@@ -186,6 +186,9 @@ const snapshot: DaemonSnapshot = {
 };
 
 const access: DaemonAgentSessionListAccess = {
+  getAvailability: async () => ({
+    state: 'ready', supportedSchemaVersion: 3, currentSchemaVersion: 3,
+  }),
   getSnapshot: async () => snapshot,
   observeEvents: () => () => undefined,
 };
@@ -220,5 +223,35 @@ export const ArchivedHistory: Story = {
     await userEvent.click(await canvas.findByTestId('daemon-agent-sessions-archived'));
     await expect(await canvas.findByText('Inspect archived provider failure')).toBeVisible();
     await expect(canvas.getByText('Managed child of Ship durable Agent navigation')).toBeVisible();
+  },
+};
+
+export const TerminalOnlySafeMode: Story = {
+  render: () => (
+    <AppI18nProvider locale="en" languages={['en']}>
+      <div style={{ width: 390, minHeight: 420, padding: 12, background: 'var(--ui-surface)' }}>
+        <DaemonAgentSessions
+          access={{
+            getAvailability: async () => ({
+              state: 'legacy-only-safe-mode',
+              initializationCode: 'future-schema',
+              databaseDisposition: 'preserved',
+              supportedSchemaVersion: 3,
+              currentSchemaVersion: 4,
+              recoveryPath: 'C:\\Users\\me\\AppData\\Roaming\\EZTerminal\\daemon.sqlite3',
+            }),
+            getSnapshot: async () => null,
+            observeEvents: () => () => undefined,
+          }}
+          onOpenSession={fn()}
+        />
+      </div>
+    </AppI18nProvider>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByTestId('daemon-safe-mode')).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    await expect(canvas.getByText(/daemon\.sqlite3/u)).toBeVisible();
   },
 };

@@ -190,6 +190,8 @@ const api: EzTerminalApi = {
     return Promise.resolve();
   },
 
+  getDaemonAvailability: () =>
+    ipcRenderer.invoke('daemon:get-availability', sessionSurfaceClientId),
   getDaemonSnapshot: () =>
     ipcRenderer.invoke('daemon:get-snapshot', sessionSurfaceClientId),
   getDaemonTranscript: (sessionId, afterSequence = 0, limit = 500) =>

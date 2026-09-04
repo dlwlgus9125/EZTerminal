@@ -5024,6 +5024,113 @@ describe('RemoteBridge — daemon protocol v12', () => {
     expect(ws.sent).toContainEqual({ kind: 'daemon-snapshot', snapshot: daemonSnapshot() });
   });
 
+  it('keeps authentication and legacy terminal transport alive when daemon authority is in safe mode', async () => {
+    const daemon = makeDaemonSource();
+    const getSnapshot = vi.fn(() => {
+      throw new Error('database unavailable');
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({
+      daemonSource: {
+        ...daemon.source,
+        getAvailability: () => ({
+          state: 'legacy-only-safe-mode',
+          initializationCode: 'database-corrupt',
+          databaseDisposition: 'quarantined',
+          supportedSchemaVersion: 3,
+          currentSchemaVersion: 3,
+          recoveryPath: 'C:\\private\\daemon-recovery',
+        }),
+        getSnapshot,
+      },
+    });
+
+    await authed(ws, options);
+
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'auth-ok' }));
+    expect(ws.sent).toContainEqual({
+      kind: 'daemon-availability',
+      availability: {
+        state: 'legacy-only-safe-mode',
+        initializationCode: 'database-corrupt',
+        databaseDisposition: 'quarantined',
+        supportedSchemaVersion: 3,
+        currentSchemaVersion: 3,
+      },
+    });
+    expect(ws.sent.some((message) => message.kind === 'auth-fail')).toBe(false);
+    expect(ws.readyState).toBe(1);
+    expect(getSnapshot).not.toHaveBeenCalled();
+
+    ws.clientSend({ kind: 'daemon-snapshot-get', requestId: 'safe-snapshot' });
+    expect(ws.sent).toContainEqual({
+      kind: 'daemon-snapshot',
+      requestId: 'safe-snapshot',
+      snapshot: null,
+      unavailable: true,
+    });
+
+    ws.clientSend({
+      kind: 'daemon-transcript-get',
+      requestId: 'safe-transcript',
+      sessionId: 'agent-1',
+      afterSequence: 0,
+      limit: 100,
+    });
+    expect(ws.sent).toContainEqual({
+      kind: 'daemon-transcript',
+      requestId: 'safe-transcript',
+      sessionId: 'agent-1',
+      items: [],
+      unavailable: true,
+    });
+
+    const command = createDaemonCommand({
+      commandId: 'safe-command',
+      idempotencyKey: 'safe-command',
+      expectedRevision: 0,
+      issuedAt: '2026-09-04T10:00:01.000Z',
+      principal: { kind: 'android', id: 'phone' },
+      type: 'runtime.set-settings',
+      payload: { browserEnabled: false },
+    });
+    ws.clientSend({ kind: 'daemon-command', requestId: 'safe-command-request', command });
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'daemon-command-reply',
+      requestId: 'safe-command-request',
+      receipt: expect.objectContaining({
+        ok: false,
+        status: 'rejected',
+        commandId: 'safe-command',
+        error: expect.objectContaining({ code: 'internal-error', retryable: false }),
+      }),
+    }));
+    expect(daemon.execute).not.toHaveBeenCalled();
+  });
+
+  it('isolates an unexpected daemon snapshot failure from successful bearer authentication', async () => {
+    const daemon = makeDaemonSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({
+      daemonSource: {
+        ...daemon.source,
+        getAvailability: () => ({
+          state: 'ready', supportedSchemaVersion: 3, currentSchemaVersion: 3,
+        }),
+        getSnapshot: () => { throw new Error('unexpected snapshot failure'); },
+      },
+    });
+
+    await authed(ws, options);
+
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'auth-ok' }));
+    expect(ws.sent).toContainEqual({
+      kind: 'daemon-snapshot', snapshot: null, unavailable: true,
+    });
+    expect(ws.sent.some((message) => message.kind === 'auth-fail')).toBe(false);
+    expect(ws.readyState).toBe(1);
+  });
+
   it('returns a bounded semantic transcript page', async () => {
     const daemon = makeDaemonSource();
     const ws = new FakeWs();

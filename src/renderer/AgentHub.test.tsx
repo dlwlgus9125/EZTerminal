@@ -513,6 +513,9 @@ describe('AgentHub structured daemon navigation', () => {
     await renderHub({ revision: 1, items: [] }, {
       onOpenStructuredAgentSession,
       daemonAgentSessionAccess: {
+        getAvailability: async () => ({
+          state: 'ready', supportedSchemaVersion: 3, currentSchemaVersion: 3,
+        }),
         getSnapshot: vi.fn(async () => daemonSnapshot),
         observeEvents: vi.fn(() => stop),
       },
@@ -525,6 +528,54 @@ describe('AgentHub structured daemon navigation', () => {
       title: 'Persisted session',
       providerLabel: 'Codex',
     });
+  });
+
+  it('disables global and project Agent creation after safe mode is confirmed', async () => {
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({
+          items: [{
+            projectId: 'safe-project',
+            name: 'Safe project',
+            primaryRoot: 'C:\\Safe',
+            additionalRoots: [],
+            pinned: false,
+            saved: true,
+            sessionCount: 0,
+            providers: [],
+            lastActiveAt: 1,
+          }],
+          nextCursor: null,
+        })),
+      },
+    });
+    const onOpenStructuredAgentDraft = vi.fn();
+    await renderHub({ revision: 1, items: [] }, {
+      onOpenStructuredAgentDraft,
+      daemonAgentSessionAccess: {
+        getAvailability: async () => ({
+          state: 'legacy-only-safe-mode',
+          initializationCode: 'database-corrupt',
+          databaseDisposition: 'quarantined',
+          supportedSchemaVersion: 3,
+        }),
+        getSnapshot: vi.fn(async () => null),
+        observeEvents: vi.fn(() => () => undefined),
+      },
+    });
+    await flush();
+
+    const globalButton = container.querySelector<HTMLButtonElement>('[data-testid="agent-new-run"]');
+    const projectButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-project-new-chat-safe-project"]',
+    );
+    expect(globalButton?.disabled).toBe(true);
+    expect(projectButton?.disabled).toBe(true);
+    expect(container.textContent).toContain('New Agent sessions are unavailable');
+    act(() => globalButton?.click());
+    act(() => projectButton?.click());
+    expect(onOpenStructuredAgentDraft).not.toHaveBeenCalled();
   });
 });
 

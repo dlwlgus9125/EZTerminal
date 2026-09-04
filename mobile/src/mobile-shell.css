@@ -1673,6 +1673,10 @@
   color: var(--ui-success);
 }
 
+.mob-daemon-nav > .daemon-safe-mode {
+  margin-block: 8px;
+}
+
 .mob-daemon-nav__row--archived > svg,
 .mob-daemon-nav__row[data-archived='true'] > svg {
   color: var(--ui-text-secondary);

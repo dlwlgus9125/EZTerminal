@@ -130,6 +130,9 @@ function capabilities(overrides: CapabilityOverrides = {}): CapabilityAccess {
       setClaudeEnablement: overrides.setClaude ?? (async (value) => ({ ok: true, value })),
     },
     daemon: {
+      getAvailability: async () => ({
+        state: 'ready', supportedSchemaVersion: 3, currentSchemaVersion: 3,
+      }),
       getSnapshot: overrides.getSnapshot ?? (async () => snapshot()),
       getTranscript: async () => [],
       sendCommand: overrides.sendCommand ?? (async (command) => ({

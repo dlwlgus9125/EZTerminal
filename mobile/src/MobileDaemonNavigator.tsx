@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { DaemonSafeModeNotice } from '../../src/renderer/DaemonSafeModeNotice';
 import type {
   DaemonSession,
   DaemonSnapshot,
@@ -333,6 +334,10 @@ export function MobileDaemonNavigator({
           <RefreshCw aria-hidden="true" />
           {statusMessage}
         </p>
+      )}
+
+      {state.availability?.state === 'legacy-only-safe-mode' && (
+        <DaemonSafeModeNotice availability={state.availability} compact />
       )}
 
       {state.status === 'error' && (

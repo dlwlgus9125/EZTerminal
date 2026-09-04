@@ -952,7 +952,7 @@ describe('DaemonStore', () => {
     }
     expect(latchedFailure).toMatchObject({
       code: 'database-corrupt',
-      safeMode: 'legacy-only',
+      safeMode: 'legacy-only-safe-mode',
       databaseDisposition: 'quarantined',
     });
     await expect(store.init()).rejects.toBe(latchedFailure);

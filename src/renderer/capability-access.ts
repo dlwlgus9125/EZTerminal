@@ -33,6 +33,7 @@ import type {
   DaemonSnapshot,
   DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import type { OpenClawMode } from '../shared/layout-schema';
 import type {
   OpenClawAgentSession,
@@ -117,6 +118,7 @@ export interface StructuredProviderAccess {
 
 /** Host authority needed by Settings and structured Agent panes. */
 export interface DaemonAccess {
+  getAvailability: () => Promise<DaemonAuthorityAvailability | null>;
   getSnapshot: () => Promise<DaemonSnapshot | null>;
   getTranscript: (
     sessionId: string,
@@ -458,6 +460,9 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
   };
 
   const daemon: DaemonAccess = {
+    getAvailability() {
+      return requireCore('getDaemonAvailability').getDaemonAvailability();
+    },
     getSnapshot() {
       return requireCore('getDaemonSnapshot').getDaemonSnapshot();
     },

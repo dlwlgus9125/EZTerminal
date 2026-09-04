@@ -96,6 +96,29 @@ describe('MobileDaemonNavigator', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
+  it('shows terminal-only remediation without exposing a local recovery path or retry', () => {
+    const retry = vi.fn();
+    renderNavigator({
+      status: 'safe-mode',
+      snapshot: null,
+      availability: {
+        state: 'legacy-only-safe-mode',
+        initializationCode: 'future-schema',
+        databaseDisposition: 'preserved',
+        supportedSchemaVersion: 3,
+        currentSchemaVersion: 4,
+      },
+    }, { onRetry: retry });
+
+    expect(container.querySelector('[data-testid="daemon-safe-mode"]')?.textContent)
+      .toContain('Existing terminal sessions remain available');
+    expect(container.textContent).toContain('Update EZTerminal');
+    expect(container.textContent).not.toContain('Local recovery location');
+    expect([...container.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Retry'))).toBe(false);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
   it('navigates Project → Workspace → Session and emits the stable session id', () => {
     const onSelectSession = vi.fn();
     const model = snapshot({

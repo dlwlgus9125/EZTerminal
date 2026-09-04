@@ -45,6 +45,8 @@ interface ProjectWorkspacePanelProps {
     location?: ProjectCodeLocation,
   ) => void;
   readonly onNewSession: (target: ProjectSessionTarget, locationLabel: string) => void;
+  readonly newSessionDisabled?: boolean;
+  readonly newSessionDisabledReason?: string;
   readonly onOpenProjectMap?: (target: {
     readonly projectId: string;
     readonly rootId: string;
@@ -608,6 +610,8 @@ export function ProjectWorkspacePanel({
   onBack,
   onOpenDocument,
   onNewSession,
+  newSessionDisabled = false,
+  newSessionDisabledReason,
   onOpenProjectMap,
   onManage,
   explorerState,
@@ -724,9 +728,10 @@ export function ProjectWorkspacePanel({
         <IconButton
           icon={MessageSquarePlus}
           aria-label={t('agentHub.projects.newSession')}
-          disabled={!workspace || workspace.access !== 'granted'}
+          disabled={newSessionDisabled || !workspace || workspace.access !== 'granted'}
+          title={newSessionDisabled ? newSessionDisabledReason : undefined}
           onClick={() => {
-            if (!workspace || workspace.access !== 'granted') return;
+            if (newSessionDisabled || !workspace || workspace.access !== 'granted') return;
             onNewSession({
               projectId: project.projectId,
               rootId: workspace.rootId,

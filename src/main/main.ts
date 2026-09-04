@@ -200,7 +200,11 @@ import { resolveNativeHostPath } from './native-host-path';
 import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
 import { DaemonLifecycleSettingsController } from './daemon-lifecycle-settings';
 import { DaemonRuntime } from './daemon-runtime';
-import { DaemonStore, DaemonStoreInitializationError } from './daemon-store';
+import { DaemonStore } from './daemon-store';
+import {
+  readyDaemonAuthorityAvailability,
+  safeModeDaemonAuthorityAvailability,
+} from './daemon-authority-availability';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonAutomationRuntime } from './daemon-automation-runtime';
@@ -215,6 +219,7 @@ import {
 import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
 import { installDaemonProviderIpc } from './daemon-provider-ipc';
 import type { DaemonCommandReceipt } from '../shared/daemon-protocol';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { ElectronUpdateHttpClient } from './app-update-network';
 import {
   UiPreferencesPatchSchema,
@@ -777,22 +782,20 @@ app.on('ready', async () => {
   // Capture legacy JSON sources before their owners can clear stale sidecars.
   const daemonStore = new DaemonStore(app.getPath('userData'));
   const daemonStoreReady = daemonStore.init();
-  void daemonStoreReady.catch((error) => {
-    const failure = error instanceof DaemonStoreInitializationError
-      ? {
-        event: 'daemon-authority-unavailable',
-        mode: 'legacy-only-safe-mode',
-        code: error.code,
-        databaseDisposition: error.databaseDisposition,
-        ...(error.schemaVersion === undefined ? {} : { schemaVersion: error.schemaVersion }),
-        ...(error.recoveryPath === undefined ? {} : { recoveryPath: error.recoveryPath }),
-      }
-      : {
-        event: 'daemon-authority-unavailable',
-        mode: 'legacy-only-safe-mode',
-        code: 'unknown-initialization-failure',
-        databaseDisposition: 'unknown',
-      };
+  let daemonAvailability: DaemonAuthorityAvailability | undefined;
+  const daemonAvailabilityReady = daemonStoreReady.then(
+    () => readyDaemonAuthorityAvailability(),
+    (error) => safeModeDaemonAuthorityAvailability(error),
+  ).then((availability) => {
+    daemonAvailability = availability;
+    return availability;
+  });
+  void daemonAvailabilityReady.then((availability) => {
+    if (availability.state === 'ready') return;
+    const failure = {
+      event: 'daemon-authority-unavailable',
+      ...availability,
+    };
     console.error('[main] daemon authority unavailable; legacy terminals remain enabled:', failure);
     mainLog?.line(`daemon safe mode: ${JSON.stringify(failure)}`);
   });
@@ -1634,6 +1637,7 @@ app.on('ready', async () => {
     value: unknown,
     message: string,
     code: 'unauthorized' | 'internal-error' = 'unauthorized',
+    details?: Readonly<Record<string, unknown>>,
   ): DaemonCommandReceipt => ({
     ok: false,
     status: 'rejected',
@@ -1650,7 +1654,12 @@ app.on('ready', async () => {
         return 0;
       }
     })(),
-    error: { code, message, retryable: false },
+    error: { code, message, retryable: false, ...(details ? { details } : {}) },
+  });
+  ipcMain.handle('daemon:get-availability', async (event, clientInstanceId: unknown) => {
+    const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+    if (!principalId) return null;
+    return daemonAvailabilityReady;
   });
   ipcMain.handle('daemon:get-snapshot', async (event, clientInstanceId: unknown) => {
     const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
@@ -1699,10 +1708,14 @@ app.on('ready', async () => {
     try {
       await Promise.all([daemonAuthorityReady, daemonProjectsReady]);
     } catch {
+      const availability = await daemonAvailabilityReady;
       return rejectedDaemonCommand(
         value,
-        'The daemon store could not be initialized.',
+        availability.state === 'legacy-only-safe-mode'
+          ? 'Structured Agent authority is unavailable in terminal-only safe mode.'
+          : 'The daemon store could not be initialized.',
         'internal-error',
+        { availability },
       );
     }
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -1718,6 +1731,11 @@ app.on('ready', async () => {
     async (event, clientInstanceId: unknown, subscribed: unknown) => {
       const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
       if (!principalId || typeof subscribed !== 'boolean') return;
+      const availability = await daemonAvailabilityReady;
+      if (availability.state !== 'ready') {
+        setDaemonEventSubscription(event.sender, false);
+        return;
+      }
       await daemonAuthorityReady;
       setDaemonEventSubscription(event.sender, subscribed);
     },
@@ -4103,7 +4121,7 @@ app.on('ready', async () => {
       await layoutStore.setRemoteEnabled(enabled);
     },
     waitUntilBridgeReady: async () => {
-      await Promise.all([agentInfrastructureReady, daemonAuthorityReady, daemonProjectsReady]);
+      await Promise.all([agentInfrastructureReady, daemonAvailabilityReady, daemonProjectsReady]);
     },
     prepareBridge: async () => {
       // Keep the presentation hint current before auth; it no longer gates
@@ -4139,7 +4157,17 @@ app.on('ready', async () => {
         decideManagedMerge: (input) => managedMergeService!.decide(input),
       } : undefined,
       agentOrchestrationSource: remoteAgentOrchestrationSource,
-      daemonSource: daemonCommandRouter,
+      daemonSource: {
+        getAvailability: () => daemonAvailability ?? safeModeDaemonAuthorityAvailability(
+          new Error('Daemon availability has not initialized.'),
+        ),
+        getSnapshot: () => daemonCommandRouter.getSnapshot(),
+        readTranscript: (sessionId, afterSequence, limit) => (
+          daemonCommandRouter.readTranscript(sessionId, afterSequence, limit)
+        ),
+        execute: (command) => daemonCommandRouter.execute(command),
+        onEvent: (listener) => daemonCommandRouter.onEvent(listener),
+      },
       agentHistorySource: remoteAgentHistorySource,
       gitSource: gitStatusService,
       pairingSource: {

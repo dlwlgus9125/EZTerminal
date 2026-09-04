@@ -3240,7 +3240,15 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   padding-top: 10px;
   border-top: 1px solid var(--ui-border-subtle);
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.agent-hub-footer__safe-mode {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
 }
 
 .agent-projects {

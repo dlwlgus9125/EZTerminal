@@ -231,6 +231,49 @@ describe('WsEzTerminalTransport daemon runtime v12', () => {
     transport.disconnect();
   });
 
+  it('enters terminal-only safe mode without retrying daemon requests or disconnecting', async () => {
+    const { createSocket, sockets } = socketFactory();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x', token: 'tok', createSocket, newId: () => 'safe-request',
+    });
+    const states: string[] = [];
+    transport.onDaemonRuntimeState((state) => states.push(state.status));
+    sockets[0].message({ kind: 'auth-ok' });
+    sockets[0].message({
+      kind: 'daemon-availability',
+      availability: {
+        state: 'legacy-only-safe-mode',
+        initializationCode: 'future-schema',
+        databaseDisposition: 'preserved',
+        supportedSchemaVersion: 3,
+        currentSchemaVersion: 4,
+      },
+    });
+
+    const sentBeforeRequests = sockets[0].sent.length;
+    await expect(transport.getDaemonSnapshot()).resolves.toBeNull();
+    await transport.setDaemonEventsSubscribed(true);
+    const receipt = await transport.sendDaemonCommand(createDaemonCommand({
+      commandId: 'safe-command',
+      idempotencyKey: 'safe-command',
+      expectedRevision: 0,
+      issuedAt: NOW,
+      principal: { kind: 'android', id: 'phone-1' },
+      type: 'runtime.set-settings',
+      payload: { browserEnabled: false },
+    }));
+
+    expect(states.at(-1)).toBe('safe-mode');
+    expect(receipt).toMatchObject({
+      ok: false,
+      status: 'rejected',
+      error: { code: 'internal-error', retryable: false },
+    });
+    expect(sockets[0].sent).toHaveLength(sentBeforeRequests);
+    expect(sockets[0].readyState).toBe(1);
+    transport.disconnect();
+  });
+
   it('correlates bounded transcript pages and rejects a mismatched session response', async () => {
     let id = 0;
     const { createSocket, sockets } = socketFactory();

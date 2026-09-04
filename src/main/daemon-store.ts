@@ -27,6 +27,11 @@ import {
   type DaemonWorkspace,
   type RevisionedRecord,
 } from '../shared/daemon-protocol';
+import {
+  DAEMON_DATABASE_SCHEMA_VERSION,
+  type DaemonAuthorityDatabaseDisposition,
+  type DaemonAuthorityInitializationFailureCode,
+} from '../shared/daemon-authority';
 import { AsyncMutationGate } from './async-mutation-gate';
 import {
   DAEMON_DATABASE_FILE_NAME,
@@ -35,7 +40,7 @@ import {
 } from './daemon-store-recovery';
 
 export { DAEMON_DATABASE_FILE_NAME } from './daemon-store-recovery';
-export const DAEMON_DATABASE_SCHEMA_VERSION = 3;
+export { DAEMON_DATABASE_SCHEMA_VERSION } from '../shared/daemon-authority';
 export const MAX_TRANSCRIPT_BATCH_ITEMS = 128;
 export const MAX_TRANSCRIPT_BATCH_UTF8_BYTES = 1024 * 1024;
 
@@ -172,19 +177,12 @@ export interface DaemonStoreOptions {
   readonly maxTranscriptBatchUtf8Bytes?: number;
 }
 
-export type DaemonStoreInitializationFailureCode =
-  | 'backup-failed'
-  | 'database-corrupt'
-  | 'future-schema'
-  | 'initialization-failed'
-  | 'migration-failed'
-  | 'quarantine-failed'
-  | 'unsafe-path';
+export type DaemonStoreInitializationFailureCode = DaemonAuthorityInitializationFailureCode;
 
 export class DaemonStoreInitializationError extends Error {
   readonly code: DaemonStoreInitializationFailureCode;
-  readonly safeMode = 'legacy-only' as const;
-  readonly databaseDisposition: 'preserved' | 'quarantined' | 'partial-quarantine';
+  readonly safeMode = 'legacy-only-safe-mode' as const;
+  readonly databaseDisposition: DaemonAuthorityDatabaseDisposition;
   readonly recoveryPath?: string;
   readonly schemaVersion?: number;
   readonly supportedSchemaVersion = DAEMON_DATABASE_SCHEMA_VERSION;
@@ -194,7 +192,7 @@ export class DaemonStoreInitializationError extends Error {
     message: string,
     options: {
       readonly cause?: unknown;
-      readonly databaseDisposition: 'preserved' | 'quarantined' | 'partial-quarantine';
+      readonly databaseDisposition: DaemonAuthorityDatabaseDisposition;
       readonly recoveryPath?: string;
       readonly schemaVersion?: number;
     },

@@ -154,6 +154,7 @@ import type {
   DaemonSnapshot,
   DaemonTranscriptItem,
 } from './daemon-protocol';
+import type { DaemonAuthorityAvailability } from './daemon-authority';
 import type {
   ClaudeProviderEnablement,
   DaemonProviderManagementResult,
@@ -1339,6 +1340,8 @@ export interface EzTerminalApi extends SessionSurfaceApi {
   attachRun: (sessionId: string, runId: string) => Promise<void>;
 
   // ── DaemonRuntime v12 (same authority as Android's WS transport) ────────
+  /** Process-latched structured Agent authority state; safe mode is explicit. */
+  getDaemonAvailability: () => Promise<DaemonAuthorityAvailability | null>;
   /** Full authoritative projection used for initial load and gap recovery. */
   getDaemonSnapshot: () => Promise<DaemonSnapshot | null>;
   /** Forward-only, bounded semantic transcript page. */

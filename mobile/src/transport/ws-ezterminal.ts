@@ -134,6 +134,10 @@ import {
   type DaemonTranscriptItem,
 } from '../../../src/shared/daemon-protocol';
 import type {
+  DaemonAuthorityAvailability,
+  RemoteDaemonAuthorityAvailability,
+} from '../../../src/shared/daemon-authority';
+import type {
   ClaudeProviderEnablement,
   DaemonProviderManagementResult,
   ProviderInspection,
@@ -229,7 +233,7 @@ import { e2eLog } from '../e2e-telemetry';
 
 export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
 
-export type DaemonRuntimeSyncStatus = 'loading' | 'ready' | 'recovering' | 'error';
+export type DaemonRuntimeSyncStatus = 'loading' | 'ready' | 'recovering' | 'safe-mode' | 'error';
 
 /**
  * Mobile's read model for the daemon runtime. `snapshot` remains available
@@ -239,6 +243,7 @@ export type DaemonRuntimeSyncStatus = 'loading' | 'ready' | 'recovering' | 'erro
 export interface DaemonRuntimeViewState {
   readonly status: DaemonRuntimeSyncStatus;
   readonly snapshot: DaemonSnapshot | null;
+  readonly availability?: RemoteDaemonAuthorityAvailability;
   readonly lastContinuity?: DaemonEventContinuity;
   readonly error?: 'connection-lost' | 'invalid-snapshot' | 'event-gap';
 }
@@ -597,6 +602,37 @@ function isBoundedString(value: unknown, maxLength: number, allowEmpty = false):
     && value.length <= maxLength
     && (allowEmpty || value.length > 0)
   );
+}
+
+function isRemoteDaemonAuthorityAvailability(
+  value: unknown,
+): value is RemoteDaemonAuthorityAvailability {
+  if (
+    !isRecord(value)
+    || !Number.isSafeInteger(value.supportedSchemaVersion)
+    || (value.supportedSchemaVersion as number) < 0
+    || 'recoveryPath' in value
+  ) return false;
+  if (value.state === 'ready') {
+    return Number.isSafeInteger(value.currentSchemaVersion)
+      && (value.currentSchemaVersion as number) >= 0;
+  }
+  return value.state === 'legacy-only-safe-mode'
+    && [
+      'backup-failed',
+      'database-corrupt',
+      'future-schema',
+      'initialization-failed',
+      'migration-failed',
+      'quarantine-failed',
+      'unsafe-path',
+    ].includes(value.initializationCode as string)
+    && ['preserved', 'quarantined', 'partial-quarantine'].includes(
+      value.databaseDisposition as string,
+    )
+    && (value.currentSchemaVersion === undefined
+      || (Number.isSafeInteger(value.currentSchemaVersion)
+        && (value.currentSchemaVersion as number) >= 0));
 }
 
 /**
@@ -1826,11 +1862,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * already present in `DaemonRuntimeViewState`. */
   getDaemonSnapshot(): Promise<DaemonSnapshot | null> {
     if (!this.authed) return Promise.resolve(null);
+    if (this.daemonRuntimeState.availability?.state === 'legacy-only-safe-mode') {
+      return Promise.resolve(null);
+    }
     this.updateDaemonRuntimeState({
       status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
       snapshot: this.daemonRuntimeState.snapshot,
     });
     return this.requestDaemonSnapshot();
+  }
+
+  getDaemonAvailability(): Promise<DaemonAuthorityAvailability | null> {
+    return Promise.resolve(this.daemonRuntimeState.availability ?? null);
   }
 
   getDaemonTranscript(
@@ -1840,6 +1883,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   ): Promise<readonly DaemonTranscriptItem[]> {
     if (
       !this.authed
+      || this.daemonRuntimeState.availability?.state === 'legacy-only-safe-mode'
       || !isBoundedString(sessionId, 256)
       || !isNonNegativeSafeInteger(afterSequence)
       || !Number.isSafeInteger(limit)
@@ -1877,6 +1921,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       ? previous + 1
       : Math.max(0, previous - 1);
     if (previous === 0 && this.daemonEventsRefcount === 1) {
+      if (this.daemonRuntimeState.availability?.state === 'legacy-only-safe-mode') {
+        return Promise.resolve();
+      }
       this.updateDaemonRuntimeState({
         status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
         snapshot: this.daemonRuntimeState.snapshot,
@@ -1938,6 +1985,19 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * idempotency key owns de-duplication; a dropped connection yields an
    * explicit delivery-uncertain receipt for the original command id. */
   sendDaemonCommand(command: DaemonCommand): Promise<DaemonCommandReceipt> {
+    if (this.daemonRuntimeState.availability?.state === 'legacy-only-safe-mode') {
+      return Promise.resolve({
+        ok: false,
+        status: 'rejected',
+        commandId: command.commandId,
+        revision: 0,
+        error: {
+          code: 'internal-error',
+          message: 'Structured Agent authority is unavailable in terminal-only safe mode.',
+          retryable: false,
+        },
+      });
+    }
     const requestId = this.newId();
     return new Promise((resolve) => {
       const pending = { commandId: command.commandId, resolve };
@@ -3409,7 +3469,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       revision: snapshot.revision,
       eventSequence: snapshot.eventSequence,
     };
-    this.updateDaemonRuntimeState({ status: 'ready', snapshot });
+    this.updateDaemonRuntimeState({
+      status: 'ready',
+      snapshot,
+      ...(this.daemonRuntimeState.availability
+        ? { availability: this.daemonRuntimeState.availability }
+        : {}),
+    });
     if (this.daemonNeedsResubscribe && this.daemonEventsRefcount > 0 && this.authed) {
       this.daemonNeedsResubscribe = false;
       this.send({ kind: 'daemon-events-unsubscribe' });
@@ -4224,6 +4290,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           this.nextRetryAt = null;
           this.lastConnectedAt = Date.now();
           this.setAuthed(true);
+          this.updateDaemonRuntimeState({
+            status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
+            snapshot: this.daemonRuntimeState.snapshot,
+          });
           this.setConnectionState('connected');
           this.recordConnectionDiagnostic('connected');
           this.emitConnectionHealth();
@@ -4425,11 +4495,46 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           });
         }
         break;
+      case 'daemon-availability': {
+        if (!isRemoteDaemonAuthorityAvailability(msg.availability)) break;
+        if (msg.availability.state === 'legacy-only-safe-mode') {
+          this.awaitingDaemonSeed = false;
+          this.daemonNeedsResubscribe = false;
+          for (const resolve of this.pendingDaemonSnapshots.values()) resolve(null);
+          this.pendingDaemonSnapshots.clear();
+          for (const pending of this.pendingDaemonTranscripts.values()) pending.resolve([]);
+          this.pendingDaemonTranscripts.clear();
+          this.updateDaemonRuntimeState({
+            status: 'safe-mode',
+            snapshot: null,
+            availability: msg.availability,
+          });
+          break;
+        }
+        this.updateDaemonRuntimeState({
+          ...this.daemonRuntimeState,
+          availability: msg.availability,
+        });
+        break;
+      }
       case 'daemon-snapshot': {
         const pending = typeof msg.requestId === 'string'
           ? this.pendingDaemonSnapshots.get(msg.requestId)
           : undefined;
         if (typeof msg.requestId === 'string') this.pendingDaemonSnapshots.delete(msg.requestId);
+        if (msg.snapshot === null && msg.unavailable === true) {
+          if (this.daemonRuntimeState.status !== 'safe-mode') {
+            this.updateDaemonRuntimeState({
+              status: 'error',
+              snapshot: this.daemonRuntimeState.snapshot,
+              ...(this.daemonRuntimeState.availability
+                ? { availability: this.daemonRuntimeState.availability }
+                : {}),
+            });
+          }
+          pending?.(null);
+          break;
+        }
         if (!isDaemonSnapshot(msg.snapshot)) {
           this.updateDaemonRuntimeState({
             status: 'error',
@@ -4461,6 +4566,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'daemon-transcript': {
         const pending = this.pendingDaemonTranscripts.get(msg.requestId);
         this.pendingDaemonTranscripts.delete(msg.requestId);
+        if (msg.unavailable === true) {
+          pending?.resolve([]);
+          break;
+        }
         if (!pending || msg.sessionId !== pending.sessionId || !Array.isArray(msg.items)) {
           pending?.resolve([]);
           break;

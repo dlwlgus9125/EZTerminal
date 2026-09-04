@@ -206,6 +206,7 @@ function renderPanel(
   onOpenDocument = vi.fn(),
   explorerState?: ProjectExplorerState,
   onNewSession = vi.fn(),
+  newSessionDisabled = false,
 ): void {
   act(() => {
     root.render(
@@ -215,6 +216,8 @@ function renderPanel(
           onBack={vi.fn()}
           onOpenDocument={onOpenDocument}
           onNewSession={onNewSession}
+          newSessionDisabled={newSessionDisabled}
+          newSessionDisabledReason="Agent authority is unavailable"
           onManage={vi.fn()}
           explorerState={explorerState}
         />
@@ -282,6 +285,21 @@ describe('ProjectWorkspacePanel', () => {
     expect(container.querySelector<HTMLButtonElement>(
       '[data-testid="project-workspace-new-session"]',
     )?.disabled).toBe(true);
+  });
+
+  it('keeps a granted workspace session action disabled when its Agent authority is unavailable', async () => {
+    installGrantedDesktop();
+    const onNewSession = vi.fn();
+    renderPanel(vi.fn(), undefined, onNewSession, true);
+    await flush();
+
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="project-workspace-new-session"]',
+    );
+    expect(button?.disabled).toBe(true);
+    expect(button?.title).toBe('Agent authority is unavailable');
+    act(() => button?.click());
+    expect(onNewSession).not.toHaveBeenCalled();
   });
 
   it('shows one decorated project tree immediately and opens virtual paths with one click', async () => {

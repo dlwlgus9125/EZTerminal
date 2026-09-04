@@ -46,6 +46,7 @@ import type {
   AgentProjectLauncherSummary,
   AgentProjectSummary,
 } from '../shared/agent-history';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import type {
   ProjectSessionPanelMetadata,
   ProjectSessionTarget,
@@ -69,6 +70,8 @@ import {
   type DaemonAgentSessionListAccess,
 } from './DaemonAgentSessions';
 import { DeferredSearchInput } from './DeferredSearchInput';
+import { rendererCapabilities } from './capability-access';
+import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import { useLatestRequestGate } from './latest-request';
 import {
   Button,
@@ -240,6 +243,7 @@ export function AgentHub({
 }: AgentHubProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [daemonAvailability, setDaemonAvailability] = useState<DaemonAuthorityAvailability | null>();
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diffView, setDiffView] = useState<DiffView | null>(null);
@@ -287,6 +291,28 @@ export function AgentHub({
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
+  const daemonAccess = daemonAgentSessionAccess ?? rendererCapabilities.daemon;
+  const daemonSafeMode = daemonAvailability?.state === 'legacy-only-safe-mode';
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve()
+      .then(() => daemonAccess.getAvailability())
+      .then((next) => {
+        if (!cancelled) setDaemonAvailability(next);
+      })
+      .catch(() => {
+        if (!cancelled) setDaemonAvailability(null);
+      });
+    return () => { cancelled = true; };
+  }, [daemonAccess]);
+
+  useEffect(() => {
+    if (daemonSafeMode && launchPickerOpen && launchProjectSession && onOpenProjectTerminal) {
+      setLaunchSessionType('terminal');
+      setLaunchError(null);
+    }
+  }, [daemonSafeMode, launchPickerOpen, launchProjectSession, onOpenProjectTerminal]);
   const diffRequestGeneration = useRef(0);
   const projectRequestGate = useLatestRequestGate();
   const allCoordinatedActivities = useMemo(() => {
@@ -1179,6 +1205,13 @@ export function AgentHub({
             : ''}
       </div>
       <div className="agent-hub-body">
+        {daemonAvailability?.state === 'legacy-only-safe-mode' && (
+          <DaemonSafeModeNotice
+            availability={daemonAvailability}
+            showRecoveryPath={!mobile}
+            compact
+          />
+        )}
         {historyProject ? renderProjectHistory(historyProject) : drillProject && onOpenProjectDocument ? (
           <ProjectWorkspacePanel
             project={drillProject}
@@ -1186,12 +1219,15 @@ export function AgentHub({
             onOpenDocument={onOpenProjectDocument}
             onOpenProjectMap={onOpenProjectMap}
             onNewSession={(target, locationLabel) => {
+              if (daemonSafeMode) return;
               if (onOpenStructuredAgentDraft) {
                 onOpenStructuredAgentDraft(drillProject, target, locationLabel);
               } else {
                 openLaunchPicker(drillProject, target, locationLabel);
               }
             }}
+            newSessionDisabled={daemonSafeMode}
+            newSessionDisabledReason={t('agentHub.daemonSafeMode.newAgentUnavailable')}
             onManage={() => openProjectEditor(drillProject)}
             explorerState={projectWorkspaceState}
             onExplorerStateChange={onProjectWorkspaceStateChange}
@@ -1402,6 +1438,10 @@ export function AgentHub({
                           variant="secondary"
                           size="sm"
                           leadingIcon={<MessageSquarePlus aria-hidden="true" />}
+                          disabled={daemonSafeMode && onOpenStructuredAgentDraft !== undefined}
+                          title={daemonSafeMode && onOpenStructuredAgentDraft
+                            ? t('agentHub.daemonSafeMode.newAgentUnavailable')
+                            : undefined}
                           onClick={() => {
                             if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft(project);
                             else openLaunchPicker(project);
@@ -1468,9 +1508,9 @@ export function AgentHub({
                 );
               })}
             </ol>
-            {!mobile && onOpenStructuredAgentSession && (
+            {!mobile && onOpenStructuredAgentSession && !daemonSafeMode && (
               <DaemonAgentSessions
-                access={daemonAgentSessionAccess}
+                access={daemonAccess}
                 onOpenSession={onOpenStructuredAgentSession}
               />
             )}
@@ -1503,6 +1543,8 @@ export function AgentHub({
               variant="primary"
               size="sm"
               leadingIcon={<Plus aria-hidden="true" />}
+              disabled={daemonSafeMode}
+              title={daemonSafeMode ? t('agentHub.daemonSafeMode.newAgentUnavailable') : undefined}
               onClick={() => {
                 if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft();
                 else openLaunchPicker();
@@ -1511,6 +1553,11 @@ export function AgentHub({
             >
               {t('agentHub.newAgentRun')}
             </Button>
+          )}
+          {daemonSafeMode && (
+            <p className="agent-hub-footer__safe-mode" role="status">
+              {t('agentHub.daemonSafeMode.newAgentUnavailable')}
+            </p>
           )}
           {onOpenAgentSettings && (
             <Button
@@ -1594,6 +1641,7 @@ export function AgentHub({
               onClick={() => void launchAgent()}
               disabled={launching
                 || !launchTarget
+                || (daemonSafeMode && launchSessionType === 'agent')
                 || (launchSessionType === 'agent' && (!onLaunchAgent || !selectedLauncherId))
                 || (launchSessionType === 'agent'
                   && launchWorkspaceMode === 'managed'
@@ -1623,7 +1671,9 @@ export function AgentHub({
                 }}
                 data-testid="agent-launch-session-type"
               >
-                <option value="agent">{t('agentHub.projects.sessionTypeAgent')}</option>
+                <option value="agent" disabled={daemonSafeMode}>
+                  {t('agentHub.projects.sessionTypeAgent')}
+                </option>
                 <option value="terminal">{t('agentHub.projects.sessionTypeTerminal')}</option>
               </Select>
             </Field>

@@ -103,6 +103,7 @@ import type {
   DaemonSnapshot,
   DaemonTranscriptItem,
 } from './daemon-protocol';
+import type { RemoteDaemonAuthorityAvailability } from './daemon-authority';
 
 export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
 export const REMOTE_CAPABILITY_DESKTOP_CONTROL = 'desktop-control-v1' as const;
@@ -1154,8 +1155,9 @@ export interface AgentLegacyMigrationConfirmReply {
 /** Authoritative full snapshot, either pushed after recovery or correlated to a request. */
 export interface DaemonSnapshotMessage {
   readonly kind: 'daemon-snapshot';
-  readonly snapshot: DaemonSnapshot;
+  readonly snapshot: DaemonSnapshot | null;
   readonly requestId?: string;
+  readonly unavailable?: true;
 }
 
 export interface DaemonTranscriptMessage {
@@ -1163,6 +1165,13 @@ export interface DaemonTranscriptMessage {
   readonly requestId: string;
   readonly sessionId: string;
   readonly items: readonly DaemonTranscriptItem[];
+  readonly unavailable?: true;
+}
+
+/** Additive v12 authority status. Local recovery paths are excluded by type. */
+export interface DaemonAvailabilityMessage {
+  readonly kind: 'daemon-availability';
+  readonly availability: RemoteDaemonAuthorityAvailability;
 }
 
 export interface DaemonCommandReply {
@@ -1522,6 +1531,7 @@ export type ServerToClientMessage =
   | AgentCollaborationPolicySaveReply
   | AgentOrchestrationActionReply
   | AgentLegacyMigrationConfirmReply
+  | DaemonAvailabilityMessage
   | DaemonSnapshotMessage
   | DaemonTranscriptMessage
   | DaemonCommandReply

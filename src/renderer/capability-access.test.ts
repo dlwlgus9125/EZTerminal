@@ -56,6 +56,7 @@ describe('CapabilityAccess Interface', () => {
     };
     const enablementResult = { ok: true as const, value: enablement };
     const snapshot = { revision: 9 };
+    const availability = { state: 'ready' as const, supportedSchemaVersion: 3, currentSchemaVersion: 3 };
     const transcript = [{ sequence: 1 }];
     const receipt = { ok: true, status: 'applied', commandId: 'command-1', revision: 10, eventSequence: 4 };
     const lifecycle = { keepRunning: true, startAtLogin: false };
@@ -67,6 +68,7 @@ describe('CapabilityAccess Interface', () => {
       listDaemonProviderModels: vi.fn(async () => models),
       getClaudeProviderEnablement: vi.fn(async () => enablementResult),
       setClaudeProviderEnablement: vi.fn(async () => enablementResult),
+      getDaemonAvailability: vi.fn(async () => availability),
       getDaemonSnapshot: vi.fn(async () => snapshot),
       getDaemonTranscript: vi.fn(async () => transcript),
       sendDaemonCommand: vi.fn(async () => receipt),
@@ -86,6 +88,7 @@ describe('CapabilityAccess Interface', () => {
     await expect(access.structuredProviders.listModels('codex')).resolves.toBe(models);
     await expect(access.structuredProviders.getClaudeEnablement()).resolves.toBe(enablementResult);
     await expect(access.structuredProviders.setClaudeEnablement(enablement)).resolves.toBe(enablementResult);
+    await expect(access.daemon.getAvailability()).resolves.toBe(availability);
     await expect(access.daemon.getSnapshot()).resolves.toBe(snapshot);
     await expect(access.daemon.getTranscript('session-1', 0, 50)).resolves.toBe(transcript);
     await expect(access.daemon.sendCommand({ commandId: 'command-1' } as never)).resolves.toBe(receipt);

@@ -39,6 +39,7 @@ type ActiveMobileSurface =
   | 'agents-overflow'
   | 'agents-offline'
   | 'agents-archived'
+  | 'agents-safe-mode'
   | 'files'
   | 'stats'
   | 'openclaw'
@@ -528,9 +529,11 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
     case 'agents-merge':
     case 'agents-overflow':
     case 'agents-offline':
-    case 'agents-archived': {
+    case 'agents-archived':
+    case 'agents-safe-mode': {
       const overflow = surface === 'agents-overflow';
       const archived = surface === 'agents-archived';
+      const safeMode = surface === 'agents-safe-mode';
       content = (
         <MobileAgentView
           snapshot={AGENTS}
@@ -541,10 +544,22 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
           onFocusSession={close}
           onSendFollowup={async () => ({ ok: true })}
           onDecideApproval={async () => ({ ok: true })}
-          transport={overflow || archived || surface === 'agents-merge' ? STORY_TRANSPORT : undefined}
-          daemonRuntimeState={archived
-            ? { status: 'ready', snapshot: ARCHIVED_DAEMON_SNAPSHOT }
-            : undefined}
+          transport={overflow || archived || safeMode || surface === 'agents-merge' ? STORY_TRANSPORT : undefined}
+          daemonRuntimeState={safeMode
+            ? {
+                status: 'safe-mode',
+                snapshot: null,
+                availability: {
+                  state: 'legacy-only-safe-mode',
+                  initializationCode: 'future-schema',
+                  databaseDisposition: 'preserved',
+                  supportedSchemaVersion: 3,
+                  currentSchemaVersion: 4,
+                },
+              }
+            : archived
+              ? { status: 'ready', snapshot: ARCHIVED_DAEMON_SNAPSHOT }
+              : undefined}
           structuredTranscripts={archived
             ? { 'archived-agent': [ARCHIVED_DAEMON_TRANSCRIPT] }
             : undefined}
@@ -688,6 +703,16 @@ export const Agents: Story = {};
 export const AgentsManagedMerge: Story = { args: { surface: 'agents-merge' } };
 export const AgentsOverflow: Story = { args: { surface: 'agents-overflow' } };
 export const AgentsOffline: Story = { args: { surface: 'agents-offline' } };
+export const AgentsTerminalOnlySafeMode: Story = {
+  args: { surface: 'agents-safe-mode' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvas.getByTestId('daemon-safe-mode')).toBeVisible());
+    await expect(canvas.getByText(/Existing terminal sessions remain available/u)).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    await expect(canvas.queryByText(/Local recovery location/u)).not.toBeInTheDocument();
+  },
+};
 export const AgentsArchivedHistory: Story = {
   args: { surface: 'agents-archived' },
   play: async ({ canvasElement }) => {

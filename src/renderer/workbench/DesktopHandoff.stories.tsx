@@ -469,6 +469,9 @@ function providerSettingsCapabilities(
       setClaudeEnablement: async (value) => ({ ok: true, value }),
     },
     daemon: {
+      getAvailability: async () => ({
+        state: 'ready', supportedSchemaVersion: 3, currentSchemaVersion: 3,
+      }),
       getSnapshot: async () => {
         if (scheduleScenario === 'error') throw new Error('Static schedule service failure');
         return daemonSnapshot;

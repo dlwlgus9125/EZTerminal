@@ -19,6 +19,11 @@ import { AppI18nProvider } from './i18n';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = '2026-09-04T10:30:00.000Z';
+const getReadyAvailability = () => Promise.resolve({
+  state: 'ready' as const,
+  supportedSchemaVersion: 3,
+  currentSchemaVersion: 3,
+});
 
 function snapshotOf(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapshot {
   return {
@@ -272,6 +277,7 @@ describe('DaemonAgentSessions', () => {
   it('opens a persisted child through the normal structured session callback', async () => {
     const stop = vi.fn();
     const onOpenSession = await renderSessions({
+      getAvailability: getReadyAvailability,
       getSnapshot: vi.fn(async () => snapshotOf()),
       observeEvents: vi.fn(() => stop),
     });
@@ -309,6 +315,7 @@ describe('DaemonAgentSessions', () => {
         : agent),
     });
     const onOpenSession = await renderSessions({
+      getAvailability: getReadyAvailability,
       getSnapshot: vi.fn(async () => archivedSnapshot),
       observeEvents: () => () => undefined,
     });
@@ -339,6 +346,7 @@ describe('DaemonAgentSessions', () => {
       .mockResolvedValueOnce(snapshotOf())
       .mockImplementationOnce(() => relevantSnapshot);
     await renderSessions({
+      getAvailability: getReadyAvailability,
       getSnapshot,
       observeEvents: (next) => {
         listener = next;
@@ -372,6 +380,7 @@ describe('DaemonAgentSessions', () => {
       .mockResolvedValueOnce(snapshotOf())
       .mockImplementationOnce(() => recovery);
     await renderSessions({
+      getAvailability: getReadyAvailability,
       getSnapshot,
       observeEvents: (next) => {
         listener = next;
@@ -393,12 +402,39 @@ describe('DaemonAgentSessions', () => {
     expect(getSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it('shows the latched safe-mode remediation without same-process retry', async () => {
+    const getSnapshot = vi.fn(async () => snapshotOf());
+    const observeEvents = vi.fn(() => () => undefined);
+    await renderSessions({
+      getAvailability: async () => ({
+        state: 'legacy-only-safe-mode',
+        initializationCode: 'future-schema',
+        databaseDisposition: 'preserved',
+        supportedSchemaVersion: 3,
+        currentSchemaVersion: 4,
+        recoveryPath: 'C:\\Users\\test\\daemon.sqlite3',
+      }),
+      getSnapshot,
+      observeEvents,
+    });
+
+    expect(container.querySelector('[data-testid="daemon-safe-mode"]')?.textContent)
+      .toContain('Update EZTerminal');
+    expect(container.textContent).toContain('Existing terminal sessions remain available');
+    expect(container.textContent).toContain('C:\\Users\\test\\daemon.sqlite3');
+    expect([...container.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Retry'))).toBe(false);
+    expect(getSnapshot).not.toHaveBeenCalled();
+    expect(observeEvents).not.toHaveBeenCalled();
+  });
+
   it('shows a recoverable error and an honest empty state after retry', async () => {
     const empty = snapshotOf({ sessions: [], agents: [], agentRelations: [] });
     const getSnapshot = vi.fn()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(empty);
     await renderSessions({
+      getAvailability: getReadyAvailability,
       getSnapshot,
       observeEvents: () => () => undefined,
     });

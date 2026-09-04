@@ -23,6 +23,11 @@ import { AppI18nProvider } from './i18n';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = '2026-09-04T09:30:00.000Z';
+const getReadyAvailability = () => Promise.resolve({
+  state: 'ready' as const,
+  supportedSchemaVersion: 3,
+  currentSchemaVersion: 3,
+});
 
 const snapshot: DaemonSnapshot = {
   protocolVersion: 12,
@@ -207,6 +212,7 @@ describe('StructuredAgentDockPanel', () => {
     const access: CapabilityAccess = {
       ...rendererCapabilities,
       daemon: {
+        getAvailability: getReadyAvailability,
         getSnapshot: async () => restoredSnapshot,
         getTranscript,
         sendCommand: async (command) => ({
@@ -375,6 +381,7 @@ describe('StructuredAgentDockPanel', () => {
     const access: CapabilityAccess = {
       ...rendererCapabilities,
       daemon: {
+        getAvailability: getReadyAvailability,
         getSnapshot,
         getTranscript,
         sendCommand,
@@ -469,6 +476,51 @@ describe('StructuredAgentDockPanel', () => {
     expect(mergeOptimisticTranscript([authoritative], [optimistic], withTurn)).toEqual([authoritative]);
   });
 
+  it('replaces draft and lifecycle controls with trusted Desktop safe-mode guidance', async () => {
+    const getSnapshot = vi.fn(async () => snapshot);
+    const sendCommand = vi.fn();
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: async () => ({
+          state: 'legacy-only-safe-mode',
+          initializationCode: 'unsafe-path',
+          databaseDisposition: 'preserved',
+          supportedSchemaVersion: 3,
+          recoveryPath: 'C:\\trusted\\daemon-recovery',
+        }),
+        getSnapshot,
+        getTranscript: async () => [],
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+    };
+    const props = {
+      capabilities: access,
+      params: { historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}safe-mode` },
+      api: { id: 'safe-agent', setTitle: vi.fn(), updateParameters: vi.fn() },
+    } as unknown as IDockviewPanelProps & { capabilities: CapabilityAccess };
+
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    expect(container.querySelector('[data-testid="structured-agent-safe-mode"]')).not.toBeNull();
+    expect(container.textContent).toContain('Existing terminal sessions remain available');
+    expect(container.textContent).toContain('C:\\trusted\\daemon-recovery');
+    expect(container.querySelector('[data-testid="structured-agent-draft-submit"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
+    expect([...container.querySelectorAll('button')]
+      .some((button) => button.textContent?.includes('Retry'))).toBe(false);
+    expect(getSnapshot).not.toHaveBeenCalled();
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
   it('opens direct children and sends guarded lifecycle commands through the v12 authority', async () => {
     const parentSession = {
       id: 'agent-parent', projectId: 'project-1', workspaceId: 'project-1.root-1.workspace-1', kind: 'agent' as const,
@@ -510,6 +562,7 @@ describe('StructuredAgentDockPanel', () => {
     const access: CapabilityAccess = {
       ...rendererCapabilities,
       daemon: {
+        getAvailability: getReadyAvailability,
         getSnapshot: async () => childSnapshot,
         getTranscript: async () => [],
         sendCommand: async (command) => {

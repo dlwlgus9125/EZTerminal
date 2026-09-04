@@ -9,8 +9,10 @@ import {
   type DaemonTranscriptItem,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import {
   StructuredAgentHeartbeat,
   type StructuredAgentHeartbeatInput,
@@ -222,6 +224,7 @@ export function StructuredAgentDockPanel(
   const restoredSessionId = structuredAgentSessionId(historyId);
   const [sessionId, setSessionId] = useState<string | null>(restoredSessionId);
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
+  const [availability, setAvailability] = useState<DaemonAuthorityAvailability | null>();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createdDraft, setCreatedDraft] = useState<CreatedDraftState | null>(null);
@@ -372,8 +375,22 @@ export function StructuredAgentDockPanel(
   }, [capabilities]);
 
   useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve()
+      .then(() => capabilities.daemon.getAvailability())
+      .then((next) => {
+        if (!cancelled) setAvailability(next);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailability(null);
+      });
+    return () => { cancelled = true; };
+  }, [capabilities]);
+
+  useEffect(() => {
+    if (availability === undefined || availability?.state === 'legacy-only-safe-mode') return;
     void refresh();
-  }, [refresh]);
+  }, [availability, refresh]);
 
   useEffect(() => {
     transcriptGenerationRef.current += 1;
@@ -386,11 +403,15 @@ export function StructuredAgentDockPanel(
     setLocalItems((current) => current.filter((item) => item.sessionId === sessionId));
     setTranscriptError(null);
     setTranscriptLoading(sessionId !== null);
-    if (sessionId) void syncTranscript(sessionId);
+    if (sessionId && availability !== undefined && availability?.state !== 'legacy-only-safe-mode') {
+      void syncTranscript(sessionId);
+    } else if (availability?.state === 'legacy-only-safe-mode') {
+      setTranscriptLoading(false);
+    }
     return () => {
       transcriptGenerationRef.current += 1;
     };
-  }, [sessionId, syncTranscript]);
+  }, [availability, sessionId, syncTranscript]);
 
   useEffect(() => {
     if (!sessionId || !snapshot) return;
@@ -433,6 +454,7 @@ export function StructuredAgentDockPanel(
   }, [capabilities, snapshot]);
 
   useEffect(() => {
+    if (availability === undefined || availability?.state === 'legacy-only-safe-mode') return undefined;
     let queued = false;
     return capabilities.daemon.observeEvents((event) => {
       if (event.kind === 'transcript.appended' && event.payload.sessionId === transcriptSessionRef.current) {
@@ -447,7 +469,7 @@ export function StructuredAgentDockPanel(
     }, () => {
       setLoadError('The Agent daemon event stream is unavailable.');
     });
-  }, [capabilities, refresh, syncTranscript]);
+  }, [availability, capabilities, refresh, syncTranscript]);
 
   useEffect(() => {
     const next = structuredAgentSessionId(historyId);
@@ -551,6 +573,14 @@ export function StructuredAgentDockPanel(
       return next.length === current.length ? current : next;
     });
   }, [transcriptItems]);
+
+  if (availability?.state === 'legacy-only-safe-mode') {
+    return (
+      <div className="structured-agent-safe-mode" data-testid="structured-agent-safe-mode">
+        <DaemonSafeModeNotice availability={availability} showRecoveryPath />
+      </div>
+    );
+  }
 
   if (!sessionId) {
     return (

@@ -9,6 +9,7 @@ import {
   type DaemonSession,
   type DaemonSnapshot,
 } from '../shared/daemon-protocol';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import {
   isDaemonSessionArchived,
   isStructuredDaemonAgentSession,
@@ -19,9 +20,13 @@ import {
 } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
+import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import './daemon-agent-sessions.css';
 
-export type DaemonAgentSessionListAccess = Pick<DaemonAccess, 'getSnapshot' | 'observeEvents'>;
+export type DaemonAgentSessionListAccess = Pick<
+  DaemonAccess,
+  'getAvailability' | 'getSnapshot' | 'observeEvents'
+>;
 
 export interface DaemonAgentSessionOpenInput {
   readonly sessionId: string;
@@ -334,6 +339,7 @@ export function DaemonAgentSessions({
 }: DaemonAgentSessionsProps): JSX.Element {
   const { t } = useAppTranslation();
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
+  const [availability, setAvailability] = useState<DaemonAuthorityAvailability | null>();
   const [loading, setLoading] = useState(true);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<'load' | 'refresh' | null>(null);
@@ -404,6 +410,26 @@ export function DaemonAgentSessions({
   }, [access]);
 
   useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve()
+      .then(() => access.getAvailability())
+      .then((next) => {
+        if (!cancelled) setAvailability(next);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailability(null);
+      });
+    return () => { cancelled = true; };
+  }, [access]);
+
+  useEffect(() => {
+    if (availability === undefined) return undefined;
+    if (availability?.state === 'legacy-only-safe-mode') {
+      setLoading(false);
+      setRecovering(false);
+      setError(null);
+      return undefined;
+    }
     mountedRef.current = true;
     lifecycleGenerationRef.current += 1;
     const generation = lifecycleGenerationRef.current;
@@ -454,7 +480,7 @@ export function DaemonAgentSessions({
         // Subscription teardown is best-effort after the owner has unmounted.
       }
     };
-  }, [access, refresh]);
+  }, [access, availability, refresh]);
 
   const activeGroups = useMemo(
     () => snapshot ? projectDaemonAgentSessions(snapshot, 'active') : [],
@@ -468,6 +494,22 @@ export function DaemonAgentSessions({
   const archivedCount = useMemo(() => sessionCount(archivedGroups), [archivedGroups]);
   const groups = visibility === 'archived' ? archivedGroups : activeGroups;
   const titleId = useId();
+
+  if (availability?.state === 'legacy-only-safe-mode') {
+    return (
+      <section
+        className="daemon-agent-sessions"
+        aria-labelledby={titleId}
+        data-testid="daemon-agent-sessions"
+        data-availability="legacy-only-safe-mode"
+      >
+        <div className="daemon-agent-sessions__heading">
+          <h3 id={titleId}>{t('agentHub.structuredSessions.title')}</h3>
+        </div>
+        <DaemonSafeModeNotice availability={availability} showRecoveryPath compact />
+      </section>
+    );
+  }
 
   return (
     <section

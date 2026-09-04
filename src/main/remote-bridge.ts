@@ -83,6 +83,12 @@ import {
   type DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
 import {
+  DAEMON_DATABASE_SCHEMA_VERSION,
+  redactDaemonAuthorityAvailability,
+  type DaemonAuthorityAvailability,
+  type RemoteDaemonAuthorityAvailability,
+} from '../shared/daemon-authority';
+import {
   isSessionSurfaceCloseDecisions,
   isSessionSurfaceCloseEntries,
   isSessionSurfaceId,
@@ -1116,6 +1122,7 @@ export interface RemoteAgentOrchestrationSource {
 
 /** Revisioned runtime projection shared by Desktop IPC, Android, CLI and MCP. */
 export interface RemoteDaemonSource {
+  getAvailability?(): DaemonAuthorityAvailability;
   getSnapshot(): DaemonSnapshot;
   readTranscript?(
     sessionId: string,
@@ -1124,6 +1131,32 @@ export interface RemoteDaemonSource {
   ): readonly DaemonTranscriptItem[];
   execute(command: DaemonCommand): Promise<DaemonCommandReceipt>;
   onEvent(listener: (event: DaemonEvent) => void): () => void;
+}
+
+function remoteDaemonAvailability(source: RemoteDaemonSource): RemoteDaemonAuthorityAvailability {
+  try {
+    const availability = source.getAvailability?.() ?? {
+      state: 'ready' as const,
+      supportedSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
+      currentSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
+    };
+    return redactDaemonAuthorityAvailability(availability);
+  } catch {
+    return {
+      state: 'legacy-only-safe-mode',
+      initializationCode: 'initialization-failed',
+      databaseDisposition: 'preserved',
+      supportedSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
+    };
+  }
+}
+
+function daemonRevision(source: RemoteDaemonSource): number {
+  try {
+    return source.getSnapshot().revision;
+  } catch {
+    return 0;
+  }
 }
 
 function remoteCoordinationSnapshot(snapshot: AgentCoordinationSnapshot): AgentCoordinationSnapshot {
@@ -1960,7 +1993,15 @@ export function attachConnection(
             });
           }
           if (options.daemonSource && negotiatedProtocol >= DAEMON_PROTOCOL_VERSION) {
-            send({ kind: 'daemon-snapshot', snapshot: options.daemonSource.getSnapshot() });
+            const availability = remoteDaemonAvailability(options.daemonSource);
+            send({ kind: 'daemon-availability', availability });
+            if (availability.state === 'ready') {
+              try {
+                send({ kind: 'daemon-snapshot', snapshot: options.daemonSource.getSnapshot() });
+              } catch {
+                send({ kind: 'daemon-snapshot', snapshot: null, unavailable: true });
+              }
+            }
           }
           // OpenClaw availability (M3): initial state, right after auth —
           // `subscribeVisibility` above only covers CHANGES from here on.
@@ -2360,33 +2401,82 @@ export function attachConnection(
 
       case 'daemon-snapshot-get':
         if (negotiatedProtocol < DAEMON_PROTOCOL_VERSION || !options.daemonSource) break;
-        send({
-          kind: 'daemon-snapshot',
-          requestId: msg.requestId,
-          snapshot: options.daemonSource.getSnapshot(),
-        });
+        if (remoteDaemonAvailability(options.daemonSource).state !== 'ready') {
+          send({
+            kind: 'daemon-snapshot',
+            requestId: msg.requestId,
+            snapshot: null,
+            unavailable: true,
+          });
+          break;
+        }
+        try {
+          send({
+            kind: 'daemon-snapshot',
+            requestId: msg.requestId,
+            snapshot: options.daemonSource.getSnapshot(),
+          });
+        } catch {
+          send({
+            kind: 'daemon-snapshot',
+            requestId: msg.requestId,
+            snapshot: null,
+            unavailable: true,
+          });
+        }
         break;
 
       case 'daemon-transcript-get':
         if (negotiatedProtocol < DAEMON_PROTOCOL_VERSION || !options.daemonSource) break;
-        send({
-          kind: 'daemon-transcript',
-          requestId: msg.requestId,
-          sessionId: msg.sessionId,
-          items: options.daemonSource.readTranscript?.(
-            msg.sessionId,
-            msg.afterSequence,
-            msg.limit,
-          ) ?? [],
-        });
+        if (remoteDaemonAvailability(options.daemonSource).state !== 'ready') {
+          send({
+            kind: 'daemon-transcript',
+            requestId: msg.requestId,
+            sessionId: msg.sessionId,
+            items: [],
+            unavailable: true,
+          });
+          break;
+        }
+        try {
+          send({
+            kind: 'daemon-transcript',
+            requestId: msg.requestId,
+            sessionId: msg.sessionId,
+            items: options.daemonSource.readTranscript?.(
+              msg.sessionId,
+              msg.afterSequence,
+              msg.limit,
+            ) ?? [],
+          });
+        } catch {
+          send({
+            kind: 'daemon-transcript',
+            requestId: msg.requestId,
+            sessionId: msg.sessionId,
+            items: [],
+            unavailable: true,
+          });
+        }
         break;
 
       case 'daemon-events-subscribe': {
         if (negotiatedProtocol < DAEMON_PROTOCOL_VERSION || !options.daemonSource) break;
+        const availability = remoteDaemonAvailability(options.daemonSource);
+        if (availability.state !== 'ready') {
+          daemonEventsSubscribed = false;
+          send({ kind: 'daemon-availability', availability });
+          break;
+        }
         daemonEventsSubscribed = true;
-        const snapshot = options.daemonSource.getSnapshot();
-        if (msg.afterSequence !== snapshot.eventSequence) {
-          send({ kind: 'daemon-snapshot', snapshot });
+        try {
+          const snapshot = options.daemonSource.getSnapshot();
+          if (msg.afterSequence !== snapshot.eventSequence) {
+            send({ kind: 'daemon-snapshot', snapshot });
+          }
+        } catch {
+          daemonEventsSubscribed = false;
+          send({ kind: 'daemon-snapshot', snapshot: null, unavailable: true });
         }
         break;
       }
@@ -2411,6 +2501,26 @@ export function attachConnection(
         } catch {
           break;
         }
+        const availability = remoteDaemonAvailability(options.daemonSource);
+        if (availability.state !== 'ready') {
+          send({
+            kind: 'daemon-command-reply',
+            requestId,
+            receipt: {
+              ok: false,
+              status: 'rejected',
+              commandId: command.commandId,
+              revision: 0,
+              error: {
+                code: 'internal-error',
+                message: 'Structured Agent authority is unavailable in terminal-only safe mode.',
+                retryable: false,
+                details: { availability },
+              },
+            },
+          });
+          break;
+        }
         void options.daemonSource.execute(command).then((receipt) => {
           if (authed) send({ kind: 'daemon-command-reply', requestId, receipt });
         }).catch((error: unknown) => {
@@ -2422,7 +2532,7 @@ export function attachConnection(
               ok: false,
               status: 'rejected',
               commandId: command.commandId,
-              revision: options.daemonSource?.getSnapshot().revision ?? 0,
+              revision: options.daemonSource ? daemonRevision(options.daemonSource) : 0,
               error: {
                 code: 'internal-error',
                 message: error instanceof Error ? error.message : 'Daemon command failed.',
