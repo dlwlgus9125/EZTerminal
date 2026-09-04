@@ -64,16 +64,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1984,
-          "endLine": 2015,
+          "startLine": 1987,
+          "endLine": 2018,
           "lineDigest": "sha256:36acf0398a8b0347c4e17ef04682d9635eb1e997cc7f34d18abb965b6fbe65f8",
           "claim": "Mobile sends one daemon command request, rejects it locally in safe mode, and converts an unavailable connection into an explicit delivery-uncertain receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3805,
-          "endLine": 3811,
+          "startLine": 3808,
+          "endLine": 3814,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "Connection loss settles each pending daemon command as delivery-uncertain and clears it rather than replaying the mutation."
         }
@@ -254,16 +254,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3457,
-          "endLine": 3517,
+          "startLine": 3460,
+          "endLine": 3520,
           "lineDigest": "sha256:25106c9a3a1fd8bac8bd8d5ec443a564d65ac0ce6a3107da9b4d594c4d46c376",
           "claim": "Mobile accepts only a non-regressing authoritative snapshot and responds to event gaps or revision regression by refetching and resubscribing from the new cursor."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 4551,
-          "endLine": 4587,
+          "startLine": 4554,
+          "endLine": 4590,
           "lineDigest": "sha256:83c17a2a2e37318b6e54ea36408ac01d540a60d21fe46deaa8f6b932740e3810",
           "claim": "Mobile correlates receipts, validates bounded transcript items against the requested Session, and feeds valid daemon events into continuity handling."
         }
@@ -281,16 +281,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1984,
-          "endLine": 2015,
+          "startLine": 1987,
+          "endLine": 2018,
           "lineDigest": "sha256:36acf0398a8b0347c4e17ef04682d9635eb1e997cc7f34d18abb965b6fbe65f8",
           "claim": "A command enters the transport once and immediately becomes delivery-uncertain when it cannot be sent."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3805,
-          "endLine": 3811,
+          "startLine": 3808,
+          "endLine": 3814,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "A connection drop resolves the original pending command as delivery-uncertain and removes it without transport replay."
         }
@@ -380,8 +380,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 3490,
-        "endLine": 3517,
+        "startLine": 3493,
+        "endLine": 3520,
         "lineDigest": "sha256:c82412e21d9783fe44ab9a9fa30cf706ed69d4e046ff41c3c152431df2461a8b",
         "claim": "A valid event advances the cursor through an authoritative refresh; a gap or regression invalidates the local projection and forces reseeding."
       }]

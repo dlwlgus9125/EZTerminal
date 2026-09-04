@@ -87,9 +87,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:a741e85a96ecf69372073e68c3aa36eebb38b9bb222629c96afc8f2b47c78ceb",
-        "decision": "map-updated",
-        "reason": "The map now follows authenticated protocol-v12 Agent commands through Android principal binding and the durable FIFO, then returns revisioned snapshots, events, bounded transcripts, receipts, and redacted safe-mode availability."
+        "inputDigest": "sha256:eca7aebbfb738cb83c2534499e98d6dcb2291006bf3b695fc01615b0c5786d28",
+        "decision": "no-semantic-impact",
+        "reason": "Desktop-only provider stubs now explicitly consume unused parameters for lint compliance; authenticated v12 commands, connection-loss receipts, reconciliation, and transcript validation remain unchanged."
       }
     },
     {
