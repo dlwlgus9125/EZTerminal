@@ -1,6 +1,38 @@
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
+
+export type DaemonAgentShutdownMode = 'explicit-quit' | 'process-loss';
+
+/** Safe mode has no writable structured authority, so only provider cleanup is legal. */
+export async function disposeAgentsForAuthorityAvailability(
+  availability: Promise<DaemonAuthorityAvailability>,
+  dispose: (mode: DaemonAgentShutdownMode) => Promise<void>,
+): Promise<void> {
+  const resolved = await availability;
+  await dispose(resolved.state === 'ready' ? 'explicit-quit' : 'process-loss');
+}
+
+export interface DaemonAuthorityStoreCloseOptions {
+  /** The exact authority shutdown barrier, not a process-guardian deadline. */
+  readonly authorityStop: Promise<void>;
+  readonly concurrentDrains: readonly (Promise<unknown> | undefined)[];
+  readonly prepareForClose: () => void;
+  readonly closeStore: () => Promise<void>;
+}
+
+/** Keeps the structured store open until every authority writer has drained. */
+export async function closeDaemonStoreAfterAuthorityDrain(
+  options: DaemonAuthorityStoreCloseOptions,
+): Promise<void> {
+  await Promise.all([options.authorityStop, ...options.concurrentDrains]);
+  options.prepareForClose();
+  await options.closeStore();
+}
+
 export interface DaemonAuthorityShutdownOptions {
   /** Rejects new external commands while preserving the already accepted FIFO prefix. */
   readonly closeCommandIngress: () => void;
+  /** Removes desktop provider discovery/setup handlers and aborts their probes. */
+  readonly closeProviderIngress: () => void;
   /** Cancels launch-capable provider work before waiting on the command FIFO. */
   readonly beginAgentShutdown: () => void;
   /** Stops automation dispatch and resolves only after its current dispatch drains. */
@@ -55,6 +87,7 @@ export class DaemonAuthorityShutdown {
     this.stopping = true;
     const failures: ShutdownFailure[] = [];
     this.captureSynchronous('close daemon command ingress', this.options.closeCommandIngress, failures);
+    this.captureSynchronous('close provider IPC ingress', this.options.closeProviderIngress, failures);
     this.captureSynchronous('begin Agent shutdown', this.options.beginAgentShutdown, failures);
 
     // Both calls synchronously close their respective ingress. Rejections are
@@ -71,8 +104,11 @@ export class DaemonAuthorityShutdown {
     failures: ShutdownFailure[],
   ): Promise<void> {
     this.collect(await automationStop, failures);
-    this.collect(await this.capture('persist and stop Agents', this.options.stopAgents), failures);
+    // daemonAuthorityReady owns the store-init barrier. Waiting for it before
+    // the explicit transition prevents a slow successful migration from being
+    // raced by an Agent write against an unopened database.
     await this.startupSettled;
+    this.collect(await this.capture('persist and stop Agents', this.options.stopAgents), failures);
     this.collect(await initialMcpStop, failures);
     // stop() may have raced a start() before that start published its server.
     this.collect(await this.capture('stop late orchestration MCP', this.options.stopMcp), failures);

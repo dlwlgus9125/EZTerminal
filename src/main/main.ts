@@ -211,7 +211,11 @@ import {
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonAutomationRuntime } from './daemon-automation-runtime';
-import { DaemonAuthorityShutdown } from './daemon-authority-shutdown';
+import {
+  DaemonAuthorityShutdown,
+  closeDaemonStoreAfterAuthorityDrain,
+  disposeAgentsForAuthorityAvailability,
+} from './daemon-authority-shutdown';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { CodexProviderAdapter } from './codex-provider-adapter';
 import { ClaudeProviderAdapter } from './claude-provider-adapter';
@@ -890,7 +894,7 @@ app.on('ready', async () => {
     claudeProviderAdapter,
   ]);
   const daemonRouterRef: { current?: DaemonCommandRouter } = {};
-  installDaemonProviderIpc({
+  const uninstallDaemonProviderIpc = installDaemonProviderIpc({
     ipc: ipcMain,
     registry: providerRegistry,
     claudeAdapter: claudeProviderAdapter,
@@ -1003,9 +1007,13 @@ app.on('ready', async () => {
       daemonCommandRouter.beginShutdown();
       unsubscribeDaemonAutomationWake();
     },
+    closeProviderIngress: uninstallDaemonProviderIpc,
     beginAgentShutdown: () => daemonAgentRuntime.beginShutdown(),
     stopAutomation: () => daemonAutomationRuntime.dispose(),
-    stopAgents: () => daemonAgentRuntime.dispose(),
+    stopAgents: () => disposeAgentsForAuthorityAvailability(
+      daemonAvailabilityReady,
+      (mode) => daemonAgentRuntime.dispose(mode),
+    ),
     stopMcp: () => agentOrchestrationMcpServer.stop(),
   });
   const stopDaemonAuthorityRuntimes = (): Promise<void> => daemonAuthorityShutdown.stop();
@@ -2688,14 +2696,15 @@ app.on('ready', async () => {
           // Await the exact authority barrier directly: the process guardian
           // intentionally has its own deadline and cannot prove this ordering.
           const authorityStop = stopDaemonAuthorityRuntimes();
-          await Promise.all([
-            daemonRuntime?.shutdown(),
+          await closeDaemonStoreAfterAuthorityDrain({
             authorityStop,
-            stopDesktopRuntimeAndFiles(),
-          ]);
-          unsubscribeDaemonEventFanout();
-          daemonEventSubscribers.clear();
-          await daemonStore.close();
+            concurrentDrains: [daemonRuntime?.shutdown(), stopDesktopRuntimeAndFiles()],
+            prepareForClose: () => {
+              unsubscribeDaemonEventFanout();
+              daemonEventSubscribers.clear();
+            },
+            closeStore: () => daemonStore.close(),
+          });
         },
       },
       {

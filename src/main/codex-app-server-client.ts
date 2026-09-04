@@ -279,6 +279,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     const command = this.options.command ?? 'codex';
     const argv = [...(this.options.argv ?? ['app-server'])];
     await this.options.beforeSpawn?.(signal);
+    if (this.disposed) throw new Error('Codex app-server client is disposed.');
     if (signal?.aborted) throw abortError('initialize');
     const child: ChildProcessWithoutNullStreams = (
       this.options.spawnProcess

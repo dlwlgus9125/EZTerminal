@@ -72,19 +72,32 @@ function fixture(options: { readonly principal?: boolean } = {}) {
   const ipc = new FakeIpc();
   let stored = { ...DEFAULT_CLAUDE_PROVIDER_ENABLEMENT };
   const registry = {
-    inspect: vi.fn(async (): Promise<ProviderRegistryResult<ProviderInspection>> => ({
-      ok: true,
-      value: inspection,
-    })),
-    listModels: vi.fn(async () => ({
-      ok: true as const,
-      value: [{
-        id: 'sonnet',
-        displayName: 'Claude Sonnet',
-        supportsReasoning: true,
-        isDefault: true,
-      }],
-    })),
+    inspect: vi.fn(async (
+      _providerId: string,
+      _signal?: AbortSignal,
+    ): Promise<ProviderRegistryResult<ProviderInspection>> => {
+      void _providerId;
+      void _signal;
+      return { ok: true, value: inspection };
+    }),
+    listModels: vi.fn(async (
+      _snapshot: { readonly providers: readonly [] },
+      _providerId: string,
+      _signal?: AbortSignal,
+    ) => {
+      void _snapshot;
+      void _providerId;
+      void _signal;
+      return {
+        ok: true as const,
+        value: [{
+          id: 'sonnet',
+          displayName: 'Claude Sonnet',
+          supportsReasoning: true,
+          isDefault: true,
+        }],
+      };
+    }),
   };
   const claudeStore = {
     load: vi.fn(async () => ({ ...stored })),
@@ -172,8 +185,12 @@ describe('daemon provider IPC', () => {
     await expect(subject.ipc.invoke('daemon:get-claude-enablement', 'client'))
       .resolves.toEqual({ ok: true, value: enabledPolicy });
 
-    expect(subject.registry.inspect).toHaveBeenCalledWith('claude');
-    expect(subject.registry.listModels).toHaveBeenCalledWith({ providers: [] }, 'claude');
+    expect(subject.registry.inspect).toHaveBeenCalledWith('claude', expect.any(AbortSignal));
+    expect(subject.registry.listModels).toHaveBeenCalledWith(
+      { providers: [] },
+      'claude',
+      expect.any(AbortSignal),
+    );
     expect(subject.claudeAdapter.setEnablement).toHaveBeenCalledWith(enabledPolicy);
   });
 
@@ -229,6 +246,35 @@ describe('daemon provider IPC', () => {
     subject.uninstall();
     subject.uninstall();
 
+    expect(subject.ipc.handlers.size).toBe(0);
+  });
+
+  it('aborts in-flight Claude and Codex UI discovery when provider IPC is uninstalled', async () => {
+    const subject = fixture();
+    const observedSignals: AbortSignal[] = [];
+    const pendingUntilAbort = <T>(signal: AbortSignal | undefined): Promise<T> => {
+      if (!signal) return Promise.reject(new Error('missing provider lifecycle signal'));
+      observedSignals.push(signal);
+      return new Promise<T>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('provider IPC stopped')), { once: true });
+      });
+    };
+    subject.registry.inspect.mockImplementation(async (_providerId, signal) => (
+      pendingUntilAbort<ProviderRegistryResult<ProviderInspection>>(signal)
+    ));
+    subject.registry.listModels.mockImplementation(async (_snapshot, _providerId, signal) => (
+      pendingUntilAbort(signal)
+    ));
+
+    const claudeProbe = subject.ipc.invoke('daemon:inspect-provider', 'client', 'claude');
+    const codexModels = subject.ipc.invoke('daemon:list-provider-models', 'client', 'codex');
+    await vi.waitFor(() => expect(observedSignals).toHaveLength(2));
+
+    subject.uninstall();
+
+    await expect(claudeProbe).resolves.toMatchObject({ ok: false, code: 'provider-operation-failed' });
+    await expect(codexModels).resolves.toMatchObject({ ok: false, code: 'provider-operation-failed' });
+    expect(observedSignals.every((signal) => signal.aborted)).toBe(true);
     expect(subject.ipc.handlers.size).toBe(0);
   });
 });

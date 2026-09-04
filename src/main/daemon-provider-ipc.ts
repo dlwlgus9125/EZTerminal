@@ -116,6 +116,8 @@ function report(
 /** Installs the desktop-only provider setup boundary for the isolated preload. */
 export function installDaemonProviderIpc(options: DaemonProviderIpcOptions): () => void {
   const claudeStoreReady = options.claudeStoreReady ?? Promise.resolve();
+  const lifecycle = new AbortController();
+  let installed = true;
 
   options.ipc.handle('daemon:inspect-provider', async (event, ...args) => {
     if (!options.resolveDesktopPrincipal(event, args[0])) {
@@ -125,7 +127,7 @@ export function installDaemonProviderIpc(options: DaemonProviderIpcOptions): () 
       return invalidInput<ProviderInspection>();
     }
     try {
-      return rendererSafeRegistryResult(await options.registry.inspect(args[1]));
+      return rendererSafeRegistryResult(await options.registry.inspect(args[1], lifecycle.signal));
     } catch (error) {
       report(options, 'daemon provider inspection failed', error);
       return failure<ProviderInspection>(
@@ -146,6 +148,7 @@ export function installDaemonProviderIpc(options: DaemonProviderIpcOptions): () 
       return rendererSafeRegistryResult(await options.registry.listModels(
         options.getSnapshot(),
         args[1],
+        lifecycle.signal,
       ));
     } catch (error) {
       report(options, 'daemon provider model discovery failed', error);
@@ -214,10 +217,10 @@ export function installDaemonProviderIpc(options: DaemonProviderIpcOptions): () 
     }
   });
 
-  let installed = true;
   return () => {
     if (!installed) return;
     installed = false;
     for (const channel of CHANNELS) options.ipc.removeHandler(channel);
+    lifecycle.abort();
   };
 }

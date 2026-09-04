@@ -175,6 +175,26 @@ describe('CodexAppServerClient', () => {
     await client.dispose();
   });
 
+  it('does not spawn a late child when dispose wins a pending pre-spawn check', async () => {
+    const spawnProcess = vi.fn(() => new FakeCodexChild().asChildProcess());
+    let releaseVerification: (() => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const verificationStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const beforeSpawn = vi.fn(async () => {
+      markStarted?.();
+      await new Promise<void>((resolve) => { releaseVerification = resolve; });
+    });
+    const client = new CodexAppServerClient({ beforeSpawn, spawnProcess });
+
+    const request = client.request('model/list');
+    await verificationStarted;
+    await client.dispose();
+    releaseVerification?.();
+
+    await expect(request).rejects.toThrow(/client is disposed/u);
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it('redacts stderr diagnostics before they reach the reporter', async () => {
     const child = new FakeCodexChild();
     initializationResponder(child, (frame) => {
