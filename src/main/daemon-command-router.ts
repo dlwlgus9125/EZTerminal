@@ -159,6 +159,7 @@ export class DaemonCommandRouter {
   private readonly listeners = new Set<(event: DaemonEvent) => void>();
   private readonly handlers: Partial<Record<DaemonCommandType, DaemonCommandHandler>>;
   private readonly now: () => Date;
+  private acceptingCommands = true;
 
   constructor(
     private readonly store: DaemonStore,
@@ -216,7 +217,18 @@ export class DaemonCommandRouter {
       };
     }
 
+    if (!this.acceptingCommands) return this.shutdownReceipt(command.commandId);
     return this.gate.runExclusive(() => this.executeExclusive(command));
+  }
+
+  /**
+   * Close every command ingress before authority shutdown begins. Commands
+   * already accepted by the FIFO retain their place; later callers fail
+   * without creating an outbox row. System transitions remain available so
+   * the shutdown state can be committed after the accepted prefix drains.
+   */
+  beginShutdown(): void {
+    this.acceptingCommands = false;
   }
 
   async applySystemCommit(
@@ -545,6 +557,22 @@ export class DaemonCommandRouter {
           ),
         };
     }
+  }
+
+  private shutdownReceipt(commandId: string): DaemonCommandReceipt {
+    return {
+      ok: false,
+      status: 'rejected',
+      commandId,
+      revision: (() => {
+        try {
+          return this.store.getRevision();
+        } catch {
+          return 0;
+        }
+      })(),
+      error: commandError('invalid-state', 'The daemon command authority is shutting down.'),
+    };
   }
 
   private publishEventsAfter(sequence: number): void {

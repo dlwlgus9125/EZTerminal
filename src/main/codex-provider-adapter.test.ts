@@ -136,9 +136,59 @@ describe('CodexProviderAdapter', () => {
       authenticationState: 'first-launch',
       authenticationDetail: 'Codex authentication is verified by app-server when the first Agent session starts.',
     });
-    expect(resolveExecutable).toHaveBeenCalledWith('codex', undefined);
-    expect(runCommand).toHaveBeenCalledWith('C:\\Tools\\codex.exe', ['--version'], undefined);
+    expect(resolveExecutable).toHaveBeenCalledWith('codex', expect.any(AbortSignal));
+    expect(runCommand).toHaveBeenCalledWith(
+      'C:\\Tools\\codex.exe',
+      ['--version'],
+      expect.any(AbortSignal),
+    );
     expect(connection.requests).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('forwards cancellation to an in-flight executable probe', async () => {
+    let observedSignal: AbortSignal | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const adapter = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
+      resolveExecutable: async () => 'C:\\Tools\\codex.exe',
+      runCommand: async (_command, _argv, signal) => {
+        observedSignal = signal;
+        markStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        });
+      },
+    });
+    const controller = new AbortController();
+
+    const pending = adapter.probe(controller.signal);
+    await started;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(observedSignal?.aborted).toBe(true);
+    await adapter.dispose();
+  });
+
+  it('bounds executable verification even when an injected command ignores abort', async () => {
+    let observedSignal: AbortSignal | undefined;
+    const adapter = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
+      probeTimeoutMs: 20,
+      resolveExecutable: async () => 'C:\\Tools\\codex.exe',
+      runCommand: async (_command, _argv, signal) => {
+        observedSignal = signal;
+        return new Promise<never>(() => undefined);
+      },
+    });
+
+    await expect(adapter.probe()).resolves.toMatchObject({
+      available: false,
+      unavailableReason: 'Codex executable verification exceeded 20ms.',
+    });
+    expect(observedSignal?.aborted).toBe(true);
     await adapter.dispose();
   });
 

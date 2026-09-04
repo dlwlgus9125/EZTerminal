@@ -198,7 +198,10 @@ import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import { AppUpdateService } from './app-update-service';
 import { resolveNativeHostPath } from './native-host-path';
 import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
-import { DaemonLifecycleSettingsController } from './daemon-lifecycle-settings';
+import {
+  DaemonLifecycleSettingsController,
+  synchronizeDaemonLifecycleAuthority,
+} from './daemon-lifecycle-settings';
 import { DaemonRuntime } from './daemon-runtime';
 import { DaemonStore } from './daemon-store';
 import {
@@ -208,6 +211,7 @@ import {
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonAutomationRuntime } from './daemon-automation-runtime';
+import { DaemonAuthorityShutdown } from './daemon-authority-shutdown';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { CodexProviderAdapter } from './codex-provider-adapter';
 import { ClaudeProviderAdapter } from './claude-provider-adapter';
@@ -994,28 +998,26 @@ app.on('ready', async () => {
       daemonAutomationRuntime.notifyAuthorityChanged();
     }
   });
-  let daemonAuthorityRuntimesStopped = false;
-  let daemonAuthorityRuntimesStop: Promise<void> | null = null;
-  const stopDaemonAuthorityRuntimes = (): Promise<void> => {
-    if (daemonAuthorityRuntimesStop) return daemonAuthorityRuntimesStop;
-    unsubscribeDaemonAutomationWake();
-    const automationStop = daemonAutomationRuntime.dispose();
-    const agentStop = daemonAgentRuntime.dispose();
-    const mcpStop = agentOrchestrationMcpServer.stop();
-    daemonAuthorityRuntimesStop = Promise.all([automationStop, agentStop, mcpStop])
-      .then(() => {
-        daemonAuthorityRuntimesStopped = true;
-      });
-    return daemonAuthorityRuntimesStop;
-  };
+  const daemonAuthorityShutdown = new DaemonAuthorityShutdown({
+    closeCommandIngress: () => {
+      daemonCommandRouter.beginShutdown();
+      unsubscribeDaemonAutomationWake();
+    },
+    beginAgentShutdown: () => daemonAgentRuntime.beginShutdown(),
+    stopAutomation: () => daemonAutomationRuntime.dispose(),
+    stopAgents: () => daemonAgentRuntime.dispose(),
+    stopMcp: () => agentOrchestrationMcpServer.stop(),
+  });
+  const stopDaemonAuthorityRuntimes = (): Promise<void> => daemonAuthorityShutdown.stop();
   daemonProcesses.register({
     id: 'daemon-authority-runtimes',
     gracefulStop: stopDaemonAuthorityRuntimes,
-    hasStopped: () => daemonAuthorityRuntimesStopped,
+    hasStopped: () => daemonAuthorityShutdown.hasStopped(),
     forceStop: stopDaemonAuthorityRuntimes,
   });
   const daemonAuthorityReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
     .then(async ([, lifecycle]) => {
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       const current = daemonCommandRouter.getSnapshot().runtime;
       if (
         current.keepRunning !== lifecycle.keepRunning
@@ -1031,11 +1033,19 @@ app.on('ready', async () => {
           }],
         });
       }
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await agentOrchestrationMcpServer.start();
+      if (daemonAuthorityShutdown.isStopping()) {
+        await agentOrchestrationMcpServer.stop();
+        return daemonCommandRouter;
+      }
       await daemonAgentRuntime.start();
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       await daemonAutomationRuntime.start();
+      if (daemonAuthorityShutdown.isStopping()) await daemonAutomationRuntime.dispose();
       return daemonCommandRouter;
     });
+  daemonAuthorityShutdown.bindStartup(daemonAuthorityReady);
   void daemonAuthorityReady.catch(() => undefined);
   const daemonEventSubscribers = new Set<WebContents>();
   const daemonSubscriberLifecycleWired = new WeakSet<WebContents>();
@@ -1614,23 +1624,23 @@ app.on('ready', async () => {
       ...('keepRunning' in candidate ? { keepRunning: candidate.keepRunning as boolean } : {}),
       ...('startAtLogin' in candidate ? { startAtLogin: candidate.startAtLogin as boolean } : {}),
     });
-    await daemonAuthorityReady;
-    const current = daemonCommandRouter.getSnapshot().runtime;
-    if (
-      current.keepRunning !== lifecycle.keepRunning
-      || current.startAtLogin !== lifecycle.startAtLogin
-    ) {
-      await daemonCommandRouter.applySystemCommit({
-        mutations: [{
-          kind: 'runtime.update',
-          value: {
-            keepRunning: lifecycle.keepRunning,
-            startAtLogin: lifecycle.startAtLogin,
-          },
-        }],
-      });
-      daemonAutomationRuntime.notifyAuthorityChanged();
-    }
+    await synchronizeDaemonLifecycleAuthority(lifecycle, {
+      availability: await daemonAvailabilityReady,
+      authorityReady: daemonAuthorityReady,
+      getCurrent: () => daemonCommandRouter.getSnapshot().runtime,
+      apply: async (settings) => {
+        await daemonCommandRouter.applySystemCommit({
+          mutations: [{
+            kind: 'runtime.update',
+            value: {
+              keepRunning: settings.keepRunning,
+              startAtLogin: settings.startAtLogin,
+            },
+          }],
+        });
+      },
+      notifyChanged: () => daemonAutomationRuntime.notifyAuthorityChanged(),
+    });
     return lifecycle;
   });
   const rejectedDaemonCommand = (
@@ -2675,8 +2685,12 @@ app.on('ready', async () => {
         run: async () => {
           // The authoritative store closes only after both command ingress
           // (the bridge) and every provider/terminal writer have drained.
+          // Await the exact authority barrier directly: the process guardian
+          // intentionally has its own deadline and cannot prove this ordering.
+          const authorityStop = stopDaemonAuthorityRuntimes();
           await Promise.all([
             daemonRuntime?.shutdown(),
+            authorityStop,
             stopDesktopRuntimeAndFiles(),
           ]);
           unsubscribeDaemonEventFanout();

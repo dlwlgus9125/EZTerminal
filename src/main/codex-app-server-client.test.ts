@@ -149,6 +149,32 @@ describe('CodexAppServerClient', () => {
     await client.dispose();
   });
 
+  it('forwards request cancellation into pre-spawn verification', async () => {
+    const spawnProcess = vi.fn(() => new FakeCodexChild().asChildProcess());
+    let observedSignal: AbortSignal | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const beforeSpawn = vi.fn(async (signal?: AbortSignal) => {
+      observedSignal = signal;
+      markStarted?.();
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('verification cancelled')), { once: true });
+      });
+    });
+    const client = new CodexAppServerClient({ beforeSpawn, spawnProcess });
+    const controller = new AbortController();
+
+    const request = client.request('model/list', {}, { signal: controller.signal });
+    await started;
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+    expect(observedSignal).toBe(controller.signal);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(spawnProcess).not.toHaveBeenCalled();
+    await client.dispose();
+  });
+
   it('redacts stderr diagnostics before they reach the reporter', async () => {
     const child = new FakeCodexChild();
     initializationResponder(child, (frame) => {

@@ -561,6 +561,158 @@ describe('DaemonAutomationRuntime', () => {
     await close(h);
   });
 
+  it('recovers deterministic Schedule Sessions from their initial turn without manufacturing running work', async () => {
+    const h = await harness();
+    for (const scheduleId of ['completed-schedule', 'interrupted-schedule', 'uncertain-schedule']) {
+      await h.execute('schedule.create', {
+        scheduleId,
+        name: scheduleId,
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        prompt: 'Recover the durable result.',
+        cron: '* * * * *',
+        timezone: 'UTC',
+        enabled: false,
+      });
+    }
+    const cases = [
+      { runId: 'completed-run', scheduleId: 'completed-schedule', turnState: 'completed', agentState: 'idle', sessionState: 'idle' },
+      { runId: 'interrupted-run', scheduleId: 'interrupted-schedule', turnState: 'interrupted', agentState: 'idle', sessionState: 'idle' },
+      {
+        runId: 'uncertain-run',
+        scheduleId: 'uncertain-schedule',
+        turnState: 'delivery-uncertain',
+        agentState: 'delivery-uncertain',
+        sessionState: 'delivery-uncertain',
+      },
+    ] as const;
+    for (const entry of cases) {
+      const sessionId = stableId('scheduled-agent', entry.runId);
+      await h.execute('agent.create', {
+        sessionId,
+        workspaceId: 'workspace-1',
+        title: entry.scheduleId,
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Recover the durable result.',
+      });
+      const snapshot = h.router.getSnapshot();
+      const session = snapshot.sessions.find((candidate) => candidate.id === sessionId)!;
+      const agent = snapshot.agents.find((candidate) => candidate.sessionId === sessionId)!;
+      const turn = snapshot.turns.find((candidate) => candidate.sessionId === sessionId)!;
+      await h.router.applySystemCommit({ mutations: [
+        { kind: 'schedule-run.upsert' as const, value: {
+          id: entry.runId,
+          scheduleId: entry.scheduleId,
+          state: 'queued' as const,
+          scheduledFor: '2026-09-04T09:59:00.000Z',
+        } },
+        { kind: 'session.upsert' as const, value: {
+          id: session.id,
+          projectId: session.projectId,
+          workspaceId: session.workspaceId,
+          kind: session.kind,
+          title: session.title,
+          state: entry.sessionState,
+          source: session.source,
+        } },
+        { kind: 'agent.upsert' as const, value: {
+          sessionId: agent.sessionId,
+          providerId: agent.providerId,
+          ...(agent.providerSessionId ? { providerSessionId: agent.providerSessionId } : {}),
+          permissionPreset: agent.permissionPreset,
+          state: entry.agentState,
+          queuedTurnCount: 0,
+          orchestrationEnabled: agent.orchestrationEnabled,
+        } },
+        { kind: 'turn.upsert' as const, value: {
+          id: turn.id,
+          sessionId: turn.sessionId,
+          commandId: turn.commandId,
+          state: entry.turnState,
+          startedAt: '2026-09-04T09:59:01.000Z',
+          ...(entry.turnState === 'delivery-uncertain'
+            ? { errorCode: 'explicit-quit-delivery-uncertain' }
+            : {
+                finishedAt: '2026-09-04T09:59:30.000Z',
+                ...(entry.turnState === 'interrupted' ? { errorCode: 'explicit-quit' } : {}),
+              }),
+        } },
+      ] });
+    }
+    h.agentCreate.mockClear();
+
+    await h.runtime.start();
+
+    expect(h.agentCreate).not.toHaveBeenCalled();
+    expect(h.router.getScheduleRuns()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'completed-run',
+        state: 'completed',
+        finishedAt: '2026-09-04T09:59:30.000Z',
+      }),
+      expect.objectContaining({
+        id: 'interrupted-run',
+        state: 'interrupted',
+        errorCode: 'explicit-quit',
+      }),
+      expect.objectContaining({
+        id: 'uncertain-run',
+        state: 'failed',
+        errorCode: 'explicit-quit-delivery-uncertain',
+      }),
+    ]));
+    expect(h.timers.delays()).toEqual([]);
+    await close(h);
+  });
+
+  it('settles a running Schedule when its initial Agent turn finishes in an idle reusable Session', async () => {
+    const h = await harness();
+    await h.execute('schedule.create', {
+      scheduleId: 'schedule-1',
+      name: 'Idle completion',
+      workspaceId: 'workspace-1',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      prompt: 'Finish once.',
+      cron: '* * * * *',
+      timezone: 'UTC',
+      enabled: false,
+    });
+    await h.execute('schedule.run-now', { scheduleId: 'schedule-1' });
+    await h.runtime.start();
+    const run = h.router.getScheduleRuns()[0]!;
+    const session = h.router.getSnapshot().sessions.find((candidate) => candidate.id === run.sessionId)!;
+    const agent = h.router.getSnapshot().agents.find((candidate) => candidate.sessionId === run.sessionId)!;
+    const turn = h.router.getSnapshot().turns.find((candidate) => candidate.sessionId === run.sessionId)!;
+    await h.router.applySystemCommit({ mutations: [
+      { kind: 'turn.upsert', value: {
+        id: turn.id,
+        sessionId: turn.sessionId,
+        commandId: turn.commandId,
+        state: 'completed',
+        startedAt: turn.startedAt,
+        finishedAt: '2026-09-04T10:00:30.000Z',
+      } },
+      { kind: 'agent.upsert', value: agentValue(agent, 'idle', undefined) },
+      { kind: 'session.upsert', value: sessionValue(session, 'idle') },
+    ] });
+
+    h.runtime.notifyAuthorityChanged();
+    h.timers.next().callback();
+    await flush();
+
+    expect(h.router.getScheduleRuns()).toEqual([
+      expect.objectContaining({
+        id: run.id,
+        state: 'completed',
+        finishedAt: '2026-09-04T10:00:30.000Z',
+      }),
+    ]);
+    await close(h);
+  });
+
   it('coalesces a busy heartbeat and submits exactly once after the Agent becomes idle', async () => {
     const h = await harness();
     await h.seedAgent('working');

@@ -280,14 +280,15 @@ export class DaemonAgentRuntime {
   private readonly setTimer: NonNullable<DaemonAgentRuntimeOptions['setTimer']>;
   private readonly clearTimer: NonNullable<DaemonAgentRuntimeOptions['clearTimer']>;
   private readonly shutdownStepTimeoutMs: number;
+  private readonly lifecycleAbortController = new AbortController();
   private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
   private pumpRequested = false;
-  private started = false;
   private disposed = false;
+  private startPromise: Promise<void> | null = null;
   private disposePromise: Promise<void> | null = null;
 
   constructor(private readonly options: DaemonAgentRuntimeOptions) {
@@ -320,31 +321,52 @@ export class DaemonAgentRuntime {
     };
   }
 
-  async start(): Promise<void> {
-    if (this.started || this.disposed) return;
-    this.started = true;
+  start(): Promise<void> {
+    if (this.startPromise) return this.startPromise;
+    if (this.disposed) return Promise.resolve();
+    this.startPromise = this.startRuntime();
+    return this.startPromise;
+  }
+
+  private async startRuntime(): Promise<void> {
     this.unsubscribeProviders = this.options.providers.subscribe((providerId, event) => {
       this.eventTail = this.eventTail
         .then(() => this.handleProviderEvent(providerId, event))
         .catch((error) => this.report('provider event failed', error));
     });
     await this.expirePersistedApprovals();
+    if (this.disposed) return;
     await this.recoverUnattachedClaims();
+    if (this.disposed) return;
     await this.rehydratePersistedSessions();
+    if (this.disposed) return;
     await this.reconcileUnsettled();
+    if (this.disposed) return;
     await this.drainEventTail();
+    if (this.disposed) return;
     this.rearmPersistedTimeouts();
     this.queuePump();
   }
 
-  dispose(mode: 'explicit-quit' | 'process-loss' = 'explicit-quit'): Promise<void> {
-    if (this.disposePromise) return this.disposePromise;
+  /**
+   * Synchronously closes runtime ingress and cancels launch-capable provider
+   * work. Durable shutdown is completed by dispose(), after accepted command
+   * FIFO work has observed this signal and released the authority gate.
+   */
+  beginShutdown(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    this.lifecycleAbortController.abort();
     this.unsubscribeProviders?.();
     this.unsubscribeProviders = null;
     this.pumpRequested = false;
     for (const timer of this.turnTimers.values()) this.clearTimer(timer);
     this.turnTimers.clear();
+  }
+
+  dispose(mode: 'explicit-quit' | 'process-loss' = 'explicit-quit'): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    this.beginShutdown();
     this.disposePromise = mode === 'process-loss'
       ? this.disposeResources()
       : this.disposeForExplicitQuit();
@@ -352,7 +374,9 @@ export class DaemonAgentRuntime {
   }
 
   private async disposeForExplicitQuit(): Promise<void> {
+    await this.settleStartupForShutdown();
     const finishedAt = this.isoNow();
+    let persistenceFailure: unknown;
     let interruptTargets: readonly {
       readonly sessionId: string;
       readonly providerId: string;
@@ -466,6 +490,7 @@ export class DaemonAgentRuntime {
       interruptTargets = receipt?.value ?? [];
     } catch (error) {
       this.report('persist explicit Agent shutdown', error);
+      persistenceFailure = error;
     }
 
     await this.runBoundedShutdownStep('drain in-flight Agent work', Promise.allSettled([
@@ -485,9 +510,11 @@ export class DaemonAgentRuntime {
       }),
     ));
     await this.runBoundedShutdownStep('dispose Agent providers', this.options.providers.dispose());
+    if (persistenceFailure !== undefined) throw persistenceFailure;
   }
 
   private async disposeResources(): Promise<void> {
+    await this.settleStartupForShutdown();
     await this.runBoundedShutdownStep('drain in-flight Agent work', Promise.allSettled([
       this.eventTail,
       this.pumpPromise ?? Promise.resolve(),
@@ -990,7 +1017,10 @@ export class DaemonAgentRuntime {
     if (command.type !== 'provider.enable' && command.type !== 'provider.update') {
       return commandError('invalid-command', 'Unexpected provider enable command.');
     }
-    const authorized = await this.options.providers.authorizeEnable(command.payload);
+    const authorized = await this.options.providers.authorizeEnable(
+      command.payload,
+      this.lifecycleAbortController.signal,
+    );
     if (!authorized.ok) {
       const code = authorized.code === 'provider-incompatible'
         ? 'provider-incompatible'
@@ -1265,7 +1295,7 @@ export class DaemonAgentRuntime {
             selected.agent.model,
             selected.agent.permissionPreset,
             selected.agent.orchestrationEnabled,
-          ));
+          ), this.lifecycleAbortController.signal);
           let attached = false;
           await this.transition((snapshot) => {
             const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
@@ -1294,7 +1324,7 @@ export class DaemonAgentRuntime {
           turnId: selected.turn.id,
           commandId: selected.turn.commandId,
           prompt: selected.prompt,
-        });
+        }, this.lifecycleAbortController.signal);
         let shouldArmTimeout = false;
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
@@ -1946,6 +1976,15 @@ export class DaemonAgentRuntime {
     }
   }
 
+  private async settleStartupForShutdown(): Promise<void> {
+    if (!this.startPromise) return;
+    try {
+      await this.startPromise;
+    } catch (error) {
+      this.report('settle Agent startup during shutdown', error);
+    }
+  }
+
   private async runBoundedShutdownStep(context: string, operation: Promise<unknown>): Promise<void> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const settled = Promise.resolve(operation).then(
@@ -2098,6 +2137,7 @@ export class DaemonAgentRuntime {
   private async rehydratePersistedSessions(): Promise<void> {
     const snapshot = this.options.getSnapshot();
     for (const agent of snapshot.agents) {
+      if (this.disposed) return;
       const session = snapshot.sessions.find((entry) => entry.id === agent.sessionId);
       if (
         !agent.providerSessionId
@@ -2139,7 +2179,7 @@ export class DaemonAgentRuntime {
           agent.orchestrationEnabled,
         ),
         providerSessionId: agent.providerSessionId,
-      });
+      }, this.lifecycleAbortController.signal);
       await this.transition((fresh) => {
         const currentAgent = fresh.agents.find((entry) => entry.sessionId === sessionId);
         const currentSession = fresh.sessions.find((entry) => entry.id === sessionId);
@@ -2329,6 +2369,7 @@ export class DaemonAgentRuntime {
   private async reconcileUnsettled(): Promise<void> {
     const snapshot = this.options.getSnapshot();
     for (const agent of snapshot.agents) {
+      if (this.disposed) return;
       if (!agent.providerSessionId || agent.state === 'archived') continue;
       const turns = snapshot.turns.filter((turn) => (
         turn.sessionId === agent.sessionId && ACTIVE_TURN_STATES.has(turn.state)
@@ -2351,7 +2392,7 @@ export class DaemonAgentRuntime {
               state: turn.state as 'submitting' | 'working' | 'blocked' | 'delivery-uncertain',
             }] : [];
           }),
-        });
+        }, this.lifecycleAbortController.signal);
         const reconciledSnapshot = this.options.getSnapshot();
         const invalidTranscript = reconciliation.transcriptItems.find((item) => {
           if (item.sessionId !== agent.sessionId) return true;

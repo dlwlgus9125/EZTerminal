@@ -70,7 +70,7 @@ export interface CodexAppServerClientOptions {
   readonly processGuardian?: CodexProcessGuardian;
   readonly environment?: NodeJS.ProcessEnv;
   /** Revalidates the reviewed executable immediately before every respawn. */
-  readonly beforeSpawn?: () => Promise<void>;
+  readonly beforeSpawn?: (signal?: AbortSignal) => Promise<void>;
   readonly spawnProcess?: (
     command: string,
     argv: readonly string[],
@@ -250,15 +250,24 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     await new Promise<void>((resolve, reject) => {
       const onAbort = (): void => reject(abortError(method));
       signal.addEventListener('abort', onAbort, { once: true });
-      this.start().then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+      void this.start(signal).then(
+        () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        (error) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        },
+      );
     });
   }
 
-  private async start(): Promise<void> {
+  private async start(signal?: AbortSignal): Promise<void> {
     if (this.disposed) throw new Error('Codex app-server client is disposed.');
     if (this.startPromise) return this.startPromise;
     if (this.process) return;
-    this.startPromise = this.spawnAndInitialize();
+    this.startPromise = this.spawnAndInitialize(signal);
     try {
       await this.startPromise;
     } finally {
@@ -266,10 +275,11 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     }
   }
 
-  private async spawnAndInitialize(): Promise<void> {
+  private async spawnAndInitialize(signal?: AbortSignal): Promise<void> {
     const command = this.options.command ?? 'codex';
     const argv = [...(this.options.argv ?? ['app-server'])];
-    await this.options.beforeSpawn?.();
+    await this.options.beforeSpawn?.(signal);
+    if (signal?.aborted) throw abortError('initialize');
     const child: ChildProcessWithoutNullStreams = (
       this.options.spawnProcess
         ? this.options.environment
@@ -317,7 +327,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
           experimentalApi: true,
           requestAttestation: false,
         },
-      }, { timeoutMs: this.requestTimeoutMs });
+      }, { timeoutMs: this.requestTimeoutMs, signal });
       await this.writeMessage(child, { jsonrpc: '2.0', method: 'initialized' });
     } catch (error) {
       if (this.process === child) this.process = undefined;

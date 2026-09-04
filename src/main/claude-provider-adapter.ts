@@ -308,6 +308,7 @@ export interface ClaudeProviderAdapterOptions {
   readonly readExecutableVersion?: (
     executablePath: string,
     environment?: NodeJS.ProcessEnv,
+    signal?: AbortSignal,
   ) => Promise<string>;
   readonly createId?: () => string;
   readonly now?: () => Date;
@@ -626,6 +627,7 @@ async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<
 async function defaultExecutableVersion(
   executablePath: string,
   environment = buildProviderProcessEnvironment([]),
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise<string>((resolve) => {
     execFile(
@@ -637,6 +639,7 @@ async function defaultExecutableVersion(
         timeout: 3_000,
         windowsHide: true,
         env: environment,
+        ...(signal ? { signal } : {}),
       },
       (error, stdout) => {
         if (error) {
@@ -783,17 +786,18 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     let policyError: ClaudeProviderError | null = null;
     let policy = DEFAULT_CLAUDE_PROVIDER_ENABLEMENT;
     try {
-      policy = await this.readEnablement();
+      policy = await abortable(this.readEnablement(), signal);
       validateEnablement(policy);
       if (!policy.enabled) policyError = new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
     } catch (error) {
+      if (signal?.aborted) throw error;
       policyError = classifyClaudeProviderError(error);
     }
 
-    const executablePath = await this.executable().catch(() => null);
+    const executablePath = await abortable(this.executable().catch(() => null), signal);
     this.throwIfAborted(signal);
     const executableVersion = executablePath
-      ? await this.executableVersion(executablePath)
+      ? await abortable(this.executableVersion(executablePath, undefined, signal), signal)
       : 'unavailable';
     const executableError = !executablePath
       ? new ClaudeProviderError('CLAUDE_EXECUTABLE_NOT_FOUND')
@@ -846,7 +850,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   async listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]> {
     this.throwIfAborted(signal);
-    await this.assertReady();
+    await abortable(this.assertReady(signal), signal);
     const active = [...this.sessions.values()].find((session) => !session.disposed && session.initialized);
     if (!active) {
       return [{
@@ -1106,7 +1110,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) {
       throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
     }
-    const readiness = await this.assertReady();
+    const readiness = await abortable(this.assertReady(signal), signal);
     const executablePath = readiness.executablePath;
     const mcpServers = orchestrationMcpServers(context);
     this.throwIfAborted(signal);
@@ -1733,25 +1737,29 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private async executableVersion(
     executablePath: string,
     environment = buildProviderProcessEnvironment([]),
+    signal?: AbortSignal,
   ): Promise<string> {
-    return this.readExecutableVersion(executablePath, environment)
+    return this.readExecutableVersion(executablePath, environment, signal)
       .then((value) => value.match(/\b\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?\b/u)?.[0] ?? 'unknown')
       .catch(() => 'unknown');
   }
 
-  private async assertReady(): Promise<{
+  private async assertReady(signal?: AbortSignal): Promise<{
     readonly executablePath: string;
     readonly enablement: ClaudeProviderEnablement;
     readonly environment: NodeJS.ProcessEnv;
   }> {
-    const policy = await this.readEnablement();
+    const policy = await abortable(this.readEnablement(), signal);
     if (!policy.enabled) throw new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
     validateEnablement(policy);
     const descriptor = this.launchDescriptor;
     if (!descriptor && this.providedQueryFactory) {
-      const executable = await this.executable();
+      const executable = await abortable(this.executable(), signal);
       if (executable) {
-        const executableVersion = await this.executableVersion(executable);
+        const executableVersion = await abortable(
+          this.executableVersion(executable, undefined, signal),
+          signal,
+        );
         if (!compatibleClaudeExecutableVersion(executableVersion)) {
           throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
         }
@@ -1776,7 +1784,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
     let canonical: string;
     try {
-      canonical = await fs.realpath(descriptor.executablePath);
+      canonical = await abortable(fs.realpath(descriptor.executablePath), signal);
     } catch {
       throw new ClaudeProviderError('CLAUDE_EXECUTABLE_NOT_FOUND');
     }
@@ -1788,7 +1796,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       process.env,
       { CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2' },
     );
-    const version = await this.executableVersion(canonical, buildProviderProcessEnvironment([]));
+    const version = await abortable(
+      this.executableVersion(canonical, buildProviderProcessEnvironment([]), signal),
+      signal,
+    );
     if (
       !samePath
       || version !== descriptor.executableVersion

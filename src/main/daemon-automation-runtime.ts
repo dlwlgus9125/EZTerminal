@@ -13,6 +13,7 @@ import {
   type DaemonSchedule,
   type DaemonSnapshot,
   type DaemonSession,
+  type DaemonTurn,
 } from '../shared/daemon-protocol';
 import type {
   DaemonCommandExecutionResult,
@@ -235,6 +236,114 @@ function findAgentSession(
   return session?.kind === 'agent' && !session.archivedAt && agent
     ? { session, agent }
     : undefined;
+}
+
+interface ScheduleSessionDisposition {
+  readonly state: 'running' | 'completed' | 'interrupted' | 'failed';
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
+  readonly errorCode?: string;
+}
+
+function firstSessionTurn(snapshot: DaemonSnapshot, sessionId: string): DaemonTurn | undefined {
+  return snapshot.turns
+    .filter((turn) => turn.sessionId === sessionId)
+    .sort((left, right) => (
+      (left.enqueueSequence ?? Number.MAX_SAFE_INTEGER)
+        - (right.enqueueSequence ?? Number.MAX_SAFE_INTEGER)
+      || left.createdAt.localeCompare(right.createdAt)
+      || left.id.localeCompare(right.id)
+    ))[0];
+}
+
+function scheduleSessionDisposition(
+  snapshot: DaemonSnapshot,
+  schedule: DaemonSchedule,
+  sessionId: string,
+  observedAt: string,
+): ScheduleSessionDisposition {
+  const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+  const agent = snapshot.agents.find((candidate) => candidate.sessionId === sessionId);
+  if (
+    !session
+    || session.kind !== 'agent'
+    || session.workspaceId !== schedule.workspaceId
+    || !agent
+    || agent.providerId !== schedule.providerId
+  ) {
+    return {
+      state: 'failed',
+      finishedAt: observedAt,
+      errorCode: 'schedule-session-mismatch',
+    };
+  }
+
+  // A Schedule represents its initial prompt, not every later direct
+  // follow-up in the reusable Agent Session. The first durable turn is
+  // therefore the most precise recovery cursor after a crash or Quit race.
+  const turn = firstSessionTurn(snapshot, sessionId);
+  if (turn) {
+    const timing = {
+      ...(turn.startedAt ? { startedAt: turn.startedAt } : {}),
+      ...(turn.finishedAt ? { finishedAt: turn.finishedAt } : {}),
+    };
+    switch (turn.state) {
+      case 'completed':
+        return { state: 'completed', ...timing, finishedAt: turn.finishedAt ?? observedAt };
+      case 'interrupted':
+        return {
+          state: 'interrupted',
+          ...timing,
+          finishedAt: turn.finishedAt ?? observedAt,
+          ...(turn.errorCode ? { errorCode: turn.errorCode } : {}),
+        };
+      case 'failed':
+        return {
+          state: 'failed',
+          ...timing,
+          finishedAt: turn.finishedAt ?? observedAt,
+          errorCode: turn.errorCode ?? 'agent-turn-failed',
+        };
+      case 'delivery-uncertain':
+        return {
+          state: 'failed',
+          ...timing,
+          finishedAt: observedAt,
+          errorCode: turn.errorCode ?? 'delivery-uncertain',
+        };
+      default:
+        return { state: 'running', ...timing };
+    }
+  }
+
+  if (session.state === 'completed' || session.state === 'archived' || agent.state === 'done') {
+    return { state: 'completed', finishedAt: observedAt };
+  }
+  if (session.state === 'interrupted' || agent.state === 'interrupted') {
+    return { state: 'interrupted', finishedAt: observedAt };
+  }
+  if (
+    session.state === 'failed'
+    || session.state === 'delivery-uncertain'
+    || agent.state === 'error'
+    || agent.state === 'delivery-uncertain'
+  ) {
+    return {
+      state: 'failed',
+      finishedAt: observedAt,
+      errorCode: session.state === 'delivery-uncertain' || agent.state === 'delivery-uncertain'
+        ? 'delivery-uncertain'
+        : 'agent-session-failed',
+    };
+  }
+  if (ACTIVE_AGENT_STATES.has(agent.state) || session.state === 'starting' || session.state === 'running') {
+    return { state: 'running' };
+  }
+  return {
+    state: 'failed',
+    finishedAt: observedAt,
+    errorCode: 'schedule-session-missing-turn',
+  };
 }
 
 /**
@@ -705,7 +814,7 @@ export class DaemonAutomationRuntime {
       const sessionId = stableId('scheduled-agent', run.id);
       const existing = snapshot.sessions.find((session) => session.id === sessionId);
       if (existing) {
-        await this.markScheduleRunning(run.id, sessionId, this.currentDate().toISOString());
+        await this.attachScheduleRun(run.id, sessionId, this.currentDate().toISOString());
         continue;
       }
       const expectedRevision = snapshot.revision;
@@ -730,7 +839,7 @@ export class DaemonAutomationRuntime {
       try {
         const receipt = await this.options.executeCommand(command);
         if (receipt.ok) {
-          await this.markScheduleRunning(run.id, sessionId, this.currentDate().toISOString());
+          await this.attachScheduleRun(run.id, sessionId, this.currentDate().toISOString());
         } else if (receipt.error.code !== 'revision-conflict' && !receipt.error.retryable) {
           await this.markScheduleFailed(run.id, receipt.error.code, this.currentDate().toISOString());
         } else if (receipt.error.code === 'revision-conflict') {
@@ -836,15 +945,27 @@ export class DaemonAutomationRuntime {
     });
   }
 
-  private async markScheduleRunning(runId: string, sessionId: string, startedAt: string): Promise<void> {
+  private async attachScheduleRun(runId: string, sessionId: string, observedAt: string): Promise<void> {
     await this.applySystemTransition((state) => {
       const run = state.scheduleRuns.find((candidate) => candidate.id === runId);
       if (!run || run.state !== 'queued') return undefined;
+      const schedule = state.snapshot.schedules.find((candidate) => candidate.id === run.scheduleId);
+      const disposition = schedule
+        ? scheduleSessionDisposition(state.snapshot, schedule, sessionId, observedAt)
+        : {
+            state: 'failed' as const,
+            finishedAt: observedAt,
+            errorCode: 'schedule-missing',
+          };
       return {
         commit: { mutations: [{ kind: 'schedule-run.upsert', value: scheduleRunInput(run, {
           sessionId,
-          state: 'running',
-          startedAt,
+          state: disposition.state,
+          ...(disposition.startedAt
+            ? { startedAt: disposition.startedAt }
+            : disposition.state === 'running' ? { startedAt: observedAt } : {}),
+          ...(disposition.finishedAt ? { finishedAt: disposition.finishedAt } : {}),
+          ...(disposition.errorCode ? { errorCode: disposition.errorCode } : {}),
         }) }] },
         value: undefined,
       };
@@ -871,19 +992,20 @@ export class DaemonAutomationRuntime {
       const mutations: DaemonStoreMutation[] = [];
       for (const run of state.scheduleRuns) {
         if (run.state !== 'running' || !run.sessionId) continue;
-        const session = state.snapshot.sessions.find((candidate) => candidate.id === run.sessionId);
-        if (!session || !['completed', 'interrupted', 'failed', 'delivery-uncertain', 'archived'].includes(session.state)) {
-          continue;
-        }
-        const stateValue: DaemonScheduleRunInput['state'] = session.state === 'completed' || session.state === 'archived'
-          ? 'completed'
-          : session.state === 'interrupted'
-            ? 'interrupted'
-            : 'failed';
+        const schedule = state.snapshot.schedules.find((candidate) => candidate.id === run.scheduleId);
+        const disposition = schedule
+          ? scheduleSessionDisposition(state.snapshot, schedule, run.sessionId, now.toISOString())
+          : {
+              state: 'failed' as const,
+              finishedAt: now.toISOString(),
+              errorCode: 'schedule-missing',
+            };
+        if (disposition.state === 'running') continue;
         mutations.push({ kind: 'schedule-run.upsert', value: scheduleRunInput(run, {
-          state: stateValue,
-          finishedAt: now.toISOString(),
-          ...(stateValue === 'failed' ? { errorCode: session.state } : {}),
+          state: disposition.state,
+          ...(disposition.startedAt ? { startedAt: disposition.startedAt } : {}),
+          finishedAt: disposition.finishedAt ?? now.toISOString(),
+          ...(disposition.errorCode ? { errorCode: disposition.errorCode } : {}),
         }) });
       }
       return mutations.length === 0 ? undefined : { commit: { mutations }, value: undefined };

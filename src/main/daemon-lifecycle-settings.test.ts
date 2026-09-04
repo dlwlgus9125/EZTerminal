@@ -3,8 +3,57 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AutomationEnableCoordinator,
   DaemonLifecycleSettingsController,
+  synchronizeDaemonLifecycleAuthority,
   type DaemonLifecycleSettings,
 } from './daemon-lifecycle-settings';
+
+describe('synchronizeDaemonLifecycleAuthority', () => {
+  it('returns persisted lifecycle settings immediately in terminal-only safe mode', async () => {
+    const apply = vi.fn(async () => undefined);
+    const notifyChanged = vi.fn();
+
+    await expect(synchronizeDaemonLifecycleAuthority(
+      { keepRunning: true, startAtLogin: true },
+      {
+        availability: {
+          state: 'legacy-only-safe-mode',
+          initializationCode: 'database-corrupt',
+          databaseDisposition: 'quarantined',
+          supportedSchemaVersion: 3,
+        },
+        authorityReady: new Promise<never>(() => undefined),
+        getCurrent: () => { throw new Error('structured authority must not be read'); },
+        apply,
+        notifyChanged,
+      },
+    )).resolves.toBe(false);
+    expect(apply).not.toHaveBeenCalled();
+    expect(notifyChanged).not.toHaveBeenCalled();
+  });
+
+  it('updates and wakes the ready structured authority only when values changed', async () => {
+    const apply = vi.fn(async () => undefined);
+    const notifyChanged = vi.fn();
+    const options = {
+      availability: {
+        state: 'ready' as const,
+        supportedSchemaVersion: 3,
+        currentSchemaVersion: 3,
+      },
+      authorityReady: Promise.resolve(),
+      getCurrent: () => ({ keepRunning: false, startAtLogin: false }),
+      apply,
+      notifyChanged,
+    };
+
+    await expect(synchronizeDaemonLifecycleAuthority(
+      { keepRunning: true, startAtLogin: false },
+      options,
+    )).resolves.toBe(true);
+    expect(apply).toHaveBeenCalledWith({ keepRunning: true, startAtLogin: false });
+    expect(notifyChanged).toHaveBeenCalledOnce();
+  });
+});
 
 function harness(initial: DaemonLifecycleSettings = { keepRunning: false, startAtLogin: false }) {
   let persisted = { ...initial };

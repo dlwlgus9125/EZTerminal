@@ -245,6 +245,30 @@ describe('Claude provider review and enablement', () => {
     expect(JSON.stringify(probe)).not.toMatch(/ANTHROPIC_API_KEY=/u);
   });
 
+  it('aborts an in-flight executable version probe promptly', async () => {
+    let observedSignal: AbortSignal | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      resolveExecutable: async () => executablePath,
+      readExecutableVersion: async (_path, _environment, signal) => {
+        observedSignal = signal;
+        markStarted?.();
+        return new Promise<never>(() => undefined);
+      },
+    });
+    const controller = new AbortController();
+
+    const pending = adapter.probe(controller.signal);
+    await started;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: 'CLAUDE_OPERATION_ABORTED' });
+    expect(observedSignal?.aborted).toBe(true);
+    await adapter.dispose();
+  });
+
   it('persists enablement only after the full terms and commercial gate passes', async () => {
     const saves: ClaudeProviderEnablement[] = [];
     const store = {
@@ -334,6 +358,38 @@ describe('Claude provider review and enablement', () => {
       code: 'CLAUDE_EXECUTABLE_INVALID',
     });
     expect(queryFactory).not.toHaveBeenCalled();
+  });
+
+  it('does not start the SDK query when shutdown aborts readiness verification', async () => {
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const queryFactory = vi.fn(() => {
+      throw new Error('query must not start');
+    });
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      resolveExecutable: async () => executablePath,
+      readExecutableVersion: async (_path, _environment, signal) => {
+        markStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new ClaudeProviderError('CLAUDE_OPERATION_ABORTED', true)),
+            { once: true },
+          );
+        });
+      },
+      queryFactory,
+    });
+    const controller = new AbortController();
+
+    const pending = adapter.createSession(context, controller.signal);
+    await started;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: 'CLAUDE_OPERATION_ABORTED' });
+    expect(queryFactory).not.toHaveBeenCalled();
+    await adapter.dispose();
   });
 });
 

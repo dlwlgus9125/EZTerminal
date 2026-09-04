@@ -1,4 +1,5 @@
 import type { DaemonRuntimeSettings } from '../shared/daemon-protocol';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 
 export type DaemonLifecycleSettings = Pick<
   DaemonRuntimeSettings,
@@ -25,6 +26,35 @@ export interface DaemonLifecycleSettingsOptions {
   readonly store: DaemonLifecycleSettingsStore;
   readonly loginItem: LoginItemAdapter;
   readonly reportError?: (context: string, error: unknown) => void;
+}
+
+export interface DaemonLifecycleAuthoritySyncOptions {
+  readonly availability: DaemonAuthorityAvailability;
+  readonly authorityReady: Promise<unknown>;
+  readonly getCurrent: () => DaemonLifecycleSettings;
+  readonly apply: (settings: DaemonLifecycleSettings) => Promise<void>;
+  readonly notifyChanged: () => void;
+}
+
+/**
+ * Mirrors an already-persisted lifecycle preference into the structured
+ * authority only when its SQLite store is available. Terminal-only safe mode
+ * deliberately returns without awaiting the rejected authority startup.
+ */
+export async function synchronizeDaemonLifecycleAuthority(
+  settings: DaemonLifecycleSettings,
+  options: DaemonLifecycleAuthoritySyncOptions,
+): Promise<boolean> {
+  if (options.availability.state !== 'ready') return false;
+  await options.authorityReady;
+  const current = options.getCurrent();
+  if (
+    current.keepRunning === settings.keepRunning
+    && current.startAtLogin === settings.startAtLogin
+  ) return false;
+  await options.apply(settings);
+  options.notifyChanged();
+  return true;
 }
 
 export type AutomationEnableResult =

@@ -40,6 +40,23 @@ function probe(providerId: string, protocol: ProviderProbeResult['protocol']): P
   };
 }
 
+async function settleWithin<T>(promise: Promise<T>, timeoutMs = 500): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Operation did not settle within ${String(timeoutMs)}ms.`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
 function fakeAdapter(
   providerId: string,
   protocol: ProviderProbeResult['protocol'],
@@ -191,7 +208,7 @@ describe('DaemonAgentRuntime', () => {
       sessionId: 'agent-1',
       commandId: expect.stringMatching(/^command-/u),
       prompt: 'Inspect the project.',
-    }));
+    }), expect.any(AbortSignal));
     expect(h.router.getSnapshot()).toMatchObject({
       sessions: [{ id: 'agent-1', kind: 'agent', state: 'running' }],
       agents: [{ sessionId: 'agent-1', providerId: 'codex', state: 'working' }],
@@ -314,6 +331,77 @@ describe('DaemonAgentRuntime', () => {
       expect(h.router.getSnapshot().revision).toBe(revisionAfterQuit);
       expect(h.router.getSnapshot().turns.find((candidate) => candidate.id === turn.id))
         .toMatchObject({ state: 'interrupted', errorCode: 'explicit-quit' });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('aborts a gated provider enable so the durable Quit transition cannot starve', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Keep working during provider review.',
+      });
+      const claudeProbe = probe('claude', 'claude-agent-sdk');
+      let observedSignal: AbortSignal | undefined;
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      vi.mocked(h.claude.probe).mockImplementation(async (signal) => {
+        observedSignal = signal;
+        markStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          const fallback = setTimeout(() => reject(new Error('probe did not observe shutdown')), 1_500);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(fallback);
+            reject(new Error('probe aborted'));
+          }, { once: true });
+        });
+      });
+      const enable = h.router.execute(createDaemonCommand({
+        commandId: 'command-enable-during-quit',
+        idempotencyKey: 'test:enable-during-quit',
+        expectedRevision: h.store.getRevision(),
+        issuedAt: '2026-09-04T10:00:00.000Z',
+        principal: { kind: 'desktop', id: 'test' },
+        type: 'provider.enable',
+        payload: {
+          providerId: claudeProbe.providerId,
+          displayName: claudeProbe.displayName,
+          protocol: claudeProbe.protocol,
+          executablePath: claudeProbe.executablePath,
+          executableVersion: claudeProbe.executableVersion,
+          argv: claudeProbe.argv,
+          environmentVariableNames: claudeProbe.environmentVariableNames,
+          capabilities: claudeProbe.capabilities,
+          reviewDigest: createProviderReviewDigest(claudeProbe),
+        },
+      }));
+      await started;
+
+      h.router.beginShutdown();
+      h.runtime.beginShutdown();
+      const disposal = h.runtime.dispose();
+      const [receipt] = await settleWithin(Promise.all([enable, disposal]));
+
+      expect(observedSignal?.aborted).toBe(true);
+      expect(receipt).toMatchObject({
+        ok: false,
+        status: 'rejected',
+        error: { code: 'invalid-state' },
+      });
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'idle' }],
+        agents: [{ sessionId: 'agent-1', state: 'idle', queuedTurnCount: 0 }],
+        turns: [{ sessionId: 'agent-1', state: 'interrupted', errorCode: 'explicit-quit' }],
+      });
     } finally {
       await h.runtime.dispose();
       await h.store.close();
@@ -505,6 +593,18 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
+  it('does not report exact shutdown completion when the durable transition fails', async () => {
+    const h = await harness();
+    const failure = new Error('SQLite transition failed');
+    vi.spyOn(h.router, 'applySystemTransition').mockRejectedValueOnce(failure);
+
+    await expect(h.runtime.dispose()).rejects.toBe(failure);
+    expect(h.codex.dispose).toHaveBeenCalledOnce();
+    expect(h.claude.dispose).toHaveBeenCalledOnce();
+    await h.runtime.dispose().catch(() => undefined);
+    await h.store.close();
+  });
+
   it('rehydrates an explicitly stopped Session and accepts a follow-up Send after restart', async () => {
     const first = await harness();
     let restartedRuntime: DaemonAgentRuntime | undefined;
@@ -563,7 +663,7 @@ describe('DaemonAgentRuntime', () => {
       expect(codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'agent-1',
         providerSessionId,
-      }));
+      }), expect.any(AbortSignal));
 
       const receipt = await router.execute(createDaemonCommand({
         commandId: 'command-after-restart',
@@ -582,7 +682,7 @@ describe('DaemonAgentRuntime', () => {
         sessionId: 'agent-1',
         providerSessionId,
         prompt: 'Continue after restart.',
-      }));
+      }), expect.any(AbortSignal));
       expect(router.getSnapshot()).toMatchObject({
         sessions: [{ id: 'agent-1', state: 'running' }],
         agents: [{ sessionId: 'agent-1', state: 'working', providerSessionId }],
@@ -629,7 +729,7 @@ describe('DaemonAgentRuntime', () => {
     expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: 'agent-5',
       prompt: 'Task 5',
-    }));
+    }), expect.any(AbortSignal));
     const second = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-2')!;
     h.codex.emit({
       kind: 'turn-finished',
@@ -709,7 +809,7 @@ describe('DaemonAgentRuntime', () => {
     expect(h.claude.submit).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: 'child',
       prompt: 'Check one more edge case.',
-    }));
+    }), expect.any(AbortSignal));
     await h.runtime.dispose();
     await h.store.close();
   });
@@ -1342,10 +1442,88 @@ describe('DaemonAgentRuntime', () => {
       expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
         providerSessionId,
         prompt: 'Post-cancel turn.',
-      }));
+      }), expect.any(AbortSignal));
     } finally {
       await h.runtime.dispose();
       await h.store.close();
+    }
+  });
+
+  it('aborts startup rehydration and waits for it before the durable Quit transition', async () => {
+    const first = await harness();
+    let firstStoreClosed = false;
+    let restartedRuntime: DaemonAgentRuntime | undefined;
+    let restartedStore: DaemonStore | undefined;
+    try {
+      await first.enable(first.codex, 'codex');
+      await first.prepareWorkspace();
+      await first.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Resume this during startup.',
+      });
+      await first.runtime.dispose('process-loss');
+      await first.store.close();
+      firstStoreClosed = true;
+
+      restartedStore = new DaemonStore(first.directory);
+      await restartedStore.init();
+      const codex = fakeAdapter('codex', 'codex-app-server');
+      const claude = fakeAdapter('claude', 'claude-agent-sdk');
+      let observedSignal: AbortSignal | undefined;
+      let markStarted: (() => void) | undefined;
+      const resumeStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+      vi.mocked(codex.resumeSession).mockImplementation(async (_context, signal) => {
+        observedSignal = signal;
+        markStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          const fallback = setTimeout(() => reject(new Error('rehydration did not observe shutdown')), 1_500);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(fallback);
+            reject(new Error('rehydration aborted'));
+          }, { once: true });
+        });
+      });
+      const providers = new AgentProviderRegistry([codex, claude]);
+      const routerRef: { current?: DaemonCommandRouter } = {};
+      const store = restartedStore;
+      restartedRuntime = new DaemonAgentRuntime({
+        providers,
+        getSnapshot: () => routerRef.current!.getSnapshot(),
+        applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
+        readTranscript: (sessionId, afterSequence, limit) => (
+          routerRef.current!.readTranscript(sessionId, afterSequence, limit)
+        ),
+        findCommand: (commandId) => store.findCommand(commandId)?.command,
+      });
+      const router = new DaemonCommandRouter(store, { handlers: restartedRuntime.handlers() });
+      routerRef.current = router;
+
+      const startup = restartedRuntime.start();
+      await resumeStarted;
+      router.beginShutdown();
+      restartedRuntime.beginShutdown();
+      const disposal = restartedRuntime.dispose();
+      await settleWithin(Promise.all([startup, disposal]));
+
+      expect(observedSignal?.aborted).toBe(true);
+      expect(codex.resumeSession).toHaveBeenCalledOnce();
+      expect(codex.reconcile).not.toHaveBeenCalled();
+      expect(router.getSnapshot()).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'idle' }],
+        agents: [{ sessionId: 'agent-1', state: 'idle', queuedTurnCount: 0 }],
+        turns: [{ sessionId: 'agent-1', state: 'interrupted', errorCode: 'explicit-quit' }],
+      });
+      expect(codex.dispose).toHaveBeenCalledOnce();
+    } finally {
+      await restartedRuntime?.dispose();
+      await restartedStore?.close();
+      await first.runtime.dispose('process-loss');
+      if (!firstStoreClosed) await first.store.close();
     }
   });
 
@@ -1455,28 +1633,28 @@ describe('DaemonAgentRuntime', () => {
       expect(codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'agent-1',
         providerSessionId,
-      }));
+      }), expect.any(AbortSignal));
       expect(codex.reconcile).toHaveBeenCalledWith(expect.objectContaining({
         unsettledCommands: [expect.objectContaining({
           commandId: originalTurn.commandId,
           turnId: originalTurn.id,
           state: 'working',
         })],
-      }));
+      }), expect.any(AbortSignal));
       expect(codex.createSession).toHaveBeenCalledOnce();
       expect(codex.createSession).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'agent-2',
-      }));
+      }), expect.any(AbortSignal));
       expect(codex.submit).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'agent-1',
         turnId: originalTurn.id,
         commandId: originalTurn.commandId,
         prompt: 'Recover this exact prompt.',
-      }));
+      }), expect.any(AbortSignal));
       expect(codex.submit).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'agent-2',
         prompt: 'Recover the pre-provider claim.',
-      }));
+      }), expect.any(AbortSignal));
       expect(vi.mocked(codex.submit).mock.calls.map(([input]) => input.sessionId))
         .toEqual(['agent-1', 'agent-2']);
       expect(router.readTranscript('agent-1', 0, 500)).toHaveLength(131);

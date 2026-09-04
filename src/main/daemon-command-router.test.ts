@@ -176,4 +176,65 @@ describe('DaemonCommandRouter', () => {
     });
     await store.close();
   });
+
+  it('closes new command ingress while preserving the already accepted FIFO prefix for shutdown', async () => {
+    let releaseHandler!: () => void;
+    let reportHandlerStarted!: () => void;
+    const handlerGate = new Promise<void>((resolve) => { releaseHandler = resolve; });
+    const handlerStarted = new Promise<void>((resolve) => { reportHandlerStarted = resolve; });
+    const { store, router } = await runtime({
+      handlers: {
+        'agent.submit': async () => {
+          reportHandlerStarted();
+          await handlerGate;
+          return {
+            ok: false,
+            error: { code: 'invalid-state', message: 'Synthetic handler completed.', retryable: false },
+          };
+        },
+      },
+    });
+    const active = router.execute(command(
+      'agent.submit',
+      { sessionId: 'agent-1', prompt: 'Hold the FIFO.' },
+      0,
+      'active',
+    ));
+    await handlerStarted;
+    const accepted = router.execute(command(
+      'project.create',
+      { projectId: 'accepted-project', name: 'Accepted' },
+      0,
+      'accepted',
+    ));
+
+    router.beginShutdown();
+    router.beginShutdown();
+    const rejected = await router.execute(command(
+      'project.create',
+      { projectId: 'late-project', name: 'Late' },
+      0,
+      'late',
+    ));
+    expect(rejected).toMatchObject({
+      ok: false,
+      status: 'rejected',
+      error: { code: 'invalid-state', message: expect.stringContaining('shutting down') },
+    });
+    expect(store.findCommand('command-late')).toBeUndefined();
+
+    releaseHandler();
+    await expect(active).resolves.toMatchObject({ ok: false, status: 'rejected' });
+    await expect(accepted).resolves.toMatchObject({ ok: true, status: 'applied', revision: 1 });
+    await router.applySystemCommit({ mutations: [{
+      kind: 'runtime.update',
+      value: { browserEnabled: true },
+    }] });
+    expect(router.getSnapshot()).toMatchObject({
+      revision: 2,
+      projects: [{ id: 'accepted-project' }],
+      runtime: { browserEnabled: true },
+    });
+    await store.close();
+  });
 });

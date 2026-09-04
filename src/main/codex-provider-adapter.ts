@@ -40,6 +40,7 @@ const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 const MAX_SEMANTIC_TEXT = 1024 * 1024;
 const MAX_PROBE_OUTPUT = 64 * 1024;
+const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
 const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
   'PATH',
@@ -96,6 +97,7 @@ export interface CodexProviderAdapterOptions {
   >;
   readonly resolveExecutable?: (command: string, signal?: AbortSignal) => Promise<string>;
   readonly runCommand?: (command: string, argv: readonly string[], signal?: AbortSignal) => Promise<CodexCommandResult>;
+  readonly probeTimeoutMs?: number;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
 }
@@ -224,6 +226,45 @@ function abortError(): Error {
   return error;
 }
 
+function probeTimeoutError(timeoutMs: number): Error {
+  return new Error(`Codex executable verification exceeded ${String(timeoutMs)}ms.`);
+}
+
+async function withProbeDeadline<T>(
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (signal?.aborted) throw abortError();
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const cancelled = new Promise<T>((_resolve, reject) => {
+    if (!signal) return;
+    onAbort = () => {
+      reject(abortError());
+      controller.abort();
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const timedOut = new Promise<T>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(probeTimeoutError(timeoutMs));
+      controller.abort();
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => operation(controller.signal)),
+      cancelled,
+      timedOut,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
 async function runExternalCommand(
   command: string,
   argv: readonly string[],
@@ -319,6 +360,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly clientOptions: CodexProviderAdapterOptions['clientOptions'];
   private readonly resolveExecutable: (command: string, signal?: AbortSignal) => Promise<string>;
   private readonly runCommand: (command: string, argv: readonly string[], signal?: AbortSignal) => Promise<CodexCommandResult>;
+  private readonly probeTimeoutMs: number;
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly listeners = new Set<AgentProviderEventListener>();
@@ -334,6 +376,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.runCommand = options.runCommand ?? runExternalCommand;
     this.resolveExecutable = options.resolveExecutable
       ?? ((command, signal) => canonicalExecutable(command, this.runCommand, signal));
+    this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.probeTimeoutMs) || this.probeTimeoutMs < 1) {
+      throw new Error('probeTimeoutMs must be a positive integer.');
+    }
     this.connection = options.connection;
     this.providedConnection = options.connection !== undefined;
     this.clientOptions = options.clientOptions;
@@ -366,8 +412,15 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   async probe(signal?: AbortSignal): Promise<ProviderProbeResult> {
     try {
-      const executablePath = await this.resolveExecutable(this.executable, signal);
-      const result = await this.runCommand(executablePath, ['--version'], signal);
+      const { executablePath, result } = await withProbeDeadline(
+        signal,
+        this.probeTimeoutMs,
+        async (deadlineSignal) => {
+          const executablePath = await this.resolveExecutable(this.executable, deadlineSignal);
+          const result = await this.runCommand(executablePath, ['--version'], deadlineSignal);
+          return { executablePath, result };
+        },
+      );
       if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Codex exited with code ${result.exitCode}.`);
       const executableVersion = parseVersion(`${result.stdout}\n${result.stderr}`);
       if (!executableVersion) throw new Error('Codex did not report a semantic version.');
@@ -726,7 +779,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       command: descriptor.executablePath,
       argv: descriptor.argv,
       environment: buildProviderProcessEnvironment(descriptor.environmentVariableNames),
-      beforeSpawn: () => this.verifyLaunchDescriptor(descriptor),
+      beforeSpawn: (launchSignal) => this.verifyLaunchDescriptor(descriptor, launchSignal),
     });
     this.connection = connection;
     this.installConnectionHandlers(connection);
@@ -741,16 +794,19 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     descriptor: ProviderLaunchDescriptor,
     signal?: AbortSignal,
   ): Promise<void> {
-    const canonical = await fs.realpath(descriptor.executablePath);
-    const samePath = process.platform === 'win32'
-      ? canonical.toLocaleLowerCase('en-US') === descriptor.executablePath.toLocaleLowerCase('en-US')
-      : canonical === descriptor.executablePath;
-    if (!samePath) throw new Error('Codex executable realpath changed after review. Inspect the provider again.');
-    const result = await this.runCommand(canonical, ['--version'], signal);
-    const version = parseVersion(`${result.stdout}\n${result.stderr}`);
-    if (result.exitCode !== 0 || version !== descriptor.executableVersion || !compatibleVersion(version)) {
-      throw new Error('Codex executable version changed after review. Inspect the provider again.');
-    }
+    await withProbeDeadline(signal, this.probeTimeoutMs, async (deadlineSignal) => {
+      const canonical = await fs.realpath(descriptor.executablePath);
+      if (deadlineSignal.aborted) throw abortError();
+      const samePath = process.platform === 'win32'
+        ? canonical.toLocaleLowerCase('en-US') === descriptor.executablePath.toLocaleLowerCase('en-US')
+        : canonical === descriptor.executablePath;
+      if (!samePath) throw new Error('Codex executable realpath changed after review. Inspect the provider again.');
+      const result = await this.runCommand(canonical, ['--version'], deadlineSignal);
+      const version = parseVersion(`${result.stdout}\n${result.stderr}`);
+      if (result.exitCode !== 0 || version !== descriptor.executableVersion || !compatibleVersion(version)) {
+        throw new Error('Codex executable version changed after review. Inspect the provider again.');
+      }
+    });
   }
 
   private resetOwnedConnection(): void {
