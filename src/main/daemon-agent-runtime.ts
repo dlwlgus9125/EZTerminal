@@ -211,7 +211,9 @@ function providerStateToAgent(
     case 'blocked': return 'blocked';
     case 'idle': return 'idle';
     case 'completed': return 'done';
-    case 'interrupted': return 'interrupted';
+    // An adapter interruption ends the active turn, not the resumable provider
+    // Session. Full lifecycle disposal is owned by Archive or daemon shutdown.
+    case 'interrupted': return 'idle';
     case 'failed': return 'error';
   }
 }
@@ -225,7 +227,7 @@ function providerStateToSession(
     case 'blocked': return 'needs-attention';
     case 'idle': return 'idle';
     case 'completed': return 'completed';
-    case 'interrupted': return 'interrupted';
+    case 'interrupted': return 'idle';
     case 'failed': return 'failed';
   }
 }
@@ -264,7 +266,7 @@ export class DaemonAgentRuntime {
       'agent.set-settings': (command, context) => this.setSettings(command, context),
       'agent.cancel': (command, context) => this.cancel(command, context),
       'agent.archive': (command, context) => this.archive(command, context),
-      'agent.detach': (command) => this.detach(command),
+      'agent.detach': (command, context) => this.detach(command, context),
       'permission.resolve': (command, context) => this.resolveApproval(command, context),
       'provider.enable': (command) => this.enableProvider(command),
       'provider.update': (command) => this.enableProvider(command),
@@ -525,30 +527,7 @@ export class DaemonAgentRuntime {
     context: DaemonCommandExecutionContext,
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.interrupt') return commandError('invalid-command', 'Unexpected Agent interrupt command.');
-    const session = context.snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
-    const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
-    if (!session || !agent?.providerSessionId) return commandError('not-found', 'Agent Session was not found.');
-    const currentTurn = agent.currentTurnId
-      ? context.snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
-      : undefined;
-    if (!currentTurn || !ACTIVE_TURN_STATES.has(currentTurn.state)) return { ok: true };
-    const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
-    if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
-    return {
-      ok: true,
-      commit: { mutations: [
-        { kind: 'turn.upsert', value: turnInput(currentTurn, {
-          state: 'delivery-uncertain',
-          errorCode: 'interrupt-requested',
-        }) },
-        { kind: 'agent.upsert', value: agentInput(agent, { state: 'delivery-uncertain' }) },
-        { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
-      ] },
-      afterCommit: () => this.runBackground(
-        `interrupt Agent ${session.id}`,
-        () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
-      ),
-    };
+    return this.interruptActiveTurn(context.snapshot, command.payload.sessionId, 'interrupt');
   }
 
   private async setSettings(
@@ -587,40 +566,73 @@ export class DaemonAgentRuntime {
     context: DaemonCommandExecutionContext,
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.cancel') return commandError('invalid-command', 'Unexpected Agent cancel command.');
-    const session = context.snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
-    const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
-    if (!session || !agent) return commandError('not-found', 'Agent Session was not found.');
-    const now = this.isoNow();
-    const unsettledTurns = context.snapshot.turns.filter((turn) => (
-      turn.sessionId === session.id && !TERMINAL_TURN_STATES.has(turn.state)
-    ));
-    const pendingApprovals = context.snapshot.approvals.filter((approval) => (
-      approval.sessionId === session.id && approval.state === 'pending'
-    ));
-    return { ok: true, commit: { mutations: [
-      ...unsettledTurns.map((turn): DaemonStoreMutation => ({
-        kind: 'turn.upsert',
-        value: turnInput(turn, { state: 'interrupted', finishedAt: now, errorCode: undefined }),
-      })),
-      ...pendingApprovals.map((approval): DaemonStoreMutation => ({
-        kind: 'approval.upsert',
-        value: this.resolvedApprovalInput(approval, 'expired', now),
-      })),
-      { kind: 'agent.upsert', value: agentInput(agent, {
-        state: 'interrupted',
-        currentTurnId: undefined,
-        queuedTurnCount: 0,
-      }) },
-      { kind: 'session.upsert', value: sessionInput(session, 'interrupted') },
-    ] }, afterCommit: () => {
-      for (const turn of unsettledTurns) this.clearTurnTimeout(turn.id);
-      if (agent.providerSessionId) {
-        this.runBackground(
-          `cancel Agent ${session.id}`,
-          () => this.cancelProviderSession(session.id, agent.providerId, agent.providerSessionId!),
-        );
-      }
-    } };
+    return this.interruptActiveTurn(context.snapshot, command.payload.sessionId, 'cancel');
+  }
+
+  /**
+   * Interrupt is a turn-scoped cooperative request. Queued turns and the
+   * provider Session stay intact; a pre-handle claim can be settled locally
+   * because no provider turn can have been submitted yet.
+   */
+  private interruptActiveTurn(
+    snapshot: DaemonSnapshot,
+    sessionId: string,
+    action: 'interrupt' | 'cancel',
+  ): DaemonCommandExecutionResult {
+    const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    if (!session || !agent || session.kind !== 'agent') {
+      return commandError('not-found', 'Agent Session was not found.');
+    }
+    if (TERMINAL_SESSION_STATES.has(session.state) || TERMINAL_AGENT_STATES.has(agent.state)) {
+      return commandError('invalid-state', 'Agent Session is not available for interruption.');
+    }
+    const currentTurn = agent.currentTurnId
+      ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+      : undefined;
+    if (!currentTurn || !ACTIVE_TURN_STATES.has(currentTurn.state)) return { ok: true };
+
+    if (!agent.providerSessionId) {
+      const now = this.isoNow();
+      return {
+        ok: true,
+        commit: { mutations: [
+          { kind: 'turn.upsert', value: turnInput(currentTurn, {
+            state: 'interrupted',
+            finishedAt: now,
+            errorCode: undefined,
+          }) },
+          ...this.expireApprovalMutations(snapshot, session.id, currentTurn.id, now),
+          { kind: 'agent.upsert', value: agentInput(agent, {
+            state: agent.queuedTurnCount > 0 ? 'queued' : 'idle',
+            currentTurnId: undefined,
+          }) },
+          { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+        ] },
+        afterCommit: () => {
+          this.clearTurnTimeout(currentTurn.id);
+          this.queuePump();
+        },
+      };
+    }
+
+    const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+    if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
+    return {
+      ok: true,
+      commit: { mutations: [
+        { kind: 'turn.upsert', value: turnInput(currentTurn, {
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+        }) },
+        { kind: 'agent.upsert', value: agentInput(agent, { state: 'delivery-uncertain' }) },
+        { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+      ] },
+      afterCommit: () => this.runBackground(
+        `${action} Agent turn ${session.id}`,
+        () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
+      ),
+    };
   }
 
   private async archive(
@@ -654,22 +666,86 @@ export class DaemonAgentRuntime {
     ) } : {}) };
   }
 
-  private detach(command: DaemonCommand): DaemonCommandExecutionResult {
+  private detach(
+    command: DaemonCommand,
+    context: DaemonCommandExecutionContext,
+  ): DaemonCommandExecutionResult {
     if (command.type !== 'agent.detach') return commandError('invalid-command', 'Unexpected Agent detach command.');
-    const snapshot = this.options.getSnapshot();
+    const snapshot = context.snapshot;
     const relation = snapshot.agentRelations.find((entry) => (
       entry.childSessionId === command.payload.sessionId && !entry.detachedAt
     ));
     if (!relation) return commandError('not-found', 'Managed Agent relation was not found.');
-    return { ok: true, commit: { mutations: [{ kind: 'agent-relation.upsert', value: {
-      id: relation.id,
-      treeId: relation.treeId,
-      parentSessionId: relation.parentSessionId,
-      childSessionId: relation.childSessionId,
-      owner: relation.owner,
-      depth: relation.depth,
-      detachedAt: this.isoNow(),
-    } }] } };
+    if (relation.owner !== 'managed') {
+      return commandError('invalid-state', 'Provider-native subagents are provider-owned and read-only.');
+    }
+
+    const rootSessionId = relation.childSessionId;
+    const activeRelations = snapshot.agentRelations.filter((entry) => entry.detachedAt === undefined);
+    const depths = new Map<string, number>([[rootSessionId, 0]]);
+    const frontier = [rootSessionId];
+    const descendants: { readonly relation: typeof relation; readonly depth: number }[] = [];
+    while (frontier.length > 0) {
+      const parentSessionId = frontier.shift()!;
+      const parentDepth = depths.get(parentSessionId)!;
+      for (const descendant of activeRelations) {
+        if (descendant.id === relation.id || descendant.parentSessionId !== parentSessionId) continue;
+        if (depths.has(descendant.childSessionId)) {
+          return commandError('invalid-state', 'Managed Agent relations do not form a detachable tree.');
+        }
+        const depth = parentDepth + 1;
+        depths.set(descendant.childSessionId, depth);
+        descendants.push({ relation: descendant, depth });
+        frontier.push(descendant.childSessionId);
+      }
+    }
+
+    // Detached relation records are retained as recent-creation history. Move
+    // records created by parents in this subtree too, without traversing into
+    // the already-detached child trees.
+    const detachedHistory = snapshot.agentRelations.filter((entry) => (
+      entry.id !== relation.id
+      && entry.detachedAt !== undefined
+      && depths.has(entry.parentSessionId)
+    ));
+    const now = this.isoNow();
+    const rebase = [
+      ...descendants.map(({ relation: descendant, depth }): DaemonStoreMutation => ({
+        kind: 'agent-relation.upsert',
+        value: {
+          id: descendant.id,
+          treeId: rootSessionId,
+          parentSessionId: descendant.parentSessionId,
+          childSessionId: descendant.childSessionId,
+          owner: descendant.owner,
+          depth,
+        },
+      })),
+      ...detachedHistory.map((historical): DaemonStoreMutation => ({
+        kind: 'agent-relation.upsert',
+        value: {
+          id: historical.id,
+          treeId: rootSessionId,
+          parentSessionId: historical.parentSessionId,
+          childSessionId: historical.childSessionId,
+          owner: historical.owner,
+          depth: depths.get(historical.parentSessionId)! + 1,
+          detachedAt: historical.detachedAt,
+        },
+      })),
+    ];
+    return { ok: true, commit: { mutations: [
+      { kind: 'agent-relation.upsert', value: {
+        id: relation.id,
+        treeId: relation.treeId,
+        parentSessionId: relation.parentSessionId,
+        childSessionId: relation.childSessionId,
+        owner: relation.owner,
+        depth: relation.depth,
+        detachedAt: now,
+      } },
+      ...rebase,
+    ] } };
   }
 
   private async resolveApproval(
@@ -783,10 +859,23 @@ export class DaemonAgentRuntime {
     }
     const parent = snapshot.sessions.find((session) => session.id === parentSessionId);
     const parentAgent = snapshot.agents.find((agent) => agent.sessionId === parentSessionId);
-    if (!parent || !parentAgent || parent.kind !== 'agent' || parent.projectId !== projectId) {
+    const providerOwned = snapshot.agentRelations.some((relation) => (
+      relation.childSessionId === parentSessionId && relation.owner === 'provider-native'
+    ));
+    if (
+      !parent
+      || !parentAgent
+      || parent.kind !== 'agent'
+      || parent.projectId !== projectId
+      || parent.archivedAt !== undefined
+      || TERMINAL_SESSION_STATES.has(parent.state)
+      || TERMINAL_AGENT_STATES.has(parentAgent.state)
+      || !parentAgent.orchestrationEnabled
+      || providerOwned
+    ) {
       return { ok: false, result: commandError(
         'invalid-state',
-        'A managed child must share a Project with an active parent Agent.',
+        'A managed child requires a live, orchestration-enabled managed parent in the same Project.',
       ) };
     }
     const parentRelation = snapshot.agentRelations.find((relation) => (
@@ -809,8 +898,8 @@ export class DaemonAgentRuntime {
       return { ok: false, result: commandError('tree-node-limit', 'Managed Agent tree node limit reached.') };
     }
     const windowStart = this.now().valueOf() - DAEMON_HARD_LIMITS.childCreationWindowMs;
-    const recentChildren = treeRelations.filter((relation) => (
-      relation.owner === 'managed' && Date.parse(relation.createdAt) >= windowStart
+    const recentChildren = snapshot.agentRelations.filter((relation) => (
+      relation.treeId === treeId && Date.parse(relation.createdAt) >= windowStart
     )).length;
     if (recentChildren >= DAEMON_HARD_LIMITS.childCreationsPerWindow) {
       return { ok: false, result: commandError('child-rate-limit', 'Managed Agent child creation rate limit reached.') };
@@ -1236,12 +1325,12 @@ export class DaemonAgentRuntime {
             { kind: 'agent.upsert' as const, value: agentInput(agent, {
               state: hasQueuedSuccessor
                 ? 'queued'
-                : failed ? 'error' : interrupted ? 'interrupted' : agent.queuedTurnCount > 0 ? 'queued' : 'idle',
+                : failed ? 'error' : agent.queuedTurnCount > 0 ? 'queued' : 'idle',
               currentTurnId: undefined,
             }) },
             { kind: 'session.upsert' as const, value: sessionInput(
               session,
-              hasQueuedSuccessor ? 'idle' : failed ? 'failed' : interrupted ? 'interrupted' : 'idle',
+              hasQueuedSuccessor ? 'idle' : failed ? 'failed' : 'idle',
             ) },
           ] : []),
           ...(resultSummary ? this.transcriptMutations([{
@@ -1406,13 +1495,27 @@ export class DaemonAgentRuntime {
     await this.transition((snapshot) => {
       const parent = snapshot.sessions.find((entry) => entry.id === event.sessionId);
       const parentAgent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      if (!parent || !parentAgent || parentAgent.providerId !== providerId || parent.state === 'archived') {
+      if (
+        !parent
+        || !parentAgent
+        || parentAgent.providerId !== providerId
+        || parent.archivedAt !== undefined
+      ) {
         return undefined;
       }
       const childId = stableId('native-agent', providerId, event.sessionId, event.providerChildId);
       const existingSession = snapshot.sessions.find((entry) => entry.id === childId);
       const existingAgent = snapshot.agents.find((entry) => entry.sessionId === childId);
       const existingRelation = snapshot.agentRelations.find((entry) => entry.childSessionId === childId);
+      if (
+        !existingRelation
+        && (
+          TERMINAL_SESSION_STATES.has(parent.state)
+          || TERMINAL_AGENT_STATES.has(parentAgent.state)
+          || !snapshot.runtime.orchestrationToolsEnabled
+          || !parentAgent.orchestrationEnabled
+        )
+      ) return undefined;
       const relationPlan = existingRelation
         ? { treeId: existingRelation.treeId, depth: existingRelation.depth }
         : this.planNativeRelation(snapshot, event.sessionId);
@@ -1515,6 +1618,11 @@ export class DaemonAgentRuntime {
       nodes.add(relation.childSessionId);
     }
     if (nodes.size >= DAEMON_HARD_LIMITS.nodesPerTree) return null;
+    const windowStart = this.now().valueOf() - DAEMON_HARD_LIMITS.childCreationWindowMs;
+    const recentChildren = snapshot.agentRelations.filter((relation) => (
+      relation.treeId === treeId && Date.parse(relation.createdAt) >= windowStart
+    )).length;
+    if (recentChildren >= DAEMON_HARD_LIMITS.childCreationsPerWindow) return null;
     return { treeId, depth };
   }
 
@@ -1940,21 +2048,6 @@ export class DaemonAgentRuntime {
     }
   }
 
-  private async cancelProviderSession(
-    sessionId: string,
-    providerId: string,
-    providerSessionId: string,
-  ): Promise<void> {
-    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
-    if (!provider.ok) return;
-    try {
-      await provider.value.interrupt(sessionId, providerSessionId);
-    } catch (error) {
-      this.report('provider cancel interrupt failed', error);
-    }
-    await this.disposeProviderSession(sessionId, providerId, providerSessionId);
-  }
-
   private async disposeProviderSession(
     sessionId: string,
     providerId: string,
@@ -2124,12 +2217,14 @@ export class DaemonAgentRuntime {
                   ...this.expireApprovalMutations(fresh, turn.sessionId, turn.id, now),
                   ...(shouldPump ? [
                     { kind: 'agent.upsert' as const, value: agentInput(currentAgent, {
-                      state: state === 'failed' ? 'error' : state === 'interrupted' ? 'interrupted' : currentAgent.queuedTurnCount > 0 ? 'queued' : 'idle',
+                      state: state === 'failed'
+                        ? 'error'
+                        : currentAgent.queuedTurnCount > 0 ? 'queued' : 'idle',
                       currentTurnId: undefined,
                     }) },
                     { kind: 'session.upsert' as const, value: sessionInput(
                       session,
-                      state === 'failed' ? 'failed' : state === 'interrupted' ? 'interrupted' : 'idle',
+                      state === 'failed' ? 'failed' : 'idle',
                     ) },
                   ] : []),
                 ],

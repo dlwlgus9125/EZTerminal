@@ -88,10 +88,12 @@ function fakeAdapter(
 async function harness(options: {
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+  readonly now?: () => Date;
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
-  const store = new DaemonStore(directory);
+  const now = options.now ?? (() => new Date('2026-09-04T10:00:00.000Z'));
+  const store = new DaemonStore(directory, { now });
   await store.init();
   const codex = fakeAdapter('codex', 'codex-app-server');
   const claude = fakeAdapter('claude', 'claude-agent-sdk');
@@ -105,7 +107,7 @@ async function harness(options: {
       routerRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
     findCommand: (commandId) => store.findCommand(commandId)?.command,
-    now: () => new Date('2026-09-04T10:00:00.000Z'),
+    now,
     idFactory: (() => {
       let id = 0;
       return () => `runtime-id-${++id}`;
@@ -318,6 +320,9 @@ describe('DaemonAgentRuntime', () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');
     await h.prepareWorkspace();
+    await h.router.applySystemCommit({
+      mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
+    });
     await h.execute('agent.create', {
       sessionId: 'lead',
       workspaceId: 'workspace-1',
@@ -360,6 +365,327 @@ describe('DaemonAgentRuntime', () => {
     ]));
     await h.runtime.dispose();
     await h.store.close();
+  });
+
+  it('rejects daemon mutations of provider-native subagents and their provider sessions', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.router.applySystemCommit({
+        mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
+      });
+      await h.execute('agent.create', {
+        sessionId: 'lead',
+        workspaceId: 'workspace-1',
+        title: 'Lead',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Lead the work.',
+      });
+      h.codex.emit({
+        kind: 'native-subagent',
+        sessionId: 'lead',
+        providerChildId: 'native-1',
+        title: 'Native reviewer',
+        state: 'working',
+      });
+      await h.runtime.whenIdle();
+      const nativeSessionId = h.router.getSnapshot().agentRelations.find((relation) => (
+        relation.owner === 'provider-native' && relation.parentSessionId === 'lead'
+      ))!.childSessionId;
+      h.codex.emit({
+        kind: 'native-subagent',
+        sessionId: nativeSessionId,
+        providerChildId: 'nested-native',
+        title: 'Nested native reviewer',
+        state: 'working',
+      });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().agentRelations).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          parentSessionId: nativeSessionId,
+          owner: 'provider-native',
+          depth: 2,
+        }),
+      ]));
+
+      const receipts = [
+        await h.execute('session.update', { sessionId: nativeSessionId, title: 'Renamed native child' }),
+        await h.execute('agent.submit', { sessionId: nativeSessionId, prompt: 'Do more.' }),
+        await h.execute('agent.interrupt-and-submit', { sessionId: nativeSessionId, prompt: 'Replace it.' }),
+        await h.execute('agent.interrupt', { sessionId: nativeSessionId }),
+        await h.execute('agent.set-settings', { sessionId: nativeSessionId, model: 'gpt-5.6' }),
+        await h.execute('agent.cancel', { sessionId: nativeSessionId }),
+        await h.execute('agent.archive', { sessionId: nativeSessionId }),
+        await h.execute('agent.detach', { sessionId: nativeSessionId }),
+        await h.execute('agent.resume', {
+          sessionId: 'resumed-native',
+          workspaceId: 'workspace-1',
+          providerId: 'codex',
+          providerSessionId: 'native-1',
+          title: 'Improper native resume',
+          permissionPreset: 'standard',
+        }),
+        await h.execute('agent.create', {
+          sessionId: 'native-child',
+          workspaceId: 'workspace-1',
+          title: 'Improper managed child',
+          providerId: 'codex',
+          permissionPreset: 'standard',
+          initialPrompt: 'Do not dispatch.',
+          parentSessionId: nativeSessionId,
+        }),
+      ];
+
+      for (const receipt of receipts) {
+        expect(receipt).toMatchObject({
+          ok: false,
+          status: 'rejected',
+          error: {
+            code: 'invalid-state',
+            retryable: false,
+            details: { owner: 'provider-native', sessionId: nativeSessionId },
+          },
+        });
+      }
+      expect(h.router.getSnapshot().agentRelations.find((relation) => (
+        relation.childSessionId === nativeSessionId
+      ))).not.toHaveProperty('detachedAt');
+      expect(h.router.getSnapshot().sessions.find((session) => session.id === nativeSessionId))
+        .toMatchObject({ state: 'running' });
+      expect(h.codex.interrupt).not.toHaveBeenCalled();
+      expect(h.codex.resumeSession).not.toHaveBeenCalled();
+      expect(h.codex.disposeSession).not.toHaveBeenCalled();
+      expect(h.codex.submit).toHaveBeenCalledTimes(1);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('requires a live orchestration-enabled managed parent before creating a child', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'disabled-parent',
+        workspaceId: 'workspace-1',
+        title: 'Disabled parent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'No orchestration capability.',
+      });
+      await h.router.applySystemCommit({
+        mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
+      });
+
+      const disabled = await h.execute('agent.create', {
+        sessionId: 'disabled-child',
+        workspaceId: 'workspace-1',
+        title: 'Disabled child',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Must not run.',
+        parentSessionId: 'disabled-parent',
+      });
+      expect(disabled).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-state' },
+      });
+
+      await h.execute('agent.create', {
+        sessionId: 'terminal-parent',
+        workspaceId: 'workspace-1',
+        title: 'Terminal parent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish.',
+      });
+      const terminalTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'terminal-parent')!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'terminal-parent',
+        turnId: terminalTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'terminal-parent', state: 'completed' });
+      await h.runtime.whenIdle();
+      const terminal = await h.execute('agent.create', {
+        sessionId: 'terminal-child',
+        workspaceId: 'workspace-1',
+        title: 'Terminal child',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Must not run.',
+        parentSessionId: 'terminal-parent',
+      });
+      expect(terminal).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+
+      expect(await h.execute('agent.archive', { sessionId: 'terminal-parent' }))
+        .toMatchObject({ ok: true });
+      expect(h.router.getSnapshot().sessions.find((session) => session.id === 'terminal-parent'))
+        .toMatchObject({ state: 'archived', archivedAt: '2026-09-04T10:00:00.000Z' });
+      const archived = await h.execute('agent.create', {
+        sessionId: 'archived-child',
+        workspaceId: 'workspace-1',
+        title: 'Archived child',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Must not run.',
+        parentSessionId: 'terminal-parent',
+      });
+      expect(archived).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+
+      h.codex.emit({
+        kind: 'native-subagent',
+        sessionId: 'terminal-parent',
+        providerChildId: 'late-native',
+        title: 'Late native child',
+        state: 'working',
+      });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().agentRelations.some((relation) => (
+        relation.parentSessionId === 'terminal-parent'
+      ))).toBe(false);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('rebases a detached subtree and enforces depth from the new root', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.router.applySystemCommit({
+        mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
+      });
+      const create = (sessionId: string, parentSessionId?: string) => h.execute('agent.create', {
+        sessionId,
+        workspaceId: 'workspace-1',
+        title: sessionId,
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: sessionId,
+        ...(parentSessionId ? { parentSessionId } : {}),
+      });
+      await create('lead');
+      await create('detached-root', 'lead');
+      await create('depth-1', 'detached-root');
+      h.codex.emit({
+        kind: 'native-subagent',
+        sessionId: 'depth-1',
+        providerChildId: 'native-descendant',
+        title: 'Native descendant',
+        state: 'working',
+      });
+      await h.runtime.whenIdle();
+      const nativeDescendantId = h.router.getSnapshot().agentRelations.find((relation) => (
+        relation.parentSessionId === 'depth-1' && relation.owner === 'provider-native'
+      ))!.childSessionId;
+      await create('depth-2', 'depth-1');
+      await create('depth-3', 'depth-2');
+
+      expect(await h.execute('agent.detach', { sessionId: 'detached-root' }))
+        .toMatchObject({ ok: true });
+      expect(h.router.getSnapshot().agentRelations).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          parentSessionId: 'lead',
+          childSessionId: 'detached-root',
+          detachedAt: '2026-09-04T10:00:00.000Z',
+        }),
+        expect.objectContaining({
+          treeId: 'detached-root',
+          parentSessionId: 'detached-root',
+          childSessionId: 'depth-1',
+          depth: 1,
+        }),
+        expect.objectContaining({
+          treeId: 'detached-root',
+          parentSessionId: 'depth-1',
+          childSessionId: 'depth-2',
+          depth: 2,
+        }),
+        expect.objectContaining({
+          treeId: 'detached-root',
+          parentSessionId: 'depth-2',
+          childSessionId: 'depth-3',
+          depth: 3,
+        }),
+        expect.objectContaining({
+          treeId: 'detached-root',
+          parentSessionId: 'depth-1',
+          childSessionId: nativeDescendantId,
+          owner: 'provider-native',
+          depth: 2,
+        }),
+      ]));
+
+      expect(await create('depth-4', 'depth-3')).toMatchObject({ ok: true });
+      expect(await create('depth-overflow', 'depth-4')).toMatchObject({
+        ok: false,
+        error: { code: 'tree-depth-limit' },
+      });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('preserves detached-subtree node and recent-creation accounting', async () => {
+    let current = new Date('2026-09-04T10:00:00.000Z');
+    const h = await harness({ now: () => current });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.router.applySystemCommit({
+        mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
+      });
+      const create = (sessionId: string, parentSessionId?: string) => h.execute('agent.create', {
+        sessionId,
+        workspaceId: 'workspace-1',
+        title: sessionId,
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: sessionId,
+        ...(parentSessionId ? { parentSessionId } : {}),
+      });
+      await create('lead');
+      await create('detached-root', 'lead');
+      for (let index = 1; index <= 11; index += 1) {
+        await create(`recent-${index}`, 'detached-root');
+      }
+      await h.execute('agent.detach', { sessionId: 'detached-root' });
+      expect(await create('recent-12', 'detached-root')).toMatchObject({ ok: true });
+      expect(await create('recent-overflow', 'detached-root')).toMatchObject({
+        ok: false,
+        error: { code: 'child-rate-limit' },
+      });
+      for (let index = 1; index <= 11; index += 1) {
+        await create(`source-${index}`, 'lead');
+      }
+      expect(await create('source-overflow', 'lead')).toMatchObject({
+        ok: false,
+        error: { code: 'child-rate-limit' },
+      });
+
+      current = new Date('2026-09-04T10:11:00.000Z');
+      for (let index = 13; index <= 14; index += 1) {
+        await create(`node-${index}`, 'detached-root');
+      }
+      expect(await create('node-15', 'detached-root')).toMatchObject({ ok: true });
+      expect(await create('node-overflow', 'detached-root')).toMatchObject({
+        ok: false,
+        error: { code: 'tree-node-limit' },
+      });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
   });
 
   it('persists approval state and forwards the exact provider request decision', async () => {
@@ -534,41 +860,91 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
-  it('never dispatches a queued turn after its Agent Session is cancelled', async () => {
+  it('cancels only the active turn, preserves queued FIFO turns, and keeps the provider Session resumable', async () => {
     const h = await harness();
     try {
       await h.enable(h.codex, 'codex');
       await h.prepareWorkspace();
-      for (let index = 1; index <= 5; index += 1) {
-        await h.execute('agent.create', {
-          sessionId: `agent-${index}`,
-          workspaceId: 'workspace-1',
-          title: `Agent ${index}`,
-          providerId: 'codex',
-          permissionPreset: 'standard',
-          initialPrompt: `Task ${index}`,
-        });
-      }
-      expect(h.codex.submit).toHaveBeenCalledTimes(4);
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'First turn.',
+      });
+      const providerSessionId = h.router.getSnapshot().agents[0]!.providerSessionId;
+      const first = h.router.getSnapshot().turns[0]!;
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Second turn.' });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Third turn.' });
 
-      await h.execute('agent.cancel', { sessionId: 'agent-5' });
-      const first = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-1')!;
+      expect(await h.execute('agent.cancel', { sessionId: 'agent-1' })).toMatchObject({ ok: true });
+      expect(h.codex.interrupt).toHaveBeenCalledWith('agent-1', providerSessionId);
+      expect(h.codex.disposeSession).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().agents[0]).toMatchObject({
+        currentTurnId: first.id,
+        queuedTurnCount: 2,
+        providerSessionId,
+      });
+      expect(h.router.getSnapshot().turns.filter((turn) => turn.state === 'queued')).toHaveLength(2);
+
       h.codex.emit({
         kind: 'turn-finished',
         sessionId: 'agent-1',
         turnId: first.id,
-        outcome: 'completed',
+        outcome: 'interrupted',
       });
       await h.runtime.whenIdle();
 
-      expect(h.codex.submit).toHaveBeenCalledTimes(4);
-      const snapshot = h.router.getSnapshot();
-      expect(snapshot.sessions.find((session) => session.id === 'agent-5'))
-        .toMatchObject({ state: 'interrupted' });
-      expect(snapshot.agents.find((agent) => agent.sessionId === 'agent-5'))
-        .toMatchObject({ state: 'interrupted', queuedTurnCount: 0 });
-      expect(snapshot.turns.find((turn) => turn.sessionId === 'agent-5'))
-        .toMatchObject({ state: 'interrupted' });
+      expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toEqual([
+        'First turn.',
+        'Second turn.',
+      ]);
+      const second = h.router.getSnapshot().turns.find((turn) => (
+        turn.id !== first.id && turn.state === 'working'
+      ))!;
+      expect(h.router.getSnapshot().agents[0]).toMatchObject({
+        state: 'working',
+        currentTurnId: second.id,
+        queuedTurnCount: 1,
+        providerSessionId,
+      });
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-1',
+        turnId: second.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toEqual([
+        'First turn.',
+        'Second turn.',
+        'Third turn.',
+      ]);
+      const third = h.router.getSnapshot().turns.find((turn) => (
+        ![first.id, second.id].includes(turn.id)
+      ))!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-1',
+        turnId: third.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'interrupted' });
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'idle' }],
+        agents: [{ sessionId: 'agent-1', state: 'idle', queuedTurnCount: 0, providerSessionId }],
+      });
+      expect(h.router.getSnapshot().agents[0]).not.toHaveProperty('currentTurnId');
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Post-cancel turn.' });
+      expect(h.codex.createSession).toHaveBeenCalledOnce();
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
+        providerSessionId,
+        prompt: 'Post-cancel turn.',
+      }));
     } finally {
       await h.runtime.dispose();
       await h.store.close();

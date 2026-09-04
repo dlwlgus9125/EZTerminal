@@ -91,6 +91,69 @@ function sameCommand(left: DaemonCommand, right: DaemonCommand): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function providerNativeRelation(
+  snapshot: DaemonSnapshot,
+  sessionId: string,
+): DaemonSnapshot['agentRelations'][number] | undefined {
+  return snapshot.agentRelations.find((relation) => (
+    relation.childSessionId === sessionId && relation.owner === 'provider-native'
+  ));
+}
+
+/**
+ * Provider-native subagents are projections of provider-owned work. Keep this
+ * invariant at the command-authority seam so every transport and every
+ * Agent-runtime handler sees the same read-only contract.
+ */
+function providerNativeMutationTarget(
+  command: DaemonCommand,
+  snapshot: DaemonSnapshot,
+): string | undefined {
+  switch (command.type) {
+    case 'session.update':
+    case 'session.archive':
+    case 'agent.submit':
+    case 'agent.interrupt-and-submit':
+    case 'agent.interrupt':
+    case 'agent.set-settings':
+    case 'agent.cancel':
+    case 'agent.archive':
+    case 'agent.detach':
+    case 'heartbeat.configure':
+    case 'heartbeat.trigger':
+      return providerNativeRelation(snapshot, command.payload.sessionId)?.childSessionId;
+
+    case 'agent.create':
+      return command.payload.parentSessionId
+        ? providerNativeRelation(snapshot, command.payload.parentSessionId)?.childSessionId
+        : undefined;
+
+    case 'agent.resume': {
+      const directTarget = providerNativeRelation(snapshot, command.payload.sessionId)
+        ?? (command.payload.parentSessionId
+          ? providerNativeRelation(snapshot, command.payload.parentSessionId)
+          : undefined);
+      if (directTarget) return directTarget.childSessionId;
+      const providerOwnedHandle = snapshot.agents.find((agent) => (
+        agent.providerId === command.payload.providerId
+        && agent.providerSessionId === command.payload.providerSessionId
+        && providerNativeRelation(snapshot, agent.sessionId) !== undefined
+      ));
+      return providerOwnedHandle?.sessionId;
+    }
+
+    case 'permission.resolve': {
+      const approval = snapshot.approvals.find((entry) => entry.id === command.payload.approvalId);
+      return approval && providerNativeRelation(snapshot, approval.sessionId)
+        ? approval.sessionId
+        : undefined;
+    }
+
+    default:
+      return undefined;
+  }
+}
+
 export class DaemonCommandRouter {
   private readonly gate = new AsyncMutationGate();
   private readonly listeners = new Set<(event: DaemonEvent) => void>();
@@ -301,9 +364,20 @@ export class DaemonCommandRouter {
 
     try {
       const handler = this.handlers[command.type];
-      const result = handler
-        ? await handler(command, { snapshot, markProviderDispatchStarted })
-        : this.executeCoreCommand(command, snapshot);
+      const providerNativeTarget = providerNativeMutationTarget(command, snapshot);
+      const result: DaemonCommandExecutionResult = providerNativeTarget
+        ? {
+            ok: false,
+            error: commandError(
+              'invalid-state',
+              'Provider-native subagents are provider-owned and read-only.',
+              false,
+              { owner: 'provider-native', sessionId: providerNativeTarget },
+            ),
+          }
+        : handler
+          ? await handler(command, { snapshot, markProviderDispatchStarted })
+          : this.executeCoreCommand(command, snapshot);
       if (!result.ok) {
         const receipt = await this.store.rejectCommand(command.commandId, result.error);
         this.publishEventsAfter(beforeSequence);

@@ -178,6 +178,8 @@ export interface DaemonProvider extends RevisionedRecord {
   readonly argv: readonly string[];
   readonly environmentVariableNames: readonly string[];
   readonly capabilities: readonly string[];
+  /** Present for providers enabled through reviewed structured setup. */
+  readonly reviewDigest?: string;
   readonly enabled: boolean;
   readonly health: 'unknown' | 'ready' | 'unavailable' | 'incompatible' | 'error';
   readonly healthDetail?: string;
@@ -339,6 +341,7 @@ export interface DaemonCommandPayloads {
     readonly model?: string;
     readonly permissionPreset?: PermissionPreset;
   };
+  /** Cooperatively interrupts only the active turn; queued turns and provider Session remain resumable. */
   readonly 'agent.cancel': { readonly sessionId: string };
   readonly 'agent.archive': { readonly sessionId: string };
   readonly 'agent.detach': { readonly sessionId: string };
