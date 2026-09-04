@@ -46,8 +46,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 526,
-        "endLine": 543,
+        "startLine": 536,
+        "endLine": 553,
         "lineDigest": "sha256:3233f6e9f076c395212718bd1612fd8c2c8c6b74556f98546aea0a18de4c8a40",
         "claim": "The workbench registers native Dockview panel components, including Project Map."
       }]
@@ -63,8 +63,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/preload/preload.ts",
-        "startLine": 745,
-        "endLine": 745,
+        "startLine": 747,
+        "endLine": 747,
         "lineDigest": "sha256:d25cf0450be3f30201f2beb5bce28e021a3695bdde30f7673b71638f5bae3ab0",
         "claim": "The desktop API is exposed through one named context bridge surface."
       }]
@@ -80,9 +80,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 979,
-        "endLine": 1020,
-        "lineDigest": "sha256:d77d506de89492f8dad370c00206d5db80c7b128c7c20ebac17a8870ae1bc5bd",
+        "startLine": 1015,
+        "endLine": 1056,
+        "lineDigest": "sha256:f9ae1e89a2d03c859a0381523d58d4f1bd082aa3ef3ab408a56ec2a084d43bef",
         "claim": "Main constructs Project Workspace and Project Map authorities and broadcasts bounded change events."
       }]
     },
@@ -131,8 +131,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1197,
-        "endLine": 1246,
+        "startLine": 1281,
+        "endLine": 1330,
         "lineDigest": "sha256:6ccedfa737c04488912b8b673a21f47b0525f6a6a8297cc4a2c84ee125271ff9",
         "claim": "Each remote connection receives isolated run, upload, packet, and terminal capability state."
       }]
@@ -198,8 +198,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 2027,
-        "endLine": 2169,
+        "startLine": 1820,
+        "endLine": 1962,
         "lineDigest": "sha256:c7320658ed61af1ab384a4bb8abb2b4179e6a43344dfadbcf9fc4eb26841d763",
         "claim": "Main validates Project Workspace and Project Map IPC payloads before dispatch."
       }]
@@ -243,8 +243,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1282,
-        "endLine": 1304,
+        "startLine": 1366,
+        "endLine": 1388,
         "lineDigest": "sha256:9cfc9b359352c4a9c3498fa6f5efdbe65c40581371a9f2582b432e6d335869d2",
         "claim": "Remote run observation encodes interpreter frames before sending them to a client."
       }]

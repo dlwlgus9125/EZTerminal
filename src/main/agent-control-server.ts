@@ -3,14 +3,17 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 import type { AgentActivity, AgentState } from '../shared/agent';
 import { isSafeAgentPromptText, MAX_AGENT_READ_LINES } from '../shared/agent-coordination';
-import { AgentTeamPlanProposalSchema } from '../shared/agent-team';
+import type {
+  CreateWorkerInput,
+  WorkerReportInput,
+} from '../shared/agent-orchestration';
 import {
   PROJECT_MAP_TYPES,
   projectMapAuthoringGuide,
   type ProjectMapType,
 } from '../shared/project-map';
 import type { AgentCoordinationService } from './agent-coordination-service';
-import type { AgentTeamService } from './agent-team-service';
+import type { AgentOrchestrationService } from './agent-orchestration-service';
 import type { ManagedMergeService } from './managed-merge-service';
 import type { ProjectMapService } from './project-map-service';
 import { sameSecret } from './managed-merge-service';
@@ -76,7 +79,7 @@ export class AgentControlServer {
     readonly coordination: AgentCoordinationService;
     readonly merges: ManagedMergeService;
     readonly maps?: ProjectMapService;
-    readonly teams?: Pick<AgentTeamService, 'submitPlan' | 'waitForPlanDecision'>;
+    readonly orchestration?: AgentOrchestrationService;
   }) {}
 
   async start(): Promise<void> {
@@ -164,7 +167,18 @@ export class AgentControlServer {
         json(response, 403, { ok: false, error: 'collaboration-inactive' });
         return;
       }
-      if (!source.participant && request.url !== '/v1/map/guide' && request.url !== '/v1/map/check') {
+      if (this.deps.orchestration?.isWorkerSession(source.sessionId)
+        && request.url !== '/v1/worker/report') {
+        json(response, 403, { ok: false, error: 'worker-depth-limit' });
+        return;
+      }
+      const orchestrationRoute = request.url.startsWith('/v1/workers/')
+        || request.url === '/v1/workers'
+        || request.url === '/v1/worker/report';
+      if (!source.participant
+        && request.url !== '/v1/map/guide'
+        && request.url !== '/v1/map/check'
+        && !orchestrationRoute) {
         json(response, 403, { ok: false, error: 'collaboration-inactive' });
         return;
       }
@@ -193,61 +207,78 @@ export class AgentControlServer {
     response: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
-    if (url === '/v1/team/plan') {
-      if (!this.deps.teams) {
-        json(response, 503, { ok: false, error: 'team-planning-unavailable' });
+    if (url === '/v1/workers/profiles') {
+      const result = this.deps.orchestration?.listProfiles(source)
+        ?? { ok: false as const, error: 'unavailable' as const, message: 'Lead orchestration is unavailable.' };
+      json(response, result.ok ? 200 : result.error === 'forbidden' ? 403 : 409, result);
+      return;
+    }
+    if (url === '/v1/workers/create') {
+      if (!this.deps.orchestration) {
+        json(response, 503, { ok: false, error: 'unavailable' });
         return;
       }
-      const runId = typeof body.runId === 'string'
-        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(body.runId)
-        ? body.runId
-        : undefined;
-      const expectedRevision = typeof body.expectedRevision === 'number'
-        && Number.isSafeInteger(body.expectedRevision)
-        && body.expectedRevision > 0
-        ? body.expectedRevision
-        : undefined;
-      const proposal = AgentTeamPlanProposalSchema.safeParse(body.proposal);
-      if (!runId || expectedRevision === undefined || !proposal.success) {
-        json(response, 400, { ok: false, error: 'invalid-request' });
-        return;
-      }
-      const result = await this.deps.teams.submitPlan(source.id, {
-        runId,
-        expectedRevision,
-        proposal: proposal.data,
-      });
-      if (!result.ok) {
-        const status = result.error === 'invalid'
-          ? 400
-          : result.error === 'not-found'
-            ? 404
-            : 409;
-        json(response, status, result);
-        return;
-      }
-      const decision = await this.deps.teams.waitForPlanDecision(
-        runId,
-        result.value.revision,
-        signal,
-      );
-      const status = decision.ok
-        ? 200
-        : decision.error === 'not-found'
-          ? 404
-          : decision.error === 'unavailable'
-            ? 503
-            : 409;
-      json(response, status, decision.ok
-        ? {
-            ok: true,
-            value: {
-              runId: decision.value.run.runId,
-              revision: decision.value.run.revision,
-              brief: decision.value.brief,
-            },
-          }
-        : decision);
+      const result = await this.deps.orchestration.createWorker(source, body as unknown as CreateWorkerInput);
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/workers') {
+      const result = this.deps.orchestration?.listWorkers(source)
+        ?? { ok: false as const, error: 'unavailable' as const, message: 'Lead orchestration is unavailable.' };
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/workers/read') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const result = taskId && this.deps.orchestration
+        ? this.deps.orchestration.readWorker(source, taskId)
+        : { ok: false as const, error: 'invalid' as const, message: 'A task id is required.' };
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/workers/prompt') {
+      const result = this.deps.orchestration
+        ? await this.deps.orchestration.promptWorker(source, {
+            taskId: typeof body.taskId === 'string' ? body.taskId : '',
+            text: typeof body.text === 'string' ? body.text : '',
+          })
+        : { ok: false as const, error: 'unavailable' as const, message: 'Lead orchestration is unavailable.' };
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/workers/cancel' || url === '/v1/workers/archive') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const result = !taskId || !this.deps.orchestration
+        ? { ok: false as const, error: 'invalid' as const, message: 'A task id is required.' }
+        : url.endsWith('/cancel')
+          ? await this.deps.orchestration.cancelWorker(source, taskId)
+          : await this.deps.orchestration.archiveWorker(source, taskId);
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/workers/merge') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const targetBranch = typeof body.targetBranch === 'string' ? body.targetBranch : '';
+      const result = taskId && targetBranch && this.deps.orchestration
+        ? await this.deps.orchestration.requestWorkerMerge(source, taskId, targetBranch)
+        : { ok: false as const, error: 'invalid' as const, message: 'Task and target branch are required.' };
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/workers/complete') {
+      const runId = typeof body.runId === 'string' ? body.runId : '';
+      const result = runId && this.deps.orchestration
+        ? await this.deps.orchestration.completeRun(source, runId)
+        : { ok: false as const, error: 'invalid' as const, message: 'A run id is required.' };
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
+      return;
+    }
+    if (url === '/v1/worker/report') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const result = taskId && this.deps.orchestration
+        ? await this.deps.orchestration.reportWorker(source, taskId, body as unknown as WorkerReportInput)
+        : { ok: false as const, error: 'invalid' as const, message: 'A task id is required.' };
+      json(response, result.ok ? 200 : this.orchestrationStatus(result.error), result);
       return;
     }
     if (url === '/v1/list') {
@@ -496,6 +527,14 @@ export class AgentControlServer {
       if (sameSecret(capability.token, token)) return capability;
     }
     return null;
+  }
+
+  private orchestrationStatus(error: string): number {
+    if (error === 'invalid') return 400;
+    if (error === 'forbidden') return 403;
+    if (error === 'not-found') return 404;
+    if (error === 'unavailable') return 503;
+    return 409;
   }
 
   private enter(capability: Capability): boolean {

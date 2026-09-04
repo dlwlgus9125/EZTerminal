@@ -10,6 +10,11 @@ import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
   type AgentCoordinationSnapshot,
 } from '../../src/shared/agent-coordination';
+import {
+  EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
+  orchestrationWorkerActivityIds,
+  type AgentOrchestrationSnapshot,
+} from '../../src/shared/agent-orchestration';
 import { countAgentAttention } from '../../src/shared/agent-attention';
 import { observationalIntervalMs } from '../../src/shared/resource-profile';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
@@ -165,6 +170,9 @@ export function MobileWorkspace({
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
   const [agentCoordinationSnapshot, setAgentCoordinationSnapshot] = useState<AgentCoordinationSnapshot>(
     EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  );
+  const [agentOrchestrationSnapshot, setAgentOrchestrationSnapshot] = useState<AgentOrchestrationSnapshot>(
+    EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   );
   const [connected, setConnected] = useState(false);
   const [authGeneration, setAuthGeneration] = useState(0);
@@ -341,6 +349,19 @@ export function MobileWorkspace({
     };
     const unsubscribe = transport.onAgentActivitySnapshot(apply);
     void transport.getAgentActivitySnapshot().then(apply).catch(() => undefined);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [transport]);
+
+  useEffect(() => {
+    let alive = true;
+    const apply = (snapshot: AgentOrchestrationSnapshot): void => {
+      if (alive) setAgentOrchestrationSnapshot(snapshot);
+    };
+    const unsubscribe = transport.onAgentOrchestrationSnapshot(apply);
+    void transport.getAgentOrchestrationSnapshot().then(apply).catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe();
@@ -612,7 +633,15 @@ export function MobileWorkspace({
     });
   }, [adoptAndOpenTab]);
 
-  const agentAttention = countAgentAttention(agentSnapshot);
+  const orchestrationWorkerIds = useMemo(
+    () => orchestrationWorkerActivityIds(agentOrchestrationSnapshot),
+    [agentOrchestrationSnapshot],
+  );
+  const userFacingAgentSnapshot = useMemo<AgentActivitySnapshot>(() => ({
+    ...agentSnapshot,
+    items: agentSnapshot.items.filter((item) => !orchestrationWorkerIds.has(item.id)),
+  }), [agentSnapshot, orchestrationWorkerIds]);
+  const agentAttention = countAgentAttention(userFacingAgentSnapshot);
 
   // Swipe-between-tabs used to live on the tab strip the session sheet
   // replaced. Keeping it on the terminal header preserves the gesture (and
@@ -762,7 +791,7 @@ export function MobileWorkspace({
         desktopControlSupported={transport.supportsDesktopControl}
         sessions={sessionRows}
         activeSessionId={tabsState.activeSessionId}
-        agentSnapshot={agentSnapshot}
+        agentSnapshot={userFacingAgentSnapshot}
         activeRuns={activeRuns}
         roundTripMs={roundTripMs}
         agentAttention={agentAttention}
@@ -782,6 +811,7 @@ export function MobileWorkspace({
         componentProps={{
           snapshot: agentSnapshot,
           coordinationSnapshot: agentCoordinationSnapshot,
+          orchestrationSnapshot: agentOrchestrationSnapshot,
           disconnected: !connected,
           onBack: () => selectTab('home'),
           onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),
@@ -925,6 +955,8 @@ export function MobileWorkspace({
                   quickCommandsSupported={transport.supportsRemoteQuickCommands}
                   connected={connected}
                   agentBootstrap={agentBootstraps.get(entry.sessionId)}
+                  agentActivitySnapshot={agentSnapshot}
+                  agentOrchestrationSnapshot={agentOrchestrationSnapshot}
                   onSessionDead={() => handleSessionDead(entry.sessionId)}
                   onCwdChange={handleCwdChange}
                   onReadGitStatus={(directory) => transport.getGitStatus(directory)}

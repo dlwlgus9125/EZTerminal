@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [1.0.46] - 2026-09-04
+
+### Added
+
+- Added Project Lead collaboration with a single user-facing lead, bounded
+  Codex/Claude worker profiles, explicit permission modes, structured worker
+  reports, and managed merge review.
+- Added the same collaboration status and policy review surfaces to the Android
+  companion without exposing desktop-only host configuration mutations.
+
+### Fixed
+
+- Made unavailable Codex and Claude worker profiles explain that EZTerminal
+  lifecycle integration is required and offer an explicit in-place
+  `Enable integration` action in Project collaboration settings.
+- Renamed the ambiguous Agent integration `Install` and `Remove` actions so an
+  already-installed CLI is no longer mistaken for a missing application.
+
+Remote protocol v11 carries the orchestration read model and collaboration
+policy writes. See [1.0.46 release notes](docs/release/release-notes-1.0.46.md).
+
 ## [1.0.45] - 2026-09-02
 
 ### Fixed

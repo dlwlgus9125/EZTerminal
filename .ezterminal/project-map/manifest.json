@@ -25,9 +25,9 @@
         { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
       ],
       "review": {
-        "inputDigest": "sha256:d495574537c26824a5f08c5817974aa510bcc8367ad2536f59864a4eb7208aa0",
-        "decision": "map-updated",
-        "reason": "The supervisor accepts late authenticated RPC readiness, migrates detected retired workspace state behind verified backup and released gateway ownership, and mobile OpenClaw chat follows the current device-identity contract instead of a retired insecure-auth setting."
+        "inputDigest": "sha256:88f588fb6da09c3942e40351f1fd09114db190413ce85dbabe6bc14b989cd9bf",
+        "decision": "no-semantic-impact",
+        "reason": "Lead orchestration, signed adapters, and remote Project policy writes stay inside the represented renderer, preload, Electron-main, and authenticated-remote trust boundaries; the architecture-level path remains unchanged."
       }
     },
     {
@@ -43,9 +43,9 @@
         { "rootAlias": "app", "relativePath": "src/interpreter/pty-session.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:ae4dcae0ccd468889a1a46d7b573848b6fdc33e9444698dd2bb7828f839fbae3",
+        "inputDigest": "sha256:d885a2d45e076c145885162cb38773e39d90ec4ffb230cf62da6e00d9d10ef19",
         "decision": "no-semantic-impact",
-        "reason": "Team activation adds another guarded Agent brief dispatch through the existing ready-aware BlockController path; ordinary shell command correlation and MessagePort handoff are unchanged."
+        "reason": "The Lead worker strip adds a main-owned status projection beside the terminal while ordinary shell command correlation, MessagePort handoff, PTY streaming, and acknowledgement flow remain unchanged."
       }
     },
     {
@@ -61,9 +61,9 @@
         { "rootAlias": "app", "relativePath": "src/main/main.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:7cfaed7d0b2c7526e57dddc3c97710915093a76c59946f01deb6ae6f99d043ec",
+        "inputDigest": "sha256:e75a999c60ee68770a899c62eed9628e0c38b64fb2e46e59077aebd296233a13",
         "decision": "no-semantic-impact",
-        "reason": "Mobile OpenClaw ticket admission changed without altering restore, checkpoint, replacement, pane, or window lifecycle transitions."
+        "reason": "Lead workers and adapter services join the bounded shutdown drain, while restore, checkpoint, renderer replacement, pane, and window lifecycle transitions remain unchanged."
       }
     },
     {
@@ -78,9 +78,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:72713b1dde786ceb826f8f840cdb4a5d7dfab4f3331736f47315376f8d699e0c",
+        "inputDigest": "sha256:9dc4fb976fbf26381891277a85307deb1c621e0c06971be11490a90027aeaeb5",
         "decision": "no-semantic-impact",
-        "reason": "OpenClaw lifecycle receipts and control snapshots reuse the same authenticated, size-capped WebSocket boundary; the represented terminal and desktop-control flows are unchanged."
+        "reason": "Protocol v11 adds correlated mobile Project coordination writes on the same authenticated, size-capped WebSocket boundary; the represented terminal and desktop-control flows are unchanged."
       }
     },
     {
@@ -103,9 +103,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:7af1c77de5fe7a1a8162302342e212f061d929bf7cf8c038f7449873e51ffb29",
+        "inputDigest": "sha256:acbaa7fb7dec2eb75d1ad7d05ff84c0817aef5a048c3cc6b35a4d1c1f1386f85",
         "decision": "no-semantic-impact",
-        "reason": "This map specifically models human-approved Project Map delivery. Team planning adds adjacent Agent launch and loopback routes but does not change the represented Project Map authoring, validation, approval, or export workflow."
+        "reason": "Lead orchestration adds adjacent depth-one worker routes, structured reports, and a compact terminal strip without changing the represented human-approved Project Map authoring, validation, approval, or export workflow."
       }
     }
   ]

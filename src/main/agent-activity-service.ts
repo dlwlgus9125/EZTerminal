@@ -75,6 +75,7 @@ interface MutableActivity {
   hookSeen: boolean;
   providerSessionIds: Set<string>;
   approval: AgentApproval | null;
+  readonly orchestrationManaged: boolean;
 }
 
 /** A provider hook parked on this activity, waiting to be told what to do. */
@@ -108,6 +109,7 @@ function publicActivity(record: MutableActivity): AgentActivity {
     live: record.live,
     interactiveReady: record.interactiveReady,
     stateSource: record.stateSource,
+    ...(record.orchestrationManaged ? { orchestrationManaged: true } : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...(record.approval ? { approval: record.approval } : {}),
@@ -409,6 +411,94 @@ export class AgentActivityService {
     return { ok: true };
   }
 
+  /** Register a signed ACP adapter process in the same user-visible activity
+   * model as built-in providers. The caller owns the process and lifecycle. */
+  registerExternalActivity(input: {
+    readonly sessionId: string;
+    readonly runId: string;
+    readonly providerLabel: string;
+    readonly cwd: string;
+  }): AgentActivity {
+    if (this.disposed || this.byRun.has(input.runId)) throw new Error('External Agent activity already exists.');
+    const now = this.now();
+    const record: MutableActivity = {
+      id: this.newId(),
+      sessionId: input.sessionId,
+      runId: input.runId,
+      provider: 'generic',
+      providerLabel: input.providerLabel.slice(0, MAX_AGENT_PROVIDER_LABEL_LENGTH),
+      cwd: input.cwd,
+      state: 'starting',
+      stateSeq: 1,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'process',
+      createdAt: now,
+      updatedAt: now,
+      port: null,
+      ended: false,
+      hookSeen: false,
+      providerSessionIds: new Set(),
+      approval: null,
+      orchestrationManaged: true,
+    };
+    this.records.set(record.id, record);
+    this.byRun.set(record.runId, record);
+    this.activeBySessionProvider.set(providerKey(record.provider, record.sessionId), record);
+    this.publish();
+    this.publishObservation(record);
+    return publicActivity(record);
+  }
+
+  setExternalActivityState(activityId: string, state: AgentState): boolean {
+    const record = this.records.get(activityId);
+    if (!record?.orchestrationManaged || record.ended) return false;
+    this.setState(record, state, 'process');
+    return true;
+  }
+
+  endExternalActivity(activityId: string, error = false): boolean {
+    const record = this.records.get(activityId);
+    if (!record?.orchestrationManaged || record.ended) return false;
+    this.finish(record, error ? 'error' : 'done', false);
+    return true;
+  }
+
+  requestExternalApproval(
+    activityId: string,
+    toolName: string,
+    command?: string,
+  ): Promise<AgentDecision | null> {
+    const record = this.records.get(activityId);
+    if (!record?.orchestrationManaged || record.ended) return Promise.resolve(null);
+    const previous = this.pendingApprovals.get(record.id);
+    if (previous) this.releaseApproval(record, previous.approvalId, null, false);
+    const requestedAt = this.now();
+    const approvalId = this.newApprovalId();
+    record.approval = {
+      approvalId,
+      toolName: toolName.slice(0, 256),
+      ...(command ? { command: command.slice(0, 4_096) } : {}),
+      risk: classifyApprovalRisk(toolName, command),
+      pending: true,
+      requestedAt,
+      expiresAt: requestedAt + APPROVAL_GATE_WINDOW_MS,
+    };
+    const decision = new Promise<AgentDecision | null>((resolve) => {
+      const timer = setTimeout(
+        () => this.releaseApproval(record, approvalId, null, true),
+        APPROVAL_GATE_WINDOW_MS,
+      );
+      timer.unref?.();
+      this.pendingApprovals.set(record.id, { approvalId, settle: resolve, timer });
+    });
+    this.setState(record, 'blocked', 'process');
+    return decision.then((value) => {
+      if (!record.ended) this.setState(record, 'working', 'process');
+      return value;
+    });
+  }
+
   /** Bounded semantic terminal read. This deliberately does not mark completion seen. */
   readActivity(activityId: string, lines = 80): Promise<PtyTextReadResult> {
     const record = this.records.get(activityId);
@@ -534,6 +624,7 @@ export class AgentActivityService {
       hookSeen: false,
       providerSessionIds: new Set(),
       approval: null,
+      orchestrationManaged: false,
     };
     this.records.set(record.id, record);
     this.byRun.set(record.runId, record);

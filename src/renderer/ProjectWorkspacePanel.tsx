@@ -52,7 +52,7 @@ interface ProjectWorkspacePanelProps {
     readonly workspaceId: string;
   }) => void;
   readonly onManage: () => void;
-  readonly onOpenTeam?: () => void;
+  readonly onConfigureCollaboration?: () => void;
   /** Optional controlled state seam for App-owned sidebar restoration. */
   readonly explorerState?: ProjectExplorerState;
   readonly onExplorerStateChange?: (state: ProjectExplorerState) => void;
@@ -612,7 +612,7 @@ export function ProjectWorkspacePanel({
   onNewSession,
   onOpenProjectMap,
   onManage,
-  onOpenTeam,
+  onConfigureCollaboration,
   explorerState,
   onExplorerStateChange,
 }: ProjectWorkspacePanelProps): JSX.Element {
@@ -754,10 +754,10 @@ export function ProjectWorkspacePanel({
         />
         <IconButton
           icon={Users}
-          aria-label={t('agentTeams.runTeam')}
-          disabled={!onOpenTeam}
-          onClick={onOpenTeam}
-          data-testid="project-workspace-open-team"
+          aria-label={t('collaboration.configureProject')}
+          disabled={!onConfigureCollaboration}
+          onClick={onConfigureCollaboration}
+          data-testid="project-workspace-configure-collaboration"
         />
         <IconButton
           icon={Settings}

@@ -4,13 +4,13 @@ import path from 'node:path';
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
   MAX_AGENT_TRANSCRIPT_PAGE_SIZE,
+  type AgentFreshLaunchOptions,
   type AgentTranscriptEntry,
   type AgentTranscriptPage,
   type AgentTranscriptTurn,
 } from '../shared/agent-history';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
-import type { AgentPersonaLaunch } from '../shared/agent-team';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
@@ -345,7 +345,7 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     };
   }
 
-  buildNewCommand(roots: readonly string[], launch?: AgentPersonaLaunch): AgentResumeCommand | null {
+  buildNewCommand(roots: readonly string[], launch?: AgentFreshLaunchOptions): AgentResumeCommand | null {
     const [primaryRoot, ...additionalRoots] = roots;
     if (!primaryRoot || (launch && launch.provider !== 'codex')) return null;
     return {

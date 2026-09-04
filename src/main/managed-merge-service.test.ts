@@ -29,6 +29,7 @@ interface MergeFixture {
 
 async function createFixture(options: {
   readonly mutateCandidateDuringValidation?: boolean;
+  readonly validationExitCode?: number;
 } = {}): Promise<MergeFixture> {
   const root = mkdtempSync(path.join(os.tmpdir(), 'ez-managed-merge-'));
   const repository = path.join(root, 'repository');
@@ -107,7 +108,7 @@ async function createFixture(options: {
         writeFileSync(path.join(_cwd, 'validation-mutation.txt'), 'not part of the candidate commit\n', 'utf8');
       }
       return {
-        exitCode: 0,
+        exitCode: options.validationExitCode ?? 0,
         durationMs: 25,
         outputTail: 'transient validation output',
         outputTruncated: false,
@@ -248,6 +249,53 @@ describe('ManagedMergeService', () => {
     } finally {
       await fixture.service.dispose();
       rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('allows mobile failed-validation review while requiring a reason only for override approval', async () => {
+    const deniedFixture = await createFixture({ validationExitCode: 1 });
+    try {
+      const requested = await deniedFixture.service.requestForActivity('activity-1', 'main');
+      if (!requested.ok) throw new Error(requested.message);
+      const awaiting = await waitForDecision(deniedFixture.service, requested.value.requestId);
+      expect(awaiting.state).toBe('override-required');
+      await expect(deniedFixture.service.decide({
+        requestId: awaiting.requestId,
+        revision: awaiting.revision,
+        decision: 'deny',
+        actor: 'mobile',
+      })).resolves.toMatchObject({ ok: true, value: { state: 'denied' } });
+    } finally {
+      await deniedFixture.service.dispose();
+      rmSync(deniedFixture.root, { recursive: true, force: true });
+    }
+
+    const approvedFixture = await createFixture({ validationExitCode: 1 });
+    try {
+      const requested = await approvedFixture.service.requestForActivity('activity-1', 'main');
+      if (!requested.ok) throw new Error(requested.message);
+      const awaiting = await waitForDecision(approvedFixture.service, requested.value.requestId);
+      await expect(approvedFixture.service.decide({
+        requestId: awaiting.requestId,
+        revision: awaiting.revision,
+        decision: 'approve',
+        actor: 'mobile',
+      })).resolves.toMatchObject({ ok: false, error: 'invalid' });
+      await expect(approvedFixture.service.decide({
+        requestId: awaiting.requestId,
+        revision: awaiting.revision,
+        decision: 'approve',
+        actor: 'mobile',
+        overrideReason: 'Reviewed failing validation on mobile.',
+      })).resolves.toMatchObject({ ok: true, value: { state: 'merged' } });
+      expect(approvedFixture.store.listAudit('project-1')).toMatchObject([{
+        decisionActor: 'mobile',
+        overrideReason: 'Reviewed failing validation on mobile.',
+        outcome: 'merged',
+      }]);
+    } finally {
+      await approvedFixture.service.dispose();
+      rmSync(approvedFixture.root, { recursive: true, force: true });
     }
   }, 30_000);
 

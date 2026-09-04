@@ -63,9 +63,10 @@ import type {
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import { dispatchProjectMapAgentRequest } from './project-map-agent-launch';
-import { activateAgentTeamMemberWhenObserved } from './agent-team-activation';
 import type { ProjectSessionTarget } from '../shared/project-workspace';
 import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
+import type { AgentOrchestrationSnapshot } from '../shared/agent-orchestration';
+import { LeadWorkersStrip } from './LeadWorkersStrip';
 
 // A TerminalPane is one independent shell surface: its own stack of command Blocks,
 // pinned prompt, and an authority-issued binding to a shell session. The host owns
@@ -154,11 +155,14 @@ interface TerminalPaneProps {
   readonly onManageQuickCommands?: (ownerDocument: Document) => void;
   /** The permission call the agent in THIS pane is parked on, if any. */
   readonly pendingApproval?: PaneApproval;
+  /** Pending permission calls for hidden depth-1 workers, keyed by activity. */
+  readonly workerApprovals?: ReadonlyMap<string, AgentApproval>;
   readonly onDecideApproval?: (
     activityId: string,
     approvalId: string,
     decision: AgentDecision,
   ) => Promise<AgentDecisionResult>;
+  readonly orchestrationSnapshot?: AgentOrchestrationSnapshot;
 }
 
 /** The pending permission call for the agent running in a given pane, so the
@@ -187,7 +191,9 @@ export function TerminalPane({
   quickCommands = [],
   onManageQuickCommands,
   pendingApproval,
+  workerApprovals,
   onDecideApproval,
+  orchestrationSnapshot,
 }: TerminalPaneProps): JSX.Element {
   const { t } = useAppTranslation();
   const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
@@ -693,45 +699,15 @@ export function TerminalPane({
         let launchTarget = bootstrap.target;
         let launchRevision = bootstrap.revision;
         if (bootstrapRetryToken > 0) {
-          if (bootstrap.teamMemberRequest) {
-            const desktop = window.ezterminalDesktop;
-            const snapshot = await desktop?.getAgentTeamSnapshot();
-            const teamRun = snapshot?.runs.find(
-              (candidate) => candidate.runId === bootstrap.teamMemberRequest?.runId,
-            );
-            const slot = teamRun?.slots.find(
-              (candidate) => candidate.personaId === bootstrap.teamMemberRequest?.personaId,
-            );
-            if (!desktop || !teamRun || !slot?.branch || !slot.rootId || !slot.workspaceId
-              || !slot.worktreeId || !slot.worktreePath) {
-              throw new Error('The Team worktree is no longer available for retry.');
-            }
-            const prepared = await desktop.prepareAgentTeamMemberLaunch({
-              ...bootstrap.teamMemberRequest,
-              expectedRevision: teamRun.revision,
-              target: bootstrap.target,
-              binding: {
-                branch: slot.branch,
-                rootId: slot.rootId,
-                workspaceId: slot.workspaceId,
-                worktreeId: slot.worktreeId,
-                worktreePath: slot.worktreePath,
-              },
-            });
-            if (!prepared.ok) throw new Error(prepared.message);
-            launchTarget = prepared.value.preparation.target;
-            launchRevision = prepared.value.preparation.revision;
-          } else {
-            const preparation = await window.ezterminal.prepareAgentLaunch(
-              bootstrap.target,
-              bootstrap.launcherId,
-            );
-            if (!preparation.ok) {
-              throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
-            }
-            launchTarget = preparation.target;
-            launchRevision = preparation.revision;
+          const preparation = await window.ezterminal.prepareAgentLaunch(
+            bootstrap.target,
+            bootstrap.launcherId,
+          );
+          if (!preparation.ok) {
+            throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
           }
+          launchTarget = preparation.target;
+          launchRevision = preparation.revision;
         }
         const result = await window.ezterminal.startAgentLaunch({
           target: launchTarget,
@@ -739,7 +715,6 @@ export function TerminalPane({
           sessionId: runSessionId,
           runId,
           revision: launchRevision,
-          ...(bootstrap.teamMemberRequest ? { teamMember: bootstrap.teamMemberRequest } : {}),
         });
         if (!result.ok) throw new Error(`Agent launch failed: ${result.reason}`);
       },
@@ -760,56 +735,7 @@ export function TerminalPane({
         setBlocks((previous) => previous.map((entry) =>
           entry.id === runId ? { ...entry, controller } : entry));
         if (bootstrap.kind === 'new-chat') {
-          if (bootstrap.teamMemberRequest) {
-            const teamMemberRequest = bootstrap.teamMemberRequest;
-            const desktop = window.ezterminalDesktop;
-            const startTeamActivation = (): void => {
-              if (!desktop) {
-                setResumeError('The Team Agent started, but desktop collaboration is unavailable.');
-                return;
-              }
-              projectMapDispatchAbortRef.current?.abort('retry');
-              const dispatchAbort = new AbortController();
-              projectMapDispatchAbortRef.current = dispatchAbort;
-              setResumeError(null);
-              void activateAgentTeamMemberWhenObserved(
-                {
-                  activate: (input) => desktop.activateAgentTeamMember(input),
-                  onActivitySnapshot: (listener) => window.ezterminal.onAgentActivitySnapshot(() => listener()),
-                },
-                { ...teamMemberRequest, sessionId: runSessionId },
-                dispatchAbort.signal,
-              ).then((activated) => {
-                if (projectMapDispatchAbortRef.current !== dispatchAbort) return;
-                controller.submitPtyWhenReady(activated.value.brief);
-                projectMapDispatchAbortRef.current = null;
-                projectMapDispatchRetryRef.current = null;
-                clearAgentTerminalBootstrap(panelId);
-              }).catch((error: unknown) => {
-                  if (projectMapDispatchAbortRef.current !== dispatchAbort || dispatchAbort.signal.aborted) return;
-                  projectMapDispatchAbortRef.current = null;
-                  const message = error instanceof Error
-                    ? error.message
-                    : 'The Team Agent started, but its approved brief could not be delivered.';
-                  setResumeError(message);
-                  void desktop.getAgentTeamSnapshot().then(async (snapshot) => {
-                    const run = snapshot.runs.find((candidate) => candidate.runId === teamMemberRequest.runId);
-                    const slot = run?.slots.find(
-                      (candidate) => candidate.personaId === teamMemberRequest.personaId,
-                    );
-                    if (!run || slot?.state !== 'launching' || slot.sessionId !== runSessionId) return;
-                    await desktop.failAgentTeamMember({
-                      ...teamMemberRequest,
-                      expectedRevision: run.revision,
-                      error: message.slice(0, 500),
-                    });
-                  }).catch(() => undefined);
-                  console.error('[renderer] Team Agent activation failed:', error);
-                });
-            };
-            projectMapDispatchRetryRef.current = startTeamActivation;
-            startTeamActivation();
-          } else if (!bootstrap.projectMapRequest) {
+          if (!bootstrap.projectMapRequest) {
             clearAgentTerminalBootstrap(panelId);
           } else if (bootstrap.provider !== 'codex' && bootstrap.provider !== 'claude') {
             setResumeError(t(
@@ -1374,6 +1300,15 @@ export function TerminalPane({
           onDismiss={handleDismiss}
         />
       </div>
+
+      {orchestrationSnapshot && (
+        <LeadWorkersStrip
+          snapshot={orchestrationSnapshot}
+          leadSessionId={sessionId}
+          approvalsByActivity={workerApprovals}
+          onDecideApproval={onDecideApproval}
+        />
+      )}
 
       {/* The same decision the Agent Hub offers, in the pane the agent is
           actually running in — asking someone to switch panels to answer a

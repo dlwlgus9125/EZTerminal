@@ -21,6 +21,8 @@ import {
 } from '../../src/shared/close-risk';
 import type { SessionSurfaceBinding } from '../../src/shared/session-surface';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
+import type { AgentActivitySnapshot } from '../../src/shared/agent';
+import type { AgentOrchestrationSnapshot } from '../../src/shared/agent-orchestration';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDirectoryStatus,
@@ -41,6 +43,7 @@ import {
   RunPortError,
 } from '../../src/renderer/run-port-broker';
 import { MobileActionSheet } from './MobileActionSheet';
+import { MobileLeadWorkersStrip } from './MobileLeadWorkersStrip';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { useMobileToast } from './MobileToast';
 import { TouchInputBar } from './TouchInputBar';
@@ -255,6 +258,8 @@ export function MobileSessionView({
   transport,
   surfaceBinding,
   agentBootstrap,
+  agentActivitySnapshot,
+  agentOrchestrationSnapshot,
   onSessionDead,
   onCwdChange,
   onCloseTab,
@@ -277,6 +282,9 @@ export function MobileSessionView({
   surfaceBinding?: SessionSurfaceBinding | null;
   /** One-shot Agent resume or project-new-chat launch for this rooted session. */
   agentBootstrap?: AgentTerminalBootstrap;
+  /** Lead-owned depth-1 workers associated with this terminal session. */
+  agentActivitySnapshot?: AgentActivitySnapshot;
+  agentOrchestrationSnapshot?: AgentOrchestrationSnapshot;
   onSessionDead?: () => void;
   /** Removes the local tab after its host surface transaction commits. */
   onCloseTab?: () => void;
@@ -1154,6 +1162,16 @@ export function MobileSessionView({
             {t('common.retry')}
           </button>
         </div>
+      )}
+
+      {transport && agentOrchestrationSnapshot && (
+        <MobileLeadWorkersStrip
+          snapshot={agentOrchestrationSnapshot}
+          activitySnapshot={agentActivitySnapshot}
+          leadSessionId={sessionId}
+          transport={transport}
+          connected={connected}
+        />
       )}
 
       <div

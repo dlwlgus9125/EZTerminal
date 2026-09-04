@@ -17,6 +17,7 @@ import {
   type OpenClawChatTicketResult,
   type RemoteBridgeOptions,
   type RemoteAgentCoordinationSource,
+  type RemoteAgentOrchestrationSource,
   type RemoteAgentSource,
   type RemoteAgentHistorySource,
   type RemoteFileSource,
@@ -59,7 +60,17 @@ import type {
   OpenClawStatus,
 } from '../shared/openclaw';
 import type { AgentActivitySnapshot, AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
-import type { AgentCoordinationSnapshot, ManagedMergeRequest } from '../shared/agent-coordination';
+import type {
+  AgentCoordinationSnapshot,
+  AgentProjectCoordinationInput,
+  ManagedMergeRequest,
+} from '../shared/agent-coordination';
+import {
+  DEFAULT_COLLABORATION_LIMITS,
+  DEFAULT_COLLABORATION_MERGE_POLICY,
+  type AgentOrchestrationSnapshot,
+  type CollaborationPolicy,
+} from '../shared/agent-orchestration';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
 import type { WorktreeRequest } from '../shared/worktree';
 import type { SessionSurfaceBinding } from '../shared/session-surface';
@@ -1189,6 +1200,18 @@ async function openRemoteOwner(
 class FakeAgentCoordinationSource implements RemoteAgentCoordinationSource {
   snapshot: AgentCoordinationSnapshot;
   readonly markSeen = vi.fn(() => true);
+  readonly saveProject = vi.fn(async (input: AgentProjectCoordinationInput) => ({
+    ok: true as const,
+    value: {
+      projectId: input.projectId,
+      goal: input.goal,
+      defaultTargetBranch: input.defaultTargetBranch,
+      validationCommands: input.validationCommands,
+      configRevision: (input.expectedRevision ?? 0) + 1,
+      participants: [],
+      updatedAt: 40,
+    },
+  }));
   readonly decideManagedMerge = vi.fn(async () => ({
     ok: true as const,
     value: this.snapshot.mergeRequests[0]!,
@@ -1215,6 +1238,80 @@ class FakeAgentCoordinationSource implements RemoteAgentCoordinationSource {
   }
 
   emit(snapshot: AgentCoordinationSnapshot): void {
+    this.snapshot = snapshot;
+    for (const listener of this.listeners) listener(snapshot);
+  }
+
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
+}
+
+class FakeAgentOrchestrationSource implements RemoteAgentOrchestrationSource {
+  readonly policy: CollaborationPolicy = {
+    schemaVersion: 1,
+    projectId: 'project-1',
+    enabled: true,
+    permissionMode: 'ask',
+    allowedWorkerProfileIds: ['profile-1'],
+    limits: DEFAULT_COLLABORATION_LIMITS,
+    mergePolicy: DEFAULT_COLLABORATION_MERGE_POLICY,
+    revision: 1,
+    updatedAt: 1,
+  };
+  snapshot: AgentOrchestrationSnapshot = {
+    revision: 1,
+    providers: [{ providerId: 'builtin:codex', kind: 'builtin', displayName: 'Codex' }],
+    profiles: [{
+      profileId: 'profile-1',
+      providerId: 'builtin:codex',
+      launcherId: 'codex',
+      name: 'Codex worker',
+      description: 'Read and write worker',
+      permissionMode: 'ask',
+      capabilities: ['worker', 'read', 'write', 'verify'],
+      available: true,
+      revision: 1,
+    }],
+    policies: [this.policy],
+    runs: [],
+    events: [],
+    migration: { required: false, catalogItemCount: 0, runCount: 0 },
+  };
+  readonly savePolicy = vi.fn(async () => ({ ok: true as const, value: this.policy }));
+  readonly cancelWorker = vi.fn(async () => ({
+    ok: false as const,
+    error: 'not-found' as const,
+    message: 'Worker task not found.',
+  }));
+  readonly archiveWorker = vi.fn(async () => ({
+    ok: false as const,
+    error: 'not-found' as const,
+    message: 'Worker task not found.',
+  }));
+  readonly stopRun = vi.fn(async () => ({
+    ok: false as const,
+    error: 'not-found' as const,
+    message: 'Lead run not found.',
+  }));
+  readonly confirmLegacyMigration = vi.fn(async () => ({
+    required: false,
+    catalogItemCount: 0,
+    runCount: 0,
+    confirmedAt: 10,
+  }));
+  private readonly listeners = new Set<(snapshot: AgentOrchestrationSnapshot) => void>();
+
+  getSnapshot(): AgentOrchestrationSnapshot {
+    return this.snapshot;
+  }
+
+  onSnapshot(listener: (snapshot: AgentOrchestrationSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(snapshot: AgentOrchestrationSnapshot): void {
     this.snapshot = snapshot;
     for (const listener of this.listeners) listener(snapshot);
   }
@@ -3562,6 +3659,33 @@ describe('RemoteBridge — Agent coordination v8', () => {
       kind: 'agent-coordination-snapshot',
       requestId: 'coord-1',
     }));
+    const projectInput = {
+      projectId: 'project-1',
+      goal: 'Ship mobile parity',
+      defaultTargetBranch: 'main',
+      validationCommands: [{
+        id: 'unit',
+        name: 'Unit tests',
+        command: 'pnpm test:unit',
+        timeoutMs: 300_000,
+      }],
+      expectedRevision: 0,
+    };
+    ws.clientSend({
+      kind: 'agent-coordination-project-save',
+      requestId: 'project-save-1',
+      input: projectInput,
+    });
+    await flush();
+    expect(source.saveProject).toHaveBeenCalledWith(projectInput);
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-coordination-project-save-reply',
+      requestId: 'project-save-1',
+      result: expect.objectContaining({
+        ok: true,
+        value: expect.objectContaining({ projectId: 'project-1', configRevision: 1 }),
+      }),
+    });
     ws.clientSend({ kind: 'agent-seen', requestId: 'seen-1', activityId: 'activity-1', stateSeq: 4 });
     expect(source.markSeen).toHaveBeenCalledWith('activity-1', 4);
     expect(ws.sent).toContainEqual({ kind: 'agent-seen-reply', requestId: 'seen-1', marked: true });
@@ -3572,6 +3696,7 @@ describe('RemoteBridge — Agent coordination v8', () => {
       mergeRequestId: 'merge-1',
       revision: 4,
       decision: 'approve',
+      overrideReason: 'Reviewed on mobile.',
     });
     await flush();
     expect(source.decideManagedMerge).toHaveBeenCalledWith({
@@ -3579,6 +3704,7 @@ describe('RemoteBridge — Agent coordination v8', () => {
       revision: 4,
       decision: 'approve',
       actor: 'mobile',
+      overrideReason: 'Reviewed on mobile.',
     });
     const reply = ws.sent.find((message) => (
       message.kind === 'managed-merge-decision-reply' && message.requestId === 'decision-1'
@@ -3594,6 +3720,90 @@ describe('RemoteBridge — Agent coordination v8', () => {
       decision: 'approve',
     });
     expect(source.decideManagedMerge).toHaveBeenCalledTimes(1);
+    ws.close();
+    expect(source.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — Lead orchestration v10', () => {
+  it('pushes snapshots and correlates policy and worker actions', async () => {
+    const source = new FakeAgentOrchestrationSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentOrchestrationSource: source });
+    await authed(ws, options);
+
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-orchestration-snapshot',
+      snapshot: source.snapshot,
+    });
+    expect(source.listenerCount).toBe(1);
+
+    source.emit({ ...source.snapshot, revision: 2 });
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'agent-orchestration-snapshot',
+      snapshot: expect.objectContaining({ revision: 2 }),
+    }));
+
+    ws.clientSend({ kind: 'agent-orchestration-snapshot-get', requestId: 'orchestration-1' });
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'agent-orchestration-snapshot',
+      requestId: 'orchestration-1',
+      snapshot: expect.objectContaining({ revision: 2 }),
+    }));
+
+    const input = {
+      projectId: 'project-1',
+      enabled: true,
+      permissionMode: 'ask' as const,
+      allowedWorkerProfileIds: ['profile-1'],
+      expectedRevision: 1,
+    };
+    ws.clientSend({ kind: 'agent-collaboration-policy-save', requestId: 'policy-1', input });
+    await flush();
+    expect(source.savePolicy).toHaveBeenCalledWith(input);
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-collaboration-policy-save-reply',
+      requestId: 'policy-1',
+      result: { ok: true, value: source.policy },
+    });
+
+    ws.clientSend({
+      kind: 'agent-orchestration-action',
+      requestId: 'cancel-1',
+      action: 'cancel-worker',
+      runId: 'run-1',
+      taskId: 'task-1',
+    });
+    ws.clientSend({
+      kind: 'agent-orchestration-action',
+      requestId: 'stop-1',
+      action: 'stop-run',
+      runId: 'run-1',
+    });
+    await flush();
+    expect(source.cancelWorker).toHaveBeenCalledWith('run-1', 'task-1');
+    expect(source.stopRun).toHaveBeenCalledWith('run-1');
+
+    ws.clientSend({ kind: 'agent-legacy-migration-confirm', requestId: 'migration-1' });
+    await flush();
+    expect(source.confirmLegacyMigration).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-legacy-migration-confirm-reply',
+      requestId: 'migration-1',
+      result: {
+        ok: true,
+        value: { required: false, catalogItemCount: 0, runCount: 0, confirmedAt: 10 },
+      },
+    });
+
+    ws.clientSend({
+      kind: 'agent-orchestration-action',
+      requestId: 'invalid-1',
+      action: 'archive-worker',
+      runId: 'run-1',
+    });
+    expect(source.archiveWorker).not.toHaveBeenCalled();
+
     ws.close();
     expect(source.listenerCount).toBe(0);
   });

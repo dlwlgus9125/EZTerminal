@@ -719,11 +719,7 @@ function AgentCoordinationFixture(): JSX.Element {
         omissions: [],
       })}
       onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS}
-      onSendPrompt={async () => ({ ok: true })}
-      onLeaveCollaboration={async () => true}
-      onRequestManagedMerge={async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! })}
       onDecideManagedMerge={async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! })}
-      onGrantNextManagedMerge={async () => ({ ok: true, value: { expiresAt: NOW + 3_600_000 } })}
       onLaunchAgent={() => undefined}
       onOpenAgentSettings={() => undefined}
     />

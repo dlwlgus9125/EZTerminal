@@ -171,8 +171,12 @@ export class AgentCoordinationService {
     input: AgentParticipantInput,
   ): Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string }>> {
     const activity = this.deps.activities.getSnapshot().items.find((item) => item.id === input.activityId);
-    if (!activity || !activity.live || (activity.provider !== 'codex' && activity.provider !== 'claude')) {
-      return { ok: false, error: 'not-found', message: 'Only a live Codex or Claude activity can join.' };
+    if (!activity || !activity.live || (
+      activity.provider !== 'codex'
+      && activity.provider !== 'claude'
+      && !activity.orchestrationManaged
+    )) {
+      return { ok: false, error: 'not-found', message: 'Only a live integrated Agent activity can join.' };
     }
     const alias = input.alias.trim();
     const role = input.role.trim();

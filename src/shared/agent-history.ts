@@ -11,6 +11,29 @@ import type { ProjectMapAgentLaunchRequest } from './project-map';
 export type AgentHistoryProvider = 'codex' | 'claude';
 export type AgentProjectLauncherProvider = AgentHistoryProvider | 'generic';
 
+/** Validated options for launching a fresh built-in Agent process. */
+export type AgentFreshLaunchOptions =
+  | {
+      readonly provider: 'codex';
+      readonly model?: string;
+      readonly sandbox: 'read-only' | 'workspace-write';
+    }
+  | {
+      readonly provider: 'claude';
+      readonly model?: string;
+      readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+      readonly permissionMode: 'plan' | 'manual' | 'acceptEdits';
+    };
+
+export interface AgentLauncherCapabilities {
+  readonly provider: 'codex' | 'claude';
+  readonly available: boolean;
+  readonly supportsModel: boolean;
+  readonly effortValues: readonly ('low' | 'medium' | 'high' | 'xhigh' | 'max')[];
+  readonly permissionValues: readonly ('read-only' | 'workspace-write' | 'plan' | 'manual' | 'acceptEdits')[];
+  readonly modelAvailability: 'launch-time' | 'unavailable';
+}
+
 export interface AgentProjectSummary {
   readonly projectId: string;
   readonly name: string;
@@ -179,8 +202,6 @@ export interface AgentLaunchStartRequest {
   readonly sessionId: string;
   readonly runId: string;
   readonly revision: string;
-  /** Main resolves the snapshotted Persona launch policy from this opaque Team reference. */
-  readonly teamMember?: AgentTeamLaunchReference;
 }
 
 export type AgentLaunchStartResult =
@@ -207,13 +228,6 @@ export interface AgentLaunchBootstrap {
   readonly revision: string;
   /** Runtime-only Project Map work handed to this fresh Agent session. */
   readonly projectMapRequest?: ProjectMapAgentLaunchRequest;
-  /** Runtime-only Team handoff. Main activates collaboration before this brief is submitted. */
-  readonly teamMemberRequest?: AgentTeamLaunchReference;
-}
-
-export interface AgentTeamLaunchReference {
-  readonly runId: string;
-  readonly personaId: string;
 }
 
 /** Protocol-v5 compatibility shape. New callers use AgentLaunchPreparation. */

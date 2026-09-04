@@ -629,31 +629,33 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('agent-projects:remove', projectId),
   selectAgentProjectFolders: (multiple = true) =>
     ipcRenderer.invoke('agent-projects:select-folders', multiple),
-  getAgentTeamSnapshot: () => ipcRenderer.invoke('agent-teams:get-snapshot'),
-  onAgentTeamSnapshot: (listener): (() => void) => {
+  getAgentOrchestrationSnapshot: () => ipcRenderer.invoke('agents:get-orchestration-snapshot'),
+  onAgentOrchestrationSnapshot: (listener): (() => void) => {
     const handler = (
       _event: unknown,
-      snapshot: import('../shared/agent-team').AgentTeamDesktopSnapshot,
+      snapshot: import('../shared/agent-orchestration').AgentOrchestrationSnapshot,
     ): void => listener(snapshot);
-    ipcRenderer.on('agent-teams:snapshot', handler);
-    return () => ipcRenderer.removeListener('agent-teams:snapshot', handler);
+    ipcRenderer.on('agents:orchestration-snapshot', handler);
+    return () => ipcRenderer.removeListener('agents:orchestration-snapshot', handler);
   },
-  saveAgentPersona: (input) => ipcRenderer.invoke('agent-teams:save-persona', input),
-  deleteAgentPersona: (personaId, expectedRevision) => (
-    ipcRenderer.invoke('agent-teams:delete-persona', personaId, expectedRevision)
-  ),
-  createAgentStarterTeam: (input) => ipcRenderer.invoke('agent-teams:create-starter-team', input),
-  saveAgentTeam: (input) => ipcRenderer.invoke('agent-teams:save-team', input),
-  deleteAgentTeam: (teamId, expectedRevision) => (
-    ipcRenderer.invoke('agent-teams:delete-team', teamId, expectedRevision)
-  ),
-  createAgentTeamRun: (input) => ipcRenderer.invoke('agent-teams:create-run', input),
-  approveAgentTeamPlan: (input) => ipcRenderer.invoke('agent-teams:approve-plan', input),
-  decideAgentTeamRun: (input) => ipcRenderer.invoke('agent-teams:decide-run', input),
-  prepareAgentTeamMemberLaunch: (input) => ipcRenderer.invoke('agent-teams:prepare-member-launch', input),
-  activateAgentTeamMember: (input) => ipcRenderer.invoke('agent-teams:activate-member', input),
-  failAgentTeamMember: (input) => ipcRenderer.invoke('agent-teams:fail-member', input),
-
+  saveCollaborationPolicy: (input) => ipcRenderer.invoke('agents:save-collaboration-policy', input),
+  confirmLegacyTeamMigration: () => ipcRenderer.invoke('agents:confirm-team-migration'),
+  cancelOrchestrationWorker: (runId, taskId) => ipcRenderer.invoke('agents:cancel-worker', runId, taskId),
+  archiveOrchestrationWorker: (runId, taskId) => ipcRenderer.invoke('agents:archive-worker', runId, taskId),
+  stopOrchestrationRun: (runId) => ipcRenderer.invoke('agents:stop-orchestration-run', runId),
+  getAgentAdapterSnapshot: () => ipcRenderer.invoke('agents:get-adapter-snapshot'),
+  onAgentAdapterSnapshot: (listener): (() => void) => {
+    const handler = (
+      _event: unknown,
+      snapshot: import('../shared/agent-adapter').AgentAdapterSnapshot,
+    ): void => listener(snapshot);
+    ipcRenderer.on('agents:adapter-snapshot', handler);
+    return () => ipcRenderer.removeListener('agents:adapter-snapshot', handler);
+  },
+  selectAgentAdapterBundle: () => ipcRenderer.invoke('agents:select-adapter-bundle'),
+  installAgentAdapter: (input) => ipcRenderer.invoke('agents:install-adapter', input),
+  setAgentAdapterEnabled: (adapterId, enabled) => ipcRenderer.invoke('agents:set-adapter-enabled', adapterId, enabled),
+  removeAgentAdapter: (adapterId) => ipcRenderer.invoke('agents:remove-adapter', adapterId),
   // OpenClaw management (openclaw-management M1): thin invoke/send wrappers —
   // main's OpenClawService is the sole authority, same shape as the file
   // explorer/settings wrappers above.

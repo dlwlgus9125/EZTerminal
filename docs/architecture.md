@@ -212,13 +212,12 @@ Codex/Claude의 Project 참여, 주소 가능한 session control과 검증된 �
 머지는 [`agent-collaboration.md`](design/agent-collaboration.md)가 소유한다. 참여하지 않은
 일반 terminal과 generic Agent는 이 협업 capability를 받지 않는다.
 
-Persona/Team catalog와 Team run도 Main의 `AgentTeamService`가 revisioned snapshot으로
-소유한다. Renderer는 validated IPC로 설정과 사람의 계획 결정을 전달하고, Planner는
-인증된 loopback Agent control 경로로 bounded plan만 제출한다. provider process 시작과
-brief 전달은 기존 Agent launch·PTY 경계를 재사용한다. 자세한 실행 순서, 저장 제외 항목과
-desktop-only 범위는 같은 협업 계약이 소유한다.
-Starter Team 생성은 Main의 한 catalog write로만 commit되며, run은 Project 장기 목적과
-사용자가 확정한 실행 결과·완료 조건을 서로 다른 frozen field로 보존한다.
+Lead 협업의 Project 정책, depth-1 worker DAG, event 전달과 exact-revision 검증은 Main의
+`AgentOrchestrationService`가 revisioned snapshot으로 소유한다. Built-in worker는 기존
+Agent launch·PTY 경계를 재사용하고, 서명된 설치형 provider는 ACP v1 stdio runtime을 사용한다.
+Renderer와 Android는 상태를 추정하지 않으며 같은 snapshot과 중지·보관 action을 투영한다.
+어댑터 설치 UI만 desktop 전용이다. 자세한 실행, 격리, 권한과 저장 제외 계약은 같은 협업
+문서가 소유한다.
 
 ## 9. 장애와 종료
 

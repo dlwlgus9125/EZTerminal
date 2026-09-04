@@ -108,6 +108,21 @@ import {
   type ManagedMergeGrantInput,
   type ManagedMergeRequest,
 } from '../../../src/shared/agent-coordination';
+import {
+  AgentOrchestrationSnapshotSchema,
+  CollaborationPolicySchema,
+  CollaborationRunSchema,
+  CollaborationTaskSchema,
+  EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
+  LegacyTeamMigrationStatusSchema,
+  type AgentOrchestrationMutationResult,
+  type AgentOrchestrationSnapshot,
+  type CollaborationPolicy,
+  type CollaborationPolicyInput,
+  type CollaborationRun,
+  type CollaborationTask,
+  type LegacyTeamMigrationStatus,
+} from '../../../src/shared/agent-orchestration';
 import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
@@ -142,6 +157,8 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
+  REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE,
+  REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION,
   uint8ArrayToBase64,
   type BuildInfo,
   type ClientToServerMessage,
@@ -616,6 +633,72 @@ function isManagedMergeMutationResult(
   );
 }
 
+function isAgentProjectCoordination(value: unknown): value is AgentProjectCoordination {
+  return isRecord(value)
+    && isBoundedString(value.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(value.goal, 2_000)
+    && isBoundedString(value.defaultTargetBranch, 200)
+    && Array.isArray(value.validationCommands)
+    && value.validationCommands.length <= 8
+    && value.validationCommands.every((command) => (
+      isRecord(command)
+      && isBoundedString(command.id, MAX_REMOTE_AGENT_ID_LENGTH)
+      && isBoundedString(command.name, 120)
+      && isBoundedString(command.command, 8_192)
+      && typeof command.timeoutMs === 'number'
+      && Number.isFinite(command.timeoutMs)
+      && command.timeoutMs >= 1_000
+      && command.timeoutMs <= 30 * 60_000
+    ))
+    && Number.isSafeInteger(value.configRevision)
+    && (value.configRevision as number) >= 1
+    && Array.isArray(value.participants)
+    && value.participants.length <= 32
+    && value.participants.every(isAgentParticipantWire)
+    && isFiniteTimestamp(value.updatedAt);
+}
+
+function isAgentProjectCoordinationMutationResult(
+  value: unknown,
+): value is AgentCoordinationMutationResult<AgentProjectCoordination> {
+  return isRecord(value) && (
+    (value.ok === true && isAgentProjectCoordination(value.value))
+    || (
+      value.ok === false
+      && ['invalid', 'not-found', 'stale', 'conflict', 'unavailable'].includes(String(value.error))
+      && isBoundedString(value.message, 1_000, true)
+    )
+  );
+}
+
+function parseAgentOrchestrationSnapshot(value: unknown): AgentOrchestrationSnapshot | null {
+  const parsed = AgentOrchestrationSnapshotSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+interface OrchestrationValueSchema<T> {
+  safeParse(value: unknown): { success: true; data: T } | { success: false };
+}
+
+function parseAgentOrchestrationMutation<T>(
+  value: unknown,
+  schema: OrchestrationValueSchema<T>,
+): AgentOrchestrationMutationResult<T> | null {
+  if (!isRecord(value)) return null;
+  if (value.ok === true) {
+    const parsed = schema.safeParse(value.value);
+    return parsed.success ? { ok: true, value: parsed.data } : null;
+  }
+  if (
+    value.ok === false
+    && ['invalid', 'not-found', 'stale', 'conflict', 'unavailable', 'forbidden'].includes(String(value.error))
+    && isBoundedString(value.message, 1_000, true)
+  ) {
+    return value as AgentOrchestrationMutationResult<T>;
+  }
+  return null;
+}
+
 function isAgentParticipantWire(value: unknown): boolean {
   return isRecord(value)
     && isBoundedString(value.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
@@ -1008,19 +1091,48 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   private agentSnapshot: AgentActivitySnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
   private agentCoordinationSnapshot: AgentCoordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
+  private agentOrchestrationSnapshot: AgentOrchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT;
   /** Revisions are process-local to the desktop. The first snapshot from each
    * newly-created socket is therefore an authoritative epoch seed even when
    * its revision is below the cache retained across reconnects. */
   private awaitingAgentSeed = true;
   private awaitingAgentCoordinationSeed = true;
+  private awaitingAgentOrchestrationSeed = true;
   private readonly agentSnapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
   private readonly agentCoordinationSnapshotListeners = new Set<
     (snapshot: AgentCoordinationSnapshot) => void
+  >();
+  private readonly agentOrchestrationSnapshotListeners = new Set<
+    (snapshot: AgentOrchestrationSnapshot) => void
   >();
   private readonly pendingAgentSnapshots = new Map<string, (snapshot: AgentActivitySnapshot) => void>();
   private readonly pendingAgentCoordinationSnapshots = new Map<
     string,
     (snapshot: AgentCoordinationSnapshot) => void
+  >();
+  private readonly pendingAgentCoordinationProjectSaves = new Map<
+    string,
+    (result: AgentCoordinationMutationResult<AgentProjectCoordination>) => void
+  >();
+  private readonly pendingAgentOrchestrationSnapshots = new Map<
+    string,
+    (snapshot: AgentOrchestrationSnapshot) => void
+  >();
+  private readonly pendingCollaborationPolicySaves = new Map<
+    string,
+    (result: AgentOrchestrationMutationResult<CollaborationPolicy>) => void
+  >();
+  private readonly pendingOrchestrationTaskActions = new Map<
+    string,
+    (result: AgentOrchestrationMutationResult<CollaborationTask>) => void
+  >();
+  private readonly pendingOrchestrationRunActions = new Map<
+    string,
+    (result: AgentOrchestrationMutationResult<CollaborationRun>) => void
+  >();
+  private readonly pendingLegacyMigrationConfirmations = new Map<
+    string,
+    (result: AgentOrchestrationMutationResult<LegacyTeamMigrationStatus>) => void
   >();
   private readonly pendingAgentSeen = new Map<string, (marked: boolean) => void>();
   private readonly pendingManagedMergeDecisions = new Map<
@@ -1564,6 +1676,118 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return () => this.agentCoordinationSnapshotListeners.delete(listener);
   }
 
+  getAgentOrchestrationSnapshot(): Promise<AgentOrchestrationSnapshot> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) {
+      return Promise.resolve(this.agentOrchestrationSnapshot);
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-orchestration-snapshot-get', requestId },
+        this.pendingAgentOrchestrationSnapshots,
+        requestId,
+        resolve,
+      )) resolve(this.agentOrchestrationSnapshot);
+    });
+  }
+
+  onAgentOrchestrationSnapshot(
+    listener: (snapshot: AgentOrchestrationSnapshot) => void,
+  ): () => void {
+    this.agentOrchestrationSnapshotListeners.add(listener);
+    listener(this.agentOrchestrationSnapshot);
+    return () => this.agentOrchestrationSnapshotListeners.delete(listener);
+  }
+
+  saveCollaborationPolicy(
+    input: CollaborationPolicyInput,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationPolicy>> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) {
+      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Lead orchestration is unavailable.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-collaboration-policy-save', requestId, input },
+        this.pendingCollaborationPolicySaves,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'unavailable', message: 'Desktop is unavailable.' });
+    });
+  }
+
+  cancelOrchestrationWorker(
+    runId: string,
+    taskId: string,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationTask>> {
+    return this.requestOrchestrationTaskAction('cancel-worker', runId, taskId);
+  }
+
+  archiveOrchestrationWorker(
+    runId: string,
+    taskId: string,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationTask>> {
+    return this.requestOrchestrationTaskAction('archive-worker', runId, taskId);
+  }
+
+  stopOrchestrationRun(
+    runId: string,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationRun>> {
+    if (
+      (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION
+      || !isBoundedString(runId, MAX_REMOTE_AGENT_ID_LENGTH)
+    ) {
+      return Promise.resolve({ ok: false, error: 'invalid', message: 'Invalid Lead run.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-orchestration-action', requestId, action: 'stop-run', runId },
+        this.pendingOrchestrationRunActions,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'unavailable', message: 'Desktop is unavailable.' });
+    });
+  }
+
+  confirmLegacyTeamMigration(): Promise<AgentOrchestrationMutationResult<LegacyTeamMigrationStatus>> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) {
+      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Lead orchestration is unavailable.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-legacy-migration-confirm', requestId },
+        this.pendingLegacyMigrationConfirmations,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'unavailable', message: 'Desktop is unavailable.' });
+    });
+  }
+
+  private requestOrchestrationTaskAction(
+    action: 'cancel-worker' | 'archive-worker',
+    runId: string,
+    taskId: string,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationTask>> {
+    if (
+      (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION
+      || !isBoundedString(runId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || !isBoundedString(taskId, MAX_REMOTE_AGENT_ID_LENGTH)
+    ) {
+      return Promise.resolve({ ok: false, error: 'invalid', message: 'Invalid worker action.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-orchestration-action', requestId, action, runId, taskId },
+        this.pendingOrchestrationTaskActions,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'unavailable', message: 'Desktop is unavailable.' });
+    });
+  }
+
   joinAgentCollaboration(
     _input: AgentParticipantInput,
   ): Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string }>> {
@@ -1577,10 +1801,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   saveAgentCoordinationProject(
-    _input: AgentProjectCoordinationInput,
+    input: AgentProjectCoordinationInput,
   ): Promise<AgentCoordinationMutationResult<AgentProjectCoordination>> {
-    void _input;
-    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Project configuration is desktop-only.' });
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE) {
+      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Remote Project configuration is unavailable.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-coordination-project-save', requestId, input },
+        this.pendingAgentCoordinationProjectSaves,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'unavailable', message: 'Desktop is unavailable.' });
+    });
   }
 
   markAgentSeen(activityId: string, stateSeq: number): Promise<boolean> {
@@ -1631,6 +1865,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           mergeRequestId: input.requestId,
           revision: input.revision,
           decision: input.decision,
+          ...(input.overrideReason ? { overrideReason: input.overrideReason } : {}),
         },
         this.pendingManagedMergeDecisions,
         requestId,
@@ -2818,6 +3053,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.socket = socket;
     this.awaitingAgentSeed = true;
     this.awaitingAgentCoordinationSeed = true;
+    this.awaitingAgentOrchestrationSeed = true;
     // Bound this attempt: if it doesn't reach `auth-ok` in time (never opened,
     // or opened but the auth round-trip stalled — a half-open link never fires
     // 'close'), abandon it and let the backoff loop try a fresh socket.
@@ -3074,6 +3310,30 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve(this.agentCoordinationSnapshot);
     }
     this.pendingAgentCoordinationSnapshots.clear();
+    for (const resolve of this.pendingAgentCoordinationProjectSaves.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Desktop disconnected.' });
+    }
+    this.pendingAgentCoordinationProjectSaves.clear();
+    for (const resolve of this.pendingAgentOrchestrationSnapshots.values()) {
+      resolve(this.agentOrchestrationSnapshot);
+    }
+    this.pendingAgentOrchestrationSnapshots.clear();
+    for (const resolve of this.pendingCollaborationPolicySaves.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Desktop disconnected.' });
+    }
+    this.pendingCollaborationPolicySaves.clear();
+    for (const resolve of this.pendingOrchestrationTaskActions.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Desktop disconnected.' });
+    }
+    this.pendingOrchestrationTaskActions.clear();
+    for (const resolve of this.pendingOrchestrationRunActions.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Desktop disconnected.' });
+    }
+    this.pendingOrchestrationRunActions.clear();
+    for (const resolve of this.pendingLegacyMigrationConfirmations.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Desktop disconnected.' });
+    }
+    this.pendingLegacyMigrationConfirmations.clear();
     for (const resolve of this.pendingAgentSeen.values()) resolve(false);
     this.pendingAgentSeen.clear();
     for (const resolve of this.pendingManagedMergeDecisions.values()) {
@@ -3748,6 +4008,72 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           this.pendingAgentCoordinationSnapshots.get(msg.requestId)?.(this.agentCoordinationSnapshot);
           this.pendingAgentCoordinationSnapshots.delete(msg.requestId);
         }
+        break;
+      }
+
+      case 'agent-coordination-project-save-reply': {
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE) break;
+        const result = isAgentProjectCoordinationMutationResult(msg.result)
+          ? msg.result
+          : { ok: false, error: 'unavailable', message: 'Desktop returned an invalid Project configuration.' } as const;
+        this.pendingAgentCoordinationProjectSaves.get(msg.requestId)?.(result);
+        this.pendingAgentCoordinationProjectSaves.delete(msg.requestId);
+        break;
+      }
+
+      case 'agent-orchestration-snapshot': {
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        const snapshot = parseAgentOrchestrationSnapshot(msg.snapshot);
+        if (snapshot) {
+          const changed = this.awaitingAgentOrchestrationSeed
+            || snapshot.revision > this.agentOrchestrationSnapshot.revision;
+          this.awaitingAgentOrchestrationSeed = false;
+          if (changed) {
+            this.agentOrchestrationSnapshot = snapshot;
+            for (const listener of this.agentOrchestrationSnapshotListeners) listener(snapshot);
+          }
+          if (msg.requestId) {
+            this.pendingAgentOrchestrationSnapshots.get(msg.requestId)?.(this.agentOrchestrationSnapshot);
+            this.pendingAgentOrchestrationSnapshots.delete(msg.requestId);
+          }
+        } else if (msg.requestId) {
+          this.pendingAgentOrchestrationSnapshots.get(msg.requestId)?.(this.agentOrchestrationSnapshot);
+          this.pendingAgentOrchestrationSnapshots.delete(msg.requestId);
+        }
+        break;
+      }
+
+      case 'agent-collaboration-policy-save-reply': {
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        const result = parseAgentOrchestrationMutation(msg.result, CollaborationPolicySchema)
+          ?? { ok: false, error: 'unavailable', message: 'Desktop returned an invalid policy result.' } as const;
+        this.pendingCollaborationPolicySaves.get(msg.requestId)?.(result);
+        this.pendingCollaborationPolicySaves.delete(msg.requestId);
+        break;
+      }
+
+      case 'agent-orchestration-action-reply': {
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        if (msg.action === 'stop-run') {
+          const result = parseAgentOrchestrationMutation(msg.result, CollaborationRunSchema)
+            ?? { ok: false, error: 'unavailable', message: 'Desktop returned an invalid run result.' } as const;
+          this.pendingOrchestrationRunActions.get(msg.requestId)?.(result);
+          this.pendingOrchestrationRunActions.delete(msg.requestId);
+        } else {
+          const result = parseAgentOrchestrationMutation(msg.result, CollaborationTaskSchema)
+            ?? { ok: false, error: 'unavailable', message: 'Desktop returned an invalid worker result.' } as const;
+          this.pendingOrchestrationTaskActions.get(msg.requestId)?.(result);
+          this.pendingOrchestrationTaskActions.delete(msg.requestId);
+        }
+        break;
+      }
+
+      case 'agent-legacy-migration-confirm-reply': {
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        const result = parseAgentOrchestrationMutation(msg.result, LegacyTeamMigrationStatusSchema)
+          ?? { ok: false, error: 'unavailable', message: 'Desktop returned an invalid migration result.' } as const;
+        this.pendingLegacyMigrationConfirmations.get(msg.requestId)?.(result);
+        this.pendingLegacyMigrationConfirmations.delete(msg.requestId);
         break;
       }
 

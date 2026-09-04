@@ -42,8 +42,19 @@ import type {
 import type {
   AgentCoordinationMutationResult,
   AgentCoordinationSnapshot,
+  AgentProjectCoordination,
+  AgentProjectCoordinationInput,
   ManagedMergeRequest,
 } from './agent-coordination';
+import type {
+  AgentOrchestrationMutationResult,
+  AgentOrchestrationSnapshot,
+  CollaborationPolicy,
+  CollaborationPolicyInput,
+  CollaborationRun,
+  CollaborationTask,
+  LegacyTeamMigrationStatus,
+} from './agent-orchestration';
 import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
@@ -93,7 +104,7 @@ export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL;
 
 /**
- * Version markers document when capabilities entered the protocol. v9 is the
+ * Version markers document when capabilities entered the protocol. v11 is the
  * only accepted wire version: session-surface authority is a security and
  * lifecycle invariant, so v1-v6 fail closed instead of negotiating down.
  *
@@ -103,7 +114,9 @@ export type RemoteCapability =
  * project management/search and project-rooted fresh Agent launches; v6 adds
  * target-neutral project/direct-directory Agent launches; v7 adds session-
  * surface authority; v8 adds Agent coordination; v9 adds durable OpenClaw
- * control snapshots and lifecycle receipts.
+ * control snapshots and lifecycle receipts; v10 adds Lead orchestration; v11
+ * adds remote Project coordination writes so Android can configure a Project
+ * without a prior desktop-only setup step.
  */
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
@@ -112,10 +125,12 @@ export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS = 6 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION = 8 as const;
 export const REMOTE_PROTOCOL_VERSION_OPENCLAW_CONTROL = 9 as const;
-export const REMOTE_PROTOCOL_VERSION = 9 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export const REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION = 10 as const;
+export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE = 11 as const;
+export const REMOTE_PROTOCOL_VERSION = 11 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [9];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [11];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -413,6 +428,36 @@ export interface AgentCoordinationSnapshotRequest {
   readonly requestId: string;
 }
 
+export interface AgentCoordinationProjectSaveRequest {
+  readonly kind: 'agent-coordination-project-save';
+  readonly requestId: string;
+  readonly input: AgentProjectCoordinationInput;
+}
+
+export interface AgentOrchestrationSnapshotRequest {
+  readonly kind: 'agent-orchestration-snapshot-get';
+  readonly requestId: string;
+}
+
+export interface AgentCollaborationPolicySaveRequest {
+  readonly kind: 'agent-collaboration-policy-save';
+  readonly requestId: string;
+  readonly input: CollaborationPolicyInput;
+}
+
+export interface AgentOrchestrationActionRequest {
+  readonly kind: 'agent-orchestration-action';
+  readonly requestId: string;
+  readonly action: 'cancel-worker' | 'archive-worker' | 'stop-run';
+  readonly runId: string;
+  readonly taskId?: string;
+}
+
+export interface AgentLegacyMigrationConfirmRequest {
+  readonly kind: 'agent-legacy-migration-confirm';
+  readonly requestId: string;
+}
+
 export interface AgentSeenRequest {
   readonly kind: 'agent-seen';
   readonly requestId: string;
@@ -426,6 +471,7 @@ export interface ManagedMergeDecisionRequest {
   readonly mergeRequestId: string;
   readonly revision: number;
   readonly decision: 'approve' | 'deny';
+  readonly overrideReason?: string;
 }
 
 export interface AgentFollowupRequest {
@@ -760,6 +806,11 @@ export type ClientToServerMessage =
   | PacketsUnsubscribeMessage
   | AgentSnapshotRequest
   | AgentCoordinationSnapshotRequest
+  | AgentCoordinationProjectSaveRequest
+  | AgentOrchestrationSnapshotRequest
+  | AgentCollaborationPolicySaveRequest
+  | AgentOrchestrationActionRequest
+  | AgentLegacyMigrationConfirmRequest
   | AgentSeenRequest
   | ManagedMergeDecisionRequest
   | AgentFollowupRequest
@@ -1018,6 +1069,44 @@ export interface AgentCoordinationSnapshotMessage {
   readonly kind: 'agent-coordination-snapshot';
   readonly snapshot: AgentCoordinationSnapshot;
   readonly requestId?: string;
+}
+
+export interface AgentCoordinationProjectSaveReply {
+  readonly kind: 'agent-coordination-project-save-reply';
+  readonly requestId: string;
+  readonly result: AgentCoordinationMutationResult<AgentProjectCoordination>;
+}
+
+export interface AgentOrchestrationSnapshotMessage {
+  readonly kind: 'agent-orchestration-snapshot';
+  readonly snapshot: AgentOrchestrationSnapshot;
+  readonly requestId?: string;
+}
+
+export interface AgentCollaborationPolicySaveReply {
+  readonly kind: 'agent-collaboration-policy-save-reply';
+  readonly requestId: string;
+  readonly result: AgentOrchestrationMutationResult<CollaborationPolicy>;
+}
+
+export type AgentOrchestrationActionReply =
+  | {
+      readonly kind: 'agent-orchestration-action-reply';
+      readonly requestId: string;
+      readonly action: 'cancel-worker' | 'archive-worker';
+      readonly result: AgentOrchestrationMutationResult<CollaborationTask>;
+    }
+  | {
+      readonly kind: 'agent-orchestration-action-reply';
+      readonly requestId: string;
+      readonly action: 'stop-run';
+      readonly result: AgentOrchestrationMutationResult<CollaborationRun>;
+    };
+
+export interface AgentLegacyMigrationConfirmReply {
+  readonly kind: 'agent-legacy-migration-confirm-reply';
+  readonly requestId: string;
+  readonly result: AgentOrchestrationMutationResult<LegacyTeamMigrationStatus>;
 }
 
 export interface AgentSeenReply {
@@ -1361,6 +1450,11 @@ export type ServerToClientMessage =
   | SessionDeadMessage
   | AgentSnapshotMessage
   | AgentCoordinationSnapshotMessage
+  | AgentCoordinationProjectSaveReply
+  | AgentOrchestrationSnapshotMessage
+  | AgentCollaborationPolicySaveReply
+  | AgentOrchestrationActionReply
+  | AgentLegacyMigrationConfirmReply
   | AgentSeenReply
   | ManagedMergeDecisionReply
   | AgentFollowupReply

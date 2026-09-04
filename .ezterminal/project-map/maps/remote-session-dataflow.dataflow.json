@@ -46,8 +46,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1282,
-        "endLine": 1300,
+        "startLine": 1366,
+        "endLine": 1384,
         "lineDigest": "sha256:6fb3bc09beb75f7d4ed809ca244cf7d48ed77e80c39ab0bc28cea537bd715e1e",
         "claim": "The bridge observes a run MessagePort and receives InterpreterFrame values."
       }]
@@ -62,8 +62,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1291,
-        "endLine": 1303,
+        "startLine": 1375,
+        "endLine": 1387,
         "lineDigest": "sha256:5584a204b526823be19e9d1556e1e6140962b8177f8228b6f77dcbd85860930c",
         "claim": "The bridge encodes an InterpreterFrame immediately before sending it."
       }]
@@ -78,8 +78,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1666,
-        "endLine": 1749,
+        "startLine": 1757,
+        "endLine": 1840,
         "lineDigest": "sha256:11769dadaaca439fdbaa339e54b4ff1d7a34f75be97e508aef08998ed669512c",
         "claim": "The connection ignores operational frames until token authentication and client identity settle."
       }]
@@ -94,8 +94,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 3632,
-        "endLine": 3664,
+        "startLine": 3892,
+        "endLine": 3924,
         "lineDigest": "sha256:6996c4150a20020c2f3a7e0499aada0ad11861b7207a9065030cd2281d7562b5",
         "claim": "The mobile transport dispatches a frame message to the matching run handler."
       }]
@@ -110,8 +110,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 2464,
-        "endLine": 2516,
+        "startLine": 2699,
+        "endLine": 2751,
         "lineDigest": "sha256:58692c59b3263d874dd9f3d2475eaac050b4a3caedbfc755fe6b44cdd5dd0879",
         "claim": "The mobile client checks negotiated capability and sends desktop-control requests through its authenticated transport."
       }]
@@ -126,8 +126,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2086,
-        "endLine": 2116,
+        "startLine": 2186,
+        "endLine": 2216,
         "lineDigest": "sha256:66c154f07c92556fbfcb7ae3a7c107d7c79dbf09e717c713ffada97d4276ff4f",
         "claim": "A control message resolves the exact run record before posting to its MessagePort."
       }]
@@ -159,8 +159,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1291,
-        "endLine": 1300,
+        "startLine": 1375,
+        "endLine": 1384,
         "lineDigest": "sha256:4749b93d5a29318563fb942e394546946c84540a78eb4e963a44c077986e5027",
         "claim": "Each observed interpreter frame is encoded into a frame protocol message."
       }]
@@ -174,8 +174,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1291,
-        "endLine": 1304,
+        "startLine": 1375,
+        "endLine": 1388,
         "lineDigest": "sha256:27108294dce5441ab30ae4d61ab65c78378915d70b1c0b42fa3ba43536189f9c",
         "claim": "The encoded frame is sent on the connection that owns this run observer."
       }]
@@ -189,8 +189,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 3636,
-        "endLine": 3660,
+        "startLine": 3896,
+        "endLine": 3920,
         "lineDigest": "sha256:6abeee58d68048efedc0e34fac85c9e8a246642c7a35584002a1f7693f5c4aba",
         "claim": "Mobile routes only decoded frame messages with a matching run identifier."
       }]
@@ -204,8 +204,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 2492,
-        "endLine": 2514,
+        "startLine": 2727,
+        "endLine": 2749,
         "lineDigest": "sha256:efc2a2f06d874f9608e6a94aa5a3621f4a7f2e145055029aa8b62b75c3e1622d",
         "claim": "Desktop signal messages use the same authenticated client send path."
       }]
@@ -219,8 +219,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2095,
-        "endLine": 2116,
+        "startLine": 2195,
+        "endLine": 2216,
         "lineDigest": "sha256:43cb5e955dc6452b380eeb8baa02309fbdcb42f1db4fcb5daa7dd4d27776b1a5",
         "claim": "The host forwards a control only when the exact run record exists."
       }]
@@ -234,8 +234,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1815,
-        "endLine": 1876,
+        "startLine": 1915,
+        "endLine": 1976,
         "lineDigest": "sha256:81d8f6a26082207e55a37e9fb554bf1706a29488e0dbf8d8da843aa32bf4ec2d",
         "claim": "Desktop-control start, signal, and stop messages are delegated to the main-owned desktop source."
       }]

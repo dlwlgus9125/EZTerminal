@@ -5,6 +5,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentActivity, AgentActivitySnapshot, AgentState } from '../../src/shared/agent';
+import type { AgentCoordinationSnapshot, ManagedMergeRequest } from '../../src/shared/agent-coordination';
+import {
+  AGENT_ORCHESTRATION_SCHEMA_VERSION,
+  type AgentOrchestrationSnapshot,
+} from '../../src/shared/agent-orchestration';
 import type { GitDiffResult } from '../../src/shared/git-status';
 import { MobileAgentView } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -34,6 +39,32 @@ function activity(id: string, state: AgentState, overrides: Partial<AgentActivit
 
 function snapshotOf(...items: readonly AgentActivity[]): AgentActivitySnapshot {
   return { revision: 1, items };
+}
+
+function orchestrationWithWorker(activityId: string): AgentOrchestrationSnapshot {
+  return {
+    revision: 1,
+    providers: [],
+    profiles: [],
+    policies: [],
+    events: [],
+    migration: { required: false, catalogItemCount: 0, runCount: 0 },
+    runs: [{
+      schemaVersion: AGENT_ORCHESTRATION_SCHEMA_VERSION,
+      runId: 'run-1', revision: 1, projectId: 'project-1',
+      leadSessionId: 'session-lead', leadActivityId: 'lead', policyRevision: 1,
+      state: 'active', createdAt: 1, updatedAt: 1, expiresAt: 60_001,
+      tasks: [{
+        taskId: 'task-1', revision: 1, title: 'Hidden worker', brief: 'Do bounded work.',
+        mode: 'read-only', dependsOn: [], writeScopes: [], profileId: 'builtin:codex:read',
+        state: 'working', createdAt: 1, updatedAt: 1,
+        worker: {
+          workerId: 'worker-1', taskId: 'task-1', profileId: 'builtin:codex:read',
+          providerId: 'codex', sessionId: 'session-worker', activityId,
+        },
+      }],
+    }],
+  };
 }
 
 let container: HTMLDivElement;
@@ -70,6 +101,24 @@ describe('MobileAgentView', () => {
     onFocusSession: () => undefined,
     onSendFollowup: async () => ({ ok: true }) as const,
   };
+
+  it('keeps orchestration workers out of cards, counts, and direct composers', () => {
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(
+          activity('lead', 'idle', { interactiveReady: true }),
+          activity('worker', 'idle', { interactiveReady: true }),
+        )}
+        orchestrationSnapshot={orchestrationWithWorker('worker')}
+        {...noop}
+      />,
+    );
+
+    expect(testIds('agent-filter-all')[0]?.textContent).toContain('1');
+    expect(testIds('agent-card')).toHaveLength(1);
+    expect(testIds('agent-followup-input')).toHaveLength(1);
+    expect(container.textContent).not.toContain('C:/Workspace/worker');
+  });
 
   it('buckets every agent status into the four filters with counts', () => {
     render(
@@ -443,5 +492,69 @@ describe('MobileAgentView', () => {
     }))} {...noop} disconnected />);
     expect((testIds('agent-followup-input')[0] as HTMLInputElement).disabled).toBe(true);
     expect(container.textContent).toContain('Reconnecting to desktop…');
+  });
+
+  it('reviews a failed validation override on mobile and forwards the bounded reason', async () => {
+    const request: ManagedMergeRequest = {
+      requestId: 'merge-1',
+      revision: 4,
+      projectId: 'project-1',
+      participantId: 'participant-1',
+      activityId: 'activity-1',
+      sourceWorkspaceId: 'workspace-1',
+      sourceBranch: 'agent/feature',
+      sourceHead: '1'.repeat(40),
+      targetBranch: 'main',
+      targetHead: '2'.repeat(40),
+      candidateHead: '3'.repeat(40),
+      state: 'override-required',
+      validationConfigRevision: 1,
+      validations: [{ id: 'unit', name: 'Unit tests', status: 'failed', exitCode: 1 }],
+      createdAt: NOW - 2_000,
+      updatedAt: NOW - 1_000,
+      expiresAt: NOW + 60_000,
+    };
+    const coordinationSnapshot: AgentCoordinationSnapshot = {
+      revision: 1,
+      activityRevision: 1,
+      activities: [],
+      projects: [],
+      mergeRequests: [request],
+    };
+    const decideManagedMerge = vi.fn(async () => ({
+      ok: true as const,
+      value: { ...request, state: 'merged' as const },
+    }));
+    const transport = { decideManagedMerge } as unknown as WsEzTerminalTransport;
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        coordinationSnapshot={coordinationSnapshot}
+        transport={transport}
+        {...noop}
+      />,
+    );
+
+    act(() => testIds('managed-merge-override')[0]!.click());
+    expect(testIds('mobile-managed-merge-override')).toHaveLength(1);
+    const reason = testIds('mobile-managed-merge-override-reason')[0] as HTMLTextAreaElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setValue.call(reason, 'Reviewed failing tests and accepted the risk.');
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    await act(async () => {
+      testIds('mobile-managed-merge-override-confirm')[0]!.click();
+      await Promise.resolve();
+    });
+    expect(decideManagedMerge).toHaveBeenCalledWith({
+      requestId: 'merge-1',
+      revision: 4,
+      decision: 'approve',
+      actor: 'mobile',
+      overrideReason: 'Reviewed failing tests and accepted the risk.',
+    });
+    expect(testIds('mobile-managed-merge-override')).toHaveLength(0);
   });
 });

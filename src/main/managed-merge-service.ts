@@ -385,10 +385,7 @@ export class ManagedMergeService {
     if (request.state !== 'approval-required' && request.state !== 'override-required') {
       return { ok: false, error: 'conflict', message: 'This request is not awaiting a decision.' };
     }
-    if (request.state === 'override-required') {
-      if (input.actor !== 'desktop') {
-        return { ok: false, error: 'invalid', message: 'Failed-validation override is desktop-only.' };
-      }
+    if (request.state === 'override-required' && input.decision === 'approve') {
       if (typeof input.overrideReason !== 'string' || input.overrideReason.trim().length < 4 || input.overrideReason.length > 500) {
         return { ok: false, error: 'invalid', message: 'A bounded override reason is required.' };
       }

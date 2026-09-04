@@ -71,6 +71,8 @@ export interface AgentActivity {
   /** Whether the PTY has advertised safe structured prompt input. */
   readonly interactiveReady: boolean;
   readonly stateSource: AgentStateSource;
+  /** Main-owned ACP adapter activity; never grants worker-creation depth. */
+  readonly orchestrationManaged?: boolean;
   readonly projectId?: string;
   readonly rootId?: string;
   readonly workspaceId?: string;

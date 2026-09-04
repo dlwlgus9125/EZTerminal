@@ -48,6 +48,8 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
+  REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE,
+  REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   isRemoteProtocolVersion,
@@ -94,8 +96,19 @@ import {
   withoutManagedMergeOutput,
   type AgentCoordinationMutationResult,
   type AgentCoordinationSnapshot,
+  type AgentProjectCoordination,
+  type AgentProjectCoordinationInput,
   type ManagedMergeRequest,
 } from '../shared/agent-coordination';
+import {
+  EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
+  type AgentOrchestrationMutationResult,
+  type AgentOrchestrationSnapshot,
+  type CollaborationPolicy,
+  type CollaborationPolicyInput,
+  type CollaborationRun,
+  type CollaborationTask,
+} from '../shared/agent-orchestration';
 import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
@@ -508,6 +521,48 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && value.requestId.length > 0
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
       );
+    case 'agent-coordination-project-save':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && isRecord(value.input)
+      );
+    case 'agent-orchestration-snapshot-get':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'agent-collaboration-policy-save':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && isRecord(value.input)
+      );
+    case 'agent-orchestration-action':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && ['cancel-worker', 'archive-worker', 'stop-run'].includes(String(value.action))
+        && typeof value.runId === 'string'
+        && value.runId.length > 0
+        && value.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && (value.taskId === undefined || (
+          typeof value.taskId === 'string'
+          && value.taskId.length > 0
+          && value.taskId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        ))
+        && (value.action === 'stop-run' || typeof value.taskId === 'string')
+      );
+    case 'agent-legacy-migration-confirm':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
     case 'agent-seen':
       return (
         typeof value.requestId === 'string'
@@ -530,6 +585,10 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && Number.isSafeInteger(value.revision)
         && (value.revision as number) > 0
         && (value.decision === 'approve' || value.decision === 'deny')
+        && (value.overrideReason === undefined || (
+          typeof value.overrideReason === 'string'
+          && value.overrideReason.length <= 500
+        ))
       );
     case 'agent-followup':
       return (
@@ -977,13 +1036,37 @@ export interface RemoteAgentCoordinationSource {
   onSnapshot(
     listener: (snapshot: AgentCoordinationSnapshot) => void,
   ): () => void;
+  saveProject(
+    input: AgentProjectCoordinationInput,
+  ): Promise<AgentCoordinationMutationResult<AgentProjectCoordination>>;
   markSeen(activityId: string, stateSeq: number): boolean;
   decideManagedMerge(input: {
     readonly requestId: string;
     readonly revision: number;
     readonly decision: 'approve' | 'deny';
     readonly actor: 'mobile';
+    readonly overrideReason?: string;
   }): Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+}
+
+export interface RemoteAgentOrchestrationSource {
+  getSnapshot(): AgentOrchestrationSnapshot;
+  onSnapshot(
+    listener: (snapshot: AgentOrchestrationSnapshot) => void,
+  ): () => void;
+  savePolicy(
+    input: CollaborationPolicyInput,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationPolicy>>;
+  cancelWorker(
+    runId: string,
+    taskId: string,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationTask>>;
+  archiveWorker(
+    runId: string,
+    taskId: string,
+  ): Promise<AgentOrchestrationMutationResult<CollaborationTask>>;
+  stopRun(runId: string): Promise<AgentOrchestrationMutationResult<CollaborationRun>>;
+  confirmLegacyMigration(): Promise<AgentOrchestrationSnapshot['migration']>;
 }
 
 function remoteCoordinationSnapshot(snapshot: AgentCoordinationSnapshot): AgentCoordinationSnapshot {
@@ -1119,6 +1202,7 @@ export interface RemoteBridgeOptions {
   readonly openclawSource?: RemoteOpenClawSource;
   readonly agentSource?: RemoteAgentSource;
   readonly agentCoordinationSource?: RemoteAgentCoordinationSource;
+  readonly agentOrchestrationSource?: RemoteAgentOrchestrationSource;
   readonly agentHistorySource?: RemoteAgentHistorySource;
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
@@ -1588,6 +1672,12 @@ export function attachConnection(
         send({ kind: 'agent-coordination-snapshot', snapshot: remoteCoordinationSnapshot(snapshot) });
       }
     }) ?? (() => undefined);
+  const unsubAgentOrchestration =
+    options.agentOrchestrationSource?.onSnapshot((snapshot) => {
+      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) {
+        send({ kind: 'agent-orchestration-snapshot', snapshot });
+      }
+    }) ?? (() => undefined);
 
   ws.on('close', () => {
     if (connectionClosed) return;
@@ -1618,6 +1708,7 @@ export function attachConnection(
     contain(unsubOpenClawVisibility);
     contain(unsubAgentSnapshot);
     contain(unsubAgentCoordination);
+    contain(unsubAgentOrchestration);
     for (const [runId, record] of runs) {
       if (releaseRunsOnClose) contain(() => record.port.close());
       else {
@@ -1791,6 +1882,15 @@ export function attachConnection(
             send({
               kind: 'agent-coordination-snapshot',
               snapshot: remoteCoordinationSnapshot(options.agentCoordinationSource.getSnapshot()),
+            });
+          }
+          if (
+            options.agentOrchestrationSource
+            && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION
+          ) {
+            send({
+              kind: 'agent-orchestration-snapshot',
+              snapshot: options.agentOrchestrationSource.getSnapshot(),
             });
           }
           // OpenClaw availability (M3): initial state, right after auth —
@@ -2150,6 +2250,137 @@ export function attachConnection(
         });
         break;
 
+      case 'agent-coordination-project-save':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE) break;
+        void (options.agentCoordinationSource?.saveProject(msg.input) ?? Promise.resolve({
+          ok: false,
+          error: 'unavailable',
+          message: 'Agent coordination is unavailable.',
+        } as const)).then((result) => {
+          if (authed) {
+            send({
+              kind: 'agent-coordination-project-save-reply',
+              requestId: msg.requestId,
+              result,
+            });
+          }
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-coordination-project-save-reply',
+              requestId: msg.requestId,
+              result: {
+                ok: false,
+                error: 'unavailable',
+                message: 'Agent coordination request failed.',
+              },
+            });
+          }
+        });
+        break;
+
+      case 'agent-orchestration-snapshot-get':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        send({
+          kind: 'agent-orchestration-snapshot',
+          requestId: msg.requestId,
+          snapshot: options.agentOrchestrationSource?.getSnapshot()
+            ?? EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
+        });
+        break;
+
+      case 'agent-collaboration-policy-save':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        void (options.agentOrchestrationSource?.savePolicy(msg.input) ?? Promise.resolve({
+          ok: false,
+          error: 'unavailable',
+          message: 'Agent orchestration is unavailable.',
+        } as const)).then((result) => {
+          if (authed) {
+            send({
+              kind: 'agent-collaboration-policy-save-reply',
+              requestId: msg.requestId,
+              result,
+            });
+          }
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-collaboration-policy-save-reply',
+              requestId: msg.requestId,
+              result: {
+                ok: false,
+                error: 'unavailable',
+                message: 'Agent orchestration request failed.',
+              },
+            });
+          }
+        });
+        break;
+
+      case 'agent-orchestration-action':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        if (msg.action === 'stop-run') {
+          void (options.agentOrchestrationSource?.stopRun(msg.runId) ?? Promise.resolve({
+            ok: false,
+            error: 'unavailable',
+            message: 'Agent orchestration is unavailable.',
+          } as const)).then((result) => {
+            if (authed) send({
+              kind: 'agent-orchestration-action-reply',
+              requestId: msg.requestId,
+              action: 'stop-run',
+              result,
+            });
+          });
+          break;
+        }
+        {
+          const taskId = msg.taskId;
+          if (!taskId) break;
+          const action: 'cancel-worker' | 'archive-worker' = msg.action === 'cancel-worker'
+            ? 'cancel-worker'
+            : 'archive-worker';
+          const operation = action === 'cancel-worker'
+            ? options.agentOrchestrationSource?.cancelWorker(msg.runId, taskId)
+            : options.agentOrchestrationSource?.archiveWorker(msg.runId, taskId);
+          void (operation ?? Promise.resolve({
+            ok: false,
+            error: 'unavailable',
+            message: 'Agent orchestration is unavailable.',
+          } as const)).then((result) => {
+            if (authed) send({
+              kind: 'agent-orchestration-action-reply',
+              requestId: msg.requestId,
+              action,
+              result,
+            });
+          });
+        }
+        break;
+
+      case 'agent-legacy-migration-confirm':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;
+        void (options.agentOrchestrationSource?.confirmLegacyMigration()
+          ?? Promise.reject(new Error('Agent orchestration is unavailable.'))).then((value) => {
+          if (authed) send({
+            kind: 'agent-legacy-migration-confirm-reply',
+            requestId: msg.requestId,
+            result: { ok: true, value },
+          });
+        }).catch((error: unknown) => {
+          if (authed) send({
+            kind: 'agent-legacy-migration-confirm-reply',
+            requestId: msg.requestId,
+            result: {
+              ok: false,
+              error: 'unavailable',
+              message: error instanceof Error ? error.message : 'Legacy Team migration failed.',
+            },
+          });
+        });
+        break;
+
       case 'agent-seen':
         if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
         send({
@@ -2166,6 +2397,7 @@ export function attachConnection(
           revision: msg.revision,
           decision: msg.decision,
           actor: 'mobile',
+          ...(msg.overrideReason ? { overrideReason: msg.overrideReason } : {}),
         }) ?? Promise.resolve({
           ok: false as const,
           error: 'unavailable' as const,

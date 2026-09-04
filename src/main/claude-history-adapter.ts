@@ -27,13 +27,13 @@ import { createHash } from 'node:crypto';
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
   MAX_AGENT_TRANSCRIPT_PAGE_SIZE,
+  type AgentFreshLaunchOptions,
   type AgentTranscriptEntry,
   type AgentTranscriptPage,
   type AgentTranscriptTurn,
 } from '../shared/agent-history';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
-import type { AgentPersonaLaunch } from '../shared/agent-team';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
@@ -620,7 +620,7 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
     return { commandText: parts.join(' '), displayCommandText: 'claude resume' };
   }
 
-  buildNewCommand(roots: readonly string[], launch?: AgentPersonaLaunch): AgentResumeCommand | null {
+  buildNewCommand(roots: readonly string[], launch?: AgentFreshLaunchOptions): AgentResumeCommand | null {
     const [primaryRoot, ...additionalRoots] = roots;
     if (!primaryRoot || (launch && launch.provider !== 'claude')) return null;
     const parts = ['!claude'];

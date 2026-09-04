@@ -31,8 +31,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/TerminalPane.tsx",
-        "startLine": 579,
-        "endLine": 601,
+        "startLine": 585,
+        "endLine": 607,
         "lineDigest": "sha256:2ec7eb3628fc84be7e39162a986d916dbcebf19889c51c407f7310abc5935d8b",
         "claim": "TerminalPane registers run correlation before asking preload to submit the command."
       }]
@@ -101,8 +101,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/TerminalPane.tsx",
-        "startLine": 591,
-        "endLine": 599,
+        "startLine": 597,
+        "endLine": 605,
         "lineDigest": "sha256:7e0a45a9a19a0f6b71da0246acb57141229280fc80cd7522820f0de88bc2ca92",
         "claim": "The renderer sends command text only after recording the runId correlation."
       }]

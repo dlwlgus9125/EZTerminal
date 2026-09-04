@@ -9,9 +9,15 @@ import type {
   AgentActivitySnapshot,
   AgentApprovalRisk,
 } from '../shared/agent';
+import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
 import type { GitDiffResult } from '../shared/git-status';
-import type { EzTerminalDesktopApi } from '../shared/ipc';
-import type { AgentTeamDesktopSnapshot, AgentTeamRun } from '../shared/agent-team';
+import {
+  AGENT_ORCHESTRATION_SCHEMA_VERSION,
+  DEFAULT_COLLABORATION_LIMITS,
+  DEFAULT_COLLABORATION_MERGE_POLICY,
+  type AgentOrchestrationSnapshot,
+  type CollaborationPolicy,
+} from '../shared/agent-orchestration';
 import { AgentHub } from './AgentHub';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -55,6 +61,32 @@ function activity(input: {
           },
         }
       : {}),
+  };
+}
+
+function orchestrationWithWorker(activityId: string): AgentOrchestrationSnapshot {
+  return {
+    revision: 1,
+    providers: [],
+    profiles: [],
+    policies: [],
+    events: [],
+    migration: { required: false, catalogItemCount: 0, runCount: 0 },
+    runs: [{
+      schemaVersion: AGENT_ORCHESTRATION_SCHEMA_VERSION,
+      runId: 'run-1', revision: 1, projectId: 'project-1',
+      leadSessionId: 'session-lead', leadActivityId: 'lead', policyRevision: 1,
+      state: 'active', createdAt: 1, updatedAt: 1, expiresAt: 60_001,
+      tasks: [{
+        taskId: 'task-1', revision: 1, title: 'Hidden worker', brief: 'Do bounded work.',
+        mode: 'read-only', dependsOn: [], writeScopes: [], profileId: 'builtin:codex:read',
+        state: 'working', createdAt: 1, updatedAt: 1,
+        worker: {
+          workerId: 'worker-1', taskId: 'task-1', profileId: 'builtin:codex:read',
+          providerId: 'codex', sessionId: 'session-worker', activityId,
+        },
+      }],
+    }],
   };
 }
 
@@ -407,188 +439,248 @@ describe('AgentHub local history paging', () => {
     expect(prepareAgentLaunch).not.toHaveBeenCalled();
   });
 
-  it('starts only the Planner from one frozen target commit in a managed worktree', async () => {
-    const plannerId = '123e4567-e89b-12d3-a456-426614174000';
-    const workerId = '123e4567-e89b-12d3-a456-426614174001';
-    const teamId = '123e4567-e89b-12d3-a456-426614174010';
-    const runId = '123e4567-e89b-12d3-a456-426614174020';
+});
+
+describe('AgentHub Lead-only orchestration projection', () => {
+  it('hides worker cards and their composer while keeping the Lead chatable', async () => {
+    await renderHub({
+      revision: 1,
+      items: [
+        activity({ id: 'lead', status: 'idle' }),
+        activity({ id: 'worker', status: 'idle' }),
+      ],
+    }, { orchestrationSnapshot: orchestrationWithWorker('worker') });
+
+    expect(container.querySelectorAll('[data-testid="agent-row"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.agent-followup-input')).toHaveLength(1);
+    expect(container.textContent).not.toContain('C:\\worker');
+  });
+});
+
+describe('AgentHub collaboration policy concurrency', () => {
+  it('offers in-place integration recovery when installed providers are not worker-ready', async () => {
     const project = {
-      projectId: 'project-1', name: 'Project', primaryRoot: 'C:\\Project', additionalRoots: [],
-      pinned: false, saved: true, sessionCount: 0, providers: [], lastActiveAt: 20,
+      projectId: 'project-recovery',
+      name: 'Recovery Project',
+      primaryRoot: 'C:\\Recovery',
+      additionalRoots: [],
+      pinned: true,
+      saved: true,
+      sessionCount: 0,
+      providers: ['codex', 'claude'],
+      lastActiveAt: 20,
     } as const;
-    const personas = [
-      {
-        personaId: plannerId, revision: 1, name: 'Planner', icon: 'search' as const,
-        role: 'Planner', instructions: 'Plan only.',
-        launch: { provider: 'codex' as const, sandbox: 'read-only' as const },
-        createdAt: 1, updatedAt: 1,
-      },
-      {
-        personaId: workerId, revision: 1, name: 'Worker', icon: 'code' as const,
-        role: 'Worker', instructions: 'Implement.',
-        launch: { provider: 'claude' as const, permissionMode: 'acceptEdits' as const },
-        createdAt: 1, updatedAt: 1,
-      },
-    ];
-    const team = {
-      teamId, revision: 1, name: 'Core', instructions: 'Keep scopes bounded.',
-      defaultGoal: {
-        outcome: 'Ship Team launch',
-        acceptanceCriteria: ['Planner starts before any other member.'],
-      },
-      personaIds: [plannerId, workerId], plannerPersonaId: plannerId, createdAt: 1, updatedAt: 1,
-    };
-    const run: AgentTeamRun = {
+    const profiles = [{
+      profileId: 'builtin:codex:read',
+      providerId: 'codex',
+      launcherId: 'codex',
+      name: 'Codex · Read & verify',
+      description: 'Read-only investigation.',
+      permissionMode: 'read-only',
+      capabilities: ['lead', 'worker', 'read', 'verify'] as const,
+      available: false,
+      revision: 1,
+    }, {
+      profileId: 'builtin:claude:read',
+      providerId: 'claude',
+      launcherId: 'claude',
+      name: 'Claude Code · Read & verify',
+      description: 'Plan-mode investigation.',
+      permissionMode: 'plan',
+      capabilities: ['lead', 'worker', 'read', 'verify'] as const,
+      available: false,
+      revision: 1,
+    }] as const;
+    const policy = {
       schemaVersion: 1,
-      runId,
-      revision: 1,
       projectId: project.projectId,
-      projectName: project.name,
-      projectGoal: 'Maintain reliable terminal collaboration',
-      goal: 'Ship Team launch',
-      goalAcceptanceCriteria: ['Planner starts before any other member.'],
-      targetBranch: 'main',
-      validationConfigRevision: 1,
-      validationCommands: [],
-      team,
-      personas,
-      plannerPersonaId: plannerId,
-      phase: 'preparing-planner',
-      slots: personas.map((persona) => ({ personaId: persona.personaId, state: 'planned' as const, updatedAt: 1 })),
-      baseHead: 'a'.repeat(40),
-      baseDirty: false,
-      warningAcknowledged: true,
-      createdAt: 1,
-      updatedAt: 1,
-    };
-    const teamSnapshot: AgentTeamDesktopSnapshot = {
+      enabled: true,
+      permissionMode: 'ask',
+      allowedWorkerProfileIds: [],
+      limits: DEFAULT_COLLABORATION_LIMITS,
+      mergePolicy: DEFAULT_COLLABORATION_MERGE_POLICY,
       revision: 1,
-      catalog: {
-        revision: 1,
-        personas,
-        teams: [team],
-        capabilities: [
-          { provider: 'codex', available: true, supportsModel: true, effortValues: [], permissionValues: ['read-only', 'workspace-write'], modelAvailability: 'launch-time' },
-          { provider: 'claude', available: true, supportsModel: true, effortValues: ['low', 'medium', 'high', 'xhigh', 'max'], permissionValues: ['plan', 'manual', 'acceptEdits'], modelAvailability: 'launch-time' },
-        ],
-      },
-      runRevision: 0,
+      updatedAt: 20,
+    } satisfies CollaborationPolicy;
+    const orchestrationSnapshot: AgentOrchestrationSnapshot = {
+      revision: 1,
+      providers: [
+        { providerId: 'codex', kind: 'builtin', displayName: 'Codex' },
+        { providerId: 'claude', kind: 'builtin', displayName: 'Claude Code' },
+      ],
+      profiles,
+      policies: [policy],
       runs: [],
+      events: [],
+      migration: { required: false, catalogItemCount: 0, runCount: 0 },
     };
-    const opened = {
-      worktreeId: 'worktree-1', repoId: 'repo-1', path: 'C:\\Worktrees\\planner',
-      branch: 'ez/team-planner', head: run.baseHead!, main: false, locked: false, managed: true, prunable: false,
-    };
-    const executeWorktree = vi.fn(async () => ({ ok: true as const, action: 'create' as const, worktrees: [opened], opened }));
     Object.defineProperty(window, 'ezterminal', {
       configurable: true,
       value: {
         listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
-        executeWorktree,
       },
     });
-    const preparedRun: AgentTeamRun = {
-      ...run,
-      revision: 2,
-      slots: [
-        {
-          personaId: plannerId,
-          state: 'prepared',
-          branch: 'ez/team-planner',
-          rootId: 'root-1',
-          workspaceId: 'worktree-1',
-          worktreeId: 'worktree-1',
-          worktreePath: opened.path,
-          updatedAt: 2,
-        },
-        run.slots[1]!,
-      ],
-    };
-    const describeProjectWorkspace = vi.fn(async () => ({
+    const listAgentIntegrations = vi.fn(async () => ([
+      { provider: 'codex' as const, configPath: 'C:\\Users\\me\\.codex\\hooks.json', enabled: false, drift: false, needsTrust: false, blockers: [] },
+      { provider: 'claude' as const, configPath: 'C:\\Users\\me\\.claude\\settings.json', enabled: false, drift: false, needsTrust: false, blockers: [] },
+    ]));
+    const setAgentIntegrationEnabled = vi.fn(async (provider: 'codex' | 'claude') => ({
       ok: true as const,
-      project: {
-        projectId: project.projectId,
-        name: project.name,
-        roots: [{ rootId: 'root-1', name: project.name, displayPath: project.primaryRoot, primary: true }],
-        workspaces: [
-          { workspaceId: 'root-1', rootId: 'root-1', name: 'main', displayPath: project.primaryRoot, kind: 'main' as const, access: 'granted' as const },
-          { workspaceId: 'worktree-1', rootId: 'root-1', name: 'planner', displayPath: opened.path, kind: 'managed' as const, access: 'granted' as const },
-        ],
-      },
-    }));
-    const createAgentTeamRun = vi.fn(async () => ({ ok: true as const, value: run }));
-    const prepareAgentTeamMemberLaunch = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        run: preparedRun,
-        preparation: {
-          ok: true as const,
-          target: { kind: 'project' as const, projectId: project.projectId, rootId: 'root-1', workspaceId: 'worktree-1' },
-          launcherId: 'codex', provider: 'codex' as const, name: 'Codex', cwd: opened.path,
-          roots: [opened.path], ignoredAdditionalRootCount: 0, revision: 'launch-revision',
-        },
+      status: {
+        provider,
+        configPath: provider === 'codex' ? 'C:\\Users\\me\\.codex\\hooks.json' : 'C:\\Users\\me\\.claude\\settings.json',
+        enabled: true,
+        drift: false,
+        needsTrust: provider === 'codex',
+        blockers: [],
       },
     }));
     Object.defineProperty(window, 'ezterminalDesktop', {
       configurable: true,
-      value: {
-        describeProjectWorkspace,
-        listProjectDocumentDirectory: vi.fn(async () => ({ ok: true, relativePath: '', parent: null, entries: [] })),
-        getAgentTeamSnapshot: vi.fn(async () => teamSnapshot),
-        onAgentTeamSnapshot: vi.fn(() => () => undefined),
-        createAgentTeamRun,
-        prepareAgentTeamMemberLaunch,
-      } as unknown as EzTerminalDesktopApi,
+      value: { listAgentIntegrations, setAgentIntegrationEnabled },
     });
-    const onLaunchAgent = vi.fn();
-    await renderHub({ revision: 1, items: [] }, {
-      teamSnapshot,
-      coordinationSnapshot: {
-        revision: 1,
-        activityRevision: 1,
-        activities: [],
-        mergeRequests: [],
-        projects: [{
-          projectId: project.projectId,
-          goal: 'Maintain reliable terminal collaboration',
-          defaultTargetBranch: 'main',
-          validationCommands: [],
-          configRevision: 1,
-          counts: { starting: 0, working: 0, blocked: 0, done: 0, idle: 0, error: 0, unknown: 0 },
-          participants: [],
-          pendingMergeCount: 0,
-        }],
-      },
-      onReadGitStatus: vi.fn(async () => ({ availability: 'ready' as const, tracked: true as const, branch: 'main', changes: [], truncated: false })),
-      onOpenProjectDocument: vi.fn(),
-      onLaunchAgent,
-    });
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="agent-project-open-project-1"]')!.click());
-    await flush();
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="project-workspace-open-team"]')!.click());
-    await flush();
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[data-testid="agent-team-start"]')!.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    const overrides = {
+      orchestrationSnapshot,
+      onSaveCoordinationProject: vi.fn(),
+      onSaveCollaborationPolicy: vi.fn(),
+    };
 
-    expect(createAgentTeamRun).toHaveBeenCalledWith(expect.objectContaining({
+    await renderHub({ revision: 1, items: [] }, overrides);
+    act(() => container.querySelector<HTMLButtonElement>('.agent-project-coordination-start')!.click());
+    await flush();
+
+    const activateCodex = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-collaboration-enable-integration-codex"]',
+    );
+    expect(activateCodex).not.toBeNull();
+    expect(document.body.querySelector(
+      '[data-testid="agent-collaboration-enable-integration-claude"]',
+    )).not.toBeNull();
+
+    act(() => activateCodex!.click());
+    await flush();
+    expect(setAgentIntegrationEnabled).toHaveBeenCalledWith('codex', true);
+
+    await renderHub({ revision: 1, items: [] }, {
+      ...overrides,
+      orchestrationSnapshot: {
+        ...orchestrationSnapshot,
+        revision: 2,
+        profiles: profiles.map((profile) => profile.providerId === 'codex'
+          ? { ...profile, available: true }
+          : profile),
+      },
+    });
+    expect(document.body.querySelector(
+      '[data-testid="agent-collaboration-enable-integration-codex"]',
+    )).toBeNull();
+    expect(document.body.querySelector<HTMLInputElement>(
+      '[data-testid="agent-collaboration-profile-builtin:codex:read"]',
+    )?.disabled).toBe(false);
+  });
+
+  it('saves against the revisions captured when the dialog opened', async () => {
+    const project = {
+      projectId: 'project-1',
+      name: 'Project',
+      primaryRoot: 'C:\\Project',
+      additionalRoots: [],
+      pinned: true,
+      saved: true,
+      sessionCount: 0,
+      providers: [],
+      lastActiveAt: 20,
+    } as const;
+    const coordinationSnapshot: AgentCoordinationSnapshot = {
+      revision: 4,
+      activityRevision: 0,
+      activities: [],
+      projects: [{
+        projectId: project.projectId,
+        goal: 'Keep collaboration safe',
+        defaultTargetBranch: 'main',
+        validationCommands: [],
+        configRevision: 4,
+        counts: {
+          starting: 0,
+          working: 0,
+          blocked: 0,
+          done: 0,
+          idle: 0,
+          error: 0,
+          unknown: 0,
+        },
+        participants: [],
+        pendingMergeCount: 0,
+      }],
+      mergeRequests: [],
+    };
+    const policy = {
+      schemaVersion: 1,
       projectId: project.projectId,
-      teamId,
-      goal: 'Ship Team launch',
-      acceptanceCriteria: ['Planner starts before any other member.'],
+      enabled: false,
+      permissionMode: 'ask',
+      allowedWorkerProfileIds: [],
+      limits: DEFAULT_COLLABORATION_LIMITS,
+      mergePolicy: {
+        ...DEFAULT_COLLABORATION_MERGE_POLICY,
+        targetBranches: ['main'],
+      },
+      revision: 7,
+      updatedAt: 20,
+    } satisfies CollaborationPolicy;
+    const orchestrationSnapshot: AgentOrchestrationSnapshot = {
+      revision: 7,
+      providers: [],
+      profiles: [],
+      policies: [policy],
+      runs: [],
+      events: [],
+      migration: { required: false, catalogItemCount: 0, runCount: 0 },
+    };
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
+      },
+    });
+    const onSaveCoordinationProject = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        projectId: project.projectId,
+        goal: 'Keep collaboration safe',
+        defaultTargetBranch: 'main',
+        validationCommands: [],
+        configRevision: 5,
+        participants: [],
+        updatedAt: 30,
+      },
     }));
-    expect(document.body.textContent).toContain('Maintain reliable terminal collaboration');
-    expect(executeWorktree).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'create',
-      cwd: project.primaryRoot,
-      base: run.baseHead,
-    }));
-    expect(onLaunchAgent).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'codex',
-      teamMemberRequest: { runId, personaId: plannerId },
-    }), expect.objectContaining({ workspaceId: 'worktree-1' }));
+    const onSaveCollaborationPolicy = vi.fn(async () => ({ ok: true as const, value: policy }));
+    const overrides = { coordinationSnapshot, orchestrationSnapshot, onSaveCoordinationProject, onSaveCollaborationPolicy };
+
+    await renderHub({ revision: 1, items: [] }, overrides);
+    act(() => container.querySelector<HTMLButtonElement>('.agent-project-coordination button')!.click());
+    expect(document.body.querySelector('[data-testid="agent-coordination-project-dialog"]')).not.toBeNull();
+
+    await renderHub({ revision: 1, items: [] }, {
+      ...overrides,
+      coordinationSnapshot: {
+        ...coordinationSnapshot,
+        revision: 5,
+        projects: [{ ...coordinationSnapshot.projects[0]!, configRevision: 5 }],
+      },
+      orchestrationSnapshot: {
+        ...orchestrationSnapshot,
+        revision: 8,
+        policies: [{ ...policy, revision: 8 }],
+      },
+    });
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="agent-coordination-project-save"]')!.click());
+    await flush();
+
+    expect(onSaveCoordinationProject).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 4 }));
+    expect(onSaveCollaborationPolicy).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 7 }));
   });
 });
 

@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
   MAX_AGENT_LAUNCH_DIRECTORY_LENGTH,
+  type AgentFreshLaunchOptions,
   type AgentHistoryProvider,
   type AgentHistorySessionPage,
   type AgentLaunchPreparation,
@@ -21,7 +22,6 @@ import {
   type AgentTranscriptPage,
 } from '../shared/agent-history';
 import type { GenericAgentProfile } from '../shared/agent';
-import type { AgentPersonaLaunch } from '../shared/agent-team';
 import type { ProjectSessionTarget, ProjectWorkspaceError } from '../shared/project-workspace';
 import type {
   AgentHistoryProviderAdapter,
@@ -422,7 +422,7 @@ export class AgentHistoryService {
   async prepareLaunch(
     target: AgentLaunchTarget,
     launcherId: string,
-    launch?: AgentPersonaLaunch,
+    launch?: AgentFreshLaunchOptions,
   ): Promise<AgentLaunchPreparation> {
     if (!launcherId || typeof target !== 'object' || target === null) {
       return { ok: false, reason: 'invalid' };
@@ -523,7 +523,7 @@ export class AgentHistoryService {
     target: AgentLaunchTarget,
     launcherId: string,
     revision: string,
-    launch?: AgentPersonaLaunch,
+    launch?: AgentFreshLaunchOptions,
   ): Promise<
     | {
       readonly ok: true;
@@ -670,7 +670,7 @@ export class AgentHistoryService {
     launcherId: string,
     roots: readonly string[],
     executable: string,
-    launch?: AgentPersonaLaunch,
+    launch?: AgentFreshLaunchOptions,
   ): string {
     return createHash('sha256')
       .update(JSON.stringify(target))

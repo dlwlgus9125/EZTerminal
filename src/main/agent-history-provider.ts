@@ -1,8 +1,8 @@
 import type {
+  AgentFreshLaunchOptions,
   AgentHistoryProvider,
   AgentTranscriptPage,
 } from '../shared/agent-history';
-import type { AgentPersonaLaunch } from '../shared/agent-team';
 
 export interface ProviderHistorySession {
   readonly privateId: string;
@@ -82,6 +82,6 @@ export interface AgentHistoryProviderAdapter {
    */
   buildResumeCommand(privateId: string, roots: readonly string[]): AgentResumeCommand | null;
   /** Builds a fresh interactive CLI launch. No prompt is included in argv. */
-  buildNewCommand?(roots: readonly string[], launch?: AgentPersonaLaunch): AgentPrivateCommand | null;
+  buildNewCommand?(roots: readonly string[], launch?: AgentFreshLaunchOptions): AgentPrivateCommand | null;
   dispose(): Promise<void>;
 }

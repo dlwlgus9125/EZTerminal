@@ -9,7 +9,7 @@ import {
   MIN_EFFECT_INTENSITY,
 } from '../shared/ui-preferences';
 import { AgentIntegrationSettings } from './AgentIntegrationSettings';
-import { AgentTeamSettings } from './AgentTeamSettings';
+import { AgentCollaborationSettings } from './AgentCollaborationSettings';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
@@ -596,8 +596,8 @@ export function SettingsPanel({
       </section>
 
       <section className="status-section" hidden={category !== 'agents'}>
-        <h2 className="status-section-title">{t('agentTeams.title')}</h2>
-        <AgentTeamSettings />
+        <h2 className="status-section-title">{t('collaboration.title')}</h2>
+        <AgentCollaborationSettings />
       </section>
 
       <section className="status-section" hidden={category !== 'integrations'}>

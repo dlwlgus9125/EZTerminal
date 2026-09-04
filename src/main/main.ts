@@ -55,7 +55,7 @@ import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { OpenClawChatSurfaceRevisionGate } from './openclaw-chat-surface-revisions';
 import { mintOpenClawChatTicket, startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { resolveOpenClawVisibility } from './openclaw-visibility';
-import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
+import { InterpreterBroker, type BrokerInterpreter, type RemotePort } from './interpreter-broker';
 import { SshForwardService } from './ssh-forward-service';
 import { sshForwardFailure, type SshForwardResult } from '../shared/ssh-forward';
 import { AgentActivityService, type AgentActivityTransition } from './agent-activity-service';
@@ -65,8 +65,13 @@ import { AgentSettingsStore } from './agent-settings-store';
 import { AgentProjectStore } from './agent-project-store';
 import { AgentCoordinationStore } from './agent-coordination-store';
 import { AgentCoordinationService } from './agent-coordination-service';
-import { AgentTeamStore } from './agent-team-store';
-import { AgentTeamService } from './agent-team-service';
+import { AgentOrchestrationStore } from './agent-orchestration-store';
+import { AgentAdapterService } from './agent-adapter-service';
+import { AcpWorkerRuntime } from './acp-worker-runtime';
+import {
+  AgentOrchestrationService,
+  type WorkerLaunchResult,
+} from './agent-orchestration-service';
 import { AgentValidationRunner } from './agent-validation-runner';
 import { ManagedMergeService } from './managed-merge-service';
 import { AgentControlServer } from './agent-control-server';
@@ -94,6 +99,7 @@ import { AsyncMutationGate } from './async-mutation-gate';
 import { SessionWorktreeGuard } from './session-worktree-guard';
 import { SessionSurfaceAuthority } from './session-surface-authority';
 import type {
+  RemoteAgentOrchestrationSource,
   RemoteFileSource,
   RemoteOpenClawSource,
   RemotePacketSource,
@@ -145,27 +151,20 @@ import {
   type OpenClawVisibility,
 } from '../shared/openclaw';
 import type { AgentDecisionResult } from '../shared/agent';
-import {
-  EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
-  type AgentLauncherCapabilities,
-  type AgentPersonaInput,
-  type AgentStarterTeamInput,
-  type AgentTeamDesktopSnapshot,
-  type AgentTeamInput,
-  type AgentTeamMemberActivationInput,
-  type AgentTeamMemberBinding,
-  type AgentTeamMemberFailureInput,
-  type AgentTeamMemberLaunchInput,
-  type AgentTeamPlanApprovalInput,
-  type AgentTeamRunDecisionInput,
-  type AgentTeamRunInput,
-  composeAgentTeamPlanningBrief,
-} from '../shared/agent-team';
+import type {
+  AgentProfile,
+  AgentProviderRef,
+  CollaborationPolicy,
+  CollaborationPolicyInput,
+} from '../shared/agent-orchestration';
+import type { InstallAgentAdapterInput } from '../shared/agent-adapter';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type {
   AgentLaunchStartRequest,
   AgentLaunchStartResult,
   AgentLaunchTarget,
+  AgentFreshLaunchOptions,
+  AgentLauncherCapabilities,
   AgentProjectLaunchStartRequest,
   AgentProjectLaunchStartResult,
   AgentProjectInput,
@@ -227,30 +226,6 @@ function isAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
   return false;
 }
 
-function isAgentTeamLaunchReference(value: unknown): value is NonNullable<AgentLaunchStartRequest['teamMember']> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const reference = value as Partial<NonNullable<AgentLaunchStartRequest['teamMember']>>;
-  return isBoundedAgentString(reference.runId, 64) && isBoundedAgentString(reference.personaId, 64);
-}
-
-function isAgentTeamMemberBinding(value: unknown): value is AgentTeamMemberBinding {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const binding = value as Record<string, unknown>;
-  const limits: Readonly<Record<string, number>> = {
-    branch: 200,
-    rootId: 128,
-    workspaceId: 128,
-    worktreeId: 128,
-    worktreePath: 8_192,
-    sessionId: 256,
-    activityId: 256,
-    participantId: 256,
-  };
-  return Object.entries(binding).every(([key, item]) => (
-    limits[key] !== undefined && isBoundedAgentString(item, limits[key]!)
-  ));
-}
-
 function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const request = value as Partial<AgentLaunchStartRequest>;
@@ -260,7 +235,6 @@ function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartReq
     && isBoundedAgentString(request.sessionId, 256)
     && isBoundedAgentString(request.runId, 256)
     && isBoundedAgentString(request.revision, 128)
-    && (request.teamMember === undefined || isAgentTeamLaunchReference(request.teamMember))
   );
 }
 
@@ -823,12 +797,16 @@ app.on('ready', async () => {
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
   const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
-  const agentTeamStore = new AgentTeamStore(app.getPath('userData'));
+  const agentOrchestrationStore = new AgentOrchestrationStore(app.getPath('userData'));
+  const agentAdapterService = new AgentAdapterService(app.getPath('userData'));
   const agentCoordinationReady = agentCoordinationStore.init().catch((err) => {
     console.error('[main] agent coordination store init failed:', err);
   });
-  const agentTeamReady = agentTeamStore.init().catch((err) => {
-    console.error('[main] agent Team store init failed:', err);
+  const agentOrchestrationReady = agentOrchestrationStore.init().catch((err) => {
+    console.error('[main] Agent orchestration store init failed:', err);
+  });
+  const agentAdapterReady = agentAdapterService.init().catch((err) => {
+    console.error('[main] Agent adapter service init failed:', err);
   });
   const codexHistoryAdapter = new CodexHistoryAdapter(new CodexAppServerClient());
   // Home resolution is left to the adapter so it matches how Claude Code itself
@@ -848,7 +826,8 @@ app.on('ready', async () => {
   const pairingCodeService = new PairingCodeService();
   let agentActivityService: AgentActivityService | null = null;
   let agentCoordinationService: AgentCoordinationService | null = null;
-  let agentTeamService: AgentTeamService | null = null;
+  let agentOrchestrationService: AgentOrchestrationService | null = null;
+  let acpWorkerRuntime: AcpWorkerRuntime | null = null;
   let managedMergeService: ManagedMergeService | null = null;
   let agentControlServer: AgentControlServer | null = null;
   const agentCliShim = new AgentCliShim(app.getPath('userData'), resolveNativeHostPath());
@@ -875,7 +854,7 @@ app.on('ready', async () => {
       console.error('[main] agent hook infrastructure init failed:', err);
     });
   const agentHookInstaller = new AgentHookInstaller(app.getPath('home'), agentHookRelay.scriptPath);
-  let agentTeamCapabilities: readonly AgentLauncherCapabilities[] = [
+  let agentLauncherCapabilities: readonly AgentLauncherCapabilities[] = [
     {
       provider: 'codex',
       available: false,
@@ -893,7 +872,7 @@ app.on('ready', async () => {
       modelAvailability: 'launch-time',
     },
   ];
-  const refreshAgentTeamCapabilities = async (): Promise<void> => {
+  const refreshAgentLauncherCapabilities = async (): Promise<void> => {
     await agentInfrastructureReady;
     const [statuses, launchers] = await Promise.all([
       agentHookInstaller.list(),
@@ -901,7 +880,7 @@ app.on('ready', async () => {
     ]);
     const launchProviders = new Set(launchers.map((launcher) => launcher.provider));
     const statusByProvider = new Map(statuses.map((status) => [status.provider, status]));
-    const next = agentTeamCapabilities.map((capability): AgentLauncherCapabilities => {
+    const next = agentLauncherCapabilities.map((capability): AgentLauncherCapabilities => {
       const status = statusByProvider.get(capability.provider);
       return {
         ...capability,
@@ -913,9 +892,66 @@ app.on('ready', async () => {
           && status.blockers.length === 0,
       };
     });
-    if (JSON.stringify(next) === JSON.stringify(agentTeamCapabilities)) return;
-    agentTeamCapabilities = next;
-    agentTeamService?.capabilitiesChanged();
+    if (JSON.stringify(next) === JSON.stringify(agentLauncherCapabilities)) return;
+    agentLauncherCapabilities = next;
+    agentOrchestrationService?.profilesChanged();
+  };
+  const orchestrationProviders = (): readonly AgentProviderRef[] => [
+    { providerId: 'codex', kind: 'builtin', displayName: 'Codex' },
+    { providerId: 'claude', kind: 'builtin', displayName: 'Claude Code' },
+    ...agentAdapterService.providers(),
+  ];
+  const orchestrationProfiles = (): readonly AgentProfile[] => {
+    const byProvider = new Map(agentLauncherCapabilities.map((capability) => [capability.provider, capability]));
+    const codex = byProvider.get('codex');
+    const claude = byProvider.get('claude');
+    return [
+      {
+        profileId: 'builtin:codex:read',
+        providerId: 'codex',
+        launcherId: 'codex',
+        name: 'Codex · Read & verify',
+        description: 'Read-only investigation and independent verification.',
+        permissionMode: 'read-only',
+        capabilities: ['lead', 'worker', 'read', 'verify', 'permission-events', 'parent-events'],
+        available: Boolean(codex?.available && codex.permissionValues.includes('read-only')),
+        revision: 1,
+      },
+      {
+        profileId: 'builtin:codex:write',
+        providerId: 'codex',
+        launcherId: 'codex',
+        name: 'Codex · Workspace writer',
+        description: 'Writes inside a dedicated managed worktree.',
+        permissionMode: 'workspace-write',
+        capabilities: ['lead', 'worker', 'read', 'write', 'permission-events', 'parent-events'],
+        available: Boolean(codex?.available && codex.permissionValues.includes('workspace-write')),
+        revision: 1,
+      },
+      {
+        profileId: 'builtin:claude:read',
+        providerId: 'claude',
+        launcherId: 'claude',
+        name: 'Claude Code · Read & verify',
+        description: 'Plan-mode investigation and independent verification.',
+        permissionMode: 'plan',
+        capabilities: ['lead', 'worker', 'read', 'verify', 'permission-events', 'parent-events'],
+        available: Boolean(claude?.available && claude.permissionValues.includes('plan')),
+        revision: 1,
+      },
+      {
+        profileId: 'builtin:claude:write',
+        providerId: 'claude',
+        launcherId: 'claude',
+        name: 'Claude Code · Workspace writer',
+        description: 'Writes inside a dedicated managed worktree.',
+        permissionMode: 'acceptEdits',
+        capabilities: ['lead', 'worker', 'read', 'write', 'permission-events', 'parent-events'],
+        available: Boolean(claude?.available && claude.permissionValues.includes('acceptEdits')),
+        revision: 1,
+      },
+      ...agentAdapterService.profiles(),
+    ];
   };
 
   // ── Status overlay panel stats (status-overlay-panel + mobile M1) ─────────
@@ -969,7 +1005,7 @@ app.on('ready', async () => {
   };
   const sessionWorktreeMutationGate = new AsyncMutationGate();
   const sessionWorktreeRunGuard = new SessionWorktreeGuard();
-  const agentTeamGitRunner = new GitRunner();
+  const agentCollaborationGitRunner = new GitRunner();
   const worktreeService = new WorktreeService({
     userDataDir: app.getPath('userData'),
     getSessionCwds: () => broker?.listSessions().map((item) => item.cwd) ?? [],
@@ -1000,7 +1036,7 @@ app.on('ready', async () => {
     projectWorkspaceService,
     projectMapBindingStore,
     projectMapCacheStore,
-    agentTeamGitRunner,
+    agentCollaborationGitRunner,
     projectMapApprovalStore,
     projectMapJobStore,
   );
@@ -1308,6 +1344,98 @@ app.on('ready', async () => {
   ipcMain.handle('agents:get-coordination-snapshot', () => (
     agentCoordinationService?.getSnapshot() ?? EMPTY_AGENT_COORDINATION_SNAPSHOT
   ));
+  ipcMain.handle('agents:get-orchestration-snapshot', async () => {
+    await agentOrchestrationReady;
+    return agentOrchestrationService?.getSnapshot() ?? {
+      revision: 0,
+      providers: [],
+      profiles: [],
+      policies: [],
+      runs: [],
+      events: [],
+      migration: agentOrchestrationStore.migrationStatus,
+    };
+  });
+  ipcMain.handle('agents:save-collaboration-policy', async (_event, input: unknown) => {
+    await agentOrchestrationReady;
+    if (!agentOrchestrationService || typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return { ok: false, error: 'invalid', message: 'Invalid collaboration policy.' } as const;
+    }
+    return agentOrchestrationService.savePolicy(input as CollaborationPolicyInput);
+  });
+  ipcMain.handle('agents:confirm-team-migration', async () => {
+    await agentOrchestrationReady;
+    return agentOrchestrationService?.confirmLegacyMigration() ?? agentOrchestrationStore.migrationStatus;
+  });
+  ipcMain.handle('agents:cancel-worker', async (_event, runId: unknown, taskId: unknown) => {
+    if (!agentOrchestrationService || typeof runId !== 'string' || typeof taskId !== 'string') {
+      return { ok: false, error: 'invalid', message: 'Invalid worker cancellation.' } as const;
+    }
+    const run = agentOrchestrationStore.getRun(runId);
+    const lead = run ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId) : undefined;
+    return lead
+      ? agentOrchestrationService.cancelWorker(lead, taskId)
+      : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+  });
+  ipcMain.handle('agents:archive-worker', async (_event, runId: unknown, taskId: unknown) => {
+    if (!agentOrchestrationService || typeof runId !== 'string' || typeof taskId !== 'string') {
+      return { ok: false, error: 'invalid', message: 'Invalid worker archive request.' } as const;
+    }
+    const run = agentOrchestrationStore.getRun(runId);
+    const lead = run ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId) : undefined;
+    return lead
+      ? agentOrchestrationService.archiveWorker(lead, taskId)
+      : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+  });
+  ipcMain.handle('agents:stop-orchestration-run', async (_event, runId: unknown) => {
+    if (!agentOrchestrationService || typeof runId !== 'string') {
+      return { ok: false, error: 'invalid', message: 'Invalid Lead run.' } as const;
+    }
+    const run = agentOrchestrationStore.getRun(runId);
+    const lead = run ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId) : undefined;
+    return lead
+      ? agentOrchestrationService.stopRun(lead, runId)
+      : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+  });
+  ipcMain.handle('agents:get-adapter-snapshot', async () => {
+    await agentAdapterReady;
+    return agentAdapterService.getSnapshot();
+  });
+  ipcMain.handle('agents:select-adapter-bundle', async (event) => {
+    await agentAdapterReady;
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
+    const options: OpenDialogOptions = {
+      title: 'Install an Agent adapter',
+      properties: ['openFile'],
+      filters: [{ name: 'EZTerminal Agent adapter', extensions: ['ezadapter'] }],
+    };
+    const selected = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    const archivePath = selected.filePaths[0];
+    return selected.canceled || !archivePath ? null : agentAdapterService.inspect(archivePath);
+  });
+  ipcMain.handle('agents:install-adapter', async (_event, input: unknown) => {
+    await agentAdapterReady;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return { ok: false, error: 'invalid', message: 'Invalid adapter installation request.' } as const;
+    }
+    return agentAdapterService.install(input as InstallAgentAdapterInput);
+  });
+  ipcMain.handle('agents:set-adapter-enabled', async (_event, adapterId: unknown, enabled: unknown) => {
+    await agentAdapterReady;
+    if (typeof adapterId !== 'string' || typeof enabled !== 'boolean') {
+      return { ok: false, error: 'invalid', message: 'Invalid adapter state request.' } as const;
+    }
+    return agentAdapterService.setEnabled(adapterId, enabled);
+  });
+  ipcMain.handle('agents:remove-adapter', async (_event, adapterId: unknown) => {
+    await agentAdapterReady;
+    if (typeof adapterId !== 'string') {
+      return { ok: false, error: 'invalid', message: 'Invalid adapter removal request.' } as const;
+    }
+    return agentAdapterService.remove(adapterId);
+  });
   ipcMain.handle('agents:join-collaboration', async (_event, input: unknown) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
       return { ok: false, error: 'invalid', message: 'Invalid collaboration request.' } as const;
@@ -1331,106 +1459,6 @@ app.on('ready', async () => {
       return { ok: false, error: 'invalid', message: 'Invalid Project coordination settings.' } as const;
     }
     return agentCoordinationService.saveProject(input as AgentProjectCoordinationInput);
-  });
-  ipcMain.handle('agent-teams:get-snapshot', async () => {
-    await Promise.all([agentTeamReady, refreshAgentTeamCapabilities()]);
-    return agentTeamService?.getSnapshot() ?? EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT;
-  });
-  ipcMain.handle('agent-teams:save-persona', async (_event, input: unknown) => {
-    await agentTeamReady;
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Persona settings.' } as const;
-    }
-    return agentTeamService.savePersona(input as AgentPersonaInput);
-  });
-  ipcMain.handle('agent-teams:delete-persona', async (
-    _event,
-    personaId: unknown,
-    expectedRevision: unknown,
-  ) => {
-    await agentTeamReady;
-    if (!isBoundedAgentString(personaId, 64)
-      || typeof expectedRevision !== 'number'
-      || !Number.isSafeInteger(expectedRevision)
-      || expectedRevision < 1
-      || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Persona deletion.' } as const;
-    }
-    return agentTeamService.deletePersona(personaId, expectedRevision);
-  });
-  ipcMain.handle('agent-teams:create-starter-team', async (_event, input: unknown) => {
-    await Promise.all([agentTeamReady, refreshAgentTeamCapabilities()]);
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid starter Team settings.' } as const;
-    }
-    return agentTeamService.createStarterTeam(input as AgentStarterTeamInput);
-  });
-  ipcMain.handle('agent-teams:save-team', async (_event, input: unknown) => {
-    await agentTeamReady;
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team settings.' } as const;
-    }
-    return agentTeamService.saveTeam(input as AgentTeamInput);
-  });
-  ipcMain.handle('agent-teams:delete-team', async (
-    _event,
-    teamId: unknown,
-    expectedRevision: unknown,
-  ) => {
-    await agentTeamReady;
-    if (!isBoundedAgentString(teamId, 64)
-      || typeof expectedRevision !== 'number'
-      || !Number.isSafeInteger(expectedRevision)
-      || expectedRevision < 1
-      || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team deletion.' } as const;
-    }
-    return agentTeamService.deleteTeam(teamId, expectedRevision);
-  });
-  ipcMain.handle('agent-teams:create-run', async (_event, input: unknown) => {
-    await Promise.all([agentTeamReady, refreshAgentTeamCapabilities()]);
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team run.' } as const;
-    }
-    return agentTeamService.createRun(input as AgentTeamRunInput);
-  });
-  ipcMain.handle('agent-teams:approve-plan', async (_event, input: unknown) => {
-    await agentTeamReady;
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team plan approval.' } as const;
-    }
-    return agentTeamService.approvePlan(input as AgentTeamPlanApprovalInput);
-  });
-  ipcMain.handle('agent-teams:decide-run', async (_event, input: unknown) => {
-    await agentTeamReady;
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team run decision.' } as const;
-    }
-    return agentTeamService.decideRun(input as AgentTeamRunDecisionInput);
-  });
-  ipcMain.handle('agent-teams:fail-member', async (_event, input: unknown) => {
-    await agentTeamReady;
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team member failure.' } as const;
-    }
-    const candidate = input as Partial<AgentTeamMemberFailureInput>;
-    if (!isBoundedAgentString(candidate.runId, 64)
-      || !isBoundedAgentString(candidate.personaId, 64)
-      || typeof candidate.expectedRevision !== 'number'
-      || !Number.isSafeInteger(candidate.expectedRevision)
-      || candidate.expectedRevision < 1
-      || !isBoundedAgentString(candidate.error, 500)
-      || (candidate.binding !== undefined && !isAgentTeamMemberBinding(candidate.binding))) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team member failure.' } as const;
-    }
-    return agentTeamService.bindMember(
-      candidate.runId,
-      candidate.personaId,
-      candidate.expectedRevision,
-      'failed',
-      candidate.binding,
-      candidate.error,
-    );
   });
   ipcMain.handle('agents:mark-seen', (_event, activityId: unknown, stateSeq: unknown) => (
     typeof activityId === 'string'
@@ -1612,35 +1640,10 @@ app.on('ready', async () => {
     event: IpcMainInvokeEvent,
     candidate: AgentLaunchStartRequest,
   ): Promise<AgentLaunchStartResult> => {
-    let teamContext: ReturnType<AgentTeamService['launchContext']> | null = null;
-    if (candidate.teamMember) {
-      if (!agentTeamService || candidate.target.kind !== 'project') {
-        return { ok: false, reason: 'unavailable' };
-      }
-      teamContext = agentTeamService.launchContext(
-        candidate.teamMember.runId,
-        candidate.teamMember.personaId,
-      );
-      if (!teamContext.ok) {
-        return { ok: false, reason: teamContext.error === 'stale' ? 'stale' : 'unavailable' };
-      }
-      const slot = teamContext.value.run.slots.find(
-        (item) => item.personaId === candidate.teamMember!.personaId,
-      );
-      if (!slot
-        || slot.state !== 'prepared'
-        || candidate.launcherId !== teamContext.value.persona.launch.provider
-        || candidate.target.projectId !== teamContext.value.run.projectId
-        || candidate.target.rootId !== slot.rootId
-        || candidate.target.workspaceId !== slot.workspaceId) {
-        return { ok: false, reason: 'stale' };
-      }
-    }
     const resolved = await agentHistoryService.resolveLaunch(
       candidate.target,
       candidate.launcherId,
       candidate.revision,
-      teamContext?.ok ? teamContext.value.persona.launch : undefined,
     );
     if (!resolved.ok) return resolved;
     const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
@@ -1648,35 +1651,13 @@ app.on('ready', async () => {
       || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
       return { ok: false, reason: 'session-mismatch' };
     }
-    let launchingTeamRevision: number | null = null;
-    if (candidate.teamMember && teamContext?.ok && agentTeamService) {
-      const launching = await agentTeamService.bindMemberCurrent(
-        candidate.teamMember.runId,
-        candidate.teamMember.personaId,
-        'launching',
-        { sessionId: candidate.sessionId },
-      );
-      if (!launching.ok) return { ok: false, reason: 'stale' };
-      launchingTeamRevision = launching.value.revision;
-    }
     const port = broker?.runPrivateCommand(
       candidate.sessionId,
       candidate.runId,
       resolved.commandText,
       resolved.displayCommandText,
     );
-    if (!port) {
-      if (candidate.teamMember && launchingTeamRevision && agentTeamService) {
-        await agentTeamService.bindMemberCurrent(
-          candidate.teamMember.runId,
-          candidate.teamMember.personaId,
-          'failed',
-          { sessionId: candidate.sessionId },
-          'The provider process could not be started.',
-        );
-      }
-      return { ok: false, reason: 'unavailable' };
-    }
+    if (!port) return { ok: false, reason: 'unavailable' };
     void agentHistoryService.recordLaunchTargetWork(candidate.target, resolved.roots, Date.now()).catch((err) => {
       console.error('[main] failed to record launched Agent project:', err);
     });
@@ -1693,194 +1674,6 @@ app.on('ready', async () => {
       return { ok: false, reason: 'invalid' };
     }
     return agentHistoryService.prepareLaunch(target, launcherId);
-  });
-  ipcMain.handle('agent-teams:prepare-member-launch', async (_event, input: unknown) => {
-    await Promise.all([agentHistoryReady, agentInfrastructureReady, agentTeamReady]);
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team member launch.' } as const;
-    }
-    const candidate = input as Partial<AgentTeamMemberLaunchInput>;
-    if (!isBoundedAgentString(candidate.runId, 64)
-      || !isBoundedAgentString(candidate.personaId, 64)
-      || typeof candidate.expectedRevision !== 'number'
-      || !Number.isSafeInteger(candidate.expectedRevision)
-      || candidate.expectedRevision < 1
-      || !isAgentLaunchTarget(candidate.target)
-      || candidate.target.kind !== 'project'
-      || !candidate.target.rootId
-      || !candidate.target.workspaceId
-      || !isAgentTeamMemberBinding(candidate.binding)
-      || !candidate.binding.branch
-      || !candidate.binding.rootId
-      || !candidate.binding.workspaceId
-      || !candidate.binding.worktreeId
-      || !candidate.binding.worktreePath
-      || candidate.binding.sessionId !== undefined
-      || candidate.binding.activityId !== undefined
-      || candidate.binding.participantId !== undefined
-      || candidate.target.rootId !== candidate.binding.rootId
-      || candidate.target.workspaceId !== candidate.binding.workspaceId) {
-      return { ok: false, error: 'invalid', message: 'A managed worktree target is required.' } as const;
-    }
-    const target = candidate.target;
-    const context = agentTeamService.launchContext(
-      candidate.runId,
-      candidate.personaId,
-      candidate.expectedRevision,
-    );
-    if (!context.ok) return context;
-    if (target.projectId !== context.value.run.projectId) {
-      return { ok: false, error: 'conflict', message: 'The worktree belongs to another Project.' } as const;
-    }
-    const described = await projectWorkspaceService.describeProjectWorkspaces(target.projectId);
-    const managedWorkspace = described.ok
-      ? described.project.workspaces?.find((workspace) => (
-          workspace.workspaceId === target.workspaceId
-          && workspace.rootId === target.rootId
-          && workspace.kind === 'managed'
-          && workspace.access === 'granted'
-        ))
-      : undefined;
-    if (!managedWorkspace
-      || managedWorkspace.workspaceId !== candidate.binding.worktreeId
-      || (managedWorkspace.branch !== undefined && managedWorkspace.branch !== candidate.binding.branch)) {
-      return { ok: false, error: 'conflict', message: 'The Team member requires the exact managed worktree.' } as const;
-    }
-    const canonicalBinding: AgentTeamMemberBinding = {
-      branch: managedWorkspace.branch ?? candidate.binding.branch,
-      rootId: managedWorkspace.rootId,
-      workspaceId: managedWorkspace.workspaceId,
-      worktreeId: managedWorkspace.workspaceId,
-      worktreePath: managedWorkspace.displayPath,
-    };
-    const slot = context.value.run.slots.find((item) => item.personaId === candidate.personaId);
-    if (!slot || !['planned', 'failed', 'prepared'].includes(slot.state)) {
-      return { ok: false, error: 'conflict', message: 'This Team member is not ready to prepare.' } as const;
-    }
-    const preparation = await agentHistoryService.prepareLaunch(
-      target,
-      context.value.persona.launch.provider,
-      context.value.persona.launch,
-    );
-    if (!preparation.ok) {
-      return {
-        ok: false,
-        error: preparation.reason === 'invalid' ? 'invalid' : 'unavailable',
-        message: `Unable to prepare ${context.value.persona.name}.`,
-      } as const;
-    }
-    if (directoryKey(preparation.cwd) !== directoryKey(managedWorkspace.displayPath)) {
-      return { ok: false, error: 'conflict', message: 'The prepared Agent path does not match the managed worktree.' } as const;
-    }
-    const bound = await agentTeamService.bindMemberCurrent(
-      candidate.runId,
-      candidate.personaId,
-      'prepared',
-      canonicalBinding,
-    );
-    return bound.ok
-      ? { ok: true, value: { run: bound.value, preparation } } as const
-      : bound;
-  });
-  ipcMain.handle('agent-teams:activate-member', async (_event, input: unknown) => {
-    await Promise.all([agentInfrastructureReady, agentTeamReady]);
-    if (typeof input !== 'object' || input === null || Array.isArray(input)
-      || !agentTeamService || !agentActivityService || !agentCoordinationService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team member activation.' } as const;
-    }
-    const candidate = input as Partial<AgentTeamMemberActivationInput>;
-    if (!isBoundedAgentString(candidate.runId, 64)
-      || !isBoundedAgentString(candidate.personaId, 64)
-      || !isBoundedAgentString(candidate.sessionId, 256)) {
-      return { ok: false, error: 'invalid', message: 'Invalid Team member activation.' } as const;
-    }
-    let context = agentTeamService.launchContext(candidate.runId, candidate.personaId);
-    if (!context.ok) return context;
-    let slot = context.value.run.slots.find((item) => item.personaId === candidate.personaId);
-    if (slot?.state === 'failed' && slot.sessionId === candidate.sessionId) {
-      const rebound = await agentTeamService.bindMemberCurrent(
-        candidate.runId,
-        candidate.personaId,
-        'launching',
-        { sessionId: candidate.sessionId },
-      );
-      if (!rebound.ok) return rebound;
-      context = agentTeamService.launchContext(candidate.runId, candidate.personaId);
-      if (!context.ok) return context;
-      slot = context.value.run.slots.find((item) => item.personaId === candidate.personaId);
-    }
-    if (!slot || slot.state !== 'launching' || slot.sessionId !== candidate.sessionId) {
-      return { ok: false, error: 'conflict', message: 'This terminal is not the prepared Team member.' } as const;
-    }
-    const activities = agentActivityService.getSnapshot().items.filter((activity) => (
-      activity.live
-      && activity.sessionId === candidate.sessionId
-      && activity.provider === context.value.persona.launch.provider
-    ));
-    if (activities.length === 0) {
-      return { ok: false, error: 'unavailable', message: 'Waiting for the Agent integration to observe this session.' } as const;
-    }
-    if (activities.length > 1) {
-      const message = 'More than one live Agent was observed in the prepared Team session.';
-      await agentTeamService.bindMemberCurrent(
-        candidate.runId,
-        candidate.personaId,
-        'failed',
-        { sessionId: candidate.sessionId },
-        message,
-      );
-      return { ok: false, error: 'conflict', message } as const;
-    }
-    const activity = activities[0]!;
-    const joined = await agentCoordinationService.join({
-      activityId: activity.id,
-      alias: context.value.persona.name,
-      role: context.value.persona.role,
-      task: context.value.task,
-      expectedProjectRevision: context.value.run.validationConfigRevision,
-    });
-    if (!joined.ok) {
-      await agentTeamService.bindMemberCurrent(
-        candidate.runId,
-        candidate.personaId,
-        'failed',
-        { sessionId: candidate.sessionId },
-        joined.message,
-      );
-      return joined;
-    }
-    if (joined.value.participant.projectId !== context.value.run.projectId
-      || joined.value.participant.rootId !== slot.rootId
-      || joined.value.participant.workspaceId !== slot.workspaceId) {
-      agentCoordinationService.leave(activity.id);
-      const message = 'The observed Agent started outside its prepared worktree.';
-      await agentTeamService.bindMemberCurrent(
-        candidate.runId,
-        candidate.personaId,
-        'failed',
-        { sessionId: candidate.sessionId },
-        message,
-      );
-      return { ok: false, error: 'conflict', message } as const;
-    }
-    const bound = await agentTeamService.bindMemberCurrent(
-      candidate.runId,
-      candidate.personaId,
-      'active',
-      {
-        sessionId: candidate.sessionId,
-        activityId: activity.id,
-        participantId: joined.value.participant.participantId,
-      },
-    );
-    if (!bound.ok) {
-      agentCoordinationService.leave(activity.id);
-      return bound;
-    }
-    const brief = !bound.value.approvedAt && candidate.personaId === bound.value.plannerPersonaId
-      ? composeAgentTeamPlanningBrief(bound.value)
-      : context.value.brief;
-    return { ok: true, value: { run: bound.value, brief } } as const;
   });
   ipcMain.handle('agent-launch:start', async (
     event,
@@ -1959,7 +1752,7 @@ app.on('ready', async () => {
     if (removed) {
       await Promise.all([
         projectWorkspaceService.revokeProjectAccess(projectId),
-        agentTeamService?.removeProject(projectId),
+        agentOrchestrationStore.removeProject(projectId),
       ]);
     }
     return removed;
@@ -2220,7 +2013,7 @@ app.on('ready', async () => {
       } as const;
     }
     const result = await agentHookInstaller.mutate(provider, enabled);
-    await refreshAgentTeamCapabilities();
+    await refreshAgentLauncherCapabilities();
     return result;
   });
   ipcMain.handle('agents:get-settings', async () => {
@@ -2356,12 +2149,14 @@ app.on('ready', async () => {
       { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
       { name: 'agent control server', run: () => agentControlServer?.stop() },
       { name: 'managed merge', run: () => managedMergeService?.dispose() },
-      { name: 'agent Teams', run: () => agentTeamService?.dispose() },
+      { name: 'agent orchestration', run: () => agentOrchestrationService?.dispose() },
+      { name: 'ACP worker runtime', run: () => acpWorkerRuntime?.dispose() },
       { name: 'agent coordination', run: () => agentCoordinationService?.dispose() },
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
       { name: 'agent history', run: () => agentHistoryService.dispose() },
       { name: 'agent coordination store', run: () => agentCoordinationStore.flush() },
-      { name: 'agent Team store', run: () => agentTeamStore.flush() },
+      { name: 'agent orchestration store', run: () => agentOrchestrationStore.flush() },
+      { name: 'agent adapter store', run: () => agentAdapterService.flush() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'project workspace access', run: () => projectWorkspaceAccessStore.flush() },
       {
@@ -2662,10 +2457,11 @@ app.on('ready', async () => {
   });
   await Promise.all([
     agentCoordinationReady,
-    agentTeamReady,
+    agentOrchestrationReady,
+    agentAdapterReady,
     agentCliReady,
     projectWorkspaceReady,
-    refreshAgentTeamCapabilities(),
+    refreshAgentLauncherCapabilities(),
   ]);
   agentCoordinationService = new AgentCoordinationService({
     activities: agentActivityService,
@@ -2692,30 +2488,27 @@ app.on('ready', async () => {
       };
     },
   });
-  agentTeamService = new AgentTeamService({
-    store: agentTeamStore,
-    listProjects: () => agentProjectStore.list(),
-    getCoordinationProject: (projectId) => agentCoordinationService?.getProject(projectId) ?? null,
-    capabilities: () => agentTeamCapabilities,
-    isActivityLive: (activityId) => agentActivityService?.getSnapshot().items.some(
-      (activity) => activity.id === activityId && activity.live,
-    ) === true,
-    inspectBase: async (project, targetBranch) => {
-      const status = await gitStatusService.getStatus(project.primaryRoot);
-      if (status.availability !== 'ready') return null;
-      try {
-        const head = (await agentTeamGitRunner.run(project.primaryRoot, [
-          'rev-parse',
-          '--verify',
-          '--end-of-options',
-          `${targetBranch}^{commit}`,
-        ])).trim();
-        return /^[0-9a-f]{40,64}$/iu.test(head)
-          ? { head, dirty: status.changes.length > 0 }
-          : null;
-      } catch {
-        return null;
+  acpWorkerRuntime = new AcpWorkerRuntime({
+    setActivityState: (activityId, state) => {
+      agentActivityService!.setExternalActivityState(activityId, state);
+    },
+    endActivity: (activityId, error) => {
+      agentActivityService!.endExternalActivity(activityId, error);
+    },
+    requestApproval: (activityId, toolName, command) => (
+      agentActivityService!.requestExternalApproval(activityId, toolName, command)
+    ),
+    report: async (activityId, taskId, report) => {
+      const activity = agentActivityService!.getSnapshot().items.find(
+        (candidate) => candidate.id === activityId,
+      );
+      if (!activity || !agentOrchestrationService) {
+        return { ok: false, message: 'The ACP worker is no longer attached to its Lead run.' };
       }
+      const result = await agentOrchestrationService.reportWorker(activity, taskId, report);
+      return result.ok
+        ? { ok: true }
+        : { ok: false, message: result.message };
     },
   });
   const validationRunner = new AgentValidationRunner(broker);
@@ -2741,9 +2534,361 @@ app.on('ready', async () => {
           ? path.resolve(session.cwd).toLocaleLowerCase('en-US')
           : path.resolve(session.cwd);
         const relative = path.relative(targetKey, cwdKey);
-        return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+        const insideTarget = relative === ''
+          || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+        if (!insideTarget) return false;
+        // The Lead's provider process is a long-lived PTY, so counting it as
+        // an ordinary active command would make every in-session merge
+        // impossible. A clean target may advance only at the same explicit
+        // turn boundary used for worker event delivery; working/blocked Leads
+        // and every unrelated terminal run still hold the guard.
+        const leadRun = agentOrchestrationStore.activeRunForLead(session.sessionId);
+        const lead = leadRun
+          ? agentActivityService?.getSnapshot().items.find((item) => item.id === leadRun.leadActivityId)
+          : undefined;
+        return !(lead?.live
+          && lead.interactiveReady
+          && (lead.state === 'done' || lead.state === 'idle'));
       });
     },
+  });
+  const workerPorts = new Map<string, RemotePort>();
+  const profileLaunch = (
+    profile: AgentProfile,
+    collaborationPermission: CollaborationPolicy['permissionMode'],
+  ): AgentFreshLaunchOptions => {
+    if (profile.providerId === 'codex') {
+      return {
+        provider: 'codex',
+        ...(profile.model ? { model: profile.model } : {}),
+        sandbox: profile.permissionMode === 'workspace-write' ? 'workspace-write' : 'read-only',
+      };
+    }
+    return {
+      provider: 'claude',
+      ...(profile.model ? { model: profile.model } : {}),
+      ...(profile.effort && ['low', 'medium', 'high', 'xhigh', 'max'].includes(profile.effort)
+        ? { effort: profile.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
+        : {}),
+      permissionMode: profile.permissionMode === 'acceptEdits'
+        ? collaborationPermission === 'safe-auto' ? 'acceptEdits' : 'manual'
+        : 'plan',
+    };
+  };
+  const waitForWorkerActivity = (
+    sessionId: string,
+    providerId: string,
+    timeoutMs = 20_000,
+  ): Promise<import('../shared/agent').AgentActivity> => {
+    const find = (): import('../shared/agent').AgentActivity | undefined => {
+      const matches = agentActivityService!.getSnapshot().items.filter((activity) => (
+        activity.live && activity.sessionId === sessionId && activity.provider === providerId
+      ));
+      return matches.length === 1 ? matches[0] : undefined;
+    };
+    const existing = find();
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (activity?: import('../shared/agent').AgentActivity, error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        if (activity) resolve(activity);
+        else reject(error ?? new Error('The worker Agent was not observed.'));
+      };
+      const unsubscribe = agentActivityService!.onObserved(() => {
+        const activity = find();
+        if (activity) finish(activity);
+      });
+      const timer = setTimeout(
+        () => finish(undefined, new Error('Timed out waiting for the worker provider integration.')),
+        timeoutMs,
+      );
+      timer.unref?.();
+    });
+  };
+  const scopeContains = (scope: string, candidate: string): boolean => {
+    const left = scope.toLocaleLowerCase('en-US').replaceAll('\\', '/');
+    const right = candidate.toLocaleLowerCase('en-US').replaceAll('\\', '/').replace(/^\.\//u, '');
+    if (left === '.') return true;
+    // `.env.` is the deliberately narrow prefix form used by the built-in
+    // deny rule (`.env.local`, `.env.production`, ...).
+    if (left === '.env.') return right.startsWith(left);
+    return right === left.replace(/\/$/u, '') || right.startsWith(left.endsWith('/') ? left : `${left}/`);
+  };
+  agentOrchestrationService = new AgentOrchestrationService({
+    store: agentOrchestrationStore,
+    providers: orchestrationProviders,
+    profiles: orchestrationProfiles,
+    projectExists: (projectId) => agentProjectStore.list().some((project) => project.projectId === projectId),
+    launchWorker: async (run, task, profile, prompt): Promise<WorkerLaunchResult> => {
+      const project = agentProjectStore.list().find((candidate) => candidate.projectId === run.projectId);
+      if (!project) throw new Error('The worker Project no longer exists.');
+      const policy = agentOrchestrationStore.getPolicy(run.projectId);
+      if (!policy || policy.revision !== run.policyRevision) {
+        throw new Error('The Project collaboration policy changed before worker launch.');
+      }
+      let cwd = project.primaryRoot;
+      let worktree: import('../shared/worktree').WorktreeInfo | undefined;
+      let sessionId: string | undefined;
+      let externalActivityId: string | undefined;
+      try {
+        if (task.mode === 'write') {
+          const branch = `ez/worker-${run.runId.slice(0, 8)}-${task.taskId.slice(0, 8)}`;
+          const base = agentCoordinationService!.getProject(run.projectId)?.defaultTargetBranch ?? 'HEAD';
+          const created = await worktreeService.execute({
+            action: 'create',
+            cwd,
+            branch,
+            base,
+          }, 'desktop');
+          if (!created.ok || !created.opened) {
+            throw new Error(created.ok ? 'Managed worker worktree was not created.' : created.message);
+          }
+          worktree = created.opened;
+          cwd = worktree.path;
+        } else if (task.mode === 'verify') {
+          const writer = run.tasks.find((candidate) => candidate.taskId === task.verifiesTaskId);
+          if (!writer?.worker?.worktreePath || !writer.worker.worktreeId || !writer.worker.branch) {
+            throw new Error('The exact writer worktree is unavailable for verification.');
+          }
+          cwd = writer.worker.worktreePath;
+          worktree = {
+            worktreeId: writer.worker.worktreeId,
+            repoId: '',
+            path: writer.worker.worktreePath,
+            branch: writer.worker.branch,
+            head: writer.result?.sourceHead ?? '',
+            main: false,
+            locked: false,
+            managed: true,
+            prunable: false,
+          };
+        }
+        const adapterProfile = profile.providerId.startsWith('adapter:');
+        const adapter = adapterProfile
+          ? agentAdapterService.runtimeDescriptor(profile.profileId)
+          : null;
+        if (adapterProfile && !adapter) {
+          throw new Error('The selected ACP adapter is disabled, unhealthy, or no longer installed.');
+        }
+        if (adapter) {
+          const verifiedWriter = task.mode === 'verify'
+            ? run.tasks.find((candidate) => candidate.taskId === task.verifiesTaskId)
+            : undefined;
+          const prepared = await acpWorkerRuntime!.prepare(
+            adapter,
+            cwd,
+            task,
+            policy.permissionMode,
+            verifiedWriter?.result?.sourceHead,
+          );
+          sessionId = prepared.sessionId;
+          const activity = agentActivityService!.registerExternalActivity({
+            sessionId: prepared.sessionId,
+            runId: prepared.runId,
+            providerLabel: adapter.manifest.name,
+            cwd,
+          });
+          externalActivityId = activity.id;
+          if (!acpWorkerRuntime!.bindActivity(prepared.sessionId, activity.id)) {
+            throw new Error('The ACP worker activity could not be bound.');
+          }
+          const alias = `worker-${task.taskId.slice(0, 8)}`;
+          const joined = await agentCoordinationService!.join({
+            activityId: activity.id,
+            alias,
+            role: task.mode === 'verify' ? 'Independent verifier' : task.mode === 'write' ? 'Scoped writer' : 'Read-only worker',
+            task: task.title,
+            expectedProjectRevision: agentCoordinationService!.getProject(run.projectId)?.configRevision,
+          });
+          if (!joined.ok) throw new Error(joined.message);
+          return {
+            profileId: profile.profileId,
+            providerId: profile.providerId,
+            sessionId: prepared.sessionId,
+            activityId: activity.id,
+            ...(worktree ? {
+              worktreeId: worktree.worktreeId,
+              worktreePath: worktree.path,
+              branch: worktree.branch,
+            } : {}),
+            start: () => prepared.start(prompt),
+          };
+        }
+        const target = { kind: 'directory' as const, directory: cwd };
+        const launch = profileLaunch(profile, policy.permissionMode);
+        const preparation = await agentHistoryService.prepareLaunch(target, profile.launcherId, launch);
+        if (!preparation.ok) throw new Error(`Worker launch preparation failed: ${preparation.reason}`);
+        const resolved = await agentHistoryService.resolveLaunch(target, profile.launcherId, preparation.revision, launch);
+        if (!resolved.ok) throw new Error(`Worker launch became unavailable: ${resolved.reason}`);
+        const session = await broker!.createSession(cwd);
+        sessionId = session.sessionId;
+        broker!.setPrivateSessionEnvironment(session.sessionId, {
+          EZTERMINAL_ORCHESTRATION_ROLE: 'worker',
+          EZTERMINAL_ORCHESTRATION_RUN_ID: run.runId,
+          EZTERMINAL_ORCHESTRATION_TASK_ID: task.taskId,
+        });
+        const providerRunId = randomUUID();
+        const port = broker!.runPrivateCommand(
+          session.sessionId,
+          providerRunId,
+          resolved.commandText,
+          `[worker] ${task.title}`,
+          'desktop',
+        );
+        if (!port) throw new Error('The worker provider process could not be started.');
+        workerPorts.set(session.sessionId, port);
+        port.on('close', () => {
+          if (workerPorts.get(session.sessionId) === port) workerPorts.delete(session.sessionId);
+        });
+        port.start();
+        const activity = await waitForWorkerActivity(session.sessionId, profile.providerId);
+        const alias = `worker-${task.taskId.slice(0, 8)}`;
+        const joined = await agentCoordinationService!.join({
+          activityId: activity.id,
+          alias,
+          role: task.mode === 'verify' ? 'Independent verifier' : task.mode === 'write' ? 'Scoped writer' : 'Read-only worker',
+          task: task.title,
+          expectedProjectRevision: agentCoordinationService!.getProject(run.projectId)?.configRevision,
+        });
+        if (!joined.ok) throw new Error(joined.message);
+        void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        return {
+          profileId: profile.profileId,
+          providerId: profile.providerId,
+          sessionId: session.sessionId,
+          activityId: activity.id,
+          ...(worktree ? {
+            worktreeId: worktree.worktreeId,
+            worktreePath: worktree.path,
+            branch: worktree.branch,
+          } : {}),
+          start: () => {
+            if (workerPorts.get(session!.sessionId) !== port) {
+              throw new Error('The worker provider stopped before task delivery.');
+            }
+            port.postMessage({ type: 'pty-submit-on-ready', data: prompt });
+          },
+        };
+      } catch (error) {
+        if (sessionId && !acpWorkerRuntime?.stop(sessionId)) broker!.destroySession(sessionId);
+        if (externalActivityId) agentActivityService!.endExternalActivity(externalActivityId, true);
+        if (worktree && task.mode === 'write') {
+          await worktreeService.execute({
+            action: 'remove',
+            cwd: project.primaryRoot,
+            worktreeId: worktree.worktreeId,
+          }, 'desktop').catch(() => undefined);
+        }
+        throw error;
+      }
+    },
+    stopSession: (sessionId) => {
+      if (acpWorkerRuntime?.stop(sessionId)) return;
+      const port = workerPorts.get(sessionId);
+      try {
+        port?.postMessage({ type: 'cancel' });
+      } catch {
+        // Session teardown remains authoritative.
+      }
+      workerPorts.delete(sessionId);
+      broker?.destroySession(sessionId);
+    },
+    promptActivity: (activityId, text) => acpWorkerRuntime?.ownsActivity(activityId)
+      ? acpWorkerRuntime.prompt(activityId, text)
+      : agentActivityService!.sendPrompt(activityId, text),
+    readActivity: async (activityId) => {
+      if (acpWorkerRuntime?.ownsActivity(activityId)) {
+        return acpWorkerRuntime.readActivity(activityId);
+      }
+      const result = await agentActivityService!.readActivity(activityId, 120);
+      return result.ok ? result.text : null;
+    },
+    activity: (activityId) => agentActivityService!.getSnapshot().items.find((activity) => activity.id === activityId) ?? null,
+    inspectWorkerSource: async (task) => {
+      const cwd = task.worker?.worktreePath;
+      if (!cwd) return null;
+      try {
+        const [head, dirty] = await Promise.all([
+          agentCollaborationGitRunner.run(cwd, ['rev-parse', 'HEAD^{commit}']).then((value) => value.trim()),
+          agentCollaborationGitRunner.run(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+        ]);
+        return /^[0-9a-f]{40,64}$/u.test(head) ? { head, clean: dirty.length === 0 } : null;
+      } catch {
+        return null;
+      }
+    },
+    evaluateMergePolicy: async (task, policy: CollaborationPolicy, targetBranch) => {
+      const cwd = task.worker?.worktreePath;
+      const expectedHead = task.result?.sourceHead;
+      if (!cwd || !expectedHead
+        || policy.mergePolicy.allowPaths.length === 0
+        || policy.mergePolicy.requiredValidationIds.length === 0) {
+        return { eligible: false, reason: 'Safe automation requires allowed paths and validations.' };
+      }
+      const project = agentCoordinationService!.getProject(policy.projectId);
+      if (!project || policy.mergePolicy.requiredValidationIds.some((id) => !project.validationCommands.some((command) => command.id === id))) {
+        return { eligible: false, reason: 'Required validations are unavailable.' };
+      }
+      try {
+        const [head, status, numstat, raw] = await Promise.all([
+          agentCollaborationGitRunner.run(cwd, ['rev-parse', 'HEAD^{commit}']).then((value) => value.trim()),
+          agentCollaborationGitRunner.run(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+          agentCollaborationGitRunner.run(cwd, ['diff', '--no-renames', '--numstat', '-z', `refs/heads/${targetBranch}`, expectedHead, '--']),
+          agentCollaborationGitRunner.run(cwd, ['diff', '--no-renames', '--raw', '-z', `refs/heads/${targetBranch}`, expectedHead, '--']),
+        ]);
+        if (head !== expectedHead || status.length > 0) return { eligible: false, reason: 'Writer revision or cleanliness changed.' };
+        const entries = numstat.split('\0').filter(Boolean).map((entry) => {
+          const [added, removed, ...pathParts] = entry.split('\t');
+          return { added, removed, path: pathParts.join('\t').replaceAll('\\', '/') };
+        });
+        if (entries.some((entry) => !entry.path || entry.added === '-' || entry.removed === '-')) {
+          return { eligible: false, reason: 'Binary or unparsable changes require approval.' };
+        }
+        const paths = [...new Set(entries.map((entry) => entry.path))];
+        const lines = entries.reduce((total, entry) => total + Number(entry.added) + Number(entry.removed), 0);
+        if (paths.length > policy.mergePolicy.maxChangedFiles || lines > policy.mergePolicy.maxChangedLines) {
+          return { eligible: false, reason: 'The diff exceeds safe automation size limits.' };
+        }
+        if (paths.some((candidate) => (
+          !task.writeScopes.some((scope) => scopeContains(scope, candidate))
+          || !policy.mergePolicy.allowPaths.some((scope) => scopeContains(scope, candidate))
+          || policy.mergePolicy.denyPaths.some((scope) => scopeContains(scope, candidate))
+        ))) return { eligible: false, reason: 'The diff falls outside allowed write paths.' };
+        const rawRecords = raw.split('\0').filter(Boolean);
+        const unsafeMode = rawRecords.some((record) => {
+          const match = /^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ [A-Z]/u.exec(record);
+          if (!match) return false;
+          const oldMode = match[1]!;
+          const newMode = match[2]!;
+          return oldMode === '120000' || newMode === '120000'
+            || oldMode === '160000' || newMode === '160000'
+            || (oldMode !== '000000' && newMode !== '000000' && oldMode !== newMode);
+        });
+        return unsafeMode
+          ? { eligible: false, reason: 'Link, submodule, or mode changes require approval.' }
+          : { eligible: true };
+      } catch {
+        return { eligible: false, reason: 'The merge policy diff could not be verified.' };
+      }
+    },
+    grantPolicyMerge: (task, targetBranch) => {
+      const activityId = task.worker?.activityId;
+      const participant = activityId ? agentCoordinationService!.getParticipantByActivity(activityId) : null;
+      if (!participant) {
+        return { ok: false, error: 'not-found', message: 'Writer collaboration identity is unavailable.' };
+      }
+      return managedMergeService!.grantNext({
+        participantId: participant.participantId,
+        sourceWorkspaceId: participant.workspaceId,
+        targetBranch,
+        durationMs: 900000,
+      });
+    },
+    requestMerge: (activityId, targetBranch) => managedMergeService!.requestForActivity(activityId, targetBranch),
   });
   try {
     await Promise.all([managedMergeService.init(), projectMapReady]);
@@ -2752,10 +2897,10 @@ app.on('ready', async () => {
       coordination: agentCoordinationService,
       merges: managedMergeService,
       maps: projectMapService,
-      teams: agentTeamService,
+      orchestration: agentOrchestrationService,
     });
     await agentControlServer.start();
-    await refreshAgentTeamCapabilities();
+    await refreshAgentLauncherCapabilities();
     for (const session of broker.listSessions()) {
       broker.setPrivateSessionEnvironment(session.sessionId, {
         EZTERMINAL_AGENT_CONTROL_DESCRIPTOR: agentControlServer.descriptorForSession(session.sessionId),
@@ -2767,21 +2912,30 @@ app.on('ready', async () => {
     await agentControlServer?.stop().catch(() => undefined);
     agentControlServer = null;
   }
-  broker.onSessionRemoved((sessionId) => agentControlServer?.revokeSession(sessionId));
+  broker.onSessionRemoved((sessionId) => {
+    agentControlServer?.revokeSession(sessionId);
+    workerPorts.delete(sessionId);
+    agentOrchestrationService?.handleSessionRemoved(sessionId);
+  });
   agentCoordinationService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('agents:coordination-snapshot', snapshot);
     }
   });
-  const broadcastAgentTeamSnapshot = (snapshot: AgentTeamDesktopSnapshot): void => {
+  agentOrchestrationService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('agent-teams:snapshot', snapshot);
+      win.webContents.send('agents:orchestration-snapshot', snapshot);
     }
-  };
-  agentTeamService.onSnapshot(broadcastAgentTeamSnapshot);
-  broadcastAgentTeamSnapshot(agentTeamService.getSnapshot());
+  });
+  agentAdapterService.onSnapshot((snapshot) => {
+    agentOrchestrationService?.profilesChanged();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('agents:adapter-snapshot', snapshot);
+    }
+  });
   agentActivityService.onObserved((activity) => {
     // Every provider EZTerminal has local history for — generic profiles have no
     // adapter and so no sessions to come back to.
@@ -2812,6 +2966,7 @@ app.on('ready', async () => {
   });
   const liveAgentNotifications = new Set<Notification>();
   agentActivityService.onTransition((transition: AgentActivityTransition) => {
+    agentOrchestrationService?.handleActivityTransition(transition);
     const { activity } = transition;
     if (activity.state !== 'done' && activity.state !== 'blocked' && activity.state !== 'error') return;
     const notificationSetting = activity.state === 'done' ? 'waiting' : activity.state;
@@ -3267,6 +3422,40 @@ app.on('ready', async () => {
       return quickCommandStore.list();
     },
   };
+  const remoteAgentOrchestrationSource: RemoteAgentOrchestrationSource | undefined =
+    agentOrchestrationService ? {
+      getSnapshot: () => agentOrchestrationService!.getSnapshot(),
+      onSnapshot: (listener) => agentOrchestrationService!.onSnapshot(listener),
+      savePolicy: (input) => agentOrchestrationService!.savePolicy(input),
+      cancelWorker: async (runId, taskId) => {
+        const run = agentOrchestrationStore.getRun(runId);
+        const lead = run
+          ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId)
+          : undefined;
+        return lead
+          ? agentOrchestrationService!.cancelWorker(lead, taskId)
+          : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+      },
+      archiveWorker: async (runId, taskId) => {
+        const run = agentOrchestrationStore.getRun(runId);
+        const lead = run
+          ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId)
+          : undefined;
+        return lead
+          ? agentOrchestrationService!.archiveWorker(lead, taskId)
+          : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+      },
+      stopRun: async (runId) => {
+        const run = agentOrchestrationStore.getRun(runId);
+        const lead = run
+          ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId)
+          : undefined;
+        return lead
+          ? agentOrchestrationService!.stopRun(lead, runId)
+          : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+      },
+      confirmLegacyMigration: () => agentOrchestrationService!.confirmLegacyMigration(),
+    } : undefined;
   const deviceRoster = new RemoteDeviceRoster();
   ipcMain.handle('remote:list-devices', () => deviceRoster.list());
 
@@ -3314,9 +3503,11 @@ app.on('ready', async () => {
       agentCoordinationSource: agentCoordinationService && managedMergeService ? {
         getSnapshot: () => agentCoordinationService!.getSnapshot(),
         onSnapshot: (listener) => agentCoordinationService!.onSnapshot(listener),
+        saveProject: (input) => agentCoordinationService!.saveProject(input),
         markSeen: (activityId, stateSeq) => agentCoordinationService!.markSeen(activityId, stateSeq),
         decideManagedMerge: (input) => managedMergeService!.decide(input),
       } : undefined,
+      agentOrchestrationSource: remoteAgentOrchestrationSource,
       agentHistorySource: agentHistoryService,
       gitSource: gitStatusService,
       pairingSource: {

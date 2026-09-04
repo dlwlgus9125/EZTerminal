@@ -119,24 +119,21 @@ import type {
   AgentTranscriptPage,
 } from './agent-history';
 import type {
-  AgentPersona,
-  AgentPersonaInput,
-  AgentStarterTeam,
-  AgentStarterTeamInput,
-  AgentTeam,
-  AgentTeamDesktopSnapshot,
-  AgentTeamInput,
-  AgentTeamMemberActivationInput,
-  AgentTeamMemberActivationResult,
-  AgentTeamMemberFailureInput,
-  AgentTeamMemberLaunchInput,
-  AgentTeamMemberLaunchResult,
-  AgentTeamMutationResult,
-  AgentTeamPlanApprovalInput,
-  AgentTeamRun,
-  AgentTeamRunDecisionInput,
-  AgentTeamRunInput,
-} from './agent-team';
+  AgentOrchestrationMutationResult,
+  AgentOrchestrationSnapshot,
+  CollaborationPolicy,
+  CollaborationPolicyInput,
+  CollaborationRun,
+  CollaborationTask,
+  LegacyTeamMigrationStatus,
+} from './agent-orchestration';
+import type {
+  AgentAdapterInstallPreview,
+  AgentAdapterMutationResult,
+  AgentAdapterSnapshot,
+  InstallAgentAdapterInput,
+  InstalledAgentAdapter,
+} from './agent-adapter';
 import type { SessionSurfaceApi } from './session-surface';
 import type {
   AppUpdateOpenResult,
@@ -1604,20 +1601,36 @@ export interface EzTerminalDesktopApi {
   removeAgentProject: (projectId: string) => Promise<boolean>;
   selectAgentProjectFolders: (multiple?: boolean) => Promise<AgentProjectFolderSelection>;
 
-  // Desktop-only Persona/Team catalog and approved one-shot Team runs.
-  getAgentTeamSnapshot: () => Promise<AgentTeamDesktopSnapshot>;
-  onAgentTeamSnapshot: (listener: (snapshot: AgentTeamDesktopSnapshot) => void) => () => void;
-  saveAgentPersona: (input: AgentPersonaInput) => Promise<AgentTeamMutationResult<AgentPersona>>;
-  deleteAgentPersona: (personaId: string, expectedRevision: number) => Promise<AgentTeamMutationResult<true>>;
-  createAgentStarterTeam: (input: AgentStarterTeamInput) => Promise<AgentTeamMutationResult<AgentStarterTeam>>;
-  saveAgentTeam: (input: AgentTeamInput) => Promise<AgentTeamMutationResult<AgentTeam>>;
-  deleteAgentTeam: (teamId: string, expectedRevision: number) => Promise<AgentTeamMutationResult<true>>;
-  createAgentTeamRun: (input: AgentTeamRunInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
-  approveAgentTeamPlan: (input: AgentTeamPlanApprovalInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
-  decideAgentTeamRun: (input: AgentTeamRunDecisionInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
-  prepareAgentTeamMemberLaunch: (input: AgentTeamMemberLaunchInput) => Promise<AgentTeamMemberLaunchResult>;
-  activateAgentTeamMember: (input: AgentTeamMemberActivationInput) => Promise<AgentTeamMemberActivationResult>;
-  failAgentTeamMember: (input: AgentTeamMemberFailureInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
+  // Project-scoped Lead orchestration. Worker creation itself is Lead-only via
+  // the session capability; the renderer can configure policy and stop work.
+  getAgentOrchestrationSnapshot: () => Promise<AgentOrchestrationSnapshot>;
+  onAgentOrchestrationSnapshot: (
+    listener: (snapshot: AgentOrchestrationSnapshot) => void,
+  ) => () => void;
+  saveCollaborationPolicy: (
+    input: CollaborationPolicyInput,
+  ) => Promise<AgentOrchestrationMutationResult<CollaborationPolicy>>;
+  confirmLegacyTeamMigration: () => Promise<LegacyTeamMigrationStatus>;
+  cancelOrchestrationWorker: (
+    runId: string,
+    taskId: string,
+  ) => Promise<AgentOrchestrationMutationResult<CollaborationTask>>;
+  archiveOrchestrationWorker: (
+    runId: string,
+    taskId: string,
+  ) => Promise<AgentOrchestrationMutationResult<CollaborationTask>>;
+  stopOrchestrationRun: (
+    runId: string,
+  ) => Promise<AgentOrchestrationMutationResult<CollaborationRun>>;
+
+  // Signed desktop adapter bundles. File paths and signing keys remain in main;
+  // the renderer receives only a bounded review token and public metadata.
+  getAgentAdapterSnapshot: () => Promise<AgentAdapterSnapshot>;
+  onAgentAdapterSnapshot: (listener: (snapshot: AgentAdapterSnapshot) => void) => () => void;
+  selectAgentAdapterBundle: () => Promise<AgentAdapterMutationResult<AgentAdapterInstallPreview> | null>;
+  installAgentAdapter: (input: InstallAgentAdapterInput) => Promise<AgentAdapterMutationResult<InstalledAgentAdapter>>;
+  setAgentAdapterEnabled: (adapterId: string, enabled: boolean) => Promise<AgentAdapterMutationResult<InstalledAgentAdapter>>;
+  removeAgentAdapter: (adapterId: string) => Promise<AgentAdapterMutationResult<true>>;
 
   // ── OpenClaw management (openclaw-management M1) ────────────────────────
   // `getChatUrl`/the raw token are deliberately ABSENT from this surface —

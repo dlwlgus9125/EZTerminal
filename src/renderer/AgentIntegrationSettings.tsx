@@ -234,7 +234,7 @@ export function AgentIntegrationSettings({
               genericProfiles: current.genericProfiles.filter((candidate) => candidate.id !== profile.id),
             }))}
           >
-            {t('agentSettings.remove')}
+            {t('agentSettings.removeProfile')}
           </button>
         </div>
       ))}

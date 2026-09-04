@@ -4,7 +4,7 @@ import type { AgentActivity } from '../shared/agent';
 import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
 import type { AgentCoordinationService } from './agent-coordination-service';
 import { AgentControlServer, descriptorFingerprint } from './agent-control-server';
-import type { AgentTeamService } from './agent-team-service';
+import type { AgentOrchestrationService } from './agent-orchestration-service';
 import type { ManagedMergeService } from './managed-merge-service';
 import type { ProjectMapService } from './project-map-service';
 
@@ -74,9 +74,18 @@ function fixture(): {
     read: ReturnType<typeof vi.fn>;
   };
   readonly maps: { readonly read: ReturnType<typeof vi.fn> };
-  readonly teams: {
-    readonly submitPlan: ReturnType<typeof vi.fn>;
-    readonly waitForPlanDecision: ReturnType<typeof vi.fn>;
+  readonly orchestration: {
+    readonly isWorkerSession: ReturnType<typeof vi.fn>;
+    readonly listProfiles: ReturnType<typeof vi.fn>;
+    readonly createWorker: ReturnType<typeof vi.fn>;
+    readonly listWorkers: ReturnType<typeof vi.fn>;
+    readonly readWorker: ReturnType<typeof vi.fn>;
+    readonly promptWorker: ReturnType<typeof vi.fn>;
+    readonly cancelWorker: ReturnType<typeof vi.fn>;
+    readonly archiveWorker: ReturnType<typeof vi.fn>;
+    readonly requestWorkerMerge: ReturnType<typeof vi.fn>;
+    readonly completeRun: ReturnType<typeof vi.fn>;
+    readonly reportWorker: ReturnType<typeof vi.fn>;
   };
   readonly setSnapshot: (snapshot: AgentCoordinationSnapshot) => void;
 } {
@@ -122,23 +131,29 @@ function fixture(): {
       },
     })),
   };
-  const teams = {
-    submitPlan: vi.fn(async () => ({ ok: true as const, value: { revision: 2 } })),
-    waitForPlanDecision: vi.fn(async () => ({
-      ok: true as const,
-      value: { run: { revision: 3 }, assignment: { title: 'Implement' }, brief: 'Approved brief.' },
-    })),
+  const orchestration = {
+    isWorkerSession: vi.fn(() => false),
+    listProfiles: vi.fn(() => ({ ok: true as const, value: [{ profileId: 'reader' }] })),
+    createWorker: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1' } })),
+    listWorkers: vi.fn(() => ({ ok: true as const, value: [{ taskId: 'task-1' }] })),
+    readWorker: vi.fn(() => ({ ok: true as const, value: { taskId: 'task-1', summary: 'bounded' } })),
+    promptWorker: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1' } })),
+    cancelWorker: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1', state: 'cancelled' } })),
+    archiveWorker: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1', archivedAt: 3 } })),
+    requestWorkerMerge: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1', state: 'merging' } })),
+    completeRun: vi.fn(async () => ({ ok: true as const, value: { runId: 'run-1', state: 'completed' } })),
+    reportWorker: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1', state: 'done' } })),
   };
   return {
     server: new AgentControlServer({
       coordination: coordination as unknown as AgentCoordinationService,
       merges: merges as unknown as ManagedMergeService,
       maps: maps as unknown as ProjectMapService,
-      teams: teams as unknown as Pick<AgentTeamService, 'submitPlan' | 'waitForPlanDecision'>,
+      orchestration: orchestration as unknown as AgentOrchestrationService,
     }),
     coordination,
     maps,
-    teams,
+    orchestration,
     setSnapshot: (next) => { snapshot = next; },
   };
 }
@@ -202,53 +217,6 @@ describe('AgentControlServer', () => {
         status: 403,
         body: { ok: false, error: 'collaboration-inactive' },
       });
-    } finally {
-      await server.stop();
-    }
-  });
-
-  it('accepts a bounded Team plan only from the authenticated session identity', async () => {
-    const { server, teams } = fixture();
-    await server.start();
-    try {
-      const descriptor = JSON.parse(server.descriptorForSession('session-source')) as Descriptor;
-      const runId = '123e4567-e89b-12d3-a456-426614174020';
-      const proposal = {
-        summary: 'Split implementation and review.',
-        assignments: [{
-          taskId: '123e4567-e89b-12d3-a456-426614174030',
-          personaId: '123e4567-e89b-12d3-a456-426614174000',
-          title: 'Implement the bounded change',
-          outcome: 'The requested behavior works.',
-          scopeHints: ['src/'],
-          validationIds: [],
-          acceptanceCriteria: ['The focused test passes.'],
-          brief: 'Implement only the assigned scope.',
-        }],
-        excludedMembers: [],
-      };
-
-      await expect(post(descriptor, '/v1/team/plan', {
-        runId,
-        expectedRevision: 1,
-        proposal,
-      })).resolves.toMatchObject({ status: 200, body: { ok: true } });
-      expect(teams.submitPlan).toHaveBeenCalledWith('source', {
-        runId,
-        expectedRevision: 1,
-        proposal,
-      });
-      expect(teams.waitForPlanDecision).toHaveBeenCalledWith(runId, 2, expect.any(AbortSignal));
-
-      await expect(post(descriptor, '/v1/team/plan', {
-        runId: '------------------------------------',
-        expectedRevision: 1,
-        proposal,
-      })).resolves.toMatchObject({
-        status: 400,
-        body: { ok: false, error: 'invalid-request' },
-      });
-      expect(teams.submitPlan).toHaveBeenCalledTimes(1);
     } finally {
       await server.stop();
     }
@@ -322,6 +290,87 @@ describe('AgentControlServer', () => {
         mapId: 'runtime-architecture',
         quality: 'production',
       });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('exposes bounded Lead worker operations through the session capability', async () => {
+    const { server, orchestration } = fixture();
+    await server.start();
+    try {
+      const descriptor = JSON.parse(server.descriptorForSession('session-source')) as Descriptor;
+      await expect(post(descriptor, '/v1/workers/profiles', {})).resolves.toMatchObject({ status: 200, body: { ok: true } });
+      const createInput = {
+        title: 'Inspect the parser',
+        brief: 'Find the exact parser boundary and report evidence.',
+        mode: 'read-only',
+        profileId: 'reader',
+        dependsOn: [],
+        writeScopes: [],
+      };
+      await expect(post(descriptor, '/v1/workers/create', createInput)).resolves.toMatchObject({
+        status: 200,
+        body: { ok: true, value: { taskId: 'task-1' } },
+      });
+      expect(orchestration.createWorker).toHaveBeenCalledWith(expect.objectContaining({ id: 'source' }), createInput);
+      await expect(post(descriptor, '/v1/workers', {})).resolves.toMatchObject({ status: 200, body: { ok: true } });
+      await expect(post(descriptor, '/v1/workers/read', { taskId: 'task-1' })).resolves.toMatchObject({ status: 200 });
+      await expect(post(descriptor, '/v1/workers/prompt', { taskId: 'task-1', text: 'Check one more edge.' })).resolves.toMatchObject({ status: 200 });
+      await expect(post(descriptor, '/v1/workers/cancel', { taskId: 'task-1' })).resolves.toMatchObject({ status: 200 });
+      await expect(post(descriptor, '/v1/workers/archive', { taskId: 'task-1' })).resolves.toMatchObject({ status: 200 });
+      await expect(post(descriptor, '/v1/workers/merge', { taskId: 'task-1', targetBranch: 'main' })).resolves.toMatchObject({ status: 200 });
+      await expect(post(descriptor, '/v1/workers/complete', { runId: 'run-1' })).resolves.toMatchObject({ status: 200 });
+      expect(orchestration.requestWorkerMerge).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'source' }),
+        'task-1',
+        'main',
+      );
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('enforces depth one: a worker can report only and cannot create or control peers', async () => {
+    const { server, orchestration, coordination, setSnapshot } = fixture();
+    orchestration.isWorkerSession.mockImplementation((sessionId: string) => sessionId === 'session-worker');
+    setSnapshot({
+      revision: 2,
+      activityRevision: 2,
+      activities: [activity('worker', 'project-1', 'Worker')],
+      projects: [],
+      mergeRequests: [],
+    });
+    await server.start();
+    try {
+      const descriptor = JSON.parse(server.descriptorForSession('session-worker')) as Descriptor;
+      await expect(post(descriptor, '/v1/workers/create', {
+        title: 'Nested worker',
+        brief: 'This must never start.',
+        mode: 'read-only',
+        profileId: 'reader',
+      })).resolves.toMatchObject({
+        status: 403,
+        body: { ok: false, error: 'worker-depth-limit' },
+      });
+      await expect(post(descriptor, '/v1/workers/cancel', { taskId: 'peer-task' })).resolves.toMatchObject({
+        status: 403,
+        body: { ok: false, error: 'worker-depth-limit' },
+      });
+      expect(orchestration.createWorker).not.toHaveBeenCalled();
+      expect(orchestration.cancelWorker).not.toHaveBeenCalled();
+
+      await expect(post(descriptor, '/v1/worker/report', {
+        taskId: 'task-1',
+        outcome: 'succeeded',
+        summary: 'Inspected the requested boundary.',
+      })).resolves.toMatchObject({ status: 200, body: { ok: true } });
+      expect(orchestration.reportWorker).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'session-worker' }),
+        'task-1',
+        expect.objectContaining({ outcome: 'succeeded' }),
+      );
+      expect(coordination.getSnapshot).toHaveBeenCalled();
     } finally {
       await server.stop();
     }

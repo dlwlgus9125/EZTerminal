@@ -33,6 +33,7 @@ import {
 } from '../shared/renderer-recovery';
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
+  type AgentApproval,
   type AgentActivitySnapshot,
   type AgentDecision,
   type AgentDecisionResult,
@@ -46,9 +47,10 @@ import {
   type AgentCoordinationSnapshot,
 } from '../shared/agent-coordination';
 import {
-  EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
-  type AgentTeamDesktopSnapshot,
-} from '../shared/agent-team';
+  EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
+  orchestrationWorkerActivityIds,
+  type AgentOrchestrationSnapshot,
+} from '../shared/agent-orchestration';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type { AuxiliaryCloseRequest } from '../shared/desktop-window';
@@ -289,6 +291,7 @@ const AgentTabStatusContext = createContext<ReadonlyMap<string, AgentTabPresenta
 
 interface PaneApprovalContextValue {
   readonly byPanel: ReadonlyMap<string, PaneApproval>;
+  readonly byActivity: ReadonlyMap<string, AgentApproval>;
   readonly onDecide: (
     activityId: string,
     approvalId: string,
@@ -297,6 +300,7 @@ interface PaneApprovalContextValue {
 }
 
 const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
+const AgentOrchestrationContext = createContext<AgentOrchestrationSnapshot>(EMPTY_AGENT_ORCHESTRATION_SNAPSHOT);
 const TerminalRuntimeContext = createContext<TerminalRuntimeOptions>(DEFAULT_TERMINAL_RUNTIME_OPTIONS);
 interface ProjectReviewNavigationContextValue {
   readonly openHistoryReview: (
@@ -429,6 +433,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   const presetMutation = useContext(PresetMutationContext);
   const quickCommandShelf = useContext(QuickCommandShelfContext);
   const paneApprovals = useContext(PaneApprovalContext);
+  const orchestrationSnapshot = useContext(AgentOrchestrationContext);
   const projectSession = isProjectSessionPanelMetadata(props.params?.projectSession)
     ? props.params.projectSession
     : undefined;
@@ -449,6 +454,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     <TerminalPane
       panelId={props.api.id}
       pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
+      workerApprovals={paneApprovals?.byActivity}
       onDecideApproval={paneApprovals?.onDecide}
       paneInstanceToken={props.api}
       initialCwd={recoveryState?.cwd || props.params?.cwd as string | undefined}
@@ -463,6 +469,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
       isCommandSubmissionLocked={presetMutation.isLocked}
       quickCommands={quickCommandShelf?.commands}
       onManageQuickCommands={quickCommandShelf?.onManage}
+      orchestrationSnapshot={orchestrationSnapshot}
     />
   );
 }
@@ -486,6 +493,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const presetMutation = useContext(PresetMutationContext);
   const quickCommandShelf = useContext(QuickCommandShelfContext);
   const paneApprovals = useContext(PaneApprovalContext);
+  const orchestrationSnapshot = useContext(AgentOrchestrationContext);
   return (
     <AgentSessionPanel
       historyId={historyId}
@@ -503,6 +511,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
         <TerminalPane
           panelId={props.api.id}
           pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
+          workerApprovals={paneApprovals?.byActivity}
           onDecideApproval={paneApprovals?.onDecide}
           paneInstanceToken={props.api}
           resumeBootstrap={resumeBootstrap}
@@ -517,6 +526,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
           isCommandSubmissionLocked={presetMutation.isLocked}
           quickCommands={quickCommandShelf?.commands}
           onManageQuickCommands={quickCommandShelf?.onManage}
+          orchestrationSnapshot={orchestrationSnapshot}
         />
       )}
     />
@@ -1341,9 +1351,17 @@ export function App(): JSX.Element {
   const [agentCoordinationSnapshot, setAgentCoordinationSnapshot] = useState<AgentCoordinationSnapshot>(
     EMPTY_AGENT_COORDINATION_SNAPSHOT,
   );
-  const [agentTeamSnapshot, setAgentTeamSnapshot] = useState<AgentTeamDesktopSnapshot>(
-    EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
+  const [agentOrchestrationSnapshot, setAgentOrchestrationSnapshot] = useState<AgentOrchestrationSnapshot>(
+    EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   );
+  const orchestrationWorkerIds = useMemo(
+    () => orchestrationWorkerActivityIds(agentOrchestrationSnapshot),
+    [agentOrchestrationSnapshot],
+  );
+  const userFacingAgentSnapshot = useMemo<AgentActivitySnapshot>(() => ({
+    ...agentSnapshot,
+    items: agentSnapshot.items.filter((item) => !orchestrationWorkerIds.has(item.id)),
+  }), [agentSnapshot, orchestrationWorkerIds]);
   const [unreadAgentIds, setUnreadAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   const latestAgentRevisionRef = useRef(-1);
   const previousAgentStatusesRef = useRef<Map<string, AgentStatus>>(new Map());
@@ -1402,13 +1420,13 @@ export function App(): JSX.Element {
     if (!desktop) return undefined;
     let alive = true;
     let latestRevision = -1;
-    const applySnapshot = (next: AgentTeamDesktopSnapshot): void => {
-      if (!alive || next.revision <= latestRevision) return;
+    const applySnapshot = (next: AgentOrchestrationSnapshot): void => {
+      if (!alive || next.revision < latestRevision) return;
       latestRevision = next.revision;
-      setAgentTeamSnapshot(next);
+      setAgentOrchestrationSnapshot(next);
     };
-    const unsubscribe = desktop.onAgentTeamSnapshot(applySnapshot);
-    void desktop.getAgentTeamSnapshot().then(applySnapshot).catch(() => undefined);
+    const unsubscribe = desktop.onAgentOrchestrationSnapshot(applySnapshot);
+    void desktop.getAgentOrchestrationSnapshot().then(applySnapshot).catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe();
@@ -1543,8 +1561,10 @@ export function App(): JSX.Element {
 
   const paneApprovalValue = useMemo<PaneApprovalContextValue>(() => {
     const byPanel = new Map<string, PaneApproval>();
+    const byActivity = new Map<string, AgentApproval>();
     for (const activity of agentSnapshot.items) {
       if (!activity.approval) continue;
+      byActivity.set(activity.id, activity.approval);
       for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
         if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
         byPanel.set(binding.panelId, { activityId: activity.id, approval: activity.approval });
@@ -1552,12 +1572,15 @@ export function App(): JSX.Element {
     }
     return {
       byPanel,
+      byActivity,
       onDecide: (activityId, approvalId, decision) =>
         window.ezterminal.decideAgentApproval(activityId, approvalId, decision),
     };
   }, [agentSnapshot, sessionPaneBindings]);
 
-  const attentionCount = countAgentAttention(agentSnapshot);
+  const attentionCount = countAgentAttention(userFacingAgentSnapshot);
+  const unreadUserFacingAgentCount = [...unreadAgentIds]
+    .filter((activityId) => !orchestrationWorkerIds.has(activityId)).length;
   const agentSessionIds = useMemo<ReadonlySet<string>>(
     () =>
       new Set(
@@ -3607,8 +3630,8 @@ export function App(): JSX.Element {
   // Live sublabels. The shell has always had the slot; nothing filled it, so a
   // destination could only ever say its own name.
   const sidebarDescription: Partial<Record<SidebarDestination, string>> = {
-    agents: agentSnapshot.items.length > 0
-      ? t('agentHub.tracked', { value: agentSnapshot.items.length })
+    agents: userFacingAgentSnapshot.items.length > 0
+      ? t('agentHub.tracked', { value: userFacingAgentSnapshot.items.length })
       : undefined,
     remote: remoteDesktopStatus?.controllerName
       ? t('statusBar.mirror', { name: remoteDesktopStatus.controllerName })
@@ -3631,7 +3654,7 @@ export function App(): JSX.Element {
         componentProps={{
           snapshot: agentSnapshot,
           coordinationSnapshot: agentCoordinationSnapshot,
-          teamSnapshot: agentTeamSnapshot,
+          orchestrationSnapshot: agentOrchestrationSnapshot,
           onFocusSession: focusAgentSession,
           onSendFollowup: (activityId, text) => window.ezterminal.sendAgentPrompt(activityId, text),
           onDecideApproval: (activityId, approvalId, decision) =>
@@ -3659,15 +3682,9 @@ export function App(): JSX.Element {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
           },
-          onJoinCollaboration: (input) => window.ezterminal.joinAgentCollaboration(input),
-          onLeaveCollaboration: (activityId) => window.ezterminal.leaveAgentCollaboration(activityId),
           onSaveCoordinationProject: (input) => window.ezterminal.saveAgentCoordinationProject(input),
-          onSendPrompt: (activityId, text) => window.ezterminal.sendAgentPrompt(activityId, text),
-          onRequestManagedMerge: (activityId, targetBranch) => (
-            window.ezterminal.requestManagedMerge(activityId, targetBranch)
-          ),
+          onSaveCollaborationPolicy: (input) => window.ezterminalDesktop!.saveCollaborationPolicy(input),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
-          onGrantNextManagedMerge: (input) => window.ezterminal.grantNextManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}
         loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
@@ -3756,7 +3773,7 @@ export function App(): JSX.Element {
     <main className="app">
       <AppHeader
         appVersion={rendererCapabilities.runtimeVersions()?.app ?? null}
-        attentionCount={Math.max(attentionCount, unreadAgentIds.size)}
+        attentionCount={Math.max(attentionCount, unreadUserFacingAgentCount)}
         commandCenterOpen={quickOpenMode !== null}
         effectIntensity={uiPreferences.effectIntensity}
         onNewTerminal={addTab}
@@ -3869,6 +3886,7 @@ export function App(): JSX.Element {
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
                 <PaneApprovalContext.Provider value={paneApprovalValue}>
+                <AgentOrchestrationContext.Provider value={agentOrchestrationSnapshot}>
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
                     <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
@@ -3895,6 +3913,7 @@ export function App(): JSX.Element {
                     </QuickCommandShelfContext.Provider>
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
+                </AgentOrchestrationContext.Provider>
                 </PaneApprovalContext.Provider>
               </AgentTabStatusContext.Provider>
             </OpenClawOverlayContext.Provider>

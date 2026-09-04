@@ -55,13 +55,13 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
         Some("wait") => parse_wait(&args[1..]),
         Some("map") => parse_map(&args[1..]),
         Some("merge") => parse_merge(&args[1..]),
-        Some("team") => parse_team(&args[1..]),
+        Some("workers") => parse_workers(&args[1..]),
+        Some("worker") => parse_worker(&args[1..]),
         _ => bail!(usage()),
     }
 }
 
-fn parse_team(args: &[String]) -> Result<RequestSpec> {
-    let (run_id, expected_revision) = parse_team_plan_arguments(args)?;
+fn read_stdin_bytes() -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     io::stdin()
         .take((MAX_STDIN_BYTES + 1) as u64)
@@ -69,58 +69,140 @@ fn parse_team(args: &[String]) -> Result<RequestSpec> {
     if bytes.is_empty() || bytes.len() > MAX_STDIN_BYTES {
         bail!("stdin must contain 1..32768 bytes");
     }
-    let proposal: Value =
-        serde_json::from_slice(&bytes).context("stdin must contain one JSON plan object")?;
-    if !proposal.is_object() {
-        bail!("stdin must contain one JSON plan object");
-    }
-    Ok(RequestSpec {
-        path: "/v1/team/plan",
-        body: json!({
-            "runId": run_id,
-            "expectedRevision": expected_revision,
-            "proposal": proposal,
-        }),
-    })
+    Ok(bytes)
 }
 
-fn parse_team_plan_arguments(args: &[String]) -> Result<(String, u64)> {
-    if args.first().map(String::as_str) != Some("plan")
-        || args.get(1).map(String::as_str) != Some("submit")
-    {
+fn read_stdin_text() -> Result<String> {
+    String::from_utf8(read_stdin_bytes()?).context("stdin must be UTF-8")
+}
+
+fn parse_workers(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("profiles") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/workers/profiles",
+            body: json!({}),
+        }),
+        Some("list") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/workers",
+            body: json!({}),
+        }),
+        Some("create") if args.len() == 2 && args[1] == "--stdin" => {
+            let body: Value = serde_json::from_slice(&read_stdin_bytes()?)
+                .context("stdin must contain one JSON worker request")?;
+            if !body.is_object() {
+                bail!("stdin must contain one JSON worker request");
+            }
+            Ok(RequestSpec {
+                path: "/v1/workers/create",
+                body,
+            })
+        }
+        Some("read") if args.len() == 2 => Ok(RequestSpec {
+            path: "/v1/workers/read",
+            body: json!({ "taskId": args[1] }),
+        }),
+        Some("prompt") if args.len() == 3 && args[2] == "--stdin" => Ok(RequestSpec {
+            path: "/v1/workers/prompt",
+            body: json!({ "taskId": args[1], "text": read_stdin_text()? }),
+        }),
+        Some("cancel") if args.len() == 2 => Ok(RequestSpec {
+            path: "/v1/workers/cancel",
+            body: json!({ "taskId": args[1] }),
+        }),
+        Some("archive") if args.len() == 2 => Ok(RequestSpec {
+            path: "/v1/workers/archive",
+            body: json!({ "taskId": args[1] }),
+        }),
+        Some("merge") => {
+            let task_id = args
+                .get(1)
+                .filter(|value| !value.starts_with('-'))
+                .context(usage())?;
+            let mut target: Option<String> = None;
+            let mut index = 2;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--target" if target.is_none() => {
+                        index += 1;
+                        target = Some(
+                            args.get(index)
+                                .context("--target requires a local branch")?
+                                .clone(),
+                        );
+                    }
+                    _ => bail!(usage()),
+                }
+                index += 1;
+            }
+            Ok(RequestSpec {
+                path: "/v1/workers/merge",
+                body: json!({ "taskId": task_id, "targetBranch": target.context("--target is required")? }),
+            })
+        }
+        Some("complete") if args.len() == 2 => Ok(RequestSpec {
+            path: "/v1/workers/complete",
+            body: json!({ "runId": args[1] }),
+        }),
+        _ => bail!(usage()),
+    }
+}
+
+fn parse_worker(args: &[String]) -> Result<RequestSpec> {
+    if !args.iter().any(|value| value == "--stdin") {
+        bail!("worker summary is accepted only with --stdin");
+    }
+    build_worker_report(args, read_stdin_text()?)
+}
+
+fn build_worker_report(args: &[String], summary: String) -> Result<RequestSpec> {
+    if args.first().map(String::as_str) != Some("report") {
         bail!(usage());
     }
-    let run_id = args
-        .get(2)
+    let task_id = args
+        .get(1)
         .filter(|value| !value.starts_with('-'))
         .context(usage())?;
-    let parts: Vec<&str> = run_id.split('-').collect();
-    if parts.len() != 5
-        || [8, 4, 4, 4, 12]
-            .iter()
-            .enumerate()
-            .any(|(index, length)| parts[index].len() != *length)
-        || !parts
-            .iter()
-            .all(|part| part.chars().all(|character| character.is_ascii_hexdigit()))
-    {
-        bail!("run id must be a UUID");
-    }
-    let mut expected_revision: Option<u64> = None;
+    let mut outcome: Option<String> = None;
+    let mut source_head: Option<String> = None;
+    let mut verifies_task: Option<String> = None;
+    let mut verifies_head: Option<String> = None;
     let mut stdin = false;
-    let mut index = 3;
+    let mut index = 2;
     while index < args.len() {
         match args[index].as_str() {
-            "--revision" if expected_revision.is_none() => {
+            "--outcome" if outcome.is_none() => {
                 index += 1;
-                let value: u64 = args
+                let value = args
                     .get(index)
-                    .context("--revision requires a positive integer")?
-                    .parse()?;
-                if value == 0 {
-                    bail!("--revision requires a positive integer");
+                    .context("--outcome requires succeeded or failed")?;
+                if value != "succeeded" && value != "failed" {
+                    bail!("--outcome requires succeeded or failed");
                 }
-                expected_revision = Some(value);
+                outcome = Some(value.clone());
+            }
+            "--source-head" if source_head.is_none() => {
+                index += 1;
+                source_head = Some(
+                    args.get(index)
+                        .context("--source-head requires a Git object id")?
+                        .clone(),
+                );
+            }
+            "--verifies-task" if verifies_task.is_none() => {
+                index += 1;
+                verifies_task = Some(
+                    args.get(index)
+                        .context("--verifies-task requires a task id")?
+                        .clone(),
+                );
+            }
+            "--verifies-head" if verifies_head.is_none() => {
+                index += 1;
+                verifies_head = Some(
+                    args.get(index)
+                        .context("--verifies-head requires a Git object id")?
+                        .clone(),
+                );
             }
             "--stdin" if !stdin => stdin = true,
             _ => bail!(usage()),
@@ -128,12 +210,35 @@ fn parse_team_plan_arguments(args: &[String]) -> Result<(String, u64)> {
         index += 1;
     }
     if !stdin {
-        bail!("the Team plan is accepted only with --stdin");
+        bail!("worker summary is accepted only with --stdin");
     }
-    Ok((
-        run_id.clone(),
-        expected_revision.context("--revision is required")?,
-    ))
+    for head in [&source_head, &verifies_head].into_iter().flatten() {
+        if !(40..=64).contains(&head.len())
+            || !head.chars().all(|character| character.is_ascii_hexdigit())
+        {
+            bail!("Git object ids must contain 40..64 hexadecimal characters");
+        }
+    }
+    let mut body = serde_json::Map::new();
+    body.insert("taskId".to_owned(), Value::String(task_id.clone()));
+    body.insert(
+        "outcome".to_owned(),
+        Value::String(outcome.context("--outcome is required")?),
+    );
+    body.insert("summary".to_owned(), Value::String(summary));
+    if let Some(value) = source_head {
+        body.insert("sourceHead".to_owned(), Value::String(value));
+    }
+    if let Some(value) = verifies_task {
+        body.insert("verifiesTaskId".to_owned(), Value::String(value));
+    }
+    if let Some(value) = verifies_head {
+        body.insert("verifiesHead".to_owned(), Value::String(value));
+    }
+    Ok(RequestSpec {
+        path: "/v1/worker/report",
+        body: Value::Object(body),
+    })
 }
 
 fn parse_map(args: &[String]) -> Result<RequestSpec> {
@@ -191,9 +296,14 @@ fn parse_map(args: &[String]) -> Result<RequestSpec> {
             {
                 bail!("map id must match [a-z][a-z0-9-]{{0,63}}");
             }
+            let mut body = serde_json::Map::new();
+            body.insert("quality".to_owned(), Value::String(quality.to_owned()));
+            if let Some(value) = map_id {
+                body.insert("mapId".to_owned(), Value::String(value.clone()));
+            }
             Ok(RequestSpec {
                 path: "/v1/map/check",
-                body: json!({ "mapId": map_id, "quality": quality }),
+                body: Value::Object(body),
             })
         }
         Some("job") if args.len() == 3 => {
@@ -278,14 +388,7 @@ fn parse_prompt(args: &[String]) -> Result<RequestSpec> {
     if !stdin {
         bail!("prompt text is accepted only with --stdin");
     }
-    let mut bytes = Vec::new();
-    io::stdin()
-        .take((MAX_STDIN_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    if bytes.is_empty() || bytes.len() > MAX_STDIN_BYTES {
-        bail!("stdin must contain 1..32768 bytes");
-    }
-    let text = String::from_utf8(bytes).context("stdin must be UTF-8")?;
+    let text = read_stdin_text()?;
     Ok(RequestSpec {
         path: "/v1/prompt",
         body: json!({ "target": target, "text": text, "whenReady": when_ready, "wait": wait }),
@@ -411,12 +514,12 @@ async fn post_json(descriptor: &Descriptor, request: RequestSpec) -> Result<(u16
 }
 
 fn usage() -> &'static str {
-    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | map guide <architecture|workflow|sequence|dataflow|lifecycle> | map check [map-id] [--quality draft|production] | map job <job-id> <phase> | team plan submit <run-id> --revision N --stdin | merge request --target <local-branch> [--wait] | merge wait <request-id>"
+    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | workers profiles|list|create --stdin|read <task>|prompt <task> --stdin|cancel <task>|archive <task>|merge <task> --target <branch>|complete <run> | worker report <task> --outcome <succeeded|failed> --stdin [--source-head <oid>] [--verifies-task <task> --verifies-head <oid>] | map guide <architecture|workflow|sequence|dataflow|lifecycle> | map check [map-id] [--quality draft|production] | map job <job-id> <phase> | merge request --target <local-branch> [--wait] | merge wait <request-id>"
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, parse_team_plan_arguments};
+    use super::{build_worker_report, parse_args};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -440,38 +543,72 @@ mod tests {
     }
 
     #[test]
-    fn validates_team_plan_submission_arguments_without_reading_stdin() {
-        let parsed = parse_team_plan_arguments(&args(&[
-            "plan",
-            "submit",
-            "123e4567-e89b-12d3-a456-426614174000",
-            "--revision",
-            "7",
-            "--stdin",
-        ]))
-        .expect("team plan arguments");
-        assert_eq!(parsed.0, "123e4567-e89b-12d3-a456-426614174000");
-        assert_eq!(parsed.1, 7);
-        assert!(
-            parse_team_plan_arguments(&args(&[
-                "plan",
-                "submit",
-                "not-a-run",
-                "--revision",
-                "1",
+    fn parses_lead_worker_control_routes() {
+        let profiles = parse_args(&args(&["workers", "profiles"])).expect("profiles");
+        assert_eq!(profiles.path, "/v1/workers/profiles");
+
+        let list = parse_args(&args(&["workers", "list"])).expect("list");
+        assert_eq!(list.path, "/v1/workers");
+
+        let read = parse_args(&args(&["workers", "read", "task-1"])).expect("read");
+        assert_eq!(read.path, "/v1/workers/read");
+        assert_eq!(read.body["taskId"], "task-1");
+
+        let merge =
+            parse_args(&args(&["workers", "merge", "task-1", "--target", "main"])).expect("merge");
+        assert_eq!(merge.path, "/v1/workers/merge");
+        assert_eq!(merge.body["targetBranch"], "main");
+
+        let complete = parse_args(&args(&["workers", "complete", "run-1"])).expect("complete");
+        assert_eq!(complete.path, "/v1/workers/complete");
+        assert!(parse_args(&args(&["workers", "merge", "task-1"])).is_err());
+    }
+
+    #[test]
+    fn builds_structured_worker_reports_without_null_optional_fields() {
+        let report = build_worker_report(
+            &args(&[
+                "report",
+                "task-1",
+                "--outcome",
+                "succeeded",
                 "--stdin",
-            ]))
-            .is_err()
+                "--source-head",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ]),
+            "bounded result".to_owned(),
+        )
+        .expect("report");
+        assert_eq!(report.path, "/v1/worker/report");
+        assert_eq!(report.body["summary"], "bounded result");
+        assert_eq!(
+            report.body["sourceHead"],
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
+        assert!(report.body.get("verifiesTaskId").is_none());
+        assert!(report.body.get("verifiesHead").is_none());
+
         assert!(
-            parse_team_plan_arguments(&args(&[
-                "plan",
-                "submit",
-                "123e4567-e89b-12d3-a456-426614174000",
-                "--revision",
-                "1",
-            ]))
+            build_worker_report(
+                &args(&[
+                    "report",
+                    "task-1",
+                    "--outcome",
+                    "succeeded",
+                    "--stdin",
+                    "--source-head",
+                    "not-a-git-object",
+                ]),
+                "result".to_owned(),
+            )
             .is_err()
         );
+    }
+
+    #[test]
+    fn omits_the_optional_map_id_instead_of_sending_null() {
+        let check = parse_args(&args(&["map", "check"])).expect("check");
+        assert_eq!(check.body["quality"], "production");
+        assert!(check.body.get("mapId").is_none());
     }
 }

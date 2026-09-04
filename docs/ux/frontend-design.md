@@ -408,45 +408,49 @@ deny, conflict, stale, failed와 interrupted는 서로 다른 text 상태이며 
 않는다. 상세 process·보안 계약은
 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
 
-### 10.3 Persona와 Team 실행
+### 10.3 Lead와 worker 협업
 
-Settings의 Agents 영역은 provider integration 다음에 **Team** section을 둔다. 이 안에서
-Persona 목록을 먼저, Team 목록을 다음에 보여 준다. Persona의 기본 편집 순서는 프리셋,
-이름, provider, 지원되는 permission이다. model·effort·icon·role·지침은 접힌 고급 설정에
-두되 프리셋이 채운 안전한 기본값과 기존 Custom 값을 잃지 않는다. Team 편집은 2~8개의
-Persona를 명시적으로 고르고 화면에 보이는 순서대로 재정렬하며 한 명을 Planner로
-지정한다. 선택적인 기본 실행 목표는 원하는 결과와 추가·제거 가능한 완료 조건 목록으로
-편집하고, description과 공통 지침은 고급 설정에 둔다. provider hook이 준비되지 않은
-Persona와 삭제를 막는 참조 관계는 일반적인 성공 상태로 숨기지 않고 card와 dialog 안에
-text로 설명한다.
+사용자는 현재 Project workspace에서 실행되는 Lead 한 명과만 대화한다. Lead는 일반 Agent와
+같이 직접 작업하며 병렬 조사, 분리된 수정 또는 독립 검증이 실제로 유리할 때만 depth-1
+worker를 만든다. worker는 다른 worker를 만들 수 없고 사용자는 worker에게 직접 prompt를
+보내지 않는다. worker의 완료·오류·입력 대기 event는 main이 보존했다가 Lead의 안전한 turn
+경계에 전달한다. 화면이나 tab을 닫아도 실행은 계속되고 명시적 Stop만 연쇄 취소한다.
 
-Persona와 Team이 모두 없으면 **Create starter team**을 제공한다. dialog에서 Planner와
-Implementer provider를 각각 명시적으로 고르며, 필요한 permission을 지원하는 준비된
-provider만 선택할 수 있다. 생성은 두 Persona와 Team 전부가 성공할 때만 한 번에 반영한다.
-설정을 저장해도 대화창이나 Agent terminal을 열지 않는다.
+Lead terminal에는 output/TUI와 approval·입력 사이에 compact worker strip을 둔다. worker가
+없으면 strip을 렌더링하지 않는다. 기본 상태는 작업 중, 입력 필요, 병합 준비, 실패 수만
+표시한다. 펼친 상세에는 task 이름, dependency, provider, write scope, 경과 시간과 결과를
+보여 주고 transcript/diff 읽기, Stop과 완료 worker Archive만 제공한다. worker composer는
+제공하지 않는다. Android는 같은 정보를 terminal 위 compact strip과 full-screen sheet로
+표현하며 Stop, provider permission과 merge decision의 의미를 desktop과 동일하게 유지한다.
 
-Agent Hub의 Team 진입점은 Project 상세 안에만 둔다. 시작 dialog는 Project 장기 목적을
-읽기 전용 맥락으로, 이번 실행의 원하는 결과와 완료 조건을 편집 가능한 입력으로 분리한다.
-Team 기본 목표는 입력의 초기값일 뿐 수정해도 Team 설정을 바꾸지 않는다. 기본 목표가
-없으면 빈 결과와 빈 완료 조건 하나로 시작한다. target branch와 자동 연결된 validation,
-Git 상태를 함께 검토하게 하며 validation은 사용자가 끄는 안전 정책으로 표현하지 않는다.
-dirty checkout은 별도 acknowledgement를 요구한다. 시작 직후에는 Planner 한 명만 표시하고,
-계획을 받기 전에는 나머지 member를 running처럼 보이지 않는다.
+Project 상세의 Collaboration 설정은 명시적 enable, 허용 worker profile, permission mode,
+동시·누적·시간 제한, target branch, allow/deny path, validation과 diff 한도를 소유한다. 기본
+permission mode는 **안전 자동화**지만 allow path와 필수 validation이 비어 있으면 자동 merge로
+표현하지 않는다. run은 Project 상한을 낮출 수만 있다. Settings의 Agents 영역은 provider
+integration 다음에 worker profile과 desktop-only adapter 설치를 배치하고 Persona/Team 편집기는
+두지 않는다.
 
-계획 검토 화면은 고정된 Project 맥락, run 결과·완료 조건과 summary 아래에 Persona별
-outcome, 실제 전달할 brief, scope, validation,
-acceptance criteria와 exclusion 이유를 구조적으로 표시한다. **Approve and launch**와
-**Cancel**은 run revision에 묶이며,
-승인 후 member별 `preparing/prepared/launching/active/failed/excluded` 상태를 text badge로
-보여 준다. 실패 member는 원인을 유지한 채 **Retry**를 제공하고, 일부 성공은 완료가 아닌
-partial 상태로 표현한다. Team 설정 변경은 진행 중 run의 이름·지침·Persona snapshot을
-바꾸지 않는다.
+Desktop에서 built-in Codex/Claude profile이 provider lifecycle integration 미설정 때문에 사용할
+수 없으면 profile을 사라지게 하거나 이유 없는 disabled control로 두지 않는다. 같은 Project 설정
+안에서 provider 이름, `EZTerminal 연동 필요` 설명과 명시적인 **연동 활성화** action을 제공한다.
+이 action만 provider hook 설정을 변경하며 collaboration enable이나 profile 선택이 hook을 조용히
+설치하지 않는다. 성공하면 dialog를 닫거나 입력을 잃지 않고 최신 profile availability를 반영하고,
+실패·blocker는 같은 위치에 원인과 기존 Agents 설정 recovery를 남긴다. 일반 Agents 설정에서도 이
+동작을 CLI나 adapter 자체의 설치로 오해할 수 있는 `설치/제거` 대신 `연동 활성화/연동 해제`로
+표현한다. Android는 host 설정을 변경하는 가짜 action을 제공하지 않고 desktop Agents 설정에서
+연동해야 한다는 설명을 표시한다.
 
-이 기능은 desktop 전용이다. Android에는 동작하지 않는 Team control을 disabled 상태로
-복제하지 않는다. production Storybook은 준비된 Persona와 Team 설정 상태를 실제 component
-adapter로 보여 주며 고정 desktop handoff 원본을 Team 변경의 snapshot 대상으로 사용하지
-않는다. 실행·저장·권한의 상세 계약은
-[`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
+write worker는 dedicated managed worktree를 사용하고 runnable writer끼리 scope가 겹치면 Lead가
+다시 나누도록 생성이 거부된다. write 결과는 exact source revision을 다른 session의 verifier가
+승인해야 merge 준비가 된다. knowledge graph나 graph editor는 노출하지 않고 dependency는 worker
+상세의 작은 text hint로만 보여 준다.
+
+기존 Persona/Team 데이터가 발견되면 최초 Collaboration 접근에 삭제 대상 개수를 보여 주는
+전환 dialog를 연다. 확인 전에는 새 협업 설정만 잠그며 앱의 다른 기능은 유지한다. 확인은 기존
+catalog/run 파일의 삭제이며 자동 변환이나 구·신 모델 병행은 제공하지 않는다. production
+Storybook은 compact/expanded/blocked/failed/merge-ready, policy setup과 migration 상태를 실제
+component adapter로 검증하고 고정 desktop handoff 원본은 snapshot 대상으로 사용하지 않는다.
+실행·저장·권한의 상세 계약은 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
 
 ## 11. PC Control UI 계약
 

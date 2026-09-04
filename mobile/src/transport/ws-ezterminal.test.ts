@@ -13,6 +13,10 @@ import {
   type RemotePacketFrame,
 } from '../../../src/shared/remote-protocol';
 import type { OpenClawControlSnapshot, OpenClawLogLine, OpenClawStatus } from '../../../src/shared/openclaw';
+import {
+  DEFAULT_COLLABORATION_LIMITS,
+  DEFAULT_COLLABORATION_MERGE_POLICY,
+} from '../../../src/shared/agent-orchestration';
 
 // ── Fake socket ──────────────────────────────────────────────────────────────
 
@@ -2317,6 +2321,7 @@ describe('WsEzTerminalTransport — Agent coordination v8', () => {
       revision: 4,
       decision: 'approve',
       actor: 'mobile',
+      overrideReason: 'Reviewed on mobile.',
     });
     expect(sockets[0].lastSent()).toEqual({
       kind: 'managed-merge-decision',
@@ -2324,6 +2329,7 @@ describe('WsEzTerminalTransport — Agent coordination v8', () => {
       mergeRequestId: 'merge-1',
       revision: 4,
       decision: 'approve',
+      overrideReason: 'Reviewed on mobile.',
     });
     sockets[0].triggerMessage({
       kind: 'managed-merge-decision-reply',
@@ -2331,6 +2337,57 @@ describe('WsEzTerminalTransport — Agent coordination v8', () => {
       result: { ok: true, value: mergeRequest },
     });
     await expect(decision).resolves.toMatchObject({ ok: true, value: { requestId: 'merge-1' } });
+  });
+
+  it('saves Project coordination settings through the correlated mobile request', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => 'project-save-1',
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const input = {
+      projectId: 'project-1',
+      goal: 'Ship mobile parity',
+      defaultTargetBranch: 'main',
+      validationCommands: [{
+        id: 'unit',
+        name: 'Unit tests',
+        command: 'pnpm test:unit',
+        timeoutMs: 300_000,
+      }],
+      expectedRevision: 2,
+    };
+    const requested = transport.saveAgentCoordinationProject(input);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-coordination-project-save',
+      requestId: 'project-save-1',
+      input,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-coordination-project-save-reply',
+      requestId: 'project-save-1',
+      result: {
+        ok: true,
+        value: {
+          projectId: input.projectId,
+          goal: input.goal,
+          defaultTargetBranch: input.defaultTargetBranch,
+          validationCommands: input.validationCommands,
+          configRevision: 3,
+          participants: [],
+          updatedAt: 20,
+        },
+      },
+    });
+
+    await expect(requested).resolves.toMatchObject({
+      ok: true,
+      value: { projectId: 'project-1', configRevision: 3 },
+    });
   });
 
   it('rejects terminal output and malformed decision results at the mobile wire boundary', async () => {
@@ -2374,6 +2431,135 @@ describe('WsEzTerminalTransport — Agent coordination v8', () => {
       ok: false,
       error: 'unavailable',
       message: 'Desktop returned an invalid merge decision.',
+    });
+  });
+});
+
+describe('WsEzTerminalTransport — Lead orchestration v10', () => {
+  const policy = {
+    schemaVersion: 1 as const,
+    projectId: 'project-1',
+    enabled: true,
+    permissionMode: 'ask' as const,
+    allowedWorkerProfileIds: ['profile-1'],
+    limits: DEFAULT_COLLABORATION_LIMITS,
+    mergePolicy: DEFAULT_COLLABORATION_MERGE_POLICY,
+    revision: 1,
+    updatedAt: 1,
+  };
+  const snapshot = {
+    revision: 1,
+    providers: [{ providerId: 'builtin:codex', kind: 'builtin' as const, displayName: 'Codex' }],
+    profiles: [{
+      profileId: 'profile-1',
+      providerId: 'builtin:codex',
+      launcherId: 'codex',
+      name: 'Codex worker',
+      description: 'Read and write worker',
+      permissionMode: 'ask',
+      capabilities: ['worker', 'read', 'write', 'verify'] as const,
+      available: true,
+      revision: 1,
+    }],
+    policies: [policy],
+    runs: [],
+    events: [],
+    migration: { required: false, catalogItemCount: 0, runCount: 0 },
+  };
+
+  it('validates snapshots and correlates policy, worker, and run mutations', async () => {
+    const requestIds = ['snapshot-1', 'policy-1', 'cancel-1', 'stop-1', 'migration-1'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const revisions: number[] = [];
+    transport.onAgentOrchestrationSnapshot((value) => revisions.push(value.revision));
+    sockets[0].triggerMessage({ kind: 'agent-orchestration-snapshot', snapshot });
+    sockets[0].triggerRawMessage({
+      kind: 'agent-orchestration-snapshot',
+      snapshot: { ...snapshot, revision: 2, profiles: [{ bad: true }] },
+    });
+    expect(revisions).toEqual([0, 1]);
+
+    const requested = transport.getAgentOrchestrationSnapshot();
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-orchestration-snapshot-get',
+      requestId: 'snapshot-1',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-orchestration-snapshot',
+      requestId: 'snapshot-1',
+      snapshot: { ...snapshot, revision: 2 },
+    });
+    await expect(requested).resolves.toMatchObject({ revision: 2 });
+
+    const input = {
+      projectId: 'project-1',
+      enabled: true,
+      permissionMode: 'safe-auto' as const,
+      allowedWorkerProfileIds: ['profile-1'],
+      expectedRevision: 1,
+    };
+    const saved = transport.saveCollaborationPolicy(input);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-collaboration-policy-save',
+      requestId: 'policy-1',
+      input,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-collaboration-policy-save-reply',
+      requestId: 'policy-1',
+      result: { ok: true, value: { ...policy, permissionMode: 'safe-auto', revision: 2 } },
+    });
+    await expect(saved).resolves.toMatchObject({ ok: true, value: { revision: 2 } });
+
+    const canceled = transport.cancelOrchestrationWorker('run-1', 'task-1');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-orchestration-action',
+      requestId: 'cancel-1',
+      action: 'cancel-worker',
+      runId: 'run-1',
+      taskId: 'task-1',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-orchestration-action-reply',
+      requestId: 'cancel-1',
+      action: 'cancel-worker',
+      result: { ok: false, error: 'not-found', message: 'Worker task not found.' },
+    });
+    await expect(canceled).resolves.toMatchObject({ ok: false, error: 'not-found' });
+
+    const stopped = transport.stopOrchestrationRun('run-1');
+    sockets[0].triggerMessage({
+      kind: 'agent-orchestration-action-reply',
+      requestId: 'stop-1',
+      action: 'stop-run',
+      result: { ok: false, error: 'not-found', message: 'Lead run not found.' },
+    });
+    await expect(stopped).resolves.toMatchObject({ ok: false, error: 'not-found' });
+
+    const migrated = transport.confirmLegacyTeamMigration();
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-legacy-migration-confirm',
+      requestId: 'migration-1',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-legacy-migration-confirm-reply',
+      requestId: 'migration-1',
+      result: {
+        ok: true,
+        value: { required: false, catalogItemCount: 0, runCount: 0, confirmedAt: 10 },
+      },
+    });
+    await expect(migrated).resolves.toMatchObject({
+      ok: true,
+      value: { required: false, confirmedAt: 10 },
     });
   });
 });

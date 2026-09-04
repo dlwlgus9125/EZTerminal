@@ -21,6 +21,11 @@ import type {
   AgentResumeBootstrap,
 } from '../../src/shared/agent-history';
 import {
+  EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
+  orchestrationWorkerActivityIds,
+  type AgentOrchestrationSnapshot,
+} from '../../src/shared/agent-orchestration';
+import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDiffOmission,
   type GitDiffResult,
@@ -114,6 +119,7 @@ type MobileDiffView =
 export function MobileAgentView({
   snapshot,
   coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  orchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   disconnected = false,
   currentTime,
   onBack,
@@ -128,6 +134,7 @@ export function MobileAgentView({
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
+  readonly orchestrationSnapshot?: AgentOrchestrationSnapshot;
   readonly disconnected?: boolean;
   readonly currentTime?: number;
   readonly onBack: () => void;
@@ -151,11 +158,21 @@ export function MobileAgentView({
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [decidingMergeId, setDecidingMergeId] = useState<string | null>(null);
+  const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const diffRequestGeneration = useRef(0);
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const workerActivityIds = useMemo(
+    () => orchestrationWorkerActivityIds(orchestrationSnapshot),
+    [orchestrationSnapshot],
+  );
+  const userFacingItems = useMemo(
+    () => snapshot.items.filter((item) => !workerActivityIds.has(item.id)),
+    [snapshot.items, workerActivityIds],
+  );
   const branches = useGitBranches(
-    snapshot.items.map((item) => item.cwd),
+    userFacingItems.map((item) => item.cwd),
     onReadGitStatus ?? readNothing,
     !disconnected,
   );
@@ -171,14 +188,17 @@ export function MobileAgentView({
   const decideMerge = async (
     request: ManagedMergeRequest,
     decision: 'approve' | 'deny',
+    overrideReasonValue?: string,
   ): Promise<void> => {
-    if (!transport || decidingMergeId !== null || request.state !== 'approval-required') return;
+    if (!transport || decidingMergeId !== null
+      || (request.state !== 'approval-required' && request.state !== 'override-required')) return;
     setDecidingMergeId(request.requestId);
     const result = await transport.decideManagedMerge({
       requestId: request.requestId,
       revision: request.revision,
       decision,
       actor: 'mobile',
+      ...(overrideReasonValue ? { overrideReason: overrideReasonValue } : {}),
     }).catch(() => ({
       ok: false as const,
       error: 'unavailable' as const,
@@ -186,6 +206,8 @@ export function MobileAgentView({
     }));
     setDecidingMergeId(null);
     if (result.ok) {
+      setOverrideRequest(null);
+      setOverrideReason('');
       showToast(decision === 'approve'
         ? t('agentHub.managedMerge.approved')
         : t('agentHub.managedMerge.denied'));
@@ -248,13 +270,13 @@ export function MobileAgentView({
   }, []);
 
   const counts = useMemo(() => {
-    const tally = { all: snapshot.items.length, attention: 0, running: 0, done: 0 };
-    for (const item of snapshot.items) tally[bucketOf(item.status)] += 1;
+    const tally = { all: userFacingItems.length, attention: 0, running: 0, done: 0 };
+    for (const item of userFacingItems) tally[bucketOf(item.status)] += 1;
     return tally;
-  }, [snapshot]);
+  }, [userFacingItems]);
 
   const visible = useMemo(() => {
-    return snapshot.items
+    return userFacingItems
       .filter((item) => filter === 'all' || bucketOf(item.status) === filter)
       .slice()
       .sort((a, b) => {
@@ -263,7 +285,7 @@ export function MobileAgentView({
         if (bucketDelta !== 0) return bucketDelta;
         return bucketOf(a.status) === 'attention' ? sortAttention(a, b) : sortRecent(a, b);
       });
-  }, [filter, snapshot]);
+  }, [filter, userFacingItems]);
 
   const send = useCallback(async (activityId: string, text: string): Promise<string | null> => {
     if (!text || sendingId !== null) return t('agentHub.errorDeliveryFailed');
@@ -357,11 +379,6 @@ export function MobileAgentView({
                   ))}
                 </ul>
               )}
-              {request.state === 'override-required' && (
-                <p className="mob-agent-card__body" role="status">
-                  {t('agentHub.managedMerge.desktopOverrideRequired')}
-                </p>
-              )}
               {request.state === 'approval-required' && (
                 <div className="mob-agent-card__actions">
                   <button
@@ -384,6 +401,31 @@ export function MobileAgentView({
                   </button>
                 </div>
               )}
+              {request.state === 'override-required' && (
+                <div className="mob-agent-card__actions">
+                  <button
+                    type="button"
+                    className="mob-btn-ghost"
+                    disabled={disconnected || decidingMergeId !== null}
+                    onClick={() => void decideMerge(request, 'deny')}
+                    data-testid="managed-merge-deny"
+                  >
+                    {t('agentHub.deny')}
+                  </button>
+                  <button
+                    type="button"
+                    className="mob-btn-danger"
+                    disabled={disconnected || decidingMergeId !== null}
+                    onClick={() => {
+                      setOverrideRequest(request);
+                      setOverrideReason('');
+                    }}
+                    data-testid="managed-merge-override"
+                  >
+                    {t('agentHub.managedMerge.override')}
+                  </button>
+                </div>
+              )}
             </article>
           ))}
           {[
@@ -396,6 +438,8 @@ export function MobileAgentView({
                 <MobileAgentProjects
                   key="agent-projects"
                   transport={transport!}
+                  coordinationSnapshot={coordinationSnapshot}
+                  orchestrationSnapshot={orchestrationSnapshot}
                   onResumeHistory={onResumeHistory!}
                   onLaunchAgent={onLaunchAgent!}
                 />
@@ -568,7 +612,7 @@ export function MobileAgentView({
           })}
           {visible.length === 0 && managedMerges.length === 0 && (
             <p className="mob-empty" data-testid="agent-empty">
-              {snapshot.items.length === 0 ? t('agentHub.empty') : t('mobile.agentView.noMatches')}
+              {userFacingItems.length === 0 ? t('agentHub.empty') : t('mobile.agentView.noMatches')}
             </p>
           )}
         </div>
@@ -616,6 +660,50 @@ export function MobileAgentView({
               )}
             </>
           )}
+        </MobileActionSheet>
+      )}
+      {overrideRequest !== null && (
+        <MobileActionSheet
+          title={t('agentHub.managedMerge.overrideTitle')}
+          description={t('agentHub.managedMerge.overrideDescription')}
+          onClose={() => {
+            if (decidingMergeId === null) {
+              setOverrideRequest(null);
+              setOverrideReason('');
+            }
+          }}
+          testId="mobile-managed-merge-override"
+        >
+          <label className="mob-managed-merge-override__field">
+            <span>{t('agentHub.managedMerge.overrideReason')}</span>
+            <textarea
+              rows={5}
+              maxLength={500}
+              value={overrideReason}
+              disabled={decidingMergeId !== null}
+              onChange={(event) => setOverrideReason(event.currentTarget.value)}
+              data-testid="mobile-managed-merge-override-reason"
+            />
+          </label>
+          <div className="mob-managed-merge-override__actions">
+            <button
+              type="button"
+              className="mob-btn-ghost"
+              disabled={decidingMergeId !== null}
+              onClick={() => setOverrideRequest(null)}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="mob-btn-danger"
+              disabled={decidingMergeId !== null || overrideReason.trim().length < 8}
+              onClick={() => void decideMerge(overrideRequest, 'approve', overrideReason.trim())}
+              data-testid="mobile-managed-merge-override-confirm"
+            >
+              {t('agentHub.managedMerge.overrideConfirm')}
+            </button>
+          </div>
         </MobileActionSheet>
       )}
     </main>
