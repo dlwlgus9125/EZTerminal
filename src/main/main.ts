@@ -140,6 +140,7 @@ import type {
   InterpreterToMain,
   MainToInterpreter,
   RunStartedInfo,
+  SessionInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
 import {
@@ -195,6 +196,9 @@ import { resolveNativeHostPath } from './native-host-path';
 import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
 import { DaemonLifecycleSettingsController } from './daemon-lifecycle-settings';
 import { DaemonRuntime } from './daemon-runtime';
+import { DaemonStore } from './daemon-store';
+import { DaemonCommandRouter } from './daemon-command-router';
+import type { DaemonCommandReceipt } from '../shared/daemon-protocol';
 import { ElectronUpdateHttpClient } from './app-update-network';
 import {
   UiPreferencesPatchSchema,
@@ -758,6 +762,12 @@ app.on('ready', async () => {
   const storeReady = layoutStore.init().catch((err) => {
     console.error('[main] layout store init failed:', err);
   });
+  const daemonStore = new DaemonStore(app.getPath('userData'));
+  const daemonStoreReady = daemonStore.init();
+  void daemonStoreReady.catch((error) => {
+    console.error('[main] daemon store failed to initialize:', error);
+    mainLog?.line(`daemon store failed to initialize: ${String(error)}`);
+  });
   const loginItemIdentity = {
     path: process.execPath,
     args: app.isPackaged
@@ -811,6 +821,92 @@ app.on('ready', async () => {
     mainLog?.line(`daemon lifecycle settings failed to initialize: ${String(error)}`);
     return daemonRuntime!.settingsSnapshot();
   });
+  const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
+    handlers: {
+      'runtime.set-settings': async (command, context) => {
+        if (command.type !== 'runtime.set-settings') {
+          return {
+            ok: false,
+            error: {
+              code: 'invalid-command',
+              message: 'Unexpected daemon runtime command.',
+              retryable: false,
+            },
+          };
+        }
+        const lifecyclePatch = {
+          ...(command.payload.keepRunning === undefined
+            ? {}
+            : { keepRunning: command.payload.keepRunning }),
+          ...(command.payload.startAtLogin === undefined
+            ? {}
+            : { startAtLogin: command.payload.startAtLogin }),
+        };
+        let lifecycle = daemonRuntime!.settingsSnapshot();
+        if (Object.keys(lifecyclePatch).length > 0) {
+          // OS login registration is externally visible. Persist the outbox
+          // sent marker first so a crash can never claim it was not attempted.
+          await context.markProviderDispatchStarted();
+          lifecycle = await daemonRuntime!.updateSettings(lifecyclePatch);
+        }
+        return {
+          ok: true,
+          commit: {
+            mutations: [{
+              kind: 'runtime.update',
+              value: {
+                ...command.payload,
+                keepRunning: lifecycle.keepRunning,
+                startAtLogin: lifecycle.startAtLogin,
+              },
+            }],
+          },
+        };
+      },
+    },
+  });
+  const daemonAuthorityReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
+    .then(async ([, lifecycle]) => {
+      const current = daemonCommandRouter.getSnapshot().runtime;
+      if (
+        current.keepRunning !== lifecycle.keepRunning
+        || current.startAtLogin !== lifecycle.startAtLogin
+      ) {
+        await daemonCommandRouter.applySystemCommit({
+          mutations: [{
+            kind: 'runtime.update',
+            value: {
+              keepRunning: lifecycle.keepRunning,
+              startAtLogin: lifecycle.startAtLogin,
+            },
+          }],
+        });
+      }
+      return daemonCommandRouter;
+    });
+  const daemonEventSubscribers = new Set<WebContents>();
+  const daemonSubscriberLifecycleWired = new WeakSet<WebContents>();
+  const unsubscribeDaemonEventFanout = daemonCommandRouter.onEvent((event) => {
+    for (const sender of [...daemonEventSubscribers]) {
+      if (sender.isDestroyed()) {
+        daemonEventSubscribers.delete(sender);
+        continue;
+      }
+      sender.send('daemon:event', event);
+    }
+  });
+  const setDaemonEventSubscription = (sender: WebContents, subscribed: boolean): void => {
+    if (subscribed) daemonEventSubscribers.add(sender);
+    else daemonEventSubscribers.delete(sender);
+    if (daemonSubscriberLifecycleWired.has(sender)) return;
+    daemonSubscriberLifecycleWired.add(sender);
+    const release = (): void => {
+      daemonEventSubscribers.delete(sender);
+    };
+    sender.on('did-navigate', release);
+    sender.on('render-process-gone', release);
+    sender.on('destroyed', release);
+  };
   // Replace the system-language bootstrap menu with the persisted choice as
   // soon as settings are available. The renderer does not need to be mounted.
   void storeReady
@@ -1309,11 +1405,120 @@ app.on('ready', async () => {
     ) {
       throw new Error('Invalid daemon lifecycle settings.');
     }
-    return daemonRuntime!.updateSettings({
+    const lifecycle = await daemonRuntime!.updateSettings({
       ...('keepRunning' in candidate ? { keepRunning: candidate.keepRunning as boolean } : {}),
       ...('startAtLogin' in candidate ? { startAtLogin: candidate.startAtLogin as boolean } : {}),
     });
+    await daemonAuthorityReady;
+    const current = daemonCommandRouter.getSnapshot().runtime;
+    if (
+      current.keepRunning !== lifecycle.keepRunning
+      || current.startAtLogin !== lifecycle.startAtLogin
+    ) {
+      await daemonCommandRouter.applySystemCommit({
+        mutations: [{
+          kind: 'runtime.update',
+          value: {
+            keepRunning: lifecycle.keepRunning,
+            startAtLogin: lifecycle.startAtLogin,
+          },
+        }],
+      });
+    }
+    return lifecycle;
   });
+  const rejectedDaemonCommand = (
+    value: unknown,
+    message: string,
+    code: 'unauthorized' | 'internal-error' = 'unauthorized',
+  ): DaemonCommandReceipt => ({
+    ok: false,
+    status: 'rejected',
+    commandId: (
+      typeof value === 'object'
+      && value !== null
+      && !Array.isArray(value)
+      && typeof (value as { commandId?: unknown }).commandId === 'string'
+    ) ? (value as { commandId: string }).commandId : 'invalid-command',
+    revision: (() => {
+      try {
+        return daemonCommandRouter.getSnapshot().revision;
+      } catch {
+        return 0;
+      }
+    })(),
+    error: { code, message, retryable: false },
+  });
+  ipcMain.handle('daemon:get-snapshot', async (event, clientInstanceId: unknown) => {
+    const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+    if (!principalId) return null;
+    try {
+      await daemonAuthorityReady;
+      return daemonCommandRouter.getSnapshot();
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.handle(
+    'daemon:get-transcript',
+    async (
+      event,
+      clientInstanceId: unknown,
+      sessionId: unknown,
+      afterSequence: unknown,
+      limit: unknown,
+    ) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+      if (
+        !principalId
+        || !isSessionSurfaceId(sessionId)
+        || !Number.isSafeInteger(afterSequence)
+        || (afterSequence as number) < 0
+        || !Number.isSafeInteger(limit)
+        || (limit as number) < 1
+        || (limit as number) > 2_000
+      ) return [];
+      try {
+        await daemonAuthorityReady;
+        return daemonCommandRouter.getTranscript(
+          sessionId,
+          afterSequence as number,
+          limit as number,
+        );
+      } catch {
+        return [];
+      }
+    },
+  );
+  ipcMain.handle('daemon:command', async (event, clientInstanceId: unknown, value: unknown) => {
+    const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+    if (!principalId) return rejectedDaemonCommand(value, 'Desktop daemon authority is unavailable.');
+    try {
+      await daemonAuthorityReady;
+    } catch {
+      return rejectedDaemonCommand(
+        value,
+        'The daemon store could not be initialized.',
+        'internal-error',
+      );
+    }
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return daemonCommandRouter.execute(value);
+    }
+    return daemonCommandRouter.execute({
+      ...(value as Record<string, unknown>),
+      principal: { kind: 'desktop', id: principalId },
+    });
+  });
+  ipcMain.handle(
+    'daemon:set-events-subscribed',
+    async (event, clientInstanceId: unknown, subscribed: unknown) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+      if (!principalId || typeof subscribed !== 'boolean') return;
+      await daemonAuthorityReady;
+      setDaemonEventSubscription(event.sender, subscribed);
+    },
+  );
   ipcMain.handle('settings:get-ui-preferences', async () => {
     await storeReady;
     return layoutStore.getUiPreferences();
@@ -2181,6 +2386,24 @@ app.on('ready', async () => {
       await scriptHostRegistry?.killAll();
     },
   });
+  let desktopRuntimeShutdownPromise: Promise<void> | null = null;
+  const stopDesktopRuntimeAndFiles = (): Promise<void> => {
+    if (!desktopRuntimeShutdownPromise) {
+      desktopRuntimeShutdownPromise = (async () => {
+        const runtime = desktopRuntime;
+        desktopRuntime = null;
+        try {
+          await runtime?.dispose();
+        } finally {
+          // Stop the bridge first so no remote begin can race the service
+          // drain. FileService then closes/unlinks every active or late
+          // pending `.ezpart` before the quit gate is released.
+          await fileService.dispose();
+        }
+      })();
+    }
+    return desktopRuntimeShutdownPromise;
+  };
   // The first quit is held while every owned service drains exactly once;
   // completion or a bounded timeout reissues app.quit().
   const gracefulShutdown = new GracefulShutdownCoordinator({
@@ -2211,6 +2434,20 @@ app.on('ready', async () => {
         run: () => daemonRuntime?.shutdown(),
       },
       {
+        name: 'daemon store',
+        run: async () => {
+          // The authoritative store closes only after both command ingress
+          // (the bridge) and every provider/terminal writer have drained.
+          await Promise.all([
+            daemonRuntime?.shutdown(),
+            stopDesktopRuntimeAndFiles(),
+          ]);
+          unsubscribeDaemonEventFanout();
+          daemonEventSubscribers.clear();
+          await daemonStore.close();
+        },
+      },
+      {
         name: 'session surface authority',
         run: () => {
           sessionSurfaceAuthority?.dispose();
@@ -2229,18 +2466,7 @@ app.on('ready', async () => {
       { name: 'packet capture', run: () => packetCaptureRegistry?.kill() },
       {
         name: 'desktop runtime and file uploads',
-        run: async () => {
-          const runtime = desktopRuntime;
-          desktopRuntime = null;
-          try {
-            await runtime?.dispose();
-          } finally {
-            // Stop the bridge first so no remote begin can race the service
-            // drain. FileService then closes/unlinks every active or late
-            // pending `.ezpart` before the quit gate is released.
-            await fileService.dispose();
-          }
-        },
+        run: stopDesktopRuntimeAndFiles,
       },
       { name: 'OpenClaw endpoint subscription', run: () => unsubscribeOpenClawEndpoint() },
       { name: 'OpenClaw lifecycle coordinator', run: () => openClawLifecycleCoordinator?.dispose() },
@@ -2526,6 +2752,40 @@ app.on('ready', async () => {
     },
   });
   console.log('[main] interpreter broker ready');
+  const registerLegacyTerminals = (sessions: readonly SessionInfo[]): void => {
+    void daemonAuthorityReady
+      .then(() => daemonCommandRouter.registerLegacyTerminals(sessions))
+      .catch((error) => {
+        console.error('[main] failed to register legacy terminal session:', error);
+        mainLog?.line(`failed to register legacy terminal session: ${String(error)}`);
+      });
+  };
+  const completeLegacyTerminal = (sessionId: string): void => {
+    void daemonAuthorityReady.then(async () => {
+      const current = daemonCommandRouter.getSnapshot().sessions.find(
+        (session) => session.id === sessionId && session.source === 'legacy-pty',
+      );
+      if (!current || ['completed', 'interrupted', 'failed', 'archived'].includes(current.state)) return;
+      await daemonCommandRouter.applySystemCommit({
+        mutations: [{
+          kind: 'session.upsert',
+          value: {
+            id: current.id,
+            projectId: current.projectId,
+            workspaceId: current.workspaceId,
+            kind: current.kind,
+            title: current.title,
+            state: 'completed',
+            source: current.source,
+          },
+        }],
+      });
+    }).catch((error) => {
+      console.error('[main] failed to complete legacy terminal session:', error);
+      mainLog?.line(`failed to complete legacy terminal session: ${String(error)}`);
+    });
+  };
+  registerLegacyTerminals(broker.listSessions());
   uninstallRunCommandIpc = installRunCommandIpc({
     ipc: ipcMain,
     getBroker: () => broker,
@@ -3102,12 +3362,14 @@ app.on('ready', async () => {
   // broadcasts are origin-agnostic (including a window's own session — see
   // SessionDirectory's doc for why the ordering is safe).
   broker.onSessionAdded((session) => {
+    registerLegacyTerminals([session]);
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('session-added', session);
     }
   });
   broker.onSessionRemoved((sessionId) => {
+    completeLegacyTerminal(sessionId);
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('session-removed', sessionId);
@@ -3575,7 +3837,7 @@ app.on('ready', async () => {
       await layoutStore.setRemoteEnabled(enabled);
     },
     waitUntilBridgeReady: async () => {
-      await agentInfrastructureReady;
+      await Promise.all([agentInfrastructureReady, daemonAuthorityReady]);
     },
     prepareBridge: async () => {
       // Keep the presentation hint current before auth; it no longer gates
@@ -3611,6 +3873,7 @@ app.on('ready', async () => {
         decideManagedMerge: (input) => managedMergeService!.decide(input),
       } : undefined,
       agentOrchestrationSource: remoteAgentOrchestrationSource,
+      daemonSource: daemonCommandRouter,
       agentHistorySource: agentHistoryService,
       gitSource: gitStatusService,
       pairingSource: {

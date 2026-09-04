@@ -32,6 +32,7 @@ const sessionSurfaceClientId = [
   Date.now().toString(36),
   Math.random().toString(36).slice(2),
 ].join('-');
+let daemonEventsRefcount = 0;
 
 // Preload runs with context isolation ON (`docs/architecture.md`).
 // We expose a NARROW, explicit API — never the raw ipcRenderer.
@@ -186,6 +187,40 @@ const api: EzTerminalApi = {
     // The port arrives asynchronously via the persistent 'attach-port' listener
     // above, keyed by runId — same shape as runCommand's cmd-port (see its doc).
     ipcRenderer.send('attach-run', { sessionId, runId });
+    return Promise.resolve();
+  },
+
+  getDaemonSnapshot: () =>
+    ipcRenderer.invoke('daemon:get-snapshot', sessionSurfaceClientId),
+  getDaemonTranscript: (sessionId, afterSequence = 0, limit = 500) =>
+    ipcRenderer.invoke(
+      'daemon:get-transcript',
+      sessionSurfaceClientId,
+      sessionId,
+      afterSequence,
+      limit,
+    ),
+  sendDaemonCommand: (command) =>
+    ipcRenderer.invoke('daemon:command', sessionSurfaceClientId, command),
+  onDaemonEvent: (listener): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      event: import('../shared/daemon-protocol').DaemonEvent,
+    ): void => listener(event);
+    ipcRenderer.on('daemon:event', handler);
+    return () => ipcRenderer.removeListener('daemon:event', handler);
+  },
+  setDaemonEventsSubscribed: (subscribed) => {
+    const previous = daemonEventsRefcount;
+    daemonEventsRefcount = subscribed
+      ? previous + 1
+      : Math.max(0, previous - 1);
+    if (previous === 0 && daemonEventsRefcount === 1) {
+      return ipcRenderer.invoke('daemon:set-events-subscribed', sessionSurfaceClientId, true);
+    }
+    if (previous === 1 && daemonEventsRefcount === 0) {
+      return ipcRenderer.invoke('daemon:set-events-subscribed', sessionSurfaceClientId, false);
+    }
     return Promise.resolve();
   },
 

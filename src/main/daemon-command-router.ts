@@ -7,6 +7,7 @@ import {
   type DaemonCommandType,
   type DaemonEvent,
   type DaemonSnapshot,
+  type DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { authorizeDaemonCommand } from './daemon-command-policy';
@@ -94,6 +95,26 @@ export class DaemonCommandRouter {
 
   getSnapshot(): DaemonSnapshot {
     return this.store.getSnapshot();
+  }
+
+  /**
+   * Read semantic transcript items without exposing the SQLite store to a
+   * transport. The store owns sequence ordering and the hard page bound.
+   */
+  getTranscript(
+    sessionId: string,
+    afterSequence = 0,
+    limit = 500,
+  ): readonly DaemonTranscriptItem[] {
+    return this.store.getTranscript(sessionId, afterSequence, limit);
+  }
+
+  readTranscript(
+    sessionId: string,
+    afterSequence = 0,
+    limit = 500,
+  ): readonly DaemonTranscriptItem[] {
+    return this.getTranscript(sessionId, afterSequence, limit);
   }
 
   onEvent(listener: (event: DaemonEvent) => void): () => void {

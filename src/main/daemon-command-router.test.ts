@@ -122,4 +122,35 @@ describe('DaemonCommandRouter', () => {
     })]);
     await store.close();
   });
+
+  it('exposes bounded transcript pages through the transport-facing seam', async () => {
+    const { store, router } = await runtime();
+    await router.execute(command('project.create', { projectId: 'project-1', name: 'Demo' }, 0));
+    await router.execute(command('workspace.create', {
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      name: 'Local',
+      kind: 'local',
+      rootPath: 'C:\\Working\\Demo',
+    }, 1));
+    await router.execute(command('session.create', {
+      sessionId: 'terminal-1',
+      workspaceId: 'workspace-1',
+      kind: 'terminal',
+      title: 'Terminal',
+    }, 2));
+    await store.appendTranscriptBatch([{
+      id: 'item-1',
+      sessionId: 'terminal-1',
+      kind: 'notice',
+      text: 'Attached.',
+      isDelta: false,
+      isSensitive: false,
+    }]);
+
+    expect(router.readTranscript('terminal-1', 0, 20)).toEqual([
+      expect.objectContaining({ id: 'item-1', sequence: 1, text: 'Attached.' }),
+    ]);
+    await store.close();
+  });
 });

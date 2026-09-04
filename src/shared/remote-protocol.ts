@@ -101,6 +101,7 @@ import type {
   DaemonCommandReceipt,
   DaemonEvent,
   DaemonSnapshot,
+  DaemonTranscriptItem,
 } from './daemon-protocol';
 
 export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
@@ -468,6 +469,15 @@ export interface AgentLegacyMigrationConfirmRequest {
 export interface DaemonSnapshotRequest {
   readonly kind: 'daemon-snapshot-get';
   readonly requestId: string;
+}
+
+/** Bounded forward-only transcript page for a single structured session. */
+export interface DaemonTranscriptRequest {
+  readonly kind: 'daemon-transcript-get';
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly afterSequence: number;
+  readonly limit: number;
 }
 
 export interface DaemonCommandRequest {
@@ -839,6 +849,7 @@ export type ClientToServerMessage =
   | AgentOrchestrationActionRequest
   | AgentLegacyMigrationConfirmRequest
   | DaemonSnapshotRequest
+  | DaemonTranscriptRequest
   | DaemonCommandRequest
   | DaemonEventsSubscribeRequest
   | DaemonEventsUnsubscribeRequest
@@ -1145,6 +1156,13 @@ export interface DaemonSnapshotMessage {
   readonly kind: 'daemon-snapshot';
   readonly snapshot: DaemonSnapshot;
   readonly requestId?: string;
+}
+
+export interface DaemonTranscriptMessage {
+  readonly kind: 'daemon-transcript';
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly items: readonly DaemonTranscriptItem[];
 }
 
 export interface DaemonCommandReply {
@@ -1505,6 +1523,7 @@ export type ServerToClientMessage =
   | AgentOrchestrationActionReply
   | AgentLegacyMigrationConfirmReply
   | DaemonSnapshotMessage
+  | DaemonTranscriptMessage
   | DaemonCommandReply
   | DaemonEventMessage
   | AgentSeenReply

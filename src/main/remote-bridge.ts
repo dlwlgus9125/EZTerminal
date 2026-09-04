@@ -80,6 +80,7 @@ import {
   type DaemonCommandReceipt,
   type DaemonEvent,
   type DaemonSnapshot,
+  type DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
 import {
   isSessionSurfaceCloseDecisions,
@@ -576,6 +577,20 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         typeof value.requestId === 'string'
         && value.requestId.length > 0
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'daemon-transcript-get':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.sessionId === 'string'
+        && value.sessionId.length > 0
+        && value.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && Number.isSafeInteger(value.afterSequence)
+        && (value.afterSequence as number) >= 0
+        && Number.isSafeInteger(value.limit)
+        && (value.limit as number) >= 1
+        && (value.limit as number) <= 2_000
       );
     case 'daemon-command':
       if (
@@ -1102,6 +1117,11 @@ export interface RemoteAgentOrchestrationSource {
 /** Revisioned runtime projection shared by Desktop IPC, Android, CLI and MCP. */
 export interface RemoteDaemonSource {
   getSnapshot(): DaemonSnapshot;
+  readTranscript?(
+    sessionId: string,
+    afterSequence: number,
+    limit: number,
+  ): readonly DaemonTranscriptItem[];
   execute(command: DaemonCommand): Promise<DaemonCommandReceipt>;
   onEvent(listener: (event: DaemonEvent) => void): () => void;
 }
@@ -2344,6 +2364,20 @@ export function attachConnection(
           kind: 'daemon-snapshot',
           requestId: msg.requestId,
           snapshot: options.daemonSource.getSnapshot(),
+        });
+        break;
+
+      case 'daemon-transcript-get':
+        if (negotiatedProtocol < DAEMON_PROTOCOL_VERSION || !options.daemonSource) break;
+        send({
+          kind: 'daemon-transcript',
+          requestId: msg.requestId,
+          sessionId: msg.sessionId,
+          items: options.daemonSource.readTranscript?.(
+            msg.sessionId,
+            msg.afterSequence,
+            msg.limit,
+          ) ?? [],
         });
         break;
 

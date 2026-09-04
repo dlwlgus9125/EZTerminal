@@ -146,7 +146,14 @@ import type {
   DesktopWindowState,
   DesktopWindowStatesSnapshot,
 } from './desktop-window';
-import type { DaemonRuntimeSettings } from './daemon-protocol';
+import type {
+  DaemonCommand,
+  DaemonCommandReceipt,
+  DaemonEvent,
+  DaemonRuntimeSettings,
+  DaemonSnapshot,
+  DaemonTranscriptItem,
+} from './daemon-protocol';
 
 export type DaemonLifecycleSettings = Pick<
   DaemonRuntimeSettings,
@@ -1324,6 +1331,21 @@ export interface EzTerminalApi extends SessionSurfaceApi {
    * arrives asynchronously via a persistent `attach-port` window message.
    */
   attachRun: (sessionId: string, runId: string) => Promise<void>;
+
+  // ── DaemonRuntime v12 (same authority as Android's WS transport) ────────
+  /** Full authoritative projection used for initial load and gap recovery. */
+  getDaemonSnapshot: () => Promise<DaemonSnapshot | null>;
+  /** Forward-only, bounded semantic transcript page. */
+  getDaemonTranscript: (
+    sessionId: string,
+    afterSequence?: number,
+    limit?: number,
+  ) => Promise<readonly DaemonTranscriptItem[]>;
+  /** Main replaces the caller-supplied principal with this renderer's identity. */
+  sendDaemonCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
+  onDaemonEvent: (listener: (event: DaemonEvent) => void) => () => void;
+  /** Reference-counted by callers; only subscribed renderers receive live events. */
+  setDaemonEventsSubscribed: (subscribed: boolean) => Promise<void>;
 
   // ── Agent Activity (desktop + connected mobile) ─────────────────────────
   /** Level-triggered seed. Snapshots never contain prompts or transcripts; the

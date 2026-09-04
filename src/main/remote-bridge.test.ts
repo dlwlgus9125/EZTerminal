@@ -514,6 +514,7 @@ function daemonSnapshot(revision = 3, eventSequence = 5): DaemonSnapshot {
 function makeDaemonSource(snapshot = daemonSnapshot()): {
   readonly source: RemoteDaemonSource;
   readonly execute: ReturnType<typeof vi.fn>;
+  readonly readTranscript: ReturnType<typeof vi.fn>;
   readonly emit: (event: DaemonEvent) => void;
   readonly unsubscribe: ReturnType<typeof vi.fn>;
 } {
@@ -525,10 +526,21 @@ function makeDaemonSource(snapshot = daemonSnapshot()): {
     revision: snapshot.revision + 1,
     eventSequence: snapshot.eventSequence + 1,
   }));
+  const readTranscript = vi.fn(() => ([{
+    id: 'transcript-1',
+    sessionId: 'agent-1',
+    sequence: 2,
+    kind: 'assistant-message' as const,
+    text: 'Ready.',
+    isDelta: false,
+    isSensitive: false,
+    createdAt: '2026-09-04T10:00:01.000Z',
+  }]));
   const unsubscribe = vi.fn();
   return {
     source: {
       getSnapshot: () => snapshot,
+      readTranscript,
       execute,
       onEvent: (next) => {
         listener = next;
@@ -536,6 +548,7 @@ function makeDaemonSource(snapshot = daemonSnapshot()): {
       },
     },
     execute,
+    readTranscript,
     emit: (event) => listener?.(event),
     unsubscribe,
   };
@@ -5009,6 +5022,29 @@ describe('RemoteBridge — daemon protocol v12', () => {
     await authed(ws, options);
 
     expect(ws.sent).toContainEqual({ kind: 'daemon-snapshot', snapshot: daemonSnapshot() });
+  });
+
+  it('returns a bounded semantic transcript page', async () => {
+    const daemon = makeDaemonSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+    await authed(ws, options);
+
+    ws.clientSend({
+      kind: 'daemon-transcript-get',
+      requestId: 'transcript-request-1',
+      sessionId: 'agent-1',
+      afterSequence: 1,
+      limit: 200,
+    });
+
+    expect(daemon.readTranscript).toHaveBeenCalledWith('agent-1', 1, 200);
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'daemon-transcript',
+      requestId: 'transcript-request-1',
+      sessionId: 'agent-1',
+      items: [expect.objectContaining({ sequence: 2, text: 'Ready.' })],
+    }));
   });
 
   it('replaces a wire-supplied principal with the authenticated Android identity', async () => {
