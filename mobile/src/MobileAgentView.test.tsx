@@ -326,7 +326,7 @@ describe('MobileAgentView', () => {
       workspaceId: 'workspace-1',
       kind: 'agent',
       title: 'Archived pre-provider failure',
-      state: 'error',
+      state: 'failed',
       source: 'structured',
       archivedAt: DAEMON_TIMESTAMP,
       revision: 2,

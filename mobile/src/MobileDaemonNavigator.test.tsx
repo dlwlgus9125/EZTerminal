@@ -211,7 +211,7 @@ describe('MobileDaemonNavigator', () => {
         revision: 1, createdAt: NOW, updatedAt: NOW,
       }, {
         id: 'failed-before-provider', projectId: 'project-1', workspaceId: 'workspace-main', kind: 'agent',
-        title: 'Failed before provider start', state: 'error', source: 'structured', archivedAt: NOW,
+        title: 'Failed before provider start', state: 'failed', source: 'structured', archivedAt: NOW,
         revision: 2, createdAt: NOW, updatedAt: NOW,
       }],
       agents: [{
