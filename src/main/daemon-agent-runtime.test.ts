@@ -2519,6 +2519,154 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
+  it('keeps a Claude cancel fence through unscoped api_retry and running events', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'claude',
+        permissionPreset: 'standard',
+        initialPrompt: 'Cancel before Claude retries.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+      await h.execute('agent.cancel', { sessionId: 'agent-1' });
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        id: turn.id,
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
+      });
+
+      h.claude.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        code: 'CLAUDE_RATE_LIMITED',
+        message: 'Claude API retry after rate limiting.',
+        recoverable: true,
+      });
+      h.claude.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({
+          sessionId: 'agent-1',
+          currentTurnId: turn.id,
+          state: 'delivery-uncertain',
+        })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+        })],
+      });
+      expect(h.router.readTranscript('agent-1')).toContainEqual(expect.objectContaining({
+        turnId: turn.id,
+        kind: 'error',
+        text: 'Claude API retry after rate limiting.',
+      }));
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('keeps a persisted Claude cancel fence through api_retry and running after restart', async () => {
+    const first = await harness();
+    let restartedRuntime: DaemonAgentRuntime | undefined;
+    let restartedStore: DaemonStore | undefined;
+    let firstStoreClosed = false;
+    try {
+      await first.enable(first.claude, 'claude');
+      await first.prepareWorkspace();
+      await first.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'claude',
+        permissionPreset: 'standard',
+        initialPrompt: 'Persist the Claude cancellation.',
+      });
+      const turn = first.router.getSnapshot().turns[0]!;
+      await first.execute('agent.cancel', { sessionId: 'agent-1' });
+      expect(first.router.getSnapshot().turns[0]).toMatchObject({
+        id: turn.id,
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
+      });
+      await first.runtime.dispose('process-loss');
+      await first.store.close();
+      firstStoreClosed = true;
+
+      restartedStore = new DaemonStore(first.directory, {
+        now: () => new Date('2026-09-04T10:00:00.000Z'),
+      });
+      await restartedStore.init();
+      const codex = fakeAdapter('codex', 'codex-app-server');
+      const claude = fakeAdapter('claude', 'claude-agent-sdk');
+      const providers = new AgentProviderRegistry([codex, claude]);
+      const routerRef: { current?: DaemonCommandRouter } = {};
+      const store = restartedStore;
+      restartedRuntime = new DaemonAgentRuntime({
+        providers,
+        getSnapshot: () => routerRef.current!.getSnapshot(),
+        applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
+        readTranscript: (sessionId, afterSequence, limit) => (
+          routerRef.current!.readTranscript(sessionId, afterSequence, limit)
+        ),
+        findCommand: (commandId) => store.findCommand(commandId)?.command,
+        now: () => new Date('2026-09-04T10:00:00.000Z'),
+      });
+      const router = new DaemonCommandRouter(store, { handlers: restartedRuntime.handlers() });
+      routerRef.current = router;
+      await restartedRuntime.start();
+      await restartedRuntime.whenIdle();
+      expect(router.getSnapshot().turns[0]).toMatchObject({
+        id: turn.id,
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
+      });
+
+      claude.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        code: 'CLAUDE_RATE_LIMITED',
+        message: 'Claude API retry after restart.',
+        recoverable: true,
+      });
+      claude.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      await restartedRuntime.whenIdle();
+
+      expect(router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({
+          sessionId: 'agent-1',
+          currentTurnId: turn.id,
+          state: 'delivery-uncertain',
+        })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+        })],
+      });
+      expect(router.readTranscript('agent-1')).toContainEqual(expect.objectContaining({
+        turnId: turn.id,
+        kind: 'error',
+        text: 'Claude API retry after restart.',
+      }));
+    } finally {
+      await restartedRuntime?.dispose('process-loss');
+      await restartedStore?.close();
+      await first.runtime.dispose('process-loss');
+      if (!firstStoreClosed) await first.store.close();
+    }
+  });
+
   it('preserves durable interrupt intent after delivery failure and late provider events', async () => {
     const h = await harness();
     try {
@@ -2673,12 +2821,16 @@ describe('DaemonAgentRuntime', () => {
       } else {
         h.codex.emit(providerFailure);
         await vi.waitFor(() => {
-          expect(h.router.getSnapshot().turns[0]).toMatchObject({ errorCode: 'turn-interrupt-failed' });
+          expect(h.router.readTranscript('agent-1')).toContainEqual(expect.objectContaining({
+            kind: 'error',
+            text: 'interrupt transport failed',
+          }));
         });
+        expect(h.router.getSnapshot().turns[0]).toMatchObject({ errorCode: 'interrupt-requested' });
         rejectInterrupt(new Error('interrupt transport failed'));
         await h.runtime.whenIdle();
       }
-      const errorCode = order === 'provider-error-last' ? 'turn-interrupt-failed' : 'interrupt-failed';
+      const errorCode = 'interrupt-failed';
       expect(h.router.getSnapshot().turns[0]).toMatchObject({
         state: 'delivery-uncertain',
         errorCode,
@@ -2739,7 +2891,7 @@ describe('DaemonAgentRuntime', () => {
       await first.runtime.whenIdle();
       expect(first.router.getSnapshot().turns[0]).toMatchObject({
         state: 'delivery-uncertain',
-        errorCode: 'turn-interrupt-failed',
+        errorCode: 'interrupt-failed',
       });
       await first.runtime.dispose('process-loss');
       await first.store.close();
@@ -2786,7 +2938,7 @@ describe('DaemonAgentRuntime', () => {
         turns: [expect.objectContaining({
           id: turn.id,
           state: 'delivery-uncertain',
-          errorCode: 'turn-interrupt-failed',
+          errorCode: 'interrupt-failed',
           providerTurnId: 'provider-turn-after-restart',
         })],
       });
@@ -3159,6 +3311,53 @@ describe('DaemonAgentRuntime', () => {
       });
     } finally {
       resolveInterrupt?.();
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('retains session-wide recovery for an ordinary unscoped recoverable Provider error', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'claude',
+        permissionPreset: 'standard',
+        initialPrompt: 'Retry without a cancellation.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+
+      h.claude.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        code: 'CLAUDE_RATE_LIMITED',
+        message: 'Claude will retry this ordinary turn.',
+        recoverable: true,
+      });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'delivery-uncertain' })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'CLAUDE_RATE_LIMITED',
+        })],
+      });
+
+      h.claude.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'running' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'working' })],
+        turns: [expect.objectContaining({ id: turn.id, state: 'working' })],
+      });
+      expect(h.router.getSnapshot().turns[0]).not.toHaveProperty('errorCode');
+    } finally {
       await h.runtime.dispose();
       await h.store.close();
     }

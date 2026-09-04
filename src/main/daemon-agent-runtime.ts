@@ -1972,6 +1972,18 @@ export class DaemonAgentRuntime {
         const turn = agent.currentTurnId
           ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
           : undefined;
+        const transcript = this.transcriptMutations([{
+          id: stableId('provider-error', providerId, sessionId, event.code, event.message),
+          sessionId,
+          ...(turn ? { turnId: turn.id } : {}),
+          kind: 'error',
+          text: event.message,
+          isDelta: false,
+          isSensitive: false,
+        }]);
+        if (event.recoverable && turn && this.isInterruptPending(turn)) {
+          return { mutations: transcript };
+        }
         const now = this.isoNow();
         if (!event.recoverable) {
           terminalTurnIds = snapshot.turns.filter((candidate) => (
@@ -1997,15 +2009,7 @@ export class DaemonAgentRuntime {
             session,
             event.recoverable ? 'delivery-uncertain' : 'failed',
           ) },
-          ...this.transcriptMutations([{
-            id: stableId('provider-error', providerId, sessionId, event.code, event.message),
-            sessionId,
-            ...(turn ? { turnId: turn.id } : {}),
-            kind: 'error',
-            text: event.message,
-            isDelta: false,
-            isSensitive: false,
-          }]),
+          ...transcript,
         ] };
       });
       if (terminalTurnIds.length > 0) {
