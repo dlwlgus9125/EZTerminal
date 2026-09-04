@@ -13,6 +13,14 @@ export interface ProviderModel {
   readonly isDefault: boolean;
 }
 
+export interface ProviderReviewNotice {
+  readonly id: string;
+  readonly level: 'required' | 'information';
+  readonly title: string;
+  readonly message: string;
+  readonly url?: string;
+}
+
 export interface ProviderProbeResult {
   readonly providerId: string;
   readonly displayName: string;
@@ -32,6 +40,8 @@ export interface ProviderProbeResult {
     | 'native-subagents'
     | 'history-reconciliation'
   )[];
+  /** User-visible policy notices included in the provider enable review digest. */
+  readonly reviewNotices?: readonly ProviderReviewNotice[];
   readonly unavailableReason?: string;
 }
 
@@ -182,5 +192,13 @@ export function validateProviderProbe(result: ProviderProbeResult): void {
   }
   if (result.environmentVariableNames.some((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))) {
     throw new Error('Provider environment variable names are invalid.');
+  }
+  if (result.reviewNotices?.some((notice) =>
+    !notice.id.trim()
+    || (notice.level !== 'required' && notice.level !== 'information')
+    || !notice.title.trim()
+    || !notice.message.trim()
+    || (notice.url !== undefined && !notice.url.startsWith('https://')))) {
+    throw new Error('Provider review notices are invalid.');
   }
 }

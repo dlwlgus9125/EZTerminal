@@ -22,5 +22,9 @@ describe('AgentProviderAdapter contract', () => {
   it('rejects probes that cannot be reviewed before enablement', () => {
     expect(() => validateProviderProbe({ ...validProbe, executablePath: '' })).toThrow(/executable identity/i);
     expect(() => validateProviderProbe({ ...validProbe, environmentVariableNames: ['TOKEN=value'] })).toThrow(/variable names/i);
+    expect(() => validateProviderProbe({
+      ...validProbe,
+      reviewNotices: [{ id: 'terms', level: 'required', title: 'Terms', message: '', url: 'http://example.test' }],
+    })).toThrow(/review notices/i);
   });
 });
