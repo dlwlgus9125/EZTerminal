@@ -289,14 +289,75 @@ describe('DaemonAgentRuntime', () => {
       }),
     ]);
     const childTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'child')!;
-    h.claude.emit({ kind: 'turn-finished', sessionId: 'child', turnId: childTurn.id, outcome: 'completed' });
+    h.claude.emit({
+      kind: 'turn-finished',
+      sessionId: 'child',
+      turnId: childTurn.id,
+      outcome: 'completed',
+      summary: 'The design review found one lifecycle edge.',
+    });
     await h.runtime.whenIdle();
+    expect(h.router.readTranscript('lead')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'child-summary',
+        text: 'The design review found one lifecycle edge.',
+        relatedSessionId: 'child',
+      }),
+    ]));
     await h.execute('agent.submit', { sessionId: 'child', prompt: 'Check one more edge case.' });
 
     expect(h.claude.submit).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: 'child',
       prompt: 'Check one more edge case.',
     }));
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('projects provider-native completion summaries onto the parent without resurrecting the child', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'lead',
+      workspaceId: 'workspace-1',
+      title: 'Lead',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      initialPrompt: 'Lead the work.',
+    });
+
+    h.codex.emit({
+      kind: 'native-subagent',
+      sessionId: 'lead',
+      providerChildId: 'native-1',
+      title: 'Native reviewer',
+      state: 'done',
+    });
+    await h.runtime.whenIdle();
+    const child = h.router.getSnapshot().agentRelations[0]!.childSessionId;
+    h.codex.emit({
+      kind: 'native-subagent',
+      sessionId: 'lead',
+      providerChildId: 'native-1',
+      title: 'Native reviewer',
+      state: 'done',
+      summary: 'The native review completed safely.',
+    });
+    await h.runtime.whenIdle();
+
+    expect(h.router.getSnapshot().sessions.find((session) => session.id === child))
+      .toMatchObject({ state: 'completed' });
+    expect(h.router.readTranscript('lead')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'child-summary',
+        text: 'The native review completed safely.',
+        relatedSessionId: child,
+      }),
+    ]));
+    expect(h.router.readTranscript(child)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'notice', relatedSessionId: 'lead' }),
+    ]));
     await h.runtime.dispose();
     await h.store.close();
   });

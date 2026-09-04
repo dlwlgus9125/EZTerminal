@@ -75,6 +75,13 @@ interface ChildRelationPlan {
   readonly depth: number;
 }
 
+const MAX_CHILD_SUMMARY_LENGTH = 2_000;
+
+function boundedChildSummary(value: string | undefined): string | undefined {
+  const summary = value?.trim().slice(0, MAX_CHILD_SUMMARY_LENGTH);
+  return summary ? summary : undefined;
+}
+
 const ACTIVE_TURN_STATES = new Set<DaemonTurn['state']>([
   'submitting',
   'working',
@@ -1188,6 +1195,7 @@ export class DaemonAgentRuntime {
     if (event.kind === 'turn-finished') {
       let finishedTurnId: string | undefined;
       let releasedCurrent = false;
+      const resultSummary = boundedChildSummary(event.summary);
       await this.transition((snapshot) => {
         const providerTurnId = event.turnId.startsWith('provider:') ? event.turnId.slice('provider:'.length) : undefined;
         const turn = snapshot.turns.find((entry) => (
@@ -1209,6 +1217,14 @@ export class DaemonAgentRuntime {
         finishedTurnId = turn.id;
         releasedCurrent = agent.currentTurnId === turn.id;
         const hasQueuedSuccessor = releasedCurrent && agent.queuedTurnCount > 0;
+        const parentRelation = snapshot.agentRelations.find((relation) => (
+          relation.childSessionId === event.sessionId
+          && relation.owner === 'managed'
+          && relation.detachedAt === undefined
+        ));
+        const parent = parentRelation
+          ? snapshot.sessions.find((candidate) => candidate.id === parentRelation.parentSessionId)
+          : undefined;
         return { mutations: [
           { kind: 'turn.upsert', value: turnInput(turn, {
             state: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
@@ -1228,15 +1244,26 @@ export class DaemonAgentRuntime {
               hasQueuedSuccessor ? 'idle' : failed ? 'failed' : interrupted ? 'interrupted' : 'idle',
             ) },
           ] : []),
-          ...(event.summary ? this.transcriptMutations([{
-            id: stableId('turn-summary', providerId, event.sessionId, turn.id, event.outcome, event.summary),
+          ...(resultSummary ? this.transcriptMutations([{
+            id: stableId('turn-summary', providerId, event.sessionId, turn.id, event.outcome, resultSummary),
             sessionId: event.sessionId,
             turnId: turn.id,
             kind: 'notice' as const,
-            text: event.summary,
+            text: resultSummary,
             isDelta: false,
             isSensitive: false,
           }]) : []),
+          ...(resultSummary && parent && parent.state !== 'archived'
+            ? this.transcriptMutations([{
+                id: stableId('managed-child-summary', parent.id, event.sessionId, turn.id, resultSummary),
+                sessionId: parent.id,
+                kind: 'child-summary' as const,
+                text: resultSummary,
+                isDelta: false,
+                isSensitive: false,
+                relatedSessionId: event.sessionId,
+              }])
+            : []),
         ] };
       });
       if (finishedTurnId) this.clearTurnTimeout(finishedTurnId);
@@ -1399,7 +1426,29 @@ export class DaemonAgentRuntime {
           isSensitive: false,
         }] }] };
       }
-      if (existingSession && TERMINAL_SESSION_STATES.has(existingSession.state)) return undefined;
+      const resultSummary = boundedChildSummary(event.summary);
+      const summaryMutations = resultSummary
+        ? this.transcriptMutations([{
+            id: stableId('native-parent-summary', providerId, event.sessionId, event.providerChildId, resultSummary),
+            sessionId: event.sessionId,
+            kind: 'child-summary',
+            text: resultSummary,
+            isDelta: false,
+            isSensitive: false,
+            relatedSessionId: childId,
+          }, {
+            id: stableId('native-child-summary', providerId, event.sessionId, event.providerChildId, resultSummary),
+            sessionId: childId,
+            kind: 'notice',
+            text: resultSummary,
+            isDelta: false,
+            isSensitive: false,
+            relatedSessionId: event.sessionId,
+          }])
+        : [];
+      if (existingSession && TERMINAL_SESSION_STATES.has(existingSession.state)) {
+        return summaryMutations.length > 0 ? { mutations: summaryMutations } : undefined;
+      }
       const state: DaemonAgent['state'] = event.state === 'done'
         ? 'done'
         : event.state === 'error'
@@ -1445,15 +1494,7 @@ export class DaemonAgentRuntime {
         owner: 'provider-native',
         depth: relationPlan.depth,
       } });
-      if (event.summary) mutations.push(...this.transcriptMutations([{
-        id: stableId('native-summary', providerId, event.sessionId, event.providerChildId, event.summary),
-        sessionId: childId,
-        kind: 'child-summary',
-        text: event.summary,
-        isDelta: false,
-        isSensitive: false,
-        relatedSessionId: event.sessionId,
-      }]));
+      mutations.push(...summaryMutations);
       return { mutations };
     });
   }
