@@ -53,6 +53,10 @@ interface BlockedScheduleMutation {
   readonly blockedMessage: string;
 }
 
+type PendingAutomationActivation =
+  | { readonly kind: 'draft' }
+  | { readonly kind: 'schedule'; readonly scheduleId: string };
+
 const PERMISSION_PRESETS: readonly PermissionPreset[] = ['plan', 'standard', 'full-access'];
 
 function opaqueId(prefix: string): string {
@@ -131,6 +135,7 @@ export function ScheduleSettings({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [message, setMessage] = useState<ScheduleMessage | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [pendingAutomation, setPendingAutomation] = useState<PendingAutomationActivation | null>(null);
   const snapshotRef = useRef<DaemonSnapshot | null>(null);
   const refreshGeneration = useRef(0);
   const modelGeneration = useRef(0);
@@ -243,6 +248,18 @@ export function ScheduleSettings({
     }
   }, [confirmDeleteId, snapshot]);
 
+  useEffect(() => {
+    if (!pendingAutomation || !snapshot) return;
+    if (automationReady(snapshot)) {
+      setPendingAutomation(null);
+      return;
+    }
+    if (
+      pendingAutomation.kind === 'schedule'
+      && !snapshot.schedules.some((schedule) => schedule.id === pendingAutomation.scheduleId)
+    ) setPendingAutomation(null);
+  }, [pendingAutomation, snapshot]);
+
   const workspaceRecords = useMemo(() => new Map(
     (snapshot?.workspaces ?? []).map((workspace) => [workspace.id, workspace]),
   ), [snapshot]);
@@ -267,7 +284,11 @@ export function ScheduleSettings({
     setMessage(null);
   };
 
-  const validateDraft = (candidate: ScheduleDraft, authority: DaemonSnapshot): ScheduleDraftErrors => {
+  const validateDraft = (
+    candidate: ScheduleDraft,
+    authority: DaemonSnapshot,
+    requireAutomation = true,
+  ): ScheduleDraftErrors => {
     const errors: Partial<Record<ScheduleDraftErrorKey, string>> = {};
     if (!candidate.name.trim()) errors.name = t('agentSettings.scheduleNameRequired');
     if (!authority.workspaces.some((workspace) => workspace.id === candidate.workspaceId && !workspace.archivedAt)) {
@@ -288,7 +309,7 @@ export function ScheduleSettings({
         errors.maxRuns = t('agentSettings.scheduleMaxRunsInvalid');
       }
     }
-    if (candidate.enabled && !automationReady(authority)) {
+    if (requireAutomation && candidate.enabled && !automationReady(authority)) {
       errors.enabled = t('agentSettings.scheduleAutomationRequired');
     }
     return errors;
@@ -343,9 +364,13 @@ export function ScheduleSettings({
   const submitDraft = async (): Promise<void> => {
     if (!draft || !snapshotRef.current || mutationBusyRef.current) return;
     const candidate = draft;
-    const errors = validateDraft(candidate, snapshotRef.current);
+    const errors = validateDraft(candidate, snapshotRef.current, false);
     if (Object.keys(errors).length > 0) {
       setDraftErrors(errors);
+      return;
+    }
+    if (candidate.enabled && !automationReady(snapshotRef.current)) {
+      setPendingAutomation({ kind: 'draft' });
       return;
     }
     const scheduleId = opaqueId('schedule');
@@ -389,6 +414,11 @@ export function ScheduleSettings({
 
   const toggleSchedule = async (schedule: DaemonSchedule): Promise<void> => {
     const enabled = !schedule.enabled;
+    if (enabled && snapshotRef.current && !automationReady(snapshotRef.current)) {
+      setPendingAutomation({ kind: 'schedule', scheduleId: schedule.id });
+      setMessage(null);
+      return;
+    }
     await runMutation(`toggle:${schedule.id}`, (authority) => {
       if (enabled && !automationReady(authority)) {
         return { blockedMessage: t('agentSettings.scheduleAutomationRequired') };
@@ -453,6 +483,46 @@ export function ScheduleSettings({
     if (deleted) setConfirmDeleteId(null);
   };
 
+  const enableAutomationAndContinue = async (): Promise<void> => {
+    const intent = pendingAutomation;
+    if (!intent || mutationBusyRef.current) return;
+    mutationBusyRef.current = true;
+    setBusyAction('automation-host');
+    setMessage(null);
+    let ready = false;
+    try {
+      const lifecycle = await capabilities.daemon.setLifecycleSettings({
+        keepRunning: true,
+        startAtLogin: true,
+      });
+      if (!lifecycle?.keepRunning || !lifecycle.startAtLogin) {
+        throw new Error('background host unavailable');
+      }
+      const authority = await refreshSnapshot();
+      if (!authority || !automationReady(authority)) {
+        throw new Error('background host state was not committed');
+      }
+      setPendingAutomation(null);
+      ready = true;
+    } catch {
+      setMessage({ variant: 'danger', text: t('agentSettings.scheduleHostEnableFailed') });
+    } finally {
+      mutationBusyRef.current = false;
+      setBusyAction(null);
+    }
+    if (!ready) return;
+    if (intent.kind === 'draft') {
+      await submitDraft();
+      return;
+    }
+    const schedule = snapshotRef.current?.schedules.find((candidate) => candidate.id === intent.scheduleId);
+    if (!schedule) {
+      setMessage({ variant: 'warning', text: t('agentSettings.scheduleTargetUnavailable') });
+      return;
+    }
+    await toggleSchedule(schedule);
+  };
+
   const focusHostControls = (): void => {
     const target = document.getElementById('agent-host-settings');
     target?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
@@ -481,6 +551,7 @@ export function ScheduleSettings({
               setCreating(true);
               setDraft(createDraft(snapshot));
               setDraftErrors({});
+              setPendingAutomation(null);
               setMessage(null);
             }}
             data-testid="schedule-create-open"
@@ -512,6 +583,40 @@ export function ScheduleSettings({
               <Button size="sm" variant="ghost" onClick={focusHostControls}>
                 {t('agentSettings.scheduleReviewHostRuntime')}
               </Button>
+            </div>
+          )}
+
+          {pendingAutomation && (
+            <div
+              className="schedule-settings__automation-confirm"
+              role="alert"
+              data-testid="schedule-host-confirm"
+            >
+              <div>
+                <strong>{t('agentSettings.scheduleHostConfirmTitle')}</strong>
+                <p>{t('agentSettings.scheduleHostConfirmDescription')}</p>
+              </div>
+              <div className="schedule-settings__automation-confirm-actions">
+                <Button
+                  size="sm"
+                  disabled={busyAction !== null}
+                  onClick={() => setPendingAutomation(null)}
+                  data-testid="schedule-host-cancel"
+                >
+                  {t('agentSettings.scheduleHostCancel')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  loading={busyAction === 'automation-host'}
+                  loadingLabel={t('agentSettings.scheduleHostEnabling')}
+                  disabled={busyAction !== null}
+                  onClick={() => void enableAutomationAndContinue()}
+                  data-testid="schedule-host-enable"
+                >
+                  {t('agentSettings.scheduleHostEnable')}
+                </Button>
+              </div>
             </div>
           )}
 
@@ -672,12 +777,12 @@ export function ScheduleSettings({
               </div>
               <Switch
                 checked={draft.enabled}
-                disabled={!readyForAutomation || busyAction !== null}
+                disabled={busyAction !== null}
                 onChange={(event) => patchDraft('enabled', event.target.checked)}
                 label={t('agentSettings.scheduleEnableOnCreate')}
                 description={readyForAutomation
                   ? t('agentSettings.scheduleEnableOnCreateHint')
-                  : t('agentSettings.scheduleSaveDisabledHint')}
+                  : t('agentSettings.scheduleEnableOnCreateNeedsHost')}
                 data-testid="schedule-enabled"
               />
               {draftErrors.enabled && <p className="schedule-create-form__error" role="alert">{draftErrors.enabled}</p>}
@@ -690,6 +795,7 @@ export function ScheduleSettings({
                     setCreating(false);
                     setDraft(null);
                     setDraftErrors({});
+                    setPendingAutomation(null);
                   }}
                 >
                   {t('agentSettings.scheduleCancel')}
@@ -789,7 +895,7 @@ export function ScheduleSettings({
                       <div className="schedule-row__actions">
                         <Button
                           size="sm"
-                          disabled={busyAction !== null || (!schedule.enabled && (!readyForAutomation || !targetAvailable))}
+                          disabled={busyAction !== null || (!schedule.enabled && !targetAvailable)}
                           loading={toggling}
                           loadingLabel={t('agentSettings.scheduleSaving')}
                           onClick={() => void toggleSchedule(schedule)}

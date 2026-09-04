@@ -4958,6 +4958,42 @@ button.agent-work-activity:focus-visible {
   line-height: var(--ui-line-height-normal);
 }
 
+.schedule-settings__automation-confirm {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3);
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 45%, var(--ui-border-subtle));
+  border-radius: var(--ui-radius-8);
+  background: color-mix(in srgb, var(--ui-accent) 7%, var(--ui-surface-inset));
+}
+
+.schedule-settings__automation-confirm > div:first-child {
+  min-width: 0;
+}
+
+.schedule-settings__automation-confirm strong {
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.schedule-settings__automation-confirm p {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.schedule-settings__automation-confirm-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ui-space-2);
+}
+
 .schedule-settings__status {
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -5146,6 +5182,11 @@ button.agent-work-activity:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .schedule-settings__automation-confirm {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .structured-provider-metadata > .is-wide {
     grid-column: auto;
   }
@@ -5155,6 +5196,7 @@ button.agent-work-activity:focus-visible {
   }
 
   .schedule-create-form__actions > .ez-ui-button,
+  .schedule-settings__automation-confirm-actions > .ez-ui-button,
   .schedule-row__actions > .ez-ui-button,
   .schedule-row__delete-confirmation > div > .ez-ui-button {
     flex: 1 1 auto;

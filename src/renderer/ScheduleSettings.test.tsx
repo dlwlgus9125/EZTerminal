@@ -94,6 +94,7 @@ interface CapabilityOverrides {
   readonly getSnapshot?: CapabilityAccess['daemon']['getSnapshot'];
   readonly sendCommand?: CapabilityAccess['daemon']['sendCommand'];
   readonly observeEvents?: CapabilityAccess['daemon']['observeEvents'];
+  readonly setLifecycleSettings?: CapabilityAccess['daemon']['setLifecycleSettings'];
   readonly listModels?: CapabilityAccess['structuredProviders']['listModels'];
 }
 
@@ -123,6 +124,8 @@ function capabilities(overrides: CapabilityOverrides = {}): CapabilityAccess {
         eventSequence: 5,
       })),
       observeEvents: overrides.observeEvents ?? (() => () => undefined),
+      setLifecycleSettings: overrides.setLifecycleSettings
+        ?? (async () => ({ keepRunning: true, startAtLogin: true })),
     },
   };
 }
@@ -208,12 +211,12 @@ describe('ScheduleSettings', () => {
     await flush();
 
     expect(container.querySelector('[data-testid="schedule-runtime-warning"]')).not.toBeNull();
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="schedule-toggle-schedule-1"]')!.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="schedule-toggle-schedule-1"]')!.disabled).toBe(false);
 
     openAndFillDraft();
     const enabled = container.querySelector<HTMLInputElement>('[data-testid="schedule-enabled"]')!;
     expect(enabled.checked).toBe(false);
-    expect(enabled.disabled).toBe(true);
+    expect(enabled.disabled).toBe(false);
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="schedule-create-submit"]')!.click());
     await flush();
 
@@ -228,6 +231,48 @@ describe('ScheduleSettings', () => {
         timezone: 'UTC',
       },
     });
+  });
+
+  it('asks once before enabling the background host and does not mutate the schedule on failure', async () => {
+    const stopped = snapshot({ revision: 11, ready: false, schedules: [SCHEDULE] });
+    const ready = snapshot({ revision: 12, ready: true, schedules: [SCHEDULE] });
+    const getSnapshot = vi.fn()
+      .mockResolvedValueOnce(stopped)
+      .mockResolvedValue(ready);
+    const sendCommand = vi.fn(async (command: DaemonCommand): Promise<DaemonCommandReceipt> => ({
+      ok: true,
+      status: 'applied',
+      commandId: command.commandId,
+      revision: 13,
+      eventSequence: 13,
+    }));
+    const setLifecycleSettings = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ keepRunning: true, startAtLogin: true });
+    renderSettings(capabilities({ getSnapshot, sendCommand, setLifecycleSettings }));
+    await flush();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="schedule-toggle-schedule-1"]')!.click());
+    expect(container.querySelector('[data-testid="schedule-host-confirm"]')).not.toBeNull();
+    expect(sendCommand).not.toHaveBeenCalled();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="schedule-host-enable"]')!.click());
+    await flush();
+    expect(setLifecycleSettings).toHaveBeenNthCalledWith(1, {
+      keepRunning: true,
+      startAtLogin: true,
+    });
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('schedule remains disabled');
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="schedule-host-enable"]')!.click());
+    await flush();
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    expect(sendCommand).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'schedule.update',
+      expectedRevision: 12,
+      payload: { scheduleId: 'schedule-1', enabled: true },
+    }));
   });
 
   it('renders the schedule and host-recovery flow in Korean', async () => {
@@ -379,7 +424,7 @@ describe('ScheduleSettings', () => {
 
     expect(container.textContent).toContain('Enabled schedules require the background Agent host');
     expect(container.querySelector('[data-testid="schedule-runtime-warning"]')).not.toBeNull();
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="schedule-toggle-schedule-1"]')!.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="schedule-toggle-schedule-1"]')!.disabled).toBe(false);
   });
 
   it('distinguishes initial loading from a retryable load error', async () => {
