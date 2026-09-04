@@ -49,12 +49,15 @@ async function chatViewInfo(
 async function chatViewHosts(
   app: import('@playwright/test').ElectronApplication,
 ): Promise<Array<{ url: string; viewIds: number[] }>> {
-  return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((win) => ({
-    url: win.webContents.getURL(),
-    viewIds: win.contentView.children.map((child) => (
-      (child as Electron.WebContentsView).webContents.id
-    )),
-  })));
+  return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().flatMap((win) => {
+    const hostContents = win.webContents;
+    if (win.isDestroyed() || hostContents.isDestroyed()) return [];
+    const viewIds = win.contentView.children.flatMap((child) => {
+      const childContents = (child as Electron.WebContentsView).webContents;
+      return childContents.isDestroyed() ? [] : [childContents.id];
+    });
+    return [{ url: hostContents.getURL(), viewIds }];
+  }));
 }
 
 test('running: opening chat from the drawer auto-closes the drawer and shows exactly one correctly-addressed WebContentsView (AC2)', async () => {
