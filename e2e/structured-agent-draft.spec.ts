@@ -1,8 +1,22 @@
 import { expect, test } from './test';
 
+import type { DaemonSnapshot } from '../src/shared/daemon-protocol';
 import { launchApp } from './launch-app';
 
-test('New Agent opens a draft tab without creating a daemon Session', async () => {
+function structuredAgentState(snapshot: DaemonSnapshot): {
+  readonly sessions: typeof snapshot.sessions;
+  readonly agents: typeof snapshot.agents;
+  readonly turns: typeof snapshot.turns;
+} {
+  const sessions = snapshot.sessions.filter((session) => session.kind === 'agent');
+  return {
+    sessions,
+    agents: snapshot.agents,
+    turns: snapshot.turns,
+  };
+}
+
+test('New Agent opens a draft tab without creating structured daemon work', async () => {
   const app = await launchApp();
   try {
     const window = await app.firstWindow();
@@ -24,9 +38,10 @@ test('New Agent opens a draft tab without creating a daemon Session', async () =
       globalThis.window.ezterminal.getDaemonSnapshot()
     ));
     expect(after).not.toBeNull();
-    expect(after?.revision).toBe(before?.revision);
-    expect(after?.sessions).toEqual(before?.sessions);
-    expect(after?.turns).toEqual(before?.turns);
+    // Legacy terminal registration and Project discovery may legitimately
+    // advance the shared daemon revision while this read-only draft is open.
+    // The draft contract is that no structured Provider work exists until Send.
+    expect(structuredAgentState(after!)).toEqual(structuredAgentState(before!));
   } finally {
     await app.close();
   }
