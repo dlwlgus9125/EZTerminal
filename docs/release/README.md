@@ -9,7 +9,7 @@ SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 
 - 앱 버전: `1.0.46`
 - Android versionCode: `67`
-- 원격 프로토콜: v11
+- 원격 프로토콜: v12
 - Electron↔Rust native desktop protocol: v2
 - 검증 프로필: `functional-hotfix`
 - Windows 서명 모드: `unsigned` (SignPath 심사 중)

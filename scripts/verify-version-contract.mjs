@@ -230,7 +230,7 @@ const aapt2Metadata = capture(
 
 assert(rootPackage.version === contract.version, 'package.json version differs from release/version.json.');
 assert(
-  rootPackage.engines?.node === '>=22.12 <25',
+  rootPackage.engines?.node === '>=22.13 <25',
   'package.json must match Electron and the direct TypeScript E2E runtime Node range.',
 );
 assert(

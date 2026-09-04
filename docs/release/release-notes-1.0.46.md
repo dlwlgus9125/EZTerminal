@@ -1,6 +1,6 @@
 # EZTerminal 1.0.46
 
-Release identity: remote protocol v11, Android versionCode 67.
+Release identity: remote protocol v12, Android versionCode 67.
 
 ## Project Lead collaboration
 
@@ -38,7 +38,7 @@ same truthful unavailable state and directs host configuration to desktop.
 
 ## Compatibility and artifacts
 
-Remote protocol v11 is required for orchestration snapshots and collaboration
+Remote protocol v12 is required for revisioned daemon snapshots, commands and
 policy writes. Desktop and Android must use the exact same protocol version;
 older remote clients fail closed instead of receiving a partial downgrade.
 Electron-to-Rust native desktop protocol v2, persisted layout schema version 1,

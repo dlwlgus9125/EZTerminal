@@ -24,11 +24,11 @@ Desktop은 여러 작업을 밀도 있게 조율하는 authoring workbench이고
 빠르게 상태를 확인하고 명시적으로 원격 동작을 시작하는 companion이다. 두 platform은
 같은 시각 언어를 쓰되 같은 화면을 축소 복제하지 않는다.
 
-Agent 협업은 사용자가 대화하는 Lead 한 명을 현재 작업의 중심으로 유지한다. worker는
-독립 제품 영역이나 dashboard KPI가 아니라 Lead terminal에 붙는 작은 상태 신호다. 평상시에는
-요약만 보이고 입력 대기, 실패, 검증 완료처럼 사용자의 판단이 필요한 순간에만 시각적 무게를
-높인다. worker transcript와 diff는 상세 검토 layer에서 열며 worker용 대화 composer는 만들지
-않는다.
+Agent 작업은 Project → Workspace → Session의 맥락을 유지하되 모든 관리형 Agent를 같은
+대화 surface로 표현한다. 부모와 자식 관계는 별도 dashboard나 그래프 편집기가 아니라 composer
+위의 작은 track과 session tab의 provenance로 드러낸다. 평상시에는 상태와 짧은 요약만 보이고
+입력 대기, 실패, 승인 요청처럼 사용자의 판단이 필요한 순간에만 시각적 무게를 높인다. 사용자는
+부모뿐 아니라 자식 Agent도 직접 열어 대화하고 권한·모델·lifecycle을 제어할 수 있어야 한다.
 
 ## Colors
 

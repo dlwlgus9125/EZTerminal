@@ -20,7 +20,7 @@
 - Renamed the ambiguous Agent integration `Install` and `Remove` actions so an
   already-installed CLI is no longer mistaken for a missing application.
 
-Remote protocol v11 carries the orchestration read model and collaboration
+Remote protocol v12 carries the revisioned daemon read model and orchestration
 policy writes. See [1.0.46 release notes](docs/release/release-notes-1.0.46.md).
 
 ## [1.0.45] - 2026-09-02

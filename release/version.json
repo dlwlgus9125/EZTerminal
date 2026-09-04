@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "version": "1.0.46",
   "androidVersionCode": 67,
-  "protocolVersion": 11,
+  "protocolVersion": 12,
   "validationProfile": "functional-hotfix",
   "performancePolicy": {
     "maxP95RegressionPercent": 5,

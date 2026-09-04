@@ -117,12 +117,13 @@ Tab drag는 panel 하나를 이동하고 tab bar의 빈 header drag는 group 전
 tab context menu의 `새 창으로 이동`과 `메인 창으로 이동`을 사용한다. 분리·합침은 같은
 panel instance를 이동하며 session, draft, selection과 실행 중 command를 재생성하지 않는다.
 
-Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 이 action은 기본값이
-Agent인 단일 dialog를 열고 Agent/Terminal 중 하나를 선택하게 한다. Projects 목록에서는
-프로젝트의 main 위치, Explorer에서는 현재 선택한 checkout/worktree로 위치를 고정하며
-dialog에서 다른 위치로 바꾸지 않는다. 승인되지 않았거나 사용할 수 없는 worktree에서는
-action을 비활성화하고, main이 실행 직전에 접근 상태를 다시 검증한다. 전역 `새 에이전트
-실행`은 Agent 전용이며 프로젝트 또는 host folder를 고르는 기존 범용 흐름을 유지한다.
+Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 선택한 Project와
+checkout/worktree를 소유하는 Workspace에 빈 draft tab을 즉시 열며 modal을 추가하지 않는다.
+draft는 Agent/Terminal 중 하나를 고르고 Agent인 경우 provider, model, `Plan`/`Standard`/
+`Full access` 권한 preset과 첫 prompt를 같은 작업면에서 편집한다. 실제 provider session은 첫
+`Send`에서만 생성하므로 tab을 닫거나 draft를 취소해도 provider history나 process를 남기지 않는다.
+승인되지 않았거나 사용할 수 없는 worktree에서는 Send를 비활성화하고 main이 제출 직전에 접근
+상태를 다시 검증한다. 전역 `새 에이전트 실행`도 같은 draft를 열되 location을 선택할 수 있다.
 
 명시적으로 프로젝트에서 연 terminal tab은 프로젝트 이름과 항상 보이는 compact Badge를
 함께 표시한다. active Agent가 있으면 `Codex`, `Claude` 또는 설정된 generic Agent 이름을,
@@ -176,11 +177,13 @@ backpressure, capture lease나 위험한 pane 닫기 확인을 느리게 해서�
 
 ### 3.8 Windows close와 tray
 
-Windows main 창의 native close와 frameless close action은 창을 숨기며 terminal·Agent
-session을 종료하지 않는다. tray click과 Open action은 같은 main 창을 restore하고
-focus한다. File 메뉴와 tray의 `Quit…`은 같은 명시적 종료 확인을 사용하며 Cancel이
-기본 action이다. 확인은 실행 중인 terminal과 Agent session이 중단된다는 결과를
-설명한다. 숨김과 종료를 같은 label이나 icon으로 표현하지 않는다.
+Windows main 창의 native close와 frameless close action은 기본적으로 명시적 Quit과 같은
+종료 경로를 사용해 terminal·Agent session을 정리한다. General의 `계속 실행`을 켠 경우에만
+창을 숨기고 user-level daemon과 tray를 유지하며, tray click과 Open은 같은 main 창을 restore하고
+focus한다. `시작 시 실행`은 별도 상태지만 첫 schedule/heartbeat 활성화에서 두 설정을 함께 켤지
+설명하고 동의를 받는다. 취소하거나 OS 등록이 실패하면 automation도 활성화하지 않는다. File
+메뉴와 tray의 `Quit…`은 설정과 무관하게 모든 session을 중단한다는 확인을 사용하며 Cancel이
+기본 action이다. 숨김과 종료를 같은 label이나 icon으로 표현하지 않는다.
 
 ### 4.5 Command Center and duplicate entry policy
 
@@ -376,18 +379,19 @@ Back, loading/empty/error/pagination을 검증한다. Storybook/visual lane은 r
 구성된 기존 Agent surface snapshot을 oracle로 사용하고, 이 계약과 불일치할 때 snapshot을
 자동으로 정답 취급하지 않는다. 미해결 제품 결정은 없다.
 
-### 10.2 Project 협업과 관리 머지
+### 10.2 Project, Workspace, Session과 관리 머지
 
-Project coordination은 기존 Agents 정보 구조 안에 놓고 별도 최상위 destination을
-만들지 않는다. Project row/card는 goal, 기본 target branch, validation 목록, 참여자
-rollup과 pending merge 수를 보여 준다. 편집 form은 현재 `configRevision`을 기준으로
-저장하며 stale 결과를 사용자의 최신 입력 위에 자동 적용하지 않는다.
+Agents의 기본 정보 구조는 Project → Workspace → Session이다. Project는 저장소와 사용자의
+지속적인 작업 맥락, Workspace는 local checkout 또는 managed worktree, Session은 Agent,
+Terminal, Diff/Review, opt-in Browser, Script/Service tab을 소유한다. 기존 독립 terminal은
+호환되는 Local workspace 아래에 비파괴적으로 등록한다. 별도의 `협업 설정` destination이나
+Project별 enable/profile/limit form은 만들지 않는다.
 
-Live Codex/Claude card에는 협업 참여 또는 참여자 편집 action을 둔다. alias, role과 task를
-확정하면 생성된 brief를 편집 가능한 preview로 먼저 보여 주고 사용자의 `Send` 전에는
-terminal에 아무것도 전달하지 않는다. 참여한 card는 Project·alias·role·task와 현재
-`starting/working/blocked/done/idle/error/unknown` 상태를 함께 표시한다. `done`을 focus한
-경우 해당 sequence만 확인 처리하고 새 turn의 attention을 지우지 않는다.
+모든 실행 중 Agent row/card는 provider, model, permission preset, workspace와 현재
+`starting/working/blocked/done/idle/error/unknown` 상태를 함께 표시한다. session tab을 닫는
+동작은 layout만 바꾸며 실행이나 history를 종료하지 않는다. Cancel은 현재 turn, Archive는
+실행을 종료한 뒤 기본 목록에서 숨김, Detach는 parent edge만 제거하고 최상위 session으로
+승격하는 서로 다른 action이다.
 
 관리 merge queue는 source→target, Agent alias, immutable request revision, validation
 상태와 warning/error를 한 card에서 읽을 수 있어야 한다. Candidate review는 정확한
@@ -396,10 +400,10 @@ target/candidate pair를 열고, stale revision이면 diff나 승인 action을 �
 전용이며 이유 입력과 두 단계 확인을 요구한다. `다음 1회 자동 머지`는 participant,
 workspace, target과 만료 시간을 먼저 보여 주고 영구 설정처럼 표현하지 않는다.
 
-Android Agents는 status/focus/conversation과 정상 `approval-required` merge의 Approve/
-Deny만 제공한다. Project 설정, Join/Leave, validation override와 1회 grant는 desktop에서
-완료하라는 설명을 보여 주며 disabled control로 가짜 affordance를 만들지 않는다. Mobile
-merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
+Android Agents는 같은 daemon snapshot에서 status, live transcript, direct conversation,
+approval, stop, archive와 detach를 제공한다. provider 설치, browser host와 validation override처럼
+Desktop host에서만 가능한 action은 이유와 복구 위치를 설명하고 가짜 control을 만들지 않는다.
+Mobile merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
 revision 의미를 유지한다.
 
 Button은 raw terminal Git 명령을 전송하지 않고 main의 관리 merge operation만 호출한다.
@@ -408,49 +412,32 @@ deny, conflict, stale, failed와 interrupted는 서로 다른 text 상태이며 
 않는다. 상세 process·보안 계약은
 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
 
-### 10.3 Lead와 worker 협업
+### 10.3 관리형 Agent tree와 직접 대화
 
-사용자는 현재 Project workspace에서 실행되는 Lead 한 명과만 대화한다. Lead는 일반 Agent와
-같이 직접 작업하며 병렬 조사, 분리된 수정 또는 독립 검증이 실제로 유리할 때만 depth-1
-worker를 만든다. worker는 다른 worker를 만들 수 없고 사용자는 worker에게 직접 prompt를
-보내지 않는다. worker의 완료·오류·입력 대기 event는 main이 보존했다가 Lead의 안전한 turn
-경계에 전달한다. 화면이나 tab을 닫아도 실행은 계속되고 명시적 Stop만 연쇄 취소한다.
+Host에서 한 번 `오케스트레이션 도구 사용`을 켜면 새로 만들거나 resume한 모든 Agent session에
+session-scoped orchestration MCP가 연결된다. Project별 협업 enable/profile/path/limit UI와 별도
+run graph는 없다. provider-native subagent도 같은 track에 표시하지만 provider-owned/read-only로
+명확히 구분한다.
 
-Lead terminal에는 output/TUI와 approval·입력 사이에 compact worker strip을 둔다. worker가
-없으면 strip을 렌더링하지 않는다. 기본 상태는 작업 중, 입력 필요, 병합 준비, 실패 수만
-표시한다. 펼친 상세에는 task 이름, dependency, provider, write scope, 경과 시간과 결과를
-보여 주고 transcript/diff 읽기, Stop과 완료 worker Archive만 제공한다. worker composer는
-제공하지 않는다. Android는 같은 정보를 terminal 위 compact strip과 full-screen sheet로
-표현하며 Stop, provider permission과 merge decision의 의미를 desktop과 동일하게 유지한다.
+Agent transcript와 composer 사이에는 direct child를 보여 주는 compact track을 둔다. child가
+없으면 렌더링하지 않는다. 항목은 provider, 상태, 경과 시간, attention과 bounded result summary를
+보여 주며 click은 같은 child Agent tab을 열거나 재사용한다. 같은 Workspace child는 자동으로
+tab을 열지 않고 cross-workspace child만 새 작업 맥락을 알리기 위해 자동 open할 수 있다. parent에는
+child transcript를 복사하지 않고 bounded summary event와 session link만 전달한다.
 
-Project 상세의 Collaboration 설정은 명시적 enable, 허용 worker profile, permission mode,
-동시·누적·시간 제한, target branch, allow/deny path, validation과 diff 한도를 소유한다. 기본
-permission mode는 **안전 자동화**지만 allow path와 필수 validation이 비어 있으면 자동 merge로
-표현하지 않는다. run은 Project 상한을 낮출 수만 있다. Settings의 Agents 영역은 provider
-integration 다음에 worker profile과 desktop-only adapter 설치를 배치하고 Persona/Team 편집기는
-두지 않는다.
+관리형 child는 parent와 동일한 완전한 Agent session이다. 사용자는 child tab에서 직접 prompt를
+보내고 model과 permission preset을 바꾸며 Interrupt+Send, Cancel, Archive, Detach를 사용할 수 있다.
+busy session의 일반 Send는 FIFO이고 Interrupt+Send만 현재 turn을 중단한다. tree는 재귀와
+cross-provider를 지원하되 host hard cap인 동시 managed turn 4, tree node 16, depth 4, tree당
+10분 내 child 생성 12, background turn 2시간을 숨기지 않는다. 동시성 초과는 queue, 다른 cap은
+구조화된 오류로 거부한다.
 
-Desktop에서 built-in Codex/Claude profile이 provider lifecycle integration 미설정 때문에 사용할
-수 없으면 profile을 사라지게 하거나 이유 없는 disabled control로 두지 않는다. 같은 Project 설정
-안에서 provider 이름, `EZTerminal 연동 필요` 설명과 명시적인 **연동 활성화** action을 제공한다.
-이 action만 provider hook 설정을 변경하며 collaboration enable이나 profile 선택이 hook을 조용히
-설치하지 않는다. 성공하면 dialog를 닫거나 입력을 잃지 않고 최신 profile availability를 반영하고,
-실패·blocker는 같은 위치에 원인과 기존 Agents 설정 recovery를 남긴다. 일반 Agents 설정에서도 이
-동작을 CLI나 adapter 자체의 설치로 오해할 수 있는 `설치/제거` 대신 `연동 활성화/연동 해제`로
-표현한다. Android는 host 설정을 변경하는 가짜 action을 제공하지 않고 desktop Agents 설정에서
-연동해야 한다는 설명을 표시한다.
-
-write worker는 dedicated managed worktree를 사용하고 runnable writer끼리 scope가 겹치면 Lead가
-다시 나누도록 생성이 거부된다. write 결과는 exact source revision을 다른 session의 verifier가
-승인해야 merge 준비가 된다. knowledge graph나 graph editor는 노출하지 않고 dependency는 worker
-상세의 작은 text hint로만 보여 준다.
-
-기존 Persona/Team 데이터가 발견되면 최초 Collaboration 접근에 삭제 대상 개수를 보여 주는
-전환 dialog를 연다. 확인 전에는 새 협업 설정만 잠그며 앱의 다른 기능은 유지한다. 확인은 기존
-catalog/run 파일의 삭제이며 자동 변환이나 구·신 모델 병행은 제공하지 않는다. production
-Storybook은 compact/expanded/blocked/failed/merge-ready, policy setup과 migration 상태를 실제
-component adapter로 검증하고 고정 desktop handoff 원본은 snapshot 대상으로 사용하지 않는다.
-실행·저장·권한의 상세 계약은 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
+write Agent는 dedicated managed worktree를 사용할 수 있고 diff/review와 명시적 merge는 기존
+Project surface에 남는다. runnable writer의 scope 충돌, stale source revision, validation 실패를
+자동 merge로 우회하지 않는다. Production Storybook은 draft, active/queued/attention, direct child
+conversation, native subagent, archived/detached와 permission states를 실제 component adapter로
+검증한다. 고정 desktop handoff 원본은 snapshot 대상으로 사용하지 않는다. 실행·저장·권한의 상세
+계약은 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
 
 ## 11. PC Control UI 계약
 

@@ -1,149 +1,195 @@
-# Lead 협업 계약
+# Local Agent Runtime 및 오케스트레이션 계약
 
 > 문서 상태: **활성 규범 계약**
 >
-> 범위: Lead 중심 depth-1 worker 오케스트레이션, Project 권한 상한, 관리형 병합,
-> 설치형 ACP adapter와 desktop/mobile 표시 및 제어 경계.
+> 범위: Windows 10/11 x64 host, Electron Desktop, Android companion에서 동작하는
+> Project/Workspace/Session 모델, 구조화된 Agent 실행, 관리형 child Agent, provider,
+> 로컬 automation과 복구 경계.
 
-EZTerminal의 협업은 사용자가 현재 Project의 Lead 한 명과 대화하고, Lead가 필요할 때만
-depth-1 worker를 만드는 모델이다. 별도의 그래프 편집기, 지식 그래프, 팀 템플릿, 위원회,
-스케줄러 또는 heartbeat UI는 제공하지 않는다. 구현은 Paseo의 사용자 경험에서 영감을 받은
-clean-room 설계이며 Paseo의 AGPL 소스 코드를 포함하거나 번역하지 않는다.
+EZTerminal은 Paseo의 공개된 사용 경험을 참고하되 코드, asset, schema를 복사하지 않는
+clean-room 구현이다. 이 릴리스 범위에는 relay, voice, 외부 Hub, Web/iOS, 다중 사용자 계정이
+없다. 기존 terminal, remote pairing, worktree diff/review와 명시적 merge는 유지한다.
 
-## 사용자 모델
+## 제품 모델
 
-- Lead는 일반 Codex/Claude 세션처럼 직접 읽고 수정할 수 있다.
-- 병렬 조사, 격리된 수정 또는 독립 검증이 실제로 유리할 때만 worker를 위임한다.
-- 사용자는 worker에게 직접 prompt를 쓰지 않는다. worker의 상태, 결과, 중지 및 보관만
-  Lead terminal의 compact strip에서 다룬다.
-- worker는 다른 worker를 만들 수 없다. 한 cycle은 최대 4개 동시 worker, 총 12개 worker,
-  2시간이며 Project 정책은 이 상한을 더 낮출 수 있다.
-- dependency는 main이 DAG로 검증하고 실행하지만 UI에는 작은 선행 작업 설명만 보여 준다.
+기본 정보 구조는 **Project → Workspace → Session**이다.
 
-## 권위와 데이터 흐름
+- Project는 저장소 또는 지속적인 사용자 작업 맥락이다.
+- Workspace는 local checkout이나 EZTerminal이 관리하는 worktree다.
+- Session은 Agent, Terminal, Diff/Review, opt-in Browser, Script 또는 Service다.
+- 기존 독립 terminal은 접근 가능한 경로를 기준으로 Local workspace에 비파괴적으로 등록한다.
+- tab을 닫는 것은 layout 동작이며 실행, transcript 또는 provider history를 삭제하지 않는다.
 
-```mermaid
-flowchart LR
-  User[사용자] --> Lead[Lead Agent]
-  Lead -->|session capability| Control[Loopback control server]
-  Control --> Orchestrator[Main orchestration service]
-  Orchestrator --> Reader[Read/verify worker]
-  Orchestrator --> Writer[Managed-worktree writer]
-  Reader -->|structured report| Orchestrator
-  Writer -->|commit + structured report| Orchestrator
-  Orchestrator -->|safe turn boundary event| Lead
-  Orchestrator --> Merge[Managed merge service]
-```
+`새 에이전트`는 modal이 아닌 draft tab이다. provider/model, workspace, 첫 prompt와 다음 세
+permission preset을 한 화면에서 편집한다.
 
-Main process만 정책, run/task graph, worker process, event queue와 merge 요청을 변경한다.
-Renderer와 Android는 revisioned snapshot의 projection이며 상태를 추정하지 않는다. Lead와
-built-in worker는 session별 bearer capability로 loopback control server를 사용한다. ACP worker는
-동일한 main-owned service에 직접 구조화된 report를 제출하며 worker 생성 capability를 받지 않는다.
+- `Plan`: 탐색과 계획 중심, 변경 작업은 승인 필요
+- `Standard`: 필요할 때 승인을 요청하는 기본값
+- `Full access`: 명시적으로 선택한 session에 한해 넓은 권한
 
-완료, 실패, 입력 대기 및 merge 준비 event는 bounded queue에 보존한다. Main은 Lead의 activity가
-안전한 turn 경계에 도달했을 때만 요약을 전달한다. 화면이나 tab을 닫아도 실행은 계속되며 Stop은
-해당 worker process를 실제로 종료한다.
+provider session과 process는 첫 Send에서만 만든다. 새 Codex session은 Codex app-server,
+새 Claude session은 Claude Agent SDK의 streaming input으로 실행한다. 기존에 실행 중인 legacy
+PTY Agent는 자연스럽게 끝날 때까지 유지하고, 새 session과 history resume은 구조화된 경로를
+사용한다. Agent transcript는 terminal 색과 밀도를 공유하는 semantic renderer이며 raw CLI/TUI는
+Terminal session에만 남는다.
 
-## Project 정책과 권한
+## DaemonRuntime과 권위
 
-협업은 Project마다 기본적으로 꺼져 있다. 사용자가 명시적으로 켜고 다음 상한을 저장한다.
+Electron main process가 user-level `DaemonRuntime`의 유일한 writer다. 별도 executable이나
+Windows service를 추가하지 않는다. renderer, Android, CLI와 session-scoped MCP는 모두 client며
+추정한 local state를 권위 상태처럼 저장하지 않는다. 기존 interpreter utility는 terminal executor로
+유지한다.
 
-- 허용 worker profile
-- `ask`, `safe-auto`, `custom` 권한 모드
-- 동시 수, 누적 수, cycle 시간
-- 허용/차단 경로, 변경 파일/줄 수
-- 대상 branch와 필수 validation
+기본 설정에서 main 창 닫기와 Quit은 모든 child process를 정리하고 종료한다. `계속 실행`을 켜면
+창을 닫아도 main과 tray가 살아 있고, `시작 시 실행`을 켜면 user login에 등록한다. 첫 schedule 또는
+heartbeat 활성화는 두 설정을 함께 켤지 한 번 설명한다. 사용자가 취소하거나 login 등록에 실패하면
+automation도 활성화하지 않는다. 명시적 Quit은 설정과 무관하게 모든 실행을 중단한다.
 
-`ask`는 권한이 필요한 ACP tool과 merge를 사용자에게 묻는다. `safe-auto`와 `custom`은 adapter가
-보고한 안전한 tool kind만 협력적으로 허용할 수 있지만, 자동 merge는 allow path, deny path,
-크기 제한, 필수 validation, 독립 검증과 깨끗한 target을 모두 통과해야 한다. 비어 있는 allow
-path나 validation은 자동 merge 허용으로 해석하지 않는다. run은 저장된 Project 상한을 높일 수
-없다.
+모든 provider, adapter와 terminal process는 `ProcessGuardian`에 등록한다. daemon crash나 정상
+shutdown 뒤에 소유권 없는 process가 남지 않아야 한다. 재시작 시 provider history와 command
+outbox를 대조하고 확인할 수 없는 제출은 `delivery-uncertain`으로 표시하며 자동 재전송하지 않는다.
 
-Provider 권한 신호는 보안 경계의 일부지만 OS sandbox를 대신하지 않는다. 특히 설치형 ACP
-adapter는 사용자의 OS 권한으로 실행되므로 설치 검토 화면과 문서에서 이를 명시한다.
+## 공통 command/event protocol
 
-## 작업 격리와 병합
+[`src/shared/daemon-protocol.ts`](../../src/shared/daemon-protocol.ts)가 Desktop IPC, Android
+WebSocket, CLI와 MCP의 공통 command, snapshot과 event를 소유한다.
 
-읽기·검증 worker는 현재 Project workspace를 읽기 전용 profile로 사용한다. 쓰기 worker는 고정된
-base에서 만든 전용 managed worktree를 사용한다. 동시에 실행 가능한 writer의 write scope가
-겹치면 생성을 거부하며, 명시적으로 선행 writer에 의존하는 후속 작업만 queue할 수 있다.
+- 모든 mutation은 stable `commandId`, `idempotencyKey`, client principal과
+  `expectedRevision`을 가진다.
+- snapshot은 단조 증가하는 revision과 event sequence를 포함한다.
+- event는 단조 증가하고 reconnect client가 gap을 snapshot으로 복구할 수 있어야 한다.
+- stale revision, 권한 거부, hard cap, delivery uncertainty는 구조화된 오류로 반환한다.
+- remote protocol은 v12다. 이전 client에는 모호한 disconnect 대신 명시적 upgrade 오류를 보낸다.
+- principal은 Desktop, Android paired device, local CLI, session MCP와 provider runtime별 allowlist를
+  가진다. MCP token은 session-scoped이며 영구 저장하지 않는다.
 
-쓰기 성공 report는 깨끗하게 commit된 exact source head와 일치해야 한다. 다른 session의 verify
-worker가 같은 head를 구조화된 report로 승인하기 전에는 `awaiting-merge`가 될 수 없다. 이후에도
-main은 현재 head, cleanliness, 경로, 파일/줄 수, mode·symlink·submodule 위험, validation과 target
-revision을 다시 확인한다. 정책 밖 변경이나 실패 validation은 사용자 결정을 요구한다.
+local CLI는 ACL이 제한된 loopback descriptor와 bearer를 사용한다. command router가 principal별
+권한을 검사한 뒤 같은 mutation을 실행하므로 Desktop/Android/CLI/MCP 사이에 별도 business logic을
+만들지 않는다.
 
-## ACP adapter 설치와 실행
+## 영속성, outbox와 migration
 
-Desktop Settings는 `.ezadapter` 파일을 고르는 native picker와 검토 dialog를 제공한다. 경로는
-renderer로 전달하지 않는다. Bundle은 다음을 만족해야 한다.
+runtime state는 Electron에 포함된 `node:sqlite`의 `orchestration.sqlite3`에 저장한다. WAL,
+foreign key, serialized writer와 bounded transcript delta batch를 사용한다. 최소 Node 버전은
+`22.13`이다. UI layout, theme와 device-only preference는 기존 JSON owner를 유지한다.
 
-- 엄격한 schema v1 manifest와 ACP v1 stdio JSON-RPC
-- Ed25519 publisher signature와 manifest에 열거된 모든 asset의 SHA-256/size 일치
-- traversal, 절대 경로, device 이름, backslash/colon, symlink/reparse, 암호화 entry,
-  중복·대소문자 충돌, extra asset 및 압축 폭탄 거부
-- 256 MiB archive, 512 MiB expanded, 256 entry, 64 KiB manifest 상한
-- `win32-x64` executable의 initialize health check 통과
+주요 table은 projects, workspaces, sessions, agent_relations, turns, transcript_items,
+command_outbox, approvals, providers, schedules, schedule_runs와 revisioned_events다. mutation은
+write-ahead outbox에 먼저 기록한 뒤 provider로 전달한다. Codex에는 `commandId`를
+`clientUserMessageId`로 사용하고 다른 provider도 가능한 native idempotency key를 연결한다.
 
-최초 publisher key는 사용자가 fingerprint와 capability를 보고 신뢰해야 한다. 업데이트는 같은
-key만 허용하며 새 capability는 별도 승인을 요구한다. 서명은 publisher 무결성과 업데이트
-연속성을 뜻할 뿐, adapter를 sandbox하지 않는다. 설치 파일은 content-addressed directory에
-두고 활성·건강한 profile만 Lead 정책에서 선택할 수 있다. Adapter 설치/삭제는 desktop 전용이다.
+최초 migration은 기존 JSON/layout의 timestamp와 SHA-256 manifest를 가진 backup을 먼저 만든다.
+import는 반복 실행해도 같은 row를 중복 생성하지 않는다. 원본을 삭제하지 않으며 기존 collaboration
+policy/run은 read-only archive metadata로만 보존하고 적용하지 않는다. DB 생성이나 import가 실패하면
+새 DB를 quarantine하고 legacy read-only safe mode로 시작한다.
 
-ACP runtime은 newline-delimited JSON-RPC로 `initialize`, `session/new`, `session/prompt`,
-`session/cancel`, `session/update`, `session/request_permission`만 사용한다. 인증을 요구하거나 ACP
-version이 다른 adapter는 현재 지원하지 않는다. Transcript와 오류는 bounded하며 민감한 원문을
-영구 orchestration store에 저장하지 않는다.
+## Provider adapter
 
-## UI와 mobile 동등성
+모든 구조화 provider는 다음 deep interface를 구현한다.
 
-Lead terminal의 strip은 worker가 없으면 렌더링하지 않는다. 접힌 상태는 active, 입력 필요,
-merge 준비, 실패 수만 보여 준다. 펼친 상태에는 task, dependency, provider, scope, 경과 시간,
-bounded 결과, Stop과 완료 worker Archive를 제공하며 worker composer는 없다. Android는 같은
-snapshot과 action을 compact strip/full-screen sheet로 표현한다. Project 목표, 기본 target branch,
-validation 명령과 권한 정책도 모바일에서 직접 저장할 수 있다. Adapter 설치만 desktop 전용이다.
+1. 설치/버전 probe와 model 목록
+2. session create/resume
+3. prompt submit과 interrupt
+4. model/permission setting 변경
+5. approval request/resolve
+6. semantic event stream
+7. history/outbox reconciliation
+8. deterministic dispose
 
-Project 상세의 Collaboration 설정은 enable, profile allowlist, 권한 모드와 모든 상한을 소유한다.
-Settings의 Agents 영역은 integration 다음에 profile 및 adapter 관리를 둔다. 구 Persona/Team
-편집기와 실행 dialog는 제공하지 않는다.
+지원 catalog는 다음과 같다.
 
-## 지속성과 마이그레이션
+| Provider | 실행 경계 |
+| --- | --- |
+| Codex | `codex app-server` |
+| Claude | Claude Agent SDK + 사용자가 설치한 Claude CLI |
+| OpenCode | `opencode acp` |
+| Gemini | `gemini --acp` |
+| Copilot | `copilot --acp --stdio` |
+| Pi | `pi --mode rpc --no-session` |
+| Custom | 서명된 `.ezadapter` 또는 사용자가 검토한 ACP command |
 
-- `agent-orchestration-policies.json`: Project 정책
-- `agent-orchestration-runs.json`: bounded run/task/event metadata
-- `agent-adapters.json`: 설치 metadata와 publisher trust
-- adapter bundles: content-addressed 실행 파일
+활성화 화면은 canonical executable, 정확한 version, argv, protocol, 전달할 environment variable
+이름과 capabilities/permission을 먼저 보여 준다. 설치, update 또는 download를 조용히 실행하지 않는다.
+서명된 `.ezadapter`는 기존 Ed25519, hash/size, traversal/reparse 방어와 content-addressed 설치 계약을
+유지한다.
 
-Prompt 전문, terminal transcript, provider credential, bearer token과 validation 출력 전문은 위
-store에 기록하지 않는다. 시작 시 비종료 run은 `interrupted`로 바꾸며 존재하지 않는 process를
-복원했다고 표시하지 않는다.
+Claude는 사용자가 설치한 CLI의 기존 authentication chain(OAuth, API key, Bedrock, Vertex,
+Foundry)을 그대로 사용한다. Agent SDK에는 검증한 `pathToClaudeCodeExecutable`을 전달하며 subscription
+OAuth에는 bare executable name이 아닌 canonical path가 필요하다. EZTerminal은 token을 읽거나 저장하지
+않고 embedded login UI를 만들지 않는다. 공개 상용 배포 전에 Anthropic 약관 검토 gate를 통과해야 하며
+제품 UI는 `Claude` 또는 `Claude Agent`라고 표기한다.
 
-기존 `agent-team-catalog.json` 또는 `agent-team-runs.json`을 발견하면 Collaboration 접근을 잠그고
-삭제 대상 개수를 보여 준다. 사용자가 확인하면 두 legacy 파일을 삭제하고 migration receipt를
-저장한다. 자동 변환, 구·신 모델 병행 또는 숨은 feature flag는 없다.
+## 관리형 Agent tree
+
+Host에서 `오케스트레이션 도구 사용`을 한 번 켜면 새로 만들거나 resume한 Agent마다 session-scoped
+orchestration MCP를 제공한다. Project별 Collaboration enable/profile/path/limit UI와 별도 run graph는
+없다. 관리형 child는 parent와 같은 완전한 Agent session이며 재귀와 cross-provider를 지원한다.
+
+사용자는 child를 직접 열고 대화하며 model/permission 변경, Cancel, Archive와 Detach를 실행할 수 있다.
+busy session의 일반 Send는 FIFO queue에 들어가고 `Interrupt + Send`만 현재 turn을 중단한다.
+
+- Cancel: 현재 turn만 cooperative interrupt
+- Archive: 실행을 끝낸 뒤 기본 목록에서 숨기고 history는 보존
+- Detach: parent edge만 제거하고 top-level session으로 승격, 실행은 유지
+
+parent에는 child transcript를 복사하지 않는다. bounded result summary와 child link를 event로 전달한다.
+같은 Workspace child는 자동 open하지 않고 cross-workspace child만 context 전환을 알리기 위해 자동
+open할 수 있다. provider-native subagent는 같은 track에 표시하지만 read-only/provider-owned다.
+
+hard cap은 동시 managed turn 4, tree node 16, depth 4, tree당 10분 내 child 생성 12,
+background turn 2시간이다. 동시성 초과는 FIFO queue로 수용하고 node/depth/rate/time cap은 구조화된
+오류 또는 timeout 상태로 처리한다.
+
+## Schedule, heartbeat와 local control
+
+Schedule은 5-field cron과 IANA timezone을 canonical form으로 저장하며 매 run마다 새 Agent session을
+만든다. `--every`는 저장 전에 cron으로 compile한다. missed tick은 backfill하지 않고 max-runs, expiry와
+run-now를 지원한다. Heartbeat는 같은 기존 Agent session에 prompt를 보내며 busy면 pending 하나로
+coalesce한다.
+
+통합 `ezterminal` CLI와 daemon MCP가 project/workspace/session/agent/provider/schedule/heartbeat
+command를 제공한다. 기존 `ezterminal-agent` entry는 한 major release 동안 compatibility shim으로
+유지하고 deprecation 안내 뒤 같은 router를 호출한다.
+
+## Browser, script와 service
+
+Browser session은 기본적으로 꺼져 있고 Desktop host가 있을 때만 실행한다. Workspace별 isolated
+partition, `http`/`https` navigation, accessibility snapshot ref, password masking과 workspace 내부
+file upload만 허용한다. Android는 live state와 승인/중단을 볼 수 있지만 browser를 host하지 않는다.
+
+Script는 명시적 command/cwd/environment variable 이름으로 실행하는 one-shot session이다. Service는
+동일한 입력과 restart policy를 가진 supervised long-running session이다. secret value는 project나
+runtime DB에 저장하지 않는다.
+
+## UI와 platform 동등성
+
+Desktop과 Android는 같은 live transcript, child track, 직접 follow-up, approval, stop, archive와
+detach 의미를 제공한다. child click은 기존 tab을 재사용하거나 정상 Agent tab을 연다. provider 설치,
+browser hosting, service 구성과 고위험 merge override는 Desktop-only이며 Mobile에서 불가능한 control을
+disabled affordance로 남기지 않는다.
+
+Desktop quit, daemon restart와 Android reconnect를 거쳐도 prompt가 중복 제출되거나 process가 orphan되지
+않아야 한다. 복구할 수 없는 turn은 성공이나 실행 중으로 가장하지 않고 interrupted 또는
+delivery-uncertain으로 표시한다. 모든 client는 같은 snapshot revision을 관찰해야 한다.
 
 ## 근거 소스
 
+- [`src/shared/daemon-protocol.ts`](../../src/shared/daemon-protocol.ts)
+- [`src/shared/remote-protocol.ts`](../../src/shared/remote-protocol.ts)
+- [`src/main/main.ts`](../../src/main/main.ts)
 - [`src/main/agent-orchestration-service.ts`](../../src/main/agent-orchestration-service.ts)
-- [`src/main/agent-orchestration-store.ts`](../../src/main/agent-orchestration-store.ts)
-- [`src/main/acp-worker-runtime.ts`](../../src/main/acp-worker-runtime.ts)
-- [`src/main/agent-adapter-service.ts`](../../src/main/agent-adapter-service.ts)
-- [`src/main/agent-control-server.ts`](../../src/main/agent-control-server.ts)
-- [`src/main/managed-merge-service.ts`](../../src/main/managed-merge-service.ts)
-- [`src/renderer/LeadWorkersStrip.tsx`](../../src/renderer/LeadWorkersStrip.tsx)
-- [`src/renderer/AgentCollaborationSettings.tsx`](../../src/renderer/AgentCollaborationSettings.tsx)
-- [`mobile/src/MobileCollaborationPolicySheet.tsx`](../../mobile/src/MobileCollaborationPolicySheet.tsx)
-- [`mobile/src/MobileLeadWorkersStrip.tsx`](../../mobile/src/MobileLeadWorkersStrip.tsx)
-- [`src/shared/agent-orchestration.ts`](../../src/shared/agent-orchestration.ts)
-- [`src/shared/agent-adapter.ts`](../../src/shared/agent-adapter.ts)
+- [`src/renderer/AgentHub.tsx`](../../src/renderer/AgentHub.tsx)
+- [`mobile/src/MobileAgentView.tsx`](../../mobile/src/MobileAgentView.tsx)
 
 ## 검증
 
-- [`src/main/agent-orchestration-service.test.ts`](../../src/main/agent-orchestration-service.test.ts)
-- [`src/main/agent-adapter-service.test.ts`](../../src/main/agent-adapter-service.test.ts)
-- [`src/main/managed-merge-service.test.ts`](../../src/main/managed-merge-service.test.ts)
-- [`src/main/remote-bridge.test.ts`](../../src/main/remote-bridge.test.ts)
-- [`src/renderer/LeadWorkersStrip.test.tsx`](../../src/renderer/LeadWorkersStrip.test.tsx)
-- [`mobile/src/MobileCollaborationPolicySheet.test.tsx`](../../mobile/src/MobileCollaborationPolicySheet.test.tsx)
-- [`mobile/src/transport/ws-ezterminal.test.ts`](../../mobile/src/transport/ws-ezterminal.test.ts)
+- protocol/schema와 SQLite migration 단위 테스트:
+  [`daemon-protocol.test.ts`](../../src/shared/daemon-protocol.test.ts)
+- provider contract, outbox idempotency와 crash reconciliation 테스트
+- ProcessGuardian과 keep-running/login lifecycle OS 테스트
+- Desktop/Android component, accessibility와 production Storybook 테스트
+- ordinary `pnpm e2e`의 quit/restart/reconnect 및 direct child 대화 시나리오
+- packaged Desktop/APK smoke와 release security/SBOM 검사
+
+고정 desktop handoff 원본은 수정하지 않으며 reference와 나란히 검토한 경우에만 snapshot을 갱신한다.
+release performance benchmark는 명시적인 성능 측정 요청이 있을 때만 실행한다.

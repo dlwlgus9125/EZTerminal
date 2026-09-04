@@ -4,7 +4,7 @@
 
 - Desktop, Android and native-host product version: `1.0.46`
 - Android versionCode: `67`
-- Remote protocol: `v11`
+- Remote protocol: `v12`
 - Electron-to-Rust native desktop-host protocol: `v2`
 - Validation profile: `functional-hotfix`
 - Windows signing mode: `unsigned`
@@ -37,7 +37,7 @@ Project Lead collaboration coverage must additionally prove:
 - permission modes, path rules, concurrency, turn budgets, structured worker
   reports, cancellation, and managed merge approval remain enforced at service
   boundaries rather than only in the renderer; and
-- remote protocol v11 rejects older clients instead of silently omitting
+- remote protocol v12 rejects older clients instead of silently omitting
   orchestration or collaboration-policy data.
 
 ## Selected release profile
@@ -54,7 +54,7 @@ claim is made for 1.0.46.
 
 ## Compatibility and residual risk
 
-- Remote protocol v11 requires matching desktop and Android clients. Native
+- Remote protocol v12 requires matching desktop and Android clients. Native
   desktop-host protocol v2 and persisted layout schema version 1 are unchanged.
 - Enabling a provider integration writes only EZTerminal-owned lifecycle hooks
   through the existing backup and drift checks. Provider trust prompts or

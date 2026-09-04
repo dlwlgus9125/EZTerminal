@@ -96,6 +96,12 @@ import type {
   SessionSurfacePrepareCloseResult,
   SessionSurfaceReleaseResult,
 } from './session-surface';
+import type {
+  DaemonCommand,
+  DaemonCommandReceipt,
+  DaemonEvent,
+  DaemonSnapshot,
+} from './daemon-protocol';
 
 export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
 export const REMOTE_CAPABILITY_DESKTOP_CONTROL = 'desktop-control-v1' as const;
@@ -104,7 +110,7 @@ export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL;
 
 /**
- * Version markers document when capabilities entered the protocol. v11 is the
+ * Version markers document when capabilities entered the protocol. v12 is the
  * only accepted wire version: session-surface authority is a security and
  * lifecycle invariant, so v1-v6 fail closed instead of negotiating down.
  *
@@ -115,8 +121,8 @@ export type RemoteCapability =
  * target-neutral project/direct-directory Agent launches; v7 adds session-
  * surface authority; v8 adds Agent coordination; v9 adds durable OpenClaw
  * control snapshots and lifecycle receipts; v10 adds Lead orchestration; v11
- * adds remote Project coordination writes so Android can configure a Project
- * without a prior desktop-only setup step.
+ * added remote Project coordination writes; v12 replaces the collaboration
+ * projection with the revisioned DaemonRuntime command/snapshot/event surface.
  */
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
@@ -127,10 +133,11 @@ export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION = 8 as const;
 export const REMOTE_PROTOCOL_VERSION_OPENCLAW_CONTROL = 9 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION = 10 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE = 11 as const;
-export const REMOTE_PROTOCOL_VERSION = 11 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+export const REMOTE_PROTOCOL_VERSION_DAEMON_RUNTIME = 12 as const;
+export const REMOTE_PROTOCOL_VERSION = 12 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [11];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [12];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -456,6 +463,26 @@ export interface AgentOrchestrationActionRequest {
 export interface AgentLegacyMigrationConfirmRequest {
   readonly kind: 'agent-legacy-migration-confirm';
   readonly requestId: string;
+}
+
+export interface DaemonSnapshotRequest {
+  readonly kind: 'daemon-snapshot-get';
+  readonly requestId: string;
+}
+
+export interface DaemonCommandRequest {
+  readonly kind: 'daemon-command';
+  readonly requestId: string;
+  readonly command: DaemonCommand;
+}
+
+export interface DaemonEventsSubscribeRequest {
+  readonly kind: 'daemon-events-subscribe';
+  readonly afterSequence: number;
+}
+
+export interface DaemonEventsUnsubscribeRequest {
+  readonly kind: 'daemon-events-unsubscribe';
 }
 
 export interface AgentSeenRequest {
@@ -811,6 +838,10 @@ export type ClientToServerMessage =
   | AgentCollaborationPolicySaveRequest
   | AgentOrchestrationActionRequest
   | AgentLegacyMigrationConfirmRequest
+  | DaemonSnapshotRequest
+  | DaemonCommandRequest
+  | DaemonEventsSubscribeRequest
+  | DaemonEventsUnsubscribeRequest
   | AgentSeenRequest
   | ManagedMergeDecisionRequest
   | AgentFollowupRequest
@@ -1107,6 +1138,24 @@ export interface AgentLegacyMigrationConfirmReply {
   readonly kind: 'agent-legacy-migration-confirm-reply';
   readonly requestId: string;
   readonly result: AgentOrchestrationMutationResult<LegacyTeamMigrationStatus>;
+}
+
+/** Authoritative full snapshot, either pushed after recovery or correlated to a request. */
+export interface DaemonSnapshotMessage {
+  readonly kind: 'daemon-snapshot';
+  readonly snapshot: DaemonSnapshot;
+  readonly requestId?: string;
+}
+
+export interface DaemonCommandReply {
+  readonly kind: 'daemon-command-reply';
+  readonly requestId: string;
+  readonly receipt: DaemonCommandReceipt;
+}
+
+export interface DaemonEventMessage {
+  readonly kind: 'daemon-event';
+  readonly event: DaemonEvent;
 }
 
 export interface AgentSeenReply {
@@ -1455,6 +1504,9 @@ export type ServerToClientMessage =
   | AgentCollaborationPolicySaveReply
   | AgentOrchestrationActionReply
   | AgentLegacyMigrationConfirmReply
+  | DaemonSnapshotMessage
+  | DaemonCommandReply
+  | DaemonEventMessage
   | AgentSeenReply
   | ManagedMergeDecisionReply
   | AgentFollowupReply
