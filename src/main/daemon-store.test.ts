@@ -1,4 +1,13 @@
-import { mkdtempSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -18,11 +27,62 @@ import {
   resolveDaemonDatabasePath,
   type DaemonStoreMutation,
 } from './daemon-store';
+import {
+  DAEMON_MIGRATION_BACKUP_DIRECTORY_NAME,
+  DAEMON_QUARANTINE_DIRECTORY_NAME,
+  DAEMON_RECOVERY_DIRECTORY_NAME,
+  DaemonStoreRecovery,
+} from './daemon-store-recovery';
 
 const FIXED_TIME = '2026-09-04T02:00:00.000Z';
 
 function makeDirectory(): string {
   return mkdtempSync(path.join(os.tmpdir(), 'ezterminal-daemon-store-'));
+}
+
+function sha256(filePath: string): string {
+  return createHash('sha256').update(readFileSync(filePath)).digest('hex');
+}
+
+function sqliteMaterialSnapshot(directory: string): readonly {
+  readonly name: string;
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly sha256: string;
+}[] {
+  return [
+    DAEMON_DATABASE_FILE_NAME,
+    `${DAEMON_DATABASE_FILE_NAME}-wal`,
+    `${DAEMON_DATABASE_FILE_NAME}-shm`,
+  ].filter((name) => existsSync(path.join(directory, name))).map((name) => {
+    const filePath = path.join(directory, name);
+    const stats = statSync(filePath);
+    return { name, size: stats.size, mtimeMs: stats.mtimeMs, sha256: sha256(filePath) };
+  });
+}
+
+function recoverySets(directory: string, category: string): readonly string[] {
+  const root = path.join(directory, DAEMON_RECOVERY_DIRECTORY_NAME, category);
+  if (!existsSync(root)) return [];
+  return readdirSync(root)
+    .filter((name) => !name.startsWith('.'))
+    .sort()
+    .map((name) => path.join(root, name));
+}
+
+interface TestRecoveryManifest {
+  readonly kind: string;
+  readonly schemaVersion: number | null;
+  readonly files: readonly {
+    readonly name: string;
+    readonly size: number;
+    readonly mtimeMs: number;
+    readonly sha256: string;
+  }[];
+}
+
+function recoveryManifest(setPath: string): TestRecoveryManifest {
+  return JSON.parse(readFileSync(path.join(setPath, 'manifest.json'), 'utf8')) as TestRecoveryManifest;
 }
 
 function command<T extends DaemonCommandType>(
@@ -693,10 +753,31 @@ describe('DaemonStore', () => {
     const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
     expect(database.prepare('SELECT COUNT(*) AS count FROM migration_receipts').get()).toEqual({ count: 1 });
     database.exec('PRAGMA user_version = 999');
-    database.close();
+    const databasePath = path.join(directory, DAEMON_DATABASE_FILE_NAME);
+    const beforeMaterial = sqliteMaterialSnapshot(directory);
+    expect(beforeMaterial.map((file) => file.name)).toEqual([
+      DAEMON_DATABASE_FILE_NAME,
+      `${DAEMON_DATABASE_FILE_NAME}-wal`,
+      `${DAEMON_DATABASE_FILE_NAME}-shm`,
+    ]);
+    const recoveryEntriesBefore = existsSync(path.join(directory, DAEMON_RECOVERY_DIRECTORY_NAME))
+      ? readdirSync(path.join(directory, DAEMON_RECOVERY_DIRECTORY_NAME), { recursive: true }).sort()
+      : [];
 
     const newer = new DaemonStore(directory);
-    await expect(newer.init()).rejects.toThrow(/newer than supported/);
+    await expect(newer.init()).rejects.toMatchObject({
+      code: 'future-schema',
+      databaseDisposition: 'preserved',
+      schemaVersion: 999,
+    });
+    expect(sqliteMaterialSnapshot(directory)).toEqual(beforeMaterial);
+    expect(existsSync(databasePath)).toBe(true);
+    expect(
+      existsSync(path.join(directory, DAEMON_RECOVERY_DIRECTORY_NAME))
+        ? readdirSync(path.join(directory, DAEMON_RECOVERY_DIRECTORY_NAME), { recursive: true }).sort()
+        : [],
+    ).toEqual(recoveryEntriesBefore);
+    database.close();
   });
 
   it('migrates a version-one turn queue and backfills a durable FIFO sequence', async () => {
@@ -741,6 +822,7 @@ describe('DaemonStore', () => {
       PRAGMA user_version = 1;
     `);
     database.close();
+    const preMigrationHash = sha256(path.join(directory, DAEMON_DATABASE_FILE_NAME));
 
     const migrated = new DaemonStore(directory);
     await migrated.init();
@@ -756,7 +838,223 @@ describe('DaemonStore', () => {
         healthDetail: 'Provider executable review must be renewed before launch.',
       }),
     ]);
+    const backups = recoverySets(directory, DAEMON_MIGRATION_BACKUP_DIRECTORY_NAME);
+    expect(backups).toHaveLength(1);
+    const manifest = recoveryManifest(backups[0]!);
+    expect(manifest).toMatchObject({ kind: 'pre-migration-backup', schemaVersion: 1 });
+    expect(manifest.files).toEqual([
+      expect.objectContaining({
+        name: DAEMON_DATABASE_FILE_NAME,
+        sha256: preMigrationHash,
+        size: expect.any(Number),
+        mtimeMs: expect.any(Number),
+      }),
+    ]);
+    expect(sha256(path.join(backups[0]!, 'material', DAEMON_DATABASE_FILE_NAME))).toBe(preMigrationHash);
     await migrated.close();
+  });
+
+  it('copies only bounded SQLite material into verified, non-overwriting backup sets', async () => {
+    const directory = makeDirectory();
+    const databasePath = path.join(directory, DAEMON_DATABASE_FILE_NAME);
+    const sourceFiles = [
+      [DAEMON_DATABASE_FILE_NAME, 'database-bytes'],
+      [`${DAEMON_DATABASE_FILE_NAME}-wal`, 'wal-bytes'],
+      [`${DAEMON_DATABASE_FILE_NAME}-shm`, 'shm-bytes'],
+    ] as const;
+    for (const [name, contents] of sourceFiles) writeFileSync(path.join(directory, name), contents);
+    const recovery = new DaemonStoreRecovery(directory, databasePath, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'stable-recovery',
+    });
+    recovery.prepareUserDataDirectory();
+
+    const first = await recovery.createMigrationBackup(1);
+    const firstManifestBytes = readFileSync(path.join(first.path, 'manifest.json'), 'utf8');
+    expect(first.manifest.files.map((file) => file.name)).toEqual(sourceFiles.map(([name]) => name).sort());
+    for (const [name] of sourceFiles) {
+      const source = path.join(directory, name);
+      const copied = path.join(first.path, 'material', name);
+      const manifestFile = first.manifest.files.find((file) => file.name === name);
+      expect(manifestFile).toMatchObject({ size: readFileSync(source).byteLength, sha256: sha256(source) });
+      expect(sha256(copied)).toBe(sha256(source));
+    }
+
+    const second = await recovery.createMigrationBackup(1);
+    expect(second.path).not.toBe(first.path);
+    expect(path.basename(second.path)).toMatch(/-2$/u);
+    expect(readFileSync(path.join(first.path, 'manifest.json'), 'utf8')).toBe(firstManifestBytes);
+    expect(recoverySets(directory, DAEMON_MIGRATION_BACKUP_DIRECTORY_NAME)).toHaveLength(2);
+
+    const quarantine = await recovery.quarantine(1);
+    expect(quarantine.manifest.files.map((file) => file.name)).toEqual(sourceFiles.map(([name]) => name).sort());
+    for (const [name] of sourceFiles) {
+      expect(existsSync(path.join(directory, name))).toBe(false);
+      expect(sha256(path.join(quarantine.path, 'material', name)))
+        .toBe(sha256(path.join(quarantine.path, 'snapshot', name)));
+    }
+  });
+
+  it('backs up the exact legacy JSON allowlist before first DB creation and skips backup on current-schema restart', async () => {
+    const directory = makeDirectory();
+    const legacySources = [
+      ['layout.json', '{"layout":true}'],
+      ['layout.json.tmp', 'pending-layout'],
+      ['agent-projects.json.corrupt', 'prior-project-evidence'],
+      ['agent-coordination.json.tmp', 'pending-coordination'],
+      ['agent-team-catalog.json', '{"teams":[]}'],
+    ] as const;
+    for (const [name, contents] of legacySources) writeFileSync(path.join(directory, name), contents);
+    writeFileSync(path.join(directory, 'remote-token.json'), 'must-not-be-copied');
+
+    const initial = new DaemonStore(directory, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'legacy-review',
+    });
+    await initial.init();
+    await initial.close();
+
+    const backups = recoverySets(directory, DAEMON_MIGRATION_BACKUP_DIRECTORY_NAME);
+    expect(backups).toHaveLength(1);
+    const manifest = recoveryManifest(backups[0]!);
+    expect(manifest.kind).toBe('initial-legacy-backup');
+    expect(manifest.files.map((file) => file.name)).toEqual(legacySources.map(([name]) => name).sort());
+    for (const [name, contents] of legacySources) {
+      expect(readFileSync(path.join(directory, name), 'utf8')).toBe(contents);
+      expect(readFileSync(path.join(backups[0]!, 'material', name), 'utf8')).toBe(contents);
+    }
+    expect(existsSync(path.join(backups[0]!, 'material', 'remote-token.json'))).toBe(false);
+
+    const restarted = new DaemonStore(directory, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'legacy-review',
+    });
+    await restarted.init();
+    await restarted.close();
+    expect(recoverySets(directory, DAEMON_MIGRATION_BACKUP_DIRECTORY_NAME)).toEqual(backups);
+  });
+
+  it('quarantines corrupt DB material with a verified snapshot and rejects initialization', async () => {
+    const directory = makeDirectory();
+    const databasePath = path.join(directory, DAEMON_DATABASE_FILE_NAME);
+    writeFileSync(databasePath, 'not-a-sqlite-database');
+    const corruptHash = sha256(databasePath);
+    const store = new DaemonStore(directory, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'corrupt-db',
+    });
+
+    let latchedFailure: unknown;
+    try {
+      await store.init();
+    } catch (error) {
+      latchedFailure = error;
+    }
+    expect(latchedFailure).toMatchObject({
+      code: 'database-corrupt',
+      safeMode: 'legacy-only',
+      databaseDisposition: 'quarantined',
+    });
+    await expect(store.init()).rejects.toBe(latchedFailure);
+    expect(existsSync(databasePath)).toBe(false);
+    const quarantines = recoverySets(directory, DAEMON_QUARANTINE_DIRECTORY_NAME);
+    expect(quarantines).toHaveLength(1);
+    const manifest = recoveryManifest(quarantines[0]!);
+    expect(manifest.files).toEqual([
+      expect.objectContaining({ name: DAEMON_DATABASE_FILE_NAME, sha256: corruptHash }),
+    ]);
+    expect(sha256(path.join(quarantines[0]!, 'snapshot', DAEMON_DATABASE_FILE_NAME))).toBe(corruptHash);
+    expect(sha256(path.join(quarantines[0]!, 'material', DAEMON_DATABASE_FILE_NAME))).toBe(corruptHash);
+
+    const firstManifest = readFileSync(path.join(quarantines[0]!, 'manifest.json'), 'utf8');
+    writeFileSync(databasePath, 'a-second-corrupt-database');
+    const retry = new DaemonStore(directory, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'corrupt-db',
+    });
+    await expect(retry.init()).rejects.toMatchObject({
+      code: 'database-corrupt',
+      databaseDisposition: 'quarantined',
+    });
+    const retriedQuarantines = recoverySets(directory, DAEMON_QUARANTINE_DIRECTORY_NAME);
+    expect(retriedQuarantines).toHaveLength(2);
+    expect(path.basename(retriedQuarantines[1]!)).toMatch(/-2$/u);
+    expect(readFileSync(path.join(retriedQuarantines[0]!, 'manifest.json'), 'utf8')).toBe(firstManifest);
+  });
+
+  it('backs up then quarantines a structurally invalid legacy schema after migration failure', async () => {
+    const directory = makeDirectory();
+    const databasePath = path.join(directory, DAEMON_DATABASE_FILE_NAME);
+    const database = new DatabaseSync(databasePath);
+    database.exec('CREATE TABLE runtime_settings (singleton INTEGER PRIMARY KEY); PRAGMA user_version = 1;');
+    database.close();
+    const preMigrationHash = sha256(databasePath);
+    const store = new DaemonStore(directory, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'failed-migration',
+    });
+
+    await expect(store.init()).rejects.toMatchObject({
+      code: 'migration-failed',
+      databaseDisposition: 'quarantined',
+      schemaVersion: 1,
+    });
+    expect(existsSync(databasePath)).toBe(false);
+    const backups = recoverySets(directory, DAEMON_MIGRATION_BACKUP_DIRECTORY_NAME);
+    const quarantines = recoverySets(directory, DAEMON_QUARANTINE_DIRECTORY_NAME);
+    expect(backups).toHaveLength(1);
+    expect(quarantines).toHaveLength(1);
+    expect(recoveryManifest(backups[0]!).files).toEqual([
+      expect.objectContaining({ name: DAEMON_DATABASE_FILE_NAME, sha256: preMigrationHash }),
+    ]);
+    expect(recoveryManifest(quarantines[0]!).files.map((file) => file.name)).toEqual([
+      DAEMON_DATABASE_FILE_NAME,
+    ]);
+  });
+
+  it('quarantines only material actually created by a failed fresh initialization', async () => {
+    const directory = makeDirectory();
+    let clockCalls = 0;
+    const store = new DaemonStore(directory, {
+      now: () => {
+        clockCalls += 1;
+        return clockCalls === 1 ? new Date(Number.NaN) : new Date(FIXED_TIME);
+      },
+      recoveryIdFactory: () => 'fresh-failure',
+    });
+
+    await expect(store.init()).rejects.toMatchObject({
+      code: 'initialization-failed',
+      databaseDisposition: 'quarantined',
+    });
+    expect(existsSync(path.join(directory, DAEMON_DATABASE_FILE_NAME))).toBe(false);
+    const quarantines = recoverySets(directory, DAEMON_QUARANTINE_DIRECTORY_NAME);
+    expect(quarantines).toHaveLength(1);
+    expect(recoveryManifest(quarantines[0]!).files.map((file) => file.name)).toEqual([
+      DAEMON_DATABASE_FILE_NAME,
+    ]);
+  });
+
+  it('fails closed when the recovery root is a symlink or Windows reparse junction', async () => {
+    const directory = makeDirectory();
+    const outside = makeDirectory();
+    const databasePath = path.join(directory, DAEMON_DATABASE_FILE_NAME);
+    writeFileSync(databasePath, 'preserve-me');
+    const beforeHash = sha256(databasePath);
+    const recovery = new DaemonStoreRecovery(directory, databasePath, {
+      now: () => new Date(FIXED_TIME),
+      recoveryIdFactory: () => 'linked-root',
+    });
+    recovery.prepareUserDataDirectory();
+    symlinkSync(
+      outside,
+      path.join(directory, DAEMON_RECOVERY_DIRECTORY_NAME),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(recovery.createMigrationBackup(1)).rejects.toMatchObject({ operation: 'backup' });
+    expect(sha256(databasePath)).toBe(beforeHash);
+    expect(readdirSync(outside)).toEqual([]);
   });
 
   it('closes deterministically and rejects use after close', async () => {

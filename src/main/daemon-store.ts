@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
@@ -29,8 +28,13 @@ import {
   type RevisionedRecord,
 } from '../shared/daemon-protocol';
 import { AsyncMutationGate } from './async-mutation-gate';
+import {
+  DAEMON_DATABASE_FILE_NAME,
+  DaemonRecoveryOperationError,
+  DaemonStoreRecovery,
+} from './daemon-store-recovery';
 
-export const DAEMON_DATABASE_FILE_NAME = 'orchestration.sqlite3';
+export { DAEMON_DATABASE_FILE_NAME } from './daemon-store-recovery';
 export const DAEMON_DATABASE_SCHEMA_VERSION = 3;
 export const MAX_TRANSCRIPT_BATCH_ITEMS = 128;
 export const MAX_TRANSCRIPT_BATCH_UTF8_BYTES = 1024 * 1024;
@@ -163,8 +167,45 @@ export interface DaemonStoreDiagnostics {
 export interface DaemonStoreOptions {
   readonly now?: () => Date;
   readonly idFactory?: () => string;
+  readonly recoveryIdFactory?: () => string;
   readonly maxTranscriptBatchItems?: number;
   readonly maxTranscriptBatchUtf8Bytes?: number;
+}
+
+export type DaemonStoreInitializationFailureCode =
+  | 'backup-failed'
+  | 'database-corrupt'
+  | 'future-schema'
+  | 'initialization-failed'
+  | 'migration-failed'
+  | 'quarantine-failed'
+  | 'unsafe-path';
+
+export class DaemonStoreInitializationError extends Error {
+  readonly code: DaemonStoreInitializationFailureCode;
+  readonly safeMode = 'legacy-only' as const;
+  readonly databaseDisposition: 'preserved' | 'quarantined' | 'partial-quarantine';
+  readonly recoveryPath?: string;
+  readonly schemaVersion?: number;
+  readonly supportedSchemaVersion = DAEMON_DATABASE_SCHEMA_VERSION;
+
+  constructor(
+    code: DaemonStoreInitializationFailureCode,
+    message: string,
+    options: {
+      readonly cause?: unknown;
+      readonly databaseDisposition: 'preserved' | 'quarantined' | 'partial-quarantine';
+      readonly recoveryPath?: string;
+      readonly schemaVersion?: number;
+    },
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = 'DaemonStoreInitializationError';
+    this.code = code;
+    this.databaseDisposition = options.databaseDisposition;
+    this.recoveryPath = options.recoveryPath;
+    this.schemaVersion = options.schemaVersion;
+  }
 }
 
 type SqlRow = Record<string, string | number | bigint | null | Uint8Array>;
@@ -517,16 +558,22 @@ export class DaemonStore {
   private readonly writer = new AsyncMutationGate();
   private readonly now: () => Date;
   private readonly idFactory: () => string;
+  private readonly recovery: DaemonStoreRecovery;
   private readonly maxTranscriptBatchItems: number;
   private readonly maxTranscriptBatchUtf8Bytes: number;
   private database: DatabaseSync | undefined;
-  private state: 'uninitialized' | 'ready' | 'closing' | 'closed' = 'uninitialized';
+  private initializationFailure: DaemonStoreInitializationError | undefined;
+  private state: 'uninitialized' | 'ready' | 'failed' | 'closing' | 'closed' = 'uninitialized';
 
   constructor(userDataDirectory: string, options: DaemonStoreOptions = {}) {
     this.databasePath = resolveDaemonDatabasePath(userDataDirectory);
     this.userDataDirectory = path.dirname(this.databasePath);
     this.now = options.now ?? (() => new Date());
     this.idFactory = options.idFactory ?? randomUUID;
+    this.recovery = new DaemonStoreRecovery(this.userDataDirectory, this.databasePath, {
+      now: this.now,
+      recoveryIdFactory: options.recoveryIdFactory ?? randomUUID,
+    });
     this.maxTranscriptBatchItems = this.boundedLimit(
       options.maxTranscriptBatchItems,
       MAX_TRANSCRIPT_BATCH_ITEMS,
@@ -540,34 +587,196 @@ export class DaemonStore {
   }
 
   async init(): Promise<void> {
-    await this.writer.runExclusive(() => {
+    await this.writer.runExclusive(async () => {
       if (this.state === 'ready') return;
+      if (this.state === 'failed' && this.initializationFailure) throw this.initializationFailure;
       if (this.state !== 'uninitialized') throw new Error('Daemon store cannot be initialized after closing.');
-      mkdirSync(this.userDataDirectory, { recursive: true });
-      if (!statSync(this.userDataDirectory).isDirectory()) {
-        throw new Error('Daemon user data path is not a directory.');
+      try {
+        await this.initializeOnce();
+      } catch (error) {
+        const failure = error instanceof DaemonStoreInitializationError
+          ? error
+          : new DaemonStoreInitializationError(
+            'initialization-failed',
+            'Daemon database initialization failed unexpectedly; orchestration is unavailable.',
+            { cause: error, databaseDisposition: 'preserved' },
+          );
+        this.database = undefined;
+        this.initializationFailure = failure;
+        this.state = 'failed';
+        throw failure;
       }
-      const database = new DatabaseSync(this.databasePath, {
+    });
+  }
+
+  private async initializeOnce(): Promise<void> {
+    try {
+      this.recovery.prepareUserDataDirectory();
+    } catch (error) {
+      throw new DaemonStoreInitializationError(
+        'unsafe-path',
+        'Daemon database storage path failed containment validation; orchestration is unavailable.',
+        { cause: error, databaseDisposition: 'preserved' },
+      );
+    }
+
+    let inspection;
+    try {
+      inspection = this.recovery.inspectMaterial();
+    } catch (error) {
+      throw new DaemonStoreInitializationError(
+        'unsafe-path',
+        'Daemon database material failed containment validation; orchestration is unavailable.',
+        { cause: error, databaseDisposition: 'preserved' },
+      );
+    }
+    if (!inspection.databasePresent && inspection.materialNames.length > 0) {
+      await this.rejectAfterQuarantine(
+        'database-corrupt',
+        new Error('SQLite sidecar material exists without the daemon database.'),
+        null,
+      );
+    }
+
+    const databaseExisted = inspection.databasePresent;
+    let schemaVersion: number | null = null;
+    let integrityChecked = false;
+    if (databaseExisted) {
+      try {
+        const probe = await this.recovery.probeDatabase(DAEMON_DATABASE_SCHEMA_VERSION);
+        schemaVersion = probe.schemaVersion;
+        integrityChecked = probe.integrityChecked;
+      } catch (error) {
+        if (this.isDatabaseCorruptionError(error)) {
+          await this.rejectAfterQuarantine('database-corrupt', error, null);
+        }
+        throw new DaemonStoreInitializationError(
+          'initialization-failed',
+          'Daemon database could not be inspected safely; it was preserved and orchestration is unavailable.',
+          { cause: error, databaseDisposition: 'preserved' },
+        );
+      }
+      if (schemaVersion > DAEMON_DATABASE_SCHEMA_VERSION) {
+        throw new DaemonStoreInitializationError(
+          'future-schema',
+          `Daemon database schema ${schemaVersion} is newer than supported schema ${DAEMON_DATABASE_SCHEMA_VERSION}; the database was preserved unchanged.`,
+          { databaseDisposition: 'preserved', schemaVersion },
+        );
+      }
+      if (schemaVersion < DAEMON_DATABASE_SCHEMA_VERSION) {
+        try {
+          await this.recovery.createMigrationBackup(schemaVersion);
+        } catch (error) {
+          const recoveryError = error instanceof DaemonRecoveryOperationError ? error : undefined;
+          throw new DaemonStoreInitializationError(
+            'backup-failed',
+            'Daemon database migration was not attempted because its recovery backup failed verification.',
+            {
+              cause: error,
+              databaseDisposition: 'preserved',
+              schemaVersion,
+              ...(recoveryError?.recoveryPath === undefined ? {} : { recoveryPath: recoveryError.recoveryPath }),
+            },
+          );
+        }
+      }
+    } else {
+      try {
+        await this.recovery.createInitialLegacyBackup();
+      } catch (error) {
+        const recoveryError = error instanceof DaemonRecoveryOperationError ? error : undefined;
+        throw new DaemonStoreInitializationError(
+          'backup-failed',
+          'Daemon database creation was not attempted because legacy source backup failed verification.',
+          {
+            cause: error,
+            databaseDisposition: 'preserved',
+            ...(recoveryError?.recoveryPath === undefined ? {} : { recoveryPath: recoveryError.recoveryPath }),
+          },
+        );
+      }
+    }
+
+    let database: DatabaseSync | undefined;
+    let phase: 'opening' | 'configuring' | 'migrating' | 'recovering' = 'opening';
+    try {
+      database = new DatabaseSync(this.databasePath, {
         enableForeignKeyConstraints: true,
         enableDoubleQuotedStringLiterals: false,
         allowExtension: false,
+        timeout: 5_000,
       });
-      try {
-        database.exec('PRAGMA busy_timeout = 5000');
-        database.exec('PRAGMA foreign_keys = ON');
-        database.exec('PRAGMA journal_mode = WAL');
-        database.exec('PRAGMA synchronous = FULL');
-        this.runMigrations(database);
-        this.database = database;
-        this.state = 'ready';
-        this.recoverUncertainCommandsInTransaction(database);
-      } catch (error) {
-        database.close();
-        this.database = undefined;
-        this.state = 'uninitialized';
-        throw error;
+      if (databaseExisted && schemaVersion !== null) {
+        const openedSchemaVersion = this.pragmaInteger(database, 'user_version');
+        if (openedSchemaVersion > DAEMON_DATABASE_SCHEMA_VERSION) {
+          throw new DaemonStoreInitializationError(
+            'future-schema',
+            `Daemon database schema ${openedSchemaVersion} is newer than supported schema ${DAEMON_DATABASE_SCHEMA_VERSION}; the database was preserved.`,
+            { databaseDisposition: 'preserved', schemaVersion: openedSchemaVersion },
+          );
+        }
+        if (openedSchemaVersion !== schemaVersion) {
+          throw new DaemonStoreInitializationError(
+            'initialization-failed',
+            'Daemon database changed after its recovery probe; it was preserved and initialization was stopped.',
+            { databaseDisposition: 'preserved', schemaVersion: openedSchemaVersion },
+          );
+        }
+        if (!integrityChecked) this.assertDatabaseIntegrity(database);
       }
-    });
+      phase = 'configuring';
+      database.exec('PRAGMA busy_timeout = 5000');
+      database.exec('PRAGMA foreign_keys = ON');
+      database.exec('PRAGMA journal_mode = WAL');
+      database.exec('PRAGMA synchronous = FULL');
+      phase = 'migrating';
+      this.runMigrations(database);
+      phase = 'recovering';
+      this.recoverUncertainCommandsInTransaction(database);
+      this.database = database;
+      this.state = 'ready';
+    } catch (error) {
+      try {
+        database?.close();
+      } catch {
+        // Quarantine below remains fail-closed if an unclosed Windows handle blocks the move.
+      }
+      this.database = undefined;
+      this.state = 'uninitialized';
+      if (error instanceof DaemonStoreInitializationError) throw error;
+      if (!databaseExisted) {
+        const created = this.inspectMaterialAfterFailure(error);
+        if (created.materialNames.length > 0) {
+          await this.rejectAfterQuarantine('initialization-failed', error, null);
+        }
+        throw new DaemonStoreInitializationError(
+          'initialization-failed',
+          'Fresh daemon database creation failed without leaving database material.',
+          { cause: error, databaseDisposition: 'preserved' },
+        );
+      }
+      if (phase === 'migrating') {
+        await this.rejectAfterQuarantine(
+          schemaVersion !== null && schemaVersion < DAEMON_DATABASE_SCHEMA_VERSION
+            ? 'migration-failed'
+            : 'database-corrupt',
+          error,
+          schemaVersion,
+        );
+      }
+      if (phase === 'recovering' || this.isDatabaseCorruptionError(error)) {
+        await this.rejectAfterQuarantine('database-corrupt', error, schemaVersion);
+      }
+      throw new DaemonStoreInitializationError(
+        'initialization-failed',
+        'Daemon database initialization failed; the database was preserved and orchestration is unavailable.',
+        {
+          cause: error,
+          databaseDisposition: 'preserved',
+          ...(schemaVersion === null ? {} : { schemaVersion }),
+        },
+      );
+    }
   }
 
   async close(): Promise<void> {
@@ -1088,6 +1297,82 @@ export class DaemonStore {
     return resolved;
   }
 
+  private inspectMaterialAfterFailure(cause: unknown): ReturnType<DaemonStoreRecovery['inspectMaterial']> {
+    try {
+      return this.recovery.inspectMaterial();
+    } catch (error) {
+      throw new DaemonStoreInitializationError(
+        'unsafe-path',
+        'Daemon database failure left material that could not pass containment validation.',
+        { cause: new AggregateError([cause, error]), databaseDisposition: 'preserved' },
+      );
+    }
+  }
+
+  private async rejectAfterQuarantine(
+    code: 'database-corrupt' | 'initialization-failed' | 'migration-failed',
+    cause: unknown,
+    schemaVersion: number | null,
+  ): Promise<never> {
+    const inspection = this.inspectMaterialAfterFailure(cause);
+    if (inspection.materialNames.length === 0) {
+      throw new DaemonStoreInitializationError(
+        code,
+        'Daemon database initialization failed without leaving database material to quarantine.',
+        {
+          cause,
+          databaseDisposition: 'preserved',
+          ...(schemaVersion === null ? {} : { schemaVersion }),
+        },
+      );
+    }
+    let recoverySet;
+    try {
+      recoverySet = await this.recovery.quarantine(schemaVersion);
+    } catch (error) {
+      const recoveryError = error instanceof DaemonRecoveryOperationError ? error : undefined;
+      throw new DaemonStoreInitializationError(
+        'quarantine-failed',
+        'Daemon database initialization failed and its material could not be completely quarantined.',
+        {
+          cause: new AggregateError([cause, error]),
+          databaseDisposition: recoveryError?.partialMutation ? 'partial-quarantine' : 'preserved',
+          ...(schemaVersion === null ? {} : { schemaVersion }),
+          ...(recoveryError?.recoveryPath === undefined ? {} : { recoveryPath: recoveryError.recoveryPath }),
+        },
+      );
+    }
+    const message = code === 'migration-failed'
+      ? 'Daemon database migration failed; the working database was quarantined and orchestration is unavailable.'
+      : code === 'database-corrupt'
+        ? 'Daemon database is corrupt or structurally invalid; its material was quarantined and orchestration is unavailable.'
+        : 'Daemon database creation failed; created material was quarantined and orchestration is unavailable.';
+    throw new DaemonStoreInitializationError(code, message, {
+      cause,
+      databaseDisposition: 'quarantined',
+      recoveryPath: recoverySet.path,
+      ...(schemaVersion === null ? {} : { schemaVersion }),
+    });
+  }
+
+  private isDatabaseCorruptionError(error: unknown): boolean {
+    const messages: string[] = [];
+    let current: unknown = error;
+    const seen = new Set<unknown>();
+    while (current !== undefined && current !== null && !seen.has(current)) {
+      seen.add(current);
+      if (current instanceof Error) {
+        messages.push(current.message);
+        current = current.cause;
+      } else {
+        messages.push(String(current));
+        break;
+      }
+    }
+    return /SQLITE_(?:CORRUPT|NOTADB)|database disk image is malformed|file is not a database|failed SQLite quick_check|valid daemon database schema version/iu
+      .test(messages.join(' '));
+  }
+
   private requireDatabase(): DatabaseSync {
     if (this.state !== 'ready' || !this.database) throw new Error('Daemon store is not open.');
     return this.database;
@@ -1165,6 +1450,13 @@ export class DaemonStore {
     const row = database.prepare(`PRAGMA ${pragma}`).get() as SqlRow | undefined;
     if (!row) throw new Error(`Unable to read SQLite ${pragma}.`);
     return integer(row, pragma);
+  }
+
+  private assertDatabaseIntegrity(database: DatabaseSync): void {
+    const row = database.prepare('PRAGMA quick_check(1)').get() as SqlRow | undefined;
+    if (!row || optionalString(row, 'quick_check') !== 'ok') {
+      throw new Error('Daemon database failed SQLite quick_check.');
+    }
   }
 
   private runtimeRow(database = this.requireDatabase()): {

@@ -200,7 +200,7 @@ import { resolveNativeHostPath } from './native-host-path';
 import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
 import { DaemonLifecycleSettingsController } from './daemon-lifecycle-settings';
 import { DaemonRuntime } from './daemon-runtime';
-import { DaemonStore } from './daemon-store';
+import { DaemonStore, DaemonStoreInitializationError } from './daemon-store';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { DaemonAutomationRuntime } from './daemon-automation-runtime';
@@ -774,16 +774,38 @@ app.on('ready', async () => {
   // Main owns the fs; the renderer passes raw api.toJSON() output and main
   // sanitizes/validates everything (Codex gate B5). init() is awaited by every
   // handler via `storeReady` so stale .tmp cleanup always precedes first use.
-  const layoutStore = new LayoutStore(path.join(app.getPath('userData')));
-  const storeReady = layoutStore.init().catch((err) => {
-    console.error('[main] layout store init failed:', err);
-  });
+  // Capture legacy JSON sources before their owners can clear stale sidecars.
   const daemonStore = new DaemonStore(app.getPath('userData'));
   const daemonStoreReady = daemonStore.init();
   void daemonStoreReady.catch((error) => {
-    console.error('[main] daemon store failed to initialize:', error);
-    mainLog?.line(`daemon store failed to initialize: ${String(error)}`);
+    const failure = error instanceof DaemonStoreInitializationError
+      ? {
+        event: 'daemon-authority-unavailable',
+        mode: 'legacy-only-safe-mode',
+        code: error.code,
+        databaseDisposition: error.databaseDisposition,
+        ...(error.schemaVersion === undefined ? {} : { schemaVersion: error.schemaVersion }),
+        ...(error.recoveryPath === undefined ? {} : { recoveryPath: error.recoveryPath }),
+      }
+      : {
+        event: 'daemon-authority-unavailable',
+        mode: 'legacy-only-safe-mode',
+        code: 'unknown-initialization-failure',
+        databaseDisposition: 'unknown',
+      };
+    console.error('[main] daemon authority unavailable; legacy terminals remain enabled:', failure);
+    mainLog?.line(`daemon safe mode: ${JSON.stringify(failure)}`);
   });
+  const daemonRecoveryBarrier = daemonStoreReady.then(
+    () => undefined,
+    () => undefined,
+  );
+  const layoutStore = new LayoutStore(path.join(app.getPath('userData')));
+  const storeReady = daemonRecoveryBarrier
+    .then(() => layoutStore.init())
+    .catch((err) => {
+      console.error('[main] layout store init failed:', err);
+    });
   const loginItemIdentity = {
     path: process.execPath,
     args: app.isPackaged
@@ -1009,6 +1031,7 @@ app.on('ready', async () => {
       await daemonAutomationRuntime.start();
       return daemonCommandRouter;
     });
+  void daemonAuthorityReady.catch(() => undefined);
   const daemonEventSubscribers = new Set<WebContents>();
   const daemonSubscriberLifecycleWired = new WeakSet<WebContents>();
   const unsubscribeDaemonEventFanout = daemonCommandRouter.onEvent((event) => {
@@ -1094,9 +1117,11 @@ app.on('ready', async () => {
   const agentCoordinationReady = agentCoordinationStore.init().catch((err) => {
     console.error('[main] agent coordination store init failed:', err);
   });
-  const agentOrchestrationReady = agentOrchestrationStore.init().catch((err) => {
-    console.error('[main] Agent orchestration store init failed:', err);
-  });
+  const agentOrchestrationReady = daemonRecoveryBarrier
+    .then(() => agentOrchestrationStore.init())
+    .catch((err) => {
+      console.error('[main] Agent orchestration store init failed:', err);
+    });
   const agentAdapterReady = agentAdapterService.init().catch((err) => {
     console.error('[main] Agent adapter service init failed:', err);
   });
@@ -1109,9 +1134,11 @@ app.on('ready', async () => {
     [codexHistoryAdapter, claudeHistoryAdapter],
     () => agentSettingsStore.current.genericProfiles,
   );
-  const agentHistoryReady = agentProjectStore.init().catch((err) => {
-    console.error('[main] agent project store init failed:', err);
-  });
+  const agentHistoryReady = daemonRecoveryBarrier
+    .then(() => agentProjectStore.init())
+    .catch((err) => {
+      console.error('[main] agent project store init failed:', err);
+    });
   // Read-only, cached, argv-only. Safe to call on every directory listing.
   const gitStatusService = new GitStatusService();
   // In-memory, single-use, expiring. Never persisted — see the service header.
