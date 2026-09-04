@@ -10,6 +10,7 @@ import {
   type DaemonAgentRelation,
   type DaemonApproval,
   type DaemonCommand,
+  type DaemonCommandError,
   type DaemonCommandReceipt,
   type DaemonEvent,
   type DaemonEventKind,
@@ -892,6 +893,37 @@ export class DaemonStore {
       const settled = this.replayedReceipt(current);
       if (settled) return settled;
       return this.markCommandsDeliveryUncertain(database, [current], detail)[0]!;
+    });
+  }
+
+  rejectCommand(commandId: string, error: DaemonCommandError): Promise<DaemonCommandReceipt> {
+    return this.writer.runExclusive(() => {
+      const database = this.requireDatabase();
+      const current = this.findCommandOrThrow(database, commandId);
+      const settled = this.replayedReceipt(current);
+      if (settled) return settled;
+      const revision = this.runtimeRow(database).revision;
+      const receipt: DaemonCommandReceipt = {
+        ok: false,
+        status: error.code === 'delivery-uncertain' ? 'delivery-uncertain' : 'rejected',
+        commandId,
+        revision,
+        error,
+      };
+      const now = this.isoNow();
+      database.prepare(`
+        UPDATE command_outbox
+        SET state = ?, receipt_json = ?, detail = ?, updated_at = ?, settled_at = ?
+        WHERE command_id = ? AND state IN ('pending', 'sent')
+      `).run(
+        receipt.status === 'delivery-uncertain' ? 'delivery-uncertain' : 'failed',
+        JSON.stringify(receipt),
+        error.code,
+        now,
+        now,
+        commandId,
+      );
+      return receipt;
     });
   }
 
