@@ -16,6 +16,12 @@ const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_PROMPT_LENGTH = 200_000;
 const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-06-18', '2025-03-26', '2024-11-05']);
 const LATEST_PROTOCOL_VERSION = '2025-06-18';
+const PERMISSION_PRESETS = ['plan', 'standard', 'full-access'] as const satisfies readonly PermissionPreset[];
+const PERMISSION_RANK: Readonly<Record<PermissionPreset, number>> = {
+  plan: 0,
+  standard: 1,
+  'full-access': 2,
+};
 
 type JsonObject = Record<string, unknown>;
 
@@ -81,6 +87,14 @@ function permissionPreset(value: unknown): PermissionPreset | undefined {
     throw new McpRequestError(-32602, 'permissionPreset must be plan, standard, or full-access.');
   }
   return value;
+}
+
+function defaultChildPermissionPreset(ownerPreset: PermissionPreset): PermissionPreset {
+  return ownerPreset === 'plan' ? 'plan' : 'standard';
+}
+
+function permissionDoesNotExceed(candidate: PermissionPreset, ceiling: PermissionPreset): boolean {
+  return PERMISSION_RANK[candidate] <= PERMISSION_RANK[ceiling];
 }
 
 function digestToken(token: string): Buffer {
@@ -285,6 +299,7 @@ export class AgentOrchestrationMcpServer {
   }
 
   private async dispatch(sessionId: string, request: JsonRpcRequest): Promise<unknown> {
+    const snapshot = this.requireLiveCapability(sessionId);
     if (request.method === 'initialize') {
       const params = isObject(request.params) ? request.params : {};
       const requested = typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
@@ -295,9 +310,11 @@ export class AgentOrchestrationMcpServer {
         instructions: 'Create and communicate with managed child Agents in the same EZTerminal Project.',
       };
     }
-    this.requireLiveCapability(sessionId);
     if (request.method === 'ping') return {};
-    if (request.method === 'tools/list') return { tools: this.toolDefinitions() };
+    if (request.method === 'tools/list') {
+      const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
+      return { tools: this.toolDefinitions(ownerAgent.permissionPreset) };
+    }
     if (request.method !== 'tools/call') throw new McpRequestError(-32601, 'Method not found.');
     const params = strictObject(request.params, ['name', 'arguments']);
     const name = requiredString(params.name, 'name', 128);
@@ -313,6 +330,7 @@ export class AgentOrchestrationMcpServer {
   private async callTool(sessionId: string, name: string, value: unknown): Promise<JsonObject> {
     const snapshot = this.requireLiveCapability(sessionId);
     const ownerSession = snapshot.sessions.find((session) => session.id === sessionId)!;
+    const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
     switch (name) {
       case 'list_agents': {
         strictObject(value, []);
@@ -339,7 +357,9 @@ export class AgentOrchestrationMcpServer {
         const prompt = requiredString(args.prompt, 'prompt', MAX_PROMPT_LENGTH);
         const title = optionalString(args.title, 'title', 256) ?? `${providerId} Agent`;
         const model = optionalString(args.model, 'model', 256);
-        const preset = permissionPreset(args.permissionPreset) ?? 'standard';
+        const preset = permissionPreset(args.permissionPreset)
+          ?? defaultChildPermissionPreset(ownerAgent.permissionPreset);
+        this.requirePermissionWithinOwner(ownerAgent.permissionPreset, preset);
         const childSessionId = `agent-${this.createId()}`;
         const receipt = await this.executeCommand(sessionId, 'agent.create', {
           sessionId: childSessionId,
@@ -350,25 +370,39 @@ export class AgentOrchestrationMcpServer {
           permissionPreset: preset,
           initialPrompt: prompt,
           parentSessionId: sessionId,
+        }, (current) => {
+          this.requirePermissionWithinOwner(
+            this.ownerPermission(current, sessionId),
+            preset,
+          );
         });
         return toolText({ ok: receipt.ok, sessionId: childSessionId, receipt }, !receipt.ok);
       }
       case 'send_message': {
         const args = strictObject(value, ['sessionId', 'prompt', 'interrupt']);
-        const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
+        const targetSessionId = this.managedExecutableTarget(snapshot, sessionId, args.sessionId);
         const prompt = requiredString(args.prompt, 'prompt', MAX_PROMPT_LENGTH);
         if (args.interrupt !== undefined && typeof args.interrupt !== 'boolean') {
           throw new McpRequestError(-32602, 'interrupt must be a boolean.');
         }
         const type = args.interrupt === true ? 'agent.interrupt-and-submit' : 'agent.submit';
-        const receipt = await this.executeCommand(sessionId, type, { sessionId: targetSessionId, prompt });
+        const receipt = await this.executeCommand(
+          sessionId,
+          type,
+          { sessionId: targetSessionId, prompt },
+          (current) => { this.managedExecutableTarget(current, sessionId, targetSessionId); },
+        );
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
       case 'interrupt_agent': {
         const args = strictObject(value, ['sessionId']);
-        const receipt = await this.executeCommand(sessionId, 'agent.interrupt', {
-          sessionId: this.managedTarget(snapshot, sessionId, args.sessionId),
-        });
+        const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
+        const receipt = await this.executeCommand(
+          sessionId,
+          'agent.interrupt',
+          { sessionId: targetSessionId },
+          (current) => { this.managedTarget(current, sessionId, targetSessionId); },
+        );
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
       case 'set_agent': {
@@ -376,10 +410,17 @@ export class AgentOrchestrationMcpServer {
         const model = optionalString(args.model, 'model', 256);
         const preset = permissionPreset(args.permissionPreset);
         if (!model && !preset) throw new McpRequestError(-32602, 'model or permissionPreset is required.');
+        const targetSessionId = this.managedExecutableTarget(snapshot, sessionId, args.sessionId);
+        if (preset) this.requirePermissionWithinOwner(ownerAgent.permissionPreset, preset);
         const receipt = await this.executeCommand(sessionId, 'agent.set-settings', {
-          sessionId: this.managedTarget(snapshot, sessionId, args.sessionId),
+          sessionId: targetSessionId,
           ...(model ? { model } : {}),
           ...(preset ? { permissionPreset: preset } : {}),
+        }, (current) => {
+          this.managedExecutableTarget(current, sessionId, targetSessionId);
+          if (preset) {
+            this.requirePermissionWithinOwner(this.ownerPermission(current, sessionId), preset);
+          }
         });
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
@@ -392,9 +433,13 @@ export class AgentOrchestrationMcpServer {
           : name === 'archive_agent'
             ? 'agent.archive'
             : 'agent.detach';
-        const receipt = await this.executeCommand(sessionId, type, {
-          sessionId: this.managedTarget(snapshot, sessionId, args.sessionId),
-        });
+        const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
+        const receipt = await this.executeCommand(
+          sessionId,
+          type,
+          { sessionId: targetSessionId },
+          (current) => { this.managedTarget(current, sessionId, targetSessionId); },
+        );
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
       default:
@@ -406,10 +451,12 @@ export class AgentOrchestrationMcpServer {
     ownerSessionId: string,
     type: T,
     payload: DaemonCommandPayloads[T],
+    authorize?: (snapshot: DaemonSnapshot) => void,
   ): Promise<DaemonCommandReceipt> {
     let receipt: DaemonCommandReceipt | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const snapshot = this.requireLiveCapability(ownerSessionId);
+      authorize?.(snapshot);
       const id = this.createId();
       const issuedAt = this.now();
       if (!(issuedAt instanceof Date) || !Number.isFinite(issuedAt.valueOf())) {
@@ -435,9 +482,14 @@ export class AgentOrchestrationMcpServer {
     const runtimeEnabled = snapshot.runtime.orchestrationToolsEnabled;
     const agent = snapshot.agents.find((candidate) => candidate.sessionId === sessionId);
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    const provider = agent
+      ? snapshot.providers.find((candidate) => candidate.id === agent.providerId)
+      : undefined;
     if (
       !runtimeEnabled
       || !agent?.orchestrationEnabled
+      || !provider?.enabled
+      || provider.health !== 'ready'
       || !session
       || session.kind !== 'agent'
       || ['completed', 'interrupted', 'failed', 'archived'].includes(session.state)
@@ -476,6 +528,41 @@ export class AgentOrchestrationMcpServer {
     return targetSessionId;
   }
 
+  private managedExecutableTarget(
+    snapshot: DaemonSnapshot,
+    ownerSessionId: string,
+    value: unknown,
+  ): string {
+    const targetSessionId = this.managedTarget(snapshot, ownerSessionId, value);
+    const ownerPreset = this.ownerPermission(snapshot, ownerSessionId);
+    const target = snapshot.agents.find((agent) => agent.sessionId === targetSessionId);
+    if (!target || !permissionDoesNotExceed(target.permissionPreset, ownerPreset)) {
+      throw new McpRequestError(
+        -32602,
+        'The managed descendant permission preset exceeds this Agent capability.',
+      );
+    }
+    return targetSessionId;
+  }
+
+  private ownerPermission(snapshot: DaemonSnapshot, ownerSessionId: string): PermissionPreset {
+    const owner = snapshot.agents.find((agent) => agent.sessionId === ownerSessionId);
+    if (!owner) throw new McpRequestError(-32002, 'This Agent orchestration capability is no longer active.');
+    return owner.permissionPreset;
+  }
+
+  private requirePermissionWithinOwner(
+    ownerPreset: PermissionPreset,
+    requestedPreset: PermissionPreset,
+  ): void {
+    if (!permissionDoesNotExceed(requestedPreset, ownerPreset)) {
+      throw new McpRequestError(
+        -32602,
+        'permissionPreset cannot exceed this Agent permission capability.',
+      );
+    }
+  }
+
   private authorized(sessionId: string, authorization: string | undefined): boolean {
     const capability = this.capabilities.get(sessionId);
     if (!capability || !authorization?.startsWith('Bearer ')) return false;
@@ -506,13 +593,21 @@ export class AgentOrchestrationMcpServer {
     });
   }
 
-  private toolDefinitions(): readonly JsonObject[] {
+  private toolDefinitions(ownerPreset: PermissionPreset): readonly JsonObject[] {
     const objectSchema = (properties: JsonObject, required: readonly string[] = []): JsonObject => ({
       type: 'object', properties, required, additionalProperties: false,
     });
     const sessionId = { type: 'string', minLength: 1, maxLength: 256 };
     const prompt = { type: 'string', minLength: 1, maxLength: MAX_PROMPT_LENGTH };
-    const preset = { type: 'string', enum: ['plan', 'standard', 'full-access'] };
+    const allowedPresets = PERMISSION_PRESETS.filter((candidate) => (
+      permissionDoesNotExceed(candidate, ownerPreset)
+    ));
+    const defaultPreset = defaultChildPermissionPreset(ownerPreset);
+    const preset = {
+      type: 'string',
+      enum: allowedPresets,
+      description: `Cannot exceed the calling Agent's ${ownerPreset} permission capability.`,
+    };
     return [
       {
         name: 'list_agents',
@@ -521,7 +616,7 @@ export class AgentOrchestrationMcpServer {
       },
       {
         name: 'create_agent',
-        description: 'Create a direct managed child Agent in this Agent workspace.',
+        description: `Create a direct managed child Agent without exceeding this Agent's ${ownerPreset} permission capability. Omitted permissionPreset defaults to ${defaultPreset}.`,
         inputSchema: objectSchema({
           providerId: { type: 'string', minLength: 1, maxLength: 128 },
           title: { type: 'string', minLength: 1, maxLength: 256 },
@@ -532,7 +627,7 @@ export class AgentOrchestrationMcpServer {
       },
       {
         name: 'send_message',
-        description: 'Send a prompt to a managed descendant; optionally interrupt its current turn first.',
+        description: 'Send a prompt only to a managed descendant whose permission does not exceed this Agent; optionally interrupt its current turn first.',
         inputSchema: objectSchema({ sessionId, prompt, interrupt: { type: 'boolean' } }, ['sessionId', 'prompt']),
       },
       {
@@ -542,7 +637,7 @@ export class AgentOrchestrationMcpServer {
       },
       {
         name: 'set_agent',
-        description: 'Change a managed descendant model or permission preset between turns.',
+        description: 'Change a managed descendant at or below this Agent permission capability; permissionPreset cannot exceed that ceiling.',
         inputSchema: objectSchema({
           sessionId,
           model: { type: 'string', minLength: 1, maxLength: 256 },
