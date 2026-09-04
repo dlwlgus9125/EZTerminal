@@ -138,6 +138,7 @@
     "@xterm/xterm": "^6.0.0",
     "ansi_up": "6.0.6",
     "cap": "^0.2.1",
+    "cron-parser": "5.10.0",
     "cross-spawn": "^7.0.6",
     "dockview-react": "^7.0.2",
     "i18next": "^26.3.6",
