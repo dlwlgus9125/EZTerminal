@@ -71,6 +71,13 @@ interface SessionState {
     readonly commandId: string;
     providerTurnId?: string;
     startedEmitted: boolean;
+    interruptRequest?: {
+      readonly promise: Promise<void>;
+      readonly resolve: () => void;
+      readonly reject: (error: Error) => void;
+      dispatched: boolean;
+      settled: boolean;
+    };
   };
   readonly completedItemKeys: Set<string>;
   readonly nativeStateByChild: Map<string, string>;
@@ -371,7 +378,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly unregister: Array<() => void> = [];
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
+  private lifecycleTail: Promise<void> = Promise.resolve();
+  private lifecycleGeneration = 0;
   private deactivatePromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
   private disposed = false;
 
   constructor(options: CodexProviderAdapterOptions = {}) {
@@ -472,7 +482,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   async listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]> {
     this.assertActive();
-    await this.ensureConnection();
+    await this.ensureConnection(signal);
     const models: ProviderModel[] = [];
     const seenModels = new Set<string>();
     const seenCursors = new Set<string>();
@@ -509,7 +519,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   async createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle> {
     this.assertSessionContext(context);
     this.assertActive();
-    await this.ensureConnection();
+    const lifecycleGeneration = await this.ensureConnection(signal);
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
@@ -527,6 +537,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const thread = asObject(result?.thread);
       const providerSessionId = asString(thread?.id);
       if (!providerSessionId) throw new Error('Codex thread/start returned no thread id.');
+      this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, providerSessionId, asString(result?.model) ?? context.model);
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
@@ -547,7 +558,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   ): Promise<ProviderSessionHandle> {
     this.assertSessionContext(context);
     this.assertActive();
-    await this.ensureConnection();
+    const lifecycleGeneration = await this.ensureConnection(signal);
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
@@ -566,6 +577,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       if (!resumedId || resumedId !== context.providerSessionId) {
         throw new Error('Codex thread/resume returned a different thread id.');
       }
+      this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, resumedId, asString(result?.model) ?? context.model);
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
@@ -604,9 +616,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const activeTurn = state.activeTurn;
       if (!activeTurn || activeTurn.commandId !== input.commandId) return;
       activeTurn.providerTurnId = providerTurnId;
+      this.dispatchPendingInterrupt(state, activeTurn);
       this.emitTurnStarted(state, activeTurn);
     } catch (error) {
-      if (state.activeTurn?.commandId === input.commandId) state.activeTurn = undefined;
+      if (state.activeTurn?.commandId === input.commandId) {
+        this.settlePendingInterrupt(state.activeTurn, error);
+        state.activeTurn = undefined;
+      }
       this.emit({
         kind: 'provider-error',
         sessionId: input.sessionId,
@@ -618,12 +634,30 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
   }
 
-  async interrupt(sessionId: string, providerSessionId: string): Promise<void> {
+  interrupt(sessionId: string, providerSessionId: string): Promise<void> {
     this.assertActive();
     const state = this.requireSession(sessionId, providerSessionId);
-    const providerTurnId = state.activeTurn?.providerTurnId;
-    if (!providerTurnId) throw new Error(`Codex session ${sessionId} has no interruptible provider turn.`);
-    await this.requireConnection().request('turn/interrupt', { threadId: providerSessionId, turnId: providerTurnId });
+    const activeTurn = state.activeTurn;
+    if (!activeTurn) {
+      return Promise.reject(new Error(`Codex session ${sessionId} has no interruptible provider turn.`));
+    }
+    if (!activeTurn.interruptRequest) {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+      });
+      activeTurn.interruptRequest = {
+        promise,
+        resolve,
+        reject,
+        dispatched: false,
+        settled: false,
+      };
+    }
+    this.dispatchPendingInterrupt(state, activeTurn);
+    return activeTurn.interruptRequest.promise;
   }
 
   async setSettings(input: {
@@ -670,7 +704,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     signal?: AbortSignal,
   ): Promise<ProviderReconciliationResult> {
     this.assertActive();
-    await this.ensureConnection();
+    await this.ensureConnection(signal);
     const result = asObject(await this.requireConnection().request('thread/read', {
       threadId: input.providerSessionId,
       includeTurns: true,
@@ -744,6 +778,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const state = this.requireSession(sessionId, providerSessionId);
+    if (state.activeTurn) {
+      this.settlePendingInterrupt(
+        state.activeTurn,
+        new Error(`Codex session ${sessionId} stopped before its interrupt could be delivered.`),
+      );
+      state.activeTurn = undefined;
+    }
     for (const approval of [...this.pendingApprovals.values()]) {
       if (approval.sessionId !== sessionId) continue;
       this.pendingApprovals.delete(approval.providerRequestId);
@@ -765,44 +806,77 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   deactivate(): Promise<void> {
     if (this.deactivatePromise) return this.deactivatePromise;
-    const connection = this.connection;
-    this.connection = undefined;
-    for (const approval of this.pendingApprovals.values()) {
-      approval.resolve(this.approvalResponse(approval, 'deny'));
-    }
-    this.pendingApprovals.clear();
-    for (const unregister of this.unregister.splice(0)) unregister();
-    this.sessions.clear();
-    this.sessionIdByProviderId.clear();
-    const operation = Promise.resolve(connection?.dispose()).finally(() => {
+    this.lifecycleGeneration += 1;
+    const operation = this.enqueueLifecycle(async () => {
+      const connection = this.connection;
+      this.connection = undefined;
+      for (const approval of this.pendingApprovals.values()) {
+        approval.resolve(this.approvalResponse(approval, 'deny'));
+      }
+      this.pendingApprovals.clear();
+      for (const unregister of this.unregister.splice(0)) unregister();
+      for (const state of this.sessions.values()) {
+        if (!state.activeTurn) continue;
+        this.settlePendingInterrupt(
+          state.activeTurn,
+          new Error(`Codex session ${state.sessionId} was deactivated before its interrupt could be delivered.`),
+        );
+        state.activeTurn = undefined;
+      }
+      this.sessions.clear();
+      this.sessionIdByProviderId.clear();
+      await connection?.dispose();
+    }).finally(() => {
       if (this.deactivatePromise === operation) this.deactivatePromise = null;
     });
     this.deactivatePromise = operation;
     return operation;
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
-    await this.deactivate();
-    this.listeners.clear();
+    const operation = this.deactivate().then(() => {
+      this.listeners.clear();
+    });
+    this.disposePromise = operation;
+    return operation;
   }
 
-  private async ensureConnection(): Promise<void> {
-    if (this.connection) return;
-    const descriptor = this.launchDescriptor;
-    if (!descriptor) {
-      throw new Error('Codex must be enabled from a persisted executable review before launch.');
-    }
-    const connection = this.connectionFactory({
-      ...this.clientOptions,
-      command: descriptor.executablePath,
-      argv: descriptor.argv,
-      environment: buildProviderProcessEnvironment(descriptor.environmentVariableNames),
-      beforeSpawn: (launchSignal) => this.verifyLaunchDescriptor(descriptor, launchSignal),
+  private ensureConnection(signal?: AbortSignal): Promise<number> {
+    return this.enqueueLifecycle(() => {
+      this.assertActive();
+      if (signal?.aborted) throw abortError();
+      if (!this.connection) {
+        const descriptor = this.launchDescriptor;
+        if (!descriptor) {
+          throw new Error('Codex must be enabled from a persisted executable review before launch.');
+        }
+        const connection = this.connectionFactory({
+          ...this.clientOptions,
+          command: descriptor.executablePath,
+          argv: descriptor.argv,
+          environment: buildProviderProcessEnvironment(descriptor.environmentVariableNames),
+          beforeSpawn: (launchSignal) => this.verifyLaunchDescriptor(descriptor, launchSignal),
+        });
+        this.connection = connection;
+        this.installConnectionHandlers(connection);
+      }
+      return this.lifecycleGeneration;
     });
-    this.connection = connection;
-    this.installConnectionHandlers(connection);
+  }
+
+  private enqueueLifecycle<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = this.lifecycleTail.then(operation);
+    this.lifecycleTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private assertLifecycleGeneration(generation: number): void {
+    this.assertActive();
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error('Codex provider lifecycle changed while the operation was starting.');
+    }
   }
 
   private requireConnection(): CodexAppServerConnection {
@@ -847,6 +921,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         }
         this.pendingApprovals.clear();
         for (const state of this.sessions.values()) {
+          if (state.activeTurn) {
+            this.settlePendingInterrupt(state.activeTurn, new Error(event.message));
+            state.activeTurn = undefined;
+          }
           this.emit({
             kind: 'provider-error', sessionId: state.sessionId, code: 'app-server-exited',
             message: sanitizeProviderDiagnostic(event.message).text, recoverable: true,
@@ -1031,7 +1109,49 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     } else {
       state.activeTurn.providerTurnId = providerTurnId;
     }
+    this.dispatchPendingInterrupt(state, state.activeTurn);
     this.emitTurnStarted(state, state.activeTurn);
+  }
+
+  private dispatchPendingInterrupt(
+    state: SessionState,
+    active: NonNullable<SessionState['activeTurn']>,
+  ): void {
+    const pending = active.interruptRequest;
+    if (!pending || pending.dispatched || pending.settled || !active.providerTurnId) return;
+    pending.dispatched = true;
+    const providerTurnId = active.providerTurnId;
+    void Promise.resolve().then(() => this.requireConnection().request('turn/interrupt', {
+      threadId: state.providerSessionId,
+      turnId: providerTurnId,
+    })).then(
+      () => this.settlePendingInterrupt(active),
+      (error) => {
+        if (!this.settlePendingInterrupt(active, error)) return;
+        this.emit({
+          kind: 'provider-error',
+          sessionId: state.sessionId,
+          code: 'turn-interrupt-failed',
+          message: sanitizeProviderDiagnostic(error).text,
+          recoverable: true,
+        });
+      },
+    );
+  }
+
+  private settlePendingInterrupt(
+    active: NonNullable<SessionState['activeTurn']>,
+    error?: unknown,
+  ): boolean {
+    const pending = active.interruptRequest;
+    if (!pending || pending.settled) return false;
+    pending.settled = true;
+    if (error === undefined) {
+      pending.resolve();
+      return true;
+    }
+    pending.reject(error instanceof Error ? error : new Error(sanitizeProviderDiagnostic(error).text));
+    return true;
   }
 
   private emitTurnStarted(state: SessionState, active: NonNullable<SessionState['activeTurn']>): void {
@@ -1051,6 +1171,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const providerTurnId = asString(turn?.id);
     if (!providerTurnId) return;
     const active = state.activeTurn;
+    if (active) this.settlePendingInterrupt(active);
     for (const itemValue of asArray(turn?.items)) {
       this.handleItem(state, providerTurnId, asObject(itemValue), true);
     }

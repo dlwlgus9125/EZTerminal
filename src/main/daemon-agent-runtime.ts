@@ -286,6 +286,7 @@ export class DaemonAgentRuntime {
   private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly providerLifecycleOperations = new Map<string, Promise<void>>();
+  private readonly providerLifecycleGenerations = new Map<string, number>();
   private readonly providerHandleOperations = new Map<string, Promise<void>>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
@@ -884,7 +885,24 @@ export class DaemonAgentRuntime {
     }
 
     const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
-    if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
+    if (!provider.ok) {
+      return {
+        ok: true,
+        commit: { mutations: [
+          ...queuedMutations,
+          { kind: 'turn.upsert', value: turnInput(activeCurrentTurn, {
+            state: 'delivery-uncertain',
+            errorCode: 'cancel-provider-unavailable',
+          }) },
+          ...this.expireApprovalMutations(snapshot, session.id, activeCurrentTurn.id, now),
+          { kind: 'agent.upsert', value: agentInput(agent, {
+            state: 'delivery-uncertain',
+            queuedTurnCount: 0,
+          }) },
+          { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+        ] },
+      };
+    }
     return {
       ok: true,
       commit: { mutations: [
@@ -1169,12 +1187,16 @@ export class DaemonAgentRuntime {
           this.queuePump();
           return;
         }
+        const lifecycleGeneration = this.advanceProviderLifecycle(command.payload.providerId);
         this.runProviderLifecycleBackground(
           `rehydrate Provider ${command.payload.providerId} after enable`,
           command.payload.providerId,
           async () => {
-            await this.rehydrateProviderSessions(command.payload.providerId);
-            this.queuePump();
+            if (!this.isCurrentProviderEnable(command.payload.providerId, lifecycleGeneration)) return;
+            await this.rehydrateProviderSessions(command.payload.providerId, lifecycleGeneration);
+            if (this.isCurrentProviderEnable(command.payload.providerId, lifecycleGeneration)) {
+              this.queuePump();
+            }
           },
         );
       },
@@ -1226,6 +1248,7 @@ export class DaemonAgentRuntime {
         health: 'unknown',
       } }] },
       afterCommit: () => {
+        this.advanceProviderLifecycle(current.id);
         for (const sessionId of orchestrationSessionIds) {
           try {
             this.options.revokeOrchestrationForSession?.(sessionId);
@@ -1644,6 +1667,10 @@ export class DaemonAgentRuntime {
           }
           if (event.state === 'starting' && currentTurn.state !== 'submitting') return undefined;
           if (event.state === 'working' && currentTurn.state === 'blocked') return undefined;
+          if (
+            this.isInterruptPending(currentTurn)
+            && (event.state === 'starting' || event.state === 'working' || event.state === 'blocked')
+          ) return undefined;
           const turnState = event.state === 'blocked'
             ? 'blocked'
             : event.state === 'working'
@@ -1691,6 +1718,15 @@ export class DaemonAgentRuntime {
           || TERMINAL_SESSION_STATES.has(session.state)
           || (agent.currentTurnId !== undefined && agent.currentTurnId !== turn.id)
         ) return undefined;
+        if (this.isInterruptPending(turn)) {
+          return { mutations: [{
+            kind: 'turn.upsert',
+            value: turnInput(turn, {
+              ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+              startedAt: turn.startedAt ?? this.isoNow(),
+            }),
+          }] };
+        }
         return { mutations: [
           { kind: 'turn.upsert', value: turnInput(turn, {
             state: 'working',
@@ -2202,6 +2238,23 @@ export class DaemonAgentRuntime {
     this.runBackground(context, () => operation);
   }
 
+  private advanceProviderLifecycle(providerId: string): number {
+    const generation = (this.providerLifecycleGenerations.get(providerId) ?? 0) + 1;
+    this.providerLifecycleGenerations.set(providerId, generation);
+    return generation;
+  }
+
+  private isCurrentProviderEnable(providerId: string, generation: number): boolean {
+    if (this.disposed || this.providerLifecycleGenerations.get(providerId) !== generation) return false;
+    const provider = this.options.getSnapshot().providers.find((entry) => entry.id === providerId);
+    return provider?.enabled === true && provider.health === 'ready';
+  }
+
+  private isInterruptPending(turn: DaemonTurn): boolean {
+    return turn.state === 'delivery-uncertain'
+      && (turn.errorCode?.startsWith('interrupt-') === true || turn.errorCode === 'cancel-provider-unavailable');
+  }
+
   private enqueueProviderLifecycleOperation(
     providerId: string,
     task: () => Promise<void>,
@@ -2402,10 +2455,10 @@ export class DaemonAgentRuntime {
     }
   }
 
-  private async rehydrateProviderSessions(providerId: string): Promise<void> {
+  private async rehydrateProviderSessions(providerId: string, lifecycleGeneration: number): Promise<void> {
     const snapshot = this.options.getSnapshot();
     for (const agent of snapshot.agents) {
-      if (this.disposed) return;
+      if (!this.isCurrentProviderEnable(providerId, lifecycleGeneration)) return;
       if (agent.providerId !== providerId || !agent.providerSessionId) continue;
       const session = snapshot.sessions.find((entry) => entry.id === agent.sessionId);
       if (
@@ -2413,11 +2466,15 @@ export class DaemonAgentRuntime {
         || TERMINAL_AGENT_STATES.has(agent.state)
         || TERMINAL_SESSION_STATES.has(session.state)
       ) continue;
-      await this.rehydrateSession(agent.sessionId);
+      await this.rehydrateSession(
+        agent.sessionId,
+        () => this.isCurrentProviderEnable(providerId, lifecycleGeneration),
+      );
     }
   }
 
-  private async rehydrateSession(sessionId: string): Promise<void> {
+  private async rehydrateSession(sessionId: string, isCurrent: () => boolean = () => true): Promise<void> {
+    if (!isCurrent()) return;
     const snapshot = this.options.getSnapshot();
     const session = snapshot.sessions.find((entry) => entry.id === sessionId);
     const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
@@ -2433,6 +2490,7 @@ export class DaemonAgentRuntime {
     ) return;
     const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
     if (!provider.ok) {
+      if (!isCurrent()) return;
       await this.markSessionDeliveryUncertain(sessionId, 'provider-unavailable', provider.message);
       return;
     }
@@ -2448,7 +2506,9 @@ export class DaemonAgentRuntime {
         ),
         providerSessionId: agent.providerSessionId,
       }, this.lifecycleAbortController.signal);
+      if (!isCurrent()) return;
       await this.transition((fresh) => {
+        if (!isCurrent()) return undefined;
         const currentAgent = fresh.agents.find((entry) => entry.sessionId === sessionId);
         const currentSession = fresh.sessions.find((entry) => entry.id === sessionId);
         if (!currentAgent || !currentSession || TERMINAL_SESSION_STATES.has(currentSession.state)) return undefined;
@@ -2467,6 +2527,7 @@ export class DaemonAgentRuntime {
         ] };
       });
     } catch (error) {
+      if (!isCurrent()) return;
       await this.markSessionDeliveryUncertain(
         sessionId,
         'provider-resume-failed',

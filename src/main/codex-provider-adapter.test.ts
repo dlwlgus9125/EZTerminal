@@ -31,6 +31,7 @@ class FakeCodexConnection implements CodexAppServerConnection {
   readonly closeListeners = new Set<(event: CodexConnectionClose) => void>();
   requestImpl: (method: string, params: unknown, options?: CodexRpcRequestOptions) => Promise<unknown>
     = async (method) => { throw new Error(`Unexpected request: ${method}`); };
+  disposeImpl: () => Promise<void> = async () => undefined;
   disposed = false;
 
   request(method: string, params: unknown = {}, options?: CodexRpcRequestOptions): Promise<unknown> {
@@ -84,6 +85,7 @@ class FakeCodexConnection implements CodexAppServerConnection {
   }
 
   async dispose(): Promise<void> {
+    await this.disposeImpl();
     this.disposed = true;
   }
 }
@@ -111,6 +113,59 @@ async function attachedAdapter(connection: FakeCodexConnection): Promise<CodexPr
   });
   await adapter.createSession(context());
   return adapter;
+}
+
+function reviewedAdapter(connectionFactory: () => CodexAppServerConnection): CodexProviderAdapter {
+  const adapter = new CodexProviderAdapter({ connectionFactory });
+  adapter.setLaunchDescriptor({
+    providerId: 'codex',
+    protocol: 'codex-app-server',
+    executablePath: 'C:\\Tools\\codex.exe',
+    executableVersion: CODEX_APP_SERVER_BASELINE_VERSION,
+    argv: ['app-server'],
+    environmentVariableNames: [
+      'PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+    ],
+    reviewDigest: 'a'.repeat(64),
+  });
+  return adapter;
+}
+
+async function pendingTurnFixture(
+  interruptImpl: () => Promise<unknown> = async () => ({}),
+): Promise<{
+  readonly adapter: CodexProviderAdapter;
+  readonly connection: FakeCodexConnection;
+  readonly submitting: Promise<void>;
+  readonly interrupting: Promise<void>;
+  readonly resolveTurnStart: (value: unknown) => void;
+  readonly rejectTurnStart: (reason: unknown) => void;
+}> {
+  const connection = new FakeCodexConnection();
+  const adapter = await attachedAdapter(connection);
+  let resolveTurnStart!: (value: unknown) => void;
+  let rejectTurnStart!: (reason: unknown) => void;
+  const turnStart = new Promise<unknown>((resolve, reject) => {
+    resolveTurnStart = resolve;
+    rejectTurnStart = reject;
+  });
+  connection.requestImpl = async (method) => {
+    if (method === 'turn/start') return turnStart;
+    if (method === 'turn/interrupt') return interruptImpl();
+    throw new Error(`Unexpected request: ${method}`);
+  };
+  const submitting = adapter.submit({
+    sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: 'Work',
+  });
+  await vi.waitFor(() => expect(connection.requests.some((request) => request.method === 'turn/start')).toBe(true));
+  return {
+    adapter,
+    connection,
+    submitting,
+    interrupting: adapter.interrupt('session-1', 'thread-1'),
+    resolveTurnStart,
+    rejectTurnStart,
+  };
 }
 
 describe('CodexProviderAdapter', () => {
@@ -483,6 +538,133 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('queues an interrupt until turn identity arrives and sends it exactly once across notification and response', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+
+    await connection.emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-turn-1', items: [{ type: 'userMessage', clientId: 'command-1' }] },
+    });
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await Promise.all([submitting, interrupting]);
+
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([
+      expect.objectContaining({
+        method: 'turn/interrupt',
+        params: { threadId: 'thread-1', turnId: 'provider-turn-1' },
+      }),
+    ]);
+    await adapter.dispose();
+  });
+
+  it('dispatches a pending interrupt when turn/start response supplies identity first', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await Promise.all([submitting, interrupting]);
+
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([
+      expect.objectContaining({ params: { threadId: 'thread-1', turnId: 'provider-turn-1' } }),
+    ]);
+    await adapter.dispose();
+  });
+
+  it('settles a pending interrupt without dispatch when the provider completes first', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-turn-1', status: 'completed', items: [] },
+    });
+    await expect(interrupting).resolves.toBeUndefined();
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await expect(submitting).resolves.toBeUndefined();
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('reports a queued interrupt delivery failure and settles its waiter', async () => {
+    const fixture = await pendingTurnFixture(async () => { throw new Error('interrupt transport failed'); });
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = fixture;
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const interruptFailure = expect(interrupting).rejects.toThrow('interrupt transport failed');
+    await connection.emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-turn-1', items: [{ type: 'userMessage', clientId: 'command-1' }] },
+    });
+    await interruptFailure;
+    expect(events).toContainEqual({
+      kind: 'provider-error',
+      sessionId: 'session-1',
+      code: 'turn-interrupt-failed',
+      message: 'interrupt transport failed',
+      recoverable: true,
+    });
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await submitting;
+    await adapter.dispose();
+  });
+
+  it('does not report a late interrupt RPC failure after authoritative turn completion', async () => {
+    let rejectInterrupt!: (reason: Error) => void;
+    const interruptRequest = new Promise<unknown>((_resolve, reject) => {
+      rejectInterrupt = reject;
+    });
+    const fixture = await pendingTurnFixture(async () => interruptRequest);
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = fixture;
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await connection.emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-turn-1', items: [{ type: 'userMessage', clientId: 'command-1' }] },
+    });
+    await vi.waitFor(() => expect(connection.requests.some((request) => request.method === 'turn/interrupt')).toBe(true));
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-turn-1', status: 'completed', items: [] },
+    });
+    await expect(interrupting).resolves.toBeUndefined();
+    rejectInterrupt(new Error('late interrupt failure'));
+    await Promise.resolve();
+    expect(events).not.toContainEqual(expect.objectContaining({ code: 'turn-interrupt-failed' }));
+
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await submitting;
+    await adapter.dispose();
+  });
+
+  it('settles a pending interrupt when turn start fails or the adapter deactivates', async () => {
+    const fixture = await pendingTurnFixture();
+    const { adapter, connection, submitting, interrupting, rejectTurnStart } = fixture;
+    rejectTurnStart(new Error('turn/start failed'));
+    await expect(submitting).rejects.toThrow('turn/start failed');
+    await expect(interrupting).rejects.toThrow('turn/start failed');
+
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/resume') return { thread: { id: 'thread-2' } };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    await adapter.resumeSession({ ...context({ sessionId: 'session-2' }), providerSessionId: 'thread-2' });
+    let resolveSecondStart!: (value: unknown) => void;
+    const secondStart = new Promise<unknown>((resolve) => {
+      resolveSecondStart = resolve;
+    });
+    connection.requestImpl = async (method) => {
+      if (method === 'turn/start') return secondStart;
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const secondSubmit = adapter.submit({
+      sessionId: 'session-2', providerSessionId: 'thread-2', turnId: 'turn-2', commandId: 'command-2', prompt: 'Work again',
+    });
+    await vi.waitFor(() => expect(connection.requests.filter((request) => request.method === 'turn/start')).toHaveLength(2));
+    const secondInterrupt = adapter.interrupt('session-2', 'thread-2');
+    await adapter.deactivate();
+    await expect(secondInterrupt).rejects.toThrow(/deactivat|stopped|disposed/i);
+    resolveSecondStart({ turn: { id: 'provider-turn-2' } });
+    await expect(secondSubmit).resolves.toBeUndefined();
+    await adapter.dispose();
+  });
+
   it('deactivates the app-server connection without permanently disposing the adapter', async () => {
     const firstConnection = new FakeCodexConnection();
     firstConnection.requestImpl = async (method) => {
@@ -496,18 +678,7 @@ describe('CodexProviderAdapter', () => {
     };
     const connections = [firstConnection, secondConnection];
     const connectionFactory = vi.fn(() => connections.shift()!);
-    const adapter = new CodexProviderAdapter({ connectionFactory });
-    adapter.setLaunchDescriptor({
-      providerId: 'codex',
-      protocol: 'codex-app-server',
-      executablePath: 'C:\\Tools\\codex.exe',
-      executableVersion: CODEX_APP_SERVER_BASELINE_VERSION,
-      argv: ['app-server'],
-      environmentVariableNames: [
-        'PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-      ],
-      reviewDigest: 'a'.repeat(64),
-    });
+    const adapter = reviewedAdapter(connectionFactory);
     await adapter.createSession(context());
 
     await adapter.deactivate();
@@ -521,6 +692,77 @@ describe('CodexProviderAdapter', () => {
     expect(secondConnection.requests).toEqual([
       expect.objectContaining({ method: 'thread/resume', params: expect.objectContaining({ threadId: 'thread-1' }) }),
     ]);
+    await adapter.dispose();
+    expect(secondConnection.disposed).toBe(true);
+  });
+
+  it('excludes connection creation during deactivation and lets dispose win the race', async () => {
+    const firstConnection = new FakeCodexConnection();
+    firstConnection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      throw new Error(`Unexpected first-connection request: ${method}`);
+    };
+    let releaseDispose!: () => void;
+    const disposeBlocked = new Promise<void>((resolve) => {
+      releaseDispose = resolve;
+    });
+    firstConnection.disposeImpl = () => disposeBlocked;
+    const secondConnection = new FakeCodexConnection();
+    secondConnection.requestImpl = async (method) => {
+      if (method === 'thread/resume') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      throw new Error(`Unexpected second-connection request: ${method}`);
+    };
+    const connectionFactory = vi.fn()
+      .mockReturnValueOnce(firstConnection)
+      .mockReturnValueOnce(secondConnection);
+    const adapter = reviewedAdapter(connectionFactory);
+    await adapter.createSession(context());
+
+    const deactivating = adapter.deactivate();
+    const resuming = adapter.resumeSession({
+      ...context({ sessionId: 'session-2' }),
+      providerSessionId: 'thread-1',
+    });
+    const disposing = adapter.dispose();
+    releaseDispose();
+    await deactivating;
+    await expect(resuming).rejects.toThrow(/disposed/);
+    await disposing;
+    expect(connectionFactory).toHaveBeenCalledTimes(1);
+    expect(secondConnection.disposed).toBe(false);
+  });
+
+  it('waits for deactivation before listing models on a replacement connection', async () => {
+    const firstConnection = new FakeCodexConnection();
+    firstConnection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      throw new Error(`Unexpected first-connection request: ${method}`);
+    };
+    let releaseDispose!: () => void;
+    const disposeBlocked = new Promise<void>((resolve) => {
+      releaseDispose = resolve;
+    });
+    firstConnection.disposeImpl = () => disposeBlocked;
+    const secondConnection = new FakeCodexConnection();
+    secondConnection.requestImpl = async (method) => {
+      if (method === 'model/list') return { data: [{ id: 'gpt-new', displayName: 'GPT New' }] };
+      throw new Error(`Unexpected second-connection request: ${method}`);
+    };
+    const connectionFactory = vi.fn()
+      .mockReturnValueOnce(firstConnection)
+      .mockReturnValueOnce(secondConnection);
+    const adapter = reviewedAdapter(connectionFactory);
+    await adapter.createSession(context());
+
+    const deactivating = adapter.deactivate();
+    const listing = adapter.listModels();
+    expect(connectionFactory).toHaveBeenCalledTimes(1);
+    releaseDispose();
+    await deactivating;
+    await expect(listing).resolves.toEqual([
+      expect.objectContaining({ id: 'gpt-new', displayName: 'GPT New' }),
+    ]);
+    expect(connectionFactory).toHaveBeenCalledTimes(2);
     await adapter.dispose();
     expect(secondConnection.disposed).toBe(true);
   });

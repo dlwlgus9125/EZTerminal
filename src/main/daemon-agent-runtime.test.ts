@@ -744,6 +744,68 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
+  it('skips stale rehydration when a second disable supersedes an enable behind blocked cleanup', async () => {
+    const h = await harness();
+    let releaseDeactivate: (() => void) | undefined;
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish before lifecycle changes.',
+      });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'idle' });
+      await h.runtime.whenIdle();
+      vi.mocked(h.codex.resumeSession).mockClear();
+      vi.mocked(h.codex.submit).mockClear();
+
+      const originalDeactivate = vi.mocked(h.codex.deactivate).getMockImplementation()!;
+      let markDeactivateStarted!: () => void;
+      const deactivateStarted = new Promise<void>((resolve) => {
+        markDeactivateStarted = resolve;
+      });
+      const deactivateBlocked = new Promise<void>((resolve) => {
+        releaseDeactivate = resolve;
+      });
+      vi.mocked(h.codex.deactivate).mockImplementationOnce(async () => {
+        markDeactivateStarted();
+        await deactivateBlocked;
+        await originalDeactivate();
+      });
+
+      await expect(h.executeWithoutSettling('provider.disable', { providerId: 'codex' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      await settleWithin(deactivateStarted);
+      await expect(h.enableWithoutSettling(h.codex, 'codex'))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      await expect(h.executeWithoutSettling('provider.disable', { providerId: 'codex' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+
+      releaseDeactivate?.();
+      releaseDeactivate = undefined;
+      await h.runtime.whenIdle();
+
+      expect(h.codex.resumeSession).not.toHaveBeenCalled();
+      expect(h.codex.submit).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot()).toMatchObject({
+        providers: [expect.objectContaining({ id: 'codex', enabled: false })],
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'idle' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'idle', queuedTurnCount: 0 })],
+      });
+    } finally {
+      releaseDeactivate?.();
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('rejects disabling a Provider while one of its Agent turns is active', async () => {
     const h = await harness();
     try {
@@ -2402,6 +2464,162 @@ describe('DaemonAgentRuntime', () => {
       expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toEqual(['First turn.']);
       expect(h.router.getSnapshot().agents[0]).toMatchObject({ state: 'idle', queuedTurnCount: 0 });
       expect(h.router.getSnapshot().agents[0]).not.toHaveProperty('currentTurnId');
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('does not let late start or working events erase a durable cancel intent', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Cancel during provider acceptance.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+
+      await expect(h.execute('agent.cancel', { sessionId: 'agent-1' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        id: turn.id,
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
+      });
+
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      h.codex.emit({
+        kind: 'turn-started',
+        sessionId: 'agent-1',
+        turnId: turn.id,
+        providerTurnId: 'provider-turn-late',
+        commandId: turn.commandId,
+      });
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'delivery-uncertain' })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+          providerTurnId: 'provider-turn-late',
+        })],
+      });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('preserves durable interrupt intent after delivery failure and late provider events', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      vi.mocked(h.codex.interrupt).mockRejectedValueOnce(new Error('interrupt transport failed'));
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Interrupt this turn.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+
+      await expect(h.execute('agent.interrupt', { sessionId: 'agent-1' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-failed',
+      });
+
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      h.codex.emit({
+        kind: 'turn-started',
+        sessionId: 'agent-1',
+        turnId: turn.id,
+        providerTurnId: 'provider-turn-late',
+        commandId: turn.commandId,
+      });
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'delivery-uncertain' })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-failed',
+          providerTurnId: 'provider-turn-late',
+        })],
+      });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('terminalizes queued successors when cancellation cannot reach an unavailable Provider', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Active turn.',
+      });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Queued successor.' });
+      const before = h.router.getSnapshot();
+      const provider = before.providers.find((entry) => entry.id === 'codex')!;
+      const active = before.turns.find((turn) => turn.id === before.agents[0]!.currentTurnId)!;
+      const successor = before.turns.find((turn) => turn.state === 'queued')!;
+      await h.router.applySystemCommit({
+        mutations: [{
+          kind: 'provider.upsert',
+          value: {
+            id: provider.id,
+            displayName: provider.displayName,
+            protocol: provider.protocol,
+            executablePath: provider.executablePath,
+            executableVersion: provider.executableVersion,
+            argv: provider.argv,
+            environmentVariableNames: provider.environmentVariableNames,
+            capabilities: provider.capabilities,
+            enabled: false,
+            health: 'unknown',
+          },
+        }],
+      });
+
+      await expect(h.execute('agent.cancel', { sessionId: 'agent-1' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+
+      expect(h.codex.interrupt).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().turns.find((turn) => turn.id === successor.id)).toMatchObject({
+        state: 'interrupted',
+        errorCode: 'cancelled',
+      });
+      expect(h.router.getSnapshot().turns.find((turn) => turn.id === active.id)).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode: 'cancel-provider-unavailable',
+      });
+      expect(h.router.getSnapshot().agents[0]).toMatchObject({
+        state: 'delivery-uncertain',
+        queuedTurnCount: 0,
+      });
     } finally {
       await h.runtime.dispose();
       await h.store.close();

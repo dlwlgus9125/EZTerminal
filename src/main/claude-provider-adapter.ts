@@ -714,7 +714,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private readonly sessions = new Map<string, SessionRecord>();
   private executablePromise: Promise<string | null> | null = null;
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
+  private lifecycleTail: Promise<void> = Promise.resolve();
+  private lifecycleGeneration = 0;
   private deactivatePromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
   private disposed = false;
 
   constructor(options: ClaudeProviderAdapterOptions = {}) {
@@ -850,9 +853,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   async listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]> {
-    this.throwIfAborted(signal);
+    const lifecycleGeneration = await this.enterLifecycle(signal);
     await abortable(this.assertReady(signal), signal);
-    const active = [...this.sessions.values()].find((session) => !session.disposed && session.initialized);
+    const active = await this.enqueueLifecycle(() => {
+      this.assertLifecycleGeneration(lifecycleGeneration, signal);
+      return [...this.sessions.values()].find((session) => !session.disposed && session.initialized);
+    });
     if (!active) {
       return [{
         id: 'default',
@@ -1094,21 +1100,27 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   deactivate(): Promise<void> {
     if (this.deactivatePromise) return this.deactivatePromise;
-    const active = [...this.sessions.values()];
-    const operation = Promise.all(active.map((session) => (
-      this.disposeSession(session.context.sessionId, session.handle.providerSessionId)
-    ))).then(() => undefined).finally(() => {
+    this.lifecycleGeneration += 1;
+    const operation = this.enqueueLifecycle(async () => {
+      const active = [...this.sessions.values()];
+      await Promise.all(active.map((session) => (
+        this.disposeSession(session.context.sessionId, session.handle.providerSessionId)
+      )));
+    }).finally(() => {
       if (this.deactivatePromise === operation) this.deactivatePromise = null;
     });
     this.deactivatePromise = operation;
     return operation;
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
-    await this.deactivate();
-    this.listeners.clear();
+    const operation = this.deactivate().then(() => {
+      this.listeners.clear();
+    });
+    this.disposePromise = operation;
+    return operation;
   }
 
   private async startSession(
@@ -1116,11 +1128,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     resumeSessionId: string | undefined,
     signal?: AbortSignal,
   ): Promise<ProviderSessionHandle> {
-    this.throwIfAborted(signal);
-    if (this.disposed) throw new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
-    if (this.sessions.has(context.sessionId)) {
-      throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
-    }
+    const lifecycleGeneration = await this.enterLifecycle(signal, context.sessionId);
     const readiness = await abortable(this.assertReady(signal), signal);
     const executablePath = readiness.executablePath;
     const mcpServers = orchestrationMcpServers(context);
@@ -1192,15 +1200,22 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ...(context.model ? { model: context.model } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : { sessionId: providerSessionId }),
     };
-    this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      session.query = this.queryFactory({ prompt: input, options });
-      this.sessions.set(context.sessionId, session);
-      session.streamPromise = this.consume(session);
-      const initialization = session.query.initializationResult().then((result) => {
-        session.accountAuthentication = claudeAccountAuthenticationEvidence(result);
-        session.initializationReceived = true;
-        this.settleAuthentication(session);
+      const { initialization } = await this.enqueueLifecycle(() => {
+        this.assertLifecycleGeneration(lifecycleGeneration, signal);
+        if (this.sessions.has(context.sessionId)) {
+          throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+        }
+        this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
+        session.query = this.queryFactory({ prompt: input, options });
+        this.sessions.set(context.sessionId, session);
+        session.streamPromise = this.consume(session);
+        const initialization = session.query.initializationResult().then((result) => {
+          session.accountAuthentication = claudeAccountAuthenticationEvidence(result);
+          session.initializationReceived = true;
+          this.settleAuthentication(session);
+        });
+        return { initialization };
       });
       await bounded(
         abortable(Promise.all([
@@ -1743,6 +1758,30 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       session.abortController.abort();
       session.query.close();
     }
+  }
+
+  private enterLifecycle(signal?: AbortSignal, sessionId?: string): Promise<number> {
+    return this.enqueueLifecycle(() => {
+      this.throwIfAborted(signal);
+      if (this.disposed) throw new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
+      if (sessionId && this.sessions.has(sessionId)) {
+        throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+      }
+      return this.lifecycleGeneration;
+    });
+  }
+
+  private assertLifecycleGeneration(generation: number, signal?: AbortSignal): void {
+    this.throwIfAborted(signal);
+    if (this.disposed || generation !== this.lifecycleGeneration) {
+      throw new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
+    }
+  }
+
+  private enqueueLifecycle<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = this.lifecycleTail.then(operation);
+    this.lifecycleTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   private async executableVersion(

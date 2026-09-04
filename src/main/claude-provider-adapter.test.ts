@@ -44,6 +44,7 @@ class FakeClaudeQuery implements ClaudeQuerySession {
   closeCount = 0;
   interruptCount = 0;
   interruptReceipt: { still_queued?: readonly string[] } | undefined;
+  returnImpl: () => Promise<void> = async () => undefined;
   supported = [{
     value: 'sonnet',
     displayName: 'Claude Sonnet',
@@ -115,6 +116,11 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     if (this.endOnClose) this.end();
   }
 
+  async return(): Promise<IteratorResult<SDKMessage, void>> {
+    await this.returnImpl();
+    return { done: true, value: undefined };
+  }
+
   [Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
     return {
       next: async (): Promise<IteratorResult<SDKMessage>> => {
@@ -132,6 +138,7 @@ function makeAdapter(options: {
   readonly endOnClose?: boolean;
   readonly apiKeySource?: string;
   readonly account?: Record<string, unknown>;
+  readonly shutdownTimeoutMs?: number;
   readonly historyReader?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['historyReader'];
 } = {}): {
   readonly adapter: ClaudeProviderAdapter;
@@ -158,7 +165,7 @@ function makeAdapter(options: {
     historyReader: options.historyReader,
     initializationTimeoutMs: 100,
     operationTimeoutMs: 100,
-    shutdownTimeoutMs: 20,
+    shutdownTimeoutMs: options.shutdownTimeoutMs ?? 20,
     now: () => new Date('2026-09-04T00:00:00.000Z'),
   });
   adapter.subscribe((event) => events.push(event));
@@ -834,6 +841,58 @@ describe('ClaudeProviderAdapter sessions', () => {
     })).resolves.toMatchObject({ sessionId: 'agent-session-2', providerSessionId });
     expect(fixture.query).not.toBe(firstQuery);
     expect(fixture.query.inputOptions.resume).toBe(providerSessionId);
+    await fixture.adapter.dispose();
+  });
+
+  it('excludes SDK query creation during deactivation and lets dispose win the race', async () => {
+    const fixture = makeAdapter({ shutdownTimeoutMs: 500 });
+    await start(fixture);
+    const firstQuery = fixture.query;
+    let releaseReturn!: () => void;
+    const returnBlocked = new Promise<void>((resolve) => {
+      releaseReturn = resolve;
+    });
+    firstQuery.returnImpl = () => returnBlocked;
+
+    const deactivating = fixture.adapter.deactivate();
+    const resuming = fixture.adapter.resumeSession({
+      ...context,
+      sessionId: 'agent-session-2',
+      providerSessionId,
+    });
+    const disposing = fixture.adapter.dispose();
+    releaseReturn();
+    await deactivating;
+    await expect(resuming).rejects.toMatchObject({ code: 'CLAUDE_PROVIDER_DISABLED' });
+    await disposing;
+    expect(fixture.query).toBe(firstQuery);
+  });
+
+  it('waits for SDK deactivation before resolving a concurrent model listing', async () => {
+    const fixture = makeAdapter({ shutdownTimeoutMs: 500 });
+    await start(fixture);
+    const firstQuery = fixture.query;
+    let releaseReturn!: () => void;
+    const returnBlocked = new Promise<void>((resolve) => {
+      releaseReturn = resolve;
+    });
+    firstQuery.returnImpl = () => returnBlocked;
+    const supportedModels = vi.spyOn(firstQuery, 'supportedModels');
+
+    const deactivating = fixture.adapter.deactivate();
+    let listingSettled = false;
+    const listing = fixture.adapter.listModels().finally(() => {
+      listingSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(listingSettled).toBe(false);
+    expect(supportedModels).not.toHaveBeenCalled();
+
+    releaseReturn();
+    await deactivating;
+    await expect(listing).resolves.toEqual([
+      expect.objectContaining({ id: 'default', displayName: 'Claude' }),
+    ]);
     await fixture.adapter.dispose();
   });
 });
