@@ -254,6 +254,7 @@ export class DaemonAutomationRuntime {
   private tickAgain = false;
   private started = false;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
 
   constructor(private readonly options: DaemonAutomationRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
@@ -268,12 +269,24 @@ export class DaemonAutomationRuntime {
 
   handlers(): Partial<Record<AutomationCommandType, DaemonCommandHandler>> {
     return {
-      'schedule.create': (command, context) => this.createSchedule(command, context.snapshot),
-      'schedule.update': (command, context) => this.updateSchedule(command, context.snapshot),
-      'schedule.delete': (command, context) => this.deleteSchedule(command, context.snapshot),
-      'schedule.run-now': (command, context) => this.runScheduleNow(command, context.snapshot),
-      'heartbeat.configure': (command, context) => this.configureHeartbeat(command, context.snapshot),
-      'heartbeat.trigger': (command, context) => this.triggerHeartbeat(command, context.snapshot),
+      'schedule.create': (command, context) => (
+        this.runCommand(() => this.createSchedule(command, context.snapshot))
+      ),
+      'schedule.update': (command, context) => (
+        this.runCommand(() => this.updateSchedule(command, context.snapshot))
+      ),
+      'schedule.delete': (command, context) => (
+        this.runCommand(() => this.deleteSchedule(command, context.snapshot))
+      ),
+      'schedule.run-now': (command, context) => (
+        this.runCommand(() => this.runScheduleNow(command, context.snapshot))
+      ),
+      'heartbeat.configure': (command, context) => (
+        this.runCommand(() => this.configureHeartbeat(command, context.snapshot))
+      ),
+      'heartbeat.trigger': (command, context) => (
+        this.runCommand(() => this.triggerHeartbeat(command, context.snapshot))
+      ),
     };
   }
 
@@ -283,11 +296,12 @@ export class DaemonAutomationRuntime {
     await this.requestTick();
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
     this.clearWakeTimer();
-    await (this.tickPromise ?? Promise.resolve());
+    this.disposePromise = this.tickPromise ?? Promise.resolve();
+    return this.disposePromise;
   }
 
   /** Allows the eventual main integration to wake the engine after runtime-setting changes. */
@@ -543,6 +557,24 @@ export class DaemonAutomationRuntime {
     throw error;
   }
 
+  private async runCommand(
+    action: () => DaemonCommandExecutionResult | Promise<DaemonCommandExecutionResult>,
+  ): Promise<DaemonCommandExecutionResult> {
+    if (this.disposed) return commandError('invalid-state', 'The automation runtime is shutting down.');
+    const result = await action();
+    return this.disposed
+      ? commandError('invalid-state', 'The automation runtime is shutting down.')
+      : result;
+  }
+
+  private applySystemTransition<T>(
+    transition: (state: AutomationClaimState) => AutomationTransitionPlan<T> | undefined,
+  ): Promise<AutomationTransitionReceipt<T> | undefined> {
+    return this.options.applySystemTransition((state) => (
+      this.disposed ? undefined : transition(state)
+    ));
+  }
+
   private currentDate(): Date {
     const value = this.now();
     if (!(value instanceof Date) || !Number.isFinite(value.valueOf())) {
@@ -577,16 +609,19 @@ export class DaemonAutomationRuntime {
   }
 
   private async tickOnce(): Promise<void> {
-    if (!automationEnabled(this.options.getSnapshot())) return;
+    if (this.disposed || !automationEnabled(this.options.getSnapshot())) return;
     const now = this.currentDate();
     await this.reconcileFinishedScheduleRuns(now);
+    if (this.disposed) return;
     await this.claimDue(now);
+    if (this.disposed) return;
     await this.dispatchQueuedSchedules();
+    if (this.disposed) return;
     await this.dispatchPendingHeartbeats();
   }
 
   private async claimDue(now: Date): Promise<void> {
-    await this.options.applySystemTransition((state) => {
+    await this.applySystemTransition((state) => {
       if (!automationEnabled(state.snapshot)) return undefined;
       const mutations: DaemonStoreMutation[] = [];
       for (const schedule of state.snapshot.schedules) {
@@ -760,7 +795,7 @@ export class DaemonAutomationRuntime {
 
   private async completeHeartbeat(sessionId: string, claimedRevision: number): Promise<void> {
     const now = this.currentDate();
-    await this.options.applySystemTransition((state) => {
+    await this.applySystemTransition((state) => {
       const heartbeat = state.snapshot.heartbeats.find((candidate) => candidate.sessionId === sessionId);
       if (!heartbeat?.pending || heartbeat.revision !== claimedRevision) return undefined;
       try {
@@ -787,7 +822,7 @@ export class DaemonAutomationRuntime {
   }
 
   private async disableHeartbeat(sessionId: string, claimedRevision: number): Promise<void> {
-    await this.options.applySystemTransition((state) => {
+    await this.applySystemTransition((state) => {
       const heartbeat = state.snapshot.heartbeats.find((candidate) => candidate.sessionId === sessionId);
       if (!heartbeat || heartbeat.revision !== claimedRevision) return undefined;
       return {
@@ -802,7 +837,7 @@ export class DaemonAutomationRuntime {
   }
 
   private async markScheduleRunning(runId: string, sessionId: string, startedAt: string): Promise<void> {
-    await this.options.applySystemTransition((state) => {
+    await this.applySystemTransition((state) => {
       const run = state.scheduleRuns.find((candidate) => candidate.id === runId);
       if (!run || run.state !== 'queued') return undefined;
       return {
@@ -817,7 +852,7 @@ export class DaemonAutomationRuntime {
   }
 
   private async markScheduleFailed(runId: string, errorCode: string, finishedAt: string): Promise<void> {
-    await this.options.applySystemTransition((state) => {
+    await this.applySystemTransition((state) => {
       const run = state.scheduleRuns.find((candidate) => candidate.id === runId);
       if (!run || run.state !== 'queued') return undefined;
       return {
@@ -832,7 +867,7 @@ export class DaemonAutomationRuntime {
   }
 
   private async reconcileFinishedScheduleRuns(now: Date): Promise<void> {
-    await this.options.applySystemTransition((state) => {
+    await this.applySystemTransition((state) => {
       const mutations: DaemonStoreMutation[] = [];
       for (const run of state.scheduleRuns) {
         if (run.state !== 'running' || !run.sessionId) continue;

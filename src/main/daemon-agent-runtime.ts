@@ -22,8 +22,12 @@ import type {
   DaemonSystemTransitionPlanner,
 } from './daemon-command-router';
 import type {
+  DaemonScheduleRun,
+  DaemonScheduleRunInput,
   DaemonStoreCommit,
   DaemonStoreMutation,
+  DaemonSystemTransition,
+  DaemonSystemTransitionReceipt,
   DaemonTranscriptItemInput,
 } from './daemon-store';
 import {
@@ -54,6 +58,10 @@ export interface DaemonAgentRuntimeOptions {
   readonly applySystemCommit: (
     commit: DaemonStoreCommit | DaemonSystemTransitionPlanner,
   ) => Promise<unknown>;
+  /** Evaluated under the command FIFO and SQLite write transaction. */
+  readonly applySystemTransition: <T>(
+    transition: DaemonSystemTransition<T>,
+  ) => Promise<DaemonSystemTransitionReceipt<T> | undefined>;
   readonly readTranscript: (
     sessionId: string,
     afterSequence?: number,
@@ -67,6 +75,7 @@ export interface DaemonAgentRuntimeOptions {
   readonly idFactory?: () => string;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+  readonly shutdownStepTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
 }
 
@@ -108,6 +117,18 @@ const TERMINAL_SESSION_STATES = new Set<DaemonSession['state']>([
   'failed',
   'archived',
 ]);
+
+const ACTIVE_AGENT_STATES = new Set<DaemonAgent['state']>([
+  'starting',
+  'queued',
+  'working',
+  'blocked',
+  'delivery-uncertain',
+]);
+
+const EXPLICIT_QUIT_ERROR_CODE = 'explicit-quit';
+const EXPLICIT_QUIT_DELIVERY_UNCERTAIN_ERROR_CODE = 'explicit-quit-delivery-uncertain';
+const DEFAULT_SHUTDOWN_STEP_TIMEOUT_MS = 750;
 
 function commandError(
   code: DaemonCommandError['code'],
@@ -188,6 +209,23 @@ function turnInput(
   };
 }
 
+function scheduleRunInput(
+  run: DaemonScheduleRun,
+  patch: Partial<DaemonScheduleRunInput> = {},
+): DaemonScheduleRunInput {
+  return {
+    id: run.id,
+    scheduleId: run.scheduleId,
+    ...(patch.sessionId ?? run.sessionId ? { sessionId: patch.sessionId ?? run.sessionId } : {}),
+    state: patch.state ?? run.state,
+    scheduledFor: patch.scheduledFor ?? run.scheduledFor,
+    ...(patch.startedAt ?? run.startedAt ? { startedAt: patch.startedAt ?? run.startedAt } : {}),
+    ...(patch.finishedAt ?? run.finishedAt ? { finishedAt: patch.finishedAt ?? run.finishedAt } : {}),
+    ...(patch.summary ?? run.summary ? { summary: patch.summary ?? run.summary } : {}),
+    ...(patch.errorCode ?? run.errorCode ? { errorCode: patch.errorCode ?? run.errorCode } : {}),
+  };
+}
+
 function transcriptInput(item: DaemonTranscriptItem): DaemonTranscriptItemInput {
   return {
     id: item.id,
@@ -241,6 +279,7 @@ export class DaemonAgentRuntime {
   private readonly now: () => Date;
   private readonly setTimer: NonNullable<DaemonAgentRuntimeOptions['setTimer']>;
   private readonly clearTimer: NonNullable<DaemonAgentRuntimeOptions['clearTimer']>;
+  private readonly shutdownStepTimeoutMs: number;
   private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private unsubscribeProviders: (() => void) | null = null;
@@ -249,28 +288,35 @@ export class DaemonAgentRuntime {
   private pumpRequested = false;
   private started = false;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
 
   constructor(private readonly options: DaemonAgentRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
+    this.shutdownStepTimeoutMs = options.shutdownStepTimeoutMs ?? DEFAULT_SHUTDOWN_STEP_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.shutdownStepTimeoutMs) || this.shutdownStepTimeoutMs < 1) {
+      throw new Error('shutdownStepTimeoutMs must be a positive integer.');
+    }
   }
 
   handlers(): Partial<Record<AgentCommandType, DaemonCommandHandler>> {
     return {
-      'agent.create': (command, context) => this.create(command, context),
-      'agent.resume': (command, context) => this.resume(command, context),
-      'agent.submit': (command, context) => this.submit(command, context, false),
-      'agent.interrupt-and-submit': (command, context) => this.submit(command, context, true),
-      'agent.interrupt': (command, context) => this.interrupt(command, context),
-      'agent.set-settings': (command, context) => this.setSettings(command, context),
-      'agent.cancel': (command, context) => this.cancel(command, context),
-      'agent.archive': (command, context) => this.archive(command, context),
-      'agent.detach': (command, context) => this.detach(command, context),
-      'permission.resolve': (command, context) => this.resolveApproval(command, context),
-      'provider.enable': (command) => this.enableProvider(command),
-      'provider.update': (command) => this.enableProvider(command),
-      'provider.disable': (command) => this.disableProvider(command),
+      'agent.create': (command, context) => this.runCommand(() => this.create(command, context)),
+      'agent.resume': (command, context) => this.runCommand(() => this.resume(command, context)),
+      'agent.submit': (command, context) => this.runCommand(() => this.submit(command, context, false)),
+      'agent.interrupt-and-submit': (command, context) => (
+        this.runCommand(() => this.submit(command, context, true))
+      ),
+      'agent.interrupt': (command, context) => this.runCommand(() => this.interrupt(command, context)),
+      'agent.set-settings': (command, context) => this.runCommand(() => this.setSettings(command, context)),
+      'agent.cancel': (command, context) => this.runCommand(() => this.cancel(command, context)),
+      'agent.archive': (command, context) => this.runCommand(() => this.archive(command, context)),
+      'agent.detach': (command, context) => this.runCommand(() => this.detach(command, context)),
+      'permission.resolve': (command, context) => this.runCommand(() => this.resolveApproval(command, context)),
+      'provider.enable': (command) => this.runCommand(() => this.enableProvider(command)),
+      'provider.update': (command) => this.runCommand(() => this.enableProvider(command)),
+      'provider.disable': (command) => this.runCommand(() => this.disableProvider(command)),
     };
   }
 
@@ -291,20 +337,163 @@ export class DaemonAgentRuntime {
     this.queuePump();
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(mode: 'explicit-quit' | 'process-loss' = 'explicit-quit'): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
     this.unsubscribeProviders?.();
     this.unsubscribeProviders = null;
+    this.pumpRequested = false;
     for (const timer of this.turnTimers.values()) this.clearTimer(timer);
     this.turnTimers.clear();
-    await Promise.allSettled([
+    this.disposePromise = mode === 'process-loss'
+      ? this.disposeResources()
+      : this.disposeForExplicitQuit();
+    return this.disposePromise;
+  }
+
+  private async disposeForExplicitQuit(): Promise<void> {
+    const finishedAt = this.isoNow();
+    let interruptTargets: readonly {
+      readonly sessionId: string;
+      readonly providerId: string;
+      readonly providerSessionId: string;
+    }[] = [];
+    try {
+      const receipt = await this.options.applySystemTransition((state) => {
+        const affectedSessionIds = new Set(
+          state.snapshot.turns
+            .filter((turn) => !TERMINAL_TURN_STATES.has(turn.state))
+            .map((turn) => turn.sessionId),
+        );
+        const uncertainSessionIds = new Set(
+          state.snapshot.turns
+            .filter((turn) => turn.state === 'submitting' || turn.state === 'delivery-uncertain')
+            .map((turn) => turn.sessionId),
+        );
+        for (const agent of state.snapshot.agents) {
+          if (
+            agent.currentTurnId
+            || agent.queuedTurnCount > 0
+            || ACTIVE_AGENT_STATES.has(agent.state)
+          ) affectedSessionIds.add(agent.sessionId);
+          if (agent.state === 'delivery-uncertain') uncertainSessionIds.add(agent.sessionId);
+        }
+        for (const session of state.snapshot.sessions) {
+          if (session.state === 'delivery-uncertain') uncertainSessionIds.add(session.id);
+        }
+        const targets = state.snapshot.agents.flatMap((agent) => (
+          affectedSessionIds.has(agent.sessionId) && agent.providerSessionId && agent.currentTurnId
+            ? [{
+                sessionId: agent.sessionId,
+                providerId: agent.providerId,
+                providerSessionId: agent.providerSessionId,
+              }]
+            : []
+        ));
+        const mutations: DaemonStoreMutation[] = [
+          ...state.snapshot.turns
+            .filter((turn) => (
+              turn.state === 'queued'
+              || turn.state === 'working'
+              || turn.state === 'blocked'
+              || turn.state === 'submitting'
+            ))
+            .map((turn): DaemonStoreMutation => ({
+              kind: 'turn.upsert',
+              value: turn.state === 'submitting'
+                ? turnInput(turn, {
+                    state: 'delivery-uncertain',
+                    errorCode: EXPLICIT_QUIT_DELIVERY_UNCERTAIN_ERROR_CODE,
+                  })
+                : turnInput(turn, {
+                    state: 'interrupted',
+                    finishedAt,
+                    errorCode: EXPLICIT_QUIT_ERROR_CODE,
+                  }),
+            })),
+          ...state.snapshot.approvals
+            .filter((approval) => approval.state === 'pending')
+            .map((approval): DaemonStoreMutation => ({
+              kind: 'approval.upsert',
+              value: this.resolvedApprovalInput(approval, 'expired', finishedAt),
+            })),
+          ...state.snapshot.agents
+            .filter((agent) => affectedSessionIds.has(agent.sessionId) && agent.state !== 'archived')
+            .map((agent): DaemonStoreMutation => {
+              const uncertainTurn = state.snapshot.turns.find((turn) => (
+                turn.sessionId === agent.sessionId
+                && (turn.state === 'submitting' || turn.state === 'delivery-uncertain')
+                && (turn.id === agent.currentTurnId || agent.currentTurnId === undefined)
+              ));
+              const uncertain = uncertainSessionIds.has(agent.sessionId);
+              return {
+                kind: 'agent.upsert',
+                value: agentInput(agent, {
+                  state: uncertain ? 'delivery-uncertain' : 'idle',
+                  currentTurnId: uncertainTurn?.id,
+                  queuedTurnCount: 0,
+                }),
+              };
+            }),
+          ...state.snapshot.sessions
+            .filter((session) => (
+              affectedSessionIds.has(session.id) && !TERMINAL_SESSION_STATES.has(session.state)
+            ))
+            .map((session): DaemonStoreMutation => ({
+              kind: 'session.upsert',
+              value: sessionInput(
+                session,
+                uncertainSessionIds.has(session.id) ? 'delivery-uncertain' : 'idle',
+              ),
+            })),
+          ...state.scheduleRuns
+            .filter((run) => (
+              run.state === 'running'
+              && run.sessionId !== undefined
+              && affectedSessionIds.has(run.sessionId)
+            ))
+            .map((run): DaemonStoreMutation => ({
+              kind: 'schedule-run.upsert',
+              value: scheduleRunInput(run, {
+                state: 'interrupted',
+                finishedAt,
+                errorCode: EXPLICIT_QUIT_ERROR_CODE,
+              }),
+            })),
+        ];
+        return { commit: { mutations }, value: targets };
+      });
+      interruptTargets = receipt?.value ?? [];
+    } catch (error) {
+      this.report('persist explicit Agent shutdown', error);
+    }
+
+    await this.runBoundedShutdownStep('drain in-flight Agent work', Promise.allSettled([
       this.eventTail,
       this.pumpPromise ?? Promise.resolve(),
       ...this.backgroundTasks,
-    ]);
-    await this.drainEventTail();
-    await this.options.providers.dispose();
+    ]));
+    await this.runBoundedShutdownStep('interrupt provider Agent work', Promise.allSettled(
+      interruptTargets.map(async (target) => {
+        const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), target.providerId);
+        if (!provider.ok) return;
+        try {
+          await provider.value.interrupt(target.sessionId, target.providerSessionId);
+        } catch (error) {
+          this.report(`interrupt Agent ${target.sessionId} during explicit shutdown`, error);
+        }
+      }),
+    ));
+    await this.runBoundedShutdownStep('dispose Agent providers', this.options.providers.dispose());
+  }
+
+  private async disposeResources(): Promise<void> {
+    await this.runBoundedShutdownStep('drain in-flight Agent work', Promise.allSettled([
+      this.eventTail,
+      this.pumpPromise ?? Promise.resolve(),
+      ...this.backgroundTasks,
+    ]));
+    await this.runBoundedShutdownStep('dispose Agent providers', this.options.providers.dispose());
   }
 
   /** Wait until all currently reachable provider events and dispatch work settle. */
@@ -1061,6 +1250,7 @@ export class DaemonAgentRuntime {
         if (repairedInvalidTurn) continue;
         return;
       }
+      if (this.disposed) return;
 
       const selected = claim;
       const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), selected.agent.providerId);
@@ -1097,6 +1287,7 @@ export class DaemonAgentRuntime {
           }
           providerSessionId = handle.providerSessionId;
         }
+        if (this.disposed) return;
         await provider.value.submit({
           sessionId: selected.turn.sessionId,
           providerSessionId,
@@ -1720,8 +1911,22 @@ export class DaemonAgentRuntime {
     this.queuePump();
   }
 
+  private async runCommand(
+    action: () => DaemonCommandExecutionResult | Promise<DaemonCommandExecutionResult>,
+  ): Promise<DaemonCommandExecutionResult> {
+    if (this.disposed) {
+      return commandError('invalid-state', 'The Agent runtime is shutting down.');
+    }
+    const result = await action();
+    return this.disposed
+      ? commandError('invalid-state', 'The Agent runtime is shutting down.')
+      : result;
+  }
+
   private transition(planner: DaemonSystemTransitionPlanner): Promise<unknown> {
-    return this.options.applySystemCommit(planner);
+    return this.options.applySystemCommit((snapshot) => (
+      this.disposed ? undefined : planner(snapshot)
+    ));
   }
 
   private runBackground(context: string, task: () => Promise<void>): void {
@@ -1738,6 +1943,25 @@ export class DaemonAgentRuntime {
       const tail = this.eventTail;
       await tail;
       if (tail === this.eventTail) return;
+    }
+  }
+
+  private async runBoundedShutdownStep(context: string, operation: Promise<unknown>): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const settled = Promise.resolve(operation).then(
+      () => 'settled' as const,
+      (error) => {
+        this.report(context, error);
+        return 'settled' as const;
+      },
+    );
+    const timedOut = new Promise<'timed-out'>((resolve) => {
+      timeout = setTimeout(() => resolve('timed-out'), this.shutdownStepTimeoutMs);
+    });
+    const outcome = await Promise.race([settled, timedOut]);
+    if (timeout !== undefined) clearTimeout(timeout);
+    if (outcome === 'timed-out') {
+      this.report(context, new Error(`${context} exceeded ${String(this.shutdownStepTimeoutMs)}ms.`));
     }
   }
 

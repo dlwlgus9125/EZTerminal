@@ -460,6 +460,56 @@ describe('DaemonAutomationRuntime', () => {
     await first.store.close();
   });
 
+  it('does not commit a late Schedule dispatch after disposal and shares repeated disposal', async () => {
+    let releaseDispatch!: () => void;
+    let reportDispatchStarted!: () => void;
+    const dispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve; });
+    const dispatchStarted = new Promise<void>((resolve) => { reportDispatchStarted = resolve; });
+    const executeCommand = vi.fn(async (command: DaemonCommand) => {
+      reportDispatchStarted();
+      await dispatchGate;
+      return {
+        ok: true as const,
+        status: 'applied' as const,
+        commandId: command.commandId,
+        revision: command.expectedRevision + 1,
+        eventSequence: 1,
+      };
+    });
+    const h = await harness({ executeCommand });
+    try {
+      await h.execute('schedule.create', {
+        scheduleId: 'schedule-1',
+        name: 'Late dispatch',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        prompt: 'Do not mark this running after shutdown.',
+        cron: '* * * * *',
+        timezone: 'UTC',
+        enabled: false,
+      });
+      await h.execute('schedule.run-now', { scheduleId: 'schedule-1' });
+
+      const start = h.runtime.start();
+      await dispatchStarted;
+      const dispose = h.runtime.dispose();
+      expect(h.runtime.dispose()).toBe(dispose);
+      releaseDispatch();
+      await Promise.all([start, dispose]);
+
+      expect(executeCommand).toHaveBeenCalledOnce();
+      expect(h.router.getScheduleRuns()).toEqual([
+        expect.objectContaining({ state: 'queued' }),
+      ]);
+      expect(h.router.getScheduleRuns()[0]).not.toHaveProperty('sessionId');
+    } finally {
+      releaseDispatch();
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('does not redispatch a queued run whose deterministic Agent already exists', async () => {
     const h = await harness();
     await h.execute('schedule.create', {

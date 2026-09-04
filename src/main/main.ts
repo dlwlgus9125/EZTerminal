@@ -910,6 +910,7 @@ app.on('ready', async () => {
     providers: providerRegistry,
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
+    applySystemTransition: (transition) => daemonRouterRef.current!.applySystemTransition(transition),
     readTranscript: (sessionId, afterSequence, limit) => (
       daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
@@ -991,23 +992,24 @@ app.on('ready', async () => {
     }
   });
   let daemonAuthorityRuntimesStopped = false;
+  let daemonAuthorityRuntimesStop: Promise<void> | null = null;
+  const stopDaemonAuthorityRuntimes = (): Promise<void> => {
+    if (daemonAuthorityRuntimesStop) return daemonAuthorityRuntimesStop;
+    unsubscribeDaemonAutomationWake();
+    const automationStop = daemonAutomationRuntime.dispose();
+    const agentStop = daemonAgentRuntime.dispose();
+    const mcpStop = agentOrchestrationMcpServer.stop();
+    daemonAuthorityRuntimesStop = Promise.all([automationStop, agentStop, mcpStop])
+      .then(() => {
+        daemonAuthorityRuntimesStopped = true;
+      });
+    return daemonAuthorityRuntimesStop;
+  };
   daemonProcesses.register({
     id: 'daemon-authority-runtimes',
-    gracefulStop: async () => {
-      unsubscribeDaemonAutomationWake();
-      await daemonAutomationRuntime.dispose();
-      await daemonAgentRuntime.dispose();
-      await agentOrchestrationMcpServer.stop();
-      daemonAuthorityRuntimesStopped = true;
-    },
+    gracefulStop: stopDaemonAuthorityRuntimes,
     hasStopped: () => daemonAuthorityRuntimesStopped,
-    forceStop: async () => {
-      unsubscribeDaemonAutomationWake();
-      await daemonAutomationRuntime.dispose();
-      await daemonAgentRuntime.dispose();
-      await agentOrchestrationMcpServer.stop();
-      daemonAuthorityRuntimesStopped = true;
-    },
+    forceStop: stopDaemonAuthorityRuntimes,
   });
   const daemonAuthorityReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
     .then(async ([, lifecycle]) => {

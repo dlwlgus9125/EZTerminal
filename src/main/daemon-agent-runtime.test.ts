@@ -89,6 +89,8 @@ async function harness(options: {
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly now?: () => Date;
+  readonly shutdownStepTimeoutMs?: number;
+  readonly reportError?: (context: string, error: unknown) => void;
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -103,6 +105,7 @@ async function harness(options: {
     providers,
     getSnapshot: () => routerRef.current!.getSnapshot(),
     applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+    applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
     readTranscript: (sessionId, afterSequence, limit) => (
       routerRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
@@ -199,6 +202,401 @@ describe('DaemonAgentRuntime', () => {
     ]);
     await h.runtime.dispose();
     await h.store.close();
+  });
+
+  it('durably interrupts active Agent work when the runtime is explicitly disposed', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Keep working until Quit.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+      h.codex.emit({
+        kind: 'approval-requested',
+        sessionId: 'agent-1',
+        turnId: turn.id,
+        providerRequestId: 'quit-approval',
+        risk: 'write',
+        title: 'Pending write',
+      });
+      await h.runtime.whenIdle();
+      await h.execute('agent.submit', {
+        sessionId: 'agent-1',
+        prompt: 'This queued turn must not survive Quit.',
+      });
+      const queuedTurn = h.router.getSnapshot().turns.find((candidate) => candidate.id !== turn.id)!;
+      await h.router.applySystemCommit({ mutations: [
+        { kind: 'schedule.upsert', value: {
+          id: 'schedule-1',
+          name: 'Scheduled work',
+          workspaceId: 'workspace-1',
+          providerId: 'codex',
+          permissionPreset: 'standard',
+          prompt: 'Run later.',
+          cron: '* * * * *',
+          timezone: 'UTC',
+          enabled: false,
+          runCount: 1,
+        } },
+        { kind: 'schedule-run.upsert', value: {
+          id: 'schedule-run-1',
+          scheduleId: 'schedule-1',
+          sessionId: 'agent-1',
+          state: 'running',
+          scheduledFor: '2026-09-04T09:59:00.000Z',
+          startedAt: '2026-09-04T10:00:00.000Z',
+        } },
+      ] });
+
+      const dispose = h.runtime.dispose();
+      expect(h.runtime.dispose()).toBe(dispose);
+      await dispose;
+
+      const afterQuit = h.router.getSnapshot();
+      expect(afterQuit).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'idle' }],
+        agents: [{ sessionId: 'agent-1', state: 'idle', queuedTurnCount: 0 }],
+        approvals: [{
+          providerRequestId: 'quit-approval',
+          state: 'expired',
+          resolvedAt: '2026-09-04T10:00:00.000Z',
+        }],
+      });
+      expect(afterQuit.turns).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: turn.id,
+          state: 'interrupted',
+          finishedAt: '2026-09-04T10:00:00.000Z',
+          errorCode: 'explicit-quit',
+        }),
+        expect.objectContaining({
+          id: queuedTurn.id,
+          state: 'interrupted',
+          finishedAt: '2026-09-04T10:00:00.000Z',
+          errorCode: 'explicit-quit',
+        }),
+      ]));
+      expect(afterQuit.agents[0]).not.toHaveProperty('currentTurnId');
+      expect(h.router.getScheduleRuns()).toEqual([
+        expect.objectContaining({
+          id: 'schedule-run-1',
+          state: 'interrupted',
+          finishedAt: '2026-09-04T10:00:00.000Z',
+          errorCode: 'explicit-quit',
+        }),
+      ]);
+      expect(h.codex.interrupt).toHaveBeenCalledOnce();
+      expect(h.codex.interrupt).toHaveBeenCalledWith('agent-1', 'codex-session-1');
+      expect(h.codex.dispose).toHaveBeenCalledOnce();
+
+      const revisionAfterQuit = afterQuit.revision;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-1',
+        turnId: turn.id,
+        outcome: 'completed',
+      });
+      h.codex.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        code: 'late-provider-error',
+        message: 'Late provider event after shutdown.',
+        recoverable: false,
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(h.router.getSnapshot().revision).toBe(revisionAfterQuit);
+      expect(h.router.getSnapshot().turns.find((candidate) => candidate.id === turn.id))
+        .toMatchObject({ state: 'interrupted', errorCode: 'explicit-quit' });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('does not leave one active turn working after explicit disposal', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Stop this on Quit.',
+      });
+
+      await h.runtime.dispose();
+
+      expect(h.router.getSnapshot().turns).toEqual([
+        expect.objectContaining({ state: 'interrupted', errorCode: 'explicit-quit' }),
+      ]);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('preserves delivery uncertainty and treats an in-flight submit conservatively on explicit Quit', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      for (const sessionId of ['agent-1', 'agent-2']) {
+        await h.execute('agent.create', {
+          sessionId,
+          workspaceId: 'workspace-1',
+          title: sessionId,
+          providerId: 'codex',
+          permissionPreset: 'standard',
+          initialPrompt: `Start ${sessionId}.`,
+        });
+      }
+      const before = h.router.getSnapshot();
+      const uncertainSession = before.sessions.find((session) => session.id === 'agent-1')!;
+      const uncertainAgent = before.agents.find((agent) => agent.sessionId === 'agent-1')!;
+      const uncertainTurn = before.turns.find((turn) => turn.sessionId === 'agent-1')!;
+      const submittingSession = before.sessions.find((session) => session.id === 'agent-2')!;
+      const submittingAgent = before.agents.find((agent) => agent.sessionId === 'agent-2')!;
+      const submittingTurn = before.turns.find((turn) => turn.sessionId === 'agent-2')!;
+      await h.router.applySystemCommit({ mutations: [
+        { kind: 'session.upsert', value: {
+          id: uncertainSession.id,
+          projectId: uncertainSession.projectId,
+          workspaceId: uncertainSession.workspaceId,
+          kind: uncertainSession.kind,
+          title: uncertainSession.title,
+          state: 'delivery-uncertain',
+          source: uncertainSession.source,
+        } },
+        { kind: 'agent.upsert', value: {
+          sessionId: uncertainAgent.sessionId,
+          providerId: uncertainAgent.providerId,
+          ...(uncertainAgent.providerSessionId
+            ? { providerSessionId: uncertainAgent.providerSessionId }
+            : {}),
+          ...(uncertainAgent.model ? { model: uncertainAgent.model } : {}),
+          permissionPreset: uncertainAgent.permissionPreset,
+          state: 'delivery-uncertain',
+          currentTurnId: uncertainTurn.id,
+          queuedTurnCount: 0,
+          orchestrationEnabled: uncertainAgent.orchestrationEnabled,
+        } },
+        { kind: 'turn.upsert', value: {
+          id: uncertainTurn.id,
+          sessionId: uncertainTurn.sessionId,
+          commandId: uncertainTurn.commandId,
+          ...(uncertainTurn.enqueueSequence !== undefined
+            ? { enqueueSequence: uncertainTurn.enqueueSequence }
+            : {}),
+          state: 'delivery-uncertain',
+          ...(uncertainTurn.startedAt ? { startedAt: uncertainTurn.startedAt } : {}),
+          errorCode: 'provider-reconciliation-required',
+        } },
+        { kind: 'session.upsert', value: {
+          id: submittingSession.id,
+          projectId: submittingSession.projectId,
+          workspaceId: submittingSession.workspaceId,
+          kind: submittingSession.kind,
+          title: submittingSession.title,
+          state: 'running',
+          source: submittingSession.source,
+        } },
+        { kind: 'agent.upsert', value: {
+          sessionId: submittingAgent.sessionId,
+          providerId: submittingAgent.providerId,
+          ...(submittingAgent.providerSessionId
+            ? { providerSessionId: submittingAgent.providerSessionId }
+            : {}),
+          ...(submittingAgent.model ? { model: submittingAgent.model } : {}),
+          permissionPreset: submittingAgent.permissionPreset,
+          state: 'working',
+          currentTurnId: submittingTurn.id,
+          queuedTurnCount: 0,
+          orchestrationEnabled: submittingAgent.orchestrationEnabled,
+        } },
+        { kind: 'turn.upsert', value: {
+          id: submittingTurn.id,
+          sessionId: submittingTurn.sessionId,
+          commandId: submittingTurn.commandId,
+          ...(submittingTurn.enqueueSequence !== undefined
+            ? { enqueueSequence: submittingTurn.enqueueSequence }
+            : {}),
+          state: 'submitting',
+          ...(submittingTurn.startedAt ? { startedAt: submittingTurn.startedAt } : {}),
+        } },
+      ] });
+
+      await h.runtime.dispose();
+
+      const after = h.router.getSnapshot();
+      expect(after.sessions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' }),
+        expect.objectContaining({ id: 'agent-2', state: 'delivery-uncertain' }),
+      ]));
+      expect(after.agents).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'agent-1',
+          state: 'delivery-uncertain',
+          currentTurnId: uncertainTurn.id,
+          queuedTurnCount: 0,
+        }),
+        expect.objectContaining({
+          sessionId: 'agent-2',
+          state: 'delivery-uncertain',
+          currentTurnId: submittingTurn.id,
+          queuedTurnCount: 0,
+        }),
+      ]));
+      expect(after.turns.find((turn) => turn.id === uncertainTurn.id)).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode: 'provider-reconciliation-required',
+      });
+      expect(after.turns.find((turn) => turn.id === uncertainTurn.id)).not.toHaveProperty('finishedAt');
+      expect(after.turns.find((turn) => turn.id === submittingTurn.id)).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode: 'explicit-quit-delivery-uncertain',
+      });
+      expect(after.turns.find((turn) => turn.id === submittingTurn.id)).not.toHaveProperty('finishedAt');
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('persists the interrupted state even when provider shutdown exceeds its bound', async () => {
+    const reportError = vi.fn();
+    const h = await harness({ shutdownStepTimeoutMs: 5, reportError });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Provider cleanup will stall.',
+      });
+      vi.mocked(h.codex.interrupt).mockImplementation(() => new Promise<void>(() => undefined));
+      vi.mocked(h.codex.dispose).mockRejectedValue(new Error('provider dispose failed'));
+
+      await expect(h.runtime.dispose()).resolves.toBeUndefined();
+
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        state: 'interrupted',
+        errorCode: 'explicit-quit',
+      });
+      expect(reportError.mock.calls.map(([context]) => context)).toEqual(expect.arrayContaining([
+        'interrupt provider Agent work',
+        'dispose Agent providers',
+      ]));
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('rehydrates an explicitly stopped Session and accepts a follow-up Send after restart', async () => {
+    const first = await harness();
+    let restartedRuntime: DaemonAgentRuntime | undefined;
+    let restartedStore: DaemonStore | undefined;
+    try {
+      await first.enable(first.codex, 'codex');
+      await first.prepareWorkspace();
+      await first.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Pause for application Quit.',
+      });
+      const originalTurn = first.router.getSnapshot().turns[0]!;
+      const providerSessionId = first.router.getSnapshot().agents[0]!.providerSessionId!;
+      await first.runtime.dispose();
+      expect(first.router.getSnapshot()).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'idle' }],
+        agents: [{
+          sessionId: 'agent-1',
+          state: 'idle',
+          providerSessionId,
+          queuedTurnCount: 0,
+        }],
+        turns: [{ id: originalTurn.id, state: 'interrupted', errorCode: 'explicit-quit' }],
+      });
+      await first.store.close();
+
+      restartedStore = new DaemonStore(first.directory, {
+        now: () => new Date('2026-09-04T10:01:00.000Z'),
+      });
+      await restartedStore.init();
+      const codex = fakeAdapter('codex', 'codex-app-server');
+      const claude = fakeAdapter('claude', 'claude-agent-sdk');
+      const providers = new AgentProviderRegistry([codex, claude]);
+      const routerRef: { current?: DaemonCommandRouter } = {};
+      const store = restartedStore;
+      restartedRuntime = new DaemonAgentRuntime({
+        providers,
+        getSnapshot: () => routerRef.current!.getSnapshot(),
+        applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
+        readTranscript: (sessionId, afterSequence, limit) => (
+          routerRef.current!.readTranscript(sessionId, afterSequence, limit)
+        ),
+        findCommand: (commandId) => store.findCommand(commandId)?.command,
+        now: () => new Date('2026-09-04T10:01:00.000Z'),
+      });
+      const router = new DaemonCommandRouter(store, { handlers: restartedRuntime.handlers() });
+      routerRef.current = router;
+
+      await restartedRuntime.start();
+      expect(codex.resumeSession).toHaveBeenCalledOnce();
+      expect(codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'agent-1',
+        providerSessionId,
+      }));
+
+      const receipt = await router.execute(createDaemonCommand({
+        commandId: 'command-after-restart',
+        idempotencyKey: 'test:after-restart',
+        expectedRevision: router.getSnapshot().revision,
+        issuedAt: '2026-09-04T10:01:00.000Z',
+        principal: { kind: 'desktop', id: 'test' },
+        type: 'agent.submit',
+        payload: { sessionId: 'agent-1', prompt: 'Continue after restart.' },
+      }));
+      await restartedRuntime.whenIdle();
+
+      expect(receipt).toMatchObject({ ok: true, status: 'applied' });
+      expect(codex.createSession).not.toHaveBeenCalled();
+      expect(codex.submit).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'agent-1',
+        providerSessionId,
+        prompt: 'Continue after restart.',
+      }));
+      expect(router.getSnapshot()).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'running' }],
+        agents: [{ sessionId: 'agent-1', state: 'working', providerSessionId }],
+      });
+      expect(router.getSnapshot().turns).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: originalTurn.id, state: 'interrupted' }),
+        expect.objectContaining({ commandId: 'command-after-restart', state: 'working' }),
+      ]));
+    } finally {
+      await restartedRuntime?.dispose();
+      await restartedStore?.close();
+      await first.runtime.dispose();
+      await first.store.close();
+    }
   });
 
   it('enforces four global active turns and pumps queued turns in durable FIFO order', async () => {
@@ -1010,7 +1408,7 @@ describe('DaemonAgentRuntime', () => {
           } },
         ] };
       });
-      await first.runtime.dispose();
+      await first.runtime.dispose('process-loss');
       await first.store.close();
 
       restartedStore = new DaemonStore(first.directory);
@@ -1041,6 +1439,7 @@ describe('DaemonAgentRuntime', () => {
         providers,
         getSnapshot: () => routerRef.current!.getSnapshot(),
         applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
         readTranscript: (sessionId, afterSequence, limit) => (
           routerRef.current!.readTranscript(sessionId, afterSequence, limit)
         ),
