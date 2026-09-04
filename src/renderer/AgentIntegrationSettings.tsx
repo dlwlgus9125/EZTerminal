@@ -9,6 +9,7 @@ import {
 } from '../shared/agent';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { StructuredProviderSettings } from './StructuredProviderSettings';
 
 const DEFAULT_SETTINGS: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
@@ -130,6 +131,17 @@ export function AgentIntegrationSettings({
 
   return (
     <>
+      <StructuredProviderSettings capabilities={capabilities} />
+
+      <section className="terminal-activity-hook-settings" aria-labelledby="terminal-activity-hooks-title">
+      <div className="agent-settings-heading">
+        <div>
+          <h2 className="status-section-title" id="terminal-activity-hooks-title">
+            {t('agentSettings.terminalHooksTitle')}
+          </h2>
+          <p>{t('agentSettings.terminalHooksDescription')}</p>
+        </div>
+      </div>
       <div className="agent-integration-list">
         {integrations.map((integration) => (
           <div className="agent-integration-row" key={integration.provider}>
@@ -242,6 +254,7 @@ export function AgentIntegrationSettings({
         {t('agentSettings.saveProfiles')}
       </button>
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
+      </section>
     </>
   );
 }

@@ -316,10 +316,17 @@ export function StructuredAgentDraftPanel({
   }, [firstProvider, providerId, providers]);
 
   useEffect(() => {
-    if (workspaces[0] && !workspaces.some((workspace) => workspace.id === workspaceId)) {
-      setWorkspaceId(workspaces[0].id);
+    const preferred = initialWorkspaceId
+      ? workspaces.find((workspace) => workspace.id === initialWorkspaceId)
+      : undefined;
+    if (!workspaceId && preferred) {
+      setWorkspaceId(preferred.id);
+      return;
     }
-  }, [workspaceId, workspaces]);
+    if (workspaces[0] && !workspaces.some((workspace) => workspace.id === workspaceId)) {
+      setWorkspaceId(preferred?.id ?? workspaces[0].id);
+    }
+  }, [initialWorkspaceId, workspaceId, workspaces]);
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();

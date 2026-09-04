@@ -27,7 +27,10 @@ const snapshot: DaemonSnapshot = {
     id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1, createdAt: NOW, updatedAt: NOW,
   }],
   workspaces: [{
-    id: 'workspace-1', projectId: 'project-1', name: 'Stage 2', kind: 'worktree',
+    id: 'project-1.root-1.workspace-other', projectId: 'project-1', name: 'Other', kind: 'worktree',
+    rootPath: 'C:\\Working\\other', revision: 1, createdAt: NOW, updatedAt: NOW,
+  }, {
+    id: 'project-1.root-1.workspace-1', projectId: 'project-1', name: 'Stage 2', kind: 'worktree',
     rootPath: 'C:\\Working\\stage2', revision: 1, createdAt: NOW, updatedAt: NOW,
   }],
   sessions: [],
@@ -70,7 +73,7 @@ afterEach(() => {
 });
 
 describe('StructuredAgentDockPanel', () => {
-  it('waits for the first Send, correlates agent.create, and converts the same normal panel', async () => {
+  it('resolves a raw project workspace to its daemon namespace before the first agent.create', async () => {
     const sent: DaemonCommand[] = [];
     const sendDaemonCommand = vi.fn(async (command: DaemonCommand) => {
       sent.push(command);
@@ -96,6 +99,7 @@ describe('StructuredAgentDockPanel', () => {
     let params: Record<string, unknown> = {
       historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}test`,
       projectId: 'project-1',
+      rootId: 'root-1',
       workspaceId: 'workspace-1',
     };
     const updateParameters = vi.fn((next: Record<string, unknown>) => { params = next; });
@@ -135,7 +139,7 @@ describe('StructuredAgentDockPanel', () => {
       principal: { kind: 'desktop', id: 'renderer-agent-ui' },
       type: 'agent.create',
       payload: {
-        workspaceId: 'workspace-1',
+        workspaceId: 'project-1.root-1.workspace-1',
         providerId: 'codex',
         permissionPreset: 'standard',
         initialPrompt: 'Create only after this send',

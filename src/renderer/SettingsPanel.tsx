@@ -590,8 +590,7 @@ export function SettingsPanel({
       </section>
 
       <section className="status-section" hidden={category !== 'agents'}>
-        <h2 className="status-section-title">{t('settings.agentIntegrations')}</h2>
-        <AgentIntegrationSettings capabilities={capabilities} />
+        {category === 'agents' && <AgentIntegrationSettings capabilities={capabilities} />}
       </section>
 
       <section className="status-section" hidden={category !== 'integrations'}>

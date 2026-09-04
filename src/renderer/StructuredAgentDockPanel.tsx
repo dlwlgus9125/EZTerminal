@@ -10,6 +10,7 @@ import {
   type DaemonTranscriptItem,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
+import type { DaemonProviderManagementResult, ProviderModel } from '../shared/daemon-provider';
 import {
   StructuredAgentDraftPanel,
   StructuredAgentSessionPanel,
@@ -42,10 +43,9 @@ interface RendererDaemonApi {
   sendDaemonCommand(command: DaemonCommand): Promise<DaemonCommandReceipt>;
   onDaemonEvent(listener: (event: DaemonEvent) => void): () => void;
   setDaemonEventsSubscribed(subscribed: boolean): void;
-  listDaemonProviderModels?(providerId: string): Promise<readonly {
-    readonly id: string;
-    readonly displayName: string;
-  }[]>;
+  listDaemonProviderModels?(
+    providerId: string,
+  ): Promise<DaemonProviderManagementResult<readonly ProviderModel[]>>;
 }
 
 function rendererDaemonApi(): RendererDaemonApi | null {
@@ -109,6 +109,28 @@ function workspaceOptions(
     }));
 }
 
+export function resolvePreferredDaemonWorkspaceId(
+  workspaces: readonly StructuredAgentWorkspaceOption[],
+  projectId?: string,
+  rootId?: string,
+  preferredWorkspaceId?: string,
+): string | undefined {
+  if (!preferredWorkspaceId) return undefined;
+  if (rootId) {
+    const fullyQualified = projectId
+      ? `${projectId}.${rootId}.${preferredWorkspaceId}`
+      : undefined;
+    const namespaced = workspaces.find((workspace) => (
+      workspace.id === fullyQualified
+      || workspace.id.endsWith(`.${rootId}.${preferredWorkspaceId}`)
+    ));
+    if (namespaced) return namespaced.id;
+  }
+  return workspaces.some((workspace) => workspace.id === preferredWorkspaceId)
+    ? preferredWorkspaceId
+    : undefined;
+}
+
 function resultOf(receipt: DaemonCommandReceipt): StructuredAgentUiResult {
   return receipt.ok ? { ok: true } : { ok: false, message: receipt.error.message };
 }
@@ -149,6 +171,7 @@ interface CreatedDraftState extends StructuredAgentDraftInput {
 export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const projectId = typeof props.params?.projectId === 'string' ? props.params.projectId : undefined;
+  const rootId = typeof props.params?.rootId === 'string' ? props.params.rootId : undefined;
   const preferredWorkspaceId = typeof props.params?.workspaceId === 'string'
     ? props.params.workspaceId
     : undefined;
@@ -219,8 +242,8 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
     if (targets.length === 0) return undefined;
     void Promise.all(targets
       .map(async (provider) => {
-        const models = await api.listDaemonProviderModels!(provider.id).catch(() => null);
-        return [provider.id, provider.revision, models] as const;
+        const result = await api.listDaemonProviderModels!(provider.id).catch(() => null);
+        return [provider.id, provider.revision, result?.ok ? result.value : null] as const;
       }))
       .then((entries) => {
         if (cancelled) return;
@@ -343,13 +366,19 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
     [providerModelCatalogs, snapshot],
   );
   const workspaces = useMemo(() => workspaceOptions(snapshot, projectId), [projectId, snapshot]);
+  const initialWorkspaceId = useMemo(() => resolvePreferredDaemonWorkspaceId(
+    workspaces,
+    projectId,
+    rootId,
+    preferredWorkspaceId,
+  ), [preferredWorkspaceId, projectId, rootId, workspaces]);
 
   if (!sessionId) {
     return (
       <StructuredAgentDraftPanel
         providers={providers}
         workspaces={workspaces}
-        initialWorkspaceId={preferredWorkspaceId}
+        initialWorkspaceId={initialWorkspaceId}
         loading={loading}
         loadError={loadError}
         onRetry={() => void refresh()}

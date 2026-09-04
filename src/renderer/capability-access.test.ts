@@ -37,10 +37,49 @@ describe('CapabilityAccess Interface', () => {
     await expect(access.remoteDesktop.disconnect()).resolves.toBeNull();
     await expect(access.sshForwards.list()).resolves.toBeNull();
     await expect(access.uiPreferences.refreshNativeMenuLocale()).resolves.toBe(false);
+    await expect(access.daemon.getLifecycleSettings()).resolves.toBeNull();
     expect(access.openClaw.openChat()).toBe(false);
     expect(() => access.files.list('')).toThrow(
       new RequiredCapabilityUnavailableError('listFiles'),
     );
+  });
+
+  it('forwards structured provider, daemon authority, and lifecycle operations without reshaping results', async () => {
+    const inspection = { ok: false as const, code: 'provider-unavailable' as const, message: 'not installed' };
+    const models = { ok: true as const, value: [] };
+    const enablement = {
+      enabled: false,
+      termsAccepted: false,
+      commercialUseApproved: false,
+      authenticationPath: 'existing-cli-environment' as const,
+      anthropicThirdPartyApproval: false,
+    };
+    const enablementResult = { ok: true as const, value: enablement };
+    const snapshot = { revision: 9 };
+    const receipt = { ok: true, status: 'applied', commandId: 'command-1', revision: 10, eventSequence: 4 };
+    const lifecycle = { keepRunning: true, startAtLogin: false };
+    const core = {
+      inspectDaemonProvider: vi.fn(async () => inspection),
+      listDaemonProviderModels: vi.fn(async () => models),
+      getClaudeProviderEnablement: vi.fn(async () => enablementResult),
+      setClaudeProviderEnablement: vi.fn(async () => enablementResult),
+      getDaemonSnapshot: vi.fn(async () => snapshot),
+      sendDaemonCommand: vi.fn(async () => receipt),
+    } as unknown as EzTerminalApi;
+    const desktop = {
+      getDaemonLifecycleSettings: vi.fn(async () => lifecycle),
+      setDaemonLifecycleSettings: vi.fn(async () => lifecycle),
+    } as unknown as EzTerminalDesktopApi;
+    const access = accessFor({ core, desktop });
+
+    await expect(access.structuredProviders.inspect('codex')).resolves.toBe(inspection);
+    await expect(access.structuredProviders.listModels('codex')).resolves.toBe(models);
+    await expect(access.structuredProviders.getClaudeEnablement()).resolves.toBe(enablementResult);
+    await expect(access.structuredProviders.setClaudeEnablement(enablement)).resolves.toBe(enablementResult);
+    await expect(access.daemon.getSnapshot()).resolves.toBe(snapshot);
+    await expect(access.daemon.sendCommand({ commandId: 'command-1' } as never)).resolves.toBe(receipt);
+    await expect(access.daemon.getLifecycleSettings()).resolves.toBe(lifecycle);
+    await expect(access.daemon.setLifecycleSettings({ startAtLogin: true })).resolves.toBe(lifecycle);
   });
 
   it('discovers a late desktop bridge on a later call and then resolves that bridge once', async () => {

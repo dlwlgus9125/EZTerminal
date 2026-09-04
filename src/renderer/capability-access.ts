@@ -11,6 +11,7 @@ import {
   type GitDirectoryStatus,
 } from '../shared/git-status';
 import type {
+  DaemonLifecycleSettings,
   EzTerminalApi,
   EzTerminalDesktopApi,
   RemoteConnectionInfo,
@@ -19,6 +20,17 @@ import type {
   RemoteSecurityStatus,
   SystemStatsSnapshot,
 } from '../shared/ipc';
+import type {
+  ClaudeProviderEnablement,
+  DaemonProviderManagementResult,
+  ProviderInspection,
+  ProviderModel,
+} from '../shared/daemon-provider';
+import type {
+  DaemonCommand,
+  DaemonCommandReceipt,
+  DaemonSnapshot,
+} from '../shared/daemon-protocol';
 import type { OpenClawMode } from '../shared/layout-schema';
 import type {
   OpenClawAgentSession,
@@ -89,6 +101,26 @@ export interface AgentIntegrationAccess {
     enabled: boolean,
   ) => Promise<AgentIntegrationMutationResult | null>;
   saveSettings: (settings: AgentSettings) => Promise<AgentSettings | null>;
+}
+
+/** Safe renderer view of the main-owned structured Agent provider registry. */
+export interface StructuredProviderAccess {
+  inspect: (providerId: string) => Promise<DaemonProviderManagementResult<ProviderInspection>>;
+  listModels: (providerId: string) => Promise<DaemonProviderManagementResult<readonly ProviderModel[]>>;
+  getClaudeEnablement: () => Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>>;
+  setClaudeEnablement: (
+    enablement: ClaudeProviderEnablement,
+  ) => Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>>;
+}
+
+/** Host authority needed by Settings and structured Agent panes. */
+export interface DaemonAccess {
+  getSnapshot: () => Promise<DaemonSnapshot | null>;
+  sendCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
+  getLifecycleSettings: () => Promise<DaemonLifecycleSettings | null>;
+  setLifecycleSettings: (
+    settings: Partial<DaemonLifecycleSettings>,
+  ) => Promise<DaemonLifecycleSettings | null>;
 }
 
 export interface OpenClawDrawerObserver {
@@ -222,6 +254,8 @@ export interface CapabilityAccess {
   snapshot: () => CapabilitySnapshot;
   runtimeVersions: () => EzTerminalApi['versions'] | null;
   readonly agentIntegrations: AgentIntegrationAccess;
+  readonly structuredProviders: StructuredProviderAccess;
+  readonly daemon: DaemonAccess;
   readonly openClaw: OpenClawAccess;
   readonly remoteDesktop: RemoteDesktopAccess;
   readonly remotePairing: RemotePairingAccess;
@@ -394,6 +428,38 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     async saveSettings(settings) {
       const api = desktopFor('setAgentSettings');
       return api ? api.setAgentSettings(settings) : null;
+    },
+  };
+
+  const structuredProviders: StructuredProviderAccess = {
+    inspect(providerId) {
+      return requireCore('inspectDaemonProvider').inspectDaemonProvider(providerId);
+    },
+    listModels(providerId) {
+      return requireCore('listDaemonProviderModels').listDaemonProviderModels(providerId);
+    },
+    getClaudeEnablement() {
+      return requireCore('getClaudeProviderEnablement').getClaudeProviderEnablement();
+    },
+    setClaudeEnablement(enablement) {
+      return requireCore('setClaudeProviderEnablement').setClaudeProviderEnablement(enablement);
+    },
+  };
+
+  const daemon: DaemonAccess = {
+    getSnapshot() {
+      return requireCore('getDaemonSnapshot').getDaemonSnapshot();
+    },
+    sendCommand(command) {
+      return requireCore('sendDaemonCommand').sendDaemonCommand(command);
+    },
+    async getLifecycleSettings() {
+      const api = desktopFor('getDaemonLifecycleSettings');
+      return api ? api.getDaemonLifecycleSettings() : null;
+    },
+    async setLifecycleSettings(settings) {
+      const api = desktopFor('setDaemonLifecycleSettings');
+      return api ? api.setDaemonLifecycleSettings(settings) : null;
     },
   };
 
@@ -820,6 +886,8 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     }),
     runtimeVersions: () => resolveCore()?.versions ?? null,
     agentIntegrations,
+    structuredProviders,
+    daemon,
     openClaw,
     remoteDesktop,
     remotePairing,

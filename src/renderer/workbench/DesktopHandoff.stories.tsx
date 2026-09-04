@@ -20,6 +20,8 @@ import {
 
 import type { AgentActivitySnapshot } from '../../shared/agent';
 import type { AgentCoordinationSnapshot } from '../../shared/agent-coordination';
+import type { ClaudeProviderEnablement, ProviderInspection } from '../../shared/daemon-provider';
+import type { DaemonProvider, DaemonSnapshot } from '../../shared/daemon-protocol';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../../shared/git-status';
 import type { RemoteDesktopHostStatus, SystemStatsSnapshot } from '../../shared/ipc';
 import { PAIRING_CODE_TTL_MS } from '../../shared/pairing';
@@ -264,6 +266,154 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
 
 const EN_CAPABILITIES = storyCapabilities('en');
 const KO_CAPABILITIES = storyCapabilities('ko');
+
+type ProviderSettingsScenario = 'missing' | 'review' | 'claude-approval' | 'ready' | 'error';
+
+function providerStoryInspection(
+  providerId: 'codex' | 'claude',
+  available: boolean,
+): ProviderInspection {
+  return {
+    reviewDigest: `${providerId}-${available ? 'available' : 'unavailable'}-handoff-digest`,
+    probe: {
+      providerId,
+      displayName: providerId === 'codex' ? 'Codex' : 'Claude Agent',
+      protocol: providerId === 'codex' ? 'codex-app-server' : 'claude-agent-sdk',
+      available,
+      executablePath: available
+        ? `C:\\Users\\operator\\AppData\\Local\\Programs\\${providerId}\\${providerId}.exe`
+        : 'unavailable',
+      executableVersion: available ? (providerId === 'codex' ? '0.45.0' : '1.0.112') : 'unavailable',
+      argv: providerId === 'codex'
+        ? ['app-server']
+        : ['--output-format', 'stream-json', '--input-format', 'stream-json'],
+      environmentVariableNames: providerId === 'codex'
+        ? ['PATH', 'CODEX_HOME']
+        : ['PATH', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK'],
+      capabilities: ['create', 'resume', 'interrupt', 'model-change', 'approvals'],
+      reviewNotices: providerId === 'claude' ? [{
+        id: 'anthropic-commercial-terms',
+        level: 'required',
+        title: 'Anthropic commercial terms',
+        message: 'Review and accept the applicable terms and commercial-use requirements.',
+        url: 'https://www.anthropic.com/legal/commercial-terms',
+      }, {
+        id: 'anthropic-third-party-claude-ai',
+        level: 'required',
+        title: 'Third-party claude.ai access',
+        message: 'Prior Anthropic approval is required for a third-party product to use claude.ai login or subscription rate limits.',
+        url: 'https://code.claude.com/docs/en/agent-sdk/overview',
+      }] : [],
+      ...(!available ? {
+        unavailableReason: providerId === 'claude'
+          ? 'CLAUDE_PROVIDER_DISABLED: Claude Agent is disabled until its requirements are accepted.'
+          : 'CODEX_EXECUTABLE_NOT_FOUND: Install Codex and check again.',
+      } : {}),
+    },
+  };
+}
+
+function providerStoryRecord(
+  inspection: ProviderInspection,
+  health: DaemonProvider['health'] = 'ready',
+): DaemonProvider {
+  const probe = inspection.probe;
+  return {
+    id: probe.providerId,
+    displayName: probe.displayName,
+    protocol: probe.protocol,
+    executablePath: probe.executablePath,
+    executableVersion: probe.executableVersion,
+    argv: probe.argv,
+    environmentVariableNames: probe.environmentVariableNames,
+    capabilities: probe.capabilities,
+    enabled: true,
+    health,
+    ...(health === 'error' ? { healthDetail: 'The provider process exited during its health check.' } : {}),
+    revision: 2,
+    createdAt: new Date(NOW - 60_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  };
+}
+
+function providerSettingsCapabilities(scenario: ProviderSettingsScenario): CapabilityAccess {
+  const codex = providerStoryInspection('codex', scenario !== 'missing');
+  const claudeAvailable = scenario === 'ready' || scenario === 'error';
+  const claude = providerStoryInspection('claude', claudeAvailable);
+  const providers: readonly DaemonProvider[] = scenario === 'ready'
+    ? [providerStoryRecord(codex), providerStoryRecord(claude)]
+    : scenario === 'error'
+      ? [providerStoryRecord(codex, 'error')]
+      : scenario === 'claude-approval'
+        ? [providerStoryRecord(codex)]
+        : [];
+  const daemonSnapshot: DaemonSnapshot = {
+    protocolVersion: 12,
+    revision: 18,
+    eventSequence: 42,
+    generatedAt: new Date(NOW).toISOString(),
+    runtime: {
+      keepRunning: true,
+      startAtLogin: false,
+      orchestrationToolsEnabled: scenario === 'ready',
+      browserEnabled: false,
+    },
+    projects: [],
+    workspaces: [],
+    sessions: [],
+    agents: [],
+    agentRelations: [],
+    turns: [],
+    transcriptHeads: [],
+    approvals: [],
+    providers,
+    schedules: [],
+    heartbeats: [],
+  };
+  const claudeEnablement: ClaudeProviderEnablement = scenario === 'ready' || scenario === 'error'
+    ? {
+        enabled: true,
+        termsAccepted: true,
+        commercialUseApproved: true,
+        authenticationPath: 'api-key-environment',
+        anthropicThirdPartyApproval: false,
+      }
+    : {
+        enabled: false,
+        termsAccepted: scenario === 'claude-approval',
+        commercialUseApproved: scenario === 'claude-approval',
+        authenticationPath: scenario === 'claude-approval'
+          ? 'existing-claude-ai-login'
+          : 'existing-cli-environment',
+        anthropicThirdPartyApproval: false,
+      };
+  return {
+    ...EN_CAPABILITIES,
+    structuredProviders: {
+      inspect: async (providerId) => {
+        if (scenario === 'error' && providerId === 'claude') {
+          return { ok: false, code: 'provider-operation-failed', message: 'Claude Agent inspection timed out.' };
+        }
+        return { ok: true, value: providerId === 'codex' ? codex : claude };
+      },
+      listModels: async () => ({ ok: true, value: [] }),
+      getClaudeEnablement: async () => ({ ok: true, value: claudeEnablement }),
+      setClaudeEnablement: async (value) => ({ ok: true, value }),
+    },
+    daemon: {
+      getSnapshot: async () => daemonSnapshot,
+      sendCommand: async (command) => ({
+        ok: false,
+        status: 'rejected',
+        commandId: command.commandId,
+        revision: daemonSnapshot.revision,
+        error: { code: 'invalid-state', message: 'Static Storybook fixture', retryable: false },
+      }),
+      getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+    },
+  };
+}
 const REMOTE_DESKTOP_API: RemotePanelDesktopApi = {
   getPairingCode: async () => ({ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }),
   issuePairingCode: async () => ({ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }),
@@ -875,8 +1025,10 @@ function CommandCenterFixture(): JSX.Element {
 
 function SettingsFixture({
   capabilities,
+  requestedCategory = 'appearance',
 }: {
   readonly capabilities?: CapabilityAccess;
+  readonly requestedCategory?: 'appearance' | 'agents';
 }): JSX.Element {
   const globalTheme = (
     ['matrix', 'dark', 'light', 'high-contrast'] as const
@@ -898,7 +1050,7 @@ function SettingsFixture({
 
   return (
     <SettingsPanel
-      requestedCategory="appearance"
+      requestedCategory={requestedCategory}
       uiScale={uiScale}
       onChangeUiScale={() => undefined}
       scrollback={10_000}
@@ -1260,6 +1412,46 @@ export const Settings: Story = {
       />
     </LocaleFrame>
   ),
+};
+
+function ProviderSettingsStory({
+  scenario,
+}: {
+  readonly scenario: ProviderSettingsScenario;
+}): JSX.Element {
+  return (
+    <LocaleFrame>
+      <WorkbenchFrame
+        destination="settings"
+        sidebar={(
+          <SettingsFixture
+            requestedCategory="agents"
+            capabilities={providerSettingsCapabilities(scenario)}
+          />
+        )}
+      />
+    </LocaleFrame>
+  );
+}
+
+export const ProviderSettingsMissing: Story = {
+  render: () => <ProviderSettingsStory scenario="missing" />,
+};
+
+export const ProviderSettingsReview: Story = {
+  render: () => <ProviderSettingsStory scenario="review" />,
+};
+
+export const ProviderSettingsClaudeApproval: Story = {
+  render: () => <ProviderSettingsStory scenario="claude-approval" />,
+};
+
+export const ProviderSettingsReady: Story = {
+  render: () => <ProviderSettingsStory scenario="ready" />,
+};
+
+export const ProviderSettingsError: Story = {
+  render: () => <ProviderSettingsStory scenario="error" />,
 };
 
 export const EnglishWorkbench: Story = {
