@@ -131,6 +131,23 @@ function reviewedAdapter(connectionFactory: () => CodexAppServerConnection): Cod
   return adapter;
 }
 
+function bufferedLifecycleState(
+  adapter: CodexProviderAdapter,
+  sessionId = 'session-1',
+): { readonly size: number; readonly overflowed: boolean } {
+  const sessions = (adapter as unknown as {
+    readonly sessions: Map<string, {
+      readonly preResponseLifecycle: Map<string, unknown>;
+      readonly preResponseLifecycleOverflowed: boolean;
+    }>;
+  }).sessions;
+  const state = sessions.get(sessionId);
+  return {
+    size: state?.preResponseLifecycle.size ?? 0,
+    overflowed: state?.preResponseLifecycleOverflowed ?? false,
+  };
+}
+
 async function pendingTurnFixture(
   interruptImpl: () => Promise<unknown> = async () => ({}),
 ): Promise<{
@@ -544,7 +561,7 @@ describe('CodexProviderAdapter', () => {
 
     await connection.emitNotification('turn/started', {
       threadId: 'thread-1',
-      turn: { id: 'provider-turn-1', items: [{ type: 'userMessage', clientId: 'command-1' }] },
+      turn: { id: 'provider-turn-1', items: [] },
     });
     resolveTurnStart({ turn: { id: 'provider-turn-1' } });
     await Promise.all([submitting, interrupting]);
@@ -571,18 +588,24 @@ describe('CodexProviderAdapter', () => {
 
   it('settles a pending interrupt without dispatch when the provider completes first', async () => {
     const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
     await connection.emitNotification('turn/completed', {
       threadId: 'thread-1',
       turn: {
         id: 'provider-turn-1',
         status: 'completed',
-        items: [{ type: 'userMessage', clientId: 'command-1' }],
+        items: [],
       },
     });
-    await expect(interrupting).resolves.toBeUndefined();
     resolveTurnStart({ turn: { id: 'provider-turn-1' } });
-    await expect(submitting).resolves.toBeUndefined();
+    await expect(Promise.all([submitting, interrupting])).resolves.toEqual([undefined, undefined]);
     expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'turn-finished',
+      turnId: 'turn-1',
+      outcome: 'completed',
+    }));
     await adapter.dispose();
   });
 
@@ -600,7 +623,7 @@ describe('CodexProviderAdapter', () => {
       threadId: 'thread-1',
       turn: {
         id: 'provider-predecessor',
-        items: [{ type: 'userMessage', clientId: 'command-predecessor' }],
+        items: [],
       },
     });
     await connection.emitNotification('turn/completed', {
@@ -608,7 +631,7 @@ describe('CodexProviderAdapter', () => {
       turn: {
         id: 'provider-predecessor',
         status: 'completed',
-        items: [{ type: 'userMessage', clientId: 'command-predecessor' }],
+        items: [],
       },
     });
 
@@ -643,6 +666,180 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('does not let a turn-scoped predecessor error capture a pending current interrupt', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    let interruptSettled = false;
+    void interrupting.finally(() => { interruptSettled = true; });
+
+    await connection.emitNotification('error', {
+      threadId: 'thread-1',
+      turnId: 'provider-predecessor',
+      error: { message: 'late predecessor error' },
+      willRetry: false,
+    });
+    expect(interruptSettled).toBe(false);
+
+    resolveTurnStart({ turn: { id: 'provider-current' } });
+    await Promise.all([submitting, interrupting]);
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([
+      expect.objectContaining({ params: { threadId: 'thread-1', turnId: 'provider-current' } }),
+    ]);
+    expect(events).not.toContainEqual(expect.objectContaining({
+      kind: 'provider-error',
+      turnScope: expect.objectContaining({ providerTurnId: 'provider-predecessor' }),
+    }));
+    await connection.emitNotification('error', {
+      threadId: 'thread-1',
+      turnId: 'provider-predecessor',
+      error: { message: 'late predecessor error after response' },
+      willRetry: false,
+    });
+    expect(events).toContainEqual({
+      kind: 'provider-error',
+      sessionId: 'session-1',
+      turnScope: { providerTurnId: 'provider-predecessor' },
+      code: 'codex-turn-error',
+      message: 'late predecessor error after response',
+      recoverable: false,
+    });
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-current', status: 'completed', items: [] },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'turn-finished', turnId: 'turn-1', outcome: 'completed',
+    }));
+    await adapter.dispose();
+  });
+
+  it('replays a matching turn-scoped error only after the response confirms ownership', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const interruptFailure = expect(interrupting).rejects.toThrow('current turn failed before response');
+
+    await connection.emitNotification('error', {
+      threadId: 'thread-1',
+      turnId: 'provider-current',
+      error: { message: 'current turn failed before response' },
+      willRetry: false,
+    });
+    expect(events).not.toContainEqual(expect.objectContaining({ kind: 'provider-error' }));
+    resolveTurnStart({ turn: { id: 'provider-current' } });
+    await Promise.all([submitting, interruptFailure]);
+
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    expect(events).toContainEqual({
+      kind: 'provider-error',
+      sessionId: 'session-1',
+      turnScope: { turnId: 'turn-1', providerTurnId: 'provider-current' },
+      code: 'codex-turn-error',
+      message: 'current turn failed before response',
+      recoverable: false,
+    });
+    expect(events.filter((event) => (
+      event.kind === 'turn-started' || event.kind === 'provider-error'
+    )).map((event) => event.kind)).toEqual(['turn-started', 'provider-error']);
+    await adapter.dispose();
+  });
+
+  it('preserves a buffered terminal completion under same-turn retryable error flood', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-current', status: 'completed', items: [] },
+    });
+    for (let index = 0; index < 12; index += 1) {
+      await connection.emitNotification('error', {
+        threadId: 'thread-1',
+        turnId: 'provider-current',
+        error: { message: `retry ${String(index)}` },
+        willRetry: true,
+      });
+    }
+
+    resolveTurnStart({ turn: { id: 'provider-current' } });
+    await expect(Promise.all([submitting, interrupting])).resolves.toEqual([undefined, undefined]);
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('fails safe without interrupting when the confirmed turn was evicted from the bounded buffer', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const interruptFailure = expect(interrupting).rejects.toThrow(/lifecycle buffer overflowed/i);
+    for (let index = 0; index < 9; index += 1) {
+      await connection.emitNotification('turn/completed', {
+        threadId: 'thread-1',
+        turn: { id: `provider-${String(index)}`, status: 'completed', items: [] },
+      });
+    }
+    expect(bufferedLifecycleState(adapter)).toEqual({ size: 8, overflowed: true });
+
+    resolveTurnStart({ turn: { id: 'provider-0' } });
+    await Promise.all([submitting, interruptFailure]);
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'provider-error',
+      turnScope: { turnId: 'turn-1', providerTurnId: 'provider-0' },
+      code: 'codex-lifecycle-buffer-overflow',
+      recoverable: true,
+    }));
+    expect(bufferedLifecycleState(adapter)).toEqual({ size: 0, overflowed: false });
+    await adapter.dispose();
+  });
+
+  it.each([
+    'start-failure',
+    'terminal-status',
+    'connection-close',
+    'deactivate',
+    'dispose-session',
+  ] as const)('clears pre-response lifecycle state on %s', async (terminal) => {
+    const fixture = await pendingTurnFixture();
+    const {
+      adapter, connection, submitting, interrupting, resolveTurnStart, rejectTurnStart,
+    } = fixture;
+    const submitSettled = submitting.catch(() => undefined);
+    const interruptSettled = interrupting.catch(() => undefined);
+    await connection.emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turn: { id: 'buffered-provider-turn', items: [] },
+    });
+    expect(bufferedLifecycleState(adapter)).toEqual({ size: 1, overflowed: false });
+
+    switch (terminal) {
+      case 'start-failure':
+        rejectTurnStart(new Error('turn/start failed'));
+        break;
+      case 'terminal-status':
+        await connection.emitNotification('thread/status/changed', {
+          threadId: 'thread-1',
+          status: { type: 'systemError' },
+        });
+        resolveTurnStart({ turn: { id: 'provider-after-terminal' } });
+        break;
+      case 'connection-close':
+        connection.crash('connection closed');
+        resolveTurnStart({ turn: { id: 'provider-after-close' } });
+        break;
+      case 'deactivate':
+        await adapter.deactivate();
+        resolveTurnStart({ turn: { id: 'provider-after-deactivate' } });
+        break;
+      case 'dispose-session':
+        await adapter.disposeSession('session-1', 'thread-1').catch(() => undefined);
+        resolveTurnStart({ turn: { id: 'provider-after-dispose' } });
+        break;
+    }
+    await Promise.all([submitSettled, interruptSettled]);
+    expect(bufferedLifecycleState(adapter)).toEqual({ size: 0, overflowed: false });
+    await adapter.dispose();
+  });
+
   it('reports a queued interrupt delivery failure and settles its waiter', async () => {
     const fixture = await pendingTurnFixture(async () => { throw new Error('interrupt transport failed'); });
     const { adapter, connection, submitting, interrupting, resolveTurnStart } = fixture;
@@ -657,6 +854,7 @@ describe('CodexProviderAdapter', () => {
     expect(events).toContainEqual({
       kind: 'provider-error',
       sessionId: 'session-1',
+      turnScope: { turnId: 'turn-1', providerTurnId: 'provider-turn-1' },
       code: 'turn-interrupt-failed',
       message: 'interrupt transport failed',
       recoverable: true,
@@ -767,13 +965,15 @@ describe('CodexProviderAdapter', () => {
     );
     await terminal.connection.emitNotification('error', {
       threadId: 'thread-1',
+      turnId: 'provider-terminal',
       error: { message: 'terminal provider error' },
       willRetry: false,
     });
-    expect(terminalOutcome).toBe('rejected');
-    terminal.resolveTurnStart({ turn: { id: 'provider-turn-after-terminal-error' } });
+    expect(terminalOutcome).toBe('pending');
+    terminal.resolveTurnStart({ turn: { id: 'provider-terminal' } });
     await terminal.submitting;
     await terminal.interrupting.catch(() => undefined);
+    expect(terminalOutcome).toBe('rejected');
     await expect(terminal.adapter.interrupt('session-1', 'thread-1'))
       .rejects.toThrow(/no interruptible provider turn/i);
     await terminal.adapter.dispose();
@@ -790,6 +990,7 @@ describe('CodexProviderAdapter', () => {
     });
     await retryable.connection.emitNotification('error', {
       threadId: 'thread-1',
+      turnId: 'provider-turn-1',
       error: { message: 'retrying provider error' },
       willRetry: true,
     });

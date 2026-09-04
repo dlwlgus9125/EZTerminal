@@ -2569,6 +2569,70 @@ describe('DaemonAgentRuntime', () => {
   });
 
   it.each([
+    ['codex', 'codex'] as const,
+    ['claude', 'claude'] as const,
+  ])('does not let a late %s interrupt rejection mark its pumped successor uncertain', async (_label, providerId) => {
+    const h = await harness();
+    let rejectInterrupt!: (error: Error) => void;
+    try {
+      const adapter = providerId === 'codex' ? h.codex : h.claude;
+      await h.enable(adapter, providerId);
+      await h.prepareWorkspace();
+      const interruptBlocked = new Promise<void>((_resolve, reject) => {
+        rejectInterrupt = reject;
+      });
+      vi.mocked(adapter.interrupt).mockReturnValueOnce(interruptBlocked);
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId,
+        permissionPreset: 'standard',
+        initialPrompt: 'First turn.',
+      });
+      const first = h.router.getSnapshot().turns[0]!;
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Successor turn.' });
+      const successor = h.router.getSnapshot().turns.find((turn) => turn.id !== first.id)!;
+
+      await expect(h.executeWithoutSettling('agent.interrupt', { sessionId: 'agent-1' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      await vi.waitFor(() => expect(adapter.interrupt).toHaveBeenCalledOnce());
+      adapter.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-1',
+        turnId: first.id,
+        outcome: 'interrupted',
+      });
+      await vi.waitFor(() => {
+        expect(h.router.getSnapshot().agents[0]).toMatchObject({
+          currentTurnId: successor.id,
+          state: 'working',
+        });
+      });
+
+      rejectInterrupt(new Error('late predecessor interrupt failure'));
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'running' })],
+        agents: [expect.objectContaining({
+          sessionId: 'agent-1',
+          currentTurnId: successor.id,
+          state: 'working',
+        })],
+        turns: expect.arrayContaining([
+          expect.objectContaining({ id: first.id, state: 'interrupted' }),
+          expect.objectContaining({ id: successor.id, state: 'working' }),
+        ]),
+      });
+    } finally {
+      rejectInterrupt?.(new Error('test cleanup'));
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it.each([
     'provider-error-last',
     'request-catch-last',
   ] as const)('preserves cancel intent when interrupt failure commits settle in %s order', async (order) => {
@@ -2942,7 +3006,165 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
-  it('closes the turn, Agent, Session, and pending approvals on a terminal provider error', async () => {
+  it('scopes Provider errors to the exact durable turn and pumps only after the current turn fails', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'First turn.',
+      });
+      const first = h.router.getSnapshot().turns[0]!;
+      h.codex.emit({
+        kind: 'turn-started',
+        sessionId: 'agent-1',
+        turnId: first.id,
+        providerTurnId: 'provider-first',
+        commandId: first.commandId,
+      });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Current turn.' });
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-1',
+        turnId: first.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      const current = h.router.getSnapshot().turns.find((turn) => turn.id !== first.id)!;
+      h.codex.emit({
+        kind: 'turn-started',
+        sessionId: 'agent-1',
+        turnId: current.id,
+        providerTurnId: 'provider-current',
+        commandId: current.commandId,
+      });
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Queued turn.' });
+      const queued = h.router.getSnapshot().turns.find((turn) => (
+        turn.id !== first.id && turn.id !== current.id
+      ))!;
+
+      h.codex.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        turnScope: { providerTurnId: 'provider-first' },
+        code: 'late-predecessor-error',
+        message: 'The predecessor reported late.',
+        recoverable: false,
+      });
+      h.codex.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        turnScope: { providerTurnId: 'provider-unknown' },
+        code: 'unmapped-error',
+        message: 'This turn is not attached.',
+        recoverable: false,
+      });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot()).toMatchObject({
+        agents: [expect.objectContaining({ currentTurnId: current.id, state: 'working', queuedTurnCount: 1 })],
+        turns: expect.arrayContaining([
+          expect.objectContaining({ id: first.id, state: 'completed' }),
+          expect.objectContaining({ id: current.id, state: 'working' }),
+          expect.objectContaining({ id: queued.id, state: 'queued' }),
+        ]),
+      });
+
+      h.codex.emit({
+        kind: 'approval-requested',
+        sessionId: 'agent-1',
+        turnId: current.id,
+        providerRequestId: 'current-approval',
+        risk: 'danger',
+        title: 'Current approval',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        turnScope: { turnId: current.id, providerTurnId: 'provider-current' },
+        code: 'current-turn-error',
+        message: 'Only the current turn failed.',
+        recoverable: false,
+      });
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'running' })],
+        agents: [expect.objectContaining({
+          sessionId: 'agent-1', currentTurnId: queued.id, state: 'working', queuedTurnCount: 0,
+        })],
+        turns: expect.arrayContaining([
+          expect.objectContaining({ id: first.id, state: 'completed' }),
+          expect.objectContaining({ id: current.id, state: 'failed', errorCode: 'current-turn-error' }),
+          expect.objectContaining({ id: queued.id, state: 'working' }),
+        ]),
+        approvals: [expect.objectContaining({ providerRequestId: 'current-approval', state: 'expired' })],
+      });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('does not overwrite a durable interrupt fence with a scoped recoverable Provider error', async () => {
+    const h = await harness();
+    let resolveInterrupt!: () => void;
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      const interruptBlocked = new Promise<void>((resolve) => { resolveInterrupt = resolve; });
+      vi.mocked(h.codex.interrupt).mockReturnValueOnce(interruptBlocked);
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Preserve the cancellation fence.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+      await h.executeWithoutSettling('agent.cancel', { sessionId: 'agent-1' });
+      await vi.waitFor(() => expect(h.codex.interrupt).toHaveBeenCalledOnce());
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        id: turn.id,
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
+      });
+
+      h.codex.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        turnScope: { turnId: turn.id },
+        code: 'codex-turn-error',
+        message: 'Retrying after cancellation.',
+        recoverable: true,
+      });
+      await vi.waitFor(() => {
+        expect(h.router.getSnapshot().turns[0]).toMatchObject({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+        });
+      });
+      resolveInterrupt();
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
+      });
+    } finally {
+      resolveInterrupt?.();
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('closes the turn, Agent, Session, and pending approvals on a session-wide terminal provider error', async () => {
     const h = await harness();
     try {
       await h.enable(h.codex, 'codex');

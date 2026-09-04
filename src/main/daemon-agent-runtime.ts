@@ -1897,10 +1897,78 @@ export class DaemonAgentRuntime {
       }
       const sessionId = event.sessionId;
       let terminalTurnIds: string[] = [];
+      let releasedCurrent = false;
       await this.transition((snapshot) => {
         const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
         const session = snapshot.sessions.find((entry) => entry.id === sessionId);
         if (!agent || !session || agent.providerId !== providerId || session.state === 'archived') return undefined;
+        if (event.turnScope) {
+          const turn = event.turnScope.turnId
+            ? snapshot.turns.find((entry) => (
+                entry.id === event.turnScope?.turnId
+                && entry.sessionId === sessionId
+                && (
+                  !event.turnScope.providerTurnId
+                  || !entry.providerTurnId
+                  || entry.providerTurnId === event.turnScope.providerTurnId
+                )
+              ))
+            : snapshot.turns.find((entry) => (
+                entry.sessionId === sessionId
+                && entry.providerTurnId === event.turnScope?.providerTurnId
+              ));
+          if (!turn || !ACTIVE_TURN_STATES.has(turn.state)) return undefined;
+          const isCurrent = agent.currentTurnId === turn.id;
+          const preserveInterruptFence = this.isInterruptPending(turn);
+          const now = this.isoNow();
+          const transcript = this.transcriptMutations([{
+            id: stableId('provider-error', providerId, sessionId, turn.id, event.code, event.message),
+            sessionId,
+            turnId: turn.id,
+            kind: 'error',
+            text: event.message,
+            isDelta: false,
+            isSensitive: false,
+          }]);
+          if (event.recoverable) {
+            return { mutations: [
+              ...(!preserveInterruptFence ? [{
+                kind: 'turn.upsert' as const,
+                value: turnInput(turn, {
+                  state: 'delivery-uncertain',
+                  errorCode: event.code,
+                }),
+              }] : []),
+              ...(isCurrent && !preserveInterruptFence ? [
+                { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'delivery-uncertain' }) },
+                { kind: 'session.upsert' as const, value: sessionInput(session, 'delivery-uncertain') },
+              ] : []),
+              ...transcript,
+            ] };
+          }
+          terminalTurnIds = [turn.id];
+          releasedCurrent = isCurrent;
+          const hasQueuedSuccessor = isCurrent && agent.queuedTurnCount > 0;
+          return { mutations: [
+            { kind: 'turn.upsert', value: turnInput(turn, {
+              state: 'failed',
+              finishedAt: now,
+              errorCode: event.code,
+            }) },
+            ...this.expireApprovalMutations(snapshot, sessionId, turn.id, now, isCurrent),
+            ...(isCurrent ? [
+              { kind: 'agent.upsert' as const, value: agentInput(agent, {
+                state: hasQueuedSuccessor ? 'queued' : 'error',
+                currentTurnId: undefined,
+              }) },
+              { kind: 'session.upsert' as const, value: sessionInput(
+                session,
+                hasQueuedSuccessor ? 'idle' : 'failed',
+              ) },
+            ] : []),
+            ...transcript,
+          ] };
+        }
         const turn = agent.currentTurnId
           ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
           : undefined;
@@ -1942,7 +2010,7 @@ export class DaemonAgentRuntime {
       });
       if (terminalTurnIds.length > 0) {
         for (const turnId of terminalTurnIds) this.clearTurnTimeout(turnId);
-        this.queuePump();
+        if (releasedCurrent || event.turnScope === undefined) this.queuePump();
       }
     }
   }
@@ -2337,12 +2405,17 @@ export class DaemonAgentRuntime {
     sessionId: string,
     turnId: string | undefined,
     resolvedAt: string,
+    includeUnscoped = true,
   ): DaemonStoreMutation[] {
     return snapshot.approvals
       .filter((approval) => (
         approval.sessionId === sessionId
         && approval.state === 'pending'
-        && (turnId === undefined || approval.turnId === undefined || approval.turnId === turnId)
+        && (
+          turnId === undefined
+          || approval.turnId === turnId
+          || (includeUnscoped && approval.turnId === undefined)
+        )
       ))
       .map((approval): DaemonStoreMutation => ({
         kind: 'approval.upsert',
@@ -2540,7 +2613,12 @@ export class DaemonAgentRuntime {
     }
   }
 
-  private async markSessionDeliveryUncertain(sessionId: string, code: string, detail: string): Promise<void> {
+  private async markSessionDeliveryUncertain(
+    sessionId: string,
+    code: string,
+    detail: string,
+    expectedTurnId?: string,
+  ): Promise<void> {
     await this.transition((snapshot) => {
       const session = snapshot.sessions.find((entry) => entry.id === sessionId);
       const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
@@ -2548,6 +2626,14 @@ export class DaemonAgentRuntime {
       const turn = agent.currentTurnId
         ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
         : undefined;
+      if (
+        expectedTurnId !== undefined
+        && (
+          agent.currentTurnId !== expectedTurnId
+          || turn?.id !== expectedTurnId
+          || TERMINAL_TURN_STATES.has(turn.state)
+        )
+      ) return undefined;
       return { mutations: [
         ...(turn && !TERMINAL_TURN_STATES.has(turn.state) ? [{
           kind: 'turn.upsert' as const,
@@ -2576,7 +2662,12 @@ export class DaemonAgentRuntime {
   ): Promise<void> {
     const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
     if (!provider.ok) {
-      await this.markSessionDeliveryUncertain(sessionId, 'interrupt-provider-unavailable', provider.message);
+      await this.markSessionDeliveryUncertain(
+        sessionId,
+        'interrupt-provider-unavailable',
+        provider.message,
+        turnId,
+      );
       return;
     }
     try {
@@ -2586,6 +2677,7 @@ export class DaemonAgentRuntime {
         sessionId,
         'interrupt-failed',
         error instanceof Error ? error.message : `Turn ${turnId} could not be interrupted.`,
+        turnId,
       );
     }
   }

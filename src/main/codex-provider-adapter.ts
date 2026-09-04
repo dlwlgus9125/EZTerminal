@@ -40,6 +40,7 @@ const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 const MAX_SEMANTIC_TEXT = 1024 * 1024;
 const MAX_PROBE_OUTPUT = 64 * 1024;
+const MAX_PRE_RESPONSE_LIFECYCLE_TURNS = 8;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
 const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
@@ -52,6 +53,21 @@ const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
 ] as const;
 
 type JsonObject = Record<string, unknown>;
+
+type PreResponseLifecycleEvent =
+  | { readonly kind: 'started'; readonly turn: JsonObject }
+  | { readonly kind: 'completed'; readonly turn: JsonObject }
+  | {
+      readonly kind: 'error';
+      readonly message: string;
+      readonly recoverable: boolean;
+    };
+
+interface PreResponseLifecycleRecord {
+  started?: Extract<PreResponseLifecycleEvent, { readonly kind: 'started' }>;
+  retryableError?: Extract<PreResponseLifecycleEvent, { readonly kind: 'error' }>;
+  terminal?: Extract<PreResponseLifecycleEvent, { readonly kind: 'completed' | 'error' }>;
+}
 
 export interface CodexCommandResult {
   readonly stdout: string;
@@ -79,6 +95,8 @@ interface SessionState {
       settled: boolean;
     };
   };
+  readonly preResponseLifecycle: Map<string, PreResponseLifecycleRecord>;
+  preResponseLifecycleOverflowed: boolean;
   readonly completedItemKeys: Set<string>;
   readonly nativeStateByChild: Map<string, string>;
 }
@@ -616,6 +634,38 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const activeTurn = state.activeTurn;
       if (!activeTurn || activeTurn.commandId !== input.commandId) return;
       activeTurn.providerTurnId = providerTurnId;
+      // The response itself authoritatively confirms this turn identity. Emit
+      // that ownership before replaying any notification that raced ahead.
+      this.emitTurnStarted(state, activeTurn);
+      const buffered = this.takePreResponseLifecycle(state, providerTurnId);
+      for (const event of buffered.events) {
+        if (state.activeTurn !== activeTurn) break;
+        switch (event.kind) {
+          case 'started':
+            this.handleTurnStarted(state, event.turn, true);
+            break;
+          case 'completed':
+            this.handleTurnCompleted(state, event.turn);
+            break;
+          case 'error':
+            this.handleCodexError(state, state.sessionId, providerTurnId, event.message, event.recoverable);
+            break;
+        }
+      }
+      if (state.activeTurn !== activeTurn) return;
+      if (buffered.overflowedWithoutMatch) {
+        const error = new Error('Codex pre-response lifecycle buffer overflowed before turn identity was confirmed.');
+        this.settlePendingInterrupt(activeTurn, error);
+        this.emit({
+          kind: 'provider-error',
+          sessionId: state.sessionId,
+          turnScope: { turnId: activeTurn.localTurnId, providerTurnId },
+          code: 'codex-lifecycle-buffer-overflow',
+          message: error.message,
+          recoverable: true,
+        });
+        return;
+      }
       this.dispatchPendingInterrupt(state, activeTurn);
       this.emitTurnStarted(state, activeTurn);
     } catch (error) {
@@ -623,9 +673,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         this.settlePendingInterrupt(state.activeTurn, error);
         state.activeTurn = undefined;
       }
+      this.clearPreResponseLifecycle(state);
       this.emit({
         kind: 'provider-error',
         sessionId: input.sessionId,
+        turnScope: { turnId: input.turnId },
         code: 'turn-start-failed',
         message: sanitizeProviderDiagnostic(error).text,
         recoverable: true,
@@ -778,6 +830,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const state = this.requireSession(sessionId, providerSessionId);
+    this.clearPreResponseLifecycle(state);
     if (state.activeTurn) {
       this.settlePendingInterrupt(
         state.activeTurn,
@@ -816,6 +869,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       this.pendingApprovals.clear();
       for (const unregister of this.unregister.splice(0)) unregister();
       for (const state of this.sessions.values()) {
+        this.clearPreResponseLifecycle(state);
         if (!state.activeTurn) continue;
         this.settlePendingInterrupt(
           state.activeTurn,
@@ -921,6 +975,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         }
         this.pendingApprovals.clear();
         for (const state of this.sessions.values()) {
+          this.clearPreResponseLifecycle(state);
           if (state.activeTurn) {
             this.settlePendingInterrupt(state.activeTurn, new Error(event.message));
             state.activeTurn = undefined;
@@ -1039,16 +1094,22 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const message = sanitizeProviderDiagnostic(
         asString(error?.message) ?? 'Codex reported an unknown error.',
       ).text;
-      if (state && params.willRetry !== true) {
-        this.clearActiveTurn(state, new Error(message));
+      const providerTurnId = asString(params.turnId);
+      const recoverable = params.willRetry === true;
+      if (
+        state
+        && providerTurnId
+        && state.activeTurn
+        && !state.activeTurn.providerTurnId
+      ) {
+        this.bufferPreResponseLifecycle(state, providerTurnId, {
+          kind: 'error',
+          message,
+          recoverable,
+        });
+        return;
       }
-      this.emit({
-        kind: 'provider-error',
-        ...(sessionId ? { sessionId } : {}),
-        code: 'codex-turn-error',
-        message,
-        recoverable: params.willRetry === true,
-      });
+      this.handleCodexError(state, sessionId, providerTurnId, message, recoverable);
       return;
     }
     if (!state) return;
@@ -1100,10 +1161,106 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
   }
 
-  private handleTurnStarted(state: SessionState, turn: JsonObject | undefined): void {
+  private handleCodexError(
+    state: SessionState | undefined,
+    sessionId: string | undefined,
+    providerTurnId: string | undefined,
+    message: string,
+    recoverable: boolean,
+  ): void {
+    const active = state?.activeTurn;
+    const matchingActive = active && providerTurnId && active.providerTurnId === providerTurnId
+      ? active
+      : undefined;
+    if (state && !recoverable && (!providerTurnId || matchingActive)) {
+      this.clearActiveTurn(state, new Error(message));
+    }
+    this.emit({
+      kind: 'provider-error',
+      ...(sessionId ? { sessionId } : {}),
+      ...(providerTurnId ? {
+        turnScope: {
+          providerTurnId,
+          ...(matchingActive ? { turnId: matchingActive.localTurnId } : {}),
+        },
+      } : {}),
+      code: 'codex-turn-error',
+      message,
+      recoverable,
+    });
+  }
+
+  private bufferPreResponseLifecycle(
+    state: SessionState,
+    providerTurnId: string,
+    event: PreResponseLifecycleEvent,
+  ): void {
+    let record = state.preResponseLifecycle.get(providerTurnId);
+    if (!record) {
+      if (state.preResponseLifecycle.size >= MAX_PRE_RESPONSE_LIFECYCLE_TURNS) {
+        const oldestProviderTurnId = state.preResponseLifecycle.keys().next().value as string | undefined;
+        if (oldestProviderTurnId) {
+          state.preResponseLifecycle.delete(oldestProviderTurnId);
+          state.preResponseLifecycleOverflowed = true;
+        }
+      }
+      record = {};
+      state.preResponseLifecycle.set(providerTurnId, record);
+    }
+    if (record.terminal) return;
+    switch (event.kind) {
+      case 'started':
+        record.started ??= event;
+        break;
+      case 'completed':
+        record.terminal = event;
+        break;
+      case 'error':
+        if (event.recoverable) record.retryableError = event;
+        else record.terminal = event;
+        break;
+    }
+  }
+
+  private takePreResponseLifecycle(
+    state: SessionState,
+    providerTurnId: string,
+  ): { readonly events: readonly PreResponseLifecycleEvent[]; readonly overflowedWithoutMatch: boolean } {
+    const record = state.preResponseLifecycle.get(providerTurnId);
+    const overflowedWithoutMatch = state.preResponseLifecycleOverflowed && !record;
+    state.preResponseLifecycle.clear();
+    state.preResponseLifecycleOverflowed = false;
+    return {
+      events: record
+        ? [record.started, record.retryableError, record.terminal].filter(
+            (event): event is PreResponseLifecycleEvent => event !== undefined,
+          )
+        : [],
+      overflowedWithoutMatch,
+    };
+  }
+
+  private clearPreResponseLifecycle(state: SessionState): void {
+    state.preResponseLifecycle.clear();
+    state.preResponseLifecycleOverflowed = false;
+  }
+
+  private handleTurnStarted(
+    state: SessionState,
+    turn: JsonObject | undefined,
+    deferInterrupt = false,
+  ): void {
     if (!turn) return;
     const providerTurnId = asString(turn?.id);
     if (!providerTurnId) return;
+    if (
+      state.activeTurn
+      && !state.activeTurn.providerTurnId
+      && !this.turnMatchesActive(state.activeTurn, turn, providerTurnId)
+    ) {
+      this.bufferPreResponseLifecycle(state, providerTurnId, { kind: 'started', turn });
+      return;
+    }
     if (!state.activeTurn) {
       const commandId = this.commandIdFromTurn(turn) ?? `provider:${providerTurnId}`;
       state.activeTurn = {
@@ -1117,7 +1274,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     } else {
       return;
     }
-    this.dispatchPendingInterrupt(state, state.activeTurn);
+    if (!deferInterrupt) this.dispatchPendingInterrupt(state, state.activeTurn);
     this.emitTurnStarted(state, state.activeTurn);
   }
 
@@ -1139,6 +1296,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         this.emit({
           kind: 'provider-error',
           sessionId: state.sessionId,
+          turnScope: {
+            turnId: active.localTurnId,
+            providerTurnId,
+          },
           code: 'turn-interrupt-failed',
           message: sanitizeProviderDiagnostic(error).text,
           recoverable: true,
@@ -1163,6 +1324,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private clearActiveTurn(state: SessionState, error: Error): void {
+    this.clearPreResponseLifecycle(state);
     const active = state.activeTurn;
     if (!active) return;
     this.settlePendingInterrupt(active, error);
@@ -1199,6 +1361,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const providerTurnId = asString(turn?.id);
     if (!providerTurnId) return;
     const active = state.activeTurn;
+    if (
+      active
+      && !active.providerTurnId
+      && !this.turnMatchesActive(active, turn, providerTurnId)
+    ) {
+      this.bufferPreResponseLifecycle(state, providerTurnId, { kind: 'completed', turn });
+      return;
+    }
     const matchingActive = active && this.turnMatchesActive(active, turn, providerTurnId)
       ? active
       : undefined;
@@ -1222,7 +1392,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ...(errorCode ? { errorCode } : {}),
     });
     if (active && !matchingActive) return;
-    if (state.activeTurn === matchingActive) state.activeTurn = undefined;
+    if (state.activeTurn === matchingActive) {
+      state.activeTurn = undefined;
+      this.clearPreResponseLifecycle(state);
+    }
     this.emit({
       kind: 'session-state',
       sessionId: state.sessionId,
@@ -1490,6 +1663,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ...(model ? { model } : {}),
       permissionPreset: context.permissionPreset,
       nextTranscriptSequence: 0,
+      preResponseLifecycle: new Map(),
+      preResponseLifecycleOverflowed: false,
       completedItemKeys: new Set(),
       nativeStateByChild: new Map(),
     };

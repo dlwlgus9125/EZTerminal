@@ -43,6 +43,16 @@ export interface ProviderSubmitInput {
   readonly prompt: string;
 }
 
+export type AgentProviderTurnScope =
+  | {
+      readonly turnId: string;
+      readonly providerTurnId?: string;
+    }
+  | {
+      readonly turnId?: string;
+      readonly providerTurnId: string;
+    };
+
 export interface ProviderApprovalDecision {
   readonly sessionId: string;
   readonly providerSessionId: string;
@@ -117,6 +127,8 @@ export type AgentProviderEvent =
   | {
       readonly kind: 'provider-error';
       readonly sessionId?: string;
+      /** Omitted only for errors that apply to the whole Provider Session. */
+      readonly turnScope?: AgentProviderTurnScope;
       readonly code: string;
       readonly message: string;
       readonly recoverable: boolean;
