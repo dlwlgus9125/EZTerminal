@@ -573,12 +573,73 @@ describe('CodexProviderAdapter', () => {
     const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
     await connection.emitNotification('turn/completed', {
       threadId: 'thread-1',
-      turn: { id: 'provider-turn-1', status: 'completed', items: [] },
+      turn: {
+        id: 'provider-turn-1',
+        status: 'completed',
+        items: [{ type: 'userMessage', clientId: 'command-1' }],
+      },
     });
     await expect(interrupting).resolves.toBeUndefined();
     resolveTurnStart({ turn: { id: 'provider-turn-1' } });
     await expect(submitting).resolves.toBeUndefined();
     expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('does not let delayed predecessor lifecycle events capture a pending current interrupt', async () => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    let interruptSettled = false;
+    void interrupting.then(
+      () => { interruptSettled = true; },
+      () => { interruptSettled = true; },
+    );
+
+    await connection.emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turn: {
+        id: 'provider-predecessor',
+        items: [{ type: 'userMessage', clientId: 'command-predecessor' }],
+      },
+    });
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turn: {
+        id: 'provider-predecessor',
+        status: 'completed',
+        items: [{ type: 'userMessage', clientId: 'command-predecessor' }],
+      },
+    });
+
+    expect(interruptSettled).toBe(false);
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
+    expect(events).not.toContainEqual(expect.objectContaining({
+      kind: 'turn-started',
+      turnId: 'turn-1',
+      providerTurnId: 'provider-predecessor',
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      kind: 'turn-finished',
+      turnId: 'turn-1',
+    }));
+
+    resolveTurnStart({ turn: { id: 'provider-current' } });
+    await Promise.all([submitting, interrupting]);
+    expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([
+      expect.objectContaining({
+        params: { threadId: 'thread-1', turnId: 'provider-current' },
+      }),
+    ]);
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turn: { id: 'provider-current', status: 'interrupted', items: [] },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'turn-finished',
+      turnId: 'turn-1',
+      outcome: 'interrupted',
+    }));
     await adapter.dispose();
   });
 
@@ -663,6 +724,89 @@ describe('CodexProviderAdapter', () => {
     resolveSecondStart({ turn: { id: 'provider-turn-2' } });
     await expect(secondSubmit).resolves.toBeUndefined();
     await adapter.dispose();
+  });
+
+  it.each([
+    ['systemError', 'failed'],
+    ['notLoaded', 'interrupted'],
+  ] as const)('rejects a pending interrupt and clears active ownership on terminal %s status', async (
+    status,
+    expectedState,
+  ) => {
+    const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
+    const states: string[] = [];
+    adapter.subscribe((event) => {
+      if (event.kind === 'session-state') states.push(event.state);
+    });
+    let outcome: 'pending' | 'resolved' | 'rejected' = 'pending';
+    void interrupting.then(
+      () => { outcome = 'resolved'; },
+      () => { outcome = 'rejected'; },
+    );
+
+    await connection.emitNotification('thread/status/changed', {
+      threadId: 'thread-1',
+      status: { type: status },
+    });
+    expect(outcome).toBe('rejected');
+    resolveTurnStart({ turn: { id: 'provider-turn-after-terminal-status' } });
+    await submitting;
+    await interrupting.catch(() => undefined);
+
+    expect(states).toContain(expectedState);
+    await expect(adapter.interrupt('session-1', 'thread-1')).rejects.toThrow(/no interruptible provider turn/i);
+    await adapter.dispose();
+  });
+
+  it('settles pending ownership on a nonretry error but preserves it for idle and retryable signals', async () => {
+    const terminal = await pendingTurnFixture();
+    let terminalOutcome: 'pending' | 'resolved' | 'rejected' = 'pending';
+    void terminal.interrupting.then(
+      () => { terminalOutcome = 'resolved'; },
+      () => { terminalOutcome = 'rejected'; },
+    );
+    await terminal.connection.emitNotification('error', {
+      threadId: 'thread-1',
+      error: { message: 'terminal provider error' },
+      willRetry: false,
+    });
+    expect(terminalOutcome).toBe('rejected');
+    terminal.resolveTurnStart({ turn: { id: 'provider-turn-after-terminal-error' } });
+    await terminal.submitting;
+    await terminal.interrupting.catch(() => undefined);
+    await expect(terminal.adapter.interrupt('session-1', 'thread-1'))
+      .rejects.toThrow(/no interruptible provider turn/i);
+    await terminal.adapter.dispose();
+
+    const retryable = await pendingTurnFixture();
+    let retryableSettled = false;
+    void retryable.interrupting.then(
+      () => { retryableSettled = true; },
+      () => { retryableSettled = true; },
+    );
+    await retryable.connection.emitNotification('thread/status/changed', {
+      threadId: 'thread-1',
+      status: { type: 'idle' },
+    });
+    await retryable.connection.emitNotification('error', {
+      threadId: 'thread-1',
+      error: { message: 'retrying provider error' },
+      willRetry: true,
+    });
+    expect(retryableSettled).toBe(false);
+
+    await retryable.connection.emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turn: {
+        id: 'provider-turn-1',
+        items: [{ type: 'userMessage', clientId: 'command-1' }],
+      },
+    });
+    retryable.resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await Promise.all([retryable.submitting, retryable.interrupting]);
+    expect(retryable.connection.requests.filter((request) => request.method === 'turn/interrupt'))
+      .toHaveLength(1);
+    await retryable.adapter.dispose();
   });
 
   it('deactivates the app-server connection without permanently disposing the adapter', async () => {

@@ -2568,6 +2568,172 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
+  it.each([
+    'provider-error-last',
+    'request-catch-last',
+  ] as const)('preserves cancel intent when interrupt failure commits settle in %s order', async (order) => {
+    const h = await harness();
+    let rejectInterrupt!: (error: Error) => void;
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      const interruptBlocked = new Promise<void>((_resolve, reject) => {
+        rejectInterrupt = reject;
+      });
+      vi.mocked(h.codex.interrupt).mockReturnValueOnce(interruptBlocked);
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Preserve this cancellation.',
+      });
+      const turn = h.router.getSnapshot().turns[0]!;
+      await expect(h.executeWithoutSettling('agent.cancel', { sessionId: 'agent-1' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      await vi.waitFor(() => expect(h.codex.interrupt).toHaveBeenCalledOnce());
+      const providerFailure: AgentProviderEvent = {
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        code: 'turn-interrupt-failed',
+        message: 'interrupt transport failed',
+        recoverable: true,
+      };
+
+      if (order === 'provider-error-last') {
+        rejectInterrupt(new Error('interrupt transport failed'));
+        await h.runtime.whenIdle();
+        h.codex.emit(providerFailure);
+        await h.runtime.whenIdle();
+      } else {
+        h.codex.emit(providerFailure);
+        await vi.waitFor(() => {
+          expect(h.router.getSnapshot().turns[0]).toMatchObject({ errorCode: 'turn-interrupt-failed' });
+        });
+        rejectInterrupt(new Error('interrupt transport failed'));
+        await h.runtime.whenIdle();
+      }
+      const errorCode = order === 'provider-error-last' ? 'turn-interrupt-failed' : 'interrupt-failed';
+      expect(h.router.getSnapshot().turns[0]).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode,
+      });
+
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      h.codex.emit({
+        kind: 'turn-started',
+        sessionId: 'agent-1',
+        turnId: turn.id,
+        providerTurnId: 'provider-turn-late',
+        commandId: turn.commandId,
+      });
+      await h.runtime.whenIdle();
+
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'delivery-uncertain' })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode,
+          providerTurnId: 'provider-turn-late',
+        })],
+      });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('keeps a persisted Provider interrupt failure fenced after process-loss restart', async () => {
+    const first = await harness();
+    let restartedRuntime: DaemonAgentRuntime | undefined;
+    let restartedStore: DaemonStore | undefined;
+    let firstStoreClosed = false;
+    try {
+      await first.enable(first.codex, 'codex');
+      await first.prepareWorkspace();
+      vi.mocked(first.codex.interrupt).mockRejectedValueOnce(new Error('interrupt transport failed'));
+      await first.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Persist this cancellation.',
+      });
+      const turn = first.router.getSnapshot().turns[0]!;
+      await first.execute('agent.cancel', { sessionId: 'agent-1' });
+      first.codex.emit({
+        kind: 'provider-error',
+        sessionId: 'agent-1',
+        code: 'turn-interrupt-failed',
+        message: 'interrupt transport failed',
+        recoverable: true,
+      });
+      await first.runtime.whenIdle();
+      expect(first.router.getSnapshot().turns[0]).toMatchObject({
+        state: 'delivery-uncertain',
+        errorCode: 'turn-interrupt-failed',
+      });
+      await first.runtime.dispose('process-loss');
+      await first.store.close();
+      firstStoreClosed = true;
+
+      restartedStore = new DaemonStore(first.directory, {
+        now: () => new Date('2026-09-04T10:00:00.000Z'),
+      });
+      await restartedStore.init();
+      const codex = fakeAdapter('codex', 'codex-app-server');
+      const claude = fakeAdapter('claude', 'claude-agent-sdk');
+      const providers = new AgentProviderRegistry([codex, claude]);
+      const routerRef: { current?: DaemonCommandRouter } = {};
+      const store = restartedStore;
+      restartedRuntime = new DaemonAgentRuntime({
+        providers,
+        getSnapshot: () => routerRef.current!.getSnapshot(),
+        applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
+        readTranscript: (sessionId, afterSequence, limit) => (
+          routerRef.current!.readTranscript(sessionId, afterSequence, limit)
+        ),
+        findCommand: (commandId) => store.findCommand(commandId)?.command,
+        now: () => new Date('2026-09-04T10:00:00.000Z'),
+      });
+      const router = new DaemonCommandRouter(store, { handlers: restartedRuntime.handlers() });
+      routerRef.current = router;
+      await restartedRuntime.start();
+      await restartedRuntime.whenIdle();
+
+      codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'working' });
+      codex.emit({
+        kind: 'turn-started',
+        sessionId: 'agent-1',
+        turnId: turn.id,
+        providerTurnId: 'provider-turn-after-restart',
+        commandId: turn.commandId,
+      });
+      await restartedRuntime.whenIdle();
+
+      expect(router.getSnapshot()).toMatchObject({
+        sessions: [expect.objectContaining({ id: 'agent-1', state: 'delivery-uncertain' })],
+        agents: [expect.objectContaining({ sessionId: 'agent-1', state: 'delivery-uncertain' })],
+        turns: [expect.objectContaining({
+          id: turn.id,
+          state: 'delivery-uncertain',
+          errorCode: 'turn-interrupt-failed',
+          providerTurnId: 'provider-turn-after-restart',
+        })],
+      });
+    } finally {
+      await restartedRuntime?.dispose();
+      await restartedStore?.close();
+      await first.runtime.dispose('process-loss');
+      if (!firstStoreClosed) await first.store.close();
+    }
+  });
+
   it('terminalizes queued successors when cancellation cannot reach an unavailable Provider', async () => {
     const h = await harness();
     try {

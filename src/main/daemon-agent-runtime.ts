@@ -2252,7 +2252,11 @@ export class DaemonAgentRuntime {
 
   private isInterruptPending(turn: DaemonTurn): boolean {
     return turn.state === 'delivery-uncertain'
-      && (turn.errorCode?.startsWith('interrupt-') === true || turn.errorCode === 'cancel-provider-unavailable');
+      && (
+        turn.errorCode?.startsWith('interrupt-') === true
+        || turn.errorCode === 'turn-interrupt-failed'
+        || turn.errorCode === 'cancel-provider-unavailable'
+      );
   }
 
   private enqueueProviderLifecycleOperation(

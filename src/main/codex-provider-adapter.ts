@@ -1036,13 +1036,17 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const state = sessionId ? this.sessions.get(sessionId) : undefined;
     if (method === 'error') {
       const error = asObject(params.error);
+      const message = sanitizeProviderDiagnostic(
+        asString(error?.message) ?? 'Codex reported an unknown error.',
+      ).text;
+      if (state && params.willRetry !== true) {
+        this.clearActiveTurn(state, new Error(message));
+      }
       this.emit({
         kind: 'provider-error',
         ...(sessionId ? { sessionId } : {}),
         code: 'codex-turn-error',
-        message: sanitizeProviderDiagnostic(
-          asString(error?.message) ?? 'Codex reported an unknown error.',
-        ).text,
+        message,
         recoverable: params.willRetry === true,
       });
       return;
@@ -1084,9 +1088,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
         break;
       case 'systemError':
+        this.clearActiveTurn(state, new Error('Codex entered a terminal system error state.'));
         this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'failed' });
         break;
       case 'notLoaded':
+        this.clearActiveTurn(state, new Error('Codex unloaded the active thread.'));
         this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'interrupted' });
         break;
       default:
@@ -1106,8 +1112,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         providerTurnId,
         startedEmitted: false,
       };
+    } else if (this.turnMatchesActive(state.activeTurn, turn, providerTurnId)) {
+      state.activeTurn.providerTurnId ??= providerTurnId;
     } else {
-      state.activeTurn.providerTurnId = providerTurnId;
+      return;
     }
     this.dispatchPendingInterrupt(state, state.activeTurn);
     this.emitTurnStarted(state, state.activeTurn);
@@ -1154,6 +1162,26 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return true;
   }
 
+  private clearActiveTurn(state: SessionState, error: Error): void {
+    const active = state.activeTurn;
+    if (!active) return;
+    this.settlePendingInterrupt(active, error);
+    if (state.activeTurn === active) state.activeTurn = undefined;
+  }
+
+  private turnMatchesActive(
+    active: NonNullable<SessionState['activeTurn']>,
+    turn: JsonObject,
+    providerTurnId: string,
+  ): boolean {
+    const commandId = this.commandIdFromTurn(turn);
+    if (active.providerTurnId) {
+      return active.providerTurnId === providerTurnId
+        && (commandId === undefined || commandId === active.commandId);
+    }
+    return commandId === active.commandId;
+  }
+
   private emitTurnStarted(state: SessionState, active: NonNullable<SessionState['activeTurn']>): void {
     if (active.startedEmitted) return;
     active.startedEmitted = true;
@@ -1171,7 +1199,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const providerTurnId = asString(turn?.id);
     if (!providerTurnId) return;
     const active = state.activeTurn;
-    if (active) this.settlePendingInterrupt(active);
+    const matchingActive = active && this.turnMatchesActive(active, turn, providerTurnId)
+      ? active
+      : undefined;
+    if (matchingActive) {
+      matchingActive.providerTurnId ??= providerTurnId;
+      this.settlePendingInterrupt(matchingActive);
+    }
     for (const itemValue of asArray(turn?.items)) {
       this.handleItem(state, providerTurnId, asObject(itemValue), true);
     }
@@ -1182,12 +1216,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.emit({
       kind: 'turn-finished',
       sessionId: state.sessionId,
-      turnId: active?.localTurnId ?? `provider:${providerTurnId}`,
+      turnId: matchingActive?.localTurnId ?? `provider:${providerTurnId}`,
       outcome,
       ...(summary ? { summary } : {}),
       ...(errorCode ? { errorCode } : {}),
     });
-    if (state.activeTurn?.providerTurnId === providerTurnId || state.activeTurn === active) state.activeTurn = undefined;
+    if (active && !matchingActive) return;
+    if (state.activeTurn === matchingActive) state.activeTurn = undefined;
     this.emit({
       kind: 'session-state',
       sessionId: state.sessionId,
