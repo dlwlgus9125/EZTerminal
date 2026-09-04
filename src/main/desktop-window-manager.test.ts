@@ -42,40 +42,37 @@ describe('DesktopWindowManager window-name resolution', () => {
     expect(manager.resolveWindowName('unknown')).toBeNull();
   });
 
-  it('hides the main window on close unless an explicit app quit is already in progress', () => {
+  it('delegates main close policy unless an explicit app quit is already in progress', () => {
     const manager = Object.create(DesktopWindowManager.prototype) as DesktopWindowManager;
     let quitting = false;
-    const quitApp = vi.fn();
+    const handleMainWindowClose = vi.fn();
     const handlers = new Map<string, (event: { preventDefault: () => void }) => void>();
-    const hide = vi.fn();
     const window = {
       on: vi.fn((event: string, listener: (value: { preventDefault: () => void }) => void) => {
         handlers.set(event, listener);
       }),
-      hide,
     } as unknown as BrowserWindow;
     const internals = manager as unknown as {
       options: {
         isAppQuitting: () => boolean;
-        quitApp: () => void;
+        handleMainWindowClose: typeof handleMainWindowClose;
       };
       configureWindow: (window: BrowserWindow, kind: 'main') => void;
     };
-    internals.options = { isAppQuitting: () => quitting, quitApp };
+    internals.options = { isAppQuitting: () => quitting, handleMainWindowClose };
     internals.configureWindow = vi.fn();
     manager.configureMainWindow(window);
 
     const preventDefault = vi.fn();
     handlers.get('close')?.({ preventDefault });
-    expect(preventDefault).toHaveBeenCalledOnce();
-    expect(hide).toHaveBeenCalledOnce();
-    expect(quitApp).not.toHaveBeenCalled();
+    expect(handleMainWindowClose).toHaveBeenCalledOnce();
+    expect(handleMainWindowClose).toHaveBeenCalledWith(window, { preventDefault });
 
     quitting = true;
     preventDefault.mockClear();
-    hide.mockClear();
+    handleMainWindowClose.mockClear();
     handlers.get('close')?.({ preventDefault });
     expect(preventDefault).not.toHaveBeenCalled();
-    expect(hide).not.toHaveBeenCalled();
+    expect(handleMainWindowClose).not.toHaveBeenCalled();
   });
 });

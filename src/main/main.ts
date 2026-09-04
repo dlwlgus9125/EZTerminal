@@ -192,7 +192,9 @@ import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import { AppUpdateService } from './app-update-service';
 import { resolveNativeHostPath } from './native-host-path';
-import { ProcessGuardian } from './process-guardian';
+import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
+import { DaemonLifecycleSettingsController } from './daemon-lifecycle-settings';
+import { DaemonRuntime } from './daemon-runtime';
 import { ElectronUpdateHttpClient } from './app-update-network';
 import {
   UiPreferencesPatchSchema,
@@ -256,6 +258,9 @@ if (process.env.EZTERMINAL_USER_DATA_DIR) {
   app.setPath('userData', process.env.EZTERMINAL_USER_DATA_DIR);
 }
 
+const DAEMON_START_ARGUMENT = '--daemon';
+const startedAsDaemon = process.argv.includes(DAEMON_START_ARGUMENT);
+
 // Production is single-instance so a second desktop cannot silently steal the
 // fixed remote/proxy ports or present a different pairing token. Test harnesses
 // that intentionally launch isolated instances must opt out explicitly.
@@ -266,6 +271,10 @@ if (!allowMultipleInstances) {
     app.quit();
   } else {
     app.on('second-instance', () => {
+      if (daemonRuntime) {
+        daemonRuntime.openMainWindow();
+        return;
+      }
       const mainWindow = mainWindowRef ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
       if (!mainWindow || mainWindow.isDestroyed()) return;
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -404,6 +413,7 @@ let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
 // Deep Module owning remote listener, desktop-control, IPC, and cleanup lifecycle.
 let desktopRuntime: DesktopRuntime | null = null;
+let daemonRuntime: DaemonRuntime | null = null;
 
 // OpenClaw reverse proxy (openclaw-management M4) — started lazily by the
 // first authenticated chat-ticket request, independently of the core bridge.
@@ -555,7 +565,7 @@ function configureRecentPanelInput(
   });
 }
 
-const createWindow = (): void => {
+const createWindow = (): BrowserWindow => {
   const rendererCrashRecovery = new RendererCrashRecovery();
   let crashFailureDialogOpen = false;
   const mainWindow = new BrowserWindow({
@@ -676,6 +686,7 @@ const createWindow = (): void => {
   // ── Per-command MessagePort brokering (`docs/design/terminal-runtime.md`) ──
   // The app-lifetime run-command listener is installed once after the broker
   // is constructed. Window recreation must not register global IPC again.
+  return mainWindow;
 };
 
 app.on('ready', async () => {
@@ -713,7 +724,14 @@ app.on('ready', async () => {
     ),
     getMainWindow: () => mainWindowRef,
     isAppQuitting: () => appIsQuitting,
-    quitApp: () => app.quit(),
+    handleMainWindowClose: (window, event) => {
+      if (daemonRuntime) {
+        daemonRuntime.handleMainWindowClose(event, window);
+        return;
+      }
+      event.preventDefault();
+      app.quit();
+    },
     openExternal: openExternalForUser,
     onWindowConfigured: (window, kind, name) => configureRecentPanelInput(window, kind, name),
     reportError: (context, error) => {
@@ -739,6 +757,59 @@ app.on('ready', async () => {
   const layoutStore = new LayoutStore(path.join(app.getPath('userData')));
   const storeReady = layoutStore.init().catch((err) => {
     console.error('[main] layout store init failed:', err);
+  });
+  const loginItemIdentity = {
+    path: process.execPath,
+    args: app.isPackaged
+      ? [DAEMON_START_ARGUMENT]
+      : [app.getAppPath(), DAEMON_START_ARGUMENT],
+  };
+  const lifecycleSettings = new DaemonLifecycleSettingsController({
+    store: {
+      read: async () => {
+        await storeReady;
+        return layoutStore.getDaemonLifecycleSettings();
+      },
+      write: async (settings) => {
+        await storeReady;
+        await layoutStore.setDaemonLifecycleSettings(settings);
+      },
+    },
+    loginItem: {
+      readEnabled: () => {
+        const status = app.getLoginItemSettings(loginItemIdentity);
+        return status.openAtLogin && status.executableWillLaunchAtLogin;
+      },
+      writeEnabled: (enabled) => {
+        app.setLoginItemSettings({
+          ...loginItemIdentity,
+          openAtLogin: enabled,
+          enabled,
+        });
+      },
+    },
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
+  const daemonProcesses = new ProcessResourceGuardian({
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
+  daemonRuntime = new DaemonRuntime({
+    settings: lifecycleSettings,
+    processes: daemonProcesses,
+    getMainWindow: () => mainWindowRef,
+    createMainWindow: createWindow,
+    requestAppQuit: () => app.quit(),
+  });
+  const daemonRuntimeReady = daemonRuntime.initialize().catch((error) => {
+    console.error('[main] daemon lifecycle settings failed to initialize:', error);
+    mainLog?.line(`daemon lifecycle settings failed to initialize: ${String(error)}`);
+    return daemonRuntime!.settingsSnapshot();
   });
   // Replace the system-language bootstrap menu with the persisted choice as
   // soon as settings are available. The renderer does not need to be mounted.
@@ -1220,6 +1291,28 @@ app.on('ready', async () => {
   ipcMain.handle('settings:set-startup', async (_event, pref: StartupPref) => {
     await storeReady;
     await layoutStore.setStartup(pref);
+  });
+  ipcMain.handle('settings:get-daemon-lifecycle', async () => {
+    await daemonRuntimeReady;
+    return daemonRuntime!.settingsSnapshot();
+  });
+  ipcMain.handle('settings:set-daemon-lifecycle', async (_event, value: unknown) => {
+    await daemonRuntimeReady;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error('Invalid daemon lifecycle settings.');
+    }
+    const candidate = value as Record<string, unknown>;
+    if (
+      Object.keys(candidate).some((key) => key !== 'keepRunning' && key !== 'startAtLogin')
+      || ('keepRunning' in candidate && typeof candidate.keepRunning !== 'boolean')
+      || ('startAtLogin' in candidate && typeof candidate.startAtLogin !== 'boolean')
+    ) {
+      throw new Error('Invalid daemon lifecycle settings.');
+    }
+    return daemonRuntime!.updateSettings({
+      ...('keepRunning' in candidate ? { keepRunning: candidate.keepRunning as boolean } : {}),
+      ...('startAtLogin' in candidate ? { startAtLogin: candidate.startAtLogin as boolean } : {}),
+    });
   });
   ipcMain.handle('settings:get-ui-preferences', async () => {
     await storeReady;
@@ -2065,6 +2158,29 @@ app.on('ready', async () => {
     await storeReady;
     if (params && typeof params === 'object') await layoutStore.setEffectParams(params);
   });
+  let terminatingInterpreterGroupId: string | null = null;
+  daemonProcesses.register({
+    id: 'terminal-runtime',
+    gracefulStop: async () => {
+      terminatingInterpreterGroupId = interpreterGroupId;
+      await broker?.shutdown(2_800);
+      await scriptHostRegistry?.killAll();
+    },
+    hasStopped: () => interpreter === null,
+    forceStop: async () => {
+      const groupId = terminatingInterpreterGroupId ?? interpreterGroupId;
+      if (groupId && processGuardian) {
+        await processGuardian.terminateGroup(groupId);
+      } else {
+        try {
+          interpreter?.kill();
+        } catch {
+          // The interpreter already exited.
+        }
+      }
+      await scriptHostRegistry?.killAll();
+    },
+  });
   // The first quit is held while every owned service drains exactly once;
   // completion or a bounded timeout reissues app.quit().
   const gracefulShutdown = new GracefulShutdownCoordinator({
@@ -2091,25 +2207,8 @@ app.on('ready', async () => {
         },
       },
       {
-        name: 'terminal runtime',
-        run: async () => {
-          const terminatingGroupId = interpreterGroupId;
-          try {
-            await broker?.shutdown(2_800);
-          } catch (error) {
-            console.error('[main] interpreter graceful drain failed:', error);
-          }
-          if (terminatingGroupId && processGuardian) {
-            await processGuardian.terminateGroup(terminatingGroupId);
-          } else {
-            try {
-              interpreter?.kill();
-            } catch {
-              // The interpreter already exited.
-            }
-          }
-          await scriptHostRegistry?.killAll();
-        },
+        name: 'daemon-owned processes',
+        run: () => daemonRuntime?.shutdown(),
       },
       {
         name: 'session surface authority',
@@ -2150,7 +2249,6 @@ app.on('ready', async () => {
       { name: 'agent control server', run: () => agentControlServer?.stop() },
       { name: 'managed merge', run: () => managedMergeService?.dispose() },
       { name: 'agent orchestration', run: () => agentOrchestrationService?.dispose() },
-      { name: 'ACP worker runtime', run: () => acpWorkerRuntime?.dispose() },
       { name: 'agent coordination', run: () => agentCoordinationService?.dispose() },
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
       { name: 'agent history', run: () => agentHistoryService.dispose() },
@@ -2510,6 +2608,11 @@ app.on('ready', async () => {
         ? { ok: true }
         : { ok: false, message: result.message };
     },
+  });
+  daemonProcesses.register({
+    id: 'provider-adapter-runtime',
+    gracefulStop: () => acpWorkerRuntime?.dispose(),
+    forceStop: () => acpWorkerRuntime?.dispose(),
   });
   const validationRunner = new AgentValidationRunner(broker);
   managedMergeService = new ManagedMergeService({
@@ -3526,6 +3629,9 @@ app.on('ready', async () => {
       ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
       ?? null
     ),
+    openMainWindow: () => {
+      daemonRuntime?.openMainWindow();
+    },
   });
   desktopRuntime = runtime;
   void runtime.initialize().catch(() => undefined);
@@ -3724,22 +3830,29 @@ app.on('ready', async () => {
     }
   });
 
-  createWindow();
+  const daemonSettings = await daemonRuntimeReady;
+  if (startedAsDaemon && !daemonSettings.keepRunning) {
+    // A stale manually-invoked/OS login argument must not create a surprise
+    // background runtime after the preference has been disabled.
+    app.quit();
+    return;
+  }
+  if (!startedAsDaemon) createWindow();
   if (process.env.EZTERMINAL_DISABLE_UPDATE_CHECK !== '1') {
     void appUpdateService.check();
   }
 });
 
-// Quit when all windows are closed, except on macOS.
+// A windowless Windows main process exists only for the opt-in user daemon.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') {
-    app.quit();
-  }
+  if (process.platform === 'darwin') return;
+  if (process.platform === 'win32' && daemonRuntime?.shouldKeepRunning()) return;
+  app.quit();
 });
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    daemonRuntime?.openMainWindow() ?? createWindow();
     return;
   }
   const mainWindow = mainWindowRef;

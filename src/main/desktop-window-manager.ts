@@ -45,7 +45,7 @@ export interface DesktopWindowManagerOptions {
   readonly isAllowedNavigation: (url: string) => boolean;
   readonly getMainWindow: () => BrowserWindow | null;
   readonly isAppQuitting: () => boolean;
-  readonly quitApp: () => void;
+  readonly handleMainWindowClose: (window: BrowserWindow, event: ElectronEvent) => void;
   readonly openExternal?: (url: string) => Promise<void>;
   readonly onWindowConfigured?: (
     window: BrowserWindow,
@@ -79,8 +79,7 @@ export class DesktopWindowManager {
     this.configureWindow(window, 'main');
     window.on('close', (event) => {
       if (this.options.isAppQuitting()) return;
-      event.preventDefault();
-      window.hide();
+      this.options.handleMainWindowClose(window, event);
     });
   }
 
@@ -140,7 +139,9 @@ export class DesktopWindowManager {
         if (window.isMaximized()) window.unmaximize();
         else window.maximize();
       } else if (this.windowKinds.get(window) === 'main') {
-        window.hide();
+        // Use the same native close event as the title-bar button. DaemonRuntime
+        // decides between an orderly Quit and the opt-in keep-running hide.
+        window.close();
       } else {
         window.close();
       }

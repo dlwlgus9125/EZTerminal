@@ -146,6 +146,12 @@ import type {
   DesktopWindowState,
   DesktopWindowStatesSnapshot,
 } from './desktop-window';
+import type { DaemonRuntimeSettings } from './daemon-protocol';
+
+export type DaemonLifecycleSettings = Pick<
+  DaemonRuntimeSettings,
+  'keepRunning' | 'startAtLogin'
+>;
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -1484,6 +1490,12 @@ export interface EzTerminalDesktopApi {
   setUiPreferences: (preferences: UiPreferencesPatch) => Promise<UiPreferences>;
   /** Rebuild the native menu after Chromium reports a system-language change. */
   refreshNativeMenuLocale: () => Promise<void>;
+  /** Electron-main daemon lifecycle; start-at-login implies keep-running. */
+  getDaemonLifecycleSettings: () => Promise<DaemonLifecycleSettings>;
+  /** OS login registration is verified before the returned state is persisted. */
+  setDaemonLifecycleSettings: (
+    settings: Partial<DaemonLifecycleSettings>,
+  ) => Promise<DaemonLifecycleSettings>;
   /** Native Ctrl+Tab/escape/release input captured before Chromium consumes it. */
   onRecentPanelInput: (listener: (event: RecentPanelInputEvent) => void) => () => void;
   /** Desktop renderer seam used by `worktree open` to select a fresh terminal

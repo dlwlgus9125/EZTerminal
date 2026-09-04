@@ -2,9 +2,9 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { ProcessGuardian } from './process-guardian';
+import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
 
 interface GuardianCommand {
   readonly id: string;
@@ -109,5 +109,73 @@ describe('ProcessGuardian', () => {
       spawnProcess: () => child.asChildProcess(),
     })).rejects.toThrow(/wrong owner process/);
     child.finish();
+  });
+});
+
+describe('ProcessResourceGuardian', () => {
+  it('terminates each registered process once across repeated stop requests', async () => {
+    const gracefulStop = vi.fn(async () => undefined);
+    const forceStop = vi.fn(async () => undefined);
+    const guardian = new ProcessResourceGuardian();
+    guardian.register({
+      id: 'terminal',
+      gracefulStop,
+      forceStop,
+      hasStopped: () => false,
+    });
+
+    await Promise.all([guardian.stopAll(), guardian.stopAll(), guardian.stopAll('second-reason')]);
+
+    expect(gracefulStop).toHaveBeenCalledOnce();
+    expect(gracefulStop).toHaveBeenCalledWith('app-quit');
+    expect(forceStop).toHaveBeenCalledOnce();
+    expect(forceStop).toHaveBeenCalledWith('app-quit');
+  });
+
+  it('uses the bounded force path when graceful shutdown hangs', async () => {
+    vi.useFakeTimers();
+    const forceStop = vi.fn(async () => undefined);
+    const reportError = vi.fn();
+    const guardian = new ProcessResourceGuardian({
+      gracefulTimeoutMs: 25,
+      forceTimeoutMs: 25,
+      reportError,
+    });
+    guardian.register({
+      id: 'provider',
+      gracefulStop: () => new Promise<void>(() => undefined),
+      forceStop,
+    });
+
+    const stopping = guardian.stopAll();
+    await vi.advanceTimersByTimeAsync(25);
+    await stopping;
+
+    expect(forceStop).toHaveBeenCalledOnce();
+    expect(reportError).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('immediately owns a process registered during shutdown', async () => {
+    let release!: () => void;
+    const firstGraceful = new Promise<void>((resolve) => { release = resolve; });
+    const lateGraceful = vi.fn(async () => undefined);
+    const guardian = new ProcessResourceGuardian();
+    guardian.register({
+      id: 'first',
+      gracefulStop: () => firstGraceful,
+      forceStop: vi.fn(),
+    });
+
+    const stopping = guardian.stopAll();
+    guardian.register({
+      id: 'late',
+      gracefulStop: lateGraceful,
+      forceStop: vi.fn(),
+    });
+    release();
+    await stopping;
+
+    expect(lateGraceful).toHaveBeenCalledOnce();
   });
 });

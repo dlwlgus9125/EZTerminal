@@ -281,6 +281,10 @@ export const SettingsSchema = z.object({
   // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
   // always-on behavior) in layout-store.
   remoteEnabled: z.boolean().optional(),
+  // Electron main remains alive without a renderer only when explicitly
+  // enabled. Runtime enforces startAtLogin => keepRunning.
+  keepRunning: z.boolean().optional(),
+  startAtLogin: z.boolean().optional(),
   // OpenClaw desktop visibility mode (openclaw-stabilization M2) — absent
   // defaults to 'auto' in layout-store (see OpenClawModeSchema above).
   openclawMode: OpenClawModeSchema.optional(),

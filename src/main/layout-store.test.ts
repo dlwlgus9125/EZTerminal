@@ -406,3 +406,35 @@ describe('LayoutStore — openclawMode (openclaw-stabilization M2)', () => {
     expect(await store.getOpenClawMode()).toBe('off');
   });
 });
+
+describe('LayoutStore daemon lifecycle settings', () => {
+  it('defaults to explicit Quit and persists lifecycle state without clobbering UI state', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getDaemonLifecycleSettings()).toEqual({
+      keepRunning: false,
+      startAtLogin: false,
+    });
+
+    await store.setTheme('light');
+    await store.setDaemonLifecycleSettings({ keepRunning: true, startAtLogin: true });
+
+    expect(await store.getDaemonLifecycleSettings()).toEqual({
+      keepRunning: true,
+      startAtLogin: true,
+    });
+    expect(await store.getTheme()).toBe('light');
+  });
+
+  it('normalizes start-at-login off when keep-running is disabled', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+
+    await store.setDaemonLifecycleSettings({ keepRunning: false, startAtLogin: true });
+
+    expect(await store.getDaemonLifecycleSettings()).toEqual({
+      keepRunning: false,
+      startAtLogin: false,
+    });
+  });
+});

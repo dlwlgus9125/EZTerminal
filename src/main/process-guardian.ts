@@ -4,6 +4,155 @@ import { createInterface, type Interface as ReadlineInterface } from 'node:readl
 
 const DEFAULT_READY_TIMEOUT_MS = 5_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 5_000;
+const DEFAULT_RESOURCE_GRACE_MS = 3_000;
+const DEFAULT_RESOURCE_FORCE_MS = 1_000;
+
+export interface GuardedProcessResource {
+  /** Stable diagnostic identity. Duplicate live ids are rejected. */
+  readonly id: string;
+  /** Ask the resource to drain protocol state and stop accepting work. */
+  readonly gracefulStop: (reason: string) => void | Promise<void>;
+  /** Terminate the underlying process or native process group. */
+  readonly forceStop: (reason: string) => void | Promise<void>;
+  /** Optional observation used when gracefulStop only drains an outer broker. */
+  readonly hasStopped?: () => boolean;
+}
+
+export interface ProcessResourceGuardianOptions {
+  readonly gracefulTimeoutMs?: number;
+  readonly forceTimeoutMs?: number;
+  readonly reportError?: (context: string, error: unknown) => void;
+}
+
+interface GuardedProcessRecord {
+  readonly resource: GuardedProcessResource;
+  stop: Promise<void> | null;
+}
+
+/**
+ * App-level registry for terminal/provider process owners.
+ *
+ * The native ProcessGuardian below remains the crash-grade Windows Job Object
+ * boundary. This registry supplies deterministic graceful-then-force shutdown
+ * on an ordinary Quit, including resources registered while shutdown is
+ * already in progress. Every resource's stop pipeline is created at most once.
+ */
+export class ProcessResourceGuardian {
+  private readonly records = new Map<string, GuardedProcessRecord>();
+  private readonly gracefulTimeoutMs: number;
+  private readonly forceTimeoutMs: number;
+  private stopPromise: Promise<void> | null = null;
+  private stopping = false;
+  private stopReason = 'app-quit';
+
+  constructor(private readonly options: ProcessResourceGuardianOptions = {}) {
+    this.gracefulTimeoutMs = Math.max(1, options.gracefulTimeoutMs ?? DEFAULT_RESOURCE_GRACE_MS);
+    this.forceTimeoutMs = Math.max(1, options.forceTimeoutMs ?? DEFAULT_RESOURCE_FORCE_MS);
+  }
+
+  register(resource: GuardedProcessResource): () => void {
+    if (!resource.id.trim()) throw new Error('Guarded process resource id is required.');
+    if (this.records.has(resource.id)) {
+      throw new Error(`Guarded process resource already registered: ${resource.id}`);
+    }
+    const record: GuardedProcessRecord = { resource, stop: null };
+    this.records.set(resource.id, record);
+    if (this.stopping) {
+      // A process that appears during shutdown must join the same ownership
+      // boundary instead of escaping because the initial snapshot was taken.
+      record.stop = this.stopRecord(record, this.stopReason);
+    }
+    return () => {
+      if (!record.stop && !this.stopping && this.records.get(resource.id) === record) {
+        this.records.delete(resource.id);
+      }
+    };
+  }
+
+  stopAll(reason = 'app-quit'): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopping = true;
+    this.stopReason = reason;
+    this.stopPromise = this.drain(reason);
+    return this.stopPromise;
+  }
+
+  private async drain(reason: string): Promise<void> {
+    let drained = false;
+    while (!drained) {
+      const records = [...this.records.values()];
+      for (const record of records) {
+        record.stop ??= this.stopRecord(record, reason);
+      }
+      await Promise.all(records.map((record) => record.stop));
+      const current = [...this.records.values()];
+      drained = current.length === records.length
+        && current.every((record) => records.includes(record));
+    }
+  }
+
+  private async stopRecord(record: GuardedProcessRecord, reason: string): Promise<void> {
+    const { resource } = record;
+    let gracefulCompleted = false;
+    try {
+      gracefulCompleted = await this.runBounded(
+        () => resource.gracefulStop(reason),
+        this.gracefulTimeoutMs,
+      );
+    } catch (error) {
+      this.report(`graceful stop failed for "${resource.id}"`, error);
+    }
+
+    let stopped = false;
+    if (gracefulCompleted) {
+      try {
+        stopped = resource.hasStopped?.() ?? true;
+      } catch (error) {
+        this.report(`stop observation failed for "${resource.id}"`, error);
+      }
+    }
+    if (stopped) return;
+
+    try {
+      const forceCompleted = await this.runBounded(
+        () => resource.forceStop(reason),
+        this.forceTimeoutMs,
+      );
+      if (!forceCompleted) {
+        this.report(
+          `force stop timed out for "${resource.id}"`,
+          new Error(`Force stop exceeded ${String(this.forceTimeoutMs)}ms.`),
+        );
+      }
+    } catch (error) {
+      this.report(`force stop failed for "${resource.id}"`, error);
+    }
+  }
+
+  private async runBounded(
+    action: () => void | Promise<void>,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const completed = Promise.resolve().then(action).then(() => true);
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    try {
+      return await Promise.race([completed, timedOut]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
+  }
+
+  private report(context: string, error: unknown): void {
+    try {
+      this.options.reportError?.(context, error);
+    } catch {
+      // Diagnostics cannot be allowed to strand child processes.
+    }
+  }
+}
 
 interface GuardianReady {
   readonly type: 'ready';

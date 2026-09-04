@@ -45,6 +45,12 @@ import {
   DEFAULT_TERMINAL_PASTE_PREFERENCES,
   type TerminalPastePreferences,
 } from '../shared/terminal-clipboard';
+import type { DaemonRuntimeSettings } from '../shared/daemon-protocol';
+
+type DaemonLifecycleSettings = Pick<
+  DaemonRuntimeSettings,
+  'keepRunning' | 'startAtLogin'
+>;
 
 const LAYOUT_FILE = 'layout.json';
 const PRESETS_FILE = 'presets.json';
@@ -307,6 +313,27 @@ export class LayoutStore {
 
   async setRemoteEnabled(remoteEnabled: boolean): Promise<void> {
     await this.updateSettings((current) => ({ ...current, remoteEnabled }), 'remoteEnabled');
+  }
+
+  async getDaemonLifecycleSettings(): Promise<DaemonLifecycleSettings> {
+    const settings = await this.loadSettingsFile();
+    const keepRunning = settings.keepRunning ?? false;
+    return {
+      keepRunning,
+      startAtLogin: keepRunning && (settings.startAtLogin ?? false),
+    };
+  }
+
+  async setDaemonLifecycleSettings(settings: DaemonLifecycleSettings): Promise<void> {
+    const keepRunning = settings.keepRunning === true;
+    await this.updateSettings(
+      (current) => ({
+        ...current,
+        keepRunning,
+        startAtLogin: keepRunning && settings.startAtLogin === true,
+      }),
+      'daemonLifecycleSettings',
+    );
   }
 
   async getOpenClawMode(): Promise<OpenClawMode> {

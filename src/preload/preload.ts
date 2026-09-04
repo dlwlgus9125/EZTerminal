@@ -368,6 +368,10 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('desktop-window:get-states'),
   performWindowAction: (action: DesktopWindowAction): Promise<void> =>
     ipcRenderer.invoke('desktop-window:perform-action', action),
+  getDaemonLifecycleSettings: () =>
+    ipcRenderer.invoke('settings:get-daemon-lifecycle'),
+  setDaemonLifecycleSettings: (settings) =>
+    ipcRenderer.invoke('settings:set-daemon-lifecycle', settings),
   onWindowStateChanged: (listener: (state: DesktopWindowState) => void): (() => void) => {
     const handler = (_event: unknown, state: DesktopWindowState): void => listener(state);
     ipcRenderer.on('desktop-window:state-changed', handler);
