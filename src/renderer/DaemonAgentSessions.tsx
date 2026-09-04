@@ -67,6 +67,23 @@ const STATE_RANK: Readonly<Record<DaemonAgent['state'], number>> = {
   archived: 9,
 };
 
+const PROJECTION_ENTITY_TYPES = new Set([
+  'project',
+  'workspace',
+  'session',
+  'agent',
+  'relation',
+  'provider',
+]);
+
+/** Events whose payload can change the Project → Workspace → Session list. */
+export function daemonEventAffectsAgentSessionProjection(event: DaemonEvent): boolean {
+  if (event.kind === 'entity.upserted') {
+    return PROJECTION_ENTITY_TYPES.has(event.payload.entityType);
+  }
+  return event.kind === 'entity.archived' || event.kind === 'runtime.recovery';
+}
+
 function timestamp(value: string): number {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -312,6 +329,7 @@ export function DaemonAgentSessions({
   const mountedRef = useRef(false);
   const lifecycleGenerationRef = useRef(0);
   const snapshotRef = useRef<DaemonSnapshot | null>(null);
+  const eventCursorRef = useRef<Pick<DaemonSnapshot, 'revision' | 'eventSequence'> | null>(null);
   const requiredEventSequenceRef = useRef(0);
   const requiredRevisionRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
@@ -343,6 +361,15 @@ export function DaemonAgentSessions({
           || next.revision < requiredRevisionRef.current
         ) throw new Error('Daemon snapshot has not reached the observed event.');
         snapshotRef.current = next;
+        const cursor = eventCursorRef.current;
+        if (!cursor || next.eventSequence > cursor.eventSequence) {
+          eventCursorRef.current = {
+            revision: next.revision,
+            eventSequence: next.eventSequence,
+          };
+        } else if (next.eventSequence === cursor.eventSequence && next.revision > cursor.revision) {
+          eventCursorRef.current = { ...cursor, revision: next.revision };
+        }
         setSnapshot(next);
         setError(null);
       })
@@ -376,16 +403,29 @@ export function DaemonAgentSessions({
     try {
       stop = access.observeEvents((event: DaemonEvent) => {
         if (lifecycleGenerationRef.current !== generation) return;
-        requiredEventSequenceRef.current = Math.max(requiredEventSequenceRef.current, event.sequence);
-        requiredRevisionRef.current = Math.max(requiredRevisionRef.current, event.revision);
-        const current = snapshotRef.current;
-        if (!current) {
-          void refresh('background');
+        const cursor = eventCursorRef.current;
+        if (!cursor) {
+          requiredEventSequenceRef.current = Math.max(requiredEventSequenceRef.current, event.sequence);
+          requiredRevisionRef.current = Math.max(requiredRevisionRef.current, event.revision);
+          void refresh('recovery');
           return;
         }
-        const continuity = classifyDaemonEvent(current, event);
+        const continuity = classifyDaemonEvent(cursor, event);
         if (continuity === 'duplicate') return;
-        void refresh(continuity === 'next' ? 'background' : 'recovery');
+        if (continuity === 'next') {
+          eventCursorRef.current = {
+            revision: event.revision,
+            eventSequence: event.sequence,
+          };
+          if (!daemonEventAffectsAgentSessionProjection(event)) return;
+          requiredEventSequenceRef.current = Math.max(requiredEventSequenceRef.current, event.sequence);
+          requiredRevisionRef.current = Math.max(requiredRevisionRef.current, event.revision);
+          void refresh(event.kind === 'runtime.recovery' ? 'recovery' : 'background');
+          return;
+        }
+        requiredEventSequenceRef.current = Math.max(requiredEventSequenceRef.current, event.sequence);
+        requiredRevisionRef.current = Math.max(requiredRevisionRef.current, event.revision);
+        void refresh('recovery');
       }, onObservationError);
     } catch {
       onObservationError();

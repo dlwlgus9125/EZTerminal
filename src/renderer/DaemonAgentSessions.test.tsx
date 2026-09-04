@@ -111,6 +111,42 @@ function daemonEvent(sequence: number, revision: number): DaemonEvent {
   };
 }
 
+function transcriptEvent(sequence: number, revision: number): DaemonEvent {
+  return {
+    protocolVersion: DAEMON_PROTOCOL_VERSION,
+    eventId: `transcript-${sequence}`,
+    sequence,
+    revision,
+    occurredAt: NOW,
+    kind: 'transcript.appended',
+    payload: { sessionId: 'lead', fromSequence: 1, toSequence: sequence },
+  };
+}
+
+function turnEvent(sequence: number, revision: number): DaemonEvent {
+  return {
+    protocolVersion: DAEMON_PROTOCOL_VERSION,
+    eventId: `turn-${sequence}`,
+    sequence,
+    revision,
+    occurredAt: NOW,
+    kind: 'entity.upserted',
+    payload: { entityType: 'turn', entityId: 'turn-1' },
+  };
+}
+
+function commandEvent(sequence: number, revision: number): DaemonEvent {
+  return {
+    protocolVersion: DAEMON_PROTOCOL_VERSION,
+    eventId: `command-${sequence}`,
+    sequence,
+    revision,
+    occurredAt: NOW,
+    kind: 'command.changed',
+    payload: { commandId: 'command-1', state: 'applied' },
+  };
+}
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -235,6 +271,39 @@ describe('DaemonAgentSessions', () => {
     act(() => root.unmount());
     expect(stop).toHaveBeenCalledOnce();
     root = createRoot(container);
+  });
+
+  it('consumes contiguous transcript, turn, and command events without refreshing the projection', async () => {
+    let listener: ((event: DaemonEvent) => void) | undefined;
+    let resolveRelevant: ((value: DaemonSnapshot) => void) | undefined;
+    const relevantSnapshot = new Promise<DaemonSnapshot>((resolve) => { resolveRelevant = resolve; });
+    const getSnapshot = vi.fn()
+      .mockResolvedValueOnce(snapshotOf())
+      .mockImplementationOnce(() => relevantSnapshot);
+    await renderSessions({
+      getSnapshot,
+      observeEvents: (next) => {
+        listener = next;
+        return () => undefined;
+      },
+    });
+
+    act(() => {
+      listener?.(transcriptEvent(6, 3));
+      listener?.(turnEvent(7, 4));
+      listener?.(commandEvent(8, 4));
+    });
+    await flush();
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+    act(() => listener?.(daemonEvent(9, 5)));
+    await flush();
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain('Restoring the live Agent session list');
+
+    await act(async () => resolveRelevant?.(snapshotOf({ revision: 5, eventSequence: 9 })));
+    await flush();
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the existing projection while an event gap is recovered authoritatively', async () => {
