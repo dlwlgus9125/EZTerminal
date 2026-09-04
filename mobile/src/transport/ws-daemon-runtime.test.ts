@@ -230,4 +230,51 @@ describe('WsEzTerminalTransport daemon runtime v12', () => {
     });
     transport.disconnect();
   });
+
+  it('correlates bounded transcript pages and rejects a mismatched session response', async () => {
+    let id = 0;
+    const { createSocket, sockets } = socketFactory();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x', token: 'tok', createSocket, newId: () => `request-${++id}`,
+    });
+    sockets[0].message({ kind: 'auth-ok' });
+
+    const transcript = transport.getDaemonTranscript('agent-1', 4, 25);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'daemon-transcript-get',
+      requestId: 'request-1',
+      sessionId: 'agent-1',
+      afterSequence: 4,
+      limit: 25,
+    });
+    sockets[0].message({
+      kind: 'daemon-transcript',
+      requestId: 'request-1',
+      sessionId: 'agent-1',
+      items: [{
+        id: 'transcript-5',
+        sessionId: 'agent-1',
+        turnId: 'turn-1',
+        sequence: 5,
+        kind: 'assistant-message',
+        text: 'Done.',
+        isDelta: false,
+        isSensitive: false,
+        createdAt: NOW,
+      }],
+    });
+    await expect(transcript).resolves.toMatchObject([{
+      id: 'transcript-5', sessionId: 'agent-1', sequence: 5, text: 'Done.',
+    }]);
+
+    const mismatched = transport.getDaemonTranscript('agent-1');
+    sockets[0].message({
+      kind: 'daemon-transcript',
+      requestId: 'request-2',
+      sessionId: 'agent-2',
+      items: [],
+    });
+    await expect(mismatched).resolves.toEqual([]);
+    transport.disconnect();
+  });
 });

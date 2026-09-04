@@ -38,7 +38,7 @@ function adapter(overrides: Partial<AgentProviderAdapter> = {}): AgentProviderAd
   };
 }
 
-function snapshot(provider = {
+function snapshot(provider: DaemonSnapshot['providers'][number] = {
   id: 'codex',
   displayName: 'Codex',
   protocol: 'codex-app-server' as const,

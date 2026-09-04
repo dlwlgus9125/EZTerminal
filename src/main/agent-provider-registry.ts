@@ -7,6 +7,7 @@ import type {
 } from '../shared/daemon-protocol';
 import {
   validateProviderProbe,
+  type AgentProviderEvent,
   type AgentProviderAdapter,
   type ProviderModel,
   type ProviderProbeResult,
@@ -93,6 +94,18 @@ export class AgentProviderRegistry {
 
   providerIds(): readonly string[] {
     return [...this.adapters.keys()].sort();
+  }
+
+  subscribe(listener: (providerId: string, event: AgentProviderEvent) => void): () => void {
+    const unsubscribers = [...this.adapters.entries()].map(([providerId, adapter]) => (
+      adapter.subscribe((event) => listener(providerId, event))
+    ));
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      for (const unsubscribe of unsubscribers) unsubscribe();
+    };
   }
 
   async inspect(providerId: string, signal?: AbortSignal): Promise<ProviderRegistryResult<ProviderInspection>> {

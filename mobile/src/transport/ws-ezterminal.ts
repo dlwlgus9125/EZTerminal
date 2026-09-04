@@ -131,6 +131,7 @@ import {
   type DaemonEvent,
   type DaemonEventContinuity,
   type DaemonSnapshot,
+  type DaemonTranscriptItem,
 } from '../../../src/shared/daemon-protocol';
 import type {
   AgentHistorySessionPage,
@@ -472,6 +473,34 @@ function isDaemonCommandReceipt(
     && typeof value.error.code === 'string'
     && typeof value.error.message === 'string'
     && typeof value.error.retryable === 'boolean';
+}
+
+const DAEMON_TRANSCRIPT_KINDS = new Set([
+  'user-message',
+  'assistant-message',
+  'reasoning',
+  'tool-call',
+  'tool-result',
+  'approval',
+  'child-summary',
+  'notice',
+  'error',
+]);
+
+function isDaemonTranscriptItem(value: unknown, sessionId: string): value is DaemonTranscriptItem {
+  return isRecord(value)
+    && isBoundedString(value.id, 256)
+    && value.sessionId === sessionId
+    && isNonNegativeSafeInteger(value.sequence)
+    && typeof value.kind === 'string'
+    && DAEMON_TRANSCRIPT_KINDS.has(value.kind)
+    && typeof value.text === 'string'
+    && value.text.length <= 1_048_576
+    && typeof value.isDelta === 'boolean'
+    && typeof value.isSensitive === 'boolean'
+    && (value.turnId === undefined || isBoundedString(value.turnId, 256))
+    && (value.relatedSessionId === undefined || isBoundedString(value.relatedSessionId, 256))
+    && typeof value.createdAt === 'string';
 }
 
 function isFilePreviewStreamMetadata(value: unknown): value is FilePreviewStreamMetadata {
@@ -1226,6 +1255,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     string,
     (snapshot: DaemonSnapshot | null) => void
   >();
+  private readonly pendingDaemonTranscripts = new Map<
+    string,
+    {
+      readonly sessionId: string;
+      readonly resolve: (items: readonly DaemonTranscriptItem[]) => void;
+    }
+  >();
   private readonly pendingDaemonCommands = new Map<
     string,
     {
@@ -1791,6 +1827,30 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.requestDaemonSnapshot();
   }
 
+  getDaemonTranscript(
+    sessionId: string,
+    afterSequence = 0,
+    limit = 500,
+  ): Promise<readonly DaemonTranscriptItem[]> {
+    if (
+      !this.authed
+      || !isBoundedString(sessionId, 256)
+      || !isNonNegativeSafeInteger(afterSequence)
+      || !Number.isSafeInteger(limit)
+      || limit < 1
+      || limit > 2_000
+    ) return Promise.resolve([]);
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      if (!this.tryStartMapRequest(
+        { kind: 'daemon-transcript-get', requestId, sessionId, afterSequence, limit },
+        this.pendingDaemonTranscripts,
+        requestId,
+        { sessionId, resolve },
+      )) resolve([]);
+    });
+  }
+
   onDaemonRuntimeState(listener: (state: DaemonRuntimeViewState) => void): () => void {
     this.daemonRuntimeListeners.add(listener);
     listener(this.daemonRuntimeState);
@@ -1805,7 +1865,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Ref-counted because the shell and an open session surface may observe
    * the same stream independently. Only the 0→1 and 1→0 transitions reach
    * the wire, and the desired state is replayed after reconnect. */
-  setDaemonEventsSubscribed(subscribed: boolean): void {
+  setDaemonEventsSubscribed(subscribed: boolean): Promise<void> {
     const previous = this.daemonEventsRefcount;
     this.daemonEventsRefcount = subscribed
       ? previous + 1
@@ -1822,11 +1882,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         });
         this.queueDaemonSnapshotRefresh();
       }
-      return;
+      return Promise.resolve();
     }
     if (previous === 1 && this.daemonEventsRefcount === 0 && this.authed) {
       this.send({ kind: 'daemon-events-unsubscribe' });
     }
+    return Promise.resolve();
   }
 
   /** Commands are never replayed by the mobile client. The daemon's command
@@ -3629,6 +3690,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.pendingWorktrees.clear();
     for (const resolve of this.pendingDaemonSnapshots.values()) resolve(null);
     this.pendingDaemonSnapshots.clear();
+    for (const pending of this.pendingDaemonTranscripts.values()) pending.resolve([]);
+    this.pendingDaemonTranscripts.clear();
     for (const pending of this.pendingDaemonCommands.values()) {
       pending.resolve(this.daemonDeliveryUncertainReceipt(
         pending.commandId,
@@ -4349,6 +4412,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         pending.resolve(msg.receipt);
         if (msg.receipt.ok) this.queueDaemonSnapshotRefresh();
+        break;
+      }
+      case 'daemon-transcript': {
+        const pending = this.pendingDaemonTranscripts.get(msg.requestId);
+        this.pendingDaemonTranscripts.delete(msg.requestId);
+        if (!pending || msg.sessionId !== pending.sessionId || !Array.isArray(msg.items)) {
+          pending?.resolve([]);
+          break;
+        }
+        const items = msg.items.length <= 2_000
+          && msg.items.every((item) => isDaemonTranscriptItem(item, pending.sessionId))
+          ? msg.items
+          : [];
+        pending.resolve(items);
         break;
       }
       case 'daemon-event':
