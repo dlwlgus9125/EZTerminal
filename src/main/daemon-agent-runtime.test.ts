@@ -162,7 +162,7 @@ async function harness(options: {
   await runtime.start();
 
   let commandSequence = 0;
-  const execute = async <T extends DaemonCommandType>(
+  const executeWithoutSettling = async <T extends DaemonCommandType>(
     type: T,
     payload: Parameters<typeof createDaemonCommand<T>>[0]['payload'],
   ) => {
@@ -176,6 +176,13 @@ async function harness(options: {
       type,
       payload,
     }));
+    return receipt;
+  };
+  const execute = async <T extends DaemonCommandType>(
+    type: T,
+    payload: Parameters<typeof createDaemonCommand<T>>[0]['payload'],
+  ) => {
+    const receipt = await executeWithoutSettling(type, payload);
     await runtime.whenIdle();
     return receipt;
   };
@@ -205,7 +212,19 @@ async function harness(options: {
       rootPath: 'C:\\Demo',
     });
   };
-  return { directory, store, router, runtime, providers, codex, claude, execute, enable, prepareWorkspace };
+  return {
+    directory,
+    store,
+    router,
+    runtime,
+    providers,
+    codex,
+    claude,
+    execute,
+    executeWithoutSettling,
+    enable,
+    prepareWorkspace,
+  };
 }
 
 describe('DaemonAgentRuntime', () => {
@@ -429,6 +448,152 @@ describe('DaemonAgentRuntime', () => {
       expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-destination'))
         .toMatchObject({ state: 'idle', providerSessionId });
     } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it.each(['codex', 'claude'] as const)(
+    'serializes archive cleanup before transferring the same %s Provider Session handle',
+    async (providerId) => {
+      const h = await harness();
+      const adapter = h[providerId];
+      let releaseArchiveCleanup: (() => void) | undefined;
+      try {
+        await h.enable(adapter, providerId);
+        await h.prepareWorkspace();
+        await h.execute('agent.create', {
+          sessionId: 'agent-source',
+          workspaceId: 'workspace-1',
+          title: 'Source Agent',
+          providerId,
+          permissionPreset: 'standard',
+          initialPrompt: 'Finish before archive.',
+        });
+        const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+        const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+          agent.sessionId === 'agent-source'
+        ))!.providerSessionId!;
+        adapter.emit({
+          kind: 'turn-finished',
+          sessionId: 'agent-source',
+          turnId: sourceTurn.id,
+          outcome: 'completed',
+        });
+        await h.runtime.whenIdle();
+        adapter.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+        await h.runtime.whenIdle();
+
+        const originalDispose = vi.mocked(adapter.disposeSession).getMockImplementation()!;
+        let markArchiveCleanupStarted!: () => void;
+        const archiveCleanupStarted = new Promise<void>((resolve) => {
+          markArchiveCleanupStarted = resolve;
+        });
+        const archiveCleanupBlocked = new Promise<void>((resolve) => {
+          releaseArchiveCleanup = resolve;
+        });
+        vi.mocked(adapter.disposeSession).mockImplementationOnce(async (...args) => {
+          markArchiveCleanupStarted();
+          await archiveCleanupBlocked;
+          await originalDispose(...args);
+        });
+
+        await expect(h.executeWithoutSettling('agent.archive', { sessionId: 'agent-source' }))
+          .resolves.toMatchObject({ ok: true, status: 'applied' });
+        await archiveCleanupStarted;
+        await expect(h.executeWithoutSettling('agent.resume', {
+          sessionId: 'agent-destination',
+          sourceSessionId: 'agent-source',
+          workspaceId: 'workspace-1',
+          providerId,
+          providerSessionId,
+          title: 'Destination Agent',
+          permissionPreset: 'standard',
+        })).resolves.toMatchObject({ ok: true, status: 'applied' });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        expect(adapter.resumeSession).not.toHaveBeenCalled();
+        releaseArchiveCleanup?.();
+        releaseArchiveCleanup = undefined;
+        await h.runtime.whenIdle();
+
+        expect(adapter.ownerOf(providerSessionId)).toBe('agent-destination');
+        expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source'))
+          .not.toHaveProperty('providerSessionId');
+        expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-destination'))
+          .toMatchObject({ state: 'idle', providerSessionId });
+      } finally {
+        releaseArchiveCleanup?.();
+        await h.runtime.dispose();
+        await h.store.close();
+      }
+    },
+  );
+
+  it('drains queued handle cleanup captured before Provider disable during shutdown', async () => {
+    const h = await harness();
+    let releaseArchiveCleanup: (() => void) | undefined;
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        title: 'Source Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish before archive.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+        agent.sessionId === 'agent-source'
+      ))!.providerSessionId!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-source',
+        turnId: sourceTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+
+      const originalDispose = vi.mocked(h.codex.disposeSession).getMockImplementation()!;
+      let markArchiveCleanupStarted!: () => void;
+      const archiveCleanupStarted = new Promise<void>((resolve) => {
+        markArchiveCleanupStarted = resolve;
+      });
+      const archiveCleanupBlocked = new Promise<void>((resolve) => {
+        releaseArchiveCleanup = resolve;
+      });
+      vi.mocked(h.codex.disposeSession).mockImplementationOnce(async (...args) => {
+        markArchiveCleanupStarted();
+        await archiveCleanupBlocked;
+        await originalDispose(...args);
+      });
+
+      await expect(h.executeWithoutSettling('agent.archive', { sessionId: 'agent-source' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      await archiveCleanupStarted;
+      await expect(h.executeWithoutSettling('agent.archive', { sessionId: 'agent-source' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+      await expect(h.executeWithoutSettling('provider.disable', { providerId: 'codex' }))
+        .resolves.toMatchObject({ ok: true, status: 'applied' });
+
+      const disposal = h.runtime.dispose('process-loss');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(h.codex.dispose).not.toHaveBeenCalled();
+      releaseArchiveCleanup?.();
+      releaseArchiveCleanup = undefined;
+      await settleWithin(disposal);
+
+      expect(h.codex.disposeSession).toHaveBeenCalledTimes(2);
+      expect(h.codex.dispose).toHaveBeenCalledOnce();
+      expect(vi.mocked(h.codex.disposeSession).mock.invocationCallOrder[1])
+        .toBeLessThan(vi.mocked(h.codex.dispose).mock.invocationCallOrder[0]!);
+      expect(h.codex.ownerOf(providerSessionId)).toBeUndefined();
+    } finally {
+      releaseArchiveCleanup?.();
       await h.runtime.dispose();
       await h.store.close();
     }

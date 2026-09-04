@@ -12,6 +12,7 @@ import {
   type DaemonTurn,
 } from '../shared/daemon-protocol';
 import type {
+  AgentProviderAdapter,
   AgentProviderEvent,
   ProviderSessionContext,
 } from './agent-provider-adapter';
@@ -283,6 +284,7 @@ export class DaemonAgentRuntime {
   private readonly lifecycleAbortController = new AbortController();
   private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly backgroundTasks = new Set<Promise<void>>();
+  private readonly providerHandleOperations = new Map<string, Promise<void>>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
@@ -696,8 +698,10 @@ export class DaemonAgentRuntime {
     return {
       ok: true,
       commit: { mutations },
-      afterCommit: () => this.runBackground(
+      afterCommit: () => this.runProviderHandleBackground(
         `resume Agent ${command.payload.sessionId}`,
+        command.payload.providerId,
+        providerSessionId,
         async () => {
           try {
             await providerAdapter.disposeSession(sourceSession.id, providerSessionId);
@@ -911,6 +915,11 @@ export class DaemonAgentRuntime {
     const pendingApprovals = context.snapshot.approvals.filter((approval) => (
       approval.sessionId === session.id && approval.state === 'pending'
     ));
+    const providerSessionId = agent.providerSessionId;
+    const selectedProvider = providerSessionId
+      ? this.options.providers.enabledAdapter(context.snapshot, agent.providerId)
+      : undefined;
+    const providerAdapter = selectedProvider?.ok ? selectedProvider.value : undefined;
     return { ok: true, commit: { mutations: [
       ...pendingApprovals.map((approval): DaemonStoreMutation => ({
         kind: 'approval.upsert',
@@ -918,9 +927,11 @@ export class DaemonAgentRuntime {
       })),
       { kind: 'agent.upsert', value: agentInput(agent, { state: 'archived', currentTurnId: undefined }) },
       { kind: 'session.upsert', value: sessionInput(session, 'archived', now) },
-    ] }, ...(agent.providerSessionId ? { afterCommit: () => this.runBackground(
+    ] }, ...(providerSessionId && providerAdapter ? { afterCommit: () => this.runProviderHandleBackground(
       `archive Agent ${session.id}`,
-      () => this.disposeProviderSession(session.id, agent.providerId, agent.providerSessionId!),
+      agent.providerId,
+      providerSessionId,
+      () => this.disposeProviderSession(providerAdapter, session.id, providerSessionId),
     ) } : {}) };
   }
 
@@ -2010,6 +2021,25 @@ export class DaemonAgentRuntime {
     this.backgroundTasks.add(running);
   }
 
+  private runProviderHandleBackground(
+    context: string,
+    providerId: string,
+    providerSessionId: string,
+    task: () => Promise<void>,
+  ): void {
+    if (this.disposed) return;
+    const key = JSON.stringify([providerId, providerSessionId]);
+    const predecessor = this.providerHandleOperations.get(key) ?? Promise.resolve();
+    const operation = predecessor.catch(() => undefined).then(task);
+    const tail = operation.finally(() => {
+      if (this.providerHandleOperations.get(key) === tail) {
+        this.providerHandleOperations.delete(key);
+      }
+    });
+    this.providerHandleOperations.set(key, tail);
+    this.runBackground(context, () => tail);
+  }
+
   private async drainEventTail(): Promise<void> {
     for (;;) {
       const tail = this.eventTail;
@@ -2355,14 +2385,12 @@ export class DaemonAgentRuntime {
   }
 
   private async disposeProviderSession(
+    provider: AgentProviderAdapter,
     sessionId: string,
-    providerId: string,
     providerSessionId: string,
   ): Promise<void> {
-    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
-    if (!provider.ok) return;
     try {
-      await provider.value.disposeSession(sessionId, providerSessionId);
+      await provider.disposeSession(sessionId, providerSessionId);
     } catch (error) {
       this.report('provider Session disposal failed', error);
     }

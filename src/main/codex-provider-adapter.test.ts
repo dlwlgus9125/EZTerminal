@@ -483,6 +483,49 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('keeps replacement notification routing when an overlapping source disposal finishes late', async () => {
+    const connection = new FakeCodexConnection();
+    let releaseFirstUnsubscribe!: () => void;
+    const firstUnsubscribe = new Promise<void>((resolve) => {
+      releaseFirstUnsubscribe = resolve;
+    });
+    let unsubscribeCount = 0;
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      if (method === 'thread/resume') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      if (method === 'thread/unsubscribe') {
+        unsubscribeCount += 1;
+        if (unsubscribeCount === 1) await firstUnsubscribe;
+        return { status: 'notLoaded' };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await adapter.createSession(context({ sessionId: 'session-source' }));
+
+    const lateDisposal = adapter.disposeSession('session-source', 'thread-1');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await adapter.disposeSession('session-source', 'thread-1');
+    await adapter.resumeSession({
+      ...context({ sessionId: 'session-destination' }),
+      providerSessionId: 'thread-1',
+    });
+    events.length = 0;
+    releaseFirstUnsubscribe();
+    await lateDisposal;
+    await connection.emitNotification('thread/status/changed', {
+      threadId: 'thread-1',
+      status: { type: 'active' },
+    });
+
+    expect(events).toEqual([
+      { kind: 'session-state', sessionId: 'session-destination', state: 'working' },
+    ]);
+    await adapter.dispose();
+  });
+
   it('reconciles delivered command IDs and semantic transcript through thread/read', async () => {
     const connection = new FakeCodexConnection();
     connection.requestImpl = async (method) => {

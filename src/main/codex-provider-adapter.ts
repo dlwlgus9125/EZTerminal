@@ -748,8 +748,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     try {
       await this.requireConnection().request('thread/unsubscribe', { threadId: providerSessionId });
     } finally {
-      this.sessions.delete(state.sessionId);
-      this.sessionIdByProviderId.delete(state.providerSessionId);
+      const stillOwnsSession = this.sessions.get(state.sessionId) === state;
+      if (stillOwnsSession) this.sessions.delete(state.sessionId);
+      if (
+        stillOwnsSession
+        && this.sessionIdByProviderId.get(state.providerSessionId) === state.sessionId
+      ) {
+        this.sessionIdByProviderId.delete(state.providerSessionId);
+      }
     }
   }
 
