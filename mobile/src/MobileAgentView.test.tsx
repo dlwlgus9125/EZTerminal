@@ -11,7 +11,11 @@ import {
   type AgentOrchestrationSnapshot,
 } from '../../src/shared/agent-orchestration';
 import type { GitDiffResult } from '../../src/shared/git-status';
-import type { DaemonSnapshot } from '../../src/shared/daemon-protocol';
+import type {
+  DaemonEvent,
+  DaemonSnapshot,
+  DaemonTranscriptItem,
+} from '../../src/shared/daemon-protocol';
 import { MobileAgentView } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -312,6 +316,99 @@ describe('MobileAgentView', () => {
       principal: { kind: 'android', id: 'mobile-agent-ui' },
       payload: { sessionId: 'structured-session-1', prompt: 'Continue directly' },
     }));
+  });
+
+  it('pages persisted structured transcripts and follows daemon append events', async () => {
+    const transcript: DaemonTranscriptItem[] = [
+      {
+        id: 'item-1', sessionId: 'structured-session-1', sequence: 1,
+        kind: 'user-message', text: 'Persisted mobile prompt', isDelta: false,
+        isSensitive: false, createdAt: DAEMON_TIMESTAMP,
+      },
+      {
+        id: 'item-2', sessionId: 'structured-session-1', sequence: 2,
+        kind: 'assistant-message', text: 'Persisted ', isDelta: true,
+        isSensitive: false, createdAt: DAEMON_TIMESTAMP,
+      },
+      {
+        id: 'item-3', sessionId: 'structured-session-1', sequence: 3,
+        kind: 'assistant-message', text: 'answer', isDelta: true,
+        isSensitive: false, createdAt: DAEMON_TIMESTAMP,
+      },
+    ];
+    const getDaemonTranscript = vi.fn(async (
+      _sessionId: string,
+      afterSequence = 0,
+    ): Promise<readonly DaemonTranscriptItem[]> => {
+      if (afterSequence === 0) return transcript.filter((item) => item.sequence <= 2);
+      return transcript.filter((item) => item.sequence > afterSequence);
+    });
+    let daemonEventListener!: (
+      event: DaemonEvent,
+      continuity: 'next' | 'duplicate' | 'gap' | 'revision-regression',
+    ) => void;
+    const stopDaemonEvents = vi.fn();
+    const setDaemonEventsSubscribed = vi.fn(async () => undefined);
+    const transport = {
+      getDaemonTranscript,
+      sendDaemonCommand: vi.fn(),
+      setDaemonEventsSubscribed,
+      onDaemonEvent: vi.fn((listener: typeof daemonEventListener) => {
+        daemonEventListener = listener;
+        return stopDaemonEvents;
+      }),
+    } as unknown as WsEzTerminalTransport;
+    const daemonSnapshot = daemonSnapshotOf({
+      transcriptHeads: [{ sessionId: 'structured-session-1', lastSequence: 3, itemCount: 3 }],
+    });
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
+        transport={transport}
+        {...noop}
+      />,
+    );
+    clickButtonText(container, 'EZTerminal');
+    clickButtonText(container, 'Main checkout');
+    clickButtonText(container, 'Structured mobile task');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getDaemonTranscript).toHaveBeenCalledWith('structured-session-1', 0, 500);
+    expect(getDaemonTranscript).toHaveBeenCalledWith('structured-session-1', 2, 500);
+    expect(container.textContent).toContain('Persisted mobile prompt');
+    expect(container.textContent).toContain('Persisted answer');
+
+    transcript.push({
+      id: 'item-4', sessionId: 'structured-session-1', sequence: 4,
+      kind: 'tool-result', text: 'Incremental mobile result', isDelta: false,
+      isSensitive: false, createdAt: DAEMON_TIMESTAMP,
+    });
+    act(() => daemonEventListener({
+      protocolVersion: 12,
+      eventId: 'event-13',
+      sequence: 13,
+      revision: 9,
+      occurredAt: DAEMON_TIMESTAMP,
+      kind: 'transcript.appended',
+      payload: { sessionId: 'structured-session-1', fromSequence: 4, toSequence: 4 },
+    }, 'next'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getDaemonTranscript).toHaveBeenCalledWith('structured-session-1', 3, 500);
+    expect(container.textContent).toContain('Incremental mobile result');
+
+    act(() => root.unmount());
+    expect(stopDaemonEvents).toHaveBeenCalledOnce();
+    expect(setDaemonEventsSubscribed).toHaveBeenLastCalledWith(false);
+    root = createRoot(container);
   });
 
   it('projects only direct attached children and routes valid lifecycle commands', async () => {

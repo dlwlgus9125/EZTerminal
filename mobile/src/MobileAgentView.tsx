@@ -77,6 +77,21 @@ const INITIAL_DAEMON_RUNTIME_STATE: DaemonRuntimeViewState = {
   snapshot: null,
 };
 
+const EMPTY_STRUCTURED_TRANSCRIPTS: Readonly<Record<string, readonly DaemonTranscriptItem[]>> = {};
+const EMPTY_TRANSCRIPT: readonly DaemonTranscriptItem[] = [];
+const TRANSCRIPT_PAGE_SIZE = 500;
+const TRANSCRIPT_PAGES_PER_YIELD = 10;
+
+function mergeTranscriptPages(
+  current: readonly DaemonTranscriptItem[],
+  incoming: readonly DaemonTranscriptItem[],
+): readonly DaemonTranscriptItem[] {
+  const bySequence = new Map<number, DaemonTranscriptItem>();
+  for (const item of current) bySequence.set(item.sequence, item);
+  for (const item of incoming) bySequence.set(item.sequence, item);
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
 const RISK_RANK = {
   danger: 0,
   write: 1,
@@ -169,7 +184,7 @@ export function MobileAgentView({
   onReadGitStatus,
   transport,
   daemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
-  structuredTranscripts = {},
+  structuredTranscripts = EMPTY_STRUCTURED_TRANSCRIPTS,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
@@ -190,7 +205,7 @@ export function MobileAgentView({
   readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
   readonly transport?: WsEzTerminalTransport;
   readonly daemonRuntimeState?: DaemonRuntimeViewState;
-  /** Transcript pages are supplied by the transport adapter once fetched. */
+  /** Optional transcript seed used by tests and hosts that already own a page cache. */
   readonly structuredTranscripts?: Readonly<Record<string, readonly DaemonTranscriptItem[]>>;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
@@ -204,8 +219,19 @@ export function MobileAgentView({
   const [overrideReason, setOverrideReason] = useState('');
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(null);
+  const [loadedTranscriptSessionId, setLoadedTranscriptSessionId] = useState<string | null>(null);
+  const [authoritativeTranscript, setAuthoritativeTranscript] = useState<readonly DaemonTranscriptItem[]>([]);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<'load' | 'gap' | null>(null);
   const diffRequestGeneration = useRef(0);
   const daemonRevisionRef = useRef(daemonRuntimeState.snapshot?.revision ?? 0);
+  const transcriptSessionRef = useRef<string | null>(null);
+  const transcriptTargetRef = useRef(0);
+  const transcriptCursorRef = useRef(0);
+  const transcriptGenerationRef = useRef(0);
+  const transcriptInFlightRef = useRef<Promise<void> | null>(null);
+  const transcriptItemsRef = useRef<readonly DaemonTranscriptItem[]>([]);
+  const handledGapRef = useRef<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const workerActivityIds = useMemo(
     () => orchestrationWorkerActivityIds(orchestrationSnapshot),
@@ -224,6 +250,130 @@ export function MobileAgentView({
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
+  const selectedTranscriptSeed = selectedDaemonSessionId
+    ? structuredTranscripts[selectedDaemonSessionId] ?? EMPTY_TRANSCRIPT
+    : EMPTY_TRANSCRIPT;
+  const selectedTranscriptHead = selectedDaemonSessionId
+    ? daemonRuntimeState.snapshot?.transcriptHeads.find((head) => (
+      head.sessionId === selectedDaemonSessionId
+    ))?.lastSequence ?? 0
+    : 0;
+
+  const syncTranscript = useCallback((
+    targetSessionId: string,
+    targetSequence = 0,
+  ): Promise<void> => {
+    if (
+      transcriptSessionRef.current !== targetSessionId
+      || !transport
+      || typeof transport.getDaemonTranscript !== 'function'
+    ) return Promise.resolve();
+    transcriptTargetRef.current = Math.max(transcriptTargetRef.current, targetSequence);
+    if (targetSequence > 0 && transcriptCursorRef.current >= transcriptTargetRef.current) {
+      return Promise.resolve();
+    }
+    if (transcriptInFlightRef.current) return transcriptInFlightRef.current;
+    const generation = transcriptGenerationRef.current;
+    let shouldContinue = false;
+    let failed = false;
+    const run = async (): Promise<void> => {
+      setTranscriptLoading(transcriptItemsRef.current.length === 0);
+      setTranscriptError(null);
+      try {
+        for (let pageIndex = 0; pageIndex < TRANSCRIPT_PAGES_PER_YIELD; pageIndex += 1) {
+          if (
+            transcriptGenerationRef.current !== generation
+            || transcriptSessionRef.current !== targetSessionId
+          ) return;
+          const afterSequence = transcriptCursorRef.current;
+          const page = await transport.getDaemonTranscript(
+            targetSessionId,
+            afterSequence,
+            TRANSCRIPT_PAGE_SIZE,
+          );
+          if (
+            transcriptGenerationRef.current !== generation
+            || transcriptSessionRef.current !== targetSessionId
+          ) return;
+          const validPage = page
+            .filter((item) => (
+              item.sessionId === targetSessionId
+              && Number.isSafeInteger(item.sequence)
+              && item.sequence > afterSequence
+            ))
+            .sort((left, right) => left.sequence - right.sequence);
+          if (validPage.some((item, index) => item.sequence !== afterSequence + index + 1)) {
+            throw new Error('The Agent transcript page contains a sequence gap.');
+          }
+          if (validPage.length > 0) {
+            const next = mergeTranscriptPages(transcriptItemsRef.current, validPage);
+            transcriptItemsRef.current = next;
+            transcriptCursorRef.current = next.at(-1)?.sequence ?? afterSequence;
+            setAuthoritativeTranscript(next);
+          }
+          const target = transcriptTargetRef.current;
+          if (validPage.length === 0) {
+            if (target > transcriptCursorRef.current) {
+              throw new Error('The Agent transcript is temporarily incomplete.');
+            }
+            shouldContinue = false;
+            return;
+          }
+          if (transcriptCursorRef.current >= target && validPage.length < TRANSCRIPT_PAGE_SIZE) {
+            shouldContinue = false;
+            return;
+          }
+          if (transcriptCursorRef.current <= afterSequence) {
+            throw new Error('The Agent transcript did not advance.');
+          }
+          shouldContinue = true;
+        }
+      } catch {
+        shouldContinue = false;
+        failed = true;
+        if (
+          transcriptGenerationRef.current === generation
+          && transcriptSessionRef.current === targetSessionId
+        ) setTranscriptError('load');
+      } finally {
+        if (
+          transcriptGenerationRef.current === generation
+          && transcriptSessionRef.current === targetSessionId
+        ) {
+          setTranscriptLoading(false);
+          if (!failed) setTranscriptError(null);
+        }
+      }
+    };
+    const promise = run().finally(() => {
+      if (transcriptInFlightRef.current === promise) {
+        transcriptInFlightRef.current = null;
+        if (
+          !failed
+          && (shouldContinue || transcriptTargetRef.current > transcriptCursorRef.current)
+          && transcriptGenerationRef.current === generation
+          && transcriptSessionRef.current === targetSessionId
+        ) queueMicrotask(() => { void syncTranscript(targetSessionId, transcriptTargetRef.current); });
+      }
+    });
+    transcriptInFlightRef.current = promise;
+    return promise;
+  }, [transport]);
+
+  const reloadTranscript = useCallback((
+    targetSessionId: string,
+    targetSequence?: number,
+  ): Promise<void> => {
+    if (transcriptSessionRef.current !== targetSessionId) return Promise.resolve();
+    const nextTarget = Math.max(transcriptTargetRef.current, targetSequence ?? 0);
+    transcriptGenerationRef.current += 1;
+    transcriptTargetRef.current = nextTarget;
+    transcriptCursorRef.current = 0;
+    transcriptInFlightRef.current = null;
+    setTranscriptError(null);
+    setTranscriptLoading(true);
+    return syncTranscript(targetSessionId, nextTarget);
+  }, [syncTranscript]);
 
   useEffect(() => {
     if (daemonRuntimeState.snapshot) {
@@ -243,6 +393,90 @@ export function MobileAgentView({
       setSelectedDaemonSessionId(null);
     }
   }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
+
+  useEffect(() => {
+    transcriptGenerationRef.current += 1;
+    transcriptSessionRef.current = selectedDaemonSessionId;
+    transcriptTargetRef.current = 0;
+    transcriptInFlightRef.current = null;
+    const seed = mergeTranscriptPages([], selectedTranscriptSeed);
+    const seedIsContiguous = seed.every((item, index) => item.sequence === index + 1);
+    transcriptCursorRef.current = seedIsContiguous ? seed.at(-1)?.sequence ?? 0 : 0;
+    transcriptItemsRef.current = seed;
+    setLoadedTranscriptSessionId(selectedDaemonSessionId);
+    setAuthoritativeTranscript(seed);
+    setTranscriptError(null);
+    const canLoad = Boolean(
+      selectedDaemonSessionId
+      && transport
+      && typeof transport.getDaemonTranscript === 'function'
+    );
+    setTranscriptLoading(canLoad && seed.length === 0);
+    if (selectedDaemonSessionId && canLoad) {
+      void syncTranscript(selectedDaemonSessionId);
+    }
+    return () => {
+      transcriptGenerationRef.current += 1;
+    };
+  }, [selectedDaemonSessionId, selectedTranscriptSeed, syncTranscript, transport]);
+
+  useEffect(() => {
+    if (selectedDaemonSessionId) {
+      void syncTranscript(selectedDaemonSessionId, selectedTranscriptHead);
+    }
+  }, [selectedDaemonSessionId, selectedTranscriptHead, syncTranscript]);
+
+  useEffect(() => {
+    if (!transport) return undefined;
+    const subscribe = typeof transport.setDaemonEventsSubscribed === 'function'
+      ? transport.setDaemonEventsSubscribed(true).catch(() => undefined)
+      : Promise.resolve();
+    const stop = typeof transport.onDaemonEvent === 'function'
+      ? transport.onDaemonEvent((event, continuity) => {
+          const currentSessionId = transcriptSessionRef.current;
+          if (!currentSessionId) return;
+          if (continuity === 'gap' || continuity === 'revision-regression') {
+            const target = event.kind === 'transcript.appended'
+              && event.payload.sessionId === currentSessionId
+              ? event.payload.toSequence
+              : transcriptTargetRef.current;
+            void reloadTranscript(currentSessionId, target);
+            setTranscriptError('gap');
+            return;
+          }
+          if (
+            continuity !== 'duplicate'
+            && event.kind === 'transcript.appended'
+            && event.payload.sessionId === currentSessionId
+          ) void syncTranscript(currentSessionId, event.payload.toSequence);
+        })
+      : () => undefined;
+    void subscribe;
+    return () => {
+      stop();
+      if (typeof transport.setDaemonEventsSubscribed === 'function') {
+        void transport.setDaemonEventsSubscribed(false).catch(() => undefined);
+      }
+    };
+  }, [reloadTranscript, syncTranscript, transport]);
+
+  useEffect(() => {
+    if (daemonRuntimeState.error !== 'event-gap' || !selectedDaemonSessionId) {
+      handledGapRef.current = null;
+      return;
+    }
+    const key = `${selectedDaemonSessionId}:${daemonRuntimeState.snapshot?.eventSequence ?? 'unknown'}`;
+    if (handledGapRef.current === key) return;
+    handledGapRef.current = key;
+    void reloadTranscript(selectedDaemonSessionId, selectedTranscriptHead);
+    setTranscriptError('gap');
+  }, [
+    daemonRuntimeState.error,
+    daemonRuntimeState.snapshot?.eventSequence,
+    reloadTranscript,
+    selectedDaemonSessionId,
+    selectedTranscriptHead,
+  ]);
 
   const managedMerges = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
     ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
@@ -440,6 +674,19 @@ export function MobileAgentView({
   }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
 
   if (selectedDaemonSession && selectedDaemonAgent && selectedDaemonWorkspace) {
+    const selectedTranscript = loadedTranscriptSessionId === selectedDaemonSession.id
+      ? authoritativeTranscript
+      : selectedTranscriptSeed;
+    const visibleTranscriptError = daemonRuntimeState.error === 'event-gap'
+      || transcriptError === 'gap'
+      ? locale.startsWith('ko')
+        ? '일부 대화 업데이트를 놓쳐 최신 원본을 다시 불러오는 중입니다…'
+        : 'Some transcript updates were missed. Reloading the authoritative state…'
+      : transcriptError === 'load'
+        ? locale.startsWith('ko')
+          ? 'Agent 대화를 불러오지 못했습니다. 기존 대화는 계속 표시됩니다.'
+          : 'The Agent transcript could not be loaded. Existing messages are still shown.'
+        : null;
     const buildCommandBase = () => {
       const commandId = mobileAgentCommandId();
       return {
@@ -484,13 +731,12 @@ export function MobileAgentView({
         permissionPreset={selectedDaemonAgent.permissionPreset}
         state={selectedDaemonAgent.state}
         queuedCount={selectedDaemonAgent.queuedTurnCount}
-        items={structuredTranscripts[selectedDaemonSession.id] ?? []}
+        items={selectedTranscript}
         approvals={(daemonRuntimeState.snapshot?.approvals ?? []).filter((approval) => (
           approval.sessionId === selectedDaemonSession.id
         ))}
-        transcriptError={daemonRuntimeState.error === 'event-gap'
-          ? 'Some transcript updates were missed. Reloading the authoritative state…'
-          : null}
+        transcriptLoading={loadedTranscriptSessionId === selectedDaemonSession.id && transcriptLoading}
+        transcriptError={visibleTranscriptError}
         disabled={disconnected || !transport}
         {...(selectedDaemonRelation ? { owner: selectedDaemonRelation.owner } : {})}
         {...(selectedDaemonChildren.length > 0 ? {
@@ -502,7 +748,12 @@ export function MobileAgentView({
           ),
         } : {})}
         onBack={() => setSelectedDaemonSessionId(null)}
-        onRetryTranscript={() => { void transport?.getDaemonSnapshot(); }}
+        onRetryTranscript={() => {
+          void reloadTranscript(selectedDaemonSession.id, selectedTranscriptHead);
+          if (transport && typeof transport.getDaemonSnapshot === 'function') {
+            void transport.getDaemonSnapshot();
+          }
+        }}
         onSend={(prompt) => dispatchDaemonCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.submit',
