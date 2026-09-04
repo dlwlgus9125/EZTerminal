@@ -655,6 +655,8 @@ export class DaemonAgentRuntime {
     }
     const provider = this.options.providers.enabledAdapter(snapshot, command.payload.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
+    const providerAdapter = provider.value;
+    const providerSessionId = sourceAgent.providerSessionId;
     const relation = command.payload.parentSessionId
       ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId)
       : undefined;
@@ -696,7 +698,14 @@ export class DaemonAgentRuntime {
       commit: { mutations },
       afterCommit: () => this.runBackground(
         `resume Agent ${command.payload.sessionId}`,
-        () => this.rehydrateSession(command.payload.sessionId),
+        async () => {
+          try {
+            await providerAdapter.disposeSession(sourceSession.id, providerSessionId);
+          } catch (error) {
+            this.report(`dispose source Provider Session ${sourceSession.id} before resume`, error);
+          }
+          await this.rehydrateSession(command.payload.sessionId);
+        },
       ),
     };
   }

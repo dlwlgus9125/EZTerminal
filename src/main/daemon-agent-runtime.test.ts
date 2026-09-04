@@ -60,26 +60,41 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs = 500): Promise<T>
 function fakeAdapter(
   providerId: string,
   protocol: ProviderProbeResult['protocol'],
-): AgentProviderAdapter & { emit(event: AgentProviderEvent): void } {
+): AgentProviderAdapter & {
+  emit(event: AgentProviderEvent): void;
+  ownerOf(providerSessionId: string): string | undefined;
+} {
   const listeners = new Set<(event: AgentProviderEvent) => void>();
+  const sessionOwners = new Map<string, string>();
   const identity = probe(providerId, protocol);
   let sequence = 0;
   return {
     providerId,
     probe: vi.fn(async () => identity),
     listModels: vi.fn(async () => []),
-    createSession: vi.fn(async (context) => ({
-      sessionId: context.sessionId,
-      providerSessionId: `${providerId}-session-${++sequence}`,
-      model: context.model,
-      permissionPreset: context.permissionPreset,
-    })),
-    resumeSession: vi.fn(async (context) => ({
-      sessionId: context.sessionId,
-      providerSessionId: context.providerSessionId,
-      model: context.model,
-      permissionPreset: context.permissionPreset,
-    })),
+    createSession: vi.fn(async (context) => {
+      const providerSessionId = `${providerId}-session-${++sequence}`;
+      sessionOwners.set(providerSessionId, context.sessionId);
+      return {
+        sessionId: context.sessionId,
+        providerSessionId,
+        model: context.model,
+        permissionPreset: context.permissionPreset,
+      };
+    }),
+    resumeSession: vi.fn(async (context) => {
+      const existingOwner = sessionOwners.get(context.providerSessionId);
+      if (existingOwner && existingOwner !== context.sessionId) {
+        throw new Error(`Provider Session is already attached to ${existingOwner}.`);
+      }
+      sessionOwners.set(context.providerSessionId, context.sessionId);
+      return {
+        sessionId: context.sessionId,
+        providerSessionId: context.providerSessionId,
+        model: context.model,
+        permissionPreset: context.permissionPreset,
+      };
+    }),
     submit: vi.fn(async () => undefined),
     interrupt: vi.fn(async () => undefined),
     setSettings: vi.fn(async (input) => ({
@@ -94,11 +109,19 @@ function fakeAdapter(
       return () => listeners.delete(listener);
     }),
     reconcile: vi.fn(async () => ({ commands: [], transcriptItems: [] })),
-    disposeSession: vi.fn(async () => undefined),
+    disposeSession: vi.fn(async (sessionId, providerSessionId) => {
+      const existingOwner = sessionOwners.get(providerSessionId);
+      if (!existingOwner) return;
+      if (existingOwner !== sessionId) {
+        throw new Error(`Provider Session belongs to ${existingOwner}.`);
+      }
+      sessionOwners.delete(providerSessionId);
+    }),
     dispose: vi.fn(async () => undefined),
     emit: (event) => {
       for (const listener of listeners) listener(event);
     },
+    ownerOf: (providerSessionId) => sessionOwners.get(providerSessionId),
   };
 }
 
@@ -265,9 +288,16 @@ describe('DaemonAgentRuntime', () => {
       expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source'))
         .not.toHaveProperty('providerSessionId');
       expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-resumed'))
-        .toMatchObject({ providerSessionId });
+        .toMatchObject({ state: 'idle', providerSessionId });
       expect(h.router.getSnapshot().agents.filter((agent) => agent.providerSessionId === providerSessionId))
         .toHaveLength(1);
+      expect(h.codex.disposeSession).toHaveBeenCalledWith('agent-source', providerSessionId);
+      expect(h.codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'agent-resumed', providerSessionId,
+      }), expect.any(AbortSignal));
+      expect(vi.mocked(h.codex.disposeSession).mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(h.codex.resumeSession).mock.invocationCallOrder[0]!);
+      expect(h.codex.ownerOf(providerSessionId)).toBe('agent-resumed');
 
       const repeated = await h.execute('agent.resume', {
         sessionId: 'agent-resumed-again',
@@ -280,6 +310,124 @@ describe('DaemonAgentRuntime', () => {
       });
       expect(repeated).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
       expect(h.router.getSnapshot().sessions.some((session) => session.id === 'agent-resumed-again')).toBe(false);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('keeps the destination as sole durable owner when Provider reattachment fails', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        title: 'Source Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish before resume.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+        agent.sessionId === 'agent-source'
+      ))!.providerSessionId!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-source',
+        turnId: sourceTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+      vi.mocked(h.codex.resumeSession).mockRejectedValueOnce(new Error('Provider reattachment failed.'));
+
+      const receipt = await h.execute('agent.resume', {
+        sessionId: 'agent-destination',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Destination Agent',
+        permissionPreset: 'standard',
+      });
+
+      expect(receipt).toMatchObject({ ok: true, status: 'applied' });
+      expect(h.codex.disposeSession).toHaveBeenCalledWith('agent-source', providerSessionId);
+      expect(vi.mocked(h.codex.disposeSession).mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(h.codex.resumeSession).mock.invocationCallOrder[0]!);
+      expect(h.codex.ownerOf(providerSessionId)).toBeUndefined();
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source'))
+        .not.toHaveProperty('providerSessionId');
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-destination'))
+        .toMatchObject({ state: 'delivery-uncertain', providerSessionId });
+      expect(h.router.getSnapshot().agents.filter((agent) => agent.providerSessionId === providerSessionId))
+        .toHaveLength(1);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('harmlessly repeats Provider cleanup when resuming an already-disposed archived source', async () => {
+    const reportError = vi.fn();
+    const h = await harness({ reportError });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        title: 'Archived source',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish before archive.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+        agent.sessionId === 'agent-source'
+      ))!.providerSessionId!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-source',
+        turnId: sourceTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+      expect(await h.execute('agent.archive', { sessionId: 'agent-source' }))
+        .toMatchObject({ ok: true });
+      expect(h.codex.ownerOf(providerSessionId)).toBeUndefined();
+      vi.mocked(h.codex.disposeSession).mockRejectedValueOnce(new Error('Provider Session is already disposed.'));
+
+      const receipt = await h.execute('agent.resume', {
+        sessionId: 'agent-destination',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Destination Agent',
+        permissionPreset: 'standard',
+      });
+
+      expect(receipt).toMatchObject({ ok: true, status: 'applied' });
+      expect(h.codex.disposeSession).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(h.codex.disposeSession).mock.invocationCallOrder[1])
+        .toBeLessThan(vi.mocked(h.codex.resumeSession).mock.invocationCallOrder[0]!);
+      expect(reportError).toHaveBeenCalledWith(
+        'dispose source Provider Session agent-source before resume',
+        expect.any(Error),
+      );
+      expect(h.codex.ownerOf(providerSessionId)).toBe('agent-destination');
+      expect(h.router.getSnapshot().sessions.find((session) => session.id === 'agent-source'))
+        .toMatchObject({ state: 'archived' });
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source'))
+        .not.toHaveProperty('providerSessionId');
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-destination'))
+        .toMatchObject({ state: 'idle', providerSessionId });
     } finally {
       await h.runtime.dispose();
       await h.store.close();
