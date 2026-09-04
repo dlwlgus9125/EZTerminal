@@ -198,6 +198,9 @@ import { DaemonLifecycleSettingsController } from './daemon-lifecycle-settings';
 import { DaemonRuntime } from './daemon-runtime';
 import { DaemonStore } from './daemon-store';
 import { DaemonCommandRouter } from './daemon-command-router';
+import { DaemonAgentRuntime } from './daemon-agent-runtime';
+import { AgentProviderRegistry } from './agent-provider-registry';
+import { CodexProviderAdapter } from './codex-provider-adapter';
 import type { DaemonCommandReceipt } from '../shared/daemon-protocol';
 import { ElectronUpdateHttpClient } from './app-update-network';
 import {
@@ -821,8 +824,34 @@ app.on('ready', async () => {
     mainLog?.line(`daemon lifecycle settings failed to initialize: ${String(error)}`);
     return daemonRuntime!.settingsSnapshot();
   });
+  const providerRegistry = new AgentProviderRegistry([
+    new CodexProviderAdapter({
+      clientOptions: {
+        ...(processGuardian ? { processGuardian } : {}),
+        reportError: (message) => {
+          console.error(message);
+          mainLog?.line(message);
+        },
+      },
+    }),
+  ]);
+  const daemonRouterRef: { current?: DaemonCommandRouter } = {};
+  const daemonAgentRuntime = new DaemonAgentRuntime({
+    providers: providerRegistry,
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
+    readTranscript: (sessionId, afterSequence, limit) => (
+      daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit)
+    ),
+    findCommand: (commandId) => daemonStore.findCommand(commandId)?.command,
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
     handlers: {
+      ...daemonAgentRuntime.handlers(),
       'runtime.set-settings': async (command, context) => {
         if (command.type !== 'runtime.set-settings') {
           return {
@@ -865,6 +894,20 @@ app.on('ready', async () => {
       },
     },
   });
+  daemonRouterRef.current = daemonCommandRouter;
+  let daemonAgentRuntimeStopped = false;
+  daemonProcesses.register({
+    id: 'managed-agent-runtime',
+    gracefulStop: async () => {
+      await daemonAgentRuntime.dispose();
+      daemonAgentRuntimeStopped = true;
+    },
+    hasStopped: () => daemonAgentRuntimeStopped,
+    forceStop: async () => {
+      await daemonAgentRuntime.dispose();
+      daemonAgentRuntimeStopped = true;
+    },
+  });
   const daemonAuthorityReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
     .then(async ([, lifecycle]) => {
       const current = daemonCommandRouter.getSnapshot().runtime;
@@ -882,6 +925,7 @@ app.on('ready', async () => {
           }],
         });
       }
+      await daemonAgentRuntime.start();
       return daemonCommandRouter;
     });
   const daemonEventSubscribers = new Set<WebContents>();
