@@ -5,12 +5,11 @@ import {
   createDaemonCommand,
   type DaemonCommand,
   type DaemonCommandReceipt,
-  type DaemonEvent,
   type DaemonSnapshot,
   type DaemonTranscriptItem,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
-import type { DaemonProviderManagementResult, ProviderModel } from '../shared/daemon-provider';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import {
   StructuredAgentDraftPanel,
   StructuredAgentSessionPanel,
@@ -38,25 +37,10 @@ export function structuredAgentSessionId(historyId: string): string | null {
     : null;
 }
 
-interface RendererDaemonApi {
-  getDaemonSnapshot(): Promise<DaemonSnapshot | null>;
-  sendDaemonCommand(command: DaemonCommand): Promise<DaemonCommandReceipt>;
-  onDaemonEvent(listener: (event: DaemonEvent) => void): () => void;
-  setDaemonEventsSubscribed(subscribed: boolean): void;
-  listDaemonProviderModels?(
-    providerId: string,
-  ): Promise<DaemonProviderManagementResult<readonly ProviderModel[]>>;
-}
-
-function rendererDaemonApi(): RendererDaemonApi | null {
-  const candidate = window.ezterminal as typeof window.ezterminal & Partial<RendererDaemonApi>;
-  return typeof candidate?.getDaemonSnapshot === 'function'
-    && typeof candidate.sendDaemonCommand === 'function'
-    ? candidate as RendererDaemonApi
-    : null;
-}
-
 let fallbackId = 0;
+
+const TRANSCRIPT_PAGE_SIZE = 500;
+const TRANSCRIPT_PAGES_PER_YIELD = 10;
 
 function opaqueId(prefix: string): string {
   const random = globalThis.crypto?.randomUUID?.();
@@ -153,6 +137,41 @@ function localUserItem(
   };
 }
 
+export function mergeAuthoritativeTranscript(
+  current: readonly DaemonTranscriptItem[],
+  incoming: readonly DaemonTranscriptItem[],
+): readonly DaemonTranscriptItem[] {
+  const bySequence = new Map<number, DaemonTranscriptItem>();
+  for (const item of current) bySequence.set(item.sequence, item);
+  for (const item of incoming) bySequence.set(item.sequence, item);
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
+function optimisticCommandId(item: DaemonTranscriptItem): string | null {
+  return item.id.startsWith('local-') ? item.id.slice('local-'.length) || null : null;
+}
+
+export function mergeOptimisticTranscript(
+  authoritative: readonly DaemonTranscriptItem[],
+  optimistic: readonly DaemonTranscriptItem[],
+  snapshot: DaemonSnapshot | null,
+): readonly DaemonTranscriptItem[] {
+  const representedTurnIds = new Set(authoritative.flatMap((item) => item.turnId ? [item.turnId] : []));
+  const representedCommandIds = new Set((snapshot?.turns ?? []).flatMap((turn) => (
+    representedTurnIds.has(turn.id) ? [turn.commandId] : []
+  )));
+  const authoritativeIds = new Set(authoritative.map((item) => item.id));
+  const pending = optimistic.filter((item) => {
+    const commandId = optimisticCommandId(item);
+    return !authoritativeIds.has(item.id) && (!commandId || !representedCommandIds.has(commandId));
+  });
+  const lastSequence = authoritative.at(-1)?.sequence ?? 0;
+  return [
+    ...authoritative,
+    ...pending.map((item, index) => ({ ...item, sequence: lastSequence + index + 1 })),
+  ];
+}
+
 function sessionTitle(prompt: string): string {
   const oneLine = prompt.replace(/\s+/gu, ' ').trim();
   return oneLine.length <= 52 ? oneLine : `${oneLine.slice(0, 49)}…`;
@@ -168,7 +187,10 @@ interface CreatedDraftState extends StructuredAgentDraftInput {
  * callback-driven; this component only translates Dockview params and v12
  * command receipts into those callbacks.
  */
-export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Element {
+export function StructuredAgentDockPanel(
+  props: IDockviewPanelProps & { readonly capabilities?: CapabilityAccess },
+): JSX.Element {
+  const capabilities = props.capabilities ?? rendererCapabilities;
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const projectId = typeof props.params?.projectId === 'string' ? props.params.projectId : undefined;
   const rootId = typeof props.params?.rootId === 'string' ? props.params.rootId : undefined;
@@ -182,6 +204,9 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createdDraft, setCreatedDraft] = useState<CreatedDraftState | null>(null);
   const [localItems, setLocalItems] = useState<readonly DaemonTranscriptItem[]>([]);
+  const [authoritativeItems, setAuthoritativeItems] = useState<readonly DaemonTranscriptItem[]>([]);
+  const [transcriptLoading, setTranscriptLoading] = useState(restoredSessionId !== null);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [providerModelCatalogs, setProviderModelCatalogs] = useState<Readonly<Record<
     string,
     readonly { readonly id: string; readonly displayName: string }[]
@@ -189,17 +214,18 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
   const snapshotRef = useRef<DaemonSnapshot | null>(null);
   const refreshInFlight = useRef<Promise<DaemonSnapshot | null> | null>(null);
   const providerModelRevisionRef = useRef<Readonly<Record<string, number>>>({});
+  const authoritativeItemsRef = useRef<readonly DaemonTranscriptItem[]>([]);
+  const transcriptCursorRef = useRef(0);
+  const transcriptTargetRef = useRef(0);
+  const transcriptSessionRef = useRef<string | null>(restoredSessionId);
+  const transcriptGenerationRef = useRef(0);
+  const transcriptInFlightRef = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async (): Promise<DaemonSnapshot | null> => {
-    const api = rendererDaemonApi();
-    if (!api) {
-      setLoading(false);
-      setLoadError('The Agent daemon bridge is unavailable.');
-      return null;
-    }
     if (refreshInFlight.current) return refreshInFlight.current;
     setLoading(true);
-    const request = api.getDaemonSnapshot()
+    const request = Promise.resolve()
+      .then(() => capabilities.daemon.getSnapshot())
       .then((next) => {
         if (!next) {
           setLoadError('The Agent daemon did not return a project snapshot.');
@@ -224,15 +250,134 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
       });
     refreshInFlight.current = request;
     return request;
-  }, []);
+  }, [capabilities]);
+
+  const syncTranscript = useCallback((
+    targetSessionId: string,
+    targetSequence = 0,
+  ): Promise<void> => {
+    if (transcriptSessionRef.current !== targetSessionId) return Promise.resolve();
+    transcriptTargetRef.current = Math.max(transcriptTargetRef.current, targetSequence);
+    if (
+      targetSequence > 0
+      && transcriptCursorRef.current >= transcriptTargetRef.current
+    ) return Promise.resolve();
+    if (transcriptInFlightRef.current) return transcriptInFlightRef.current;
+    const generation = transcriptGenerationRef.current;
+    let shouldContinue = false;
+    let failed = false;
+    const run = async (): Promise<void> => {
+      setTranscriptLoading(authoritativeItemsRef.current.length === 0);
+      setTranscriptError(null);
+      try {
+        for (let pageIndex = 0; pageIndex < TRANSCRIPT_PAGES_PER_YIELD; pageIndex += 1) {
+          if (
+            transcriptGenerationRef.current !== generation
+            || transcriptSessionRef.current !== targetSessionId
+          ) return;
+          const afterSequence = transcriptCursorRef.current;
+          const page = await capabilities.daemon.getTranscript(
+            targetSessionId,
+            afterSequence,
+            TRANSCRIPT_PAGE_SIZE,
+          );
+          if (
+            transcriptGenerationRef.current !== generation
+            || transcriptSessionRef.current !== targetSessionId
+          ) return;
+          const validPage = page
+            .filter((item) => (
+              item.sessionId === targetSessionId
+              && Number.isSafeInteger(item.sequence)
+              && item.sequence > afterSequence
+            ))
+            .sort((left, right) => left.sequence - right.sequence);
+          if (validPage.some((item, index) => item.sequence !== afterSequence + index + 1)) {
+            throw new Error('The Agent transcript page contains a sequence gap.');
+          }
+          if (validPage.length > 0) {
+            const next = mergeAuthoritativeTranscript(authoritativeItemsRef.current, validPage);
+            authoritativeItemsRef.current = next;
+            transcriptCursorRef.current = next.at(-1)?.sequence ?? afterSequence;
+            setAuthoritativeItems(next);
+          }
+          const target = transcriptTargetRef.current;
+          if (validPage.length === 0) {
+            if (target > transcriptCursorRef.current) {
+              throw new Error('The Agent transcript is temporarily incomplete.');
+            }
+            shouldContinue = false;
+            return;
+          }
+          if (transcriptCursorRef.current >= target && page.length < TRANSCRIPT_PAGE_SIZE) {
+            shouldContinue = false;
+            return;
+          }
+          if (transcriptCursorRef.current <= afterSequence) {
+            throw new Error('The Agent transcript did not advance.');
+          }
+          shouldContinue = true;
+        }
+      } catch {
+        shouldContinue = false;
+        failed = true;
+        if (
+          transcriptGenerationRef.current === generation
+          && transcriptSessionRef.current === targetSessionId
+        ) {
+          setTranscriptError('The Agent transcript could not be loaded.');
+        }
+      } finally {
+        if (
+          transcriptGenerationRef.current === generation
+          && transcriptSessionRef.current === targetSessionId
+        ) setTranscriptLoading(false);
+      }
+    };
+    const promise = run().finally(() => {
+      if (transcriptInFlightRef.current === promise) {
+        transcriptInFlightRef.current = null;
+        if (
+          !failed
+          && (shouldContinue || transcriptTargetRef.current > transcriptCursorRef.current)
+          && transcriptGenerationRef.current === generation
+          && transcriptSessionRef.current === targetSessionId
+        ) queueMicrotask(() => { void syncTranscript(targetSessionId, transcriptTargetRef.current); });
+      }
+    });
+    transcriptInFlightRef.current = promise;
+    return promise;
+  }, [capabilities]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
-    const api = rendererDaemonApi();
-    if (!snapshot || typeof api?.listDaemonProviderModels !== 'function') return undefined;
+    transcriptGenerationRef.current += 1;
+    transcriptSessionRef.current = sessionId;
+    transcriptTargetRef.current = 0;
+    transcriptCursorRef.current = 0;
+    transcriptInFlightRef.current = null;
+    authoritativeItemsRef.current = [];
+    setAuthoritativeItems([]);
+    setLocalItems((current) => current.filter((item) => item.sessionId === sessionId));
+    setTranscriptError(null);
+    setTranscriptLoading(sessionId !== null);
+    if (sessionId) void syncTranscript(sessionId);
+    return () => {
+      transcriptGenerationRef.current += 1;
+    };
+  }, [sessionId, syncTranscript]);
+
+  useEffect(() => {
+    if (!sessionId || !snapshot) return;
+    const head = snapshot.transcriptHeads.find((candidate) => candidate.sessionId === sessionId);
+    void syncTranscript(sessionId, head?.lastSequence ?? 0);
+  }, [sessionId, snapshot, syncTranscript]);
+
+  useEffect(() => {
+    if (!snapshot) return undefined;
     let cancelled = false;
     const targets = snapshot.providers.filter((provider) => (
       provider.enabled
@@ -242,7 +387,9 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
     if (targets.length === 0) return undefined;
     void Promise.all(targets
       .map(async (provider) => {
-        const result = await api.listDaemonProviderModels!(provider.id).catch(() => null);
+        const result = await Promise.resolve()
+          .then(() => capabilities.structuredProviders.listModels(provider.id))
+          .catch(() => null);
         return [provider.id, provider.revision, result?.ok ? result.value : null] as const;
       }))
       .then((entries) => {
@@ -261,28 +408,24 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
         });
       });
     return () => { cancelled = true; };
-  }, [snapshot]);
+  }, [capabilities, snapshot]);
 
   useEffect(() => {
-    const api = rendererDaemonApi();
-    if (!api || typeof api.onDaemonEvent !== 'function' || typeof api.setDaemonEventsSubscribed !== 'function') {
-      return undefined;
-    }
     let queued = false;
-    api.setDaemonEventsSubscribed(true);
-    const unsubscribe = api.onDaemonEvent(() => {
+    return capabilities.daemon.observeEvents((event) => {
+      if (event.kind === 'transcript.appended' && event.payload.sessionId === transcriptSessionRef.current) {
+        void syncTranscript(event.payload.sessionId, event.payload.toSequence);
+      }
       if (queued) return;
       queued = true;
       queueMicrotask(() => {
         queued = false;
         void refresh();
       });
+    }, () => {
+      setLoadError('The Agent daemon event stream is unavailable.');
     });
-    return () => {
-      unsubscribe();
-      api.setDaemonEventsSubscribed(false);
-    };
-  }, [refresh]);
+  }, [capabilities, refresh, syncTranscript]);
 
   useEffect(() => {
     const next = structuredAgentSessionId(historyId);
@@ -290,9 +433,9 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
   }, [historyId]);
 
   const sendCommand = useCallback(async (command: DaemonCommand): Promise<DaemonCommandReceipt | null> => {
-    const api = rendererDaemonApi();
-    if (!api) return null;
-    const receipt = await api.sendDaemonCommand(command).catch(() => null);
+    const receipt = await Promise.resolve()
+      .then(() => capabilities.daemon.sendCommand(command))
+      .catch(() => null);
     if (receipt?.ok) {
       if (snapshotRef.current && receipt.revision >= snapshotRef.current.revision) {
         snapshotRef.current = {
@@ -305,7 +448,7 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
       void refresh();
     }
     return receipt;
-  }, [refresh]);
+  }, [capabilities, refresh]);
 
   const latestSnapshot = useCallback(async (): Promise<DaemonSnapshot | null> => {
     return await refresh() ?? snapshotRef.current;
@@ -372,6 +515,20 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
     rootId,
     preferredWorkspaceId,
   ), [preferredWorkspaceId, projectId, rootId, workspaces]);
+  const transcriptItems = useMemo(
+    () => mergeOptimisticTranscript(authoritativeItems, localItems, snapshot),
+    [authoritativeItems, localItems, snapshot],
+  );
+
+  useEffect(() => {
+    const visibleLocalIds = new Set(transcriptItems.flatMap((item) => (
+      item.id.startsWith('local-') ? [item.id] : []
+    )));
+    setLocalItems((current) => {
+      const next = current.filter((item) => visibleLocalIds.has(item.id));
+      return next.length === current.length ? current : next;
+    });
+  }, [transcriptItems]);
 
   if (!sessionId) {
     return (
@@ -431,6 +588,7 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
       setLocalItems((current) => current.some((item) => item.id === `local-${commandId}`)
         ? current
         : [...current, localUserItem(sessionId, commandId, current.length + 1, prompt)]);
+      void syncTranscript(sessionId);
     }
     return result;
   };
@@ -493,14 +651,17 @@ export function StructuredAgentDockPanel(props: IDockviewPanelProps): JSX.Elemen
       permissionPreset={agent?.permissionPreset ?? createdDraft?.permissionPreset ?? 'standard'}
       state={agent?.state ?? (createdDraft || loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
-      items={localItems}
+      items={transcriptItems}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}
-      transcriptLoading={loading && localItems.length === 0}
-      transcriptError={loadError ?? (!createdDraft && !loading && snapshot && !session
+      transcriptLoading={transcriptLoading && transcriptItems.length === 0}
+      transcriptError={transcriptError ?? loadError ?? (!createdDraft && !loading && snapshot && !session
         ? 'This Agent session is no longer available.'
         : null)}
-      disabled={!rendererDaemonApi()}
-      onRetryTranscript={() => void refresh()}
+      disabled={!snapshot && !loading}
+      onRetryTranscript={() => {
+        void refresh();
+        if (sessionId) void syncTranscript(sessionId, transcriptTargetRef.current);
+      }}
       onSend={(prompt) => runSessionCommand('agent.submit', prompt)}
       onInterruptAndSend={(prompt) => runSessionCommand('agent.interrupt-and-submit', prompt)}
       onChangeSettings={changeSettings}

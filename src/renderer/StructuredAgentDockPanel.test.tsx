@@ -5,8 +5,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DaemonCommand, DaemonSnapshot } from '../shared/daemon-protocol';
+import type {
+  DaemonCommand,
+  DaemonEvent,
+  DaemonSnapshot,
+  DaemonTranscriptItem,
+} from '../shared/daemon-protocol';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import {
+  mergeOptimisticTranscript,
   STRUCTURED_AGENT_DRAFT_PREFIX,
   STRUCTURED_AGENT_SESSION_PREFIX,
   StructuredAgentDockPanel,
@@ -85,11 +92,12 @@ describe('StructuredAgentDockPanel', () => {
         eventSequence: 10,
       };
     });
-    const setSubscribed = vi.fn();
+    const setSubscribed = vi.fn(async () => undefined);
     Object.defineProperty(window, 'ezterminal', {
       configurable: true,
       value: {
         getDaemonSnapshot: vi.fn(async () => snapshot),
+        getDaemonTranscript: vi.fn(async () => []),
         sendDaemonCommand,
         onDaemonEvent: vi.fn(() => () => undefined),
         setDaemonEventsSubscribed: setSubscribed,
@@ -152,5 +160,162 @@ describe('StructuredAgentDockPanel', () => {
     expect(setTitle).toHaveBeenCalledWith('Create only after this send');
     expect(container.querySelector('[data-testid="structured-agent-session"]')).not.toBeNull();
     expect(setSubscribed).toHaveBeenNthCalledWith(1, true);
+  });
+
+  it('pages persisted transcript forward and incrementally catches transcript events', async () => {
+    const sessionId = 'session-restored';
+    const restoredSnapshot: DaemonSnapshot = {
+      ...snapshot,
+      sessions: [{
+        id: sessionId,
+        projectId: 'project-1',
+        workspaceId: 'project-1.root-1.workspace-1',
+        kind: 'agent',
+        title: 'Persisted agent',
+        state: 'running',
+        source: 'structured',
+        revision: 2,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      agents: [{
+        sessionId,
+        providerId: 'codex',
+        providerSessionId: 'provider-session-1',
+        model: 'gpt-5',
+        permissionPreset: 'standard',
+        state: 'working',
+        queuedTurnCount: 0,
+        orchestrationEnabled: true,
+        revision: 2,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      transcriptHeads: [{ sessionId, lastSequence: 3, itemCount: 3 }],
+    };
+    const transcript: DaemonTranscriptItem[] = [
+      { id: 'message-1', sessionId, sequence: 1, kind: 'user-message', text: 'Persisted prompt', isDelta: false, isSensitive: false, createdAt: NOW },
+      { id: 'message-2a', sessionId, sequence: 2, kind: 'assistant-message', text: 'First ', isDelta: true, isSensitive: false, createdAt: NOW },
+      { id: 'message-2b', sessionId, sequence: 3, kind: 'assistant-message', text: 'answer', isDelta: true, isSensitive: false, createdAt: NOW },
+    ];
+    const getTranscript = vi.fn(async (_sessionId: string, afterSequence = 0) => {
+      if (afterSequence === 0) return transcript.slice(0, 2);
+      return transcript.filter((item) => item.sequence > afterSequence);
+    });
+    let onDaemonEvent!: (event: DaemonEvent) => void;
+    const stopEvents = vi.fn();
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getSnapshot: async () => restoredSnapshot,
+        getTranscript,
+        sendCommand: async (command) => ({
+          ok: true,
+          status: 'applied',
+          commandId: command.commandId,
+          revision: 5,
+          eventSequence: 10,
+        }),
+        observeEvents: (listener) => {
+          onDaemonEvent = listener;
+          return stopEvents;
+        },
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    const props = {
+      capabilities: access,
+      params: {
+        historyId: `${STRUCTURED_AGENT_SESSION_PREFIX}${sessionId}`,
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'workspace-1',
+      },
+      api: { id: 'persisted-agent', setTitle: vi.fn(), updateParameters: vi.fn() },
+    } as unknown as IDockviewPanelProps & { capabilities: CapabilityAccess };
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+    await flush();
+
+    expect(getTranscript).toHaveBeenCalledWith(sessionId, 0, 500);
+    expect(getTranscript).toHaveBeenCalledWith(sessionId, 2, 500);
+    expect(container.textContent).toContain('Persisted prompt');
+    expect(container.textContent).toContain('First answer');
+
+    transcript.push({
+      id: 'message-3',
+      sessionId,
+      sequence: 4,
+      kind: 'tool-result',
+      text: 'Incremental result',
+      isDelta: false,
+      isSensitive: false,
+      createdAt: NOW,
+    });
+    act(() => onDaemonEvent({
+      protocolVersion: 12,
+      eventId: 'event-4',
+      sequence: 10,
+      revision: 5,
+      occurredAt: NOW,
+      kind: 'transcript.appended',
+      payload: { sessionId, fromSequence: 4, toSequence: 4 },
+    }));
+    await flush();
+
+    expect(getTranscript).toHaveBeenCalledWith(sessionId, 3, 500);
+    expect(container.textContent).toContain('Incremental result');
+
+    act(() => root.unmount());
+    expect(stopEvents).toHaveBeenCalledOnce();
+    root = createRoot(container);
+  });
+
+  it('drops an optimistic user item once its persisted turn is represented', () => {
+    const sessionId = 'session-1';
+    const optimistic: DaemonTranscriptItem = {
+      id: 'local-command-1',
+      sessionId,
+      sequence: 1,
+      kind: 'user-message',
+      text: 'Do the work',
+      isDelta: false,
+      isSensitive: false,
+      createdAt: NOW,
+    };
+    const authoritative: DaemonTranscriptItem = {
+      id: 'message-stable',
+      sessionId,
+      turnId: 'turn-stable',
+      sequence: 7,
+      kind: 'user-message',
+      text: 'Do the work',
+      isDelta: false,
+      isSensitive: false,
+      createdAt: NOW,
+    };
+    const withTurn: DaemonSnapshot = {
+      ...snapshot,
+      turns: [{
+        id: 'turn-stable',
+        sessionId,
+        commandId: 'command-1',
+        state: 'working',
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+    };
+
+    expect(mergeOptimisticTranscript([authoritative], [optimistic], withTurn)).toEqual([authoritative]);
   });
 });

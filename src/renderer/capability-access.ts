@@ -29,7 +29,9 @@ import type {
 import type {
   DaemonCommand,
   DaemonCommandReceipt,
+  DaemonEvent,
   DaemonSnapshot,
+  DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
 import type { OpenClawMode } from '../shared/layout-schema';
 import type {
@@ -116,7 +118,16 @@ export interface StructuredProviderAccess {
 /** Host authority needed by Settings and structured Agent panes. */
 export interface DaemonAccess {
   getSnapshot: () => Promise<DaemonSnapshot | null>;
+  getTranscript: (
+    sessionId: string,
+    afterSequence?: number,
+    limit?: number,
+  ) => Promise<readonly DaemonTranscriptItem[]>;
   sendCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
+  observeEvents: (
+    onEvent: (event: DaemonEvent) => void,
+    onError?: (error: unknown) => void,
+  ) => CapabilityCleanup;
   getLifecycleSettings: () => Promise<DaemonLifecycleSettings | null>;
   setLifecycleSettings: (
     settings: Partial<DaemonLifecycleSettings>,
@@ -450,8 +461,65 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     getSnapshot() {
       return requireCore('getDaemonSnapshot').getDaemonSnapshot();
     },
+    getTranscript(sessionId, afterSequence, limit) {
+      return requireCore('getDaemonTranscript').getDaemonTranscript(sessionId, afterSequence, limit);
+    },
     sendCommand(command) {
       return requireCore('sendDaemonCommand').sendDaemonCommand(command);
+    },
+    observeEvents(onEvent, onError) {
+      const report = (error: unknown): void => {
+        try {
+          onError?.(error);
+        } catch {
+          // Consumer error reporting must not break subscription ownership.
+        }
+      };
+      let api: EzTerminalApi;
+      try {
+        api = requireCore('onDaemonEvent');
+        requireCore('setDaemonEventsSubscribed');
+      } catch (error) {
+        report(error);
+        return NOOP_CLEANUP;
+      }
+      let active = true;
+      let unsubscribe: CapabilityCleanup = NOOP_CLEANUP;
+      try {
+        unsubscribe = api.onDaemonEvent((event) => {
+          if (!active) return;
+          try {
+            onEvent(event);
+          } catch (error) {
+            report(error);
+          }
+        });
+        void Promise.resolve(api.setDaemonEventsSubscribed(true)).catch((error) => {
+          if (active) report(error);
+        });
+      } catch (error) {
+        active = false;
+        try {
+          unsubscribe();
+        } catch {
+          // A partially-created subscription remains best-effort to unwind.
+        }
+        report(error);
+        return NOOP_CLEANUP;
+      }
+      return () => {
+        if (!active) return;
+        active = false;
+        try {
+          unsubscribe();
+        } finally {
+          try {
+            void Promise.resolve(api.setDaemonEventsSubscribed(false)).catch(() => undefined);
+          } catch {
+            // Teardown is deliberately best-effort and idempotent.
+          }
+        }
+      };
     },
     async getLifecycleSettings() {
       const api = desktopFor('getDaemonLifecycleSettings');

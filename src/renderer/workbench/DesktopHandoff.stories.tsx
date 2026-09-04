@@ -402,6 +402,7 @@ function providerSettingsCapabilities(scenario: ProviderSettingsScenario): Capab
     },
     daemon: {
       getSnapshot: async () => daemonSnapshot,
+      getTranscript: async () => [],
       sendCommand: async (command) => ({
         ok: false,
         status: 'rejected',
@@ -409,6 +410,7 @@ function providerSettingsCapabilities(scenario: ProviderSettingsScenario): Capab
         revision: daemonSnapshot.revision,
         error: { code: 'invalid-state', message: 'Static Storybook fixture', retryable: false },
       }),
+      observeEvents: () => () => undefined,
       getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
       setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
     },

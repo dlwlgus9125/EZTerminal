@@ -130,6 +130,7 @@ function capabilities(overrides: CapabilityOverrides = {}): CapabilityAccess {
     },
     daemon: {
       getSnapshot: overrides.getSnapshot ?? (async () => snapshot()),
+      getTranscript: async () => [],
       sendCommand: overrides.sendCommand ?? (async (command) => ({
         ok: true,
         status: 'applied',
@@ -137,6 +138,7 @@ function capabilities(overrides: CapabilityOverrides = {}): CapabilityAccess {
         revision: 5,
         eventSequence: 5,
       })),
+      observeEvents: () => () => undefined,
       getLifecycleSettings: overrides.getLifecycle ?? (async () => ({
         keepRunning: false,
         startAtLogin: false,
