@@ -2,47 +2,58 @@
 
 Release identity: remote protocol v12, Android versionCode 67.
 
-## Project Lead collaboration
+## Local Agent sessions instead of Project collaboration setup
 
-This release replaces the earlier Team-oriented setup with a simpler
-Paseo-style collaboration flow. The user talks to one lead inside the Project,
-and that lead coordinates approved Codex or Claude Code workers. Worker
-profiles carry explicit permission modes, bounded concurrency and turn limits,
-path allow/deny rules, structured reports, and visible run state.
+This release replaces the per-Project Collaboration switch, Persona editor,
+and separate Team run graph with a single Project → Workspace → Session model.
+New Agent opens as a normal draft tab; choosing a provider or model does not
+start a process, and the provider session is created only when the first prompt
+is sent.
 
-The lead can request managed merge review, but EZTerminal still validates an
-immutable candidate and requires the configured approval policy before moving
-the target branch. Selecting a worker profile never grants broader filesystem
-or merge authority by itself.
+Codex runs through `codex app-server`. Claude runs through Claude Agent SDK
+streaming input using the user's installed Claude CLI authentication chain.
+EZTerminal does not read or persist provider tokens and does not embed a
+provider login page. Provider enablement, executable review, and third-party
+adapter trust remain explicit desktop settings actions. Android reports the
+same runtime state without exposing controls that cannot run on the host.
 
-## Installed CLIs can be enabled where they are selected
+## Managed Agents are directly usable sessions
 
-Codex and Claude Code may already be installed while their EZTerminal lifecycle
-hooks are not yet active. Previously, Project collaboration showed those
-profiles as unavailable without offering a local recovery action; visiting the
-separate Agent settings page and pressing an ambiguous `Install` button was the
-only way to make them selectable.
+An Agent with orchestration tools enabled can create recursive children in the
+same or another Workspace and can choose Codex or Claude independently for each
+child. A managed child is not a hidden worker transcript: it is a complete Agent
+session that the user can open, message, interrupt, archive, or detach directly.
+Provider-native subagents remain visible but read-only and provider-owned.
 
-Project collaboration now keeps each unavailable built-in profile visible,
-explains the missing EZTerminal integration, and offers an explicit
-`Enable integration` action beside it. A successful activation refreshes the
-orchestration snapshot in place so the corresponding worker profile becomes
-selectable. Blockers and write failures remain visible with a route to Agent
-settings. The shared Agent settings actions are now named `Enable integration`
-and `Disable integration`, making it clear that they manage EZTerminal hooks,
-not the provider CLI installation.
+The daemon enforces four concurrent managed turns, 16 nodes per tree, depth
+four, 12 child creations per ten minutes, and a two-hour background-turn limit.
+Excess concurrency is queued FIFO; structural and time limits fail with typed
+states rather than silently widening authority. Session-scoped MCP can manage
+only its owning Agent and verified descendants. The local CLI, schedules, and
+heartbeats use the same command policy and revisioned state.
 
-Profile selection and the collaboration master switch remain non-mutating:
-they do not silently write Codex or Claude configuration. Android shows the
-same truthful unavailable state and directs host configuration to desktop.
+## Durable local authority and recovery
+
+Electron main owns the user-level local daemon authority while desktop,
+Android, CLI, MCP, and provider runtimes act as scoped clients. Revisioned
+SQLite snapshots, a write-ahead command outbox, provider reconciliation,
+idempotent legacy import, process ownership, and terminal-only safe mode protect
+restarts and partial delivery. Cancellation fences prevent a stopped or
+superseded turn from being revived by a late provider response.
+
+Closing or explicitly quitting uses the configured daemon lifetime policy;
+optional keep-running and start-at-login behavior is reviewed in desktop
+settings. Relay, voice, an external Hub, and multi-user accounts are not part of
+this release.
 
 ## Compatibility and artifacts
 
-Remote protocol v12 is required for revisioned daemon snapshots, commands and
-policy writes. Desktop and Android must use the exact same protocol version;
-older remote clients fail closed instead of receiving a partial downgrade.
-Electron-to-Rust native desktop protocol v2, persisted layout schema version 1,
-Project Map schema v2, and terminal and project identities are unchanged.
+Remote protocol v12 is required for revisioned daemon snapshots, commands,
+provider state, Agent trees, schedules, and heartbeat state. Desktop and
+Android must use the exact same protocol version; older remote clients fail
+closed instead of receiving a partial downgrade. Electron-to-Rust native
+desktop protocol v2, persisted layout schema version 1, Project Map schema v2,
+and terminal and project identities are unchanged.
 
 - Windows 10 22H2/Windows 11 x64: `EZTerminal-Setup.exe`
 - Android 10 (API 29) or newer:
@@ -56,9 +67,10 @@ EZTerminal release certificate.
 
 This release uses the `functional-hotfix` validation profile. The exact tagged
 SHA must pass the release workflow's version and documentation contracts,
-desktop and mobile typechecks and tests, Rust tests, Storybook accessibility,
-ordinary Electron E2E, packaging, signing-state, SBOM, manifest, and checksum
-gates before publication.
+desktop and mobile typechecks and repeated zero-retry tests, Android API 29/35
+instrumentation, Rust format/test/clippy/audit/deny, Storybook accessibility
+and visual checks, ordinary Electron E2E, packaged smoke, signing-state, SBOM,
+manifest, and checksum gates before a draft is created.
 
 This release does not run or claim the separately authorized release
 performance benchmark, the opt-in two-hour desktop lifecycle soak, or the

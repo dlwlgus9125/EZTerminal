@@ -2,23 +2,29 @@
 
 ## [Unreleased]
 
-## [1.0.46] - 2026-09-04
+## [1.0.46] - 2026-09-05
 
 ### Added
 
-- Added Project Lead collaboration with a single user-facing lead, bounded
-  Codex/Claude worker profiles, explicit permission modes, structured worker
-  reports, and managed merge review.
-- Added the same collaboration status and policy review surfaces to the Android
-  companion without exposing desktop-only host configuration mutations.
+- Added a local Project → Workspace → Session Agent model with draft-first
+  creation, Codex app-server and Claude Agent SDK providers, durable transcript
+  recovery, schedules, heartbeats, local CLI control, and session-scoped MCP.
+- Added recursive, cross-provider managed Agent trees. Every managed child is a
+  normal session that the user can open, message, interrupt, archive, or detach
+  directly on desktop and Android.
+- Added bounded orchestration limits, provider permission ceilings, revisioned
+  SQLite state, write-ahead delivery, safe-mode recovery, and process ownership
+  guards for daemon and provider failures.
 
-### Fixed
+### Changed
 
-- Made unavailable Codex and Claude worker profiles explain that EZTerminal
-  lifecycle integration is required and offer an explicit in-place
-  `Enable integration` action in Project collaboration settings.
-- Renamed the ambiguous Agent integration `Install` and `Remove` actions so an
-  already-installed CLI is no longer mistaken for a missing application.
+- Replaced the per-Project Collaboration switch, Persona editor, and separate
+  Team graph with the normal New Agent flow and a compact lead/children strip.
+- Kept provider enablement and adapter trust review in desktop settings while
+  mobile exposes truthful runtime state and session controls without pretending
+  to configure the desktop host.
+- Retained the legacy `ezterminal-agent` entry only as a one-major-release
+  compatibility shim. Relay and voice are not part of this release.
 
 Remote protocol v12 carries the revisioned daemon read model and orchestration
 policy writes. See [1.0.46 release notes](docs/release/release-notes-1.0.46.md).
