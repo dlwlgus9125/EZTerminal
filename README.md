@@ -115,6 +115,14 @@ terminal activity hooks. There is no per-Project collaboration switch, Persona e
 in the active workflow. The old collaboration CLI is retained only as a one-major-release
 compatibility surface.
 
+Provider authentication stays with the installed provider. Codex launches the reviewed
+`codex app-server` executable and verifies authentication on the first Agent start. Claude uses the
+Agent SDK streaming transport (the SDK-managed non-interactive `-p`-style path) with its reviewed
+bundled Claude executable and the existing CLI authentication chain. EZTerminal does not open an
+embedded OAuth flow or read, copy, or store provider tokens. The **Existing claude.ai login** option
+must only be enabled after Anthropic has approved that third-party product use; otherwise select an
+API-key or supported cloud/CLI environment.
+
 Managed merge never turns an arbitrary terminal command into an approval
 button. It accepts only committed changes from an EZTerminal-managed worktree,
 creates a detached candidate, runs the Project validations, and rechecks both
