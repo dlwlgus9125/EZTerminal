@@ -1944,8 +1944,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   inspectDaemonProvider(
-    _providerId: string,
+    providerId: string,
   ): Promise<DaemonProviderManagementResult<ProviderInspection>> {
+    void providerId;
     return Promise.resolve({
       ok: false,
       code: 'desktop-principal-required',
@@ -1954,8 +1955,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   listDaemonProviderModels(
-    _providerId: string,
+    providerId: string,
   ): Promise<DaemonProviderManagementResult<readonly ProviderModel[]>> {
+    void providerId;
     return Promise.resolve({
       ok: false,
       code: 'desktop-principal-required',
@@ -1972,8 +1974,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   setClaudeProviderEnablement(
-    _enablement: ClaudeProviderEnablement,
+    enablement: ClaudeProviderEnablement,
   ): Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>> {
+    void enablement;
     return Promise.resolve({
       ok: false,
       code: 'desktop-principal-required',
