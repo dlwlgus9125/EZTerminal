@@ -105,6 +105,7 @@ function fixture(options: { readonly principal?: boolean } = {}) {
     registry,
     claudeAdapter,
     claudeStore,
+    getSnapshot: () => ({ providers: [] }),
     resolveDesktopPrincipal,
     reportError,
   });
@@ -172,7 +173,7 @@ describe('daemon provider IPC', () => {
       .resolves.toEqual({ ok: true, value: enabledPolicy });
 
     expect(subject.registry.inspect).toHaveBeenCalledWith('claude');
-    expect(subject.registry.listModels).toHaveBeenCalledWith('claude');
+    expect(subject.registry.listModels).toHaveBeenCalledWith({ providers: [] }, 'claude');
     expect(subject.claudeAdapter.setEnablement).toHaveBeenCalledWith(enabledPolicy);
   });
 

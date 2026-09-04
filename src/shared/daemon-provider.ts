@@ -40,6 +40,9 @@ export interface ProviderProbeResult {
     | 'native-subagents'
     | 'history-reconciliation'
   )[];
+  /** Installation compatibility is separate from authentication readiness. */
+  readonly authenticationState?: 'verified' | 'first-launch' | 'unavailable';
+  readonly authenticationDetail?: string;
   readonly reviewNotices?: readonly ProviderReviewNotice[];
   readonly unavailableReason?: string;
 }
@@ -47,6 +50,20 @@ export interface ProviderProbeResult {
 export interface ProviderInspection {
   readonly probe: ProviderProbeResult;
   /** Binds the executable, argv, capabilities and every review notice. */
+  readonly reviewDigest: string;
+}
+
+/**
+ * Durable, non-secret process identity approved by the user. Provider adapters
+ * may launch only this exact absolute executable with this exact argv/env set.
+ */
+export interface ProviderLaunchDescriptor {
+  readonly providerId: string;
+  readonly protocol: ProviderProtocol;
+  readonly executablePath: string;
+  readonly executableVersion: string;
+  readonly argv: readonly string[];
+  readonly environmentVariableNames: readonly string[];
   readonly reviewDigest: string;
 }
 

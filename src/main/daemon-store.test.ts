@@ -93,6 +93,7 @@ function providerMutation(): DaemonStoreMutation {
       argv: ['app-server'],
       environmentVariableNames: ['CODEX_HOME'],
       capabilities: ['streaming', 'approvals'],
+      reviewDigest: 'a'.repeat(64),
       enabled: true,
       health: 'ready',
     },
@@ -153,7 +154,9 @@ describe('DaemonStore', () => {
       'turns',
       'workspaces',
     ]);
-    expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 });
+    expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 });
+    expect(database.prepare("SELECT name FROM pragma_table_info('providers') WHERE name = 'review_digest'").get())
+      .toEqual({ name: 'review_digest' });
     expect(database.prepare("SELECT name FROM pragma_table_info('turns') WHERE name = 'enqueue_sequence'").get())
       .toEqual({ name: 'enqueue_sequence' });
     expect(database.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
@@ -368,7 +371,12 @@ describe('DaemonStore', () => {
       turns: [{ id: 'turn-1', commandId: 'agent-create' }],
       transcriptHeads: [{ sessionId: 'session-parent', lastSequence: 2, itemCount: 2 }],
       approvals: [{ id: 'approval-1', state: 'pending' }],
-      providers: [{ id: 'codex', argv: ['app-server'], environmentVariableNames: ['CODEX_HOME'] }],
+      providers: [{
+        id: 'codex',
+        argv: ['app-server'],
+        environmentVariableNames: ['CODEX_HOME'],
+        reviewDigest: 'a'.repeat(64),
+      }],
       schedules: [{ id: 'schedule-1', cron: '0 2 * * *' }],
       heartbeats: [{ sessionId: 'session-parent', pending: false }],
     });
@@ -735,7 +743,7 @@ describe('DaemonStore', () => {
 
     const migrated = new DaemonStore(directory);
     await migrated.init();
-    expect(migrated.getDiagnostics().schemaVersion).toBe(2);
+    expect(migrated.getDiagnostics().schemaVersion).toBe(3);
     expect(migrated.getSnapshot().turns).toEqual([
       expect.objectContaining({ id: 'turn-v1', enqueueSequence: expect.any(Number) }),
     ]);

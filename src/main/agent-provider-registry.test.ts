@@ -22,6 +22,7 @@ const probe: ProviderProbeResult = {
 function adapter(overrides: Partial<AgentProviderAdapter> = {}): AgentProviderAdapter {
   return {
     providerId: 'codex',
+    setLaunchDescriptor: vi.fn(),
     probe: vi.fn(async () => probe),
     listModels: vi.fn(async () => []),
     createSession: vi.fn(),
@@ -47,6 +48,7 @@ function snapshot(provider: DaemonSnapshot['providers'][number] = {
   argv: probe.argv,
   environmentVariableNames: probe.environmentVariableNames,
   capabilities: probe.capabilities,
+  reviewDigest: createProviderReviewDigest(probe),
   enabled: true,
   health: 'ready' as const,
   revision: 1,
@@ -109,8 +111,35 @@ describe('AgentProviderRegistry', () => {
     const providerAdapter = adapter();
     const registry = new AgentProviderRegistry([providerAdapter]);
     expect(registry.enabledAdapter(snapshot(), 'codex')).toEqual({ ok: true, value: providerAdapter });
+    expect(providerAdapter.setLaunchDescriptor).toHaveBeenCalledWith(expect.objectContaining({
+      executablePath: probe.executablePath,
+      executableVersion: probe.executableVersion,
+      reviewDigest: createProviderReviewDigest(probe),
+    }));
     expect(registry.enabledAdapter(snapshot({ ...snapshot().providers[0]!, enabled: false }), 'codex'))
       .toMatchObject({ ok: false, code: 'provider-unavailable' });
+    expect(registry.enabledAdapter(snapshot({
+      ...snapshot().providers[0]!,
+      reviewDigest: undefined,
+    }), 'codex')).toMatchObject({ ok: false, code: 'review-mismatch' });
+  });
+
+  it('binds model discovery to the durable reviewed provider record', async () => {
+    const listModels = vi.fn(async () => []);
+    const providerAdapter = adapter({ listModels });
+    const registry = new AgentProviderRegistry([providerAdapter]);
+
+    await expect(registry.listModels(snapshot(), 'codex')).resolves.toEqual({ ok: true, value: [] });
+    expect(providerAdapter.setLaunchDescriptor).toHaveBeenCalledWith(expect.objectContaining({
+      reviewDigest: createProviderReviewDigest(probe),
+    }));
+    expect(listModels).toHaveBeenCalledOnce();
+
+    await expect(registry.listModels(snapshot({
+      ...snapshot().providers[0]!,
+      reviewDigest: undefined,
+    }), 'codex')).resolves.toMatchObject({ ok: false, code: 'review-mismatch' });
+    expect(listModels).toHaveBeenCalledOnce();
   });
 
   it('disposes every adapter and reports aggregate failures', async () => {

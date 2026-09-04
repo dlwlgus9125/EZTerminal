@@ -6,6 +6,7 @@ import type {
   ProviderEnableInput,
 } from '../shared/daemon-protocol';
 import type {
+  ProviderLaunchDescriptor,
   ProviderInspection,
   ProviderModel,
   ProviderProbeResult,
@@ -37,8 +38,23 @@ function canonicalProbe(probe: ProviderProbeResult): Readonly<Record<string, unk
     argv: [...probe.argv],
     environmentVariableNames: [...probe.environmentVariableNames].sort(),
     capabilities: [...probe.capabilities].sort(),
+    authenticationState: probe.authenticationState ?? null,
+    authenticationDetail: probe.authenticationDetail ?? null,
     unavailableReason: probe.unavailableReason ?? null,
     reviewNotices,
+  };
+}
+
+function launchDescriptor(provider: DaemonProvider): ProviderLaunchDescriptor | null {
+  if (!provider.reviewDigest || !/^[a-f0-9]{64}$/u.test(provider.reviewDigest)) return null;
+  return {
+    providerId: provider.id,
+    protocol: provider.protocol,
+    executablePath: provider.executablePath,
+    executableVersion: provider.executableVersion,
+    argv: provider.argv,
+    environmentVariableNames: provider.environmentVariableNames,
+    reviewDigest: provider.reviewDigest,
   };
 }
 
@@ -127,6 +143,14 @@ export class AgentProviderRegistry {
     input: ProviderEnableInput,
     signal?: AbortSignal,
   ): Promise<ProviderRegistryResult<Omit<DaemonProvider, 'revision' | 'createdAt' | 'updatedAt'>>> {
+    const adapter = this.adapters.get(input.providerId);
+    if (!adapter) {
+      return {
+        ok: false,
+        code: 'provider-not-registered',
+        message: `Provider is not registered: ${input.providerId}`,
+      };
+    }
     const inspected = await this.inspect(input.providerId, signal);
     if (!inspected.ok) return inspected;
     const { probe, reviewDigest } = inspected.value;
@@ -144,21 +168,40 @@ export class AgentProviderRegistry {
         message: 'Provider details changed after review. Inspect and approve the current executable again.',
       };
     }
-    return {
-      ok: true,
-      value: {
-        id: probe.providerId,
-        displayName: probe.displayName,
-        protocol: probe.protocol,
-        executablePath: probe.executablePath,
-        executableVersion: probe.executableVersion,
-        argv: probe.argv,
-        environmentVariableNames: probe.environmentVariableNames,
-        capabilities: probe.capabilities,
-        enabled: true,
-        health: 'ready',
-      },
+    const value: Omit<DaemonProvider, 'revision' | 'createdAt' | 'updatedAt'> = {
+      id: probe.providerId,
+      displayName: probe.displayName,
+      protocol: probe.protocol,
+      executablePath: probe.executablePath,
+      executableVersion: probe.executableVersion,
+      argv: probe.argv,
+      environmentVariableNames: probe.environmentVariableNames,
+      capabilities: probe.capabilities,
+      reviewDigest,
+      enabled: true,
+      health: 'ready',
+      healthDetail: probe.authenticationDetail
+        ?? 'Executable review is current. Authentication is verified when the first Agent session starts.',
     };
+    const descriptor = launchDescriptor({
+      ...value,
+      revision: 0,
+      createdAt: '',
+      updatedAt: '',
+    });
+    if (!descriptor) {
+      return { ok: false, code: 'review-mismatch', message: 'Provider launch review could not be bound.' };
+    }
+    try {
+      adapter.setLaunchDescriptor?.(descriptor);
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'provider-incompatible',
+        message: error instanceof Error ? error.message : 'Provider launch review is incompatible.',
+      };
+    }
+    return { ok: true, value };
   }
 
   enabledAdapter(
@@ -177,16 +220,37 @@ export class AgentProviderRegistry {
         message: `${provider?.displayName ?? providerId} is not enabled and ready.`,
       };
     }
+    if (adapter.setLaunchDescriptor) {
+      const descriptor = launchDescriptor(provider);
+      if (!descriptor) {
+        return {
+          ok: false,
+          code: 'review-mismatch',
+          message: `${provider.displayName} must be inspected and reviewed again before it can launch.`,
+        };
+      }
+      try {
+        adapter.setLaunchDescriptor(descriptor);
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'provider-incompatible',
+          message: error instanceof Error ? error.message : 'Provider launch review is invalid.',
+        };
+      }
+    }
     return { ok: true, value: adapter };
   }
 
-  async listModels(providerId: string, signal?: AbortSignal): Promise<ProviderRegistryResult<readonly ProviderModel[]>> {
-    const adapter = this.adapters.get(providerId);
-    if (!adapter) {
-      return { ok: false, code: 'provider-not-registered', message: `Provider is not registered: ${providerId}` };
-    }
+  async listModels(
+    snapshot: Pick<DaemonSnapshot, 'providers'>,
+    providerId: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderRegistryResult<readonly ProviderModel[]>> {
+    const selected = this.enabledAdapter(snapshot, providerId);
+    if (!selected.ok) return selected;
     try {
-      return { ok: true, value: await adapter.listModels(signal) };
+      return { ok: true, value: await selected.value.listModels(signal) };
     } catch (error) {
       return {
         ok: false,

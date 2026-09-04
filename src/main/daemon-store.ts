@@ -31,7 +31,7 @@ import {
 import { AsyncMutationGate } from './async-mutation-gate';
 
 export const DAEMON_DATABASE_FILE_NAME = 'orchestration.sqlite3';
-export const DAEMON_DATABASE_SCHEMA_VERSION = 2;
+export const DAEMON_DATABASE_SCHEMA_VERSION = 3;
 export const MAX_TRANSCRIPT_BATCH_ITEMS = 128;
 export const MAX_TRANSCRIPT_BATCH_UTF8_BYTES = 1024 * 1024;
 
@@ -690,6 +690,7 @@ export class DaemonStore {
         protocol: requiredString(row, 'protocol') as DaemonProvider['protocol'], executablePath: requiredString(row, 'executable_path'),
         executableVersion: requiredString(row, 'executable_version'), argv: stringArray(row, 'argv_json'),
         environmentVariableNames: stringArray(row, 'environment_variable_names_json'), capabilities: stringArray(row, 'capabilities_json'),
+        ...(optionalString(row, 'review_digest') === undefined ? {} : { reviewDigest: optionalString(row, 'review_digest') }),
         enabled: bool(row, 'enabled'), health: requiredString(row, 'health') as DaemonProvider['health'],
         ...(optionalString(row, 'health_detail') === undefined ? {} : { healthDetail: optionalString(row, 'health_detail') }),
         revision: integer(row, 'revision'), createdAt: requiredString(row, 'created_at'), updatedAt: requiredString(row, 'updated_at'),
@@ -1134,6 +1135,22 @@ export class DaemonStore {
         throw error;
       }
     }
+    if (version < 3) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const reviewDigestColumn = database.prepare(
+          "SELECT name FROM pragma_table_info('providers') WHERE name = 'review_digest'",
+        ).get();
+        if (!reviewDigestColumn) {
+          database.exec('ALTER TABLE providers ADD COLUMN review_digest TEXT');
+        }
+        database.exec('PRAGMA user_version = 3');
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
     const row = database.prepare('SELECT singleton FROM runtime_settings WHERE singleton = 1').get();
     if (!row) throw new Error('Daemon database is missing runtime metadata.');
   }
@@ -1344,19 +1361,21 @@ export class DaemonStore {
         database.prepare(`
           INSERT INTO providers (
             id, display_name, protocol, executable_path, executable_version, argv_json,
-            environment_variable_names_json, capabilities_json, enabled, health, health_detail,
+            environment_variable_names_json, capabilities_json, review_digest, enabled, health, health_detail,
             revision, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             display_name = excluded.display_name, protocol = excluded.protocol, executable_path = excluded.executable_path,
             executable_version = excluded.executable_version, argv_json = excluded.argv_json,
             environment_variable_names_json = excluded.environment_variable_names_json,
-            capabilities_json = excluded.capabilities_json, enabled = excluded.enabled, health = excluded.health,
+            capabilities_json = excluded.capabilities_json,
+            review_digest = COALESCE(excluded.review_digest, providers.review_digest),
+            enabled = excluded.enabled, health = excluded.health,
             health_detail = excluded.health_detail, revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
           value.id, value.displayName, value.protocol, value.executablePath, value.executableVersion,
           JSON.stringify(value.argv), JSON.stringify(value.environmentVariableNames), JSON.stringify(value.capabilities),
-          value.enabled ? 1 : 0, value.health, value.healthDetail ?? null, revision, now, now,
+          value.reviewDigest ?? null, value.enabled ? 1 : 0, value.health, value.healthDetail ?? null, revision, now, now,
         );
         return [{ kind: 'entity.upserted', payload: { entityType: 'provider', entityId: value.id } }];
       }

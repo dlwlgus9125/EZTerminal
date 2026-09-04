@@ -5,10 +5,13 @@ import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-a
 
 import type { AgentProviderEvent, ProviderSessionContext } from './agent-provider-adapter';
 import {
+  CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION,
   ClaudeProviderAdapter,
   ClaudeProviderError,
   MemoryClaudeProviderEnablementStore,
+  classifyClaudeAuthentication,
   classifyClaudeProviderError,
+  resolveBundledClaudeExecutable,
   resolveClaudeExecutable,
   type ClaudeProviderEnablement,
   type ClaudeQuerySession,
@@ -52,16 +55,19 @@ class FakeClaudeQuery implements ClaudeQuerySession {
   private readonly waiters: Array<(result: IteratorResult<SDKMessage>) => void> = [];
   private ended = false;
   private readonly endOnClose: boolean;
+  private readonly account: Record<string, unknown> | undefined;
 
   constructor(
     input: AsyncIterable<SDKUserMessage>,
     options: Options,
     endOnClose = true,
     apiKeySource = 'ANTHROPIC_API_KEY',
+    account?: Record<string, unknown>,
   ) {
     this.input = input;
     this.inputOptions = options;
     this.endOnClose = endOnClose;
+    this.account = account;
     this.emit({
       type: 'system',
       subtype: 'init',
@@ -97,7 +103,7 @@ class FakeClaudeQuery implements ClaudeQuerySession {
   }
 
   async initializationResult(): Promise<unknown> {
-    return { models: this.supported };
+    return { models: this.supported, ...(this.account ? { account: this.account } : {}) };
   }
 
   async supportedModels(): Promise<typeof this.supported> {
@@ -125,6 +131,7 @@ function makeAdapter(options: {
   readonly policy?: ClaudeProviderEnablement;
   readonly endOnClose?: boolean;
   readonly apiKeySource?: string;
+  readonly account?: Record<string, unknown>;
   readonly historyReader?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['historyReader'];
 } = {}): {
   readonly adapter: ClaudeProviderAdapter;
@@ -144,6 +151,7 @@ function makeAdapter(options: {
         queryOptions,
         options.endOnClose,
         options.apiKeySource,
+        options.account,
       );
       return fakeQuery;
     },
@@ -232,7 +240,8 @@ describe('Claude provider review and enablement', () => {
       expect.objectContaining({ id: 'anthropic-third-party-claude-ai', level: 'required' }),
     ]));
     expect(probe.displayName).toBe('Claude Agent');
-    expect(probe.environmentVariableNames).toContain('ANTHROPIC_API_KEY');
+    expect(probe.environmentVariableNames).not.toContain('ANTHROPIC_API_KEY');
+    expect(probe.environmentVariableNames).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
     expect(JSON.stringify(probe)).not.toMatch(/ANTHROPIC_API_KEY=/u);
   });
 
@@ -276,10 +285,60 @@ describe('Claude provider review and enablement', () => {
       anthropicThirdPartyApproval: true,
     })).resolves.toMatchObject({ enabled: true, anthropicThirdPartyApproval: true });
   });
+
+  it('classifies helper, managed-key, cloud, and first-party auth without account identity output', () => {
+    expect(classifyClaudeAuthentication('existing-cli-environment', 'apiKeyHelper', {
+      account: { email: 'private@example.test', apiProvider: 'firstParty' },
+    })).toBeNull();
+    expect(classifyClaudeAuthentication('existing-cli-environment', '/login managed key', {
+      account: { organization: 'private-org' },
+    })).toBeNull();
+    expect(classifyClaudeAuthentication('existing-cli-environment', 'none', {
+      account: { apiProvider: 'gateway' },
+    })).toBeNull();
+    expect(classifyClaudeAuthentication('existing-cli-environment', 'none', {
+      account: { apiProvider: 'firstParty', subscriptionType: 'pro' },
+    })).toBe('CLAUDE_AUTHENTICATION_FAILED');
+    expect(classifyClaudeAuthentication('existing-claude-ai-login', 'none', {
+      account: { apiProvider: 'firstParty', subscriptionType: 'pro' },
+    })).toBeNull();
+  });
+
+  it('fails before SDK process creation when the reviewed CLI version drifts', async () => {
+    const bundledExecutable = await resolveBundledClaudeExecutable();
+    expect(bundledExecutable).not.toBeNull();
+    const queryFactory = vi.fn(() => {
+      throw new Error('query must not start');
+    });
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      queryFactory,
+      readExecutableVersion: async () => '2.1.261',
+    });
+    adapter.setLaunchDescriptor({
+      providerId: 'claude',
+      protocol: 'claude-agent-sdk',
+      executablePath: bundledExecutable!,
+      executableVersion: CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION,
+      argv: [
+        '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json',
+        '--permission-prompt-tool', 'stdio',
+      ],
+      environmentVariableNames: [
+        'PATH', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'ANTHROPIC_API_KEY',
+      ],
+      reviewDigest: 'a'.repeat(64),
+    });
+
+    await expect(adapter.createSession(context)).rejects.toMatchObject({
+      code: 'CLAUDE_EXECUTABLE_INVALID',
+    });
+    expect(queryFactory).not.toHaveBeenCalled();
+  });
 });
 
 describe('ClaudeProviderAdapter sessions', () => {
-  it('creates and resumes through the SDK using an absolute executable and inherited auth environment', async () => {
+  it('creates and resumes through the SDK using an absolute executable and allowlisted environment', async () => {
     const created = makeAdapter();
     const handle = await created.adapter.createSession(context);
 
@@ -296,7 +355,11 @@ describe('ClaudeProviderAdapter sessions', () => {
       sessionId: providerSessionId,
       model: 'sonnet',
     });
-    expect(created.query.inputOptions).not.toHaveProperty('env');
+    expect(created.query.inputOptions.env).toMatchObject({
+      CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2',
+    });
+    expect(created.query.inputOptions.env).not.toHaveProperty('GITHUB_TOKEN');
+    expect(created.query.inputOptions.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(created.query.inputOptions).not.toHaveProperty('resume');
     expect(path.isAbsolute(created.query.inputOptions.pathToClaudeCodeExecutable!)).toBe(true);
     await created.adapter.dispose();
@@ -308,7 +371,7 @@ describe('ClaudeProviderAdapter sessions', () => {
       pathToClaudeCodeExecutable: executablePath,
     });
     expect(resumed.query.inputOptions).not.toHaveProperty('sessionId');
-    expect(resumed.query.inputOptions).not.toHaveProperty('env');
+    expect(resumed.query.inputOptions.env).toBeDefined();
     await resumed.adapter.dispose();
   });
 
@@ -331,7 +394,8 @@ describe('ClaudeProviderAdapter sessions', () => {
         headers: { Authorization: `Bearer ${bearerToken}` },
       },
     });
-    expect(fixture.query.inputOptions).not.toHaveProperty('env');
+    expect(fixture.query.inputOptions.env).toBeDefined();
+    expect(fixture.query.inputOptions.env).not.toHaveProperty('GITHUB_TOKEN');
     await fixture.adapter.dispose();
   });
 
@@ -357,7 +421,8 @@ describe('ClaudeProviderAdapter sessions', () => {
     await expect(fixture.adapter.createSession(context)).rejects.toMatchObject({
       code: 'CLAUDE_AUTHENTICATION_FAILED',
     });
-    expect(fixture.query.inputOptions).not.toHaveProperty('env');
+    expect(fixture.query.inputOptions.env).toBeDefined();
+    expect(fixture.query.inputOptions.env).not.toHaveProperty('GITHUB_TOKEN');
     expect(fixture.query.inputOptions.abortController?.signal.aborted).toBe(true);
     expect(fixture.events).toContainEqual(expect.objectContaining({
       kind: 'provider-error',
@@ -372,13 +437,57 @@ describe('ClaudeProviderAdapter sessions', () => {
         authenticationPath: 'existing-cli-environment',
       },
       apiKeySource: 'none',
+      account: { apiProvider: 'bedrock' },
     });
 
     await expect(fixture.adapter.createSession(context)).resolves.toMatchObject({
       providerSessionId,
     });
-    expect(fixture.query.inputOptions).not.toHaveProperty('env');
+    expect(fixture.query.inputOptions.env).toBeDefined();
+    expect(fixture.query.inputOptions.env).not.toHaveProperty('GITHUB_TOKEN');
     await fixture.adapter.dispose();
+  });
+
+  it('fails closed for ambiguous none auth and requires approved login mode for first-party OAuth', async () => {
+    const ambiguous = makeAdapter({
+      policy: { ...enabledPolicy, authenticationPath: 'existing-cli-environment' },
+      apiKeySource: 'none',
+    });
+    await expect(ambiguous.adapter.createSession(context)).rejects.toMatchObject({
+      code: 'CLAUDE_AUTHENTICATION_FAILED',
+    });
+
+    const wrongMode = makeAdapter({
+      policy: { ...enabledPolicy, authenticationPath: 'existing-cli-environment' },
+      apiKeySource: 'none',
+      account: {
+        apiProvider: 'firstParty',
+        subscriptionType: 'pro',
+        email: 'must-not-leave-adapter@example.test',
+      },
+    });
+    await expect(wrongMode.adapter.createSession(context)).rejects.toMatchObject({
+      code: 'CLAUDE_AUTHENTICATION_FAILED',
+      message: expect.not.stringContaining('example.test'),
+    });
+
+    const approved = makeAdapter({
+      policy: {
+        ...enabledPolicy,
+        authenticationPath: 'existing-claude-ai-login',
+        anthropicThirdPartyApproval: true,
+      },
+      apiKeySource: 'none',
+      account: {
+        apiProvider: 'firstParty',
+        subscriptionType: 'pro',
+        email: 'must-not-leave-adapter@example.test',
+      },
+    });
+    await expect(approved.adapter.createSession(context)).resolves.toMatchObject({ providerSessionId });
+    expect(JSON.stringify(approved.events)).not.toContain('example.test');
+    expect(approved.query.inputOptions.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    await approved.adapter.dispose();
   });
 
   it('lists SDK models and applies model and permission settings', async () => {

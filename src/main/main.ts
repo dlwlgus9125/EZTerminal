@@ -860,11 +860,13 @@ app.on('ready', async () => {
     }),
     claudeProviderAdapter,
   ]);
+  const daemonRouterRef: { current?: DaemonCommandRouter } = {};
   installDaemonProviderIpc({
     ipc: ipcMain,
     registry: providerRegistry,
     claudeAdapter: claudeProviderAdapter,
     claudeStore: claudeEnablementStore,
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     resolveDesktopPrincipal: resolveDesktopSessionPrincipal,
     claudeStoreReady: claudeEnablementStoreReady,
     reportError: (context, error) => {
@@ -872,7 +874,6 @@ app.on('ready', async () => {
       mainLog?.line(`${context}: ${String(error)}`);
     },
   });
-  const daemonRouterRef: { current?: DaemonCommandRouter } = {};
   const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
     authority: {
       getSnapshot: () => daemonRouterRef.current!.getSnapshot(),

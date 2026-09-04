@@ -3,7 +3,11 @@ import type {
   DaemonTranscriptItem,
   PermissionPreset,
 } from '../shared/daemon-protocol';
-import type { ProviderModel, ProviderProbeResult } from '../shared/daemon-provider';
+import type {
+  ProviderLaunchDescriptor,
+  ProviderModel,
+  ProviderProbeResult,
+} from '../shared/daemon-provider';
 
 export type {
   ProviderModel,
@@ -126,6 +130,9 @@ export type AgentProviderEventListener = (event: AgentProviderEvent) => void;
  */
 export interface AgentProviderAdapter {
   readonly providerId: string;
+
+  /** Bind the durable user-reviewed process identity before any launch-capable operation. */
+  setLaunchDescriptor?(descriptor: ProviderLaunchDescriptor): void;
 
   probe(signal?: AbortSignal): Promise<ProviderProbeResult>;
   listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]>;

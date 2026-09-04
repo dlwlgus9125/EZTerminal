@@ -13,6 +13,7 @@ import {
   type ProviderRegistryResult,
 } from '../shared/daemon-provider';
 import type { AgentProviderRegistry } from './agent-provider-registry';
+import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import type {
   ClaudeProviderAdapter,
   ClaudeProviderEnablementStore,
@@ -37,6 +38,7 @@ export interface DaemonProviderIpc {
 export interface DaemonProviderIpcOptions {
   readonly ipc: DaemonProviderIpc;
   readonly registry: Pick<AgentProviderRegistry, 'inspect' | 'listModels'>;
+  readonly getSnapshot: () => Pick<DaemonSnapshot, 'providers'>;
   readonly claudeAdapter: Pick<ClaudeProviderAdapter, 'setEnablement'>;
   readonly claudeStore: ClaudeProviderEnablementStore;
   readonly resolveDesktopPrincipal: (
@@ -141,7 +143,10 @@ export function installDaemonProviderIpc(options: DaemonProviderIpcOptions): () 
       return invalidInput<readonly ProviderModel[]>();
     }
     try {
-      return rendererSafeRegistryResult(await options.registry.listModels(args[1]));
+      return rendererSafeRegistryResult(await options.registry.listModels(
+        options.getSnapshot(),
+        args[1],
+      ));
     } catch (error) {
       report(options, 'daemon provider model discovery failed', error);
       return failure<readonly ProviderModel[]>(

@@ -8,6 +8,7 @@ import type {
   DaemonTranscriptItem,
   PermissionPreset,
 } from '../shared/daemon-protocol';
+import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
 import type {
   AgentProviderAdapter,
   AgentProviderEvent,
@@ -28,12 +29,26 @@ import {
   type CodexJsonRpcId,
   type CodexServerRequestContext,
 } from './codex-app-server-client';
+import {
+  buildProviderProcessEnvironment,
+  sameEnvironmentVariableSet,
+  sanitizeProviderDiagnostic,
+} from './provider-process-security';
 
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
 const MAX_SEMANTIC_TEXT = 1024 * 1024;
 const MAX_PROBE_OUTPUT = 64 * 1024;
+const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
+const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
+  'PATH',
+  'CODEX_HOME',
+  'OPENAI_API_KEY',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+] as const;
 
 type JsonObject = Record<string, unknown>;
 
@@ -75,7 +90,10 @@ interface PendingApproval {
 export interface CodexProviderAdapterOptions {
   readonly connection?: CodexAppServerConnection;
   readonly executable?: string;
-  readonly clientOptions?: Omit<CodexAppServerClientOptions, 'command'>;
+  readonly clientOptions?: Omit<
+    CodexAppServerClientOptions,
+    'command' | 'argv' | 'environment' | 'beforeSpawn'
+  >;
   readonly resolveExecutable?: (command: string, signal?: AbortSignal) => Promise<string>;
   readonly runCommand?: (command: string, argv: readonly string[], signal?: AbortSignal) => Promise<CodexCommandResult>;
   readonly now?: () => Date;
@@ -97,14 +115,17 @@ function asArray(value: unknown): readonly unknown[] {
 }
 
 function boundedText(value: unknown, maximum = MAX_SEMANTIC_TEXT): string {
-  if (typeof value === 'string') return value.slice(0, maximum);
-  if (!Array.isArray(value)) return '';
-  return value.flatMap((entry): string[] => {
+  const raw = typeof value === 'string'
+    ? value
+    : !Array.isArray(value)
+      ? ''
+      : value.flatMap((entry): string[] => {
     if (typeof entry === 'string') return [entry];
     const object = asObject(entry);
     const text = asString(object?.text) ?? asString(object?.content);
     return text ? [text] : [];
-  }).join('\n').slice(0, maximum);
+  }).join('\n');
+  return sanitizeProviderDiagnostic(raw, { maxLength: maximum }).text;
 }
 
 function opaqueId(namespace: string, ...parts: readonly string[]): string {
@@ -213,6 +234,7 @@ async function runExternalCommand(
     const child = crossSpawn(command, [...argv], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      env: buildProviderProcessEnvironment([]),
     });
     let stdout = '';
     let stderr = '';
@@ -292,7 +314,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
 
   private readonly executable: string;
-  private readonly connection: CodexAppServerConnection;
+  private connection: CodexAppServerConnection | undefined;
+  private readonly providedConnection: boolean;
+  private readonly clientOptions: CodexProviderAdapterOptions['clientOptions'];
   private readonly resolveExecutable: (command: string, signal?: AbortSignal) => Promise<string>;
   private readonly runCommand: (command: string, argv: readonly string[], signal?: AbortSignal) => Promise<CodexCommandResult>;
   private readonly now: () => Date;
@@ -302,6 +326,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly sessionIdByProviderId = new Map<string, string>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly unregister: Array<() => void> = [];
+  private launchDescriptor: ProviderLaunchDescriptor | undefined;
   private disposed = false;
 
   constructor(options: CodexProviderAdapterOptions = {}) {
@@ -309,13 +334,34 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.runCommand = options.runCommand ?? runExternalCommand;
     this.resolveExecutable = options.resolveExecutable
       ?? ((command, signal) => canonicalExecutable(command, this.runCommand, signal));
-    this.connection = options.connection ?? new CodexAppServerClient({
-      ...options.clientOptions,
-      command: this.executable,
-    });
+    this.connection = options.connection;
+    this.providedConnection = options.connection !== undefined;
+    this.clientOptions = options.clientOptions;
     this.now = options.now ?? (() => new Date());
     this.idFactory = options.idFactory ?? randomUUID;
-    this.installConnectionHandlers();
+    if (this.connection) this.installConnectionHandlers(this.connection);
+  }
+
+  setLaunchDescriptor(descriptor: ProviderLaunchDescriptor): void {
+    if (
+      descriptor.providerId !== this.providerId
+      || descriptor.protocol !== 'codex-app-server'
+      || !path.isAbsolute(descriptor.executablePath)
+      || descriptor.argv.length !== CODEX_APP_SERVER_ARGV.length
+      || !descriptor.argv.every((value, index) => value === CODEX_APP_SERVER_ARGV[index])
+      || !sameEnvironmentVariableSet(descriptor.environmentVariableNames, CODEX_ENVIRONMENT_VARIABLE_NAMES)
+      || !compatibleVersion(descriptor.executableVersion)
+      || !/^[a-f0-9]{64}$/u.test(descriptor.reviewDigest)
+    ) {
+      throw new Error('The reviewed Codex launch descriptor is incompatible.');
+    }
+    const changed = this.launchDescriptor !== undefined
+      && JSON.stringify(this.launchDescriptor) !== JSON.stringify(descriptor);
+    if (changed && this.sessions.size > 0) {
+      throw new Error('Stop active Codex sessions before changing the reviewed executable.');
+    }
+    this.launchDescriptor = { ...descriptor, argv: [...descriptor.argv], environmentVariableNames: [...descriptor.environmentVariableNames] };
+    if (changed && !this.providedConnection) this.resetOwnedConnection();
   }
 
   async probe(signal?: AbortSignal): Promise<ProviderProbeResult> {
@@ -333,12 +379,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         available: compatible,
         executablePath,
         executableVersion,
-        argv: ['app-server'],
-        environmentVariableNames: ['PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'],
+        argv: CODEX_APP_SERVER_ARGV,
+        environmentVariableNames: CODEX_ENVIRONMENT_VARIABLE_NAMES,
         capabilities: [
           'create', 'resume', 'interrupt', 'model-change', 'permission-change',
           'approvals', 'native-subagents', 'history-reconciliation',
         ],
+        authenticationState: 'first-launch',
+        authenticationDetail: 'Codex authentication is verified by app-server when the first Agent session starts.',
         ...(compatible ? {} : {
           unavailableReason: `Codex ${executableVersion} has not been reviewed for the ${CODEX_APP_SERVER_BASELINE_VERSION} app-server contract.`,
         }),
@@ -352,25 +400,28 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         available: false,
         executablePath: this.executable,
         executableVersion: 'unknown',
-        argv: ['app-server'],
-        environmentVariableNames: ['PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'],
+        argv: CODEX_APP_SERVER_ARGV,
+        environmentVariableNames: CODEX_ENVIRONMENT_VARIABLE_NAMES,
         capabilities: [
           'create', 'resume', 'interrupt', 'model-change', 'permission-change',
           'approvals', 'native-subagents', 'history-reconciliation',
         ],
-        unavailableReason: error instanceof Error ? error.message : String(error),
+        authenticationState: 'unavailable',
+        authenticationDetail: 'Codex authentication cannot be checked until a compatible executable is available.',
+        unavailableReason: sanitizeProviderDiagnostic(error).text,
       };
     }
   }
 
   async listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]> {
     this.assertActive();
+    await this.ensureConnection();
     const models: ProviderModel[] = [];
     const seenModels = new Set<string>();
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < MAX_MODEL_PAGES && models.length < MAX_MODELS; page += 1) {
-      const result = asObject(await this.connection.request('model/list', {
+      const result = asObject(await this.requireConnection().request('model/list', {
         limit: Math.min(100, MAX_MODELS - models.length),
         includeHidden: false,
         ...(cursor ? { cursor } : {}),
@@ -401,11 +452,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   async createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle> {
     this.assertSessionContext(context);
     this.assertActive();
+    await this.ensureConnection();
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
       const config = orchestrationConfig(context);
-      const result = asObject(await this.connection.request('thread/start', {
+      const result = asObject(await this.requireConnection().request('thread/start', {
         cwd: context.workspaceRoot,
         runtimeWorkspaceRoots: [context.workspaceRoot],
         ...(context.model ? { model: context.model } : {}),
@@ -424,7 +476,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     } catch (error) {
       this.emit({
         kind: 'session-state', sessionId: context.sessionId, state: 'failed',
-        detail: error instanceof Error ? error.message : String(error),
+        detail: sanitizeProviderDiagnostic(error, {
+          explicitSecrets: context.orchestration ? [context.orchestration.bearerToken] : [],
+        }).text,
       });
       throw error;
     }
@@ -436,11 +490,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   ): Promise<ProviderSessionHandle> {
     this.assertSessionContext(context);
     this.assertActive();
+    await this.ensureConnection();
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
       const config = orchestrationConfig(context);
-      const result = asObject(await this.connection.request('thread/resume', {
+      const result = asObject(await this.requireConnection().request('thread/resume', {
         threadId: context.providerSessionId,
         cwd: context.workspaceRoot,
         runtimeWorkspaceRoots: [context.workspaceRoot],
@@ -460,7 +515,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     } catch (error) {
       this.emit({
         kind: 'session-state', sessionId: context.sessionId, state: 'failed',
-        detail: error instanceof Error ? error.message : String(error),
+        detail: sanitizeProviderDiagnostic(error, {
+          explicitSecrets: context.orchestration ? [context.orchestration.bearerToken] : [],
+        }).text,
       });
       throw error;
     }
@@ -479,7 +536,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     };
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
     try {
-      const result = asObject(await this.connection.request('turn/start', {
+      const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
         input: [{ type: 'text', text: input.prompt, text_elements: [] }],
@@ -497,7 +554,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind: 'provider-error',
         sessionId: input.sessionId,
         code: 'turn-start-failed',
-        message: error instanceof Error ? error.message : String(error),
+        message: sanitizeProviderDiagnostic(error).text,
         recoverable: true,
       });
       throw error;
@@ -509,7 +566,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const state = this.requireSession(sessionId, providerSessionId);
     const providerTurnId = state.activeTurn?.providerTurnId;
     if (!providerTurnId) throw new Error(`Codex session ${sessionId} has no interruptible provider turn.`);
-    await this.connection.request('turn/interrupt', { threadId: providerSessionId, turnId: providerTurnId });
+    await this.requireConnection().request('turn/interrupt', { threadId: providerSessionId, turnId: providerTurnId });
   }
 
   async setSettings(input: {
@@ -522,7 +579,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const state = this.requireSession(input.sessionId, input.providerSessionId);
     if (input.model === undefined && input.permissionPreset === undefined) return this.handleFor(state);
     if (input.model !== undefined && !input.model.trim()) throw new Error('Codex model must not be empty.');
-    await this.connection.request('thread/settings/update', {
+    await this.requireConnection().request('thread/settings/update', {
       threadId: input.providerSessionId,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.permissionPreset === undefined
@@ -556,7 +613,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     signal?: AbortSignal,
   ): Promise<ProviderReconciliationResult> {
     this.assertActive();
-    const result = asObject(await this.connection.request('thread/read', {
+    await this.ensureConnection();
+    const result = asObject(await this.requireConnection().request('thread/read', {
       threadId: input.providerSessionId,
       includeTurns: true,
     }, { signal }));
@@ -635,7 +693,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       approval.resolve(this.approvalResponse(approval, 'deny'));
     }
     try {
-      await this.connection.request('thread/unsubscribe', { threadId: providerSessionId });
+      await this.requireConnection().request('thread/unsubscribe', { threadId: providerSessionId });
     } finally {
       this.sessions.delete(state.sessionId);
       this.sessionIdByProviderId.delete(state.providerSessionId);
@@ -653,13 +711,60 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.sessions.clear();
     this.sessionIdByProviderId.clear();
     this.listeners.clear();
-    await this.connection.dispose();
+    await this.connection?.dispose();
+    this.connection = undefined;
   }
 
-  private installConnectionHandlers(): void {
+  private async ensureConnection(): Promise<void> {
+    if (this.connection) return;
+    const descriptor = this.launchDescriptor;
+    if (!descriptor) {
+      throw new Error('Codex must be enabled from a persisted executable review before launch.');
+    }
+    const connection = new CodexAppServerClient({
+      ...this.clientOptions,
+      command: descriptor.executablePath,
+      argv: descriptor.argv,
+      environment: buildProviderProcessEnvironment(descriptor.environmentVariableNames),
+      beforeSpawn: () => this.verifyLaunchDescriptor(descriptor),
+    });
+    this.connection = connection;
+    this.installConnectionHandlers(connection);
+  }
+
+  private requireConnection(): CodexAppServerConnection {
+    if (!this.connection) throw new Error('Codex app-server is not initialized.');
+    return this.connection;
+  }
+
+  private async verifyLaunchDescriptor(
+    descriptor: ProviderLaunchDescriptor,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const canonical = await fs.realpath(descriptor.executablePath);
+    const samePath = process.platform === 'win32'
+      ? canonical.toLocaleLowerCase('en-US') === descriptor.executablePath.toLocaleLowerCase('en-US')
+      : canonical === descriptor.executablePath;
+    if (!samePath) throw new Error('Codex executable realpath changed after review. Inspect the provider again.');
+    const result = await this.runCommand(canonical, ['--version'], signal);
+    const version = parseVersion(`${result.stdout}\n${result.stderr}`);
+    if (result.exitCode !== 0 || version !== descriptor.executableVersion || !compatibleVersion(version)) {
+      throw new Error('Codex executable version changed after review. Inspect the provider again.');
+    }
+  }
+
+  private resetOwnedConnection(): void {
+    if (this.providedConnection || !this.connection) return;
+    for (const unregister of this.unregister.splice(0)) unregister();
+    const connection = this.connection;
+    this.connection = undefined;
+    void connection.dispose();
+  }
+
+  private installConnectionHandlers(connection: CodexAppServerConnection): void {
     this.unregister.push(
-      this.connection.onNotification('*', (params, method) => this.handleNotification(method, params)),
-      this.connection.onClose((event) => {
+      connection.onNotification('*', (params, method) => this.handleNotification(method, params)),
+      connection.onClose((event) => {
         if (event.expected || this.disposed) return;
         for (const approval of this.pendingApprovals.values()) {
           approval.resolve(this.approvalResponse(approval, 'deny'));
@@ -668,9 +773,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         for (const state of this.sessions.values()) {
           this.emit({
             kind: 'provider-error', sessionId: state.sessionId, code: 'app-server-exited',
-            message: event.message, recoverable: true,
+            message: sanitizeProviderDiagnostic(event.message).text, recoverable: true,
           });
-          this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'failed', detail: event.message });
+          this.emit({
+            kind: 'session-state',
+            sessionId: state.sessionId,
+            state: 'failed',
+            detail: sanitizeProviderDiagnostic(event.message).text,
+          });
         }
       }),
     );
@@ -682,7 +792,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ['applyPatchApproval', 'legacy-file-change'],
     ];
     for (const [method, kind] of approvalMethods) {
-      this.unregister.push(this.connection.onServerRequest(
+      this.unregister.push(connection.onServerRequest(
         method,
         (params, context) => this.handleApproval(kind, params, context),
       ));
@@ -776,7 +886,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind: 'provider-error',
         ...(sessionId ? { sessionId } : {}),
         code: 'codex-turn-error',
-        message: asString(error?.message) ?? 'Codex reported an unknown error.',
+        message: sanitizeProviderDiagnostic(
+          asString(error?.message) ?? 'Codex reported an unknown error.',
+        ).text,
         recoverable: params.willRetry === true,
       });
       return;
@@ -883,7 +995,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       kind: 'session-state',
       sessionId: state.sessionId,
       state: outcome === 'failed' ? 'failed' : outcome === 'interrupted' ? 'interrupted' : 'idle',
-      ...(asString(error?.message) ? { detail: asString(error?.message) } : {}),
+      ...(asString(error?.message)
+        ? { detail: sanitizeProviderDiagnostic(asString(error?.message)).text }
+        : {}),
     });
   }
 
@@ -939,7 +1053,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind,
         text: delta,
         isDelta: true,
-        isSensitive: false,
+        isSensitive: true,
         createdAt: this.isoNow(),
       },
     });
@@ -1040,6 +1154,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return undefined;
     }
     if (!text) return undefined;
+    const sanitized = sanitizeProviderDiagnostic(text, { maxLength: MAX_SEMANTIC_TEXT });
+    text = sanitized.text;
+    isSensitive ||= sanitized.redacted
+      || kind === 'user-message'
+      || kind === 'assistant-message'
+      || kind === 'reasoning';
     const localTurnId = this.localTurnId(sessionId, providerTurnId);
     return {
       id: opaqueId('codex_item', sessionId, providerTurnId, providerItemId, started ? 'started' : 'completed'),
@@ -1071,7 +1191,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         childId,
         boundedText(item.prompt, 120).split(/\r?\n/u)[0] || asString(item.tool) || 'Codex sub-agent',
         nativeState(childState?.status ?? item.status ?? (completed ? 'completed' : 'inProgress')),
-        asString(childState?.message),
+        asString(childState?.message)
+          ? sanitizeProviderDiagnostic(asString(childState?.message), { maxLength: 2_000 }).text
+          : undefined,
       );
     }
   }

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import {
@@ -21,6 +22,7 @@ import {
   getClaudeEnablementGateFailure,
   type ClaudeAuthenticationPath,
   type ClaudeProviderEnablement,
+  type ProviderLaunchDescriptor,
 } from '../shared/daemon-provider';
 import type {
   AgentProviderAdapter,
@@ -35,6 +37,11 @@ import type {
   ProviderSessionHandle,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
+import {
+  buildProviderProcessEnvironment,
+  sameEnvironmentVariableSet,
+  sanitizeProviderDiagnostic,
+} from './provider-process-security';
 
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 15_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 5_000;
@@ -42,6 +49,48 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_500;
 const MAX_SAFE_TEXT_LENGTH = 20_000;
 const MAX_RECONCILIATION_ITEMS = 2_000;
 const MAX_PROVIDER_HISTORY_MESSAGES = 5_000;
+export const CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION = '2.1.260';
+const CLAUDE_AGENT_SDK_ARGV = [
+  '--output-format',
+  'stream-json',
+  '--verbose',
+  '--input-format',
+  'stream-json',
+  '--permission-prompt-tool',
+  'stdio',
+] as const;
+const CLAUDE_NETWORK_ENVIRONMENT_VARIABLES = [
+  'PATH',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+] as const;
+const CLAUDE_EXISTING_CLI_ENVIRONMENT_VARIABLES = [
+  ...CLAUDE_NETWORK_ENVIRONMENT_VARIABLES,
+  'CLAUDE_CONFIG_DIR',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_REGION',
+  'AWS_DEFAULT_REGION',
+  'AWS_PROFILE',
+  'AWS_CONFIG_FILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'AWS_ROLE_ARN',
+  'AWS_WEB_IDENTITY_TOKEN_FILE',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'GOOGLE_CLOUD_PROJECT',
+  'CLOUD_ML_REGION',
+  'ANTHROPIC_VERTEX_PROJECT_ID',
+  'ANTHROPIC_FOUNDRY_RESOURCE',
+] as const;
 
 type JsonObject = Record<string, unknown>;
 
@@ -97,7 +146,8 @@ const ERROR_MESSAGES: Readonly<Record<ClaudeProviderErrorCode, string>> = {
   CLAUDE_THIRD_PARTY_AUTHORIZATION_REQUIRED:
     'Using a claude.ai login or its subscription rate limits in a third-party product requires prior Anthropic approval. EZTerminal does not start or provide that login flow.',
   CLAUDE_EXECUTABLE_NOT_FOUND: 'An installed Claude executable could not be found.',
-  CLAUDE_EXECUTABLE_INVALID: 'The configured Claude executable is not a safe absolute executable path.',
+  CLAUDE_EXECUTABLE_INVALID:
+    'The Claude executable path or version no longer matches the pinned Agent SDK review.',
   CLAUDE_AUTHENTICATION_FAILED:
     'Claude authentication failed. Configure the installed Claude CLI or an API-key environment outside EZTerminal.',
   CLAUDE_ACCOUNT_UNAVAILABLE: 'The Claude account is currently unavailable.',
@@ -136,6 +186,22 @@ export interface ClaudeExecutableResolutionOptions {
   readonly pathValue?: string;
   readonly isFile?: (candidate: string) => Promise<boolean>;
   readonly realpath?: (candidate: string) => Promise<string>;
+}
+
+const moduleRequire = createRequire(import.meta.url);
+
+/** Resolves the platform binary shipped with the pinned Agent SDK package. */
+export async function resolveBundledClaudeExecutable(): Promise<string | null> {
+  const packageSuffix = `${process.platform}-${process.arch}`;
+  const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  try {
+    const packageJson = moduleRequire.resolve(
+      `@anthropic-ai/claude-agent-sdk-${packageSuffix}/package.json`,
+    );
+    return fs.realpath(path.join(path.dirname(packageJson), binaryName));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -239,7 +305,10 @@ export interface ClaudeProviderAdapterOptions {
   ) => Promise<SessionMessage[]>;
   readonly executablePath?: string;
   readonly resolveExecutable?: () => Promise<string | null>;
-  readonly readExecutableVersion?: (executablePath: string) => Promise<string>;
+  readonly readExecutableVersion?: (
+    executablePath: string,
+    environment?: NodeJS.ProcessEnv,
+  ) => Promise<string>;
   readonly createId?: () => string;
   readonly now?: () => Date;
   readonly initializationTimeoutMs?: number;
@@ -288,7 +357,16 @@ interface SessionRecord {
   resolveAuthentication(): void;
   rejectAuthentication(error: ClaudeProviderError): void;
   authenticationSettled: boolean;
+  apiKeySource?: string;
+  initializationReceived: boolean;
+  accountAuthentication?: ClaudeAccountAuthenticationEvidence;
   startupError?: ClaudeProviderError;
+}
+
+interface ClaudeAccountAuthenticationEvidence {
+  readonly apiProvider?: string;
+  readonly hasSubscription: boolean;
+  readonly indicatesOAuth: boolean;
 }
 
 class AsyncInputQueue<T> implements AsyncIterable<T> {
@@ -336,11 +414,27 @@ function asString(value: unknown): string | null {
 }
 
 function safeText(value: unknown, maxLength = MAX_SAFE_TEXT_LENGTH): string {
-  if (typeof value !== 'string') return '';
-  return value
-    .replace(/sk-ant-[A-Za-z0-9_-]+/gu, '[redacted Anthropic key]')
-    .replace(/(ANTHROPIC_API_KEY\s*[=:]\s*)[^\s'";]+/giu, '$1[redacted]')
-    .slice(0, maxLength);
+  return typeof value === 'string'
+    ? sanitizeProviderDiagnostic(value, { maxLength }).text
+    : '';
+}
+
+function compatibleClaudeExecutableVersion(version: string): boolean {
+  return version === CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION;
+}
+
+function claudeEnvironmentVariableNames(
+  authenticationPath: ClaudeAuthenticationPath,
+): readonly string[] {
+  if (authenticationPath === 'api-key-environment') {
+    return [...CLAUDE_NETWORK_ENVIRONMENT_VARIABLES, 'ANTHROPIC_API_KEY'];
+  }
+  if (authenticationPath === 'existing-cli-environment') {
+    return CLAUDE_EXISTING_CLI_ENVIRONMENT_VARIABLES;
+  }
+  // Existing claude.ai login reads the installed CLI credential store. OAuth
+  // bearer environment variables are intentionally unsupported.
+  return CLAUDE_NETWORK_ENVIRONMENT_VARIABLES;
 }
 
 function safeToolName(value: unknown): string {
@@ -435,6 +529,66 @@ export function classifyClaudeProviderError(value: unknown): ClaudeProviderError
   return new ClaudeProviderError(code, recoverable);
 }
 
+function claudeAccountAuthenticationEvidence(
+  initializationResult: unknown,
+): ClaudeAccountAuthenticationEvidence {
+  const account = asObject(asObject(initializationResult)?.account);
+  const apiProvider = asString(account?.apiProvider) ?? undefined;
+  const subscriptionType = asString(account?.subscriptionType);
+  const tokenSource = asString(account?.tokenSource);
+  const accountApiKeySource = asString(account?.apiKeySource);
+  return {
+    ...(apiProvider ? { apiProvider } : {}),
+    hasSubscription: Boolean(subscriptionType?.trim()),
+    indicatesOAuth: [tokenSource, accountApiKeySource].some((value) => (
+      typeof value === 'string' && /oauth|claude\.ai|subscription/iu.test(value)
+    )),
+  };
+}
+
+/** Classifies only coarse auth evidence; account identity fields never leave the adapter. */
+export function classifyClaudeAuthentication(
+  authenticationPath: ClaudeAuthenticationPath,
+  apiKeySource: string | undefined,
+  initializationResult: unknown,
+): ClaudeProviderErrorCode | null {
+  return classifyClaudeAuthenticationEvidence(
+    authenticationPath,
+    apiKeySource,
+    claudeAccountAuthenticationEvidence(initializationResult),
+  );
+}
+
+function classifyClaudeAuthenticationEvidence(
+  authenticationPath: ClaudeAuthenticationPath,
+  apiKeySource: string | undefined,
+  evidence: ClaudeAccountAuthenticationEvidence,
+): ClaudeProviderErrorCode | null {
+  if (!apiKeySource) return 'CLAUDE_AUTHENTICATION_FAILED';
+  if (authenticationPath === 'api-key-environment') {
+    return apiKeySource === 'ANTHROPIC_API_KEY' ? null : 'CLAUDE_AUTHENTICATION_FAILED';
+  }
+
+  const helperOrManagedKey = apiKeySource === 'apiKeyHelper'
+    || apiKeySource === '/login managed key';
+  const nonFirstPartyProvider = evidence.apiProvider !== undefined
+    && evidence.apiProvider !== 'firstParty';
+  if (authenticationPath === 'existing-cli-environment') {
+    return helperOrManagedKey || (apiKeySource === 'none' && nonFirstPartyProvider)
+      ? null
+      : 'CLAUDE_AUTHENTICATION_FAILED';
+  }
+
+  const loginSource = apiKeySource === 'none' || apiKeySource === 'oauth';
+  const firstPartyLogin = evidence.apiProvider === 'firstParty'
+    || evidence.hasSubscription
+    || evidence.indicatesOAuth
+    || apiKeySource === 'oauth';
+  return loginSource && firstPartyLogin
+    ? null
+    : 'CLAUDE_AUTHENTICATION_FAILED';
+}
+
 async function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
   try {
@@ -469,12 +623,21 @@ async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<
   }
 }
 
-async function defaultExecutableVersion(executablePath: string): Promise<string> {
+async function defaultExecutableVersion(
+  executablePath: string,
+  environment = buildProviderProcessEnvironment([]),
+): Promise<string> {
   return new Promise<string>((resolve) => {
     execFile(
       executablePath,
       ['--version'],
-      { encoding: 'utf8', maxBuffer: 16 * 1024, timeout: 3_000, windowsHide: true },
+      {
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024,
+        timeout: 3_000,
+        windowsHide: true,
+        env: environment,
+      },
       (error, stdout) => {
         if (error) {
           resolve('unknown');
@@ -537,32 +700,71 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private readonly queryFactory: ClaudeQueryFactory;
   private readonly historyReader: NonNullable<ClaudeProviderAdapterOptions['historyReader']>;
   private readonly resolveExecutable: () => Promise<string | null>;
-  private readonly readExecutableVersion: (executablePath: string) => Promise<string>;
+  private readonly readExecutableVersion: NonNullable<ClaudeProviderAdapterOptions['readExecutableVersion']>;
   private readonly createId: () => string;
   private readonly now: () => Date;
   private readonly initializationTimeoutMs: number;
   private readonly operationTimeoutMs: number;
   private readonly shutdownTimeoutMs: number;
+  private readonly providedQueryFactory: boolean;
   private readonly listeners = new Set<AgentProviderEventListener>();
   private readonly sessions = new Map<string, SessionRecord>();
   private executablePromise: Promise<string | null> | null = null;
-  private executableVersionPromise: Promise<string> | null = null;
+  private launchDescriptor: ProviderLaunchDescriptor | undefined;
   private disposed = false;
 
   constructor(options: ClaudeProviderAdapterOptions = {}) {
     this.enablementStore = options.enablementStore ?? new MemoryClaudeProviderEnablementStore();
     this.queryFactory = options.queryFactory ?? ((input) => query(input) as ClaudeQuerySession);
+    this.providedQueryFactory = options.queryFactory !== undefined;
     this.historyReader = options.historyReader ?? ((sessionId, historyOptions) =>
       getSessionMessages(sessionId, historyOptions));
-    this.resolveExecutable = options.resolveExecutable ?? (() => resolveClaudeExecutable({
-      configuredPath: options.executablePath,
-    }));
+    this.resolveExecutable = options.resolveExecutable ?? (async () => {
+      if (options.executablePath) {
+        return resolveClaudeExecutable({ configuredPath: options.executablePath });
+      }
+      return await resolveBundledClaudeExecutable() ?? resolveClaudeExecutable();
+    });
     this.readExecutableVersion = options.readExecutableVersion ?? defaultExecutableVersion;
     this.createId = options.createId ?? randomUUID;
     this.now = options.now ?? (() => new Date());
     this.initializationTimeoutMs = options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS;
     this.operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+  }
+
+  setLaunchDescriptor(descriptor: ProviderLaunchDescriptor): void {
+    const allowedEnvironmentSets = [
+      claudeEnvironmentVariableNames('api-key-environment'),
+      claudeEnvironmentVariableNames('existing-cli-environment'),
+      claudeEnvironmentVariableNames('existing-claude-ai-login'),
+    ];
+    if (
+      descriptor.providerId !== this.providerId
+      || descriptor.protocol !== 'claude-agent-sdk'
+      || !path.isAbsolute(descriptor.executablePath)
+      || descriptor.argv.length !== CLAUDE_AGENT_SDK_ARGV.length
+      || !descriptor.argv.every((value, index) => value === CLAUDE_AGENT_SDK_ARGV[index])
+      || !allowedEnvironmentSets.some((expected) => (
+        sameEnvironmentVariableSet(descriptor.environmentVariableNames, expected)
+      ))
+      || !compatibleClaudeExecutableVersion(descriptor.executableVersion)
+      || !/^[a-f0-9]{64}$/u.test(descriptor.reviewDigest)
+    ) {
+      throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
+    }
+    if (
+      this.launchDescriptor
+      && JSON.stringify(this.launchDescriptor) !== JSON.stringify(descriptor)
+      && this.sessions.size > 0
+    ) {
+      throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    }
+    this.launchDescriptor = {
+      ...descriptor,
+      argv: [...descriptor.argv],
+      environmentVariableNames: [...descriptor.environmentVariableNames],
+    };
   }
 
   /**
@@ -579,8 +781,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   async probe(signal?: AbortSignal): Promise<ProviderProbeResult> {
     this.throwIfAborted(signal);
     let policyError: ClaudeProviderError | null = null;
+    let policy = DEFAULT_CLAUDE_PROVIDER_ENABLEMENT;
     try {
-      const policy = await this.readEnablement();
+      policy = await this.readEnablement();
       validateEnablement(policy);
       if (!policy.enabled) policyError = new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
     } catch (error) {
@@ -594,7 +797,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       : 'unavailable';
     const executableError = !executablePath
       ? new ClaudeProviderError('CLAUDE_EXECUTABLE_NOT_FOUND')
-      : executableVersion === 'unknown'
+      : !compatibleClaudeExecutableVersion(executableVersion)
         ? new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID')
         : null;
     const unavailable = policyError ?? executableError;
@@ -605,22 +808,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       available: unavailable === null,
       executablePath: executablePath ?? 'unavailable',
       executableVersion,
-      argv: [
-        '--output-format',
-        'stream-json',
-        '--verbose',
-        '--input-format',
-        'stream-json',
-        '--permission-prompt-tool',
-        'stdio',
-      ],
-      environmentVariableNames: [
-        'PATH',
-        'ANTHROPIC_API_KEY',
-        'CLAUDE_CODE_USE_BEDROCK',
-        'CLAUDE_CODE_USE_VERTEX',
-        'CLAUDE_CODE_USE_FOUNDRY',
-      ],
+      argv: CLAUDE_AGENT_SDK_ARGV,
+      environmentVariableNames: claudeEnvironmentVariableNames(policy.authenticationPath),
       capabilities: [
         'create',
         'resume',
@@ -631,6 +820,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         'native-subagents',
         'history-reconciliation',
       ],
+      authenticationState: unavailable ? 'unavailable' : 'first-launch',
+      authenticationDetail: unavailable
+        ? 'Claude authentication cannot be verified until provider setup and executable review are complete.'
+        : 'Claude authentication is verified from SDK initialization metadata when the first Agent session starts.',
       reviewNotices: [
         {
           id: 'anthropic-commercial-terms',
@@ -964,6 +1157,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         rejectAuthenticationPromise(error);
       },
       authenticationSettled: false,
+      initializationReceived: false,
     };
     const canUseTool: CanUseTool = (toolName, toolInput, request) =>
       this.requestApproval(session, toolName, toolInput, request);
@@ -978,20 +1172,24 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       forwardSubagentText: true,
       agentProgressSummaries: true,
       persistSession: true,
+      env: readiness.environment,
       ...(mcpServers ? { mcpServers } : {}),
       ...(context.model ? { model: context.model } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : { sessionId: providerSessionId }),
-      // `env` is intentionally omitted. The SDK then inherits the process
-      // environment without this adapter reading or copying credential values.
     };
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
       session.query = this.queryFactory({ prompt: input, options });
       this.sessions.set(context.sessionId, session);
       session.streamPromise = this.consume(session);
+      const initialization = session.query.initializationResult().then((result) => {
+        session.accountAuthentication = claudeAccountAuthenticationEvidence(result);
+        session.initializationReceived = true;
+        this.settleAuthentication(session);
+      });
       await bounded(
         abortable(Promise.all([
-          session.query.initializationResult(),
+          initialization,
           session.authenticationReady,
         ]), signal),
         this.initializationTimeoutMs,
@@ -1168,19 +1366,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private handleSystem(session: SessionRecord, message: JsonObject): void {
     const subtype = asString(message.subtype);
     if (subtype === 'init') {
-      const apiKeySource = asString(message.apiKeySource);
-      if (
-        session.enablement.authenticationPath === 'api-key-environment'
-        && apiKeySource !== 'ANTHROPIC_API_KEY'
-      ) {
-        session.rejectAuthentication(new ClaudeProviderError('CLAUDE_AUTHENTICATION_FAILED'));
-        if (session.initialized) {
-          session.abortController.abort();
-          session.query.close();
-        }
-      } else {
-        session.resolveAuthentication();
-      }
+      session.apiKeySource = asString(message.apiKeySource) ?? '';
+      this.settleAuthentication(session);
       return;
     }
     if (subtype === 'task_started') {
@@ -1337,8 +1524,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     text: string,
     options: { readonly turnId?: string; readonly source: string },
   ): void {
-    const sanitized = safeText(text);
-    if (!sanitized.trim()) return;
+    const sanitized = sanitizeProviderDiagnostic(text, { maxLength: MAX_SAFE_TEXT_LENGTH });
+    if (!sanitized.text.trim()) return;
     session.sequence += 1;
     const item: DaemonTranscriptItem = {
       id: `claude_${createHash('sha256').update(`${session.handle.providerSessionId}:${options.source}`).digest('hex').slice(0, 24)}`,
@@ -1346,9 +1533,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ...(options.turnId ? { turnId: options.turnId } : {}),
       sequence: session.sequence,
       kind,
-      text: sanitized,
+      text: sanitized.text,
       isDelta: false,
-      isSensitive: false,
+      isSensitive: sanitized.redacted
+        || kind === 'user-message'
+        || kind === 'assistant-message'
+        || kind === 'reasoning',
       createdAt: this.now().toISOString(),
     };
     session.transcript.push(item);
@@ -1360,17 +1550,20 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const items: DaemonTranscriptItem[] = [];
     let sequence = 0;
     const append = (kind: DaemonTranscriptItem['kind'], text: string, source: string): void => {
-      const sanitized = safeText(text);
-      if (!sanitized.trim() || items.length >= MAX_RECONCILIATION_ITEMS) return;
+      const sanitized = sanitizeProviderDiagnostic(text, { maxLength: MAX_SAFE_TEXT_LENGTH });
+      if (!sanitized.text.trim() || items.length >= MAX_RECONCILIATION_ITEMS) return;
       sequence += 1;
       items.push({
         id: `claude_${createHash('sha256').update(`${sessionId}:${source}`).digest('hex').slice(0, 24)}`,
         sessionId,
         sequence,
         kind,
-        text: sanitized,
+        text: sanitized.text,
         isDelta: false,
-        isSensitive: false,
+        isSensitive: sanitized.redacted
+          || kind === 'user-message'
+          || kind === 'assistant-message'
+          || kind === 'reasoning',
         createdAt: this.now().toISOString(),
       });
     };
@@ -1514,26 +1707,100 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     return this.executablePromise;
   }
 
-  private async executableVersion(executablePath: string): Promise<string> {
-    this.executableVersionPromise ??= this.readExecutableVersion(executablePath)
+  private settleAuthentication(session: SessionRecord): void {
+    if (
+      session.authenticationSettled
+      || session.apiKeySource === undefined
+      || !session.initializationReceived
+      || !session.accountAuthentication
+    ) return;
+    const failure = classifyClaudeAuthenticationEvidence(
+      session.enablement.authenticationPath,
+      session.apiKeySource || undefined,
+      session.accountAuthentication,
+    );
+    if (!failure) {
+      session.resolveAuthentication();
+      return;
+    }
+    session.rejectAuthentication(new ClaudeProviderError(failure));
+    if (session.initialized) {
+      session.abortController.abort();
+      session.query.close();
+    }
+  }
+
+  private async executableVersion(
+    executablePath: string,
+    environment = buildProviderProcessEnvironment([]),
+  ): Promise<string> {
+    return this.readExecutableVersion(executablePath, environment)
       .then((value) => value.match(/\b\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?\b/u)?.[0] ?? 'unknown')
       .catch(() => 'unknown');
-    return this.executableVersionPromise;
   }
 
   private async assertReady(): Promise<{
     readonly executablePath: string;
     readonly enablement: ClaudeProviderEnablement;
+    readonly environment: NodeJS.ProcessEnv;
   }> {
     const policy = await this.readEnablement();
     if (!policy.enabled) throw new ClaudeProviderError('CLAUDE_PROVIDER_DISABLED');
     validateEnablement(policy);
-    const executable = await this.executable();
-    if (!executable) throw new ClaudeProviderError('CLAUDE_EXECUTABLE_NOT_FOUND');
-    if (await this.executableVersion(executable) === 'unknown') {
+    const descriptor = this.launchDescriptor;
+    if (!descriptor && this.providedQueryFactory) {
+      const executable = await this.executable();
+      if (executable) {
+        const executableVersion = await this.executableVersion(executable);
+        if (!compatibleClaudeExecutableVersion(executableVersion)) {
+          throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
+        }
+        const environmentVariableNames = claudeEnvironmentVariableNames(policy.authenticationPath);
+        return {
+          executablePath: executable,
+          enablement: policy,
+          environment: buildProviderProcessEnvironment(
+            environmentVariableNames,
+            process.env,
+            { CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2' },
+          ),
+        };
+      }
+    }
+    if (!descriptor) throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
+    if (!sameEnvironmentVariableSet(
+      descriptor.environmentVariableNames,
+      claudeEnvironmentVariableNames(policy.authenticationPath),
+    )) {
       throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
     }
-    return { executablePath: executable, enablement: policy };
+    let canonical: string;
+    try {
+      canonical = await fs.realpath(descriptor.executablePath);
+    } catch {
+      throw new ClaudeProviderError('CLAUDE_EXECUTABLE_NOT_FOUND');
+    }
+    const samePath = process.platform === 'win32'
+      ? canonical.toLocaleLowerCase('en-US') === descriptor.executablePath.toLocaleLowerCase('en-US')
+      : canonical === descriptor.executablePath;
+    const environment = buildProviderProcessEnvironment(
+      descriptor.environmentVariableNames,
+      process.env,
+      { CLAUDE_AGENT_SDK_CLIENT_APP: 'ezterminal/2' },
+    );
+    const version = await this.executableVersion(canonical, buildProviderProcessEnvironment([]));
+    if (
+      !samePath
+      || version !== descriptor.executableVersion
+      || !compatibleClaudeExecutableVersion(version)
+    ) {
+      throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
+    }
+    return {
+      executablePath: canonical,
+      enablement: policy,
+      environment,
+    };
   }
 
   private session(sessionId: string, providerSessionId: string): SessionRecord {

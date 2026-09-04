@@ -278,7 +278,8 @@ describe('StructuredProviderSettings', () => {
       anthropicThirdPartyApproval: true,
     });
     expect(container.querySelector('input[type="password"], input[type="text"]')).toBeNull();
-    expect(container.textContent).toContain('does not ask for, read, or store API keys');
+    expect(container.textContent).toContain('never asks for or stores credential values');
+    expect(container.textContent).toContain('only the reviewed environment variable names');
   });
 
   it('keeps Start at login dependent on Keep running and accepts the main-owned rollback snapshot', async () => {

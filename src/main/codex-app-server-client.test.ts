@@ -102,13 +102,18 @@ describe('CodexAppServerClient', () => {
     };
     const client = new CodexAppServerClient({
       command: 'C:\\Tools\\codex.exe',
+      environment: { PATH: 'C:\\Tools', OPENAI_API_KEY: 'process-only' },
       spawnProcess,
       processGuardian: guardian,
       processGroupId: 'provider:codex',
     });
 
     await expect(client.request('model/list', { limit: 100 })).resolves.toEqual({ data: [], nextCursor: null });
-    expect(spawnProcess).toHaveBeenCalledWith('C:\\Tools\\codex.exe', ['app-server']);
+    expect(spawnProcess).toHaveBeenCalledWith(
+      'C:\\Tools\\codex.exe',
+      ['app-server'],
+      { PATH: 'C:\\Tools', OPENAI_API_KEY: 'process-only' },
+    );
     expect(guardian.createGroup).toHaveBeenCalledWith('provider:codex', 4242, undefined);
     expect(child.frames[0]).toMatchObject({
       jsonrpc: '2.0',
@@ -123,6 +128,43 @@ describe('CodexAppServerClient', () => {
 
     await client.dispose();
     expect(guardian.terminateGroup).toHaveBeenCalledWith('provider:codex');
+  });
+
+  it('revalidates before spawn and does not launch after descriptor drift', async () => {
+    const spawnProcess = vi.fn(() => new FakeCodexChild().asChildProcess());
+    const beforeSpawn = vi.fn(async () => {
+      throw new Error('Executable version changed after review.');
+    });
+    const client = new CodexAppServerClient({
+      command: 'C:\\Tools\\codex.exe',
+      argv: ['app-server'],
+      environment: { PATH: 'C:\\Tools' },
+      beforeSpawn,
+      spawnProcess,
+    });
+
+    await expect(client.request('model/list')).rejects.toThrow(/changed after review/);
+    expect(beforeSpawn).toHaveBeenCalledOnce();
+    expect(spawnProcess).not.toHaveBeenCalled();
+    await client.dispose();
+  });
+
+  it('redacts stderr diagnostics before they reach the reporter', async () => {
+    const child = new FakeCodexChild();
+    initializationResponder(child, (frame) => {
+      if (frame.method === 'model/list') child.respondTo(frame, { data: [] });
+    });
+    const reportError = vi.fn();
+    const client = new CodexAppServerClient({
+      spawnProcess: () => child.asChildProcess(),
+      reportError,
+    });
+    await client.request('model/list');
+    child.stderr.write('OPENAI_API_KEY=sk-proj-supersecretvalue Authorization: Bearer secret-bearer-value');
+
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalled());
+    expect(JSON.stringify(reportError.mock.calls)).not.toMatch(/supersecretvalue|secret-bearer-value/u);
+    await client.dispose();
   });
 
   it('dispatches notifications and answers bidirectional server requests', async () => {

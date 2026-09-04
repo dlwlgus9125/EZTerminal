@@ -133,6 +133,8 @@ describe('CodexProviderAdapter', () => {
         'create', 'resume', 'interrupt', 'model-change', 'permission-change',
         'approvals', 'native-subagents', 'history-reconciliation',
       ],
+      authenticationState: 'first-launch',
+      authenticationDetail: 'Codex authentication is verified by app-server when the first Agent session starts.',
     });
     expect(resolveExecutable).toHaveBeenCalledWith('codex', undefined);
     expect(runCommand).toHaveBeenCalledWith('C:\\Tools\\codex.exe', ['--version'], undefined);

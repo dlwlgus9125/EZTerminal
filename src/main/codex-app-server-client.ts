@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 
 import crossSpawn from 'cross-spawn';
 
+import { sanitizeProviderDiagnostic } from './provider-process-security';
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_CONFIGURABLE_LINE_BYTES = 16 * 1024 * 1024;
@@ -66,9 +68,13 @@ export interface CodexAppServerClientOptions {
   readonly processGroupId?: string;
   readonly parentProcessGroupId?: string;
   readonly processGuardian?: CodexProcessGuardian;
+  readonly environment?: NodeJS.ProcessEnv;
+  /** Revalidates the reviewed executable immediately before every respawn. */
+  readonly beforeSpawn?: () => Promise<void>;
   readonly spawnProcess?: (
     command: string,
     argv: readonly string[],
+    environment?: NodeJS.ProcessEnv,
   ) => ChildProcessWithoutNullStreams;
   readonly reportError?: (message: string) => void;
 }
@@ -93,7 +99,7 @@ export class CodexJsonRpcError extends Error {
     message: string,
     readonly data?: unknown,
   ) {
-    super(message);
+    super(sanitizeProviderDiagnostic(message).text);
     this.name = 'CodexJsonRpcError';
   }
 }
@@ -155,7 +161,8 @@ export class CodexAppServerClient implements CodexAppServerConnection {
       'maxLineBytes',
     );
     this.processGroupId = options.processGroupId ?? `codex-app-server:${randomUUID()}`;
-    this.reportError = options.reportError ?? (() => undefined);
+    const reportError = options.reportError ?? (() => undefined);
+    this.reportError = (message) => reportError(sanitizeProviderDiagnostic(message, { maxLength: 8_192 }).text);
   }
 
   async request(method: string, params: unknown = {}, options: CodexRpcRequestOptions = {}): Promise<unknown> {
@@ -262,10 +269,21 @@ export class CodexAppServerClient implements CodexAppServerConnection {
   private async spawnAndInitialize(): Promise<void> {
     const command = this.options.command ?? 'codex';
     const argv = [...(this.options.argv ?? ['app-server'])];
-    const child: ChildProcessWithoutNullStreams = this.options.spawnProcess?.(command, argv) ?? crossSpawn(
+    await this.options.beforeSpawn?.();
+    const child: ChildProcessWithoutNullStreams = (
+      this.options.spawnProcess
+        ? this.options.environment
+          ? this.options.spawnProcess(command, argv, this.options.environment)
+          : this.options.spawnProcess(command, argv)
+        : undefined
+    ) ?? crossSpawn(
       command,
       argv,
-      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...(this.options.environment ? { env: this.options.environment } : {}),
+      },
     ) as ChildProcessWithoutNullStreams;
     this.expectedExit = false;
     this.inputBuffer = '';
