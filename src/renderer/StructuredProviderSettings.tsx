@@ -48,8 +48,10 @@ function arraysEqual(left: readonly string[], right: readonly string[]): boolean
 export function daemonProviderMatchesProbe(
   provider: DaemonProvider | undefined,
   probe: ProviderProbeResult,
+  reviewDigest: string,
 ): boolean {
   return Boolean(provider
+    && provider.reviewDigest === reviewDigest
     && provider.displayName === probe.displayName
     && provider.protocol === probe.protocol
     && provider.executablePath === probe.executablePath
@@ -127,7 +129,7 @@ function ProviderStatus({
     if (provider.health !== 'ready') {
       return <Status variant="danger">{provider.healthDetail ?? t('agentSettings.providerError')}</Status>;
     }
-    if (!daemonProviderMatchesProbe(provider, probe)) {
+    if (!daemonProviderMatchesProbe(provider, probe, state.inspection.reviewDigest)) {
       return <Status variant="warning">{t('agentSettings.providerStale')}</Status>;
     }
     return <Status variant="success">{t('agentSettings.providerReady')}</Status>;
@@ -536,7 +538,10 @@ export function StructuredProviderSettings({
             const probe = inspection?.probe;
             const provider = providerRecords.get(providerId);
             const active = provider?.enabled === true;
-            const stale = Boolean(active && probe && !daemonProviderMatchesProbe(provider, probe));
+            const stale = Boolean(active
+              && inspection
+              && probe
+              && !daemonProviderMatchesProbe(provider, probe, inspection.reviewDigest));
             const claudeNeedsPreparation = providerId === 'claude'
               && !claudeEnablementEqual(claudeStored, { ...claudeDraft, enabled: true });
             const reviewable = Boolean(probe

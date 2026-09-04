@@ -68,6 +68,7 @@ function providerRecord(source: ProviderInspection, overrides: Partial<DaemonPro
     argv: probe.argv,
     environmentVariableNames: probe.environmentVariableNames,
     capabilities: probe.capabilities,
+    reviewDigest: source.reviewDigest,
     enabled: true,
     health: 'ready',
     revision: 1,
@@ -356,5 +357,22 @@ describe('StructuredProviderSettings', () => {
     const card = container.querySelector('[data-testid="structured-provider-codex"]')!;
     expect(card.textContent).toContain('Ready');
     expect(card.querySelector('[data-testid="provider-disable-codex"]')).not.toBeNull();
+  });
+
+  it('requires renewed review when the inspection digest changes without executable field changes', async () => {
+    const reviewed = inspection('codex', 'reviewed-digest');
+    const current = inspection('codex', 'current-digest');
+    renderSettings(capabilities({
+      inspect: async (providerId) => ({
+        ok: true,
+        value: providerId === 'codex' ? current : inspection('claude', 'claude'),
+      }),
+      getSnapshot: async () => snapshot(4, [providerRecord(reviewed)]),
+    }));
+    await flush();
+
+    const card = container.querySelector('[data-testid="structured-provider-codex"]')!;
+    expect(card.textContent).toMatch(/review again/iu);
+    expect(card.querySelector('[data-testid="provider-enable-codex"]')).not.toBeNull();
   });
 });
