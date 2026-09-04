@@ -90,6 +90,7 @@ interface PendingApproval {
 
 export interface CodexProviderAdapterOptions {
   readonly connection?: CodexAppServerConnection;
+  readonly connectionFactory?: (options: CodexAppServerClientOptions) => CodexAppServerConnection;
   readonly executable?: string;
   readonly clientOptions?: Omit<
     CodexAppServerClientOptions,
@@ -357,6 +358,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly executable: string;
   private connection: CodexAppServerConnection | undefined;
   private readonly providedConnection: boolean;
+  private readonly connectionFactory: (options: CodexAppServerClientOptions) => CodexAppServerConnection;
   private readonly clientOptions: CodexProviderAdapterOptions['clientOptions'];
   private readonly resolveExecutable: (command: string, signal?: AbortSignal) => Promise<string>;
   private readonly runCommand: (command: string, argv: readonly string[], signal?: AbortSignal) => Promise<CodexCommandResult>;
@@ -369,6 +371,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly unregister: Array<() => void> = [];
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
+  private deactivatePromise: Promise<void> | null = null;
   private disposed = false;
 
   constructor(options: CodexProviderAdapterOptions = {}) {
@@ -382,6 +385,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
     this.connection = options.connection;
     this.providedConnection = options.connection !== undefined;
+    this.connectionFactory = options.connectionFactory ?? ((clientOptions) => new CodexAppServerClient(clientOptions));
     this.clientOptions = options.clientOptions;
     this.now = options.now ?? (() => new Date());
     this.idFactory = options.idFactory ?? randomUUID;
@@ -759,9 +763,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
-    this.disposed = true;
+  deactivate(): Promise<void> {
+    if (this.deactivatePromise) return this.deactivatePromise;
+    const connection = this.connection;
+    this.connection = undefined;
     for (const approval of this.pendingApprovals.values()) {
       approval.resolve(this.approvalResponse(approval, 'deny'));
     }
@@ -769,9 +774,18 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     for (const unregister of this.unregister.splice(0)) unregister();
     this.sessions.clear();
     this.sessionIdByProviderId.clear();
+    const operation = Promise.resolve(connection?.dispose()).finally(() => {
+      if (this.deactivatePromise === operation) this.deactivatePromise = null;
+    });
+    this.deactivatePromise = operation;
+    return operation;
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await this.deactivate();
     this.listeners.clear();
-    await this.connection?.dispose();
-    this.connection = undefined;
   }
 
   private async ensureConnection(): Promise<void> {
@@ -780,7 +794,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (!descriptor) {
       throw new Error('Codex must be enabled from a persisted executable review before launch.');
     }
-    const connection = new CodexAppServerClient({
+    const connection = this.connectionFactory({
       ...this.clientOptions,
       command: descriptor.executablePath,
       argv: descriptor.argv,

@@ -72,6 +72,7 @@ export interface DaemonAgentRuntimeOptions {
   readonly orchestrationForSession?: (
     sessionId: string,
   ) => ProviderSessionContext['orchestration'] | undefined;
+  readonly revokeOrchestrationForSession?: (sessionId: string) => void;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
@@ -284,6 +285,7 @@ export class DaemonAgentRuntime {
   private readonly lifecycleAbortController = new AbortController();
   private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly backgroundTasks = new Set<Promise<void>>();
+  private readonly providerLifecycleOperations = new Map<string, Promise<void>>();
   private readonly providerHandleOperations = new Map<string, Promise<void>>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
@@ -317,9 +319,9 @@ export class DaemonAgentRuntime {
       'agent.archive': (command, context) => this.runCommand(() => this.archive(command, context)),
       'agent.detach': (command, context) => this.runCommand(() => this.detach(command, context)),
       'permission.resolve': (command, context) => this.runCommand(() => this.resolveApproval(command, context)),
-      'provider.enable': (command) => this.runCommand(() => this.enableProvider(command)),
-      'provider.update': (command) => this.runCommand(() => this.enableProvider(command)),
-      'provider.disable': (command) => this.runCommand(() => this.disableProvider(command)),
+      'provider.enable': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
+      'provider.update': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
+      'provider.disable': (command, context) => this.runCommand(() => this.disableProvider(command, context)),
     };
   }
 
@@ -789,7 +791,7 @@ export class DaemonAgentRuntime {
     context: DaemonCommandExecutionContext,
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.interrupt') return commandError('invalid-command', 'Unexpected Agent interrupt command.');
-    return this.interruptActiveTurn(context.snapshot, command.payload.sessionId, 'interrupt');
+    return this.interruptActiveTurn(context.snapshot, command.payload.sessionId);
   }
 
   private async setSettings(
@@ -828,7 +830,81 @@ export class DaemonAgentRuntime {
     context: DaemonCommandExecutionContext,
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.cancel') return commandError('invalid-command', 'Unexpected Agent cancel command.');
-    return this.interruptActiveTurn(context.snapshot, command.payload.sessionId, 'cancel');
+    const snapshot = context.snapshot;
+    const session = snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
+    if (!session || !agent || session.kind !== 'agent') {
+      return commandError('not-found', 'Agent Session was not found.');
+    }
+    if (TERMINAL_SESSION_STATES.has(session.state) || TERMINAL_AGENT_STATES.has(agent.state)) {
+      return commandError('invalid-state', 'Agent Session is not available for cancellation.');
+    }
+    const currentTurn = agent.currentTurnId
+      ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+      : undefined;
+    const activeCurrentTurn = currentTurn && ACTIVE_TURN_STATES.has(currentTurn.state)
+      ? currentTurn
+      : undefined;
+    const queuedTurns = snapshot.turns.filter((turn) => (
+      turn.sessionId === session.id && turn.state === 'queued'
+    ));
+    if (!activeCurrentTurn && queuedTurns.length === 0 && agent.queuedTurnCount === 0) return { ok: true };
+
+    const now = this.isoNow();
+    const queuedMutations = queuedTurns.map((turn): DaemonStoreMutation => ({
+      kind: 'turn.upsert',
+      value: turnInput(turn, { state: 'interrupted', finishedAt: now, errorCode: 'cancelled' }),
+    }));
+    if (!activeCurrentTurn || !agent.providerSessionId) {
+      return {
+        ok: true,
+        commit: { mutations: [
+          ...queuedMutations,
+          ...(activeCurrentTurn ? [{
+            kind: 'turn.upsert' as const,
+            value: turnInput(activeCurrentTurn, {
+              state: 'interrupted',
+              finishedAt: now,
+              errorCode: 'cancelled',
+            }),
+          }] : []),
+          ...this.expireApprovalMutations(snapshot, session.id, activeCurrentTurn?.id, now),
+          { kind: 'agent.upsert', value: agentInput(agent, {
+            state: 'idle',
+            currentTurnId: undefined,
+            queuedTurnCount: 0,
+          }) },
+          { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+        ] },
+        afterCommit: () => {
+          if (activeCurrentTurn) this.clearTurnTimeout(activeCurrentTurn.id);
+          this.queuePump();
+        },
+      };
+    }
+
+    const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+    if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
+    return {
+      ok: true,
+      commit: { mutations: [
+        ...queuedMutations,
+        { kind: 'turn.upsert', value: turnInput(activeCurrentTurn, {
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+        }) },
+        ...this.expireApprovalMutations(snapshot, session.id, activeCurrentTurn.id, now),
+        { kind: 'agent.upsert', value: agentInput(agent, {
+          state: 'delivery-uncertain',
+          queuedTurnCount: 0,
+        }) },
+        { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+      ] },
+      afterCommit: () => this.runBackground(
+        `cancel Agent ${session.id}`,
+        () => this.requestInterrupt(session.id, activeCurrentTurn.id, agent.providerId, agent.providerSessionId!),
+      ),
+    };
   }
 
   /**
@@ -839,7 +915,6 @@ export class DaemonAgentRuntime {
   private interruptActiveTurn(
     snapshot: DaemonSnapshot,
     sessionId: string,
-    action: 'interrupt' | 'cancel',
   ): DaemonCommandExecutionResult {
     const session = snapshot.sessions.find((entry) => entry.id === sessionId);
     const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
@@ -891,7 +966,7 @@ export class DaemonAgentRuntime {
         { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
       ] },
       afterCommit: () => this.runBackground(
-        `${action} Agent turn ${session.id}`,
+        `interrupt Agent turn ${session.id}`,
         () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
       ),
     };
@@ -1066,7 +1141,10 @@ export class DaemonAgentRuntime {
     ) };
   }
 
-  private async enableProvider(command: DaemonCommand): Promise<DaemonCommandExecutionResult> {
+  private async enableProvider(
+    command: DaemonCommand,
+    context: DaemonCommandExecutionContext,
+  ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'provider.enable' && command.type !== 'provider.update') {
       return commandError('invalid-command', 'Unexpected provider enable command.');
     }
@@ -1080,16 +1158,35 @@ export class DaemonAgentRuntime {
         : 'provider-unavailable';
       return commandError(code, authorized.message);
     }
+    const wasEnabled = context.snapshot.providers.find((provider) => (
+      provider.id === command.payload.providerId
+    ))?.enabled === true;
     return {
       ok: true,
       commit: { mutations: [{ kind: 'provider.upsert', value: authorized.value }] },
-      afterCommit: () => this.queuePump(),
+      afterCommit: () => {
+        if (wasEnabled) {
+          this.queuePump();
+          return;
+        }
+        this.runProviderLifecycleBackground(
+          `rehydrate Provider ${command.payload.providerId} after enable`,
+          command.payload.providerId,
+          async () => {
+            await this.rehydrateProviderSessions(command.payload.providerId);
+            this.queuePump();
+          },
+        );
+      },
     };
   }
 
-  private disableProvider(command: DaemonCommand): DaemonCommandExecutionResult {
+  private disableProvider(
+    command: DaemonCommand,
+    context: DaemonCommandExecutionContext,
+  ): DaemonCommandExecutionResult {
     if (command.type !== 'provider.disable') return commandError('invalid-command', 'Unexpected provider disable command.');
-    const snapshot = this.options.getSnapshot();
+    const snapshot = context.snapshot;
     const current = snapshot.providers.find((entry) => entry.id === command.payload.providerId);
     if (!current) return commandError('not-found', 'Provider was not found.');
     if (snapshot.agents.some((agent) => (
@@ -1101,18 +1198,49 @@ export class DaemonAgentRuntime {
         ))
       )
     ))) return commandError('invalid-state', 'Stop active Agent Sessions before disabling their provider.');
-    return { ok: true, commit: { mutations: [{ kind: 'provider.upsert', value: {
-      id: current.id,
-      displayName: current.displayName,
-      protocol: current.protocol,
-      executablePath: current.executablePath,
-      executableVersion: current.executableVersion,
-      argv: current.argv,
-      environmentVariableNames: current.environmentVariableNames,
-      capabilities: current.capabilities,
-      enabled: false,
-      health: 'unknown',
-    } }] } };
+    const providerSessions = snapshot.agents.flatMap((agent) => (
+      agent.providerId === current.id && agent.providerSessionId
+        ? [{ sessionId: agent.sessionId, providerSessionId: agent.providerSessionId }]
+        : []
+    ));
+    const orchestrationSessionIds = [
+      ...providerSessions.map((target) => target.sessionId),
+      ...snapshot.agents
+        .filter((agent) => agent.providerId === current.id && !agent.providerSessionId)
+        .map((agent) => agent.sessionId),
+    ];
+    const selectedProvider = this.options.providers.enabledAdapter(snapshot, current.id);
+    const providerAdapter = selectedProvider.ok ? selectedProvider.value : undefined;
+    return {
+      ok: true,
+      commit: { mutations: [{ kind: 'provider.upsert', value: {
+        id: current.id,
+        displayName: current.displayName,
+        protocol: current.protocol,
+        executablePath: current.executablePath,
+        executableVersion: current.executableVersion,
+        argv: current.argv,
+        environmentVariableNames: current.environmentVariableNames,
+        capabilities: current.capabilities,
+        enabled: false,
+        health: 'unknown',
+      } }] },
+      afterCommit: () => {
+        for (const sessionId of orchestrationSessionIds) {
+          try {
+            this.options.revokeOrchestrationForSession?.(sessionId);
+          } catch (error) {
+            this.report(`revoke Agent orchestration token ${sessionId}`, error);
+          }
+        }
+        if (!providerAdapter) return;
+        this.runProviderLifecycleBackground(
+          `deactivate Provider ${current.id}`,
+          current.id,
+          () => providerAdapter.deactivate(),
+        );
+      },
+    };
   }
 
   private planChildRelation(
@@ -1335,8 +1463,29 @@ export class DaemonAgentRuntime {
       }
       if (this.disposed) return;
 
-      const selected = claim;
-      const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), selected.agent.providerId);
+      const claimed = claim;
+      await this.waitForProviderLifecycle(claimed.agent.providerId);
+      if (this.disposed) return;
+      const dispatchSnapshot = this.options.getSnapshot();
+      const currentTurn = dispatchSnapshot.turns.find((turn) => turn.id === claimed.turn.id);
+      const currentAgent = dispatchSnapshot.agents.find((agent) => agent.sessionId === claimed.agent.sessionId);
+      const currentSession = dispatchSnapshot.sessions.find((session) => session.id === claimed.session.id);
+      if (
+        !currentTurn
+        || currentTurn.state !== 'submitting'
+        || !currentAgent
+        || currentAgent.currentTurnId !== currentTurn.id
+        || !currentSession
+        || TERMINAL_AGENT_STATES.has(currentAgent.state)
+        || TERMINAL_SESSION_STATES.has(currentSession.state)
+      ) continue;
+      const selected = {
+        ...claimed,
+        turn: currentTurn,
+        agent: currentAgent,
+        session: currentSession,
+      };
+      const provider = this.options.providers.enabledAdapter(dispatchSnapshot, selected.agent.providerId);
       if (!provider.ok) return;
       let providerSessionId = selected.agent.providerSessionId;
       try {
@@ -2030,7 +2179,10 @@ export class DaemonAgentRuntime {
     if (this.disposed) return;
     const key = JSON.stringify([providerId, providerSessionId]);
     const predecessor = this.providerHandleOperations.get(key) ?? Promise.resolve();
-    const operation = predecessor.catch(() => undefined).then(task);
+    const operation = this.enqueueProviderLifecycleOperation(providerId, async () => {
+      await predecessor.catch(() => undefined);
+      await task();
+    });
     const tail = operation.finally(() => {
       if (this.providerHandleOperations.get(key) === tail) {
         this.providerHandleOperations.delete(key);
@@ -2038,6 +2190,35 @@ export class DaemonAgentRuntime {
     });
     this.providerHandleOperations.set(key, tail);
     this.runBackground(context, () => tail);
+  }
+
+  private runProviderLifecycleBackground(
+    context: string,
+    providerId: string,
+    task: () => Promise<void>,
+  ): void {
+    if (this.disposed) return;
+    const operation = this.enqueueProviderLifecycleOperation(providerId, task);
+    this.runBackground(context, () => operation);
+  }
+
+  private enqueueProviderLifecycleOperation(
+    providerId: string,
+    task: () => Promise<void>,
+  ): Promise<void> {
+    const predecessor = this.providerLifecycleOperations.get(providerId) ?? Promise.resolve();
+    const operation = predecessor.catch(() => undefined).then(task);
+    const tail = operation.finally(() => {
+      if (this.providerLifecycleOperations.get(providerId) === tail) {
+        this.providerLifecycleOperations.delete(providerId);
+      }
+    });
+    this.providerLifecycleOperations.set(providerId, tail);
+    return tail;
+  }
+
+  private async waitForProviderLifecycle(providerId: string): Promise<void> {
+    await this.providerLifecycleOperations.get(providerId)?.catch(() => undefined);
   }
 
   private async drainEventTail(): Promise<void> {
@@ -2214,6 +2395,21 @@ export class DaemonAgentRuntime {
       if (
         !agent.providerSessionId
         || !session
+        || TERMINAL_AGENT_STATES.has(agent.state)
+        || TERMINAL_SESSION_STATES.has(session.state)
+      ) continue;
+      await this.rehydrateSession(agent.sessionId);
+    }
+  }
+
+  private async rehydrateProviderSessions(providerId: string): Promise<void> {
+    const snapshot = this.options.getSnapshot();
+    for (const agent of snapshot.agents) {
+      if (this.disposed) return;
+      if (agent.providerId !== providerId || !agent.providerSessionId) continue;
+      const session = snapshot.sessions.find((entry) => entry.id === agent.sessionId);
+      if (
+        !session
         || TERMINAL_AGENT_STATES.has(agent.state)
         || TERMINAL_SESSION_STATES.has(session.state)
       ) continue;

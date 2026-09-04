@@ -929,6 +929,9 @@ app.on('ready', async () => {
     orchestrationForSession: (sessionId) => (
       agentOrchestrationMcpServer.descriptorForSession(sessionId)
     ),
+    revokeOrchestrationForSession: (sessionId) => {
+      agentOrchestrationMcpServer.revokeSession(sessionId);
+    },
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);

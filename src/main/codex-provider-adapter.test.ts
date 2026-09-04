@@ -483,6 +483,48 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('deactivates the app-server connection without permanently disposing the adapter', async () => {
+    const firstConnection = new FakeCodexConnection();
+    firstConnection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      throw new Error(`Unexpected first-connection request: ${method}`);
+    };
+    const secondConnection = new FakeCodexConnection();
+    secondConnection.requestImpl = async (method) => {
+      if (method === 'thread/resume') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      throw new Error(`Unexpected second-connection request: ${method}`);
+    };
+    const connections = [firstConnection, secondConnection];
+    const connectionFactory = vi.fn(() => connections.shift()!);
+    const adapter = new CodexProviderAdapter({ connectionFactory });
+    adapter.setLaunchDescriptor({
+      providerId: 'codex',
+      protocol: 'codex-app-server',
+      executablePath: 'C:\\Tools\\codex.exe',
+      executableVersion: CODEX_APP_SERVER_BASELINE_VERSION,
+      argv: ['app-server'],
+      environmentVariableNames: [
+        'PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+      ],
+      reviewDigest: 'a'.repeat(64),
+    });
+    await adapter.createSession(context());
+
+    await adapter.deactivate();
+
+    expect(firstConnection.disposed).toBe(true);
+    await expect(adapter.resumeSession({
+      ...context({ sessionId: 'session-2' }),
+      providerSessionId: 'thread-1',
+    })).resolves.toMatchObject({ sessionId: 'session-2', providerSessionId: 'thread-1' });
+    expect(connectionFactory).toHaveBeenCalledTimes(2);
+    expect(secondConnection.requests).toEqual([
+      expect.objectContaining({ method: 'thread/resume', params: expect.objectContaining({ threadId: 'thread-1' }) }),
+    ]);
+    await adapter.dispose();
+    expect(secondConnection.disposed).toBe(true);
+  });
+
   it('keeps replacement notification routing when an overlapping source disposal finishes late', async () => {
     const connection = new FakeCodexConnection();
     let releaseFirstUnsubscribe!: () => void;

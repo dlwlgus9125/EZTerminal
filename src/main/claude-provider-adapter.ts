@@ -714,6 +714,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private readonly sessions = new Map<string, SessionRecord>();
   private executablePromise: Promise<string | null> | null = null;
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
+  private deactivatePromise: Promise<void> | null = null;
   private disposed = false;
 
   constructor(options: ClaudeProviderAdapterOptions = {}) {
@@ -1091,12 +1092,22 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.sessions.delete(sessionId);
   }
 
+  deactivate(): Promise<void> {
+    if (this.deactivatePromise) return this.deactivatePromise;
+    const active = [...this.sessions.values()];
+    const operation = Promise.all(active.map((session) => (
+      this.disposeSession(session.context.sessionId, session.handle.providerSessionId)
+    ))).then(() => undefined).finally(() => {
+      if (this.deactivatePromise === operation) this.deactivatePromise = null;
+    });
+    this.deactivatePromise = operation;
+    return operation;
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    const active = [...this.sessions.values()];
-    await Promise.all(active.map((session) =>
-      this.disposeSession(session.context.sessionId, session.handle.providerSessionId)));
+    await this.deactivate();
     this.listeners.clear();
   }
 

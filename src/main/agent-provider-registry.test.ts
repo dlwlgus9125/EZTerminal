@@ -34,6 +34,7 @@ function adapter(overrides: Partial<AgentProviderAdapter> = {}): AgentProviderAd
     subscribe: vi.fn(() => () => undefined),
     reconcile: vi.fn(async () => ({ commands: [], transcriptItems: [] })),
     disposeSession: vi.fn(),
+    deactivate: vi.fn(),
     dispose: vi.fn(),
     ...overrides,
   };

@@ -816,6 +816,26 @@ describe('ClaudeProviderAdapter sessions', () => {
     expect(signal.aborted).toBe(true);
     expect(fixture.query.closeCount).toBe(1);
   });
+
+  it('deactivates every SDK query while keeping the adapter reusable', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const firstQuery = fixture.query;
+    const firstSignal = firstQuery.inputOptions.abortController!.signal;
+
+    await fixture.adapter.deactivate();
+
+    expect(firstSignal.aborted).toBe(true);
+    expect(firstQuery.closeCount).toBe(1);
+    await expect(fixture.adapter.resumeSession({
+      ...context,
+      sessionId: 'agent-session-2',
+      providerSessionId,
+    })).resolves.toMatchObject({ sessionId: 'agent-session-2', providerSessionId });
+    expect(fixture.query).not.toBe(firstQuery);
+    expect(fixture.query.inputOptions.resume).toBe(providerSessionId);
+    await fixture.adapter.dispose();
+  });
 });
 
 describe('Claude error classification', () => {

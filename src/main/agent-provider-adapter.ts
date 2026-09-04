@@ -156,6 +156,9 @@ export interface AgentProviderAdapter {
   subscribe(listener: AgentProviderEventListener): () => void;
   reconcile(input: ProviderReconciliationInput, signal?: AbortSignal): Promise<ProviderReconciliationResult>;
   disposeSession(sessionId: string, providerSessionId: string): Promise<void>;
+  /** Release all live Sessions/shared processes while keeping the reviewed adapter reusable. */
+  deactivate(): Promise<void>;
+  /** Permanently release the adapter and its event listeners during application shutdown. */
   dispose(): Promise<void>;
 }
 
