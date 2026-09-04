@@ -76,8 +76,11 @@ v12 command router as Desktop, Android, and managed Agent tools:
 
 ```powershell
 ezterminal status
+ezterminal projects
+ezterminal workspaces
 ezterminal sessions
 ezterminal agents
+ezterminal providers
 ezterminal schedules
 'Continue with the approved task.' | ezterminal send Builder --stdin
 ezterminal agent read Builder --limit 100
@@ -109,6 +112,15 @@ Agent SDK streaming protocol, while ordinary CLI/TUI programs remain normal term
 Persisted Agent sessions can be reopened from their Project and Workspace. Managed child Agents use
 the same conversation surface as their parent, can mix providers recursively within the runtime
 caps, and can be opened and controlled directly. Provider-native children remain visibly read-only.
+Archived sessions move out of the live list but remain available as read-only transcript history on
+both Desktop and Android. An explicit app Quit durably interrupts active turns and schedule runs,
+expires pending approvals, and keeps provider-backed sessions resumable without retrying uncertain
+delivery.
+
+If the structured Agent database cannot be opened or migrated safely, EZTerminal latches into
+terminal-only safe mode for that app process. Existing local and remote terminals keep working while
+Agent history, events, commands, and creation fail closed with a concrete recovery explanation.
+Desktop may show the trusted local recovery path; that path is never sent to Android.
 
 Settings → Agents owns explicit provider review, background-host lifecycle, schedules, and legacy
 terminal activity hooks. There is no per-Project collaboration switch, Persona editor, or Team graph
@@ -196,7 +208,7 @@ full [security policy](SECURITY.md), [privacy policy](PRIVACY.md), and
 
 ## Build from source
 
-You need Windows 10 22H2 or Windows 11 x64, Node.js `>=22.12 <25`, pnpm `10.33.4`, and a Rust
+You need Windows 10 22H2 or Windows 11 x64, Node.js `>=22.13 <25`, pnpm `10.33.4`, and a Rust
 toolchain. The Windows native host is built automatically by `pnpm start` and `pnpm make`.
 
 ```powershell
@@ -224,7 +236,7 @@ boundaries, data flows, and native components are documented in the
 | Architecture and subsystem ownership | [docs/architecture.md](docs/architecture.md) |
 | Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
-| Agent collaboration and managed merge | [docs/design/agent-collaboration.md](docs/design/agent-collaboration.md) |
+| Local Agent runtime, orchestration, and managed merge | [docs/design/agent-collaboration.md](docs/design/agent-collaboration.md) |
 | Current release | [v1.0.46 notes](docs/release/release-notes-1.0.46.md) · [1.0.46 validation policy](docs/release/validation-policy-1.0.46.md) |
 | Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |

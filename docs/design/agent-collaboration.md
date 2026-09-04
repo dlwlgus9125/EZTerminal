@@ -81,7 +81,13 @@ write-ahead outbox에 먼저 기록한 뒤 provider로 전달한다. Codex에는
 최초 migration은 기존 JSON/layout의 timestamp와 SHA-256 manifest를 가진 backup을 먼저 만든다.
 import는 반복 실행해도 같은 row를 중복 생성하지 않는다. 원본을 삭제하지 않으며 기존 collaboration
 policy/run은 read-only archive metadata로만 보존하고 적용하지 않는다. DB 생성이나 import가 실패하면
-새 DB를 quarantine하고 legacy read-only safe mode로 시작한다.
+새 DB를 quarantine하고 terminal-only safe mode로 시작한다.
+
+safe mode는 프로세스 수명 동안 latch되며 같은 프로세스에서 DB 재생성이나 자동 재시도를 하지 않는다.
+기존 terminal과 remote terminal은 계속 사용하되 구조화 Agent snapshot, transcript, event와 command는 fail-closed된다.
+Desktop은 초기화 원인, DB 보존/격리 상태, 스키마 버전, 다음 조치와 trusted recovery path를
+보여 준다. Android에는 같은 원인과 조치를 보이지만 host의 로컬 recovery path는 protocol type과
+직렬화 경계에서 제거한다. New Agent 진입점은 비활성화하고 UI retry loop를 만들지 않는다.
 
 ## Provider adapter
 
@@ -147,9 +153,13 @@ Schedule은 5-field cron과 IANA timezone을 canonical form으로 저장하며 �
 run-now를 지원한다. Heartbeat는 같은 기존 Agent session에 prompt를 보내며 busy면 pending 하나로
 coalesce한다.
 
-통합 `ezterminal` CLI와 daemon MCP가 project/workspace/session/agent/provider/schedule/heartbeat
-command를 제공한다. 기존 `ezterminal-agent` entry는 한 major release 동안 compatibility shim으로
-유지하고 deprecation 안내 뒤 같은 router를 호출한다.
+통합 `ezterminal` CLI는 현재 shell의 Project 범위에서
+project/workspace/session/agent/provider/schedule/heartbeat command를 제공한다. Project 생성과
+provider enable/update처럼 신뢰 범위를 넓히는 작업은 CLI에서 수행하지 않고 Desktop review
+이동 안내를 반환한다. 각 Agent에 제공하는 session-scoped orchestration MCP는 자신과 daemon이
+소유를 재검증한 managed descendant의 생성, 조회, follow-up, cancel, archive만 제공하며 Project나
+provider를 관리하는 광범위 admin API를 노출하지 않는다. 기존 `ezterminal-agent` entry는 한 major release
+동안 compatibility shim으로 유지하고 deprecation 안내 뒤 같은 router를 호출한다.
 
 ## Browser, script와 service
 
@@ -170,7 +180,12 @@ disabled affordance로 남기지 않는다.
 
 Desktop quit, daemon restart와 Android reconnect를 거쳐도 prompt가 중복 제출되거나 process가 orphan되지
 않아야 한다. 복구할 수 없는 turn은 성공이나 실행 중으로 가장하지 않고 interrupted 또는
-delivery-uncertain으로 표시한다. 모든 client는 같은 snapshot revision을 관찰해야 한다.
+delivery-uncertain으로 표시한다. 명시적 Quit은 queued/working/blocked turn과 관련 schedule run을
+`explicit-quit`으로 내구적으로 중단하고 approval을 만료시키되, provider history로 resume할 수 있는 Agent
+Session 자체는 idle로 남긴다. 이미 delivery-uncertain인 turn은 확정된 실패로 덮어쓰지 않는다.
+모든 client는 같은 snapshot revision을 관찰해야 한다. archive된 Agent Session은 기본 live 목록에서
+숨기지만 Desktop과 Android의 Archived 뷰에서 transcript와 relation을 read-only history로 다시 열 수
+있어야 한다.
 
 ## 근거 소스
 
