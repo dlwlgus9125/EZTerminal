@@ -621,6 +621,38 @@ export class DaemonAgentRuntime {
     if (snapshot.sessions.some((entry) => entry.id === command.payload.sessionId)) {
       return commandError('invalid-state', 'Session already exists.');
     }
+    const sourceSession = snapshot.sessions.find((entry) => entry.id === command.payload.sourceSessionId);
+    const sourceAgent = snapshot.agents.find((entry) => entry.sessionId === command.payload.sourceSessionId);
+    if (!sourceSession || sourceSession.kind !== 'agent' || !sourceAgent) {
+      return commandError('not-found', 'Source Agent Session was not found.');
+    }
+    if (snapshot.agentRelations.some((entry) => (
+      entry.childSessionId === sourceSession.id && entry.owner === 'provider-native'
+    ))) {
+      return commandError('invalid-state', 'Provider-native subagents cannot transfer Provider Session ownership.');
+    }
+    if (!TERMINAL_SESSION_STATES.has(sourceSession.state) || !TERMINAL_AGENT_STATES.has(sourceAgent.state)) {
+      return commandError('invalid-state', 'Only a stopped source Agent Session can be resumed.');
+    }
+    if (!sourceAgent.providerSessionId) {
+      return commandError('invalid-state', 'The source Agent no longer owns a resumable Provider Session.');
+    }
+    if (
+      sourceAgent.providerId !== command.payload.providerId
+      || sourceAgent.providerSessionId !== command.payload.providerSessionId
+    ) {
+      return commandError('invalid-state', 'The Provider Session does not match the source Agent owner.');
+    }
+    if (workspace.projectId !== sourceSession.projectId) {
+      return commandError('invalid-state', 'A resumed Agent must remain in the source Project.');
+    }
+    if (snapshot.agents.some((entry) => (
+      entry.sessionId !== sourceAgent.sessionId
+      && entry.providerId === sourceAgent.providerId
+      && entry.providerSessionId === sourceAgent.providerSessionId
+    ))) {
+      return commandError('invalid-state', 'The Provider Session is already claimed by another Agent.');
+    }
     const provider = this.options.providers.enabledAdapter(snapshot, command.payload.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const relation = command.payload.parentSessionId
@@ -628,6 +660,7 @@ export class DaemonAgentRuntime {
       : undefined;
     if (relation && !relation.ok) return relation.result;
     const mutations: DaemonStoreMutation[] = [
+      { kind: 'agent.upsert', value: agentInput(sourceAgent, { providerSessionId: undefined }) },
       { kind: 'session.upsert', value: {
         id: command.payload.sessionId,
         projectId: workspace.projectId,

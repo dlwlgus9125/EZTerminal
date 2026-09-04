@@ -325,6 +325,7 @@ export interface DaemonCommandPayloads {
   };
   readonly 'agent.resume': {
     readonly sessionId: string;
+    readonly sourceSessionId: string;
     readonly workspaceId: string;
     readonly providerId: string;
     readonly providerSessionId: string;
@@ -584,6 +585,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   }).strict(),
   'agent.resume': z.object({
     sessionId: IdentifierSchema,
+    sourceSessionId: IdentifierSchema,
     workspaceId: IdentifierSchema,
     providerId: IdentifierSchema,
     providerSessionId: IdentifierSchema,

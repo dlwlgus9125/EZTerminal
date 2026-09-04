@@ -129,7 +129,8 @@ function providerNativeMutationTarget(
         : undefined;
 
     case 'agent.resume': {
-      const directTarget = providerNativeRelation(snapshot, command.payload.sessionId)
+      const directTarget = providerNativeRelation(snapshot, command.payload.sourceSessionId)
+        ?? providerNativeRelation(snapshot, command.payload.sessionId)
         ?? (command.payload.parentSessionId
           ? providerNativeRelation(snapshot, command.payload.parentSessionId)
           : undefined);

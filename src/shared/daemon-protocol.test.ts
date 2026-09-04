@@ -70,6 +70,31 @@ describe('daemon protocol', () => {
     }).success).toBe(false);
   });
 
+  it('requires an explicit source Session for Provider handle resume', () => {
+    const base = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION,
+      commandId: 'command-resume',
+      idempotencyKey: 'desktop:command-resume',
+      expectedRevision: 0,
+      issuedAt: '2026-09-04T10:00:00.000Z',
+      principal,
+      type: 'agent.resume',
+    } as const;
+    const payload = {
+      sessionId: 'session-resumed',
+      sourceSessionId: 'session-stopped',
+      workspaceId: 'workspace-1',
+      providerId: 'codex',
+      providerSessionId: 'provider-session-1',
+      title: 'Resumed Agent',
+      permissionPreset: 'standard',
+    } as const;
+    expect(safeParseDaemonCommand({ ...base, payload }).success).toBe(true);
+    const missingSource: Record<string, unknown> = { ...payload };
+    delete missingSource.sourceSessionId;
+    expect(safeParseDaemonCommand({ ...base, payload: missingSource }).success).toBe(false);
+  });
+
   it('classifies monotonic event delivery without guessing across gaps', () => {
     const event = {
       protocolVersion: DAEMON_PROTOCOL_VERSION,

@@ -57,10 +57,19 @@ describe('daemon command authorization', () => {
     expect(authorizeDaemonCommand(command('browser.open', { sessionId: 'browser', workspaceId: 'ws', url: 'https://example.com' }, android), context).allowed).toBe(false);
   });
 
-  it('allows an MCP capability to create only a direct child', () => {
+  it('allows an MCP capability to create only a direct child and resume only a managed source', () => {
     const mcp = { kind: 'mcp' as const, id: 'capability', sessionId: 'parent' };
     expect(authorizeDaemonCommand(command('agent.create', { parentSessionId: 'parent' }, mcp), context).allowed).toBe(true);
     expect(authorizeDaemonCommand(command('agent.create', { parentSessionId: 'someone-else' }, mcp), context).allowed).toBe(false);
+    expect(authorizeDaemonCommand(command('agent.resume', {
+      parentSessionId: 'parent', sourceSessionId: 'child',
+    }, mcp), context).allowed).toBe(true);
+    expect(authorizeDaemonCommand(command('agent.resume', {
+      parentSessionId: 'parent', sourceSessionId: 'unrelated',
+    }, mcp), context).allowed).toBe(false);
+    expect(authorizeDaemonCommand(command('agent.resume', {
+      parentSessionId: 'parent', sourceSessionId: 'parent',
+    }, mcp), context).allowed).toBe(false);
   });
 
   it('limits MCP follow-ups and lifecycle actions to managed descendants', () => {

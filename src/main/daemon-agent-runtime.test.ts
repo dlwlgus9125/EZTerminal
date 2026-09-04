@@ -221,6 +221,235 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('transfers a stopped Provider Session handle exactly once when resuming', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        title: 'Stopped Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish this turn.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+        agent.sessionId === 'agent-source'
+      ))!.providerSessionId!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-source',
+        turnId: sourceTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+
+      const first = await h.execute('agent.resume', {
+        sessionId: 'agent-resumed',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Resumed Agent',
+        permissionPreset: 'standard',
+      });
+      expect(first).toMatchObject({ ok: true, status: 'applied' });
+      expect(h.router.getSnapshot().sessions.find((session) => session.id === 'agent-source'))
+        .toMatchObject({ state: 'completed' });
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source'))
+        .toMatchObject({ state: 'done' });
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source'))
+        .not.toHaveProperty('providerSessionId');
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-resumed'))
+        .toMatchObject({ providerSessionId });
+      expect(h.router.getSnapshot().agents.filter((agent) => agent.providerSessionId === providerSessionId))
+        .toHaveLength(1);
+
+      const repeated = await h.execute('agent.resume', {
+        sessionId: 'agent-resumed-again',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Improper duplicate',
+        permissionPreset: 'standard',
+      });
+      expect(repeated).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(h.router.getSnapshot().sessions.some((session) => session.id === 'agent-resumed-again')).toBe(false);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('rejects active, missing, cross-Project, and mismatched resume sources', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        title: 'Source Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish before resume.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+        agent.sessionId === 'agent-source'
+      ))!.providerSessionId!;
+      const active = await h.execute('agent.resume', {
+        sessionId: 'active-copy',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Active copy',
+        permissionPreset: 'standard',
+      });
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-source',
+        turnId: sourceTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+      await h.execute('project.create', { projectId: 'project-2', name: 'Other', rootPath: 'C:\\Other' });
+      await h.execute('workspace.create', {
+        workspaceId: 'workspace-2',
+        projectId: 'project-2',
+        name: 'Other',
+        kind: 'local',
+        rootPath: 'C:\\Other',
+      });
+
+      const missing = await h.execute('agent.resume', {
+        sessionId: 'missing-copy',
+        sourceSessionId: 'missing-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Missing copy',
+        permissionPreset: 'standard',
+      });
+      const crossProject = await h.execute('agent.resume', {
+        sessionId: 'cross-project-copy',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-2',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Cross Project copy',
+        permissionPreset: 'standard',
+      });
+      const providerMismatch = await h.execute('agent.resume', {
+        sessionId: 'provider-mismatch-copy',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'claude',
+        providerSessionId,
+        title: 'Provider mismatch copy',
+        permissionPreset: 'standard',
+      });
+      const handleMismatch = await h.execute('agent.resume', {
+        sessionId: 'handle-mismatch-copy',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId: 'different-provider-handle',
+        title: 'Handle mismatch copy',
+        permissionPreset: 'standard',
+      });
+
+      expect(active).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(missing).toMatchObject({ ok: false, error: { code: 'not-found' } });
+      for (const receipt of [crossProject, providerMismatch, handleMismatch]) {
+        expect(receipt).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      }
+      expect(h.codex.resumeSession).not.toHaveBeenCalled();
+      expect(h.claude.resumeSession).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().sessions.filter((session) => session.id.endsWith('-copy'))).toEqual([]);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('rejects resume when another Agent already claims the Provider Session handle', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        title: 'Source Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish before resume.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+        agent.sessionId === 'agent-source'
+      ))!.providerSessionId!;
+      h.codex.emit({
+        kind: 'turn-finished',
+        sessionId: 'agent-source',
+        turnId: sourceTurn.id,
+        outcome: 'completed',
+      });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+      await h.router.applySystemCommit({ mutations: [
+        { kind: 'session.upsert', value: {
+          id: 'agent-duplicate-owner',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          kind: 'agent',
+          title: 'Duplicate owner',
+          state: 'completed',
+          source: 'structured',
+        } },
+        { kind: 'agent.upsert', value: {
+          sessionId: 'agent-duplicate-owner',
+          providerId: 'codex',
+          providerSessionId,
+          permissionPreset: 'standard',
+          state: 'done',
+          queuedTurnCount: 0,
+          orchestrationEnabled: false,
+        } },
+      ] });
+
+      const receipt = await h.execute('agent.resume', {
+        sessionId: 'agent-destination',
+        sourceSessionId: 'agent-source',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        providerSessionId,
+        title: 'Destination',
+        permissionPreset: 'standard',
+      });
+
+      expect(receipt).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(h.router.getSnapshot().sessions.some((session) => session.id === 'agent-destination')).toBe(false);
+      expect(h.router.getSnapshot().agents.filter((agent) => agent.providerSessionId === providerSessionId))
+        .toHaveLength(2);
+      expect(h.codex.resumeSession).not.toHaveBeenCalled();
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('durably interrupts active Agent work when the runtime is explicitly disposed', async () => {
     const h = await harness();
     try {
@@ -919,6 +1148,7 @@ describe('DaemonAgentRuntime', () => {
         await h.execute('agent.detach', { sessionId: nativeSessionId }),
         await h.execute('agent.resume', {
           sessionId: 'resumed-native',
+          sourceSessionId: nativeSessionId,
           workspaceId: 'workspace-1',
           providerId: 'codex',
           providerSessionId: 'native-1',

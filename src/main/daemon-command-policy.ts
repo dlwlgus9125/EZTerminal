@@ -5,7 +5,7 @@ import type {
 } from '../shared/daemon-protocol';
 
 export interface DaemonAuthorizationContext {
-  /** True only for a live, non-detached managed descendant of rootSessionId. */
+  /** True only for a non-detached managed descendant of rootSessionId. */
   readonly isManagedDescendant: (rootSessionId: string, candidateSessionId: string) => boolean;
 }
 
@@ -118,10 +118,19 @@ export function authorizeDaemonCommand(
         return denied(command, 'The session-scoped orchestration capability cannot perform this command.');
       }
 
-      if (command.type === 'agent.create' || command.type === 'agent.resume') {
+      if (command.type === 'agent.create') {
         return command.payload.parentSessionId === rootSessionId
           ? { allowed: true }
-          : denied(command, 'A session capability may create or resume only its direct child.');
+          : denied(command, 'A session capability may create only its direct child.');
+      }
+
+      if (command.type === 'agent.resume') {
+        if (command.payload.parentSessionId !== rootSessionId) {
+          return denied(command, 'A session capability may resume only as its direct child.');
+        }
+        return context.isManagedDescendant(rootSessionId, command.payload.sourceSessionId)
+          ? { allowed: true }
+          : denied(command, 'A session capability may resume only a managed descendant Provider Session.');
       }
 
       const targetSessionId = getTargetSessionId(command);

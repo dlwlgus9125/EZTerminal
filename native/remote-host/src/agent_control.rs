@@ -198,7 +198,13 @@ fn build_daemon_agent_resume(target: &str, value: Value) -> Result<RequestSpec> 
         .context("stdin must contain one JSON Agent resume object")?;
     reject_reserved_fields(
         &body,
-        &["target", "requestId", "providerId", "providerSessionId"],
+        &[
+            "target",
+            "requestId",
+            "sourceSessionId",
+            "providerId",
+            "providerSessionId",
+        ],
     )?;
     if !body.contains_key("sessionId") {
         body.insert(
@@ -1227,6 +1233,10 @@ mod tests {
         );
         assert!(
             build_daemon_agent_resume("Dormant", json!({ "providerSessionId": "raw-handle" }),)
+                .is_err()
+        );
+        assert!(
+            build_daemon_agent_resume("Dormant", json!({ "sourceSessionId": "forged-source" }),)
                 .is_err()
         );
         assert!(

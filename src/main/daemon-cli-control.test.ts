@@ -426,7 +426,8 @@ describe('DaemonCliControl', () => {
     });
     expect(execute.mock.calls[1]![0]).toMatchObject({
       payload: {
-        sessionId: 'agent-resumed', providerId: 'codex', providerSessionId: 'provider-owned-handle',
+        sessionId: 'agent-resumed', sourceSessionId: 'agent-old', providerId: 'codex',
+        providerSessionId: 'provider-owned-handle',
         model: 'gpt-5.6', permissionPreset: 'plan', parentSessionId: 'agent-1',
       },
     });

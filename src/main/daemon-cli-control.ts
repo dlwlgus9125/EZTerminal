@@ -704,6 +704,7 @@ export class DaemonCliControl {
     const model = body.model ?? source.value.agent.model;
     return this.execute(sourceSessionId, requestId.value, 'agent.resume', {
       sessionId: body.sessionId.trim(),
+      sourceSessionId: source.value.session.id,
       workspaceId: workspace.value.id,
       providerId: provider.value.id,
       providerSessionId: source.value.agent.providerSessionId,
