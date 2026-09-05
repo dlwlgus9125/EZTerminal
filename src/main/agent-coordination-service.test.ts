@@ -8,6 +8,7 @@ import type { ManagedMergeRequest } from '../shared/agent-coordination';
 import type { AgentProjectRecord } from './agent-project-store';
 import {
   AgentCoordinationService,
+  type AgentWorkspaceIdentity,
   type CoordinationActivitySource,
   type CoordinationMergeSource,
 } from './agent-coordination-service';
@@ -78,6 +79,15 @@ async function configuredStore(directory = makeDir()): Promise<AgentCoordination
 }
 
 const projects = [{ projectId: 'project-1' }] as unknown as readonly AgentProjectRecord[];
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
 
 describe('AgentCoordinationService', () => {
   it('projects workspace identity for a live activity before coordination join', async () => {
@@ -189,6 +199,198 @@ describe('AgentCoordinationService', () => {
     activities.emit([activity({ live: false, state: 'idle', status: 'idle', stateSeq: 4 })]);
     expect(service.getParticipantByActivity('activity-1')).toBeNull();
     expect(service.getSnapshot().projects[0]?.participants).toEqual([]);
+    service.dispose();
+  });
+
+  it('removes Project authority immediately and detaches participant and workspace caches', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([activity()]);
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace: async () => ({
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'workspace-1',
+      }),
+      newId: () => 'participant-1',
+    });
+    await expect(service.join({
+      activityId: 'activity-1', alias: 'Builder', role: 'code', task: 'remove safely',
+    })).resolves.toMatchObject({ ok: true });
+
+    const removing = service.removeProjectAuthority('project-1');
+    expect(service.getParticipantByActivity('activity-1')).toBeNull();
+    expect(service.getProject('project-1')).toBeNull();
+    expect(service.getSnapshot().activities[0]).not.toHaveProperty('projectId');
+    expect(service.getSnapshot().activities[0]?.participant).toBeUndefined();
+    expect(service.getSnapshot().projects).toEqual([]);
+
+    await expect(removing).resolves.toBe(true);
+    expect(store.getProject('project-1')).toBeNull();
+    service.dispose();
+  });
+
+  it('generation-fences late workspace resolution and join completion across remove and restore', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([activity()]);
+    const initialResolution = deferred<AgentWorkspaceIdentity | null>();
+    const joiningResolution = deferred<AgentWorkspaceIdentity | null>();
+    const revokedResolution = deferred<AgentWorkspaceIdentity | null>();
+    const restoredResolution = deferred<AgentWorkspaceIdentity | null>();
+    const resolveWorkspace = vi.fn()
+      .mockReturnValueOnce(initialResolution.promise)
+      .mockReturnValueOnce(joiningResolution.promise)
+      .mockReturnValueOnce(revokedResolution.promise)
+      .mockReturnValueOnce(restoredResolution.promise);
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace,
+      newId: () => 'participant-1',
+    });
+    const joining = service.join({
+      activityId: 'activity-1', alias: 'Builder', role: 'code', task: 'must become stale',
+    });
+    expect(resolveWorkspace).toHaveBeenCalledTimes(2);
+
+    await expect(service.removeProjectAuthority('project-1')).resolves.toBe(true);
+    const restored = await store.saveProject({
+      projectId: 'project-1',
+      goal: 'Explicitly restored Project',
+      defaultTargetBranch: 'main',
+      validationCommands: [],
+    });
+    expect(restored.ok).toBe(true);
+    expect(service.restoreProjectAuthority('project-1')).toBe(true);
+    expect(resolveWorkspace).toHaveBeenCalledTimes(4);
+
+    const identity = {
+      projectId: 'project-1', rootId: 'root-1', workspaceId: 'workspace-1',
+    } as const;
+    initialResolution.resolve(identity);
+    joiningResolution.resolve(identity);
+    revokedResolution.resolve(identity);
+    await expect(joining).resolves.toMatchObject({ ok: false, error: 'stale' });
+    expect(service.getParticipantByActivity('activity-1')).toBeNull();
+    expect(service.getSnapshot().activities[0]).not.toHaveProperty('projectId');
+
+    restoredResolution.resolve(identity);
+    await vi.waitFor(() => {
+      expect(service.getSnapshot().activities[0]).toMatchObject({
+        projectId: 'project-1', rootId: 'root-1', workspaceId: 'workspace-1',
+      });
+    });
+    expect(service.getSnapshot().activities[0]?.participant).toBeUndefined();
+    service.dispose();
+  });
+
+  it('removes only matching Workspace authority while preserving Project configuration and unrelated participants', async () => {
+    const store = await configuredStore();
+    await store.saveProject({
+      projectId: 'project-2',
+      goal: 'Keep the other Project active',
+      defaultTargetBranch: 'main',
+      validationCommands: [],
+    });
+    const activities = new FakeActivities([
+      activity(),
+      activity({ id: 'activity-sibling', sessionId: 'session-sibling', cwd: 'C:\\repo\\sibling' }),
+      activity({ id: 'activity-foreign', sessionId: 'session-foreign', cwd: 'C:\\other' }),
+      activity({ id: 'activity-unjoined', sessionId: 'session-unjoined', cwd: 'C:\\repo\\unjoined' }),
+    ]);
+    let nextParticipantId = 0;
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => [
+        { projectId: 'project-1' },
+        { projectId: 'project-2' },
+      ] as unknown as readonly AgentProjectRecord[],
+      resolveWorkspace: async (item) => {
+        if (item.id === 'activity-foreign') {
+          return { projectId: 'project-2', rootId: 'root-foreign', workspaceId: 'workspace-foreign' };
+        }
+        if (item.id === 'activity-sibling') {
+          return { projectId: 'project-1', rootId: 'root-sibling', workspaceId: 'workspace-sibling' };
+        }
+        return {
+          projectId: 'project-1',
+          rootId: 'root-target',
+          workspaceId: item.id === 'activity-unjoined' ? 'workspace-unjoined' : 'workspace-target',
+        };
+      },
+      newId: () => `participant-${String(++nextParticipantId)}`,
+    });
+    await vi.waitFor(() => {
+      expect(service.getSnapshot().activities.find((item) => item.id === 'activity-unjoined'))
+        .toMatchObject({ projectId: 'project-1', rootId: 'root-target', workspaceId: 'workspace-unjoined' });
+    });
+    for (const activityId of ['activity-1', 'activity-sibling', 'activity-foreign']) {
+      await expect(service.join({
+        activityId,
+        alias: activityId,
+        role: 'code',
+        task: 'stay correctly scoped',
+      })).resolves.toMatchObject({ ok: true });
+    }
+
+    expect(service.removeWorkspaceAuthority('project-1', 'root-target', 'workspace-target')).toBe(true);
+    expect(service.getParticipantByActivity('activity-1')).toBeNull();
+    expect(service.getParticipantByActivity('activity-sibling')).not.toBeNull();
+    expect(service.getParticipantByActivity('activity-foreign')).not.toBeNull();
+    expect(service.getSnapshot().activities.find((item) => item.id === 'activity-unjoined'))
+      .toMatchObject({ projectId: 'project-1', workspaceId: 'workspace-unjoined' });
+
+    expect(service.removeWorkspaceAuthority('project-1', 'root-target')).toBe(true);
+    expect(service.getSnapshot().activities.find((item) => item.id === 'activity-unjoined'))
+      .not.toHaveProperty('projectId');
+    expect(service.getParticipantByActivity('activity-sibling')).not.toBeNull();
+    expect(service.getParticipantByActivity('activity-foreign')).not.toBeNull();
+    expect(service.getSnapshot().projects.map((project) => project.projectId))
+      .toEqual(['project-1', 'project-2']);
+    expect(store.getProject('project-1')).not.toBeNull();
+    service.dispose();
+  });
+
+  it('generation-fences a pending Workspace resolver across revoke and explicit restore', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([activity()]);
+    const beforeRevoke = deferred<AgentWorkspaceIdentity | null>();
+    const joiningBeforeRevoke = deferred<AgentWorkspaceIdentity | null>();
+    const whileRevoked = deferred<AgentWorkspaceIdentity | null>();
+    const afterRestore = deferred<AgentWorkspaceIdentity | null>();
+    const resolveWorkspace = vi.fn()
+      .mockReturnValueOnce(beforeRevoke.promise)
+      .mockReturnValueOnce(joiningBeforeRevoke.promise)
+      .mockReturnValueOnce(whileRevoked.promise)
+      .mockReturnValueOnce(afterRestore.promise);
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace,
+    });
+    const joining = service.join({
+      activityId: 'activity-1', alias: 'Builder', role: 'code', task: 'must not cross revoke',
+    });
+
+    expect(service.removeWorkspaceAuthority('project-1', 'root-1', 'workspace-1')).toBe(true);
+    expect(service.restoreWorkspaceAuthority('project-1', 'root-1', 'workspace-1')).toBe(true);
+    expect(resolveWorkspace).toHaveBeenCalledTimes(4);
+    const identity = { projectId: 'project-1', rootId: 'root-1', workspaceId: 'workspace-1' } as const;
+    beforeRevoke.resolve(identity);
+    joiningBeforeRevoke.resolve(identity);
+    whileRevoked.resolve(identity);
+    await expect(joining).resolves.toMatchObject({ ok: false, error: 'stale' });
+    await Promise.resolve();
+    expect(service.getSnapshot().activities[0]).not.toHaveProperty('projectId');
+
+    afterRestore.resolve(identity);
+    await vi.waitFor(() => expect(service.getSnapshot().activities[0]).toMatchObject(identity));
+    expect(store.getProject('project-1')).not.toBeNull();
     service.dispose();
   });
 

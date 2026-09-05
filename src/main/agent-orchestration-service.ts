@@ -121,9 +121,14 @@ function reaches(tasks: readonly CollaborationTask[], from: string, target: stri
 export class AgentOrchestrationService {
   private readonly listeners = new Set<(snapshot: AgentOrchestrationSnapshot) => void>();
   private readonly scheduling = new Map<string, Promise<void>>();
+  private readonly backgroundOperations = new Set<Promise<unknown>>();
+  private readonly projectOperations = new Map<string, Set<Promise<unknown>>>();
+  private readonly projectStops = new Map<string, Promise<void>>();
+  private readonly stoppingProjects = new Set<string>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private revision = 0;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
 
   constructor(private readonly deps: {
     readonly store: AgentOrchestrationStore;
@@ -201,19 +206,33 @@ export class AgentOrchestrationService {
   }
 
   canLead(source: AgentActivity): boolean {
-    if (!source.live || !source.projectId || this.isWorkerSession(source.sessionId)) return false;
+    if (this.disposed
+      || !source.live
+      || !source.projectId
+      || this.stoppingProjects.has(source.projectId)
+      || !this.deps.projectExists(source.projectId)
+      || this.isWorkerSession(source.sessionId)) return false;
     const policy = this.deps.store.getPolicy(source.projectId);
     return Boolean(policy?.enabled && !this.deps.store.migrationStatus.required);
   }
 
-  async createWorker(
+  createWorker(
     source: AgentActivity,
     input: CreateWorkerInput,
   ): Promise<AgentOrchestrationMutationResult<{ readonly run: CollaborationRun; readonly task: CollaborationTask }>> {
     if (!this.canLead(source) || !source.projectId) {
-      return failure('forbidden', 'This session is not an enabled project Lead.');
+      return Promise.resolve(failure('forbidden', 'This session is not an enabled project Lead.'));
     }
-    const policy = this.deps.store.getPolicy(source.projectId)!;
+    const operation = this.createWorkerForProject(source, input, source.projectId);
+    return this.trackProjectOperation(source.projectId, operation);
+  }
+
+  private async createWorkerForProject(
+    source: AgentActivity,
+    input: CreateWorkerInput,
+    projectId: string,
+  ): Promise<AgentOrchestrationMutationResult<{ readonly run: CollaborationRun; readonly task: CollaborationTask }>> {
+    const policy = this.deps.store.getPolicy(projectId)!;
     const title = typeof input.title === 'string' ? input.title.trim() : '';
     const brief = typeof input.brief === 'string' ? input.brief.trim() : '';
     const dependsOn = input.dependsOn ? [...input.dependsOn] : [];
@@ -245,7 +264,7 @@ export class AgentOrchestrationService {
         schemaVersion: AGENT_ORCHESTRATION_SCHEMA_VERSION,
         runId: this.newId(),
         revision: 1,
-        projectId: source.projectId,
+        projectId,
         leadSessionId: source.sessionId,
         leadActivityId: source.id,
         policyRevision: policy.revision,
@@ -261,7 +280,7 @@ export class AgentOrchestrationService {
       this.armExpiry(run);
     }
     this.armExpiry(run);
-    if (run.projectId !== source.projectId || run.leadActivityId !== source.id) {
+    if (run.projectId !== projectId || run.leadActivityId !== source.id) {
       return failure('conflict', 'The active run belongs to another Lead activity.');
     }
     if (run.policyRevision !== policy.revision) {
@@ -396,7 +415,7 @@ export class AgentOrchestrationService {
     if (task.worker?.sessionId) this.deps.stopSession(task.worker.sessionId);
     this.publish();
     this.schedule(result.value.runId);
-    void this.flushLead(result.value.runId);
+    this.startBackground(this.flushLead(result.value.runId));
     return { ok: true, value: result.value.tasks.find((candidate) => candidate.taskId === taskId)! };
   }
 
@@ -426,6 +445,27 @@ export class AgentOrchestrationService {
     if (task.worker?.sessionId) this.deps.stopSession(task.worker.sessionId);
     this.publish();
     return { ok: true, value: result.value.tasks.find((candidate) => candidate.taskId === taskId)! };
+  }
+
+  stopProjectRuns(projectId: string): Promise<void> {
+    const existing = this.projectStops.get(projectId);
+    if (existing) return existing;
+
+    this.stoppingProjects.add(projectId);
+    const operation = this.stopProjectRunsWhileBlocked(projectId);
+    const tracked = operation.finally(() => {
+      if (this.projectStops.get(projectId) !== tracked) return;
+      this.projectStops.delete(projectId);
+    });
+    this.projectStops.set(projectId, tracked);
+    return tracked;
+  }
+
+  activateProject(projectId: string): void {
+    if (this.projectStops.has(projectId)) {
+      throw new Error('Project orchestration cleanup is still in progress.');
+    }
+    this.stoppingProjects.delete(projectId);
   }
 
   async stopRun(
@@ -579,7 +619,7 @@ export class AgentOrchestrationService {
     if (!result.ok) return result;
     this.publish();
     this.schedule(result.value.runId);
-    void this.flushLead(result.value.runId);
+    this.startBackground(this.flushLead(result.value.runId));
     const finished = result.value.tasks.find((candidate) => candidate.taskId === task.taskId)!;
     if (finished.mode !== 'write' && finished.worker?.sessionId) {
       const timer = setTimeout(() => this.deps.stopSession(finished.worker!.sessionId!), 750);
@@ -626,46 +666,167 @@ export class AgentOrchestrationService {
       && located.task.state !== 'awaiting-verification'
       && located.task.state !== 'awaiting-merge') {
       if (transition.activity.state === 'blocked') {
-        void this.transitionWorkerState(located.run, located.task, 'blocked', 'worker-blocked', `${located.task.title} needs permission or input.`);
+        this.startBackground(this.transitionWorkerState(located.run, located.task, 'blocked', 'worker-blocked', `${located.task.title} needs permission or input.`));
       } else if (transition.activity.state === 'working' && located.task.state === 'blocked') {
-        void this.transitionWorkerState(located.run, located.task, located.task.mode === 'verify' ? 'verifying' : 'working');
+        this.startBackground(this.transitionWorkerState(located.run, located.task, located.task.mode === 'verify' ? 'verifying' : 'working'));
       } else if (transition.activity.state === 'error' || (!transition.activity.live && transition.activity.state === 'done')) {
-        void this.failUnreportedWorker(located.run, located.task, transition.activity.state === 'error'
-          ? 'Worker process ended with an error before reporting.'
-          : 'Worker exited before sending a structured result.');
+        this.startBackground(this.failUnreportedWorker(
+          located.run,
+          located.task,
+          transition.activity.state === 'error'
+            ? 'Worker process ended with an error before reporting.'
+            : 'Worker exited before sending a structured result.',
+        ));
       } else if (transition.activity.state === 'done') {
-        void this.failUnreportedWorker(located.run, located.task, 'Worker finished without sending a structured result.');
+        this.startBackground(this.failUnreportedWorker(located.run, located.task, 'Worker finished without sending a structured result.'));
       }
     }
     const leadRun = this.deps.store.activeRunForLead(transition.activity.sessionId);
     if (leadRun && (transition.activity.state === 'done' || transition.activity.state === 'idle')) {
-      void this.flushLead(leadRun.runId);
+      this.startBackground(this.flushLead(leadRun.runId));
     }
   }
 
   handleSessionRemoved(sessionId: string): void {
+    if (this.disposed) return;
     const worker = this.taskForWorkerSession(sessionId);
     if (worker && !isTerminalCollaborationTask(worker.task.state)
       && worker.task.state !== 'awaiting-verification'
       && worker.task.state !== 'awaiting-merge') {
-      void this.failUnreportedWorker(worker.run, worker.task, 'Worker session ended before reporting.');
+      this.startBackground(this.failUnreportedWorker(worker.run, worker.task, 'Worker session ended before reporting.'));
     }
     const lead = this.deps.store.activeRunForLead(sessionId);
     if (lead) {
       const source = this.deps.activity(lead.leadActivityId);
-      if (source) void this.stopRun(source, lead.runId);
-      else void this.stopRunById(lead.runId);
+      if (source) this.startBackground(this.stopRun(source, lead.runId));
+      else this.startBackground(this.stopRunById(lead.runId));
     }
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
     for (const timer of this.expiryTimers.values()) clearTimeout(timer);
     this.expiryTimers.clear();
     this.listeners.clear();
+    const projectIds = new Set([
+      ...this.deps.store.listRuns().map((run) => run.projectId),
+      ...this.projectOperations.keys(),
+      ...this.projectStops.keys(),
+    ]);
+    const disposal = this.disposeProjects([...projectIds]);
+    this.disposePromise = disposal;
+    return disposal;
+  }
+
+  private async disposeProjects(projectIds: readonly string[]): Promise<void> {
+    const results = await Promise.allSettled(projectIds.map((projectId) => this.stopProjectRuns(projectId)));
+    await this.drainBackgroundOperations();
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length > 0) {
+      throw new AggregateError(failures.map((result) => result.reason), 'Agent orchestration shutdown failed.');
+    }
+  }
+
+  private startBackground(operation: Promise<unknown>): void {
+    this.backgroundOperations.add(operation);
+    void operation.then(
+      () => this.backgroundOperations.delete(operation),
+      () => this.backgroundOperations.delete(operation),
+    );
+  }
+
+  private async drainBackgroundOperations(): Promise<void> {
+    for (;;) {
+      const operations = [...this.backgroundOperations];
+      if (operations.length === 0) return;
+      await Promise.allSettled(operations);
+    }
+  }
+
+  private trackProjectOperation<T>(projectId: string, operation: Promise<T>): Promise<T> {
+    const operations = this.projectOperations.get(projectId) ?? new Set<Promise<unknown>>();
+    operations.add(operation);
+    this.projectOperations.set(projectId, operations);
+    void operation.then(
+      () => this.finishProjectOperation(projectId, operation),
+      () => this.finishProjectOperation(projectId, operation),
+    );
+    return operation;
+  }
+
+  private finishProjectOperation(projectId: string, operation: Promise<unknown>): void {
+    const operations = this.projectOperations.get(projectId);
+    operations?.delete(operation);
+    if (operations?.size === 0) this.projectOperations.delete(projectId);
+  }
+
+  private async drainProjectOperations(projectId: string): Promise<void> {
+    for (;;) {
+      const operations = [...(this.projectOperations.get(projectId) ?? [])];
+      if (operations.length === 0) return;
+      await Promise.allSettled(operations);
+    }
+  }
+
+  private async drainProjectScheduling(projectId: string): Promise<void> {
+    for (;;) {
+      const runIds = new Set(this.deps.store.listRuns()
+        .filter((run) => run.projectId === projectId)
+        .map((run) => run.runId));
+      const scheduling = [...runIds]
+        .map((runId) => this.scheduling.get(runId))
+        .filter((operation): operation is Promise<void> => operation !== undefined);
+      if (scheduling.length === 0) return;
+      await Promise.allSettled(scheduling);
+    }
+  }
+
+  private async stopProjectRunsWhileBlocked(projectId: string): Promise<void> {
+    await this.drainProjectOperations(projectId);
+    let runs = this.deps.store.listRuns().filter((run) => (
+      run.projectId === projectId && !isTerminalCollaborationRun(run.state)
+    ));
+    const stoppedWorkerSessions = new Set<string>();
+    let stopError: unknown;
+    const stopKnownWorkerSessions = (): void => {
+      for (const sessionId of runs.flatMap((run) => run.tasks.flatMap((task) => (
+        task.worker?.sessionId ? [task.worker.sessionId] : []
+      )))) {
+        if (stoppedWorkerSessions.has(sessionId)) continue;
+        stoppedWorkerSessions.add(sessionId);
+        try {
+          this.deps.stopSession(sessionId);
+        } catch (error) {
+          stopError ??= error;
+        }
+      }
+    };
+
+    // A worker can be durably bound while its initial delivery is still
+    // waiting. Stop known sessions before awaiting the scheduling chain so
+    // provider teardown can settle that delivery instead of starving quit.
+    stopKnownWorkerSessions();
+    await this.drainProjectScheduling(projectId);
+    runs = this.deps.store.listRuns().filter((run) => (
+      run.projectId === projectId && !isTerminalCollaborationRun(run.state)
+    ));
+    stopKnownWorkerSessions();
+    if (stopError !== undefined) throw stopError;
+
+    for (const run of runs) await this.stopRunById(run.runId, true);
+    await this.drainProjectScheduling(projectId);
+    if (this.deps.store.listRuns().some((run) => (
+      run.projectId === projectId && !isTerminalCollaborationRun(run.state)
+    ))) {
+      throw new Error('Project orchestration runs did not stop cleanly.');
+    }
   }
 
   private schedule(runId: string): void {
+    if (this.disposed) return;
+    const run = this.deps.store.getRun(runId);
+    if (!run || this.stoppingProjects.has(run.projectId)) return;
     const previous = this.scheduling.get(runId) ?? Promise.resolve();
     const next = previous.then(() => this.startReadyTasks(runId)).finally(() => {
       if (this.scheduling.get(runId) === next) this.scheduling.delete(runId);
@@ -676,7 +837,7 @@ export class AgentOrchestrationService {
   private async startReadyTasks(runId: string): Promise<void> {
     if (this.disposed) return;
     let run = this.deps.store.getRun(runId);
-    if (!run || isTerminalCollaborationRun(run.state)) return;
+    if (!run || isTerminalCollaborationRun(run.state) || this.stoppingProjects.has(run.projectId)) return;
     this.armExpiry(run);
     const policy = this.deps.store.getPolicy(run.projectId);
     if (!policy || !policy.enabled || policy.revision !== run.policyRevision) return;
@@ -685,6 +846,7 @@ export class AgentOrchestrationService {
       return;
     }
     while (run) {
+      if (this.disposed || this.stoppingProjects.has(run.projectId)) return;
       const activeCount = run.tasks.filter((task) => ACTIVE_TASK_STATES.has(task.state)).length;
       if (activeCount >= policy.limits.maxConcurrent) return;
       const blocked = run.tasks.find((task) => task.state === 'queued' && task.dependsOn.some((dependency) => {
@@ -705,7 +867,7 @@ export class AgentOrchestrationService {
         if (!canceled.ok) return;
         run = canceled.value;
         this.publish();
-        void this.flushLead(runId);
+        this.startBackground(this.flushLead(runId));
         continue;
       }
       const ready = run.tasks.find((task) => task.state === 'queued' && task.dependsOn.every((dependency) => {
@@ -744,6 +906,7 @@ export class AgentOrchestrationService {
       const dependencyResults = startingTask.dependsOn.map((dependency) => (
         run!.tasks.find((task) => task.taskId === dependency)?.result
       )).filter((result): result is CollaborationTaskResult => result !== undefined);
+      if (this.stoppingProjects.has(run.projectId)) return;
       try {
         const launch = await this.deps.launchWorker(
           run,
@@ -751,6 +914,10 @@ export class AgentOrchestrationService {
           profile,
           composeWorkerBrief(run, startingTask, dependencyResults),
         );
+        if (this.disposed || this.stoppingProjects.has(run.projectId)) {
+          this.deps.stopSession(launch.sessionId);
+          return;
+        }
         const launchedAt = this.now();
         const launched = await this.deps.store.updateRun(runId, (current) => {
           const target = current.tasks.find((task) => task.taskId === startingTask.taskId);
@@ -773,7 +940,7 @@ export class AgentOrchestrationService {
             events: [this.event(current, nextTask, 'worker-started', `${nextTask.title} started with ${profile.name}.`)],
           };
         });
-        if (!launched.ok) {
+        if (!launched.ok || this.disposed || this.stoppingProjects.has(run.projectId)) {
           this.deps.stopSession(launch.sessionId);
           return;
         }
@@ -819,7 +986,7 @@ export class AgentOrchestrationService {
     });
     if (!result.ok) return;
     this.publish();
-    if (eventKind) void this.flushLead(run.runId);
+    if (eventKind) this.startBackground(this.flushLead(run.runId));
   }
 
   private async failUnreportedWorker(
@@ -850,10 +1017,11 @@ export class AgentOrchestrationService {
     if (!result.ok) return;
     this.publish();
     this.schedule(run.runId);
-    void this.flushLead(run.runId);
+    this.startBackground(this.flushLead(run.runId));
   }
 
   private async flushLead(runId: string): Promise<void> {
+    if (this.disposed) return;
     const run = this.deps.store.getRun(runId);
     if (!run) return;
     const lead = this.deps.activity(run.leadActivityId);
@@ -871,7 +1039,7 @@ export class AgentOrchestrationService {
       'Inspect the worker record if you need transcript or diff details. Continue managing the user request as Lead.',
     ].join('\n');
     const sent = await this.deps.promptActivity(run.leadActivityId, message);
-    if (!sent.ok) return;
+    if (!sent.ok || this.disposed) return;
     await this.deps.store.markEventDelivered(event.eventId, this.now());
     this.publish();
   }
@@ -892,7 +1060,7 @@ export class AgentOrchestrationService {
     return null;
   }
 
-  private async stopRunById(runId: string): Promise<void> {
+  private async stopRunById(runId: string, workerSessionsAlreadyStopped = false): Promise<void> {
     const run = this.deps.store.getRun(runId);
     if (!run || isTerminalCollaborationRun(run.state)) {
       this.clearExpiry(runId);
@@ -908,7 +1076,9 @@ export class AgentOrchestrationService {
     }));
     if (!result.ok) return;
     this.clearExpiry(runId);
-    for (const task of result.value.tasks) if (task.worker?.sessionId) this.deps.stopSession(task.worker.sessionId);
+    if (!workerSessionsAlreadyStopped) {
+      for (const task of result.value.tasks) if (task.worker?.sessionId) this.deps.stopSession(task.worker.sessionId);
+    }
     this.publish();
   }
 
@@ -930,10 +1100,10 @@ export class AgentOrchestrationService {
   }
 
   private armExpiry(run: CollaborationRun): void {
-    if (isTerminalCollaborationRun(run.state) || this.expiryTimers.has(run.runId)) return;
+    if (this.disposed || isTerminalCollaborationRun(run.state) || this.expiryTimers.has(run.runId)) return;
     const timer = setTimeout(() => {
       this.expiryTimers.delete(run.runId);
-      void this.stopRunById(run.runId);
+      this.startBackground(this.stopRunById(run.runId));
     }, Math.max(0, run.expiresAt - this.now()));
     timer.unref?.();
     this.expiryTimers.set(run.runId, timer);

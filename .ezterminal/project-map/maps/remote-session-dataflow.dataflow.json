@@ -3,7 +3,7 @@
   "id": "remote-session-dataflow",
   "type": "dataflow",
   "title": "Authenticated v12 Agent session dataflow",
-  "summary": "How an Android Agent command crosses exact-version authentication into the same revisioned SQLite authority, then returns as correlated receipts, bounded transcripts, and gap-recoverable snapshot and event projections.",
+  "summary": "How an Android Agent command crosses exact-version authentication into the revisioned SQLite authority, while successful remote launch and resume activity preserves its target or history identity before Project sync and correlated projection.",
   "contentLocale": "en",
   "layoutIntent": {
     "density": "balanced",
@@ -13,6 +13,7 @@
       "android-principal-command",
       "authorized-outbox",
       "sqlite-session-graph",
+      "targeted-history-observation",
       "revisioned-events",
       "v12-egress",
       "mobile-agent-projection"
@@ -42,6 +43,12 @@
       "title": "Safe-mode projection",
       "summary": "Remote clients receive authority availability without local recovery paths and cannot issue structured commands while the host is in terminal-only safe mode.",
       "focusIds": ["authority-availability", "redacted-availability", "v12-egress", "mobile-agent-projection"]
+    },
+    {
+      "id": "targeted-history-recording",
+      "title": "Targeted activity recording",
+      "summary": "Successful remote launch and resume activity keeps the original Agent launch target or indexed history identity and synchronizes only the resulting valid Project descriptors.",
+      "focusIds": ["v12-ingress", "targeted-history-observation", "sqlite-session-graph"]
     }
   ],
   "stages": [
@@ -98,8 +105,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1857,
-          "endLine": 1938,
+          "startLine": 1862,
+          "endLine": 1943,
           "lineDigest": "sha256:d7c9f4ba52ddcc24de61885963dfb0905e5f5c5facd9ec8a390ed60948214f29",
           "claim": "The host ignores non-auth frames, verifies bearer or consumes a matching pairing generation, enforces exact v12 identity, then marks the socket authenticated."
         }
@@ -115,8 +122,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2488,
-        "endLine": 2525,
+        "startLine": 2493,
+        "endLine": 2530,
         "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
         "claim": "The command handler requires v12 and a bound client, replaces principal with that Android id, strictly parses the result, checks availability, and executes it."
       }]
@@ -131,8 +138,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 334,
-        "endLine": 420,
+        "startLine": 335,
+        "endLine": 421,
         "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
         "claim": "The exclusive router authorizes the bound principal, deduplicates by idempotency key, records provider dispatch, commits or rejects, and publishes durable events."
       }]
@@ -164,16 +171,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 579,
-          "endLine": 595,
+          "startLine": 593,
+          "endLine": 609,
           "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
           "claim": "After a commit, the router reads ordered events from the store and treats observers as non-authoritative projections."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1773,
-          "endLine": 1778,
+          "startLine": 1778,
+          "endLine": 1783,
           "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
           "claim": "The bridge emits daemon events only to authenticated, explicitly subscribed v12 connections."
         }
@@ -189,11 +196,45 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2429,
-        "endLine": 2460,
+        "startLine": 2434,
+        "endLine": 2465,
         "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
         "claim": "Transcript reads require ready v12 authority and return either the exact bounded Session page or an explicit unavailable empty page."
       }]
+    },
+    {
+      "id": "targeted-history-observation",
+      "label": "Target and history-aware activity",
+      "detail": "After successful launch or resume, main records the exact AgentLaunchTarget or indexed history id in the Project FIFO and synchronizes only valid resulting descriptors.",
+      "kind": "transform",
+      "stage": "main-authority",
+      "order": 3,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1201,
+          "endLine": 1208,
+          "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
+          "claim": "The remote history source separates target-aware successful launch recording from history-aware successful resume recording."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-service.ts",
+          "startLine": 238,
+          "endLine": 268,
+          "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
+          "claim": "Project targets and resume history ids only touch existing indexed Projects, while direct-directory launches return explicit deterministic Project registration intent."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 1591,
+          "endLine": 1623,
+          "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
+          "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
+        }
+      ]
     },
     {
       "id": "authority-availability",
@@ -201,7 +242,7 @@
       "detail": "Ready or legacy-only-safe-mode state includes schema and database disposition; only trusted desktop state may include a recovery path.",
       "kind": "source",
       "stage": "main-authority",
-      "order": 3,
+      "order": 4,
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/shared/daemon-authority.ts",
@@ -305,8 +346,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2488,
-        "endLine": 2503,
+        "startLine": 2493,
+        "endLine": 2508,
         "lineDigest": "sha256:a86dadd123a9026b869c1906a5faad520b47ec978e68d2a29fbd9af4263e4be9",
         "claim": "Only the authenticated connection's client id becomes the Android principal of the strict daemon command."
       }]
@@ -320,11 +361,44 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 202,
-        "endLine": 223,
+        "startLine": 203,
+        "endLine": 224,
         "lineDigest": "sha256:ae2c52bc6410a53d9fbd160fd5feeb9aaa31e96c7e09d0ed5472454964de2be8",
         "claim": "The parsed command joins the same exclusive FIFO used by every daemon client."
       }]
+    },
+    {
+      "id": "ingress-to-history-observation",
+      "from": "v12-ingress",
+      "to": "targeted-history-observation",
+      "label": "successful target-aware activity",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 2845,
+          "endLine": 2849,
+          "lineDigest": "sha256:6ae1b97f47409e427806b6e930f0f493671f45ee81ae827240c7024f79291e00",
+          "claim": "A successful Project launch records the exact Project launch target rather than reconstructing it from a reported working directory."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 2938,
+          "endLine": 2942,
+          "lineDigest": "sha256:2e02a59d7ea06680b0d60888320c21e35b577143de42312112f9085818a6a125",
+          "claim": "A general successful launch passes its exact AgentLaunchTarget into activity recording."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 3071,
+          "endLine": 3071,
+          "lineDigest": "sha256:de84c56e97e3e35cb078746525f9bdac031ea5c9003d064f767a8b22c0c7447e",
+          "claim": "A successful resume records the original indexed history id."
+        }
+      ]
     },
     {
       "id": "outbox-to-graph",
@@ -335,11 +409,36 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 367,
-        "endLine": 419,
+        "startLine": 368,
+        "endLine": 420,
         "lineDigest": "sha256:524d17f1511b3f90f92e97de397a97fa3edce1c3f611e01958bf614f437980b5",
         "claim": "Outbox state and command effects settle durably before the router returns a receipt or publishes events."
       }]
+    },
+    {
+      "id": "history-observation-to-graph",
+      "from": "targeted-history-observation",
+      "to": "sqlite-session-graph",
+      "label": "record then synchronize",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+        "startLine": 1591,
+        "endLine": 1623,
+          "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
+          "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-service.ts",
+          "startLine": 238,
+          "endLine": 268,
+          "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
+          "claim": "Project-target and history-specific records return no changed descriptor after removal; direct-directory launches instead return their deterministic id as explicit intent."
+        }
+      ]
     },
     {
       "id": "graph-to-events",
@@ -350,8 +449,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 579,
-        "endLine": 595,
+        "startLine": 593,
+        "endLine": 609,
         "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
         "claim": "Published events are read back from the durable sequence after commit rather than synthesized by a transport."
       }]
@@ -365,8 +464,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1773,
-        "endLine": 1778,
+        "startLine": 1778,
+        "endLine": 1783,
         "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
         "claim": "Only an authenticated v12 socket with an active daemon subscription receives the event envelope."
       }]
@@ -395,8 +494,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 177,
-        "endLine": 195,
+        "startLine": 178,
+        "endLine": 196,
         "lineDigest": "sha256:1a2db6d9849a2167256a4b6fe331d54606b8bee1062c3a4bf5adc7b75225ac58",
         "claim": "Transports read Session transcript items through a bounded router method without access to the SQLite store itself."
       }]
@@ -410,8 +509,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2429,
-        "endLine": 2460,
+        "startLine": 2434,
+        "endLine": 2465,
         "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
         "claim": "The host returns transcript items with the original request and Session ids or explicitly marks the page unavailable."
       }]
@@ -440,8 +539,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1995,
-        "endLine": 2005,
+        "startLine": 2000,
+        "endLine": 2010,
         "lineDigest": "sha256:1c7c6e9fe0085f95d654460a7ef58e52143ff70bdb0bbd162948e044c2191ac8",
         "claim": "Immediately after authentication the host sends redacted availability and sends a structured snapshot only when authority state is ready."
       }]

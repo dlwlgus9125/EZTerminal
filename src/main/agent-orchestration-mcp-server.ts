@@ -48,6 +48,7 @@ export interface AgentOrchestrationMcpServerOptions {
 
 interface SessionCapability {
   readonly digest: Buffer;
+  readonly projectId: string;
 }
 
 class McpRequestError extends Error {
@@ -202,11 +203,16 @@ export class AgentOrchestrationMcpServer {
   descriptorForSession(sessionId: string): NonNullable<ProviderSessionContext['orchestration']> {
     if (!this.server || this.port === null) throw new Error('Agent orchestration MCP server is not running.');
     if (!sessionId.trim() || sessionId.length > 256) throw new Error('Agent orchestration session id is invalid.');
+    const snapshot = this.requireLiveCapability(sessionId);
+    const session = snapshot.sessions.find((candidate) => candidate.id === sessionId)!;
     const bearerToken = this.createToken();
     if (!bearerToken || bearerToken.length < 32 || bearerToken.length > 512) {
       throw new Error('Agent orchestration token generator returned an unsafe token.');
     }
-    this.capabilities.set(sessionId, { digest: digestToken(bearerToken) });
+    this.capabilities.set(sessionId, {
+      digest: digestToken(bearerToken),
+      projectId: session.projectId,
+    });
     return {
       endpoint: `http://${this.host}:${String(this.port)}/mcp/${encodeURIComponent(sessionId)}`,
       bearerToken,
@@ -215,6 +221,12 @@ export class AgentOrchestrationMcpServer {
 
   revokeSession(sessionId: string): void {
     this.capabilities.delete(sessionId);
+  }
+
+  revokeProject(projectId: string): void {
+    for (const [sessionId, capability] of this.capabilities) {
+      if (capability.projectId === projectId) this.capabilities.delete(sessionId);
+    }
   }
 
   stop(): Promise<void> {
@@ -482,6 +494,18 @@ export class AgentOrchestrationMcpServer {
     const runtimeEnabled = snapshot.runtime.orchestrationToolsEnabled;
     const agent = snapshot.agents.find((candidate) => candidate.sessionId === sessionId);
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    const project = session
+      ? snapshot.projects.find((candidate) => (
+          candidate.id === session.projectId && candidate.archivedAt === undefined
+        ))
+      : undefined;
+    const workspace = session
+      ? snapshot.workspaces.find((candidate) => (
+          candidate.id === session.workspaceId
+          && candidate.projectId === session.projectId
+          && candidate.archivedAt === undefined
+        ))
+      : undefined;
     const provider = agent
       ? snapshot.providers.find((candidate) => candidate.id === agent.providerId)
       : undefined;
@@ -491,6 +515,8 @@ export class AgentOrchestrationMcpServer {
       || !provider?.enabled
       || provider.health !== 'ready'
       || !session
+      || !project
+      || !workspace
       || session.kind !== 'agent'
       || ['completed', 'interrupted', 'failed', 'archived'].includes(session.state)
       || ['done', 'interrupted', 'error', 'archived'].includes(agent.state)

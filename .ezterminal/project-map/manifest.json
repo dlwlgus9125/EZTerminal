@@ -18,12 +18,21 @@
         { "rootAlias": "app", "relativePath": "src/renderer/StructuredAgentDockPanel.tsx" },
         { "rootAlias": "app", "relativePath": "src/preload/preload.ts" },
         { "rootAlias": "app", "relativePath": "src/main/main.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-history-service.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-project-observation.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-service.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/project-workspace.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-access-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-orchestration-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-project-sync.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-workspace-authority.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-cli-control.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-store.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-automation-runtime.ts" },
         { "rootAlias": "app", "relativePath": "src/main/agent-orchestration-mcp-server.ts" },
         { "rootAlias": "app", "relativePath": "src/main/agent-provider-adapter.ts" },
         { "rootAlias": "app", "relativePath": "src/main/agent-provider-registry.ts" },
@@ -32,9 +41,9 @@
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:949ce10c35efea112f4a00dcba5f22b9e5e1e35fd907eed3519f4d7734849dce",
+        "inputDigest": "sha256:ef592b65817e751905b4b97c9867a63cd63291d2d8d377718543c135c4f42cd7",
         "decision": "map-updated",
-        "reason": "The map now shows Electron-main authority, durable Project to Workspace to Session ownership, UI, CLI, and remote clients, permission-capped managed-child control, serialized provider lifecycle, turn-scoped event correlation, and Codex app-server or Claude Agent SDK boundaries."
+        "reason": "Mapped active ownership gates, explicit tombstone reactivation, discovery-completeness fail-closed sync, crash-recoverable consent, and the Project FIFO. Project edits and removal stop orchestration and retire descendants and tokens before replacement."
       }
     },
     {
@@ -63,15 +72,24 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-store-recovery.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-store.ts" },
         { "rootAlias": "app", "relativePath": "src/main/main.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/owned-startup-barrier.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ingress.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/graceful-shutdown.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/openclaw-lifecycle-coordinator.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-history-service.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-project-observation.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-service.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-access-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-workspace-authority.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-availability.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:00f8bfd2f621f2349e86f2739cace33b8e269f1b69d3c0973815e40eff001728",
-        "decision": "no-semantic-impact",
-        "reason": "Directory preparation now accepts plain Windows DOS short-name aliases while rejecting any linked or reparse ancestor; the mapped startup, recovery, safe-mode, active, and shutdown lifecycle remains unchanged."
+        "inputDigest": "sha256:976757a23b37b0a63f41330c1df2a34da0f65adf6d48d9a1b3f4f4ffc28f631c",
+        "decision": "map-updated",
+        "reason": "Startup recovers Workspace consent before Project sync and providers. Quit closes main-owned startup and local mutation ingress, drains OpenClaw bootstrap recovery and accepted work through named cleanup dependencies, and keeps normal SQLite close behind exact writer barriers."
       }
     },
     {
@@ -81,15 +99,17 @@
       "authoritativeInputs": [
         { "rootAlias": "app", "relativePath": "src/shared/remote-protocol.ts" },
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/main.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-history-service.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/daemon-authority.ts" },
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:eca7aebbfb738cb83c2534499e98d6dcb2291006bf3b695fc01615b0c5786d28",
-        "decision": "no-semantic-impact",
-        "reason": "Desktop-only provider stubs now explicitly consume unused parameters for lint compliance; authenticated v12 commands, connection-loss receipts, reconciliation, and transcript validation remain unchanged."
+        "inputDigest": "sha256:4fb45f5e024c0ca91ce765ebb47a7cbf4ab39734cc56b4d61576ca87486cad42",
+        "decision": "map-updated",
+        "reason": "Remote launch and resume activity retains its exact AgentLaunchTarget or historyId and joins the Project FIFO before synchronization. Project targets and resumes cannot recreate removed Projects; only a direct-directory launch carries explicit re-registration intent."
       }
     },
     {
@@ -112,9 +132,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:1534803c5b206b6fec47cb4f1234ad2d7ee08cf4a96c6ab69c6661d5498a7bd3",
+        "inputDigest": "sha256:829f80e6ca57a64e16dd274f2a3a47690501f97db6d46dd9fbefd5c327e7dd48",
         "decision": "no-semantic-impact",
-        "reason": "Preserving opaque Project identity for File Explorer terminals is adjacent to this flow; dedicated Project Map launch, scoped guide/check/report, human approval, and verified export remain unchanged."
+        "reason": "Project- and Session-wide capability revocation now aborts stale Agent-control requests, but the dedicated Project Map launch, scoped guide/check/report, human approval, and verified export workflow is unchanged."
       }
     }
   ]

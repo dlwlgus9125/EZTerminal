@@ -192,6 +192,17 @@ function deferred<T>(): {
 }
 
 describe('ManagedDesktopRuntime Interface', () => {
+  it('cannot initialize after shutdown closed an unpublished runtime', async () => {
+    const h = harness();
+    const runtime = new ManagedDesktopRuntime(h.options);
+
+    await runtime.dispose();
+
+    await expect(runtime.initialize()).rejects.toThrow('DesktopRuntime is disposed.');
+    expect(h.ipc.handlers.size).toBe(0);
+    expect(h.startBridge).not.toHaveBeenCalled();
+  });
+
   it('registers the exact IPC contract once and initializes the bridge once', async () => {
     const h = harness();
     const runtime = new ManagedDesktopRuntime(h.options);

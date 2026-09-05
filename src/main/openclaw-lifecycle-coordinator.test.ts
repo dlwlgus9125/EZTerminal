@@ -36,7 +36,47 @@ function fakeSupervisor(): OpenClawSupervisorAdapter & {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 describe('OpenClawLifecycleCoordinator', () => {
+  it('drains pending-intent recovery and does not wake after disposal begins', async () => {
+    const userDataDirectory = await makeDirectory();
+    const controlDirectory = path.join(userDataDirectory, 'openclaw-control');
+    await fs.mkdir(controlDirectory, { recursive: true });
+    await fs.writeFile(path.join(controlDirectory, 'intent.json'), JSON.stringify({
+      schemaVersion: 1,
+      intentId: 'intent-recovery',
+      generation: 1,
+      desiredState: 'running',
+      action: 'start',
+      requestedAt: '2026-09-01T00:00:00.000Z',
+    }));
+    const supervisor = fakeSupervisor();
+    const installation = deferred<{ readonly ok: true }>();
+    supervisor.ensureInstalled.mockReturnValue(installation.promise);
+    const coordinator = new OpenClawLifecycleCoordinator({
+      userDataDirectory,
+      supervisorAssetPath: 'unused-in-test',
+      supervisor,
+      getPhysicalStatus: async () => ({ state: 'stopped', port: 18789 }),
+      pollMs: 60_000,
+    });
+
+    await coordinator.initialize();
+    let disposed = false;
+    const disposal = coordinator.dispose().then(() => { disposed = true; });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+    expect(disposed).toBe(false);
+
+    installation.resolve({ ok: true });
+    await disposal;
+    expect(supervisor.wake).not.toHaveBeenCalled();
+  });
+
   it('persists a running intent and returns an immediate durable receipt', async () => {
     const userDataDirectory = await makeDirectory();
     const supervisor = fakeSupervisor();

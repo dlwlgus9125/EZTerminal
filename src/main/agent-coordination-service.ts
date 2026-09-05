@@ -49,6 +49,7 @@ interface ResolvedActivityWorkspace {
 
 interface PendingActivityWorkspace {
   readonly cwd: string;
+  readonly authorityGeneration: number;
 }
 
 const EMPTY_COUNTS: Readonly<Record<AgentState, number>> = Object.freeze({
@@ -63,6 +64,14 @@ const EMPTY_COUNTS: Readonly<Record<AgentState, number>> = Object.freeze({
 
 function normalizedAlias(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
+}
+
+function validAuthorityId(value: string, maxLength = 256): boolean {
+  return value.length > 0 && value.length <= maxLength;
+}
+
+function workspaceAuthorityKey(projectId: string, rootId: string, workspaceId?: string): string {
+  return JSON.stringify([projectId, rootId, workspaceId ?? null]);
 }
 
 function makeBrief(project: AgentProjectCoordination, participant: AgentParticipant): string {
@@ -90,6 +99,12 @@ export class AgentCoordinationService {
   private unsubscribeMerge: (() => void) | null = null;
   private mergeSource: CoordinationMergeSource | null = null;
   private revision = 0;
+  private authorityGeneration = 0;
+  private readonly revokedProjectIds = new Set<string>();
+  private readonly revokedWorkspaceAuthorities = new Set<string>();
+  private readonly projectAuthorityGenerations = new Map<string, number>();
+  private readonly workspaceAuthorityGenerations = new Map<string, number>();
+  private readonly projectRemovals = new Map<string, Promise<boolean>>();
   private lastSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
   private disposed = false;
 
@@ -163,6 +178,7 @@ export class AgentCoordinationService {
   }
 
   getProject(projectId: string): AgentProjectCoordination | null {
+    if (this.revokedProjectIds.has(projectId)) return null;
     const project = this.deps.store.getProject(projectId);
     return project ? this.withParticipants(project) : null;
   }
@@ -186,8 +202,15 @@ export class AgentCoordinationService {
       || role.length < 1 || role.length > 120
       || task.length < 1 || task.length > 1_000
     ) return { ok: false, error: 'invalid', message: 'Alias, role, or task is invalid.' };
+    const authorityGeneration = this.authorityGeneration;
     const workspace = await this.deps.resolveWorkspace(activity);
+    if (this.disposed || (workspace && this.identityAuthorityChangedSince(workspace, authorityGeneration))) {
+      return { ok: false, error: 'stale', message: 'Project authority changed while joining.' };
+    }
     if (!workspace) return { ok: false, error: 'not-found', message: 'The activity is outside a registered Project.' };
+    if (this.isIdentityRevoked(workspace)) {
+      return { ok: false, error: 'not-found', message: 'Project authority has been removed.' };
+    }
     const project = this.deps.store.getProject(workspace.projectId);
     if (!project) {
       return { ok: false, error: 'not-found', message: 'Configure the Project goal and target branch first.' };
@@ -235,13 +258,114 @@ export class AgentCoordinationService {
     return removed;
   }
 
+  removeProjectAuthority(projectId: string): Promise<boolean> {
+    if (typeof projectId !== 'string' || !validAuthorityId(projectId, 128)) {
+      return Promise.resolve(false);
+    }
+    const pendingRemoval = this.projectRemovals.get(projectId);
+    if (pendingRemoval) return pendingRemoval;
+    const authorityChanged = !this.revokedProjectIds.has(projectId);
+    if (authorityChanged) {
+      this.revokedProjectIds.add(projectId);
+      this.projectAuthorityGenerations.set(projectId, ++this.authorityGeneration);
+    }
+    for (const [activityId, participant] of this.participantsByActivity) {
+      if (participant.projectId === projectId) this.participantsByActivity.delete(activityId);
+    }
+    for (const [activityId, workspace] of this.resolvedWorkspacesByActivity) {
+      if (workspace.identity.projectId === projectId) this.resolvedWorkspacesByActivity.delete(activityId);
+    }
+    // A pending resolver has no trustworthy Project identity yet. Invalidate all
+    // of them so a completion started under the old authority cannot cross the
+    // remove/re-add boundary. Unrelated live activities are resolved again below.
+    if (authorityChanged) this.pendingWorkspacesByActivity.clear();
+    this.publish();
+    if (authorityChanged) this.resolveActivityWorkspaces(this.deps.activities.getSnapshot());
+    const removal = this.deps.store.removeProject(projectId).finally(() => {
+      if (this.projectRemovals.get(projectId) === removal) this.projectRemovals.delete(projectId);
+    });
+    this.projectRemovals.set(projectId, removal);
+    return removal;
+  }
+
+  restoreProjectAuthority(projectId: string): boolean {
+    if (
+      typeof projectId !== 'string'
+      || !validAuthorityId(projectId, 128)
+      || this.projectRemovals.has(projectId)
+      || !this.deps.listProjects().some((project) => project.projectId === projectId)
+    ) return false;
+    if (!this.revokedProjectIds.delete(projectId)) return true;
+    this.projectAuthorityGenerations.set(projectId, ++this.authorityGeneration);
+    this.pendingWorkspacesByActivity.clear();
+    this.resolveActivityWorkspaces(this.deps.activities.getSnapshot());
+    this.publish();
+    return true;
+  }
+
+  removeWorkspaceAuthority(projectId: string, rootId: string, workspaceId?: string): boolean {
+    if (
+      !validAuthorityId(projectId, 128)
+      || !validAuthorityId(rootId)
+      || (workspaceId !== undefined && !validAuthorityId(workspaceId))
+    ) return false;
+    const authorityKey = workspaceAuthorityKey(projectId, rootId, workspaceId);
+    const authorityChanged = !this.revokedWorkspaceAuthorities.has(authorityKey);
+    if (authorityChanged) {
+      this.revokedWorkspaceAuthorities.add(authorityKey);
+      this.workspaceAuthorityGenerations.set(authorityKey, ++this.authorityGeneration);
+    }
+    const matches = (identity: AgentWorkspaceIdentity): boolean => (
+      identity.projectId === projectId
+      && identity.rootId === rootId
+      && (workspaceId === undefined || identity.workspaceId === workspaceId)
+    );
+    for (const [activityId, participant] of this.participantsByActivity) {
+      if (matches(participant)) this.participantsByActivity.delete(activityId);
+    }
+    for (const [activityId, workspace] of this.resolvedWorkspacesByActivity) {
+      if (matches(workspace.identity)) this.resolvedWorkspacesByActivity.delete(activityId);
+    }
+    if (authorityChanged) this.pendingWorkspacesByActivity.clear();
+    this.publish();
+    if (authorityChanged) this.resolveActivityWorkspaces(this.deps.activities.getSnapshot());
+    return true;
+  }
+
+  restoreWorkspaceAuthority(projectId: string, rootId: string, workspaceId?: string): boolean {
+    if (
+      !validAuthorityId(projectId, 128)
+      || !validAuthorityId(rootId)
+      || (workspaceId !== undefined && !validAuthorityId(workspaceId))
+      || this.revokedProjectIds.has(projectId)
+      || !this.deps.listProjects().some((project) => project.projectId === projectId)
+    ) return false;
+    const authorityKey = workspaceAuthorityKey(projectId, rootId, workspaceId);
+    if (!this.revokedWorkspaceAuthorities.delete(authorityKey)) return true;
+    this.workspaceAuthorityGenerations.set(authorityKey, ++this.authorityGeneration);
+    this.pendingWorkspacesByActivity.clear();
+    this.resolveActivityWorkspaces(this.deps.activities.getSnapshot());
+    this.publish();
+    return true;
+  }
+
   async saveProject(
     input: AgentProjectCoordinationInput,
   ): Promise<AgentCoordinationMutationResult<AgentProjectCoordination>> {
-    if (!this.deps.listProjects().some((project) => project.projectId === input.projectId)) {
+    if (
+      this.revokedProjectIds.has(input.projectId)
+      || !this.deps.listProjects().some((project) => project.projectId === input.projectId)
+    ) {
       return { ok: false, error: 'not-found', message: 'Project not found.' };
     }
+    const authorityGeneration = this.projectAuthorityGenerations.get(input.projectId) ?? 0;
     const result = await this.deps.store.saveProject(input);
+    if (
+      authorityGeneration !== (this.projectAuthorityGenerations.get(input.projectId) ?? 0)
+      || this.revokedProjectIds.has(input.projectId)
+    ) {
+      return { ok: false, error: 'stale', message: 'Project authority changed.' };
+    }
     if (!result.ok) {
       return {
         ok: false,
@@ -337,6 +461,11 @@ export class AgentCoordinationService {
     this.participantsByActivity.clear();
     this.resolvedWorkspacesByActivity.clear();
     this.pendingWorkspacesByActivity.clear();
+    this.revokedProjectIds.clear();
+    this.revokedWorkspaceAuthorities.clear();
+    this.projectAuthorityGenerations.clear();
+    this.workspaceAuthorityGenerations.clear();
+    this.projectRemovals.clear();
   }
 
   private resolveActivityWorkspaces(snapshot: AgentActivitySnapshot): void {
@@ -347,12 +476,22 @@ export class AgentCoordinationService {
       if (resolved) this.resolvedWorkspacesByActivity.delete(activity.id);
       const pending = this.pendingWorkspacesByActivity.get(activity.id);
       if (pending?.cwd === activity.cwd) continue;
-      const request = { cwd: activity.cwd } satisfies PendingActivityWorkspace;
+      const request = {
+        cwd: activity.cwd,
+        authorityGeneration: this.authorityGeneration,
+      } satisfies PendingActivityWorkspace;
       this.pendingWorkspacesByActivity.set(activity.id, request);
       void this.deps.resolveWorkspace(activity).then((identity) => {
-        if (this.disposed || this.pendingWorkspacesByActivity.get(activity.id) !== request) return;
+        if (
+          this.disposed
+          || this.pendingWorkspacesByActivity.get(activity.id) !== request
+        ) return;
         this.pendingWorkspacesByActivity.delete(activity.id);
-        if (!identity) return;
+        if (
+          !identity
+          || this.identityAuthorityChangedSince(identity, request.authorityGeneration)
+          || this.isIdentityRevoked(identity)
+        ) return;
         this.resolvedWorkspacesByActivity.set(activity.id, { cwd: activity.cwd, identity });
         this.publish();
       }).catch(() => {
@@ -367,9 +506,27 @@ export class AgentCoordinationService {
     return {
       ...project,
       participants: [...this.participantsByActivity.values()].filter(
-        (participant) => participant.projectId === project.projectId,
+        (participant) => participant.projectId === project.projectId && !this.isIdentityRevoked(participant),
       ),
     };
+  }
+
+  private isIdentityRevoked(identity: AgentWorkspaceIdentity): boolean {
+    return this.revokedProjectIds.has(identity.projectId)
+      || this.revokedWorkspaceAuthorities.has(workspaceAuthorityKey(identity.projectId, identity.rootId))
+      || this.revokedWorkspaceAuthorities.has(
+        workspaceAuthorityKey(identity.projectId, identity.rootId, identity.workspaceId),
+      );
+  }
+
+  private identityAuthorityChangedSince(identity: AgentWorkspaceIdentity, generation: number): boolean {
+    return (this.projectAuthorityGenerations.get(identity.projectId) ?? 0) > generation
+      || (this.workspaceAuthorityGenerations.get(
+        workspaceAuthorityKey(identity.projectId, identity.rootId),
+      ) ?? 0) > generation
+      || (this.workspaceAuthorityGenerations.get(
+        workspaceAuthorityKey(identity.projectId, identity.rootId, identity.workspaceId),
+      ) ?? 0) > generation;
   }
 
   private publish(activitySnapshot = this.deps.activities.getSnapshot()): void {
@@ -377,7 +534,7 @@ export class AgentCoordinationService {
     const activities = activitySnapshot.items.map((activity) => {
       const participant = participants.get(activity.id);
       const workspace = participant ?? this.resolvedWorkspacesByActivity.get(activity.id)?.identity;
-      return workspace
+      return workspace && !this.isIdentityRevoked(workspace)
         ? {
             ...activity,
             projectId: workspace.projectId,
@@ -397,27 +554,29 @@ export class AgentCoordinationService {
         : activity;
     });
     const requests = (this.mergeSource?.listRequests() ?? []).map(withoutManagedMergeOutput);
-    const projects: AgentProjectRollup[] = this.deps.store.listProjects().map((stored) => {
-      const project = this.withParticipants(stored);
-      const counts = { ...EMPTY_COUNTS };
-      for (const participant of project.participants) {
-        const activity = activities.find((item) => item.id === participant.activityId);
-        if (activity) counts[activity.state] += 1;
-      }
-      return {
-        projectId: project.projectId,
-        goal: project.goal,
-        defaultTargetBranch: project.defaultTargetBranch,
-        validationCommands: project.validationCommands,
-        configRevision: project.configRevision,
-        counts,
-        participants: project.participants,
-        pendingMergeCount: requests.filter((request) => (
-          request.projectId === project.projectId
-          && !['merged', 'denied', 'conflict', 'stale', 'failed', 'interrupted', 'already-integrated'].includes(request.state)
-        )).length,
-      };
-    });
+    const projects: AgentProjectRollup[] = this.deps.store.listProjects()
+      .filter((stored) => !this.revokedProjectIds.has(stored.projectId))
+      .map((stored) => {
+        const project = this.withParticipants(stored);
+        const counts = { ...EMPTY_COUNTS };
+        for (const participant of project.participants) {
+          const activity = activities.find((item) => item.id === participant.activityId);
+          if (activity) counts[activity.state] += 1;
+        }
+        return {
+          projectId: project.projectId,
+          goal: project.goal,
+          defaultTargetBranch: project.defaultTargetBranch,
+          validationCommands: project.validationCommands,
+          configRevision: project.configRevision,
+          counts,
+          participants: project.participants,
+          pendingMergeCount: requests.filter((request) => (
+            request.projectId === project.projectId
+            && !['merged', 'denied', 'conflict', 'stale', 'failed', 'interrupted', 'already-integrated'].includes(request.state)
+          )).length,
+        };
+      });
     this.revision += 1;
     this.lastSnapshot = {
       revision: this.revision,

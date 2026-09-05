@@ -14,6 +14,26 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
 }
 
 describe('DaemonAuthorityShutdown', () => {
+  it('closes the shared startup gate synchronously before shutdown awaits', async () => {
+    const startup = deferred();
+    const shutdown = new DaemonAuthorityShutdown({
+      closeCommandIngress: () => undefined,
+      closeProviderIngress: () => undefined,
+      beginAgentShutdown: () => undefined,
+      stopAutomation: async () => undefined,
+      stopAgents: async () => undefined,
+      stopMcp: async () => undefined,
+    });
+    shutdown.bindStartup(startup.promise);
+
+    expect(shutdown.startupSignal.aborted).toBe(false);
+    const stopping = shutdown.stop();
+    expect(shutdown.startupSignal.aborted).toBe(true);
+
+    startup.resolve();
+    await stopping;
+  });
+
   it('closes all ingress, drains automation, and waits slow startup before the durable Agent stop', async () => {
     const order: string[] = [];
     const automation = deferred();

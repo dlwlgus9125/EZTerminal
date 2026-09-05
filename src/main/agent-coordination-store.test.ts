@@ -79,6 +79,29 @@ describe('AgentCoordinationStore', () => {
     });
   });
 
+  it('removes only Project configuration while preserving managed-merge audit evidence', async () => {
+    const directory = makeDir();
+    const store = new AgentCoordinationStore(directory);
+    await store.init();
+    await store.saveProject({
+      projectId: 'project-1',
+      goal: 'Ship the collaboration flow',
+      defaultTargetBranch: 'main',
+      validationCommands: [validation],
+    });
+    await store.appendAudit(auditRecord());
+
+    await expect(store.removeProject('project-1')).resolves.toBe(true);
+    await expect(store.removeProject('project-1')).resolves.toBe(false);
+    expect(store.getProject('project-1')).toBeNull();
+    expect(store.listAudit('project-1')).toEqual([auditRecord()]);
+
+    const reloaded = new AgentCoordinationStore(directory);
+    await reloaded.init();
+    expect(reloaded.getProject('project-1')).toBeNull();
+    expect(reloaded.listAudit('project-1')).toEqual([auditRecord()]);
+  });
+
   it('rejects unsafe local branch names and duplicate validation ids', async () => {
     const store = new AgentCoordinationStore(makeDir());
     await store.init();

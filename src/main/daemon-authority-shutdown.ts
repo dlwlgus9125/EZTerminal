@@ -55,6 +55,7 @@ interface ShutdownFailure {
  * owner must await this exact promise before closing the authoritative store.
  */
 export class DaemonAuthorityShutdown {
+  private readonly startupAbortController = new AbortController();
   private stopping = false;
   private stopped = false;
   private stopPromise: Promise<void> | null = null;
@@ -78,6 +79,11 @@ export class DaemonAuthorityShutdown {
     return this.stopping;
   }
 
+  /** Process-lifetime gate for services that must never publish after Quit begins. */
+  get startupSignal(): AbortSignal {
+    return this.startupAbortController.signal;
+  }
+
   hasStopped(): boolean {
     return this.stopped;
   }
@@ -85,6 +91,7 @@ export class DaemonAuthorityShutdown {
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
+    this.startupAbortController.abort();
     const failures: ShutdownFailure[] = [];
     this.captureSynchronous('close daemon command ingress', this.options.closeCommandIngress, failures);
     this.captureSynchronous('close provider IPC ingress', this.options.closeProviderIngress, failures);

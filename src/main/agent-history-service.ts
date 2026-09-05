@@ -31,6 +31,7 @@ import type {
 import {
   AgentProjectStore,
   canonicalAgentDirectory,
+  type AgentProjectUpsertPreparation,
   type AgentProjectRecord,
 } from './agent-project-store';
 
@@ -39,6 +40,23 @@ interface IndexedSession {
   readonly privateSession: ProviderHistorySession;
   readonly adapter: AgentHistoryProviderAdapter;
 }
+
+export type AgentProjectSaveContextResult =
+  | {
+      readonly ok: true;
+      readonly project: AgentProjectSummary;
+      readonly previousProject?: AgentProjectSummary;
+    }
+  | { readonly ok: false; readonly reason: 'invalid' | 'not-found' | 'duplicate' };
+
+export type AgentProjectSavePreparationResult =
+  | {
+      readonly ok: true;
+      readonly preparation: AgentProjectUpsertPreparation;
+      readonly project: AgentProjectSummary;
+      readonly previousProject?: AgentProjectSummary;
+    }
+  | { readonly ok: false; readonly reason: 'invalid' | 'not-found' | 'duplicate' };
 
 const MAX_INDEXED_SESSIONS = 500;
 
@@ -221,20 +239,33 @@ export class AgentHistoryService {
     target: AgentLaunchTarget,
     roots: readonly string[],
     lastActiveAt = Date.now(),
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     if (target.kind === 'project') {
       const project = this.projectForId(target.projectId);
       if (project) {
         await this.projects.touch(project.projectId, lastActiveAt);
-        return;
+        return target.projectId;
       }
+      // A stale Project launch must not silently recreate an explicitly
+      // removed Project as an ambient terminal-origin record.
+      return undefined;
     }
+    const primaryRoot = roots[0];
+    if (!primaryRoot) return undefined;
     await this.recordTerminalWork(roots, lastActiveAt);
+    return projectIdForRoot(primaryRoot);
   }
 
   async recordObservedProjectWork(projectId: string, lastActiveAt = Date.now()): Promise<boolean> {
     const project = this.projectForId(projectId);
     return project ? this.projects.touch(project.projectId, lastActiveAt) : false;
+  }
+
+  async recordResumeWork(historyId: string, lastActiveAt = Date.now()): Promise<boolean> {
+    const indexed = this.index.get(historyId);
+    return indexed
+      ? this.recordObservedProjectWork(indexed.publicSession.projectId, lastActiveAt)
+      : false;
   }
 
   /**
@@ -557,16 +588,49 @@ export class AgentHistoryService {
   }
 
   async saveProject(input: AgentProjectInput): Promise<AgentProjectMutationResult> {
+    const result = await this.saveProjectWithContext(input);
+    return result.ok ? { ok: true, project: result.project } : result;
+  }
+
+  async saveProjectWithContext(input: AgentProjectInput): Promise<AgentProjectSaveContextResult> {
+    const prepared = await this.prepareProjectSave(input);
+    if (!prepared.ok) return prepared;
+    return this.commitPreparedProjectSave(prepared.preparation);
+  }
+
+  async prepareProjectSave(input: AgentProjectInput): Promise<AgentProjectSavePreparationResult> {
     const inferred = !input.projectId
       ? this.projects.list().find((project) =>
           project.origin === 'terminal' && pathKey(project.primaryRoot) === pathKey(input.primaryRoot))
       : undefined;
-    const result = await this.projects.upsert(inferred
+    const result = await this.projects.prepareUpsert(inferred
       ? { ...input, projectId: inferred.projectId }
       : input);
-    return result.ok
-      ? { ok: true, project: projectSummary(result.project) }
-      : result;
+    return result.ok ? {
+      ok: true,
+      preparation: result.preparation,
+      project: projectSummary(result.preparation.project),
+      ...(result.preparation.previousProject
+        ? { previousProject: projectSummary(result.preparation.previousProject) }
+        : {}),
+    } : result;
+  }
+
+  async commitPreparedProjectSave(
+    preparation: AgentProjectUpsertPreparation,
+  ): Promise<AgentProjectSaveContextResult> {
+    const result = await this.projects.commitPreparedUpsert(preparation);
+    return result.ok ? {
+      ok: true,
+      project: projectSummary(result.project),
+      ...(result.previousProject
+        ? { previousProject: projectSummary(result.previousProject) }
+        : {}),
+    } : { ok: false, reason: 'invalid' };
+  }
+
+  hasProject(projectId: string): boolean {
+    return this.projectForId(projectId) !== undefined;
   }
 
   async removeProject(projectId: string): Promise<boolean> {

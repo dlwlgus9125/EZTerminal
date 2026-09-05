@@ -62,7 +62,7 @@ import { AgentActivityService, type AgentActivityTransition } from './agent-acti
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentSettingsStore } from './agent-settings-store';
-import { AgentProjectStore } from './agent-project-store';
+import { AgentProjectStore, canonicalAgentDirectory } from './agent-project-store';
 import { AgentCoordinationStore } from './agent-coordination-store';
 import { AgentCoordinationService } from './agent-coordination-service';
 import { AgentOrchestrationStore } from './agent-orchestration-store';
@@ -77,6 +77,7 @@ import { ManagedMergeService } from './managed-merge-service';
 import { AgentControlServer } from './agent-control-server';
 import { AgentCliShim } from './agent-cli-shim';
 import { AgentHistoryService } from './agent-history-service';
+import { recordAgentProjectObservation } from './agent-project-observation';
 import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
 import { ClaudeHistoryAdapter } from './claude-history-adapter';
@@ -84,7 +85,10 @@ import { GitStatusService } from './git-status-service';
 import { PairingCodeService } from './pairing-code-service';
 import { QuickCommandStore } from './quick-command-store';
 import { WorkspaceFileSearchService } from './workspace-file-search-service';
-import { ProjectWorkspaceService } from './project-workspace-service';
+import {
+  ProjectWorkspaceService,
+  projectWorkspaceDescriptorForProject,
+} from './project-workspace-service';
 import { ProjectReviewService } from './project-review-service';
 import { ProjectDocumentService } from './project-document-service';
 import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
@@ -96,6 +100,8 @@ import { exportProjectMap } from './project-map-exporter';
 import { ProjectMapService } from './project-map-service';
 import { GitRunner, WorktreeService } from './worktree-service';
 import { AsyncMutationGate } from './async-mutation-gate';
+import { LocalMutationIngress, raceLocalOperationWithAbort } from './local-mutation-ingress';
+import { OwnedStartupBarrier, waitForStartupGroup } from './owned-startup-barrier';
 import { SessionWorktreeGuard } from './session-worktree-guard';
 import { SessionSurfaceAuthority } from './session-surface-authority';
 import type {
@@ -180,7 +186,10 @@ import {
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
-import { isProjectSessionTarget } from '../shared/project-workspace';
+import {
+  isProjectSessionTarget,
+  type ProjectWorkspaceDescriptor,
+} from '../shared/project-workspace';
 import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import {
@@ -221,8 +230,15 @@ import { CodexProviderAdapter } from './codex-provider-adapter';
 import { ClaudeProviderAdapter } from './claude-provider-adapter';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import {
+  daemonProjectRemovalTransition,
+  daemonProjectSaveRevocationTransition,
   daemonProjectSyncDescriptor,
+  daemonWorkspaceId,
   planDaemonProjectSync,
+  daemonWorkspaceRevocationTransition,
+  resolvedDaemonProjectSyncDescriptor,
+  trustedDaemonWorkspaceReactivationIds,
+  type DaemonProjectSyncOptions,
 } from './daemon-project-sync';
 import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
 import { installDaemonProviderIpc } from './daemon-provider-ipc';
@@ -304,6 +320,7 @@ if (!allowMultipleInstances) {
     app.quit();
   } else {
     app.on('second-instance', () => {
+      if (appIsQuitting) return;
       if (daemonRuntime) {
         daemonRuntime.openMainWindow();
         return;
@@ -791,22 +808,7 @@ app.on('ready', async () => {
   const daemonStore = new DaemonStore(app.getPath('userData'));
   const daemonStoreReady = daemonStore.init();
   let daemonAvailability: DaemonAuthorityAvailability | undefined;
-  const daemonAvailabilityReady = daemonStoreReady.then(
-    () => readyDaemonAuthorityAvailability(),
-    (error) => safeModeDaemonAuthorityAvailability(error),
-  ).then((availability) => {
-    daemonAvailability = availability;
-    return availability;
-  });
-  void daemonAvailabilityReady.then((availability) => {
-    if (availability.state === 'ready') return;
-    const failure = {
-      event: 'daemon-authority-unavailable',
-      ...availability,
-    };
-    console.error('[main] daemon authority unavailable; legacy terminals remain enabled:', failure);
-    mainLog?.line(`daemon safe mode: ${JSON.stringify(failure)}`);
-  });
+  let daemonAuthorityOperational = false;
   const daemonRecoveryBarrier = daemonStoreReady.then(
     () => undefined,
     () => undefined,
@@ -862,7 +864,12 @@ app.on('ready', async () => {
     settings: lifecycleSettings,
     processes: daemonProcesses,
     getMainWindow: () => mainWindowRef,
-    createMainWindow: createWindow,
+    createMainWindow: () => {
+      if (appIsQuitting) {
+        throw new Error('Cannot create a main window while the application is quitting.');
+      }
+      return createWindow();
+    },
     requestAppQuit: () => app.quit(),
   });
   const daemonRuntimeReady = daemonRuntime.initialize().catch((error) => {
@@ -1007,6 +1014,7 @@ app.on('ready', async () => {
   });
   const daemonAuthorityShutdown = new DaemonAuthorityShutdown({
     closeCommandIngress: () => {
+      daemonAuthorityOperational = false;
       daemonCommandRouter.beginShutdown();
       unsubscribeDaemonAutomationWake();
     },
@@ -1026,7 +1034,7 @@ app.on('ready', async () => {
     hasStopped: () => daemonAuthorityShutdown.hasStopped(),
     forceStop: stopDaemonAuthorityRuntimes,
   });
-  const daemonAuthorityReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
+  const daemonCoreReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
     .then(async ([, lifecycle]) => {
       if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
       const current = daemonCommandRouter.getSnapshot().runtime;
@@ -1044,20 +1052,8 @@ app.on('ready', async () => {
           }],
         });
       }
-      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
-      await agentOrchestrationMcpServer.start();
-      if (daemonAuthorityShutdown.isStopping()) {
-        await agentOrchestrationMcpServer.stop();
-        return daemonCommandRouter;
-      }
-      await daemonAgentRuntime.start();
-      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
-      await daemonAutomationRuntime.start();
-      if (daemonAuthorityShutdown.isStopping()) await daemonAutomationRuntime.dispose();
       return daemonCommandRouter;
     });
-  daemonAuthorityShutdown.bindStartup(daemonAuthorityReady);
-  void daemonAuthorityReady.catch(() => undefined);
   const daemonEventSubscribers = new Set<WebContents>();
   const daemonSubscriberLifecycleWired = new WeakSet<WebContents>();
   const unsubscribeDaemonEventFanout = daemonCommandRouter.onEvent((event) => {
@@ -1140,9 +1136,11 @@ app.on('ready', async () => {
   const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
   const agentOrchestrationStore = new AgentOrchestrationStore(app.getPath('userData'));
   const agentAdapterService = new AgentAdapterService(app.getPath('userData'));
-  const agentCoordinationReady = agentCoordinationStore.init().catch((err) => {
-    console.error('[main] agent coordination store init failed:', err);
-  });
+  const agentCoordinationReady = daemonRecoveryBarrier
+    .then(() => agentCoordinationStore.init())
+    .catch((err) => {
+      console.error('[main] agent coordination store init failed:', err);
+    });
   const agentOrchestrationReady = daemonRecoveryBarrier
     .then(() => agentOrchestrationStore.init())
     .catch((err) => {
@@ -1160,8 +1158,9 @@ app.on('ready', async () => {
     [codexHistoryAdapter, claudeHistoryAdapter],
     () => agentSettingsStore.current.genericProfiles,
   );
-  const agentHistoryReady = daemonRecoveryBarrier
-    .then(() => agentProjectStore.init())
+  const agentHistoryAuthorityReady = daemonRecoveryBarrier
+    .then(() => agentProjectStore.init());
+  const agentHistoryReady = agentHistoryAuthorityReady
     .catch((err) => {
       console.error('[main] agent project store init failed:', err);
     });
@@ -1191,7 +1190,10 @@ app.on('ready', async () => {
     // No service means no one to ask, so the provider keeps its own prompt.
     async (event) => (await agentActivityService?.requestApproval(event)) ?? null,
   );
-  const agentInfrastructureReady = Promise.all([agentSettingsStore.init(), agentHookRelay.start()])
+  const agentInfrastructureReady = waitForStartupGroup('Agent hook infrastructure startup', [
+    agentSettingsStore.init(),
+    agentHookRelay.start(),
+  ])
     .then(() => {
       agentRelayReady = true;
     })
@@ -1358,18 +1360,23 @@ app.on('ready', async () => {
     runGuard: sessionWorktreeRunGuard,
   });
   const projectWorkspaceAccessStore = new ProjectWorkspaceAccessStore(app.getPath('userData'));
-  const projectWorkspaceAccessReady = projectWorkspaceAccessStore.init().catch((err) => {
-    console.error('[main] project workspace access store init failed:', err);
-  });
+  const projectWorkspaceAccessAuthorityReady = daemonRecoveryBarrier
+    .then(() => projectWorkspaceAccessStore.init());
+  const projectWorkspaceAccessReady = projectWorkspaceAccessAuthorityReady
+    .catch((err) => {
+      console.error('[main] project workspace access store init failed:', err);
+    });
   const projectWorkspaceService = new ProjectWorkspaceService(agentProjectStore, {
-    listWorktrees: (cwd) => worktreeService.execute({ action: 'list', cwd }, 'desktop'),
+    listWorktrees: (cwd, signal) => (
+      worktreeService.execute({ action: 'list', cwd }, 'desktop', signal)
+    ),
     accessStore: projectWorkspaceAccessStore,
   });
   const projectMapBindingStore = new ProjectMapBindingStore(app.getPath('userData'));
   const projectMapCacheStore = new ProjectMapCacheStore(app.getPath('userData'));
   const projectMapApprovalStore = new ProjectMapApprovalStore(app.getPath('userData'));
   const projectMapJobStore = new ProjectMapJobStore(app.getPath('userData'));
-  const projectMapReady = Promise.all([
+  const projectMapReady = waitForStartupGroup('Project Map store startup', [
     projectMapBindingStore.init(),
     projectMapCacheStore.init(),
     projectMapApprovalStore.init(),
@@ -1403,17 +1410,143 @@ app.on('ready', async () => {
   const projectDocumentService = new ProjectDocumentService(projectWorkspaceService, projectReviewService);
   const projectWorkspaceSearches = new Map<string, AbortController>();
   const projectWorkspaceReady = Promise.all([agentHistoryReady, projectWorkspaceAccessReady]);
+  const projectWorkspaceAuthorityReady = Promise.all([
+    agentHistoryAuthorityReady,
+    projectWorkspaceAccessAuthorityReady,
+  ]);
   let daemonProjectSyncTail: Promise<void> = Promise.resolve();
-  const syncAgentProjectsToDaemon = async (): Promise<void> => {
-    await Promise.all([daemonAuthorityReady, projectWorkspaceReady]);
+  const mainOwnedStartupBarrier = new OwnedStartupBarrier('Main-owned runtime startup');
+  let unsubscribeOpenClawEndpoint = (): void => undefined;
+  let openclawVisibilityRecheckTimer: ReturnType<typeof setInterval> | null = null;
+  const trackLocalAgentStackSubscription = (unsubscribe: () => void): void => {
+    mainOwnedStartupBarrier.addCleanup(unsubscribe);
+  };
+  const ownMainStartup = (startup: PromiseLike<unknown>): void => {
+    void mainOwnedStartupBarrier.run(async (signal) => {
+      try {
+        await startup;
+      } finally {
+        // A rejected initializer is already reported at its source. This
+        // converts an overlapping Quit into AbortError only after cleanup has
+        // waited for the initializer's exact end.
+        mainOwnedStartupBarrier.checkpoint(signal);
+      }
+    }).catch(() => undefined);
+  };
+  for (const startup of [
+    storeReady,
+    daemonRuntimeReady,
+    quickCommandsReady,
+    agentCoordinationReady,
+    agentOrchestrationReady,
+    agentAdapterReady,
+    agentHistoryReady,
+    agentCliReady,
+    agentInfrastructureReady,
+    projectWorkspaceAccessReady,
+    projectMapReady,
+  ]) {
+    ownMainStartup(startup);
+  }
+  const localAgentOperationIngress = new LocalMutationIngress('Local Agent operations');
+  // Desktop IPC and authenticated RemoteBridge calls share one shutdown
+  // prefix: every admitted Agent operation drains before its services close.
+  const desktopAgentMutationIngress = localAgentOperationIngress;
+  const desktopProjectMapMutationIngress = new LocalMutationIngress('Desktop Project Map IPC');
+  const gateLocalMutation = <TArgs extends unknown[], TResult>(
+    ingress: LocalMutationIngress,
+    handler: (event: IpcMainInvokeEvent, ...args: TArgs) => TResult | PromiseLike<TResult>,
+  ) => (
+    event: IpcMainInvokeEvent,
+    ...args: TArgs
+  ): Promise<TResult> => ingress.run(() => handler(event, ...args));
+  const gateAbortableLocalMutation = <TArgs extends unknown[], TResult>(
+    ingress: LocalMutationIngress,
+    handler: (
+      signal: AbortSignal,
+      event: IpcMainInvokeEvent,
+      ...args: TArgs
+    ) => TResult | PromiseLike<TResult>,
+  ) => (
+    event: IpcMainInvokeEvent,
+    ...args: TArgs
+  ): Promise<TResult> => ingress.run((signal) => handler(signal, event, ...args));
+  let daemonProjectOperationIngressClosed = false;
+  let daemonProjectOperationsShutdownDrain: Promise<void> | undefined;
+  const daemonProjectOperationAbortController = new AbortController();
+  const daemonProjectOperationSignal = daemonProjectOperationAbortController.signal;
+  const closeDaemonProjectOperationIngress = (): Promise<void> => {
+    if (!daemonProjectOperationIngressClosed) {
+      daemonProjectOperationIngressClosed = true;
+      daemonProjectOperationAbortController.abort(
+        new DOMException('Agent Project authority is shutting down.', 'AbortError'),
+      );
+      // Capture the exact accepted FIFO prefix only after closing ingress.
+      daemonProjectOperationsShutdownDrain = daemonProjectSyncTail;
+    }
+    return daemonProjectOperationsShutdownDrain ?? daemonProjectSyncTail;
+  };
+  const closeDaemonProjectOperationsForAuthorityShutdown = (): void => {
+    void closeDaemonProjectOperationIngress();
+  };
+  daemonAuthorityShutdown.startupSignal.addEventListener(
+    'abort',
+    closeDaemonProjectOperationsForAuthorityShutdown,
+    { once: true },
+  );
+  if (daemonAuthorityShutdown.startupSignal.aborted) {
+    closeDaemonProjectOperationsForAuthorityShutdown();
+  }
+  const enqueueDaemonProjectOperation = <T>(operation: () => Promise<T>): Promise<T> => {
+    if (daemonProjectOperationIngressClosed) {
+      return Promise.reject(new Error('Agent Project authority is shutting down.'));
+    }
+    const run = daemonProjectSyncTail.then(operation, operation);
+    daemonProjectSyncTail = run.then(() => undefined, () => undefined);
+    return run;
+  };
+  const syncAgentProjectsToDaemon = async (
+    resolvedProject?: ProjectWorkspaceDescriptor,
+    options: DaemonProjectSyncOptions = {},
+  ): Promise<void> => {
+    daemonProjectOperationSignal.throwIfAborted();
+    // Project authority is the startup preflight for provider runtimes. This
+    // path therefore waits only for durable daemon storage, never for the
+    // runtimes whose start is gated on the initial Project sync itself.
+    await Promise.all([daemonCoreReady, projectWorkspaceAuthorityReady]);
+    daemonProjectOperationSignal.throwIfAborted();
+    const reactivateWorkspaceIds = new Set(options.reactivateWorkspaceIds ?? []);
+    if (resolvedProject) {
+      const descriptor = resolvedDaemonProjectSyncDescriptor(resolvedProject);
+      if (options.reactivateProjectIds?.has(resolvedProject.projectId)) {
+        for (const workspaceId of trustedDaemonWorkspaceReactivationIds(resolvedProject)) {
+          reactivateWorkspaceIds.add(workspaceId);
+        }
+      }
+      await daemonCommandRouter.applySystemCommit((snapshot) => {
+        const mutations = planDaemonProjectSync(snapshot, [descriptor], {
+          ...options,
+          ...(reactivateWorkspaceIds.size > 0 ? { reactivateWorkspaceIds } : {}),
+        });
+        return mutations.length > 0 ? { mutations } : undefined;
+      });
+      daemonProjectOperationSignal.throwIfAborted();
+      return;
+    }
     const descriptors: ReturnType<typeof daemonProjectSyncDescriptor>[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     let exhausted = false;
     for (let pageIndex = 0; pageIndex <= Math.ceil(MAX_AGENT_PROJECTS / 100); pageIndex += 1) {
+      daemonProjectOperationSignal.throwIfAborted();
       const page = await agentHistoryService.listProjects(false, cursor, 100);
+      daemonProjectOperationSignal.throwIfAborted();
       for (const summary of page.items) {
-        const described = await projectWorkspaceService.describeProjectWorkspaces(summary.projectId);
+        daemonProjectOperationSignal.throwIfAborted();
+        const described = await projectWorkspaceService.describeProjectWorkspaces(
+          summary.projectId,
+          daemonProjectOperationSignal,
+        );
         if (!described.ok) {
           mainLog?.line(
             `daemon Project sync skipped ${summary.projectId}: ${described.error}`,
@@ -1421,6 +1554,11 @@ app.on('ready', async () => {
           continue;
         }
         descriptors.push(daemonProjectSyncDescriptor(summary, described.project));
+        if (options.reactivateProjectIds?.has(summary.projectId)) {
+          for (const workspaceId of trustedDaemonWorkspaceReactivationIds(described.project)) {
+            reactivateWorkspaceIds.add(workspaceId);
+          }
+        }
       }
       if (!page.nextCursor) {
         exhausted = true;
@@ -1434,23 +1572,436 @@ app.on('ready', async () => {
     }
     if (!exhausted) throw new Error('Agent Project pagination exceeded its durable limit.');
 
-    const mutations = planDaemonProjectSync(daemonCommandRouter.getSnapshot(), descriptors);
-    if (mutations.length > 0) {
-      await daemonCommandRouter.applySystemCommit({ mutations });
+    daemonProjectOperationSignal.throwIfAborted();
+    await daemonCommandRouter.applySystemCommit((snapshot) => {
+      const mutations = planDaemonProjectSync(snapshot, descriptors, {
+        ...options,
+        ...(reactivateWorkspaceIds.size > 0 ? { reactivateWorkspaceIds } : {}),
+      });
+      return mutations.length > 0 ? { mutations } : undefined;
+    });
+    daemonProjectOperationSignal.throwIfAborted();
+  };
+  const requestDaemonProjectSync = (
+    resolvedProject?: ProjectWorkspaceDescriptor,
+    options: DaemonProjectSyncOptions = {},
+  ): Promise<void> => {
+    return enqueueDaemonProjectOperation(() => syncAgentProjectsToDaemon(resolvedProject, options));
+  };
+  const requestAgentLaunchWork = (
+    target: AgentLaunchTarget,
+    roots: readonly string[],
+    lastActiveAt: number,
+  ): Promise<void> => enqueueDaemonProjectOperation(async () => {
+    daemonProjectOperationSignal.throwIfAborted();
+    await projectWorkspaceAuthorityReady;
+    daemonProjectOperationSignal.throwIfAborted();
+    const projectId = await agentHistoryService.recordLaunchTargetWork(target, roots, lastActiveAt);
+    await syncAgentProjectsToDaemon(undefined, target.kind === 'directory' && projectId
+      ? { reactivateProjectIds: new Set([projectId]) }
+      : {});
+  });
+  const requestAgentResumeWork = (
+    historyId: string,
+    lastActiveAt: number,
+  ): Promise<void> => enqueueDaemonProjectOperation(async () => {
+    daemonProjectOperationSignal.throwIfAborted();
+    await projectWorkspaceAuthorityReady;
+    daemonProjectOperationSignal.throwIfAborted();
+    if (!await agentHistoryService.recordResumeWork(historyId, lastActiveAt)) return;
+    await syncAgentProjectsToDaemon();
+  });
+  const requestAgentProjectActivity = (
+    projectId: string,
+    lastActiveAt: number,
+  ): Promise<void> => enqueueDaemonProjectOperation(async () => {
+    daemonProjectOperationSignal.throwIfAborted();
+    await projectWorkspaceAuthorityReady;
+    daemonProjectOperationSignal.throwIfAborted();
+    if (!await agentHistoryService.recordObservedProjectWork(projectId, lastActiveAt)) return;
+    await syncAgentProjectsToDaemon();
+  });
+  function revokeAgentSessionCapabilities(sessionIds: Iterable<string>): void {
+    for (const sessionId of new Set(sessionIds)) {
+      agentOrchestrationMcpServer.revokeSession(sessionId);
+      agentControlServer?.revokeSession(sessionId);
+    }
+  }
+  const retireDaemonWorkspaceAuthority = async (
+    request: { readonly projectId: string; readonly rootId: string; readonly workspaceId: string },
+  ): Promise<void> => {
+    const receipt = await daemonCommandRouter.applySystemTransition(daemonWorkspaceRevocationTransition(
+      request,
+      new Date().toISOString(),
+    ));
+    revokeAgentSessionCapabilities(receipt?.value.sessionIds ?? []);
+    agentCoordinationService?.removeWorkspaceAuthority(
+      request.projectId,
+      request.rootId,
+      request.workspaceId,
+    );
+  };
+  const requestAgentProjectSave = (input: AgentProjectInput) => (
+    enqueueDaemonProjectOperation(async () => {
+      daemonProjectOperationSignal.throwIfAborted();
+      await projectWorkspaceAuthorityReady;
+      daemonProjectOperationSignal.throwIfAborted();
+      const prepared = await agentHistoryService.prepareProjectSave(input);
+      daemonProjectOperationSignal.throwIfAborted();
+      if (!prepared.ok) return prepared;
+
+      const previous = prepared.previousProject
+        ? {
+            id: prepared.previousProject.projectId,
+            rootPaths: [
+              prepared.previousProject.primaryRoot,
+              ...prepared.previousProject.additionalRoots,
+            ],
+          }
+        : undefined;
+      const nextRootPaths = [prepared.project.primaryRoot, ...prepared.project.additionalRoots];
+      const previousRootKeys = new Set(previous?.rootPaths.map((rootPath) => {
+        const normalized = path.normalize(rootPath);
+        return process.platform === 'win32'
+          ? normalized.toLocaleLowerCase('en-US')
+          : normalized;
+      }) ?? []);
+      const nextRootKeys = new Set(nextRootPaths.map((rootPath) => {
+        const normalized = path.normalize(rootPath);
+        return process.platform === 'win32'
+          ? normalized.toLocaleLowerCase('en-US')
+          : normalized;
+      }));
+      const removesAuthority = previous !== undefined && (
+        previous.id !== prepared.project.projectId
+        || [...previousRootKeys].some((rootKey) => !nextRootKeys.has(rootKey))
+      );
+      if (removesAuthority) {
+        await agentOrchestrationService?.stopProjectRuns(previous.id);
+        daemonProjectOperationSignal.throwIfAborted();
+      }
+
+      const currentDaemonProject = daemonCommandRouter.getSnapshot().projects.find((project) => (
+        project.id === prepared.project.projectId
+      ));
+      const fullyRetiredProjectIds = new Set<string>();
+      if (previous && previous.id !== prepared.project.projectId) {
+        fullyRetiredProjectIds.add(previous.id);
+      }
+      if (currentDaemonProject?.source === 'native' && (
+        !previous
+        || previous.id !== prepared.project.projectId
+        || currentDaemonProject.archivedAt !== undefined
+      )) {
+        fullyRetiredProjectIds.add(prepared.project.projectId);
+      }
+      if (currentDaemonProject?.source === 'native' && currentDaemonProject.archivedAt) {
+        // A previous delete may have crashed after the daemon tombstone landed
+        // but before external-worktree consent was removed. Explicitly adding
+        // the Project back must never revive that stale consent.
+        await projectWorkspaceService.revokeProjectAccess(prepared.project.projectId);
+        daemonProjectOperationSignal.throwIfAborted();
+      }
+      const described = await projectWorkspaceService.describePreparedProjectWorkspaces(
+        prepared.preparation.project,
+        daemonProjectOperationSignal,
+      );
+      if (!described.ok) {
+        throw new Error(`Prepared Agent Project ${prepared.project.projectId} cannot be described.`);
+      }
+
+      daemonProjectOperationSignal.throwIfAborted();
+      await daemonAuthorityReady;
+      daemonProjectOperationSignal.throwIfAborted();
+      const retired = await daemonCommandRouter.applySystemTransition(
+        daemonProjectSaveRevocationTransition(
+          previous,
+          prepared.project.projectId,
+          nextRootPaths,
+          new Date().toISOString(),
+        ),
+      );
+      if (retired && !retired.value.ok) {
+        if (removesAuthority && previous) agentOrchestrationService?.activateProject(previous.id);
+        return { ok: false, reason: 'invalid' } as const;
+      }
+      revokeAgentSessionCapabilities(retired?.value.sessionIds ?? []);
+      for (const retiredProjectId of fullyRetiredProjectIds) {
+        agentOrchestrationMcpServer.revokeProject(retiredProjectId);
+        agentControlServer?.revokeProject(retiredProjectId);
+        await agentCoordinationService?.removeProjectAuthority(retiredProjectId);
+        await agentOrchestrationStore.removeProject(retiredProjectId);
+      }
+
+      if (prepared.previousProject) {
+        if (prepared.previousProject.projectId !== prepared.project.projectId) {
+          await projectWorkspaceService.revokeProjectAccess(prepared.previousProject.projectId);
+        } else {
+          const previousDescriptor = projectWorkspaceDescriptorForProject(prepared.previousProject);
+          for (const root of previousDescriptor.roots) {
+            const normalized = path.normalize(root.displayPath);
+            const key = process.platform === 'win32'
+              ? normalized.toLocaleLowerCase('en-US')
+              : normalized;
+            if (!nextRootKeys.has(key)) {
+              agentCoordinationService?.removeWorkspaceAuthority(
+                prepared.project.projectId,
+                root.rootId,
+              );
+              await projectWorkspaceService.revokeProjectRootAccess(
+                prepared.project.projectId,
+                root.rootId,
+              );
+            }
+          }
+        }
+      }
+      const committed = await agentHistoryService.commitPreparedProjectSave(prepared.preparation);
+      if (!committed.ok) return committed;
+      await syncAgentProjectsToDaemon(described.project, {
+        reactivateProjectIds: new Set([committed.project.projectId]),
+        reactivateWorkspaceIds: trustedDaemonWorkspaceReactivationIds(described.project),
+      });
+      agentOrchestrationService?.activateProject(committed.project.projectId);
+      agentControlServer?.restoreProject(committed.project.projectId);
+      agentCoordinationService?.restoreProjectAuthority(committed.project.projectId);
+      for (const root of described.project.roots) {
+        agentCoordinationService?.restoreWorkspaceAuthority(
+          committed.project.projectId,
+          root.rootId,
+        );
+      }
+      return { ok: true, project: committed.project } as const;
+    })
+  );
+  const resolveProjectTerminalDirectory = (
+    request: unknown,
+    signal: AbortSignal = daemonProjectOperationSignal,
+  ) => (
+    enqueueDaemonProjectOperation(async () => {
+      daemonProjectOperationSignal.throwIfAborted();
+      signal.throwIfAborted();
+      await raceLocalOperationWithAbort(projectWorkspaceAuthorityReady, signal);
+      daemonProjectOperationSignal.throwIfAborted();
+      signal.throwIfAborted();
+      const resolved = await projectWorkspaceService.resolveTerminalDirectoryContext(
+        request,
+        signal,
+      );
+      if (!resolved.ok) return resolved;
+      await syncAgentProjectsToDaemon(resolved.project);
+      return { ok: true, projectSession: resolved.projectSession } as const;
+    })
+  );
+  const requestDaemonWorkspaceRevocation = (request: unknown): Promise<boolean> => (
+    enqueueDaemonProjectOperation(async () => {
+      daemonProjectOperationSignal.throwIfAborted();
+      await projectWorkspaceAuthorityReady;
+      daemonProjectOperationSignal.throwIfAborted();
+      const begun = await projectWorkspaceService.beginWorkspaceRevocation(request);
+      if (!begun.ok) return false;
+      daemonProjectOperationSignal.throwIfAborted();
+      await daemonAuthorityReady;
+      daemonProjectOperationSignal.throwIfAborted();
+      await retireDaemonWorkspaceAuthority(begun.request);
+      if (!await projectWorkspaceService.commitWorkspaceRevocation(begun.intent)) {
+        throw new Error('Project Workspace revocation intent was lost before commit.');
+      }
+      return true;
+    })
+  );
+  const requestProjectWorkspaceApproval = (request: unknown) => (
+    enqueueDaemonProjectOperation(async () => {
+      daemonProjectOperationSignal.throwIfAborted();
+      await projectWorkspaceAuthorityReady;
+      daemonProjectOperationSignal.throwIfAborted();
+      const result = await projectWorkspaceService.beginWorkspaceApproval(
+        request,
+        daemonProjectOperationSignal,
+      );
+      if (!result.ok) return result;
+      daemonProjectOperationSignal.throwIfAborted();
+      const workspaceId = daemonWorkspaceId(
+        result.intent.identity.projectId,
+        result.intent.identity.rootId,
+        result.intent.identity.workspaceId,
+      );
+      await daemonAuthorityReady;
+      daemonProjectOperationSignal.throwIfAborted();
+      await syncAgentProjectsToDaemon(result.project, {
+        reactivateWorkspaceIds: new Set([workspaceId]),
+      });
+      try {
+        if (!await projectWorkspaceService.commitWorkspaceApproval(result.intent)) {
+          throw new Error('Project Workspace approval intent was lost before commit.');
+        }
+      } catch (error) {
+        // The daemon grant is provisional until the exact journal record lands.
+        // Compensate immediately; a crash still leaves the pending intent for
+        // the startup preflight to revalidate before providers can start.
+        await retireDaemonWorkspaceAuthority(result.intent.identity).catch((retireError) => {
+          console.error('[main] provisional Project Workspace grant could not be retired:', retireError);
+        });
+        throw error;
+      }
+      agentCoordinationService?.restoreWorkspaceAuthority(
+        result.intent.identity.projectId,
+        result.intent.identity.rootId,
+        result.intent.identity.workspaceId,
+      );
+      return { ok: true, workspace: result.workspace } as const;
+    })
+  );
+  const requestAgentProjectRemoval = (projectId: unknown): Promise<boolean> => (
+    enqueueDaemonProjectOperation(async () => {
+      daemonProjectOperationSignal.throwIfAborted();
+      if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 128) {
+        return false;
+      }
+      await Promise.all([daemonAuthorityReady, projectWorkspaceAuthorityReady, agentOrchestrationReady]);
+      daemonProjectOperationSignal.throwIfAborted();
+      if (!agentHistoryService.hasProject(projectId)) return false;
+
+      await agentOrchestrationService?.stopProjectRuns(projectId);
+      daemonProjectOperationSignal.throwIfAborted();
+      const coordinationSessionIds = agentCoordinationService?.getSnapshot().activities
+        .filter((activity) => activity.participant?.projectId === projectId)
+        .map((activity) => activity.sessionId) ?? [];
+      const retired = await daemonCommandRouter.applySystemTransition(daemonProjectRemovalTransition(
+        projectId,
+        new Date().toISOString(),
+      ));
+      if (retired && !retired.value.ok) {
+        agentOrchestrationService?.activateProject(projectId);
+        return false;
+      }
+      agentOrchestrationMcpServer.revokeProject(projectId);
+      agentControlServer?.revokeProject(projectId);
+      revokeAgentSessionCapabilities([
+        ...(retired?.value.sessionIds ?? []),
+        ...coordinationSessionIds,
+      ]);
+      // Complete durable cleanup only after daemon capabilities are closed.
+      // A partial failure therefore leaves the visible Project retryable while
+      // preventing new Agent work from starting with stale authority.
+      await projectWorkspaceService.revokeProjectAccess(projectId);
+      await agentCoordinationService?.removeProjectAuthority(projectId);
+      await agentOrchestrationStore.removeProject(projectId);
+      const removed = await agentHistoryService.removeProject(projectId);
+      if (!removed) throw new Error(`Agent Project ${projectId} disappeared during removal.`);
+      return true;
+    })
+  );
+  const recoverPendingProjectWorkspaceAccess = async (): Promise<void> => {
+    daemonProjectOperationSignal.throwIfAborted();
+    const recovered = await projectWorkspaceService.recoverPendingWorkspaceAccess(
+      daemonProjectOperationSignal,
+    );
+    for (const result of recovered) {
+      daemonProjectOperationSignal.throwIfAborted();
+      if (!result.ok) {
+        if (result.intent.kind !== 'approve') {
+          throw new Error('A Project Workspace revocation intent could not be recovered.');
+        }
+        // A failed approval revalidation may follow a crash after its daemon
+        // workspace was provisionally activated. Retire that exact capability
+        // before discarding the stale user intent.
+        await retireDaemonWorkspaceAuthority(result.intent.identity);
+        daemonProjectOperationSignal.throwIfAborted();
+        if (!await projectWorkspaceService.discardWorkspaceAccessIntent(result.intent)) {
+          throw new Error('A stale Project Workspace approval intent could not be discarded.');
+        }
+        mainLog?.line(
+          `discarded stale Project Workspace approval ${result.intent.identity.workspaceId}: ${result.error}`,
+        );
+        continue;
+      }
+      if ('project' in result) {
+        await syncAgentProjectsToDaemon(result.project, {
+          reactivateWorkspaceIds: new Set([daemonWorkspaceId(
+            result.intent.identity.projectId,
+            result.intent.identity.rootId,
+            result.intent.identity.workspaceId,
+          )]),
+        });
+        daemonProjectOperationSignal.throwIfAborted();
+        if (!await projectWorkspaceService.commitWorkspaceApproval(result.intent)) {
+          throw new Error('A recovered Project Workspace approval intent was lost before commit.');
+        }
+        continue;
+      }
+      if (!('request' in result)) {
+        throw new Error('A recovered Project Workspace intent has no executable action.');
+      }
+      await retireDaemonWorkspaceAuthority(result.request);
+      daemonProjectOperationSignal.throwIfAborted();
+      if (!await projectWorkspaceService.commitWorkspaceRevocation(result.intent)) {
+        throw new Error('A recovered Project Workspace revocation intent was lost before commit.');
+      }
     }
   };
-  const requestDaemonProjectSync = (): Promise<void> => {
-    const run = daemonProjectSyncTail.then(
-      () => syncAgentProjectsToDaemon(),
-      () => syncAgentProjectsToDaemon(),
-    );
-    daemonProjectSyncTail = run.catch(() => undefined);
-    return run;
-  };
-  const daemonProjectsReady = requestDaemonProjectSync().catch((error) => {
-    console.error('[main] initial Agent Project daemon sync failed:', error);
-    mainLog?.line(`initial Agent Project daemon sync failed: ${String(error)}`);
+  const daemonProjectsReady: Promise<void> = enqueueDaemonProjectOperation(async () => {
+    daemonProjectOperationSignal.throwIfAborted();
+    await Promise.all([daemonCoreReady, projectWorkspaceAuthorityReady]);
+    daemonProjectOperationSignal.throwIfAborted();
+    await recoverPendingProjectWorkspaceAccess();
+    await syncAgentProjectsToDaemon();
   });
+  void daemonProjectsReady.catch((error) => {
+    console.error('[main] initial Agent Project authority preflight failed:', error);
+    mainLog?.line(`initial Agent Project authority preflight failed: ${String(error)}`);
+  });
+  const daemonAuthorityReady: Promise<DaemonCommandRouter> = Promise.all([
+    daemonCoreReady,
+    daemonProjectsReady,
+  ]).then(async () => {
+    try {
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
+      await agentOrchestrationMcpServer.start();
+      if (daemonAuthorityShutdown.isStopping()) {
+        await agentOrchestrationMcpServer.stop();
+        return daemonCommandRouter;
+      }
+      await daemonAgentRuntime.start();
+      if (daemonAuthorityShutdown.isStopping()) return daemonCommandRouter;
+      await daemonAutomationRuntime.start();
+      if (daemonAuthorityShutdown.isStopping()) {
+        await daemonAutomationRuntime.dispose();
+        return daemonCommandRouter;
+      }
+      daemonAuthorityOperational = true;
+      return daemonCommandRouter;
+    } catch (error) {
+      // A rejected authority promise must mean there is no surviving partial
+      // listener, provider attachment, or automation dispatcher.
+      daemonAgentRuntime.beginShutdown();
+      await Promise.allSettled([
+        daemonAutomationRuntime.dispose(),
+        daemonAgentRuntime.dispose('process-loss'),
+        agentOrchestrationMcpServer.stop(),
+      ]);
+      daemonAuthorityOperational = false;
+      throw error;
+    }
+  });
+  const daemonAvailabilityReady: Promise<DaemonAuthorityAvailability> = daemonAuthorityReady.then(
+    () => readyDaemonAuthorityAvailability(),
+    (error) => safeModeDaemonAuthorityAvailability(error),
+  ).then((availability) => {
+    daemonAvailability = availability;
+    return availability;
+  });
+  void daemonAvailabilityReady.then((availability) => {
+    if (availability.state === 'ready') return;
+    const failure = {
+      event: 'daemon-authority-unavailable',
+      ...availability,
+    };
+    console.error('[main] daemon authority unavailable; legacy terminals remain enabled:', failure);
+    mainLog?.line(`daemon safe mode: ${JSON.stringify(failure)}`);
+  });
+  daemonAuthorityShutdown.bindStartup(daemonAuthorityReady);
+  void daemonAuthorityReady.catch(() => undefined);
   agentHistoryService.setProjectSessionTargetResolver(async (target) => {
     await projectWorkspaceReady;
     return projectWorkspaceService.resolveSessionTarget(target);
@@ -1896,18 +2447,18 @@ app.on('ready', async () => {
       migration: agentOrchestrationStore.migrationStatus,
     };
   });
-  ipcMain.handle('agents:save-collaboration-policy', async (_event, input: unknown) => {
+  ipcMain.handle('agents:save-collaboration-policy', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
     await agentOrchestrationReady;
     if (!agentOrchestrationService || typeof input !== 'object' || input === null || Array.isArray(input)) {
       return { ok: false, error: 'invalid', message: 'Invalid collaboration policy.' } as const;
     }
     return agentOrchestrationService.savePolicy(input as CollaborationPolicyInput);
-  });
-  ipcMain.handle('agents:confirm-team-migration', async () => {
+  }));
+  ipcMain.handle('agents:confirm-team-migration', gateLocalMutation(desktopAgentMutationIngress, async () => {
     await agentOrchestrationReady;
     return agentOrchestrationService?.confirmLegacyMigration() ?? agentOrchestrationStore.migrationStatus;
-  });
-  ipcMain.handle('agents:cancel-worker', async (_event, runId: unknown, taskId: unknown) => {
+  }));
+  ipcMain.handle('agents:cancel-worker', gateLocalMutation(desktopAgentMutationIngress, async (_event, runId: unknown, taskId: unknown) => {
     if (!agentOrchestrationService || typeof runId !== 'string' || typeof taskId !== 'string') {
       return { ok: false, error: 'invalid', message: 'Invalid worker cancellation.' } as const;
     }
@@ -1916,8 +2467,8 @@ app.on('ready', async () => {
     return lead
       ? agentOrchestrationService.cancelWorker(lead, taskId)
       : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
-  });
-  ipcMain.handle('agents:archive-worker', async (_event, runId: unknown, taskId: unknown) => {
+  }));
+  ipcMain.handle('agents:archive-worker', gateLocalMutation(desktopAgentMutationIngress, async (_event, runId: unknown, taskId: unknown) => {
     if (!agentOrchestrationService || typeof runId !== 'string' || typeof taskId !== 'string') {
       return { ok: false, error: 'invalid', message: 'Invalid worker archive request.' } as const;
     }
@@ -1926,8 +2477,8 @@ app.on('ready', async () => {
     return lead
       ? agentOrchestrationService.archiveWorker(lead, taskId)
       : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
-  });
-  ipcMain.handle('agents:stop-orchestration-run', async (_event, runId: unknown) => {
+  }));
+  ipcMain.handle('agents:stop-orchestration-run', gateLocalMutation(desktopAgentMutationIngress, async (_event, runId: unknown) => {
     if (!agentOrchestrationService || typeof runId !== 'string') {
       return { ok: false, error: 'invalid', message: 'Invalid Lead run.' } as const;
     }
@@ -1936,47 +2487,55 @@ app.on('ready', async () => {
     return lead
       ? agentOrchestrationService.stopRun(lead, runId)
       : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
-  });
+  }));
   ipcMain.handle('agents:get-adapter-snapshot', async () => {
     await agentAdapterReady;
     return agentAdapterService.getSnapshot();
   });
-  ipcMain.handle('agents:select-adapter-bundle', async (event) => {
-    await agentAdapterReady;
+  ipcMain.handle('agents:select-adapter-bundle', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, event) => {
+    await raceLocalOperationWithAbort(agentAdapterReady, signal);
+    signal.throwIfAborted();
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
     const options: OpenDialogOptions = {
       title: 'Install an Agent adapter',
       properties: ['openFile'],
       filters: [{ name: 'EZTerminal Agent adapter', extensions: ['ezadapter'] }],
     };
-    const selected = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
+    let selected: Electron.OpenDialogReturnValue;
+    try {
+      selected = await raceLocalOperationWithAbort(
+        owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options),
+        signal,
+      );
+    } catch (error) {
+      if (signal.aborted) return null;
+      throw error;
+    }
     const archivePath = selected.filePaths[0];
     return selected.canceled || !archivePath ? null : agentAdapterService.inspect(archivePath);
-  });
-  ipcMain.handle('agents:install-adapter', async (_event, input: unknown) => {
+  }));
+  ipcMain.handle('agents:install-adapter', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
     await agentAdapterReady;
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return { ok: false, error: 'invalid', message: 'Invalid adapter installation request.' } as const;
     }
     return agentAdapterService.install(input as InstallAgentAdapterInput);
-  });
-  ipcMain.handle('agents:set-adapter-enabled', async (_event, adapterId: unknown, enabled: unknown) => {
+  }));
+  ipcMain.handle('agents:set-adapter-enabled', gateLocalMutation(desktopAgentMutationIngress, async (_event, adapterId: unknown, enabled: unknown) => {
     await agentAdapterReady;
     if (typeof adapterId !== 'string' || typeof enabled !== 'boolean') {
       return { ok: false, error: 'invalid', message: 'Invalid adapter state request.' } as const;
     }
     return agentAdapterService.setEnabled(adapterId, enabled);
-  });
-  ipcMain.handle('agents:remove-adapter', async (_event, adapterId: unknown) => {
+  }));
+  ipcMain.handle('agents:remove-adapter', gateLocalMutation(desktopAgentMutationIngress, async (_event, adapterId: unknown) => {
     await agentAdapterReady;
     if (typeof adapterId !== 'string') {
       return { ok: false, error: 'invalid', message: 'Invalid adapter removal request.' } as const;
     }
     return agentAdapterService.remove(adapterId);
-  });
-  ipcMain.handle('agents:join-collaboration', async (_event, input: unknown) => {
+  }));
+  ipcMain.handle('agents:join-collaboration', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
       return { ok: false, error: 'invalid', message: 'Invalid collaboration request.' } as const;
     }
@@ -1989,24 +2548,25 @@ app.on('ready', async () => {
       });
     }
     return result;
-  });
-  ipcMain.handle('agents:leave-collaboration', (_event, activityId: unknown) => {
+  }));
+  ipcMain.handle('agents:leave-collaboration', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: unknown) => {
     if (typeof activityId !== 'string' || !agentCoordinationService) return false;
     return agentCoordinationService.leave(activityId);
-  });
-  ipcMain.handle('agents:save-coordination-project', async (_event, input: unknown) => {
+  }));
+  ipcMain.handle('agents:save-coordination-project', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
       return { ok: false, error: 'invalid', message: 'Invalid Project coordination settings.' } as const;
     }
     return agentCoordinationService.saveProject(input as AgentProjectCoordinationInput);
-  });
-  ipcMain.handle('agents:mark-seen', (_event, activityId: unknown, stateSeq: unknown) => (
+  }));
+  ipcMain.handle('agents:mark-seen', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: unknown, stateSeq: unknown) => (
     typeof activityId === 'string'
     && typeof stateSeq === 'number'
     && Number.isSafeInteger(stateSeq)
     && agentCoordinationService?.markSeen(activityId, stateSeq) === true
-  ));
-  ipcMain.handle('agents:prompt', (
+  )));
+  ipcMain.handle('agents:prompt', gateAbortableLocalMutation(desktopAgentMutationIngress, (
+    signal,
     _event,
     activityId: unknown,
     text: unknown,
@@ -2032,18 +2592,18 @@ app.on('ready', async () => {
     }
     const whenReady = (options as { readonly whenReady?: boolean } | undefined)?.whenReady === true;
     if (whenReady) {
-      return agentCoordinationService?.prompt(activityId, text, { whenReady: true })
+      return agentCoordinationService?.prompt(activityId, text, { whenReady: true, signal })
         ?? { ok: false, error: 'not-found' } as const;
     }
     return agentActivityService.sendPrompt(activityId, text);
-  });
-  ipcMain.handle('agents:request-managed-merge', (_event, activityId: unknown, targetBranch: unknown) => {
+  }));
+  ipcMain.handle('agents:request-managed-merge', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: unknown, targetBranch: unknown) => {
     if (typeof activityId !== 'string' || typeof targetBranch !== 'string' || !managedMergeService) {
       return { ok: false, error: 'invalid', message: 'Invalid managed merge request.' } as const;
     }
     return managedMergeService.requestForActivity(activityId, targetBranch);
-  });
-  ipcMain.handle('agents:decide-managed-merge', (_event, input: unknown) => {
+  }));
+  ipcMain.handle('agents:decide-managed-merge', gateLocalMutation(desktopAgentMutationIngress, (_event, input: unknown) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input) || !managedMergeService) {
       return { ok: false, error: 'invalid', message: 'Invalid managed merge decision.' } as const;
     }
@@ -2051,14 +2611,14 @@ app.on('ready', async () => {
       ...(input as ManagedMergeDecisionInput),
       actor: 'desktop',
     });
-  });
-  ipcMain.handle('agents:grant-next-managed-merge', (_event, input: unknown) => {
+  }));
+  ipcMain.handle('agents:grant-next-managed-merge', gateLocalMutation(desktopAgentMutationIngress, (_event, input: unknown) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input) || !managedMergeService) {
       return { ok: false, error: 'invalid', message: 'Invalid one-shot merge grant.' } as const;
     }
     return managedMergeService.grantNext(input as ManagedMergeGrantInput);
-  });
-  ipcMain.handle('agents:get-managed-merge-diff', (_event, requestId: unknown, revision: unknown) => {
+  }));
+  ipcMain.handle('agents:get-managed-merge-diff', gateLocalMutation(desktopAgentMutationIngress, (_event, requestId: unknown, revision: unknown) => {
     if (
       typeof requestId !== 'string'
       || typeof revision !== 'number'
@@ -2066,7 +2626,7 @@ app.on('ready', async () => {
       || !managedMergeService
     ) return { ok: false, error: 'git-failed' } as const;
     return managedMergeService.readCandidateDiff(requestId, revision);
-  });
+  }));
   ipcMain.handle('agent-history:list-projects', async (
     _event,
     force?: unknown,
@@ -2119,7 +2679,7 @@ app.on('ready', async () => {
     if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
     return agentHistoryService.prepareResume(historyId);
   });
-  ipcMain.handle('agent-history:start-resume', async (
+  ipcMain.handle('agent-history:start-resume', gateLocalMutation(desktopAgentMutationIngress, async (
     event,
     request: unknown,
   ): Promise<AgentResumeStartResult> => {
@@ -2166,14 +2726,13 @@ app.on('ready', async () => {
       resolved.displayCommandText,
     );
     if (!port) return { ok: false, reason: 'unavailable' };
-    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now())
-      .then(() => requestDaemonProjectSync())
+    void requestAgentResumeWork(candidate.historyId, Date.now())
       .catch((err) => {
         console.error('[main] failed to record resumed Agent project:', err);
       });
     event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
     return { ok: true };
-  });
+  }));
   ipcMain.handle('agent-projects:list-launchers', async () => {
     await agentInfrastructureReady;
     return agentHistoryService.listLaunchers();
@@ -2200,8 +2759,7 @@ app.on('ready', async () => {
       resolved.displayCommandText,
     );
     if (!port) return { ok: false, reason: 'unavailable' };
-    void agentHistoryService.recordLaunchTargetWork(candidate.target, resolved.roots, Date.now())
-      .then(() => requestDaemonProjectSync())
+    void requestAgentLaunchWork(candidate.target, resolved.roots, Date.now())
       .catch((err) => {
         console.error('[main] failed to record launched Agent project:', err);
       });
@@ -2219,7 +2777,7 @@ app.on('ready', async () => {
     }
     return agentHistoryService.prepareLaunch(target, launcherId);
   });
-  ipcMain.handle('agent-launch:start', async (
+  ipcMain.handle('agent-launch:start', gateLocalMutation(desktopAgentMutationIngress, async (
     event,
     request: unknown,
   ): Promise<AgentLaunchStartResult> => {
@@ -2227,7 +2785,7 @@ app.on('ready', async () => {
     return isAgentLaunchStartRequest(request)
       ? startAgentLaunchInSession(event, request)
       : { ok: false, reason: 'invalid' };
-  });
+  }));
   ipcMain.handle('agent-projects:prepare-launch', async (
     _event,
     projectId: unknown,
@@ -2246,7 +2804,7 @@ app.on('ready', async () => {
     }
     return agentHistoryService.prepareProjectLaunch(projectId, launcherId);
   });
-  ipcMain.handle('agent-projects:start-launch', async (
+  ipcMain.handle('agent-projects:start-launch', gateLocalMutation(desktopAgentMutationIngress, async (
     event,
     request: unknown,
   ): Promise<AgentProjectLaunchStartResult> => {
@@ -2281,43 +2839,44 @@ app.on('ready', async () => {
       runId: candidate.runId,
       revision: candidate.revision,
     });
-  });
-  ipcMain.handle('agent-projects:save', async (_event, input: unknown) => {
-    await agentHistoryReady;
+  }));
+  ipcMain.handle('agent-projects:save', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
       return { ok: false, reason: 'invalid' };
     }
-    const result = await agentHistoryService.saveProject(input as AgentProjectInput);
-    if (result.ok) {
-      await requestDaemonProjectSync().catch((error) => {
-        console.error('[main] saved Agent Project daemon sync failed:', error);
-      });
+    try {
+      return await requestAgentProjectSave(input as AgentProjectInput);
+    } catch (error) {
+      console.error('[main] saved Agent Project daemon sync failed:', error);
+      return { ok: false, reason: 'invalid' } as const;
     }
-    return result;
-  });
-  ipcMain.handle('agent-projects:remove', async (_event, projectId: unknown) => {
-    await agentHistoryReady;
-    if (typeof projectId !== 'string' || projectId.length > 128) return false;
-    const removed = await agentHistoryService.removeProject(projectId);
-    if (removed) {
-      await Promise.all([
-        projectWorkspaceService.revokeProjectAccess(projectId),
-        agentOrchestrationStore.removeProject(projectId),
-      ]);
+  }));
+  ipcMain.handle('agent-projects:remove', gateLocalMutation(desktopAgentMutationIngress, async (_event, projectId: unknown) => {
+    try {
+      return await requestAgentProjectRemoval(projectId);
+    } catch (error) {
+      console.error('[main] Agent Project daemon revocation failed:', error);
+      return false;
     }
-    return removed;
-  });
-  ipcMain.handle('agent-projects:select-folders', async (event, multiple?: unknown) => {
+  }));
+  ipcMain.handle('agent-projects:select-folders', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, event, multiple?: unknown) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
     const options: Electron.OpenDialogOptions = {
       title: 'Select project folders',
       properties: ['openDirectory', ...(multiple === false ? [] : ['multiSelections' as const])],
     };
-    const result = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
+    let result: Electron.OpenDialogReturnValue;
+    try {
+      result = await raceLocalOperationWithAbort(
+        owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options),
+        signal,
+      );
+    } catch (error) {
+      if (signal.aborted) return { canceled: true, paths: [] } as const;
+      throw error;
+    }
     return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
-  });
+  }));
   ipcMain.handle('renderer-recovery:save-checkpoint', (event, checkpoint: unknown) => (
     rendererRecoveryCheckpoints.save(event.sender.id, checkpoint)
   ));
@@ -2327,20 +2886,28 @@ app.on('ready', async () => {
   ipcMain.handle('renderer-recovery:prepare', (event) => {
     prepareDesktopRendererRecovery(event.sender.id);
   });
-  ipcMain.handle('project-workspace:describe', async (_event, projectId: unknown) => {
-    await projectWorkspaceReady;
-    const described = await projectWorkspaceService.describeProjectWorkspaces(projectId);
+  ipcMain.handle('project-workspace:describe', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, _event, projectId: unknown) => {
+    await raceLocalOperationWithAbort(projectWorkspaceReady, signal);
+    signal.throwIfAborted();
+    const described = await projectWorkspaceService.describeProjectWorkspaces(projectId, signal);
     if (described.ok) {
       await requestDaemonProjectSync().catch((error) => {
         console.error('[main] described Agent Project daemon sync failed:', error);
       });
     }
     return described;
-  });
-  ipcMain.handle('project-workspace:resolve-terminal-directory', async (_event, request: unknown) => {
-    await projectWorkspaceReady;
-    return projectWorkspaceService.resolveTerminalDirectory(request);
-  });
+  }));
+  ipcMain.handle('project-workspace:resolve-terminal-directory', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, _event, request: unknown) => {
+    try {
+      signal.throwIfAborted();
+      // Resolution and its exact daemon commit share one FIFO operation with
+      // revocation, so neither can publish a stale external-worktree grant.
+      return await resolveProjectTerminalDirectory(request, signal);
+    } catch (error) {
+      console.error('[main] project terminal daemon sync failed:', error);
+      return { ok: false, error: 'io-error' } as const;
+    }
+  }));
   ipcMain.handle('project-documents:resolve', async (_event, request: unknown) => {
     await projectWorkspaceReady;
     return projectDocumentService.resolveTarget(request);
@@ -2353,39 +2920,54 @@ app.on('ready', async () => {
     await projectWorkspaceReady;
     return projectDocumentService.readDocument(request);
   });
-  ipcMain.handle('project-workspace:search', async (event, request: unknown) => {
-    await projectWorkspaceReady;
+  ipcMain.handle('project-workspace:search', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, event, request: unknown) => {
+    await raceLocalOperationWithAbort(projectWorkspaceReady, signal);
+    signal.throwIfAborted();
     const requestId = typeof request === 'object' && request !== null && !Array.isArray(request)
       ? (request as { readonly requestId?: unknown }).requestId
       : undefined;
     if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128) {
-      return projectWorkspaceService.search(request);
+      return projectWorkspaceService.search(request, signal);
     }
     const key = `${String(event.sender.id)}:${requestId}`;
     projectWorkspaceSearches.get(key)?.abort();
     const controller = new AbortController();
     projectWorkspaceSearches.set(key, controller);
+    const abortSearch = (): void => controller.abort(signal.reason);
+    signal.addEventListener('abort', abortSearch, { once: true });
+    if (signal.aborted) abortSearch();
     try {
       return await projectWorkspaceService.search(request, controller.signal);
     } finally {
+      signal.removeEventListener('abort', abortSearch);
       if (projectWorkspaceSearches.get(key) === controller) projectWorkspaceSearches.delete(key);
     }
-  });
+  }));
   ipcMain.on('project-workspace:cancel-search', (event, requestId: unknown) => {
     if (typeof requestId !== 'string') return;
     const key = `${String(event.sender.id)}:${requestId}`;
     projectWorkspaceSearches.get(key)?.abort();
     projectWorkspaceSearches.delete(key);
   });
-  ipcMain.handle('project-workspace:approve', async (_event, request: unknown) => {
-    await projectWorkspaceReady;
-    return projectWorkspaceService.approveWorkspace(request);
-  });
-  ipcMain.handle('project-workspace:revoke', async (_event, request: unknown) => {
-    await projectWorkspaceReady;
-    return projectWorkspaceService.revokeWorkspace(request);
-  });
-  ipcMain.handle('project-map:describe', async (_event, request: unknown) => {
+  ipcMain.handle('project-workspace:approve', gateLocalMutation(desktopAgentMutationIngress, async (_event, request: unknown) => {
+    try {
+      return await requestProjectWorkspaceApproval(request);
+    } catch (error) {
+      console.error('[main] project workspace daemon approval sync failed:', error);
+      return { ok: false, error: 'io-error' } as const;
+    }
+  }));
+  ipcMain.handle('project-workspace:revoke', gateLocalMutation(desktopAgentMutationIngress, async (_event, request: unknown) => {
+    try {
+      // Archive the launch capability and remove persisted consent in the same
+      // FIFO operation used by Project discovery and terminal preparation.
+      return await requestDaemonWorkspaceRevocation(request);
+    } catch (error) {
+      console.error('[main] project workspace daemon revocation failed:', error);
+      return false;
+    }
+  }));
+  ipcMain.handle('project-map:describe', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapCollectionRequest(request)) {
       return {
         ok: false,
@@ -2407,8 +2989,8 @@ app.on('ready', async () => {
     }
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     return projectMapService.describe(request);
-  });
-  ipcMain.handle('project-map:set-bindings', async (_event, request: unknown) => {
+  }));
+  ipcMain.handle('project-map:set-bindings', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapBindingRequest(request)) {
       return {
         ok: false,
@@ -2430,7 +3012,7 @@ app.on('ready', async () => {
     }
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     return projectMapService.setBindings(request);
-  });
+  }));
   const readProjectMap = async (request: unknown) => {
     if (!isProjectMapReadRequest(request)) {
       return {
@@ -2448,8 +3030,14 @@ app.on('ready', async () => {
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     return projectMapService.read(request);
   };
-  ipcMain.handle('project-map:read', (_event, request: unknown) => readProjectMap(request));
-  ipcMain.handle('project-map:refresh', (_event, request: unknown) => readProjectMap(request));
+  ipcMain.handle('project-map:read', gateLocalMutation(
+    desktopProjectMapMutationIngress,
+    (_event, request: unknown) => readProjectMap(request),
+  ));
+  ipcMain.handle('project-map:refresh', gateLocalMutation(
+    desktopProjectMapMutationIngress,
+    (_event, request: unknown) => readProjectMap(request),
+  ));
   const invalidProjectMapOpen = () => ({
     ok: false as const,
     error: 'invalid-request',
@@ -2471,22 +3059,22 @@ app.on('ready', async () => {
       verificationPending: false,
     },
   });
-  ipcMain.handle('project-map:open', async (_event, request: unknown) => {
+  ipcMain.handle('project-map:open', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapReadRequest(request)) return invalidProjectMapOpen();
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     return projectMapService.open(request);
-  });
-  ipcMain.handle('project-map:refresh-v2', async (_event, request: unknown) => {
+  }));
+  ipcMain.handle('project-map:refresh-v2', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapReadRequest(request)) return invalidProjectMapOpen();
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     return projectMapService.open(request, true);
-  });
-  ipcMain.handle('project-map:approve', async (_event, request: unknown) => {
+  }));
+  ipcMain.handle('project-map:approve', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapApprovalRequest(request)) return invalidProjectMapOpen();
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     return projectMapService.approve(request);
-  });
-  ipcMain.handle('project-map:start-job', async (_event, request: unknown) => {
+  }));
+  ipcMain.handle('project-map:start-job', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapStartJobRequest(request)) return { ok: false, error: 'invalid-request' };
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     try {
@@ -2494,24 +3082,31 @@ app.on('ready', async () => {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : 'job-start-failed' };
     }
-  });
-  ipcMain.handle('project-map:cancel-job', async (_event, request: unknown) => {
+  }));
+  ipcMain.handle('project-map:cancel-job', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapJobRequest(request)) return { ok: false, error: 'invalid-request' };
     await Promise.all([projectWorkspaceReady, projectMapReady]);
     const job = await projectMapService.cancelJob(request);
     return job ? { ok: true, job } : { ok: false, error: 'job-not-found' };
-  });
-  ipcMain.handle('project-map:select-export-directory', async (event) => {
+  }));
+  ipcMain.handle('project-map:select-export-directory', gateAbortableLocalMutation(desktopProjectMapMutationIngress, async (signal, event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
     const options: OpenDialogOptions = { properties: ['openDirectory', 'createDirectory'] };
-    const result = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
+    let result: Electron.OpenDialogReturnValue;
+    try {
+      result = await raceLocalOperationWithAbort(
+        owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options),
+        signal,
+      );
+    } catch (error) {
+      if (signal.aborted) return { ok: false, error: 'canceled' } as const;
+      throw error;
+    }
     return result.canceled || !result.filePaths[0]
       ? { ok: false as const, error: 'canceled' }
       : { ok: true as const, directory: result.filePaths[0] };
-  });
-  ipcMain.handle('project-map:export', async (_event, request: unknown) => {
+  }));
+  ipcMain.handle('project-map:export', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
     if (!isProjectMapExportRequest(request) || !request.mapId) {
       return { ok: false, error: 'invalid-request' };
     }
@@ -2519,11 +3114,14 @@ app.on('ready', async () => {
     const document = await projectMapService.approvedDocument(request);
     if (!document) return { ok: false, error: 'approved-map-not-found' };
     return exportProjectMap(request, document, nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
-  });
-  ipcMain.handle('agents:followup', (_event, activityId: string, text: string) => {
-    if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
-    return agentActivityService?.sendPrompt(activityId, text) ?? { ok: false, error: 'delivery-failed' };
-  });
+  }));
+  ipcMain.handle('agents:followup', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: string, text: string) => {
+    if (typeof activityId !== 'string' || typeof text !== 'string') {
+      return { ok: false, error: 'invalid-text' } as const;
+    }
+    return agentActivityService?.sendPrompt(activityId, text)
+      ?? { ok: false, error: 'delivery-failed' } as const;
+  }));
   ipcMain.handle('pairing:issue', () => {
     if (!desktopRuntime?.isRunning()) {
       pairingCodeService.revoke();
@@ -2535,7 +3133,7 @@ app.on('ready', async () => {
   ipcMain.handle('pairing:revoke', () => { pairingCodeService.revoke(); });
   ipcMain.handle('git:status', (_event, directory: string) => gitStatusService.getStatus(directory));
   ipcMain.handle('git:diff', (_event, directory: string) => gitStatusService.getDiff(directory));
-  ipcMain.handle('agents:decide', (
+  ipcMain.handle('agents:decide', gateLocalMutation(desktopAgentMutationIngress, (
     _event,
     activityId: unknown,
     approvalId: unknown,
@@ -2554,12 +3152,12 @@ app.on('ready', async () => {
     }
     return agentActivityService?.decideApproval(activityId, approvalId, decision)
       ?? { ok: false, error: 'not-found' };
-  });
+  }));
   ipcMain.handle('agents:list-integrations', async () => {
     await agentInfrastructureReady;
     return agentHookInstaller.list();
   });
-  ipcMain.handle('agents:set-integration-enabled', async (_event, provider: unknown, enabled: unknown) => {
+  ipcMain.handle('agents:set-integration-enabled', gateLocalMutation(desktopAgentMutationIngress, async (_event, provider: unknown, enabled: unknown) => {
     await agentInfrastructureReady;
     if (!isAgentIntegrationProvider(provider) || typeof enabled !== 'boolean') {
       throw new Error('invalid agent integration request');
@@ -2575,17 +3173,17 @@ app.on('ready', async () => {
     const result = await agentHookInstaller.mutate(provider, enabled);
     await refreshAgentLauncherCapabilities();
     return result;
-  });
+  }));
   ipcMain.handle('agents:get-settings', async () => {
     await agentInfrastructureReady;
     return agentSettingsStore.get();
   });
-  ipcMain.handle('agents:set-settings', async (_event, settings: unknown) => {
+  ipcMain.handle('agents:set-settings', gateLocalMutation(desktopAgentMutationIngress, async (_event, settings: unknown) => {
     await agentInfrastructureReady;
     const saved = await agentSettingsStore.set(settings);
     if (saved) agentActivityService?.applySettings(saved);
     return saved;
-  });
+  }));
 
   // ── Custom themes + font/effects settings (theme-effects-font M3) ────────
   // theme-store.ts owns its own fs (the themes dir, independent of layoutStore's
@@ -2666,6 +3264,13 @@ app.on('ready', async () => {
     }
     return desktopRuntimeShutdownPromise;
   };
+  let processGuardianDeadlinePromise: Promise<void> | null = null;
+  const armProcessGuardianDeadline = (): Promise<void> => {
+    processGuardianDeadlinePromise ??= processGuardian?.armRootDeadline(
+      GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+    ) ?? Promise.resolve();
+    return processGuardianDeadlinePromise;
+  };
   // The first quit is held while every owned service drains exactly once;
   // completion or a bounded timeout reissues app.quit().
   const gracefulShutdown = new GracefulShutdownCoordinator({
@@ -2679,33 +3284,75 @@ app.on('ready', async () => {
     tasks: [
       {
         name: 'quit state',
-        run: async () => {
+        run: () => {
           appIsQuitting = true;
-          await processGuardian?.armRootDeadline(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
+          closeDaemonProjectOperationIngress();
+          void mainOwnedStartupBarrier.closeAndDrain();
+          void localAgentOperationIngress.closeAndDrain();
+          void desktopProjectMapMutationIngress.closeAndDrain();
+          void armProcessGuardianDeadline();
         },
       },
       {
+        name: 'process guardian deadline',
+        after: ['quit state'],
+        run: armProcessGuardianDeadline,
+      },
+      {
+        name: 'daemon authority',
+        after: ['quit state'],
+        run: stopDaemonAuthorityRuntimes,
+      },
+      {
+        name: 'main-owned runtime startup',
+        after: ['quit state'],
+        run: () => mainOwnedStartupBarrier.closeAndDrain(),
+      },
+      {
+        name: 'local Agent stack subscriptions',
+        after: ['main-owned runtime startup'],
+        run: () => mainOwnedStartupBarrier.releaseCleanups(),
+      },
+      {
+        name: 'local Agent operation ingress',
+        after: ['quit state'],
+        run: () => localAgentOperationIngress.closeAndDrain(),
+      },
+      {
+        name: 'desktop Project Map mutation ingress',
+        after: ['quit state'],
+        run: () => desktopProjectMapMutationIngress.closeAndDrain(),
+      },
+      {
         name: 'run command IPC',
+        after: ['main-owned runtime startup'],
         run: () => {
-          uninstallRunCommandIpc?.();
+          const uninstall = uninstallRunCommandIpc;
           uninstallRunCommandIpc = null;
+          uninstall?.();
         },
       },
       {
         name: 'daemon-owned processes',
+        after: ['main-owned runtime startup'],
         run: () => daemonRuntime?.shutdown(),
       },
       {
         name: 'daemon store',
+        after: ['daemon authority', 'main-owned runtime startup'],
         run: async () => {
           // The authoritative store closes only after both command ingress
           // (the bridge) and every provider/terminal writer have drained.
           // Await the exact authority barrier directly: the process guardian
           // intentionally has its own deadline and cannot prove this ordering.
           const authorityStop = stopDaemonAuthorityRuntimes();
-          await closeDaemonStoreAfterAuthorityDrain({
-            authorityStop,
-            concurrentDrains: [daemonRuntime?.shutdown(), stopDesktopRuntimeAndFiles()],
+           await closeDaemonStoreAfterAuthorityDrain({
+             authorityStop,
+             concurrentDrains: [
+               daemonProjectOperationsShutdownDrain,
+               daemonRuntime?.shutdown(),
+               stopDesktopRuntimeAndFiles(),
+             ],
             prepareForClose: () => {
               unsubscribeDaemonEventFanout();
               daemonEventSubscribers.clear();
@@ -2716,14 +3363,17 @@ app.on('ready', async () => {
       },
       {
         name: 'session surface authority',
+        after: ['main-owned runtime startup'],
         run: () => {
-          sessionSurfaceAuthority?.dispose();
+          const authority = sessionSurfaceAuthority;
           sessionSurfaceAuthority = null;
           desktopSessionPrincipalByWebContentsId.clear();
+          authority?.dispose();
         },
       },
       {
         name: 'renderer layout and layout store',
+        after: ['main-owned runtime startup'],
         run: async () => {
           await desktopWindowManager?.requestLayoutFlush();
           await layoutStore.flush();
@@ -2733,25 +3383,137 @@ app.on('ready', async () => {
       { name: 'packet capture', run: () => packetCaptureRegistry?.kill() },
       {
         name: 'desktop runtime and file uploads',
+        after: ['main-owned runtime startup'],
         run: stopDesktopRuntimeAndFiles,
       },
-      { name: 'OpenClaw endpoint subscription', run: () => unsubscribeOpenClawEndpoint() },
-      { name: 'OpenClaw lifecycle coordinator', run: () => openClawLifecycleCoordinator?.dispose() },
-      { name: 'OpenClaw service', run: () => openClawService?.dispose() },
-      { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
-      { name: 'agent control server', run: () => agentControlServer?.stop() },
-      { name: 'managed merge', run: () => managedMergeService?.dispose() },
-      { name: 'agent orchestration', run: () => agentOrchestrationService?.dispose() },
-      { name: 'agent coordination', run: () => agentCoordinationService?.dispose() },
-      { name: 'agent activity', run: () => agentActivityService?.dispose() },
-      { name: 'agent history', run: () => agentHistoryService.dispose() },
-      { name: 'agent coordination store', run: () => agentCoordinationStore.flush() },
-      { name: 'agent orchestration store', run: () => agentOrchestrationStore.flush() },
-      { name: 'agent adapter store', run: () => agentAdapterService.flush() },
-      { name: 'agent settings', run: () => agentSettingsStore.flush() },
-      { name: 'project workspace access', run: () => projectWorkspaceAccessStore.flush() },
+      {
+        name: 'OpenClaw endpoint subscription',
+        after: ['main-owned runtime startup'],
+        run: () => {
+          const unsubscribe = unsubscribeOpenClawEndpoint;
+          unsubscribeOpenClawEndpoint = (): void => undefined;
+          unsubscribe();
+        },
+      },
+      {
+        name: 'OpenClaw lifecycle coordinator',
+        after: ['main-owned runtime startup'],
+        run: () => {
+          const coordinator = openClawLifecycleCoordinator;
+          if (openClawLifecycleCoordinator === coordinator) openClawLifecycleCoordinator = null;
+          return coordinator?.dispose();
+        },
+      },
+      {
+        name: 'OpenClaw service',
+        after: ['main-owned runtime startup'],
+        run: () => {
+          const service = openClawService;
+          if (openClawService === service) openClawService = null;
+          return service?.dispose();
+        },
+      },
+      {
+        name: 'OpenClaw chat view',
+        after: ['main-owned runtime startup'],
+        run: () => {
+          const view = openClawChatView;
+          if (openClawChatView === view) openClawChatView = null;
+          view?.destroy();
+        },
+      },
+      {
+        name: 'agent control server',
+        after: ['main-owned runtime startup'],
+        run: () => {
+          const server = agentControlServer;
+          if (agentControlServer === server) agentControlServer = null;
+          return server?.stop();
+        },
+      },
+      {
+        name: 'managed merge',
+        after: [
+          'agent control server',
+          'desktop runtime and file uploads',
+          'local Agent operation ingress',
+          'local Agent stack subscriptions',
+        ],
+        run: () => {
+          const service = managedMergeService;
+          if (managedMergeService === service) managedMergeService = null;
+          return service?.dispose();
+        },
+      },
+      {
+        name: 'agent orchestration',
+        after: [
+          'agent control server',
+          'desktop runtime and file uploads',
+          'local Agent operation ingress',
+          'local Agent stack subscriptions',
+        ],
+        run: () => {
+          const service = agentOrchestrationService;
+          if (agentOrchestrationService === service) agentOrchestrationService = null;
+          return service?.dispose();
+        },
+      },
+      {
+        name: 'agent coordination',
+        after: ['managed merge', 'agent orchestration', 'agent activity'],
+        run: () => {
+          const service = agentCoordinationService;
+          if (agentCoordinationService === service) agentCoordinationService = null;
+          return service?.dispose();
+        },
+      },
+      {
+        name: 'agent activity',
+        after: ['agent orchestration', 'agent hook relay'],
+        run: () => {
+          const service = agentActivityService;
+          if (agentActivityService === service) agentActivityService = null;
+          return service?.dispose();
+        },
+      },
+      {
+        name: 'agent history',
+        after: ['agent orchestration'],
+        run: () => agentHistoryService.dispose(),
+      },
+      {
+        name: 'agent coordination store',
+        after: ['agent coordination'],
+        run: () => agentCoordinationStore.flush(),
+      },
+      {
+        name: 'agent orchestration store',
+        after: ['agent orchestration'],
+        run: () => agentOrchestrationStore.flush(),
+      },
+      {
+        name: 'agent adapter store',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => agentAdapterService.flush(),
+      },
+      {
+        name: 'agent settings',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => agentSettingsStore.flush(),
+      },
+      {
+        name: 'project workspace access',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => projectWorkspaceAccessStore.flush(),
+      },
       {
         name: 'project maps',
+        after: [
+          'agent control server',
+          'desktop runtime and file uploads',
+          'desktop Project Map mutation ingress',
+        ],
         run: async () => {
           projectMapService.close();
           await Promise.all([
@@ -2762,11 +3524,16 @@ app.on('ready', async () => {
           ]);
         },
       },
-      { name: 'quick commands', run: () => quickCommandStore.flush() },
+      {
+        name: 'quick commands',
+        after: ['main-owned runtime startup'],
+        run: () => quickCommandStore.flush(),
+      },
       { name: 'app update', run: () => appUpdateService.dispose() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
       {
         name: 'project workspace search',
+        after: ['local Agent operation ingress'],
         run: () => {
           for (const controller of projectWorkspaceSearches.values()) controller.abort();
           projectWorkspaceSearches.clear();
@@ -2774,16 +3541,25 @@ app.on('ready', async () => {
       },
       {
         name: 'SSH forwards',
+        after: ['main-owned runtime startup'],
         run: () => {
           const service = sshForwardService;
           sshForwardService = null;
           return service?.dispose();
         },
       },
-      { name: 'agent hook relay', run: () => agentHookRelay.stop() },
+      {
+        name: 'agent hook relay',
+        after: ['main-owned runtime startup'],
+        run: () => agentHookRelay.stop(),
+      },
       {
         name: 'OpenClaw visibility timer',
-        run: () => clearInterval(openclawVisibilityRecheckTimer),
+        after: ['main-owned runtime startup'],
+        run: () => {
+          if (openclawVisibilityRecheckTimer !== null) clearInterval(openclawVisibilityRecheckTimer);
+          openclawVisibilityRecheckTimer = null;
+        },
       },
     ],
   });
@@ -2944,7 +3720,11 @@ app.on('ready', async () => {
       target.once('exit', onExit);
     });
   };
-  const spawnInterpreterProcess = async (): Promise<UtilityProcess> => {
+  interface SpawnedInterpreter {
+    readonly target: UtilityProcess;
+    readonly groupId: string | null;
+  }
+  const spawnInterpreterProcess = async (): Promise<SpawnedInterpreter> => {
     console.log(`[main] spawning interpreter at: ${interpreterPath}`);
     const target = utilityProcess.fork(interpreterPath, [], {
       serviceName: 'EZTerminal Interpreter',
@@ -2962,13 +3742,48 @@ app.on('ready', async () => {
       }
       throw error;
     }
-    interpreterGroupId = processGuardian ? nextGroupId : null;
-    return target;
+    return {
+      target,
+      groupId: processGuardian ? nextGroupId : null,
+    };
+  };
+  const discardInterpreterSpawn = async (spawned: SpawnedInterpreter): Promise<void> => {
+    try {
+      spawned.target.kill();
+    } catch {
+      // The candidate exited before its publication checkpoint.
+    }
+    if (spawned.groupId && processGuardian) {
+      try {
+        await processGuardian.terminateGroup(spawned.groupId);
+      } catch (error) {
+        mainLog?.line(`failed to release unpublished interpreter group: ${String(error)}`);
+      }
+    }
   };
 
   try {
-    interpreter = await spawnInterpreterProcess();
+    await mainOwnedStartupBarrier.run(async (mainStartupSignal) => {
+      const assertMainStartupActive = (): void => {
+        mainOwnedStartupBarrier.checkpoint(mainStartupSignal);
+        daemonAuthorityShutdown.startupSignal.throwIfAborted();
+        if (appIsQuitting) {
+          throw new DOMException('Main-owned runtime startup was canceled by application Quit.', 'AbortError');
+        }
+      };
+      assertMainStartupActive();
+  let pendingInterpreterSpawn: SpawnedInterpreter | null = null;
+  try {
+    pendingInterpreterSpawn = await spawnInterpreterProcess();
+    assertMainStartupActive();
+    interpreter = pendingInterpreterSpawn.target;
+    interpreterGroupId = pendingInterpreterSpawn.groupId;
+    pendingInterpreterSpawn = null;
   } catch (error) {
+    if (pendingInterpreterSpawn) await discardInterpreterSpawn(pendingInterpreterSpawn);
+    if (mainStartupSignal.aborted || daemonAuthorityShutdown.startupSignal.aborted || appIsQuitting) {
+      throw error;
+    }
     const detail = error instanceof Error ? error.message : String(error);
     console.error('[main] interpreter ownership setup failed:', error);
     dialog.showErrorBox(
@@ -3074,7 +3889,9 @@ app.on('ready', async () => {
       win.webContents.send(channel, payload);
     }
   };
-  pairingCodeService.onChange((code) => broadcast('pairing:changed', code));
+  trackLocalAgentStackSubscription(
+    pairingCodeService.onChange((code) => broadcast('pairing:changed', code)),
+  );
 
   agentActivityService = new AgentActivityService({
     broker,
@@ -3088,6 +3905,7 @@ app.on('ready', async () => {
     projectWorkspaceReady,
     refreshAgentLauncherCapabilities(),
   ]);
+  assertMainStartupActive();
   agentCoordinationService = new AgentCoordinationService({
     activities: agentActivityService,
     store: agentCoordinationStore,
@@ -3252,7 +4070,15 @@ app.on('ready', async () => {
     store: agentOrchestrationStore,
     providers: orchestrationProviders,
     profiles: orchestrationProfiles,
-    projectExists: (projectId) => agentProjectStore.list().some((project) => project.projectId === projectId),
+    projectExists: (projectId) => {
+      if (!daemonAuthorityOperational || !agentHistoryService.hasProject(projectId)) return false;
+      const snapshot = daemonCommandRouter.getSnapshot();
+      return snapshot.projects.some((project) => (
+        project.id === projectId && project.archivedAt === undefined
+      )) && snapshot.workspaces.some((workspace) => (
+        workspace.projectId === projectId && workspace.archivedAt === undefined
+      ));
+    },
     launchWorker: async (run, task, profile, prompt): Promise<WorkerLaunchResult> => {
       const project = agentProjectStore.list().find((candidate) => candidate.projectId === run.projectId);
       if (!project) throw new Error('The worker Project no longer exists.');
@@ -3385,9 +4211,7 @@ app.on('ready', async () => {
           expectedProjectRevision: agentCoordinationService!.getProject(run.projectId)?.configRevision,
         });
         if (!joined.ok) throw new Error(joined.message);
-        void agentHistoryService.recordTerminalWork(resolved.roots, Date.now())
-          .then(() => requestDaemonProjectSync())
-          .catch(() => undefined);
+        void requestAgentProjectActivity(run.projectId, Date.now()).catch(() => undefined);
         return {
           profileId: profile.profileId,
           providerId: profile.providerId,
@@ -3523,7 +4347,15 @@ app.on('ready', async () => {
     requestMerge: (activityId, targetBranch) => managedMergeService!.requestForActivity(activityId, targetBranch),
   });
   try {
-    await Promise.all([managedMergeService.init(), projectMapReady]);
+    try {
+      await waitForStartupGroup('Agent collaboration startup', [
+        managedMergeService.init(),
+        projectMapReady,
+        daemonAuthorityReady,
+      ]);
+    } finally {
+      assertMainStartupActive();
+    }
     agentCoordinationService.bindMergeSource(managedMergeService);
     agentControlServer = new AgentControlServer({
       coordination: agentCoordinationService,
@@ -3533,7 +4365,9 @@ app.on('ready', async () => {
       daemon: daemonCommandRouter,
     });
     await agentControlServer.start();
+    assertMainStartupActive();
     await refreshAgentLauncherCapabilities();
+    assertMainStartupActive();
     for (const session of broker.listSessions()) {
       broker.setPrivateSessionEnvironment(session.sessionId, {
         EZTERMINAL_AGENT_CONTROL_DESCRIPTOR: agentControlServer.descriptorForSession(session.sessionId),
@@ -3544,62 +4378,72 @@ app.on('ready', async () => {
     console.error('[main] Agent collaboration infrastructure init failed:', err);
     await agentControlServer?.stop().catch(() => undefined);
     agentControlServer = null;
+    if (mainStartupSignal.aborted || daemonAuthorityShutdown.startupSignal.aborted || appIsQuitting) {
+      throw err;
+    }
   }
-  broker.onSessionRemoved((sessionId) => {
+  trackLocalAgentStackSubscription(broker.onSessionRemoved((sessionId) => {
     agentControlServer?.revokeSession(sessionId);
     workerPorts.delete(sessionId);
     agentOrchestrationService?.handleSessionRemoved(sessionId);
-  });
-  agentCoordinationService.onSnapshot((snapshot) => {
+  }));
+  trackLocalAgentStackSubscription(agentCoordinationService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('agents:coordination-snapshot', snapshot);
     }
-  });
-  agentOrchestrationService.onSnapshot((snapshot) => {
+  }));
+  trackLocalAgentStackSubscription(agentOrchestrationService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('agents:orchestration-snapshot', snapshot);
     }
-  });
-  agentAdapterService.onSnapshot((snapshot) => {
+  }));
+  trackLocalAgentStackSubscription(agentAdapterService.onSnapshot((snapshot) => {
     agentOrchestrationService?.profilesChanged();
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('agents:adapter-snapshot', snapshot);
     }
-  });
-  agentActivityService.onObserved((activity) => {
+  }));
+  trackLocalAgentStackSubscription(agentActivityService.onObserved((activity) => {
     // Every provider EZTerminal has local history for — generic profiles have no
     // adapter and so no sessions to come back to.
     if (!isAgentIntegrationProvider(activity.provider) || !activity.cwd) return;
-    void projectWorkspaceReady
-      .then(async () => {
-        const registered = await projectWorkspaceService.resolveAbsoluteProjectPath({
-          absolutePath: activity.cwd,
-        });
-        if (registered.ok) {
-          await agentHistoryService.recordObservedProjectWork(
-            registered.request.projectId,
-            activity.updatedAt,
-          );
-        } else {
-          await agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt);
-        }
-        await requestDaemonProjectSync();
-      })
-      .catch((err) => {
-        console.error('[main] failed to record terminal Agent project:', err);
+    void enqueueDaemonProjectOperation(async () => {
+      daemonProjectOperationSignal.throwIfAborted();
+      await Promise.all([daemonAuthorityReady, projectWorkspaceAuthorityReady]);
+      daemonProjectOperationSignal.throwIfAborted();
+      await recordAgentProjectObservation({
+        cwd: activity.cwd,
+        updatedAt: activity.updatedAt,
+      }, {
+        resolvePath: (absolutePath) => projectWorkspaceService.resolveAbsoluteProjectPath(
+          { absolutePath },
+          daemonProjectOperationSignal,
+        ),
+        touchProject: (projectId, updatedAt) => (
+          agentHistoryService.recordObservedProjectWork(projectId, updatedAt)
+        ),
+        recordProject: async (canonicalRoot, updatedAt) => {
+          await agentHistoryService.recordTerminalWork([canonicalRoot], updatedAt);
+        },
+        canonicalizeDirectory: canonicalAgentDirectory,
+        getDaemonSnapshot: () => daemonCommandRouter.getSnapshot(),
+        syncProjects: () => syncAgentProjectsToDaemon(),
       });
-  });
-  agentActivityService.onSnapshot((snapshot) => {
+    }).catch((err) => {
+      console.error('[main] failed to record terminal Agent project:', err);
+    });
+  }));
+  trackLocalAgentStackSubscription(agentActivityService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('agents:snapshot', snapshot);
     }
-  });
+  }));
   const liveAgentNotifications = new Set<Notification>();
-  agentActivityService.onTransition((transition: AgentActivityTransition) => {
+  trackLocalAgentStackSubscription(agentActivityService.onTransition((transition: AgentActivityTransition) => {
     agentOrchestrationService?.handleActivityTransition(transition);
     const { activity } = transition;
     if (activity.state !== 'done' && activity.state !== 'blocked' && activity.state !== 'error') return;
@@ -3623,7 +4467,7 @@ app.on('ready', async () => {
       win.webContents.send('agents:reveal-session', activity.sessionId);
     });
     notification.show();
-  });
+  }));
 
   // ── Session/run fan-out to every desktop window (M2 mirroring) ────────────
   // The broker is the sole session `add`/`remove` caller; these subscriptions
@@ -3632,21 +4476,21 @@ app.on('ready', async () => {
   // remote-bridge.ts subscribes to the SAME broker independently (T2.1). Both
   // broadcasts are origin-agnostic (including a window's own session — see
   // SessionDirectory's doc for why the ordering is safe).
-  broker.onSessionAdded((session) => {
+  trackLocalAgentStackSubscription(broker.onSessionAdded((session) => {
     registerLegacyTerminals([session]);
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('session-added', session);
     }
-  });
-  broker.onSessionRemoved((sessionId) => {
+  }));
+  trackLocalAgentStackSubscription(broker.onSessionRemoved((sessionId) => {
     completeLegacyTerminal(sessionId);
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('session-removed', sessionId);
     }
-  });
-  broker.onRunStarted((info) => {
+  }));
+  trackLocalAgentStackSubscription(broker.onRunStarted((info) => {
     // runId is caller-minted, so unlike session-added there's no "learn my own
     // id first" race to guard — a plain broadcast is enough.
     for (const win of BrowserWindow.getAllWindows()) {
@@ -3658,7 +4502,7 @@ app.on('ready', async () => {
         executionKind: info.executionKind,
       });
     }
-  });
+  }));
 
   // run-script (E4 §6.1): main is the only process that can fork a utilityProcess
   // (C1/C2), so the interpreter asks main to spawn/kill a script-host per
@@ -3690,17 +4534,25 @@ app.on('ready', async () => {
     const delayMs = recoveryDelaysMs[attemptIndex];
     mainLog?.line(`interpreter recovery attempt ${String(consecutiveRecoveryAttempts)} scheduled in ${String(delayMs)}ms`);
     setTimeout(() => {
-      void (async () => {
-        if (appIsQuitting) return;
-        let next: UtilityProcess | null = null;
+      void mainOwnedStartupBarrier.run(async (recoverySignal) => {
+        let next: SpawnedInterpreter | null = null;
         try {
+          mainOwnedStartupBarrier.checkpoint(recoverySignal);
+          daemonAuthorityShutdown.startupSignal.throwIfAborted();
+          if (appIsQuitting) return;
           next = await spawnInterpreterProcess();
-          interpreter = next;
-          if (!broker?.restart(next as unknown as BrokerInterpreter)) {
+          mainOwnedStartupBarrier.checkpoint(recoverySignal);
+          daemonAuthorityShutdown.startupSignal.throwIfAborted();
+          if (appIsQuitting) {
+            throw new DOMException('Interpreter recovery was canceled by application Quit.', 'AbortError');
+          }
+          interpreter = next.target;
+          interpreterGroupId = next.groupId;
+          if (!broker?.restart(next.target as unknown as BrokerInterpreter)) {
             throw new Error('broker rejected interpreter replacement');
           }
-          bindSshForwardService(next);
-          wireInterpreterProcess(next);
+          bindSshForwardService(next.target);
+          wireInterpreterProcess(next.target);
           mainLog?.line(`interpreter recovered on attempt ${String(consecutiveRecoveryAttempts)}`);
           for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
@@ -3713,14 +4565,18 @@ app.on('ready', async () => {
             recoveryStabilityTimer = null;
           }, 30_000);
         } catch (error) {
-          mainLog?.line(`interpreter recovery spawn failed: ${String(error)}`);
           if (next) {
-            try { next.kill(); } catch { /* already gone */ }
+            if (interpreter === next.target) interpreter = null;
+            if (interpreterGroupId === next.groupId) interpreterGroupId = null;
+            await discardInterpreterSpawn(next);
           }
-          interpreter = null;
+          if (recoverySignal.aborted || daemonAuthorityShutdown.startupSignal.aborted || appIsQuitting) {
+            return;
+          }
+          mainLog?.line(`interpreter recovery spawn failed: ${String(error)}`);
           scheduleInterpreterRecovery();
         }
-      })();
+      }).catch(() => undefined);
     }, delayMs);
   }
 
@@ -3886,6 +4742,7 @@ app.on('ready', async () => {
     : null;
   openClawLifecycleCoordinator = openclawControl;
   await openclawControl?.initialize();
+  assertMainStartupActive();
 
   const transientControlSnapshot = async (force = false): Promise<OpenClawControlSnapshot> => {
     const status = await openclaw.getStatus(force);
@@ -4012,7 +4869,7 @@ app.on('ready', async () => {
     openClawProxyHandle = null;
     if (handle) await handle.stop();
   };
-  const unsubscribeOpenClawEndpoint = openclaw.onEndpointChanged((endpoint) => {
+  unsubscribeOpenClawEndpoint = openclaw.onEndpointChanged((endpoint) => {
     try {
       openClawProxyHandle?.setUpstreamOrigin(endpoint.origin);
     } catch (error) {
@@ -4054,45 +4911,56 @@ app.on('ready', async () => {
   };
   const remoteAgentHistorySource: RemoteAgentHistorySource = {
     listProjects: (force, cursor, limit, query) => (
-      agentHistoryService.listProjects(force, cursor, limit, query)
+      localAgentOperationIngress.run(() => (
+        agentHistoryService.listProjects(force, cursor, limit, query)
+      ))
     ),
-    saveProject: async (input) => {
-      const result = await agentHistoryService.saveProject(input);
-      if (result.ok) await requestDaemonProjectSync();
-      return result;
-    },
-    removeProject: async (projectId) => {
-      const removed = await agentHistoryService.removeProject(projectId);
-      if (removed) {
-        await Promise.all([
-          projectWorkspaceService.revokeProjectAccess(projectId),
-          agentOrchestrationStore.removeProject(projectId),
-        ]);
-        await requestDaemonProjectSync();
+    saveProject: (input) => localAgentOperationIngress.run(() => requestAgentProjectSave(input)),
+    removeProject: (projectId) => localAgentOperationIngress.run(async () => {
+      try {
+        return await requestAgentProjectRemoval(projectId);
+      } catch (error) {
+        console.error('[main] remote Agent Project daemon revocation failed:', error);
+        return false;
       }
-      return removed;
-    },
+    }),
     listLaunchers: () => agentHistoryService.listLaunchers(),
-    prepareLaunch: (target, launcherId) => agentHistoryService.prepareLaunch(target, launcherId),
+    prepareLaunch: (target, launcherId) => localAgentOperationIngress.run(() => (
+      agentHistoryService.prepareLaunch(target, launcherId)
+    )),
     prepareProjectLaunch: (projectId, launcherId) => (
-      agentHistoryService.prepareProjectLaunch(projectId, launcherId)
+      localAgentOperationIngress.run(() => (
+        agentHistoryService.prepareProjectLaunch(projectId, launcherId)
+      ))
     ),
     resolveLaunch: (target, launcherId, revision) => (
-      agentHistoryService.resolveLaunch(target, launcherId, revision)
+      localAgentOperationIngress.run(() => (
+        agentHistoryService.resolveLaunch(target, launcherId, revision)
+      ))
     ),
     listSessions: (projectId, cursor, limit, force) => (
-      agentHistoryService.listSessions(projectId, cursor, limit, force)
+      localAgentOperationIngress.run(() => (
+        agentHistoryService.listSessions(projectId, cursor, limit, force)
+      ))
     ),
     readTranscript: (historyId, cursor, limit) => (
-      agentHistoryService.readTranscript(historyId, cursor, limit)
+      localAgentOperationIngress.run(() => (
+        agentHistoryService.readTranscript(historyId, cursor, limit)
+      ))
     ),
-    prepareResume: (historyId) => agentHistoryService.prepareResume(historyId),
-    recordTerminalWork: async (roots, lastActiveAt) => {
-      await agentHistoryService.recordTerminalWork(roots, lastActiveAt);
-      await requestDaemonProjectSync();
-    },
+    prepareResume: (historyId) => localAgentOperationIngress.run(() => (
+      agentHistoryService.prepareResume(historyId)
+    )),
+    recordLaunchTargetWork: (target, roots, lastActiveAt = Date.now()) => (
+      localAgentOperationIngress.run(() => requestAgentLaunchWork(target, roots, lastActiveAt))
+    ),
+    recordResumeWork: (historyId, lastActiveAt = Date.now()) => (
+      localAgentOperationIngress.run(() => requestAgentResumeWork(historyId, lastActiveAt))
+    ),
     resolveResume: (historyId, revision, choice) => (
-      agentHistoryService.resolveResume(historyId, revision, choice)
+      localAgentOperationIngress.run(() => (
+        agentHistoryService.resolveResume(historyId, revision, choice)
+      ))
     ),
   };
   const remoteQuickCommandSource: RemoteQuickCommandSource = {
@@ -4105,8 +4973,10 @@ app.on('ready', async () => {
     agentOrchestrationService ? {
       getSnapshot: () => agentOrchestrationService!.getSnapshot(),
       onSnapshot: (listener) => agentOrchestrationService!.onSnapshot(listener),
-      savePolicy: (input) => agentOrchestrationService!.savePolicy(input),
-      cancelWorker: async (runId, taskId) => {
+      savePolicy: (input) => localAgentOperationIngress.run(() => (
+        agentOrchestrationService!.savePolicy(input)
+      )),
+      cancelWorker: (runId, taskId) => localAgentOperationIngress.run(async () => {
         const run = agentOrchestrationStore.getRun(runId);
         const lead = run
           ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId)
@@ -4114,8 +4984,12 @@ app.on('ready', async () => {
         return lead
           ? agentOrchestrationService!.cancelWorker(lead, taskId)
           : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
-      },
-      archiveWorker: async (runId, taskId) => {
+      }).catch(() => ({
+        ok: false,
+        error: 'unavailable',
+        message: 'Agent orchestration is unavailable.',
+      } as const)),
+      archiveWorker: (runId, taskId) => localAgentOperationIngress.run(async () => {
         const run = agentOrchestrationStore.getRun(runId);
         const lead = run
           ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId)
@@ -4123,8 +4997,12 @@ app.on('ready', async () => {
         return lead
           ? agentOrchestrationService!.archiveWorker(lead, taskId)
           : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
-      },
-      stopRun: async (runId) => {
+      }).catch(() => ({
+        ok: false,
+        error: 'unavailable',
+        message: 'Agent orchestration is unavailable.',
+      } as const)),
+      stopRun: (runId) => localAgentOperationIngress.run(async () => {
         const run = agentOrchestrationStore.getRun(runId);
         const lead = run
           ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId)
@@ -4132,8 +5010,14 @@ app.on('ready', async () => {
         return lead
           ? agentOrchestrationService!.stopRun(lead, runId)
           : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
-      },
-      confirmLegacyMigration: () => agentOrchestrationService!.confirmLegacyMigration(),
+      }).catch(() => ({
+        ok: false,
+        error: 'unavailable',
+        message: 'Agent orchestration is unavailable.',
+      } as const)),
+      confirmLegacyMigration: () => localAgentOperationIngress.run(() => (
+        agentOrchestrationService!.confirmLegacyMigration()
+      )),
     } : undefined;
   const deviceRoster = new RemoteDeviceRoster();
   ipcMain.handle('remote:list-devices', () => deviceRoster.list());
@@ -4151,7 +5035,9 @@ app.on('ready', async () => {
       await layoutStore.setRemoteEnabled(enabled);
     },
     waitUntilBridgeReady: async () => {
-      await Promise.all([agentInfrastructureReady, daemonAvailabilityReady, daemonProjectsReady]);
+      daemonAuthorityShutdown.startupSignal.throwIfAborted();
+      await Promise.all([agentInfrastructureReady, daemonAuthorityReady]);
+      daemonAuthorityShutdown.startupSignal.throwIfAborted();
     },
     prepareBridge: async () => {
       // Keep the presentation hint current before auth; it no longer gates
@@ -4174,17 +5060,35 @@ app.on('ready', async () => {
       agentSource: agentActivityService ? {
         getSnapshot: () => agentActivityService!.getSnapshot(),
         onSnapshot: (listener) => agentActivityService!.onSnapshot(listener),
-        sendFollowup: (activityId, text) => agentActivityService!.sendPrompt(activityId, text),
-        decideApproval: (activityId, approvalId, decision) => (
-          agentActivityService!.decideApproval(activityId, approvalId, decision)
-        ),
+        sendFollowup: (activityId, text) => localAgentOperationIngress.run(() => (
+          agentActivityService!.sendPrompt(activityId, text)
+        )).catch(() => ({ ok: false, error: 'delivery-failed' } as const)),
+        decideApproval: (activityId, approvalId, decision) => {
+          const result = localAgentOperationIngress.tryRunSync(() => (
+            agentActivityService!.decideApproval(activityId, approvalId, decision)
+          ));
+          return result.accepted ? result.value : { ok: false, error: 'not-found' } as const;
+        },
       } : undefined,
       agentCoordinationSource: agentCoordinationService && managedMergeService ? {
         getSnapshot: () => agentCoordinationService!.getSnapshot(),
         onSnapshot: (listener) => agentCoordinationService!.onSnapshot(listener),
-        saveProject: (input) => agentCoordinationService!.saveProject(input),
-        markSeen: (activityId, stateSeq) => agentCoordinationService!.markSeen(activityId, stateSeq),
-        decideManagedMerge: (input) => managedMergeService!.decide(input),
+        saveProject: (input) => localAgentOperationIngress.run(() => (
+          agentCoordinationService!.saveProject(input)
+        )),
+        markSeen: (activityId, stateSeq) => {
+          const result = localAgentOperationIngress.tryRunSync(() => (
+            agentCoordinationService!.markSeen(activityId, stateSeq)
+          ));
+          return result.accepted ? result.value : false;
+        },
+        decideManagedMerge: (input) => localAgentOperationIngress.run(() => (
+          managedMergeService!.decide(input)
+        )).catch(() => ({
+          ok: false,
+          error: 'unavailable',
+          message: 'Managed merge is unavailable.',
+        } as const)),
       } : undefined,
       agentOrchestrationSource: remoteAgentOrchestrationSource,
       daemonSource: {
@@ -4217,11 +5121,25 @@ app.on('ready', async () => {
       ?? null
     ),
     openMainWindow: () => {
+      if (appIsQuitting) return;
       daemonRuntime?.openMainWindow();
     },
   });
-  desktopRuntime = runtime;
-  void runtime.initialize().catch(() => undefined);
+  if (daemonAuthorityShutdown.startupSignal.aborted) {
+    void runtime.dispose().catch(() => undefined);
+  } else {
+    // Publish before initialize() yields so the synchronous Quit path always
+    // owns an in-flight bridge. ManagedDesktopRuntime makes dispose/start a
+    // true exclusion barrier; the final signal check covers a late resolve.
+    desktopRuntime = runtime;
+    void runtime.initialize()
+      .finally(async () => {
+        if (!daemonAuthorityShutdown.startupSignal.aborted) return;
+        if (desktopRuntime === runtime) desktopRuntime = null;
+        await runtime.dispose();
+      })
+      .catch(() => undefined);
+  }
 
   // ── OpenClaw management (openclaw-management M1) ─────────────────────────
   // `openclaw`/`openClawService` are constructed earlier (see the mobile
@@ -4289,7 +5207,7 @@ app.on('ready', async () => {
   // via CommandResolver + fs stat, no gateway HTTP/WS traffic. `.unref()`'d
   // so it never keeps the process alive on its own — same pattern as
   // FileService's idle-upload sweep timer (file-service.ts).
-  const openclawVisibilityRecheckTimer = setInterval(() => {
+  openclawVisibilityRecheckTimer = setInterval(() => {
     void (async () => {
       const mode = await layoutStore.getOpenClawMode();
       if (mode !== 'auto') return;
@@ -4418,6 +5336,7 @@ app.on('ready', async () => {
   });
 
   const daemonSettings = await daemonRuntimeReady;
+  assertMainStartupActive();
   if (startedAsDaemon && !daemonSettings.keepRunning) {
     // A stale manually-invoked/OS login argument must not create a surprise
     // background runtime after the preference has been disabled.
@@ -4427,6 +5346,11 @@ app.on('ready', async () => {
   if (!startedAsDaemon) createWindow();
   if (process.env.EZTERMINAL_DISABLE_UPDATE_CHECK !== '1') {
     void appUpdateService.check();
+  }
+    });
+  } catch (error) {
+    if (appIsQuitting || daemonAuthorityShutdown.startupSignal.aborted) return;
+    throw error;
   }
 });
 
@@ -4438,6 +5362,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
+  if (appIsQuitting) return;
   if (BrowserWindow.getAllWindows().length === 0) {
     daemonRuntime?.openMainWindow() ?? createWindow();
     return;

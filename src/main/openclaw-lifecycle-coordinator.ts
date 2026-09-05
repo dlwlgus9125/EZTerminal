@@ -401,6 +401,9 @@ export class OpenClawLifecycleCoordinator {
   private lastSnapshot: OpenClawControlSnapshot | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private readonly listeners = new Set<(snapshot: OpenClawControlSnapshot) => void>();
+  private bootstrapRecovery: Promise<void> | null = null;
+  private disposed = false;
+  private disposePromise: Promise<void> | null = null;
 
   constructor(deps: OpenClawLifecycleCoordinatorDeps) {
     this.controlDirectory = path.join(deps.userDataDirectory, 'openclaw-control');
@@ -420,7 +423,10 @@ export class OpenClawLifecycleCoordinator {
   initialize(): Promise<void> {
     if (!this.initialized) {
       this.initialized = (async () => {
-        await Promise.all([this.intentFile.init(), this.runtimeFile.init()]);
+        // Start sequentially so a first-file failure cannot leave an unowned
+        // sibling initializer writing after initialize() has rejected.
+        await this.intentFile.init();
+        await this.runtimeFile.init();
         try {
           this.physicalStatus = await this.getPhysicalStatus();
           this.physicalStatusObservedAt = this.now().getTime();
@@ -428,14 +434,14 @@ export class OpenClawLifecycleCoordinator {
           this.physicalStatus = { state: 'unknown', port: 18789 };
         }
         const current = await this.readIntent();
-        if (current) {
+        if (current && !this.disposed) {
           this.pendingIntent = current;
-          void this.ensureAndWake().then((result) => {
-            if (!result.ok) this.bootstrapControlIssue = result.issue ?? null;
-            void this.refreshSnapshot();
-          }).catch(() => undefined);
+          this.bootstrapRecovery = this.recoverPendingIntent();
+          void this.bootstrapRecovery.catch(() => undefined);
         }
+        if (this.disposed) return;
         await this.refreshSnapshot();
+        if (this.disposed) return;
         this.pollTimer = setInterval(() => {
           void this.refreshSnapshot();
         }, this.pollMs);
@@ -455,10 +461,15 @@ export class OpenClawLifecycleCoordinator {
     return raw === undefined ? null : validateSnapshot(raw);
   }
 
-  private async ensureAndWake(): Promise<OpenClawSupervisorInstallResult> {
+  private async recoverPendingIntent(): Promise<void> {
     const installed = await this.supervisor.ensureInstalled();
-    if (!installed.ok) return installed;
-    return this.supervisor.wake();
+    // Installation may be a slow PowerShell operation. Once disposal closes
+    // admission, a late completion must not wake the external supervisor.
+    if (this.disposed) return;
+    const result = installed.ok ? await this.supervisor.wake() : installed;
+    if (this.disposed) return;
+    if (!result.ok) this.bootstrapControlIssue = result.issue ?? null;
+    await this.refreshSnapshot();
   }
 
   private mergeSnapshot(runtime: OpenClawControlSnapshot | null): OpenClawControlSnapshot {
@@ -506,6 +517,7 @@ export class OpenClawLifecycleCoordinator {
   }
 
   private emit(snapshot: OpenClawControlSnapshot): void {
+    if (this.disposed) return;
     const serialized = JSON.stringify(snapshot);
     if (this.lastSnapshot && JSON.stringify(this.lastSnapshot) === serialized) return;
     this.lastSnapshot = snapshot;
@@ -653,11 +665,22 @@ export class OpenClawLifecycleCoordinator {
   }
 
   async dispose(): Promise<void> {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+    if (!this.disposePromise) {
+      // Close recovery publication synchronously before awaiting its exact
+      // admitted prefix. This keeps initialize() fast while making shutdown
+      // own a pending supervisor installation attempt.
+      this.disposed = true;
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+      }
+      this.listeners.clear();
+      this.disposePromise = (async () => {
+        await this.initialized?.catch(() => undefined);
+        await this.bootstrapRecovery?.catch(() => undefined);
+        await Promise.all([this.intentFile.flush(), this.runtimeFile.flush()]);
+      })();
     }
-    this.listeners.clear();
-    await Promise.all([this.intentFile.flush(), this.runtimeFile.flush()]);
+    return this.disposePromise;
   }
 }

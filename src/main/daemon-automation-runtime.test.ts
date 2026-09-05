@@ -10,6 +10,7 @@ import {
   type DaemonAgent,
   type DaemonCommand,
   type DaemonCommandType,
+  type DaemonProvider,
   type DaemonSession,
 } from '../shared/daemon-protocol';
 import {
@@ -100,6 +101,26 @@ function agentValue(
     ...(currentTurnId ? { currentTurnId } : {}),
     queuedTurnCount: agent.queuedTurnCount,
     orchestrationEnabled: agent.orchestrationEnabled,
+  };
+}
+
+function providerValue(
+  provider: DaemonProvider,
+  patch: Pick<DaemonProvider, 'enabled' | 'health'>,
+): Omit<DaemonProvider, 'revision' | 'createdAt' | 'updatedAt'> {
+  return {
+    id: provider.id,
+    displayName: provider.displayName,
+    protocol: provider.protocol,
+    executablePath: provider.executablePath,
+    executableVersion: provider.executableVersion,
+    argv: provider.argv,
+    environmentVariableNames: provider.environmentVariableNames,
+    capabilities: provider.capabilities,
+    ...(provider.reviewDigest ? { reviewDigest: provider.reviewDigest } : {}),
+    enabled: patch.enabled,
+    health: patch.health,
+    ...(provider.healthDetail ? { healthDetail: provider.healthDetail } : {}),
   };
 }
 
@@ -286,7 +307,312 @@ async function close(h: Harness): Promise<void> {
   await h.store.close();
 }
 
+async function archiveOwnerProjectOnly(h: Harness): Promise<void> {
+  const project = h.router.getSnapshot().projects.find((entry) => entry.id === 'project-1')!;
+  await h.router.applySystemCommit({ mutations: [{
+    kind: 'project.upsert',
+    value: {
+      id: project.id,
+      name: project.name,
+      rootPath: project.rootPath,
+      source: project.source,
+      archivedAt: '2026-09-04T10:01:00.000Z',
+    },
+  }] });
+}
+
 describe('DaemonAutomationRuntime', () => {
+  it('rejects Schedule work for an active Workspace whose owner Project is archived', async () => {
+    const h = await harness();
+    try {
+      await h.execute('schedule.create', {
+        scheduleId: 'schedule-before-project-archive',
+        name: 'Existing Schedule',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        prompt: 'This must not run after the Project is archived.',
+        cron: '* * * * *',
+        timezone: 'UTC',
+        enabled: false,
+      });
+      await archiveOwnerProjectOnly(h);
+
+      const create = await h.execute('schedule.create', {
+        scheduleId: 'schedule-after-project-archive',
+        name: 'New Schedule',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        prompt: 'This must not target the archived Project.',
+        cron: '* * * * *',
+        timezone: 'UTC',
+        enabled: false,
+      });
+      const runNow = await h.execute('schedule.run-now', {
+        scheduleId: 'schedule-before-project-archive',
+      });
+
+      expect({ create, runNow }).toMatchObject({
+        create: {
+          ok: false,
+          status: 'rejected',
+          error: { code: 'not-found' },
+        },
+        runNow: {
+          ok: false,
+          status: 'rejected',
+          error: { code: 'not-found' },
+        },
+      });
+      expect(h.router.getScheduleRuns()).toEqual([]);
+    } finally {
+      await close(h);
+    }
+  });
+
+  it('rejects enabling a Schedule after its owner Project is archived', async () => {
+    const h = await harness();
+    try {
+      await h.execute('schedule.create', {
+        scheduleId: 'revoked-schedule',
+        name: 'Revoked Schedule',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        prompt: 'This must stay disabled.',
+        cron: '* * * * *',
+        timezone: 'UTC',
+        enabled: false,
+      });
+      await archiveOwnerProjectOnly(h);
+
+      await expect(h.execute('schedule.update', {
+        scheduleId: 'revoked-schedule',
+        enabled: true,
+      })).resolves.toMatchObject({
+        ok: false,
+        status: 'rejected',
+        error: { code: 'not-found' },
+      });
+      expect(h.router.getSnapshot().schedules[0]).toMatchObject({
+        id: 'revoked-schedule',
+        enabled: false,
+        runCount: 0,
+      });
+      expect(h.router.getSnapshot().schedules[0]).not.toHaveProperty('nextRunAt');
+    } finally {
+      await close(h);
+    }
+  });
+
+  it('disables a due Schedule and terminalizes its queued cursor when its owner is archived', async () => {
+    const executeCommand = vi.fn(async (command: DaemonCommand) => ({
+      ok: false as const,
+      status: 'rejected' as const,
+      commandId: command.commandId,
+      revision: command.expectedRevision,
+      error: {
+        code: 'not-found' as const,
+        message: 'Active Workspace was not found.',
+        retryable: false,
+      },
+    }));
+    const h = await harness({ executeCommand });
+    try {
+      await h.execute('schedule.create', {
+        scheduleId: 'revoked-schedule',
+        name: 'Revoked Schedule',
+        workspaceId: 'workspace-1',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        prompt: 'This must not dispatch.',
+        cron: '* * * * *',
+        timezone: 'UTC',
+        enabled: true,
+      });
+      await h.execute('schedule.run-now', { scheduleId: 'revoked-schedule' });
+      expect(h.router.getScheduleRuns(['queued'])).toHaveLength(1);
+      await archiveOwnerProjectOnly(h);
+      h.setNow('2026-09-04T10:10:00.000Z');
+
+      await h.runtime.start();
+
+      expect({
+        schedule: h.router.getSnapshot().schedules[0],
+        runs: h.router.getScheduleRuns(),
+        dispatchCount: executeCommand.mock.calls.length,
+        timerDelays: h.timers.delays(),
+      }).toMatchObject({
+        schedule: {
+          id: 'revoked-schedule',
+          enabled: false,
+          runCount: 1,
+        },
+        runs: [expect.objectContaining({
+          scheduleId: 'revoked-schedule',
+          state: 'failed',
+          finishedAt: '2026-09-04T10:10:00.000Z',
+          errorCode: 'not-found',
+        })],
+        dispatchCount: 0,
+        timerDelays: [],
+      });
+      expect(h.router.getSnapshot().schedules[0]).not.toHaveProperty('nextRunAt');
+    } finally {
+      await close(h);
+    }
+  });
+
+  it('atomically retires disabled and unhealthy provider Schedules without stale dispatch', async () => {
+    const executeCommand = vi.fn(async (command: DaemonCommand) => ({
+      ok: false as const,
+      status: 'rejected' as const,
+      commandId: command.commandId,
+      revision: command.expectedRevision,
+      error: {
+        code: 'provider-unavailable' as const,
+        message: 'The Schedule provider is not ready.',
+        retryable: true,
+      },
+    }));
+    const h = await harness({ executeCommand });
+    try {
+      const codex = h.router.getSnapshot().providers[0]!;
+      await h.router.applySystemCommit({ mutations: [{
+        kind: 'provider.upsert',
+        value: { ...providerValue(codex, { enabled: true, health: 'ready' }), id: 'claude' },
+      }] });
+      await h.runtime.start();
+      for (const [scheduleId, providerId] of [
+        ['disabled-provider-schedule', 'codex'],
+        ['unhealthy-provider-schedule', 'claude'],
+      ] as const) {
+        await h.execute('schedule.create', {
+          scheduleId,
+          name: scheduleId,
+          workspaceId: 'workspace-1',
+          providerId,
+          permissionPreset: 'standard',
+          prompt: 'Do not dispatch stale provider work.',
+          cron: '* * * * *',
+          timezone: 'UTC',
+          enabled: true,
+        });
+      }
+      const runningSessionId = stableId('scheduled-agent', 'provider-running-run');
+      await h.execute('agent.create', {
+        sessionId: runningSessionId,
+        workspaceId: 'workspace-1',
+        title: 'Existing running audit',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Keep this running record intact.',
+      });
+      await h.router.applySystemCommit({ mutations: [
+        { kind: 'schedule-run.upsert', value: {
+          id: 'disabled-provider-queued-run',
+          scheduleId: 'disabled-provider-schedule',
+          state: 'queued',
+          scheduledFor: '2026-09-04T10:00:00.000Z',
+        } },
+        { kind: 'schedule-run.upsert', value: {
+          id: 'unhealthy-provider-queued-run',
+          scheduleId: 'unhealthy-provider-schedule',
+          state: 'queued',
+          scheduledFor: '2026-09-04T10:00:00.000Z',
+        } },
+        { kind: 'schedule-run.upsert', value: {
+          id: 'provider-running-run',
+          scheduleId: 'disabled-provider-schedule',
+          sessionId: runningSessionId,
+          state: 'running',
+          scheduledFor: '2026-09-04T09:58:00.000Z',
+          startedAt: '2026-09-04T09:58:01.000Z',
+        } },
+        { kind: 'schedule-run.upsert', value: {
+          id: 'provider-completed-audit',
+          scheduleId: 'disabled-provider-schedule',
+          state: 'completed',
+          scheduledFor: '2026-09-04T09:55:00.000Z',
+          startedAt: '2026-09-04T09:55:01.000Z',
+          finishedAt: '2026-09-04T09:55:30.000Z',
+          summary: 'Preserved audit record.',
+        } },
+      ] });
+      const providers = h.router.getSnapshot().providers;
+      await h.router.applySystemCommit({ mutations: [
+        { kind: 'provider.upsert', value: providerValue(
+          providers.find((provider) => provider.id === 'codex')!,
+          { enabled: false, health: 'ready' },
+        ) },
+        { kind: 'provider.upsert', value: providerValue(
+          providers.find((provider) => provider.id === 'claude')!,
+          { enabled: true, health: 'unavailable' },
+        ) },
+      ] });
+      h.setNow('2026-09-04T10:10:00.000Z');
+
+      h.runtime.notifyAuthorityChanged();
+      h.timers.next().callback();
+      await flush();
+
+      expect(h.router.getSnapshot().schedules).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'disabled-provider-schedule', enabled: false, runCount: 0 }),
+        expect.objectContaining({ id: 'unhealthy-provider-schedule', enabled: false, runCount: 0 }),
+      ]));
+      for (const schedule of h.router.getSnapshot().schedules) expect(schedule).not.toHaveProperty('nextRunAt');
+      expect(h.router.getScheduleRuns()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'disabled-provider-queued-run',
+          state: 'failed',
+          finishedAt: '2026-09-04T10:10:00.000Z',
+          errorCode: 'provider-unavailable',
+        }),
+        expect.objectContaining({
+          id: 'unhealthy-provider-queued-run',
+          state: 'failed',
+          errorCode: 'provider-unavailable',
+        }),
+        expect.objectContaining({
+          id: 'provider-running-run',
+          state: 'running',
+          startedAt: '2026-09-04T09:58:01.000Z',
+        }),
+        expect.objectContaining({
+          id: 'provider-completed-audit',
+          state: 'completed',
+          summary: 'Preserved audit record.',
+        }),
+      ]));
+      expect(h.router.getScheduleRuns()).toHaveLength(4);
+      expect(executeCommand).not.toHaveBeenCalled();
+
+      for (let tick = 0; tick < 2; tick += 1) {
+        h.runtime.notifyAuthorityChanged();
+        h.timers.next().callback();
+        await flush();
+      }
+      const unavailableProviders = h.router.getSnapshot().providers;
+      await h.router.applySystemCommit({ mutations: unavailableProviders.map((provider) => ({
+        kind: 'provider.upsert' as const,
+        value: providerValue(provider, { enabled: true, health: 'ready' }),
+      })) });
+      for (const scheduleId of ['disabled-provider-schedule', 'unhealthy-provider-schedule']) {
+        await expect(h.execute('schedule.update', { scheduleId, enabled: true }))
+          .resolves.toMatchObject({ ok: true });
+      }
+      h.runtime.notifyAuthorityChanged();
+      h.timers.next().callback();
+      await flush();
+
+      expect(h.router.getScheduleRuns()).toHaveLength(4);
+      expect(executeCommand).not.toHaveBeenCalled();
+    } finally {
+      await close(h);
+    }
+  });
+
   it('fails closed when enabled automation lacks keep-running plus start-at-login', async () => {
     const h = await harness({ daemonEnabled: false });
     await h.seedAgent();

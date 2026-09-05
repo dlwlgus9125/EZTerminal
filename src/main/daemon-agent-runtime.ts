@@ -36,6 +36,7 @@ import {
   MAX_TRANSCRIPT_BATCH_UTF8_BYTES,
 } from './daemon-store';
 import { AgentProviderRegistry } from './agent-provider-registry';
+import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 
 type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.create'
@@ -550,9 +551,7 @@ export class DaemonAgentRuntime {
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.create') return commandError('invalid-command', 'Unexpected Agent create command.');
     const { snapshot } = context;
-    const workspace = snapshot.workspaces.find((entry) => (
-      entry.id === command.payload.workspaceId && !entry.archivedAt
-    ));
+    const workspace = findActiveDaemonWorkspace(snapshot, command.payload.workspaceId);
     if (!workspace) return commandError('not-found', 'Active Workspace was not found.');
     if (snapshot.sessions.some((entry) => entry.id === command.payload.sessionId)) {
       return commandError('invalid-state', 'Session already exists.');
@@ -619,9 +618,7 @@ export class DaemonAgentRuntime {
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.resume') return commandError('invalid-command', 'Unexpected Agent resume command.');
     const { snapshot } = context;
-    const workspace = snapshot.workspaces.find((entry) => (
-      entry.id === command.payload.workspaceId && !entry.archivedAt
-    ));
+    const workspace = findActiveDaemonWorkspace(snapshot, command.payload.workspaceId);
     if (!workspace) return commandError('not-found', 'Active Workspace was not found.');
     if (snapshot.sessions.some((entry) => entry.id === command.payload.sessionId)) {
       return commandError('invalid-state', 'Session already exists.');
@@ -729,6 +726,10 @@ export class DaemonAgentRuntime {
     const agent = snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
     if (!session || !agent || session.kind !== 'agent') {
       return commandError('not-found', 'Agent Session was not found.');
+    }
+    const workspace = findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId);
+    if (!workspace) {
+      return commandError('not-found', 'Active Workspace was not found.');
     }
     if (['archived', 'done', 'interrupted', 'error'].includes(agent.state)) {
       return commandError('invalid-state', 'Agent Session is not available for a new turn.');
@@ -1435,7 +1436,7 @@ export class DaemonAgentRuntime {
         if (!turn) return undefined;
         const agent = snapshot.agents.find((entry) => entry.sessionId === turn.sessionId)!;
         const session = snapshot.sessions.find((entry) => entry.id === turn.sessionId)!;
-        const workspace = snapshot.workspaces.find((entry) => entry.id === session.workspaceId);
+        const workspace = findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId);
         const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
         const prompt = this.promptForTurn(turn);
         if (!workspace || !provider.ok || !prompt) {
@@ -2026,9 +2027,13 @@ export class DaemonAgentRuntime {
     await this.transition((snapshot) => {
       const parent = snapshot.sessions.find((entry) => entry.id === event.sessionId);
       const parentAgent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+      const workspace = parent
+        ? findActiveDaemonWorkspace(snapshot, parent.workspaceId, parent.projectId)
+        : undefined;
       if (
         !parent
         || !parentAgent
+        || !workspace
         || parentAgent.providerId !== providerId
         || parent.archivedAt !== undefined
       ) {
@@ -2560,7 +2565,7 @@ export class DaemonAgentRuntime {
     const session = snapshot.sessions.find((entry) => entry.id === sessionId);
     const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
     const workspace = session
-      ? snapshot.workspaces.find((entry) => entry.id === session.workspaceId)
+      ? findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId)
       : undefined;
     if (
       !session
@@ -2588,12 +2593,23 @@ export class DaemonAgentRuntime {
         providerSessionId: agent.providerSessionId,
       }, this.lifecycleAbortController.signal);
       if (!isCurrent()) return;
+      let attached = false;
       await this.transition((fresh) => {
         if (!isCurrent()) return undefined;
         const currentAgent = fresh.agents.find((entry) => entry.sessionId === sessionId);
         const currentSession = fresh.sessions.find((entry) => entry.id === sessionId);
-        if (!currentAgent || !currentSession || TERMINAL_SESSION_STATES.has(currentSession.state)) return undefined;
+        const currentWorkspace = currentSession
+          ? findActiveDaemonWorkspace(fresh, currentSession.workspaceId, currentSession.projectId)
+          : undefined;
+        if (
+          !currentAgent
+          || !currentSession
+          || !currentWorkspace
+          || TERMINAL_AGENT_STATES.has(currentAgent.state)
+          || TERMINAL_SESSION_STATES.has(currentSession.state)
+        ) return undefined;
         const hasCurrent = currentAgent.currentTurnId !== undefined;
+        attached = true;
         return { mutations: [
           { kind: 'agent.upsert', value: agentInput(currentAgent, {
             providerSessionId: handle.providerSessionId,
@@ -2607,6 +2623,9 @@ export class DaemonAgentRuntime {
           }] : []),
         ] };
       });
+      if (!attached) {
+        await this.disposeProviderSession(provider.value, sessionId, handle.providerSessionId);
+      }
     } catch (error) {
       if (!isCurrent()) return;
       await this.markSessionDeliveryUncertain(

@@ -115,6 +115,18 @@ export interface ProjectRootDescriptor {
 
 export type ProjectWorkspaceKind = 'root' | 'main' | 'managed' | 'external';
 export type ProjectWorkspaceAccess = 'granted' | 'authorization-required' | 'unavailable';
+export type ProjectWorkspaceRootDiscovery =
+  | { readonly rootId: string; readonly status: 'complete' }
+  | {
+      readonly rootId: string;
+      readonly status: 'unavailable';
+      readonly error: 'not-a-repository' | 'git-failed' | 'io-error' | 'unsupported';
+    };
+
+/** Per registered root provenance for daemon authority reconciliation. */
+export interface ProjectWorkspaceDiscovery {
+  readonly roots: readonly ProjectWorkspaceRootDiscovery[];
+}
 
 /**
  * One concrete checkout that can be inspected beneath a registered Agent
@@ -140,6 +152,11 @@ export interface ProjectWorkspaceDescriptor {
   readonly roots: readonly ProjectRootDescriptor[];
   /** Present on the desktop descriptor; optional for protocol/test fixtures created before v2. */
   readonly workspaces?: readonly ProjectWorkspaceLocationDescriptor[];
+  /**
+   * Which roots have an authoritative worktree set for revoking stale daemon
+   * capabilities. Omitted legacy descriptors may add/update but never prune.
+   */
+  readonly workspaceDiscovery?: ProjectWorkspaceDiscovery;
 }
 
 export type ProjectWorkspaceDescriptorResult =

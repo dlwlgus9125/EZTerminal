@@ -4,6 +4,8 @@ export interface BeforeQuitEvent {
 
 export interface GracefulShutdownTask {
   readonly name: string;
+  /** Named cleanup tasks that must settle before this task starts. */
+  readonly after?: readonly string[];
   readonly run: () => void | Promise<void>;
 }
 
@@ -58,16 +60,58 @@ export class GracefulShutdownCoordinator {
   }
 
   private startDrain(): void {
-    const pendingTasks = this.options.tasks.map((task) => {
-      try {
-        return Promise.resolve(task.run()).catch((error: unknown) => {
-          this.report(`shutdown task "${task.name}" failed`, error);
-        });
-      } catch (error) {
-        this.report(`shutdown task "${task.name}" failed`, error);
-        return Promise.resolve();
+    const tasksByName = new Map<string, GracefulShutdownTask>();
+    let dependencyGraphValid = true;
+    try {
+      for (const task of this.options.tasks) {
+        if (tasksByName.has(task.name)) throw new Error(`Duplicate shutdown task name: ${task.name}`);
+        tasksByName.set(task.name, task);
       }
-    });
+      const states = new Map<string, 'visiting' | 'visited'>();
+      const visit = (task: GracefulShutdownTask): void => {
+        const state = states.get(task.name);
+        if (state === 'visited') return;
+        if (state === 'visiting') throw new Error(`Cyclic shutdown task dependency: ${task.name}`);
+        states.set(task.name, 'visiting');
+        for (const dependencyName of task.after ?? []) {
+          const dependency = tasksByName.get(dependencyName);
+          if (!dependency) throw new Error(`Unknown shutdown task dependency: ${dependencyName}`);
+          visit(dependency);
+        }
+        states.set(task.name, 'visited');
+      };
+      for (const task of this.options.tasks) visit(task);
+    } catch (error) {
+      dependencyGraphValid = false;
+      this.report('shutdown task dependency graph invalid', error);
+    }
+
+    const pendingTasks: Promise<void>[] = [];
+    if (dependencyGraphValid) {
+      const started = new Map<string, Promise<void>>();
+      const start = (task: GracefulShutdownTask): Promise<void> => {
+        const existing = started.get(task.name);
+        if (existing) return existing;
+        const dependencies = (task.after ?? []).map((name) => start(tasksByName.get(name)!));
+        const pending = dependencies.length === 0
+          ? this.runTask(task)
+          : Promise.all(dependencies).then(() => this.runTask(task));
+        started.set(task.name, pending);
+        return pending;
+      };
+      for (const task of this.options.tasks) pendingTasks.push(start(task));
+    } else {
+      // A malformed static graph must not strand cleanup or reintroduce unsafe
+      // parallelism. Fall back to the declared order and retain the diagnostic.
+      let previous: Promise<void> | null = null;
+      for (const task of this.options.tasks) {
+        const pending: Promise<void> = previous
+          ? previous.then(() => this.runTask(task))
+          : this.runTask(task);
+        pendingTasks.push(pending);
+        previous = pending;
+      }
+    }
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const tasksSettled = Promise.all(pendingTasks).then(() => 'settled' as const);
@@ -91,5 +135,16 @@ export class GracefulShutdownCoordinator {
         this.report('continuing application quit failed', error);
       }
     });
+  }
+
+  private runTask(task: GracefulShutdownTask): Promise<void> {
+    try {
+      return Promise.resolve(task.run()).catch((error: unknown) => {
+        this.report(`shutdown task "${task.name}" failed`, error);
+      });
+    } catch (error) {
+      this.report(`shutdown task "${task.name}" failed`, error);
+      return Promise.resolve();
+    }
   }
 }

@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "id": "workbench-lifecycle",
   "type": "lifecycle",
-  "title": "Local Agent authority lifecycle",
-  "summary": "How the Electron-owned structured Agent authority verifies and recovers durable state, remains usable without a window, fails closed into terminal-only safe mode, and drains before SQLite closes.",
+  "title": "Main-owned authority lifecycle",
+  "summary": "How Electron verifies SQLite and consent, recovers Project authority before providers, owns late startup and OpenClaw recovery across Quit, remains windowless, and drains accepted work before close.",
   "contentLocale": "en",
   "layoutIntent": {
     "density": "balanced",
@@ -21,7 +21,7 @@
     {
       "id": "crash-safe-startup",
       "title": "Crash-safe startup",
-      "summary": "Existing material is contained, backed up when required, migrated, and reconciled before structured clients can observe ready state.",
+      "summary": "Existing SQLite and consent material is contained, migrated, reconciled, and replayed before structured clients or providers can observe ready state.",
       "focusIds": ["persisted-material", "verifying-store", "authority-ready", "start-verification", "verification-ready"]
     },
     {
@@ -39,7 +39,7 @@
     {
       "id": "ordered-shutdown",
       "title": "Ordered shutdown",
-      "summary": "Quit closes ingress, drains accepted commands and automation, persists Agent termination when legal, releases providers and MCP, then closes the store.",
+      "summary": "Quit closes authority, main startup, and local mutation ingress, then dependency-orders Agent, OpenClaw, desktop, and SQLite cleanup behind their accepted work.",
       "focusIds": ["authority-ready", "terminal-only-safe-mode", "draining-authority", "closed", "drain-and-close"]
     }
   ],
@@ -54,23 +54,33 @@
     {
       "id": "persisted-material",
       "label": "Persisted daemon material",
-      "detail": "SQLite, WAL sidecars, and named legacy sources remain under one contained user-data recovery boundary.",
+      "detail": "SQLite, WAL sidecars, the atomic external Workspace consent journal, and named legacy sources remain under contained user-data recovery boundaries.",
       "kind": "initial",
       "phase": "durable-input",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-store-recovery.ts",
-        "startLine": 141,
-        "endLine": 163,
-        "lineDigest": "sha256:454816cb33df049acd88de0f69a9c4eca1e1bb7959aaa303d50d45fb36acf3c3",
-        "claim": "DaemonStoreRecovery owns the contained filesystem boundary for exact SQLite material and explicitly named legacy inputs."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store-recovery.ts",
+          "startLine": 141,
+          "endLine": 163,
+          "lineDigest": "sha256:454816cb33df049acd88de0f69a9c4eca1e1bb7959aaa303d50d45fb36acf3c3",
+          "claim": "DaemonStoreRecovery owns the contained filesystem boundary for exact SQLite material and explicitly named legacy inputs."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-access-store.ts",
+          "startLine": 39,
+          "endLine": 54,
+          "lineDigest": "sha256:bfc43538c2731bb11ea0ea2c0eff09c7741c53ef8504bc5d7193823729f2ec4a",
+          "claim": "The bounded v2 access file stores committed grants and pending approval or revocation intents together in the same atomic JSON material."
+        }
+      ]
     },
     {
       "id": "verifying-store",
       "label": "Verifying and recovering store",
-      "detail": "Containment, integrity, backup, schema migration, and uncertain-command recovery must finish before the store becomes ready.",
+      "detail": "Containment, integrity, backup, schema migration, uncertain-command recovery, and consent-journal validation must finish before the authority can become ready.",
       "kind": "transient",
       "phase": "startup",
       "order": 0,
@@ -90,13 +100,21 @@
           "endLine": 735,
           "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
           "claim": "The store opens with strict SQLite options, enables WAL and full synchronization, migrates, recovers uncertain commands, then marks itself ready."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-access-store.ts",
+          "startLine": 138,
+          "endLine": 175,
+          "lineDigest": "sha256:f6a913456be77dcfce191338284ef7b7c392900a120a98541e8491789ea5cfa8",
+          "claim": "Consent validation bounds entries and intents, rejects inconsistent revocations, and migrates a valid v1 grant file to an empty v2 pending list."
         }
       ]
     },
     {
       "id": "authority-ready",
       "label": "Structured authority ready",
-      "detail": "The router, session MCP, provider state machine, automation, and revisioned projections are live; the workbench is only one client.",
+      "detail": "Pending Workspace consent has recovered and Project sync has settled before the router, shared ownership gate, Project FIFO, MCP, Agents, and automation become live.",
       "kind": "steady",
       "phase": "active",
       "order": 0,
@@ -104,18 +122,26 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1029,
-          "endLine": 1059,
-          "lineDigest": "sha256:fdd2c92535cc7ba2e69b4cf10d4632f36b796d7949d2fb67345d974a4c8cd370",
-          "claim": "Only after store and lifecycle initialization does main synchronize settings, start MCP, rehydrate Agents, start automation, and bind shutdown to startup."
+          "startLine": 1895,
+          "endLine": 2003,
+          "lineDigest": "sha256:03f1aba48b3bf268a0b11e39ea3881a618078ecd4621a2b6fa0210a9201d5ee7",
+          "claim": "Main recovers pending consent and synchronizes Projects before the ordered MCP, Agent, and automation startup publishes ready availability and binds the exact shutdown barrier."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 335,
-          "endLine": 353,
+          "startLine": 336,
+          "endLine": 354,
           "lineDigest": "sha256:d3a345787b078d0f1879d601daa0ddbc9b4ebf9fbf168f73cb1649a33a4ebee2",
           "claim": "Agent startup restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, reconciles unsettled work, and rearms durable timeouts."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 1474,
+          "endLine": 1507,
+          "lineDigest": "sha256:4aa5ef82af26651b2557828ce4eca703a91ab92700f343749c0170c62f888d58",
+          "claim": "The Project-operation FIFO rejects new work after shutdown begins, preserves its exact accepted prefix, and serializes both successful and failed predecessors."
         }
       ]
     },
@@ -138,16 +164,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1680,
-          "endLine": 1740,
+          "startLine": 2231,
+          "endLine": 2291,
           "lineDigest": "sha256:280a21b85ec8a437bf3965ce096c35d87e40b98403840e2cc2a19256181020de",
           "claim": "Desktop clients can still read availability, while structured snapshot and command paths return unavailable or reject with the terminal-only safe-mode reason."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 801,
-          "endLine": 809,
+          "startLine": 1994,
+          "endLine": 2002,
           "lineDigest": "sha256:3af45fffdc9e0a0cb7de49d6d5a9d989d64a1e1bd62f11f4f154a16dc7c4e3e9",
           "claim": "Main reports structured authority failure as a terminal-preserving safe mode rather than failing the entire desktop runtime."
         }
@@ -172,23 +198,41 @@
     {
       "id": "draining-authority",
       "label": "Ingress closed and draining",
-      "detail": "New commands and provider probes stop synchronously while accepted FIFO work, startup, automation, Agents, and MCP settle exactly once.",
+      "detail": "Quit closes authority, main-owned startup, and local mutation ingress synchronously; accepted Project, Agent, automation, provider, and recovery work drains once.",
       "kind": "transient",
       "phase": "shutdown",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-authority-shutdown.ts",
-        "startLine": 51,
-        "endLine": 121,
-        "lineDigest": "sha256:9b724b873c5c9f60d474bd52e46094e78a521131816b33779119b33be2f432a7",
-        "claim": "The idempotent authority barrier closes command, provider, and Agent ingress first, then drains automation, startup, Agent persistence, and both early and late MCP instances."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-shutdown.ts",
+          "startLine": 51,
+          "endLine": 129,
+          "lineDigest": "sha256:7b0f113e1f64d2a919556a75497ffd2d4bb4353f859ed06caeb81237a47bdef4",
+          "claim": "The idempotent authority barrier aborts late startup, closes command, provider, and Agent ingress, then drains automation, startup, Agent persistence, and both early and late MCP instances."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/owned-startup-barrier.ts",
+          "startLine": 15,
+          "endLine": 52,
+          "lineDigest": "sha256:d04882278594f78e5c3c99549ec61940b4aea92a9babb2c9dced636731658d2c",
+          "claim": "The main-owned startup barrier rejects late publication through abort checkpoints, drains admitted startup, and releases tracked subscriptions afterward."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/local-mutation-ingress.ts",
+          "startLine": 40,
+          "endLine": 113,
+          "lineDigest": "sha256:0e578b8378b6286fce614149b5c662960a01b4ff96eed43ffbf9ae440bee09b1",
+          "claim": "Local mutation ingress closes synchronously, aborts cancellable work, denies later admission, and resolves one stable drain after every accepted callback settles."
+        }
+      ]
     },
     {
       "id": "closed",
       "label": "Authority and SQLite closed",
-      "detail": "The store closes only after the exact authority barrier and concurrent desktop writers have drained.",
+      "detail": "Normal SQLite close waits exact writer drains; the process exit gate also bounds dependency-ordered cleanup while OpenClaw recovery is owned through disposal.",
       "kind": "terminal",
       "phase": "shutdown",
       "order": 1,
@@ -204,10 +248,18 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2695,
-          "endLine": 2710,
-          "lineDigest": "sha256:aa437f98c2e76f4d992109e9dc470119ad29dcd1da8867704728ddc0e9161f68",
-          "claim": "Main joins the authority, daemon runtime, and desktop-file drains before removing event fanout and closing DaemonStore."
+          "startLine": 3274,
+          "endLine": 3424,
+          "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
+          "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/openclaw-lifecycle-coordinator.ts",
+          "startLine": 667,
+          "endLine": 685,
+          "lineDigest": "sha256:1e71db1162647795cc761cb1f8abb20ee2be3e34b6662ac0706d0f442fa254b6",
+          "claim": "OpenClaw disposal closes publication synchronously, awaits initialization and pending bootstrap recovery, then flushes both atomic control files."
         }
       ]
     }
@@ -239,10 +291,10 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1029,
-        "endLine": 1059,
-        "lineDigest": "sha256:fdd2c92535cc7ba2e69b4cf10d4632f36b796d7949d2fb67345d974a4c8cd370",
-        "claim": "Successful database and lifecycle initialization gates the ordered start of every structured Agent runtime."
+        "startLine": 1895,
+        "endLine": 2003,
+        "lineDigest": "sha256:03f1aba48b3bf268a0b11e39ea3881a618078ecd4621a2b6fa0210a9201d5ee7",
+        "claim": "Successful database, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
       }]
     },
     {
@@ -255,10 +307,10 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 791,
-        "endLine": 813,
-        "lineDigest": "sha256:2a14682304e2ef5c5ce8df40c7ee754de98eb80526eaa876d384212b3d8eb4c2",
-        "claim": "A rejected store initialization is converted once into process-lifetime safe-mode availability and logged without blocking legacy store initialization."
+        "startLine": 1987,
+        "endLine": 2002,
+        "lineDigest": "sha256:3d781ac239406fc6562df5790dbc60b6ad32f0d3c342c06d302931b722aa1e08",
+        "claim": "Any rejected structured-authority preflight or startup becomes one process-lifetime safe-mode availability record and is logged while legacy terminals remain enabled."
       }]
     },
     {
@@ -302,11 +354,11 @@
       "event": "explicit Quit",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/main/daemon-authority-shutdown.ts",
-        "startLine": 85,
-        "endLine": 114,
-        "lineDigest": "sha256:073e4e320ef33375b25d51f9f6dfefaaaddb539cf98817ce1516e704f1e3b3a0",
-        "claim": "Quit immediately closes external ingress and begins Agent shutdown before awaiting the exact drain sequence."
+        "relativePath": "src/main/main.ts",
+        "startLine": 3284,
+        "endLine": 3324,
+        "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
+        "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
       }]
     },
     {
@@ -348,14 +400,32 @@
       "label": "close after exact barrier",
       "kind": "primary",
       "event": "all writers settle",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-authority-shutdown.ts",
-        "startLine": 14,
-        "endLine": 29,
-        "lineDigest": "sha256:f5cd800a4da4e07cb4831e995d77b0abe37ecefb31e2b96d51be51ea5e061a54",
-        "claim": "SQLite closure cannot run until the authoritative stop promise and all concurrent writer drains resolve."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-shutdown.ts",
+          "startLine": 14,
+          "endLine": 29,
+          "lineDigest": "sha256:f5cd800a4da4e07cb4831e995d77b0abe37ecefb31e2b96d51be51ea5e061a54",
+          "claim": "SQLite closure cannot run until the authoritative stop promise and all concurrent writer drains resolve."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/graceful-shutdown.ts",
+          "startLine": 62,
+          "endLine": 137,
+          "lineDigest": "sha256:64ddebd950773c077601e0d65f349972efe21df42402c245efd6da4f11841e5b",
+          "claim": "Shutdown validates and runs named task dependencies, falls back to declared order for an invalid graph, and opens the exit gate after completion or its bounded timeout."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 3274,
+          "endLine": 3424,
+          "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
+          "claim": "Main closes ingress first, drains main startup and local mutations, and orders OpenClaw and desktop cleanup while DaemonStore awaits the exact authority and concurrent writer barrier."
+        }
+      ]
     }
   ],
   "initialState": "persisted-material"

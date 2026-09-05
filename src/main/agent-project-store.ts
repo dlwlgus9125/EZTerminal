@@ -137,6 +137,21 @@ function projectIdForRoot(primaryRoot: string): string {
   return createHash('sha256').update(pathKey(primaryRoot)).digest('hex').slice(0, 24);
 }
 
+function projectSnapshotFingerprint(snapshot: AgentProjectFile): string {
+  return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+}
+
+export interface AgentProjectUpsertPreparation {
+  readonly project: StoredAgentProject;
+  readonly previousProject?: StoredAgentProject;
+  readonly expectedSnapshotFingerprint: string;
+  readonly existingIndex: number;
+}
+
+export type AgentProjectUpsertPreparationResult =
+  | { readonly ok: true; readonly preparation: AgentProjectUpsertPreparation }
+  | { readonly ok: false; readonly reason: 'invalid' | 'not-found' | 'duplicate' };
+
 export class AgentProjectStore {
   private readonly file: JsonFile;
   private snapshot: AgentProjectFile = EMPTY_FILE;
@@ -169,9 +184,26 @@ export class AgentProjectStore {
   }
 
   async upsert(input: AgentProjectInput): Promise<
-    | { readonly ok: true; readonly project: StoredAgentProject }
+    | {
+        readonly ok: true;
+        readonly project: StoredAgentProject;
+        readonly previousProject?: StoredAgentProject;
+      }
     | { readonly ok: false; readonly reason: 'invalid' | 'not-found' | 'duplicate' }
   > {
+    const prepared = await this.prepareUpsert(input);
+    if (!prepared.ok) return prepared;
+    const committed = await this.commitPreparedUpsert(prepared.preparation);
+    return committed.ok
+      ? {
+          ok: true,
+          project: committed.project,
+          ...(committed.previousProject ? { previousProject: committed.previousProject } : {}),
+        }
+      : { ok: false, reason: 'invalid' };
+  }
+
+  async prepareUpsert(input: AgentProjectInput): Promise<AgentProjectUpsertPreparationResult> {
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     if (
       name.length === 0
@@ -226,13 +258,45 @@ export class AgentProjectStore {
       if (existingIndex < 0 && current.length >= MAX_AGENT_PROJECTS) {
         return { ok: false, reason: 'invalid' };
       }
-      const projects = [...current];
-      if (existingIndex >= 0) projects.splice(existingIndex, 1, project);
-      else projects.push(project);
+      const previousProject = existingIndex >= 0 ? current[existingIndex] : undefined;
+      return {
+        ok: true,
+        preparation: {
+          project,
+          ...(previousProject ? { previousProject } : {}),
+          expectedSnapshotFingerprint: projectSnapshotFingerprint(this.snapshot),
+          existingIndex,
+        },
+      };
+    });
+  }
+
+  commitPreparedUpsert(preparation: AgentProjectUpsertPreparation): Promise<
+    | {
+        readonly ok: true;
+        readonly project: StoredAgentProject;
+        readonly previousProject?: StoredAgentProject;
+      }
+    | { readonly ok: false; readonly reason: 'stale' }
+  > {
+    return this.file.enqueue(async () => {
+      if (projectSnapshotFingerprint(this.snapshot) !== preparation.expectedSnapshotFingerprint) {
+        return { ok: false, reason: 'stale' } as const;
+      }
+      const projects = [...this.snapshot.projects];
+      if (preparation.existingIndex >= 0) {
+        projects.splice(preparation.existingIndex, 1, preparation.project);
+      } else {
+        projects.push(preparation.project);
+      }
       const next: AgentProjectFile = { version: 3, projects };
       await this.file.writeAtomic(JSON.stringify(next));
       this.snapshot = next;
-      return { ok: true, project };
+      return {
+        ok: true,
+        project: preparation.project,
+        ...(preparation.previousProject ? { previousProject: preparation.previousProject } : {}),
+      } as const;
     });
   }
 

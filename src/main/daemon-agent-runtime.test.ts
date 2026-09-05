@@ -238,7 +238,261 @@ async function harness(options: {
   };
 }
 
+type RuntimeHarness = Awaited<ReturnType<typeof harness>>;
+
+async function archiveWorkspaceOrProject(
+  h: RuntimeHarness,
+  owner: 'Workspace' | 'Project',
+): Promise<void> {
+  if (owner === 'Workspace') {
+    const workspace = h.router.getSnapshot().workspaces.find((entry) => entry.id === 'workspace-1')!;
+    await h.router.applySystemCommit({ mutations: [{
+      kind: 'workspace.upsert',
+      value: {
+        id: workspace.id,
+        projectId: workspace.projectId,
+        name: workspace.name,
+        kind: workspace.kind,
+        rootPath: workspace.rootPath,
+        archivedAt: '2026-09-04T10:01:00.000Z',
+      },
+    }] });
+    return;
+  }
+  const project = h.router.getSnapshot().projects.find((entry) => entry.id === 'project-1')!;
+  await h.router.applySystemCommit({ mutations: [{
+    kind: 'project.upsert',
+    value: {
+      id: project.id,
+      name: project.name,
+      rootPath: project.rootPath,
+      source: project.source,
+      archivedAt: '2026-09-04T10:01:00.000Z',
+    },
+  }] });
+}
+
 describe('DaemonAgentRuntime', () => {
+  it.each(['Workspace', 'Project'] as const)(
+    'ignores provider-native child events after a %s owner archive',
+    async (owner) => {
+      const h = await harness();
+      try {
+        await h.enable(h.codex, 'codex');
+        await h.prepareWorkspace();
+        await h.router.applySystemCommit({
+          mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
+        });
+        await h.execute('agent.create', {
+          sessionId: 'native-parent',
+          workspaceId: 'workspace-1',
+          title: 'Native parent',
+          providerId: 'codex',
+          permissionPreset: 'standard',
+          initialPrompt: 'Own provider-native children.',
+        });
+        h.codex.emit({
+          kind: 'native-subagent',
+          sessionId: 'native-parent',
+          providerChildId: 'terminal-native-child',
+          title: 'Terminal native child',
+          state: 'done',
+        });
+        await h.runtime.whenIdle();
+        const terminalChildId = h.router.getSnapshot().agentRelations[0]!.childSessionId;
+
+        await archiveWorkspaceOrProject(h, owner);
+        h.codex.emit({
+          kind: 'native-subagent',
+          sessionId: 'native-parent',
+          providerChildId: 'late-new-native-child',
+          title: 'Late new native child',
+          state: 'working',
+        });
+        h.codex.emit({
+          kind: 'native-subagent',
+          sessionId: 'native-parent',
+          providerChildId: 'terminal-native-child',
+          title: 'Terminal native child',
+          state: 'working',
+        });
+        await h.runtime.whenIdle();
+
+        expect(h.router.getSnapshot().sessions.find((session) => session.id === terminalChildId))
+          .toMatchObject({ state: 'completed' });
+        expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === terminalChildId))
+          .toMatchObject({ state: 'done' });
+        expect(h.router.getSnapshot().agentRelations).toHaveLength(1);
+        expect(h.router.getSnapshot().sessions).toHaveLength(2);
+      } finally {
+        await h.runtime.dispose();
+        await h.store.close();
+      }
+    },
+  );
+
+  it.each(['Workspace', 'Project'] as const)(
+    'does not rehydrate a Session when %s archive wins the resumeSession race',
+    async (owner) => {
+      const h = await harness();
+      let releaseResume: (() => void) | undefined;
+      try {
+        await h.enable(h.codex, 'codex');
+        await h.prepareWorkspace();
+        await h.execute('agent.create', {
+          sessionId: 'resume-source',
+          workspaceId: 'workspace-1',
+          title: 'Resume source',
+          providerId: 'codex',
+          permissionPreset: 'standard',
+          initialPrompt: 'Finish before transfer.',
+        });
+        const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'resume-source')!;
+        const providerSessionId = h.router.getSnapshot().agents.find((agent) => (
+          agent.sessionId === 'resume-source'
+        ))!.providerSessionId!;
+        h.codex.emit({
+          kind: 'turn-finished',
+          sessionId: 'resume-source',
+          turnId: sourceTurn.id,
+          outcome: 'completed',
+        });
+        await h.runtime.whenIdle();
+        h.codex.emit({ kind: 'session-state', sessionId: 'resume-source', state: 'completed' });
+        await h.runtime.whenIdle();
+
+        const originalResume = vi.mocked(h.codex.resumeSession).getMockImplementation()!;
+        let reportResumeStarted!: () => void;
+        const resumeStarted = new Promise<void>((resolve) => { reportResumeStarted = resolve; });
+        const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve; });
+        vi.mocked(h.codex.resumeSession).mockImplementationOnce(async (...args) => {
+          reportResumeStarted();
+          await resumeGate;
+          return originalResume(...args);
+        });
+        await expect(h.executeWithoutSettling('agent.resume', {
+          sessionId: 'resume-destination',
+          sourceSessionId: 'resume-source',
+          workspaceId: 'workspace-1',
+          providerId: 'codex',
+          providerSessionId,
+          title: 'Resume destination',
+          permissionPreset: 'standard',
+        })).resolves.toMatchObject({ ok: true, status: 'applied' });
+        await resumeStarted;
+        await archiveWorkspaceOrProject(h, owner);
+
+        releaseResume?.();
+        releaseResume = undefined;
+        await h.runtime.whenIdle();
+
+        expect(h.router.getSnapshot().sessions.find((session) => session.id === 'resume-destination'))
+          .toMatchObject({ state: 'starting' });
+        expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'resume-destination'))
+          .toMatchObject({ state: 'starting', providerSessionId });
+        expect(h.codex.ownerOf(providerSessionId)).toBeUndefined();
+      } finally {
+        releaseResume?.();
+        await h.runtime.dispose();
+        await h.store.close();
+      }
+    },
+  );
+
+  it('rejects an active Workspace whose owner Project is archived', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      const project = h.router.getSnapshot().projects.find((entry) => entry.id === 'project-1')!;
+      await h.router.applySystemCommit({ mutations: [{
+        kind: 'project.upsert',
+        value: {
+          id: project.id,
+          name: project.name,
+          rootPath: project.rootPath,
+          source: project.source,
+          archivedAt: '2026-09-04T10:01:00.000Z',
+        },
+      }] });
+
+      await expect(h.execute('agent.create', {
+        sessionId: 'agent-after-project-archive',
+        workspaceId: 'workspace-1',
+        title: 'Agent after Project archive',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'This must not reach the archived Project.',
+      })).resolves.toMatchObject({
+        ok: false,
+        status: 'rejected',
+        error: { code: 'not-found' },
+      });
+      expect(h.codex.createSession).not.toHaveBeenCalled();
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('lets an active turn finish but rejects new turns after its Workspace access is archived', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Finish the current turn.',
+      });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      await h.execute('agent.submit', {
+        sessionId: 'agent-1',
+        prompt: 'This queued turn must not start after access is revoked.',
+      });
+      const queuedTurn = h.router.getSnapshot().turns.find((entry) => (
+        entry.sessionId === 'agent-1' && entry.id !== turn.id
+      ))!;
+      expect(queuedTurn.state).toBe('queued');
+
+      const workspace = h.router.getSnapshot().workspaces.find((entry) => entry.id === 'workspace-1')!;
+      await h.router.applySystemCommit({ mutations: [{
+        kind: 'workspace.upsert',
+        value: {
+          id: workspace.id,
+          projectId: workspace.projectId,
+          name: workspace.name,
+          kind: workspace.kind,
+          rootPath: workspace.rootPath,
+          archivedAt: '2026-09-04T10:01:00.000Z',
+        },
+      }] });
+
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().turns.find((entry) => entry.id === queuedTurn.id)).toMatchObject({
+        state: 'failed',
+        errorCode: 'queue-state-invalid',
+      });
+
+      await expect(h.execute('agent.submit', {
+        sessionId: 'agent-1',
+        prompt: 'This must not reach the revoked Workspace.',
+      })).resolves.toMatchObject({
+        ok: false,
+        status: 'rejected',
+        error: { code: 'not-found' },
+      });
+      expect(h.codex.submit).toHaveBeenCalledTimes(1);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('creates the durable Agent Session only with its first submitted prompt', async () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');

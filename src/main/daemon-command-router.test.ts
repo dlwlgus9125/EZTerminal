@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDaemonCommand, type DaemonCommandType } from '../shared/daemon-protocol';
 import { DaemonCommandRouter } from './daemon-command-router';
+import { daemonProjectRevocationCommit } from './daemon-project-sync';
 import { DaemonStore } from './daemon-store';
 
 const temporaryDirectories: string[] = [];
@@ -63,6 +64,64 @@ describe('DaemonCommandRouter', () => {
       sessions: [{ id: 'terminal-1', workspaceId: 'workspace-1', state: 'draft' }],
     });
     expect(events.filter((kind) => kind === 'entity.upserted')).toHaveLength(3);
+    await store.close();
+  });
+
+  it('archives every child Workspace with its Project before accepting new Sessions', async () => {
+    const { store, router } = await runtime();
+    await router.execute(command('project.create', {
+      projectId: 'project-1', name: 'Demo', rootPath: 'C:\\Working\\Demo',
+    }, 0));
+    await router.execute(command('workspace.create', {
+      workspaceId: 'workspace-1', projectId: 'project-1', name: 'Local', kind: 'local',
+      rootPath: 'C:\\Working\\Demo',
+    }, 1));
+
+    await expect(router.execute(command('project.archive', {
+      projectId: 'project-1',
+    }, 2))).resolves.toMatchObject({ ok: true, revision: 3 });
+    expect(router.getSnapshot()).toMatchObject({
+      projects: [{ id: 'project-1', archivedAt: expect.any(String) }],
+      workspaces: [{ id: 'workspace-1', archivedAt: expect.any(String) }],
+    });
+    await expect(router.execute(command('session.create', {
+      sessionId: 'post-archive-session',
+      workspaceId: 'workspace-1',
+      kind: 'terminal',
+      title: 'Must not start',
+    }, 3, 'post-archive-session'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'not-found' },
+    });
+    await store.close();
+  });
+
+  it('rejects a Session beneath an archived Project even if an old active Workspace remains', async () => {
+    const { store, router } = await runtime();
+    await router.execute(command('project.create', {
+      projectId: 'project-1', name: 'Demo', rootPath: 'C:\\Working\\Demo',
+    }, 0));
+    await router.execute(command('workspace.create', {
+      workspaceId: 'workspace-1', projectId: 'project-1', name: 'Local', kind: 'local',
+      rootPath: 'C:\\Working\\Demo',
+    }, 1));
+    await router.applySystemCommit({ mutations: [{ kind: 'project.upsert', value: {
+      id: 'project-1',
+      name: 'Demo',
+      rootPath: 'C:\\Working\\Demo',
+      source: 'native',
+      archivedAt: '2026-09-04T11:00:00.000Z',
+    } }] });
+
+    await expect(router.execute(command('session.create', {
+      sessionId: 'orphan-session',
+      workspaceId: 'workspace-1',
+      kind: 'terminal',
+      title: 'Must not start',
+    }, 3, 'orphan-session'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'not-found' },
+    });
     await store.close();
   });
 
@@ -173,6 +232,33 @@ describe('DaemonCommandRouter', () => {
     expect(router.getSnapshot()).toMatchObject({
       revision: 2,
       runtime: { keepRunning: true, browserEnabled: true },
+    });
+    await store.close();
+  });
+
+  it('archives a Workspace command already ahead of Project revocation in the daemon FIFO', async () => {
+    const { store, router } = await runtime();
+    await router.execute(command('project.create', {
+      projectId: 'project-1', name: 'Demo', rootPath: 'C:\\Working\\Demo',
+    }, 0));
+
+    const workspaceCreate = router.execute(command('workspace.create', {
+      workspaceId: 'workspace-late',
+      projectId: 'project-1',
+      name: 'Already accepted',
+      kind: 'local',
+      rootPath: 'C:\\Working\\Demo\\late',
+    }, 1, 'workspace-before-revoke'));
+    const revocation = router.applySystemCommit(daemonProjectRevocationCommit(
+      'project-1',
+      '2026-09-04T11:00:00.000Z',
+    ));
+
+    await expect(workspaceCreate).resolves.toMatchObject({ ok: true, revision: 2 });
+    await revocation;
+    expect(router.getSnapshot()).toMatchObject({
+      projects: [{ id: 'project-1', archivedAt: '2026-09-04T11:00:00.000Z' }],
+      workspaces: [{ id: 'workspace-late', archivedAt: '2026-09-04T11:00:00.000Z' }],
     });
     await store.close();
   });

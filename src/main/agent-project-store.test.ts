@@ -201,6 +201,33 @@ describe('AgentProjectStore', () => {
     expect(store.list().map((project) => project.origin).sort()).toEqual(['manual', 'terminal']);
   });
 
+  it('rejects a prepared save when the Project index changed before its CAS commit', async () => {
+    const fixture = makeFixture();
+    const store = new AgentProjectStore(fixture.userData);
+    await store.init();
+    const prepared = await store.prepareUpsert({
+      name: 'Prepared',
+      primaryRoot: fixture.primary,
+      additionalRoots: [],
+      pinned: false,
+    });
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error('expected Project preparation');
+
+    await store.recordWork({
+      primaryRoot: fixture.extra,
+      additionalRoots: [],
+      lastActiveAt: 123,
+    });
+
+    await expect(store.commitPreparedUpsert(prepared.preparation)).resolves.toEqual({
+      ok: false,
+      reason: 'stale',
+    });
+    expect(store.list()).toHaveLength(1);
+    expect(store.list()[0]?.primaryRoot).toBe(path.normalize(fixture.extra));
+  });
+
   it('quarantines malformed metadata instead of accepting provider content', async () => {
     const fixture = makeFixture();
     mkdirSync(fixture.userData);

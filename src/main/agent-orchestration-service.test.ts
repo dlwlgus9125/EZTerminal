@@ -56,7 +56,11 @@ async function eventually(assertion: () => void): Promise<void> {
   throw last;
 }
 
-async function fixture() {
+async function fixture(options: {
+  readonly beforeWorkerLaunch?: () => Promise<void>;
+  readonly startWorker?: () => Promise<void>;
+  readonly projectExists?: () => boolean;
+} = {}) {
   const store = new AgentOrchestrationStore(makeDir());
   await store.init();
   await store.savePolicy({
@@ -75,15 +79,17 @@ async function fixture() {
     store,
     providers: () => [{ providerId: 'codex', kind: 'builtin', displayName: 'Codex' }],
     profiles: () => [profile],
-    projectExists: () => true,
+    projectExists: options.projectExists ?? (() => true),
     newId: () => `id-${++id}`,
     launchWorker: async (_run, task, selectedProfile, prompt) => {
+      await options.beforeWorkerLaunch?.();
       launches.push({ taskId: task.taskId, prompt });
       return {
         profileId: selectedProfile.profileId,
         providerId: selectedProfile.providerId,
         sessionId: `session-${task.taskId}`,
         activityId: `activity-${task.taskId}`,
+        ...(options.startWorker ? { start: options.startWorker } : {}),
         ...(task.mode === 'write' ? {
           worktreeId: `worktree-${task.taskId}`,
           worktreePath: `C:\\worktrees\\${task.taskId}`,
@@ -104,6 +110,213 @@ async function fixture() {
 }
 
 describe('AgentOrchestrationService', () => {
+  it('rejects legacy Lead creation after its Project authority disappears', async () => {
+    const { service, launches, lead } = await fixture({ projectExists: () => false });
+
+    expect(service.canLead(lead)).toBe(false);
+    await expect(service.createWorker(lead, {
+      title: 'Tombstoned Project worker',
+      brief: 'Must not start from a legacy collaboration policy.',
+      mode: 'read-only',
+      profileId: profile.profileId,
+    })).resolves.toMatchObject({ ok: false, error: 'forbidden' });
+    expect(launches).toHaveLength(0);
+    await service.dispose();
+  });
+
+  it('stops every active Project worker before terminalizing its runs and preserves terminal history', async () => {
+    const { store, service, stopSession } = await fixture();
+    const createRun = async (leadSessionId: string, title: string) => {
+      const source = activity(leadSessionId, `${leadSessionId}-activity`);
+      const created = await service.createWorker(source, {
+        title,
+        brief: `Run ${title}.`,
+        mode: 'read-only',
+        profileId: profile.profileId,
+      });
+      if (!created.ok) throw new Error(created.message);
+      await eventually(() => {
+        expect(store.getRun(created.value.run.runId)?.tasks[0]?.worker?.sessionId).toBe(
+          `session-${created.value.task.taskId}`,
+        );
+      });
+      return {
+        source,
+        runId: created.value.run.runId,
+        workerSessionId: `session-${created.value.task.taskId}`,
+      };
+    };
+
+    const first = await createRun('lead-one', 'First worker');
+    const second = await createRun('lead-two', 'Second worker');
+    const terminal = await createRun('lead-terminal', 'Terminal worker');
+    await service.stopRun(terminal.source, terminal.runId);
+    const terminalBefore = structuredClone(store.getRun(terminal.runId));
+    stopSession.mockClear();
+    const statesObservedAtStop: string[][] = [];
+    stopSession.mockImplementation(() => {
+      statesObservedAtStop.push([first.runId, second.runId].map((runId) => store.getRun(runId)!.state));
+    });
+
+    await service.stopProjectRuns('project-1');
+
+    expect(stopSession.mock.calls.map(([sessionId]) => sessionId)).toEqual([
+      first.workerSessionId,
+      second.workerSessionId,
+    ]);
+    expect(statesObservedAtStop).toEqual([
+      ['active', 'active'],
+      ['active', 'active'],
+    ]);
+    for (const runId of [first.runId, second.runId]) {
+      expect(store.getRun(runId)).toMatchObject({
+        state: 'stopped',
+        finishedAt: expect.any(Number),
+        tasks: [{ state: 'canceled', worker: { finishedAt: expect.any(Number) } }],
+      });
+    }
+    expect(store.getRun(terminal.runId)).toEqual(terminalBefore);
+    await service.dispose();
+  });
+
+  it('keeps the Project stop barrier open until an in-flight launch session is stopped', async () => {
+    let releaseLaunch!: () => void;
+    let reportLaunchStarted!: () => void;
+    const launchGate = new Promise<void>((resolve) => { releaseLaunch = resolve; });
+    const launchStarted = new Promise<void>((resolve) => { reportLaunchStarted = resolve; });
+    const { store, service, launches, lead, stopSession } = await fixture({
+      beforeWorkerLaunch: async () => {
+        reportLaunchStarted();
+        await launchGate;
+      },
+    });
+    let stop: Promise<void> | undefined;
+    try {
+      const created = await service.createWorker(lead, {
+        title: 'Racing worker',
+        brief: 'Hold launch across Project cleanup.',
+        mode: 'read-only',
+        profileId: profile.profileId,
+      });
+      if (!created.ok) throw new Error(created.message);
+      await launchStarted;
+
+      let stopSettled = false;
+      const projectStop = service.stopProjectRuns('project-1');
+      expect(service.stopProjectRuns('project-1')).toBe(projectStop);
+      expect(() => service.activateProject('project-1')).toThrow('cleanup is still in progress');
+      stop = projectStop.then(() => { stopSettled = true; });
+      const blocked = await service.createWorker(lead, {
+        title: 'Late worker',
+        brief: 'Must not launch after Project cleanup begins.',
+        mode: 'read-only',
+        profileId: profile.profileId,
+      });
+      expect(blocked).toMatchObject({ ok: false, error: 'forbidden' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(stopSettled).toBe(false);
+
+      releaseLaunch();
+      await stop;
+      expect(launches).toHaveLength(1);
+      expect(stopSession).toHaveBeenCalledWith(`session-${created.value.task.taskId}`);
+      expect(store.getRun(created.value.run.runId)).toMatchObject({
+        state: 'stopped',
+        tasks: [{ state: 'canceled' }],
+      });
+      const afterStop = await service.createWorker(lead, {
+        title: 'Retired Project worker',
+        brief: 'Must remain blocked after Project cleanup returns.',
+        mode: 'read-only',
+        profileId: profile.profileId,
+      });
+      expect(afterStop).toMatchObject({ ok: false, error: 'forbidden' });
+      service.activateProject('project-1');
+      const afterActivate = await service.createWorker(lead, {
+        title: 'Reactivated Project worker',
+        brief: 'Launch only after explicit Project activation.',
+        mode: 'read-only',
+        profileId: profile.profileId,
+      });
+      expect(afterActivate).toMatchObject({ ok: true });
+      await service.stopProjectRuns('project-1');
+    } finally {
+      releaseLaunch();
+      await stop?.catch(() => undefined);
+      await service.dispose();
+    }
+  });
+
+  it('does not finish disposal before an admitted worker launch is contained and durably stopped', async () => {
+    let releaseLaunch!: () => void;
+    let reportLaunchStarted!: () => void;
+    const launchGate = new Promise<void>((resolve) => { releaseLaunch = resolve; });
+    const launchStarted = new Promise<void>((resolve) => { reportLaunchStarted = resolve; });
+    const { store, service, lead, stopSession } = await fixture({
+      beforeWorkerLaunch: async () => {
+        reportLaunchStarted();
+        await launchGate;
+      },
+    });
+    const created = await service.createWorker(lead, {
+      title: 'Shutdown-racing worker',
+      brief: 'Hold launch across orchestration disposal.',
+      mode: 'read-only',
+      profileId: profile.profileId,
+    });
+    if (!created.ok) throw new Error(created.message);
+    await launchStarted;
+
+    let disposeSettled = false;
+    const disposal = service.dispose();
+    expect(service.dispose()).toBe(disposal);
+    const dispose = disposal.then(() => { disposeSettled = true; });
+    await Promise.resolve();
+    expect(disposeSettled).toBe(false);
+    await expect(service.createWorker(lead, {
+      title: 'Too-late worker',
+      brief: 'Must not enter after shutdown starts.',
+      mode: 'read-only',
+      profileId: profile.profileId,
+    })).resolves.toMatchObject({ ok: false, error: 'forbidden' });
+
+    releaseLaunch();
+    await dispose;
+    expect(stopSession).toHaveBeenCalledWith(`session-${created.value.task.taskId}`);
+    expect(store.getRun(created.value.run.runId)).toMatchObject({
+      state: 'stopped',
+      tasks: [{ state: 'canceled' }],
+    });
+  });
+
+  it('stops a durably bound worker before waiting for its in-flight delivery to drain', async () => {
+    let releaseDelivery!: () => void;
+    let reportDeliveryStarted!: () => void;
+    const deliveryGate = new Promise<void>((resolve) => { releaseDelivery = resolve; });
+    const deliveryStarted = new Promise<void>((resolve) => { reportDeliveryStarted = resolve; });
+    const { service, lead, stopSession } = await fixture({
+      startWorker: async () => {
+        reportDeliveryStarted();
+        await deliveryGate;
+      },
+    });
+    stopSession.mockImplementation(() => releaseDelivery());
+    const created = await service.createWorker(lead, {
+      title: 'Delivery-racing worker',
+      brief: 'Hold first delivery across orchestration disposal.',
+      mode: 'read-only',
+      profileId: profile.profileId,
+    });
+    if (!created.ok) throw new Error(created.message);
+    await deliveryStarted;
+
+    const disposal = service.dispose();
+    await eventually(() => {
+      expect(stopSession).toHaveBeenCalledWith(`session-${created.value.task.taskId}`);
+    });
+    await disposal;
+  });
+
   it('stops an otherwise silent delegation cycle at its hard duration limit', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
@@ -121,7 +334,7 @@ describe('AgentOrchestrationService', () => {
         state: 'stopped',
         tasks: [{ state: 'canceled' }],
       });
-      service.dispose();
+      await service.dispose();
     } finally {
       vi.useRealTimers();
     }

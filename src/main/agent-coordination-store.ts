@@ -245,6 +245,20 @@ export class AgentCoordinationStore {
     });
   }
 
+  removeProject(projectId: string): Promise<boolean> {
+    if (typeof projectId !== 'string' || projectId.length < 1 || projectId.length > 128) {
+      return Promise.resolve(false);
+    }
+    return this.file.enqueue(async () => {
+      const projects = this.snapshot.projects.filter((project) => project.projectId !== projectId);
+      if (projects.length === this.snapshot.projects.length) return false;
+      const next = { ...this.snapshot, projects };
+      await this.file.writeAtomic(JSON.stringify(next));
+      this.snapshot = next;
+      return true;
+    });
+  }
+
   listAudit(projectId?: string): readonly ManagedMergeAuditRecord[] {
     return projectId
       ? this.snapshot.audit.filter((record) => record.projectId === projectId)

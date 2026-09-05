@@ -24,6 +24,7 @@ import type {
   DaemonStoreCommit,
   DaemonStoreMutation,
 } from './daemon-store';
+import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 
 type AutomationCommandType = Extract<DaemonCommandType,
   | 'schedule.create'
@@ -227,13 +228,40 @@ function scheduleRunInput(
   };
 }
 
+function inactiveScheduleMutations(
+  schedule: DaemonSchedule,
+  scheduleRuns: readonly AutomationScheduleRun[],
+  observedAt: string,
+  errorCode: 'not-found' | 'provider-unavailable',
+): DaemonStoreMutation[] {
+  return [
+    { kind: 'schedule.upsert', value: scheduleInput(schedule, {
+      enabled: false,
+      nextRunAt: undefined,
+    }) },
+    ...scheduleRuns
+      .filter((run) => run.scheduleId === schedule.id && run.state === 'queued')
+      .map((run): DaemonStoreMutation => ({
+        kind: 'schedule-run.upsert',
+        value: scheduleRunInput(run, {
+          state: 'failed',
+          finishedAt: observedAt,
+          errorCode,
+        }),
+      })),
+  ];
+}
+
 function findAgentSession(
   snapshot: DaemonSnapshot,
   sessionId: string,
 ): { readonly session: DaemonSession; readonly agent: DaemonAgent } | undefined {
   const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
   const agent = snapshot.agents.find((candidate) => candidate.sessionId === sessionId);
-  return session?.kind === 'agent' && !session.archivedAt && agent
+  const workspace = session
+    ? findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId)
+    : undefined;
+  return session?.kind === 'agent' && !session.archivedAt && agent && workspace
     ? { session, agent }
     : undefined;
 }
@@ -428,9 +456,7 @@ export class DaemonAutomationRuntime {
     if (snapshot.schedules.some((schedule) => schedule.id === command.payload.scheduleId)) {
       return commandError('invalid-state', 'Schedule already exists.');
     }
-    const workspace = snapshot.workspaces.find((candidate) => (
-      candidate.id === command.payload.workspaceId && !candidate.archivedAt
-    ));
+    const workspace = findActiveDaemonWorkspace(snapshot, command.payload.workspaceId);
     if (!workspace) return commandError('not-found', 'Active Workspace was not found.');
     const provider = snapshot.providers.find((candidate) => candidate.id === command.payload.providerId);
     if (!provider || !provider.enabled || provider.health !== 'ready') {
@@ -483,6 +509,18 @@ export class DaemonAutomationRuntime {
     }
     const current = snapshot.schedules.find((schedule) => schedule.id === command.payload.scheduleId);
     if (!current) return commandError('not-found', 'Schedule was not found.');
+    const requestedEnabled = command.payload.enabled ?? current.enabled;
+    if (requestedEnabled && !findActiveDaemonWorkspace(snapshot, current.workspaceId)) {
+      return commandError('not-found', 'Active Workspace was not found.');
+    }
+    const provider = requestedEnabled
+      ? snapshot.providers.find((candidate) => (
+          candidate.id === current.providerId && candidate.enabled && candidate.health === 'ready'
+        ))
+      : undefined;
+    if (requestedEnabled && !provider) {
+      return commandError('provider-unavailable', 'The Schedule provider is not ready.', true);
+    }
     if (command.payload.enabled === true && !automationEnabled(snapshot)) return this.requiresDaemon();
     try {
       const now = this.currentDate();
@@ -494,7 +532,7 @@ export class DaemonAutomationRuntime {
       );
       const expiresAt = canonicalExpiry(command.payload.expiresAt ?? current.expiresAt);
       const maxRuns = command.payload.maxRuns ?? current.maxRuns;
-      let enabled = command.payload.enabled ?? current.enabled;
+      let enabled = requestedEnabled;
       let nextRunAt = current.nextRunAt;
       const timingChanged = command.payload.cron !== undefined
         || command.payload.timezone !== undefined
@@ -559,9 +597,7 @@ export class DaemonAutomationRuntime {
     if (exhausted(schedule, now)) {
       return commandError('invalid-state', 'Schedule has reached its run or expiry limit.');
     }
-    const owner = snapshot.workspaces.find((workspace) => (
-      workspace.id === schedule.workspaceId && !workspace.archivedAt
-    ));
+    const owner = findActiveDaemonWorkspace(snapshot, schedule.workspaceId);
     const provider = snapshot.providers.find((candidate) => (
       candidate.id === schedule.providerId && candidate.enabled && candidate.health === 'ready'
     ));
@@ -735,6 +771,27 @@ export class DaemonAutomationRuntime {
       const mutations: DaemonStoreMutation[] = [];
       for (const schedule of state.snapshot.schedules) {
         if (!schedule.enabled) continue;
+        if (!findActiveDaemonWorkspace(state.snapshot, schedule.workspaceId)) {
+          mutations.push(...inactiveScheduleMutations(
+            schedule,
+            state.scheduleRuns,
+            now.toISOString(),
+            'not-found',
+          ));
+          continue;
+        }
+        const provider = state.snapshot.providers.find((candidate) => (
+          candidate.id === schedule.providerId && candidate.enabled && candidate.health === 'ready'
+        ));
+        if (!provider) {
+          mutations.push(...inactiveScheduleMutations(
+            schedule,
+            state.scheduleRuns,
+            now.toISOString(),
+            'provider-unavailable',
+          ));
+          continue;
+        }
         if (exhausted(schedule, now)) {
           mutations.push({ kind: 'schedule.upsert', value: scheduleInput(schedule, {
             enabled: false,
@@ -806,11 +863,20 @@ export class DaemonAutomationRuntime {
   }
 
   private async dispatchQueuedSchedules(): Promise<void> {
-    for (const run of this.options.getScheduleRuns(['queued'])) {
+    for (const queued of this.options.getScheduleRuns(['queued'])) {
       if (this.disposed) return;
+      const run = this.options.getScheduleRuns(['queued']).find((candidate) => candidate.id === queued.id);
+      if (!run) continue;
       const snapshot = this.options.getSnapshot();
       const schedule = snapshot.schedules.find((candidate) => candidate.id === run.scheduleId);
       if (!schedule) continue;
+      const provider = snapshot.providers.find((candidate) => (
+        candidate.id === schedule.providerId && candidate.enabled && candidate.health === 'ready'
+      ));
+      if (!provider) {
+        await this.disableScheduleForUnavailableProvider(schedule.id, this.currentDate().toISOString());
+        continue;
+      }
       const sessionId = stableId('scheduled-agent', run.id);
       const existing = snapshot.sessions.find((session) => session.id === sessionId);
       if (existing) {
@@ -840,6 +906,8 @@ export class DaemonAutomationRuntime {
         const receipt = await this.options.executeCommand(command);
         if (receipt.ok) {
           await this.attachScheduleRun(run.id, sessionId, this.currentDate().toISOString());
+        } else if (receipt.error.code === 'provider-unavailable') {
+          await this.disableScheduleForUnavailableProvider(schedule.id, this.currentDate().toISOString());
         } else if (receipt.error.code !== 'revision-conflict' && !receipt.error.retryable) {
           await this.markScheduleFailed(run.id, receipt.error.code, this.currentDate().toISOString());
         } else if (receipt.error.code === 'revision-conflict') {
@@ -851,6 +919,31 @@ export class DaemonAutomationRuntime {
         this.report(`Schedule ${run.scheduleId} dispatch failed`, error);
       }
     }
+  }
+
+  private async disableScheduleForUnavailableProvider(
+    scheduleId: string,
+    observedAt: string,
+  ): Promise<void> {
+    await this.applySystemTransition((state) => {
+      const schedule = state.snapshot.schedules.find((candidate) => candidate.id === scheduleId);
+      if (!schedule) return undefined;
+      const provider = state.snapshot.providers.find((candidate) => (
+        candidate.id === schedule.providerId && candidate.enabled && candidate.health === 'ready'
+      ));
+      if (provider) return undefined;
+      return {
+        commit: {
+          mutations: inactiveScheduleMutations(
+            schedule,
+            state.scheduleRuns,
+            observedAt,
+            'provider-unavailable',
+          ),
+        },
+        value: undefined,
+      };
+    });
   }
 
   private async dispatchPendingHeartbeats(): Promise<void> {

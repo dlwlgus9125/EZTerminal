@@ -25,6 +25,8 @@ import {
   type ProjectSessionTarget,
   type ProjectTextResult,
   type ProjectWorkspaceDescriptorResult,
+  type ProjectWorkspaceDescriptor,
+  type ProjectWorkspaceDiscovery,
   type ProjectWorkspaceAccessRequest,
   type ProjectWorkspaceAccessResult,
   type ProjectWorkspaceError,
@@ -32,7 +34,13 @@ import {
 } from '../shared/project-workspace';
 import type { WorktreeResult } from '../shared/worktree';
 import type { AgentProjectRecord, AgentProjectStore } from './agent-project-store';
-import type { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
+import type {
+  ProjectWorkspaceAccessIdentity,
+  ProjectWorkspaceAccessIntent,
+  ProjectWorkspaceAccessStore,
+  ProjectWorkspaceApprovalIntent,
+  ProjectWorkspaceRevocationIntent,
+} from './project-workspace-access-store';
 
 const MAX_RELATIVE_PATH_LENGTH = 4096;
 const SEARCH_READ_CONCURRENCY = 8;
@@ -61,9 +69,89 @@ export type ProjectSessionTargetResolution =
     }
   | { readonly ok: false; readonly error: ProjectWorkspaceError };
 
+export type ProjectTerminalDirectoryContextResult =
+  | (Extract<ProjectTerminalDirectoryResult, { readonly ok: true }> & {
+      /** Exact descriptor captured by the successful path authorization. */
+      readonly project: ProjectWorkspaceDescriptor;
+    })
+  | Extract<ProjectTerminalDirectoryResult, { readonly ok: false }>;
+
+export type ProjectWorkspaceRevocationPreparation =
+  | { readonly ok: true; readonly request: ProjectWorkspaceAccessRequest }
+  | { readonly ok: false };
+
+export type ProjectWorkspaceApprovalContextResult =
+  | (Extract<ProjectWorkspaceAccessResult, { readonly ok: true }> & {
+      /** Exact post-approval descriptor; avoids weaker rediscovery in main. */
+      readonly project: ProjectWorkspaceDescriptor;
+    })
+  | Extract<ProjectWorkspaceAccessResult, { readonly ok: false }>;
+
+export type ProjectWorkspaceApprovalIntentResult =
+  | (Extract<ProjectWorkspaceApprovalContextResult, { readonly ok: true }> & {
+      readonly intent: ProjectWorkspaceApprovalIntent;
+    })
+  | Extract<ProjectWorkspaceAccessResult, { readonly ok: false }>;
+
+export type ProjectWorkspaceRevocationIntentResult =
+  | {
+      readonly ok: true;
+      readonly intent: ProjectWorkspaceRevocationIntent;
+      readonly request: ProjectWorkspaceAccessRequest;
+    }
+  | { readonly ok: false };
+
+export type ProjectWorkspaceAccessRecoveryResult =
+  | Extract<ProjectWorkspaceApprovalIntentResult, { readonly ok: true }>
+  | Extract<ProjectWorkspaceRevocationIntentResult, { readonly ok: true }>
+  | {
+      readonly ok: false;
+      readonly intent: ProjectWorkspaceAccessIntent;
+      readonly error: ProjectWorkspaceError;
+    };
+
+interface ExactExternalWorkspaceContext {
+  readonly identity: ProjectWorkspaceAccessIdentity;
+  readonly workspace: ProjectWorkspaceLocationDescriptor;
+  readonly project: ProjectWorkspaceDescriptor;
+}
+
+interface WorkspaceEnrichmentOptions {
+  readonly worktreesByRootId?: ReadonlyMap<
+    string,
+    Extract<WorktreeResult, { readonly ok: true }>
+  >;
+  readonly provisionalAccess?: ProjectWorkspaceAccessIdentity;
+  readonly signal?: AbortSignal;
+}
+
+type ExactExternalWorkspaceContextResult =
+  | { readonly ok: true; readonly value: ExactExternalWorkspaceContext }
+  | { readonly ok: false; readonly error: ProjectWorkspaceError };
+
 function pathKey(value: string): string {
   const normalized = path.normalize(value);
   return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+}
+
+function sameWorkspaceAccessIdentity(
+  left: ProjectWorkspaceAccessIdentity,
+  right: ProjectWorkspaceAccessIdentity,
+): boolean {
+  return left.projectId === right.projectId
+    && left.rootId === right.rootId
+    && left.workspaceId === right.workspaceId
+    && left.repositoryId === right.repositoryId
+    && pathKey(left.canonicalPath) === pathKey(right.canonicalPath);
+}
+
+function sameWorkspaceAccessIntent(
+  left: ProjectWorkspaceAccessIntent,
+  right: ProjectWorkspaceAccessIntent,
+): boolean {
+  return left.kind === right.kind
+    && left.createdAt === right.createdAt
+    && sameWorkspaceAccessIdentity(left.identity, right.identity);
 }
 
 function absoluteRelativePath(rootPath: string, absolutePath: string): string | null {
@@ -87,8 +175,29 @@ function rootWorkspace(root: ProjectRootDescriptor): ProjectWorkspaceLocationDes
   };
 }
 
+/** Build the stable renderer-facing descriptor for one persisted Project.
+ * Keeping this translation public lets main clean up the exact previous root
+ * identities after an edit without rediscovering them from the replacement. */
+export function projectWorkspaceDescriptorForProject(
+  project: Pick<AgentProjectRecord, 'projectId' | 'name' | 'primaryRoot' | 'additionalRoots'>,
+): ProjectWorkspaceDescriptor {
+  const allRoots = [project.primaryRoot, ...project.additionalRoots];
+  const roots = allRoots.map((rootPath, index) => ({
+    rootId: rootIdForPath(rootPath),
+    name: path.basename(rootPath) || rootPath,
+    displayPath: rootPath,
+    primary: index === 0,
+  }));
+  return {
+    projectId: rootIdForPath(project.primaryRoot),
+    name: project.name,
+    roots,
+    workspaces: roots.map(rootWorkspace),
+  };
+}
+
 export interface ProjectWorkspaceServiceOptions {
-  readonly listWorktrees?: (cwd: string) => Promise<WorktreeResult>;
+  readonly listWorktrees?: (cwd: string, signal?: AbortSignal) => Promise<WorktreeResult>;
   readonly accessStore?: ProjectWorkspaceAccessStore;
 }
 
@@ -112,6 +221,18 @@ function classifyFsError(error: unknown): ProjectWorkspaceError {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === 'ENOENT') return 'not-found';
   return 'io-error';
+}
+
+function classifyWorktreeFailure(
+  error: Extract<WorktreeResult, { readonly ok: false }>['error'],
+): ProjectWorkspaceError {
+  if (error === 'NOT_A_GIT_REPOSITORY') return 'not-a-repository';
+  if (error === 'GIT_FAILED') return 'git-failed';
+  return 'io-error';
+}
+
+function isRetryableWorkspaceDiscoveryError(error: ProjectWorkspaceError): boolean {
+  return error === 'not-a-repository' || error === 'git-failed' || error === 'io-error';
 }
 
 function isBinary(bytes: Buffer): boolean {
@@ -164,22 +285,7 @@ export class ProjectWorkspaceService {
     const project = this.projects.list().find((candidate) =>
       rootIdForPath(candidate.primaryRoot) === projectId);
     if (!project) return { ok: false, error: 'project-not-found' };
-    const allRoots = [project.primaryRoot, ...project.additionalRoots];
-    const roots = allRoots.map((rootPath, index) => ({
-      rootId: rootIdForPath(rootPath),
-      name: path.basename(rootPath) || rootPath,
-      displayPath: rootPath,
-      primary: index === 0,
-    }));
-    return {
-      ok: true,
-      project: {
-        projectId,
-        name: project.name,
-        roots,
-        workspaces: roots.map(rootWorkspace),
-      },
-    };
+    return { ok: true, project: projectWorkspaceDescriptorForProject(project) };
   }
 
   /** Resolve an explicit project terminal target immediately before launch. */
@@ -219,15 +325,33 @@ export class ProjectWorkspaceService {
    * root. Physical aliases are interpreted here in main; descendants and
    * unavailable workspaces deliberately remain ordinary cwd terminals.
    */
-  async resolveTerminalDirectory(value: unknown): Promise<ProjectTerminalDirectoryResult> {
+  async resolveTerminalDirectory(
+    value: unknown,
+    signal?: AbortSignal,
+  ): Promise<ProjectTerminalDirectoryResult> {
+    const resolved = await this.resolveTerminalDirectoryContext(value, signal);
+    if (!resolved.ok) return resolved;
+    return { ok: true, projectSession: resolved.projectSession };
+  }
+
+  /** Main-only launch context. The descriptor is deliberately captured from
+   * the same successful resolution so daemon synchronization never performs a
+   * weaker second worktree discovery.
+   */
+  async resolveTerminalDirectoryContext(
+    value: unknown,
+    signal?: AbortSignal,
+  ): Promise<ProjectTerminalDirectoryContextResult> {
+    signal?.throwIfAborted();
     if (typeof value !== 'object'
       || value === null
       || Array.isArray(value)
       || typeof (value as { readonly projectId?: unknown }).projectId !== 'string') {
       return { ok: false, error: 'invalid-request' };
     }
-    const resolved = await this.resolveAbsoluteProjectPath(value);
+    const resolved = await this.resolveAbsoluteProjectPath(value, signal);
     if (!resolved.ok) return resolved;
+    signal?.throwIfAborted();
     if (resolved.request.relativePath !== '') {
       return { ok: false, error: 'not-workspace-root' };
     }
@@ -235,6 +359,7 @@ export class ProjectWorkspaceService {
     if (!described.ok) return described;
     return {
       ok: true,
+      project: resolved.project,
       projectSession: {
         projectId: resolved.request.projectId,
         rootId: resolved.request.rootId,
@@ -248,18 +373,84 @@ export class ProjectWorkspaceService {
   /** Enrich the synchronous registered-root descriptor with local Git
    * worktrees. Failure to inspect Git never makes ordinary project files
    * disappear; the registered-root workspace remains available. */
-  async describeProjectWorkspaces(projectId: unknown): Promise<ProjectWorkspaceDescriptorResult> {
+  async describeProjectWorkspaces(
+    projectId: unknown,
+    signal?: AbortSignal,
+  ): Promise<ProjectWorkspaceDescriptorResult> {
+    signal?.throwIfAborted();
     const described = this.describeProject(projectId);
-    if (!described.ok || !this.options.listWorktrees) return described;
+    return described.ok ? this.enrichProjectWorkspaces(described.project, { signal }) : described;
+  }
+
+  /** Describe a validated-but-not-yet-committed Project save candidate. This
+   * is the preflight half of main's fail-closed cross-store transition. */
+  describePreparedProjectWorkspaces(
+    project: Pick<AgentProjectRecord, 'projectId' | 'name' | 'primaryRoot' | 'additionalRoots'>,
+    signal?: AbortSignal,
+  ): Promise<ProjectWorkspaceDescriptorResult> {
+    signal?.throwIfAborted();
+    return this.enrichProjectWorkspaces(projectWorkspaceDescriptorForProject(project), { signal });
+  }
+
+  private async enrichProjectWorkspaces(
+    project: ProjectWorkspaceDescriptor,
+    options: WorkspaceEnrichmentOptions = {},
+  ): Promise<ProjectWorkspaceDescriptorResult> {
+    options.signal?.throwIfAborted();
+    if (!this.options.listWorktrees) {
+      return {
+        ok: true,
+        project: {
+          ...project,
+          workspaceDiscovery: {
+            roots: project.roots.map((root) => ({
+              rootId: root.rootId,
+              status: 'unavailable',
+              error: 'unsupported',
+            })),
+          },
+        },
+      };
+    }
     const workspaces: ProjectWorkspaceLocationDescriptor[] = [];
-    for (const root of described.project.roots) {
-      const listed = await this.options.listWorktrees(root.displayPath).catch(() => null);
-      if (!listed?.ok || listed.worktrees.length === 0) {
+    const discoveryRoots: ProjectWorkspaceDiscovery['roots'][number][] = [];
+    for (const root of project.roots) {
+      options.signal?.throwIfAborted();
+      let listed: WorktreeResult;
+      const prepared = options.worktreesByRootId?.get(root.rootId);
+      if (prepared) {
+        listed = prepared;
+      } else {
+        try {
+          listed = await this.options.listWorktrees(root.displayPath, options.signal);
+        } catch {
+          options.signal?.throwIfAborted();
+          discoveryRoots.push({ rootId: root.rootId, status: 'unavailable', error: 'io-error' });
+          workspaces.push(rootWorkspace(root));
+          continue;
+        }
+      }
+      options.signal?.throwIfAborted();
+      if (!listed.ok) {
+        const classified = classifyWorktreeFailure(listed.error);
+        discoveryRoots.push({
+          rootId: root.rootId,
+          status: 'unavailable',
+          error: classified === 'not-a-repository' || classified === 'git-failed'
+            ? classified
+            : 'io-error',
+        });
+        workspaces.push(rootWorkspace(root));
+        continue;
+      }
+      if (listed.worktrees.length === 0) {
+        discoveryRoots.push({ rootId: root.rootId, status: 'complete' });
         workspaces.push(rootWorkspace(root));
         continue;
       }
       const main = listed.worktrees.find((worktree) => worktree.main);
       if (!main) {
+        discoveryRoots.push({ rootId: root.rootId, status: 'complete' });
         workspaces.push(rootWorkspace(root));
         continue;
       }
@@ -271,17 +462,23 @@ export class ProjectWorkspaceService {
           fs.realpath(root.displayPath),
         ]);
       } catch {
+        options.signal?.throwIfAborted();
+        discoveryRoots.push({ rootId: root.rootId, status: 'unavailable', error: 'io-error' });
         workspaces.push(rootWorkspace(root));
         continue;
       }
+      options.signal?.throwIfAborted();
       const rootWithinMain = path.relative(mainCanonical, registeredCanonical);
       if (rootWithinMain === '..'
         || rootWithinMain.startsWith(`..${path.sep}`)
         || path.isAbsolute(rootWithinMain)) {
+        discoveryRoots.push({ rootId: root.rootId, status: 'complete' });
         workspaces.push(rootWorkspace(root));
         continue;
       }
+      let rootDiscoveryError: 'io-error' | undefined;
       for (const worktree of listed.worktrees) {
+        options.signal?.throwIfAborted();
         if (worktree.prunable) continue;
         let canonicalWorktree: string;
         let contentPath: string;
@@ -291,18 +488,24 @@ export class ProjectWorkspaceService {
           const relative = path.relative(canonicalWorktree, contentPath);
           if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
           if (!(await fs.stat(contentPath)).isDirectory()) continue;
-        } catch {
+        } catch (error) {
+          options.signal?.throwIfAborted();
+          if (classifyFsError(error) !== 'not-found') rootDiscoveryError = 'io-error';
           continue;
         }
+        options.signal?.throwIfAborted();
         const identity = {
-          projectId: described.project.projectId,
+          projectId: project.projectId,
           rootId: root.rootId,
           workspaceId: worktree.worktreeId,
           repositoryId: worktree.repoId,
           canonicalPath: canonicalWorktree,
         };
         const kind = worktree.main ? 'main' : worktree.managed ? 'managed' : 'external';
-        const granted = kind !== 'external' || this.options.accessStore?.isApproved(identity) === true;
+        const granted = kind !== 'external'
+          || this.options.accessStore?.isApproved(identity) === true
+          || (options.provisionalAccess !== undefined
+            && sameWorkspaceAccessIdentity(identity, options.provisionalAccess));
         workspaces.push({
           workspaceId: worktree.worktreeId,
           rootId: root.rootId,
@@ -321,59 +524,252 @@ export class ProjectWorkspaceService {
       if (!workspaces.some((workspace) => workspace.rootId === root.rootId)) {
         workspaces.push(rootWorkspace(root));
       }
+      discoveryRoots.push(rootDiscoveryError
+        ? { rootId: root.rootId, status: 'unavailable', error: rootDiscoveryError }
+        : { rootId: root.rootId, status: 'complete' });
     }
-    return { ok: true, project: { ...described.project, workspaces } };
+    options.signal?.throwIfAborted();
+    return {
+      ok: true,
+      project: {
+        ...project,
+        workspaces,
+        workspaceDiscovery: { roots: discoveryRoots },
+      },
+    };
   }
 
-  async approveWorkspace(value: unknown): Promise<ProjectWorkspaceAccessResult> {
-    if (!this.isAccessRequest(value) || !this.options.accessStore) {
-      return { ok: false, error: 'invalid-request' };
-    }
-    const described = await this.describeProjectWorkspaces(value.projectId);
+  /** Rediscover one external Workspace and bind its consent transaction to the
+   * repository id plus canonical worktree root observed in the same listing.
+   * A provisional descriptor is returned for the caller's daemon transition;
+   * it does not make accessStore.isApproved true.
+   */
+  private async resolveExactExternalWorkspace(
+    request: ProjectWorkspaceAccessRequest,
+    expectedIdentity?: ProjectWorkspaceAccessIdentity,
+    signal?: AbortSignal,
+  ): Promise<ExactExternalWorkspaceContextResult> {
+    signal?.throwIfAborted();
+    const described = this.describeProject(request.projectId);
     if (!described.ok) return described;
-    const workspace = described.project.workspaces?.find((candidate) =>
-      candidate.rootId === value.rootId && candidate.workspaceId === value.workspaceId);
-    if (!workspace) return { ok: false, error: 'workspace-not-found' };
-    if (workspace.kind !== 'external') return { ok: true, workspace };
-    if (!workspace.repositoryId) return { ok: false, error: 'workspace-not-found' };
-    const listed = await this.options.listWorktrees?.(
-      described.project.roots.find((root) => root.rootId === value.rootId)?.displayPath ?? '',
-    ).catch(() => null);
-    const worktree = listed?.ok
-      ? listed.worktrees.find((candidate) => candidate.worktreeId === value.workspaceId)
-      : undefined;
-    if (!worktree || worktree.managed || worktree.main || worktree.repoId !== workspace.repositoryId) {
+    const root = described.project.roots.find((candidate) => candidate.rootId === request.rootId);
+    if (!root || !this.options.listWorktrees) {
       return { ok: false, error: 'workspace-not-found' };
     }
+    if (request.workspaceId === root.rootId) return { ok: false, error: 'invalid-request' };
+    let listed: WorktreeResult;
+    try {
+      listed = await this.options.listWorktrees(root.displayPath, signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      return { ok: false, error: classifyFsError(error) };
+    }
+    signal?.throwIfAborted();
+    if (!listed.ok) return { ok: false, error: classifyWorktreeFailure(listed.error) };
+    const worktree = listed.worktrees.find((candidate) => candidate.worktreeId === request.workspaceId);
+    if (!worktree || worktree.prunable) {
+      return { ok: false, error: 'workspace-not-found' };
+    }
+    if (worktree.managed || worktree.main) return { ok: false, error: 'invalid-request' };
     let canonicalPath: string;
     try {
       canonicalPath = await fs.realpath(worktree.path);
-    } catch {
-      return { ok: false, error: 'not-found' };
+    } catch (error) {
+      signal?.throwIfAborted();
+      return { ok: false, error: classifyFsError(error) };
     }
-    await this.options.accessStore.approve({
-      projectId: value.projectId,
-      rootId: value.rootId,
-      workspaceId: value.workspaceId,
+    signal?.throwIfAborted();
+    const identity: ProjectWorkspaceAccessIdentity = {
+      projectId: request.projectId,
+      rootId: request.rootId,
+      workspaceId: request.workspaceId,
       repositoryId: worktree.repoId,
       canonicalPath,
+    };
+    if (expectedIdentity && !sameWorkspaceAccessIdentity(identity, expectedIdentity)) {
+      return { ok: false, error: 'workspace-not-found' };
+    }
+    const enriched = await this.enrichProjectWorkspaces(described.project, {
+      worktreesByRootId: new Map([[root.rootId, listed]]),
+      provisionalAccess: identity,
+      signal,
     });
-    const refreshed = await this.describeProjectWorkspaces(value.projectId);
-    const approved = refreshed.ok
-      ? refreshed.project.workspaces?.find((candidate) =>
-        candidate.rootId === value.rootId && candidate.workspaceId === value.workspaceId)
-      : undefined;
-    return approved ? { ok: true, workspace: approved } : { ok: false, error: 'workspace-not-found' };
+    signal?.throwIfAborted();
+    if (!enriched.ok) return enriched;
+    const workspace = enriched.project.workspaces?.find((candidate) => (
+      candidate.rootId === request.rootId
+      && candidate.workspaceId === request.workspaceId
+      && candidate.kind === 'external'
+      && candidate.repositoryId === identity.repositoryId
+      && candidate.access === 'granted'
+    ));
+    return workspace
+      ? { ok: true, value: { identity, workspace, project: enriched.project } }
+      : { ok: false, error: 'workspace-not-found' };
+  }
+
+  async approveWorkspace(value: unknown): Promise<ProjectWorkspaceAccessResult> {
+    const approved = await this.approveWorkspaceContext(value);
+    return approved.ok
+      ? { ok: true, workspace: approved.workspace }
+      : approved;
+  }
+
+  async approveWorkspaceContext(value: unknown): Promise<ProjectWorkspaceApprovalContextResult> {
+    const begun = await this.beginWorkspaceApproval(value);
+    if (!begun.ok) return begun;
+    if (!await this.commitWorkspaceApproval(begun.intent)) {
+      return { ok: false, error: 'io-error' };
+    }
+    return { ok: true, workspace: begun.workspace, project: begun.project };
+  }
+
+  async beginWorkspaceApproval(
+    value: unknown,
+    signal?: AbortSignal,
+  ): Promise<ProjectWorkspaceApprovalIntentResult> {
+    signal?.throwIfAborted();
+    if (!this.isAccessRequest(value) || !this.options.accessStore) {
+      return { ok: false, error: 'invalid-request' };
+    }
+    const resolved = await this.resolveExactExternalWorkspace(value, undefined, signal);
+    if (!resolved.ok) return resolved;
+    signal?.throwIfAborted();
+    const intent = await this.options.accessStore.beginApproval(resolved.value.identity);
+    signal?.throwIfAborted();
+    return {
+      ok: true,
+      intent,
+      workspace: resolved.value.workspace,
+      project: resolved.value.project,
+    };
+  }
+
+  commitWorkspaceApproval(intent: ProjectWorkspaceAccessIntent): Promise<boolean> {
+    return this.options.accessStore?.commitApproval(intent) ?? Promise.resolve(false);
+  }
+
+  /** Clear a revalidation-failed approval only when its persisted transaction
+   * token still matches. Revoke recovery must remain pending and fail closed.
+   */
+  discardWorkspaceAccessIntent(intent: ProjectWorkspaceAccessIntent): Promise<boolean> {
+    return this.options.accessStore?.discardApproval(intent) ?? Promise.resolve(false);
   }
 
   async revokeWorkspace(value: unknown): Promise<boolean> {
-    if (!this.isAccessRequest(value) || !this.options.accessStore) return false;
-    await this.options.accessStore.revoke(value.projectId, value.rootId, value.workspaceId);
+    const begun = await this.beginWorkspaceRevocation(value);
+    if (!begun.ok) return false;
+    return this.commitWorkspaceRevocation(begun.intent);
+  }
+
+  async beginWorkspaceRevocation(value: unknown): Promise<ProjectWorkspaceRevocationIntentResult> {
+    if (!this.isAccessRequest(value) || !this.options.accessStore) return { ok: false };
+    const intent = await this.options.accessStore.beginRevocation(value);
+    if (!intent) return { ok: false };
+    return {
+      ok: true,
+      intent,
+      request: {
+        projectId: value.projectId,
+        rootId: value.rootId,
+        workspaceId: value.workspaceId,
+      },
+    };
+  }
+
+  /** Validate that a revoke request names a previously persisted external
+   * Workspace grant before main archives its matching daemon capability.
+   */
+  prepareWorkspaceRevocation(value: unknown): ProjectWorkspaceRevocationPreparation {
+    if (!this.isAccessRequest(value)
+      || !this.options.accessStore?.hasApproval(value)) {
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      request: {
+        projectId: value.projectId,
+        rootId: value.rootId,
+        workspaceId: value.workspaceId,
+      },
+    };
+  }
+
+  /** Complete a journaled revoke after daemon archival. The request overload
+   * preserves the pre-journal main wiring until startup recovery is connected.
+   */
+  async commitWorkspaceRevocation(
+    request: ProjectWorkspaceAccessRequest | ProjectWorkspaceAccessIntent,
+  ): Promise<boolean> {
+    if (!this.options.accessStore) throw new Error('Project Workspace access store is unavailable.');
+    if ('kind' in request) return this.options.accessStore.commitRevocation(request);
+    await this.options.accessStore.revoke(request.projectId, request.rootId, request.workspaceId);
     return true;
+  }
+
+  listPendingWorkspaceAccess(): readonly ProjectWorkspaceAccessIntent[] {
+    return this.options.accessStore?.listPendingIntents() ?? [];
+  }
+
+  async recoverWorkspaceAccessIntent(
+    candidate: ProjectWorkspaceAccessIntent,
+    signal?: AbortSignal,
+  ): Promise<ProjectWorkspaceAccessRecoveryResult> {
+    signal?.throwIfAborted();
+    const intent = this.options.accessStore?.listPendingIntents().find((pending) => (
+      sameWorkspaceAccessIntent(pending, candidate)
+    ));
+    if (!intent) return { ok: false, intent: candidate, error: 'invalid-request' };
+    if (intent.kind === 'revoke') {
+      return {
+        ok: true,
+        intent,
+        request: {
+          projectId: intent.identity.projectId,
+          rootId: intent.identity.rootId,
+          workspaceId: intent.identity.workspaceId,
+        },
+      };
+    }
+    const resolved = await this.resolveExactExternalWorkspace({
+      projectId: intent.identity.projectId,
+      rootId: intent.identity.rootId,
+      workspaceId: intent.identity.workspaceId,
+    }, intent.identity, signal);
+    signal?.throwIfAborted();
+    if (!resolved.ok && isRetryableWorkspaceDiscoveryError(resolved.error)) {
+      throw new ProjectWorkspaceResolutionError(resolved.error);
+    }
+    return resolved.ok
+      ? {
+          ok: true,
+          intent,
+          workspace: resolved.value.workspace,
+          project: resolved.value.project,
+        }
+      : { ok: false, intent, error: resolved.error };
+  }
+
+  async recoverPendingWorkspaceAccess(
+    signal?: AbortSignal,
+  ): Promise<readonly ProjectWorkspaceAccessRecoveryResult[]> {
+    signal?.throwIfAborted();
+    const recovered: ProjectWorkspaceAccessRecoveryResult[] = [];
+    for (const intent of this.listPendingWorkspaceAccess()) {
+      const result = await this.recoverWorkspaceAccessIntent(intent, signal);
+      signal?.throwIfAborted();
+      recovered.push(result);
+    }
+    signal?.throwIfAborted();
+    return recovered;
   }
 
   revokeProjectAccess(projectId: string): Promise<void> {
     return this.options.accessStore?.revoke(projectId) ?? Promise.resolve();
+  }
+
+  revokeProjectRootAccess(projectId: string, rootId: string): Promise<void> {
+    return this.options.accessStore?.revoke(projectId, rootId) ?? Promise.resolve();
   }
 
   /**
@@ -382,13 +778,15 @@ export class ProjectWorkspaceService {
    * granted workspaces participate; an external worktree is never approved as
    * a side effect of following a link.
    */
-  async resolveAbsoluteProjectPath(value: unknown): Promise<
+  async resolveAbsoluteProjectPath(value: unknown, signal?: AbortSignal): Promise<
     | {
         readonly ok: true;
         readonly request: ProjectPathRequest & { readonly workspaceId: string };
+        readonly project: ProjectWorkspaceDescriptor;
       }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
   > {
+    signal?.throwIfAborted();
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
       return { ok: false, error: 'invalid-request' };
     }
@@ -409,12 +807,14 @@ export class ProjectWorkspaceService {
       ? [candidate.projectId]
       : this.projects.list().map((project) => rootIdForPath(project.primaryRoot));
     for (const projectId of projectIds) {
-      const described = await this.describeProjectWorkspaces(projectId);
+      signal?.throwIfAborted();
+      const described = await this.describeProjectWorkspaces(projectId, signal);
       if (!described.ok) continue;
       const rootsById = new Map(described.project.roots.map((root) => [root.rootId, root]));
       const workspaces = [...(described.project.workspaces ?? described.project.roots.map(rootWorkspace))]
         .sort((left, right) => right.displayPath.length - left.displayPath.length);
       for (const workspace of workspaces) {
+        signal?.throwIfAborted();
         if (!rootsById.has(workspace.rootId)) continue;
         const lexicalRelativePath = absoluteRelativePath(workspace.displayPath, absolutePath);
         if (workspace.access === 'authorization-required') {
@@ -425,23 +825,46 @@ export class ProjectWorkspaceService {
           if (lexicalRelativePath !== null) return { ok: false, error: 'workspace-not-found' };
           continue;
         }
-        const root = await this.resolveRoot(projectId, workspace.rootId, workspace.workspaceId);
+        const root = await this.resolveRoot(
+          projectId,
+          workspace.rootId,
+          workspace.workspaceId,
+          signal,
+        );
+        signal?.throwIfAborted();
         if (!root.ok) {
           if (lexicalRelativePath !== null) return root;
           continue;
         }
         const relativePath = lexicalRelativePath
           ?? await this.relativePathFromRootAlias(root.value.rootPath, absolutePath);
+        signal?.throwIfAborted();
         if (relativePath === null) continue;
         const resolved = await this.resolveProjectPath({
           projectId,
           rootId: workspace.rootId,
           workspaceId: workspace.workspaceId,
           relativePath,
-        });
+        }, signal);
+        signal?.throwIfAborted();
         if (!resolved.ok) return resolved;
+        const workspaces = [...(described.project.workspaces ?? [])];
+        const selectedIndex = workspaces.findIndex((candidate) => (
+          candidate.rootId === resolved.value.workspace.rootId
+          && candidate.workspaceId === resolved.value.workspace.workspaceId
+        ));
+        const selectedWorkspace = {
+          ...resolved.value.workspace,
+          displayPath: resolved.value.rootPath,
+        };
+        if (selectedIndex >= 0) {
+          workspaces[selectedIndex] = selectedWorkspace;
+        } else {
+          workspaces.push(selectedWorkspace);
+        }
         return {
           ok: true,
+          project: { ...described.project, workspaces },
           request: {
             projectId,
             rootId: workspace.rootId,
@@ -538,7 +961,7 @@ export class ProjectWorkspaceService {
   async search(request: unknown, signal?: AbortSignal): Promise<ProjectSearchResult> {
     if (!this.isSearchRequest(request)) return { ok: false, error: 'invalid-request' };
     const described = request.workspaceId
-      ? await this.describeProjectWorkspaces(request.projectId)
+      ? await this.describeProjectWorkspaces(request.projectId, signal)
       : this.describeProject(request.projectId);
     if (!described.ok) return described;
     const selectedRoots = request.rootId
@@ -559,6 +982,7 @@ export class ProjectWorkspaceService {
         request.projectId,
         root.rootId,
         request.workspaceId,
+        signal,
       );
       if (!rootResolution.ok) return rootResolution;
       const pendingDirectories: Array<{ absolutePath: string; relativePath: string }> = [{
@@ -706,11 +1130,11 @@ export class ProjectWorkspaceService {
     return { ok: true, matches, truncated, scannedFiles, scannedBytes };
   }
 
-  async resolveProjectPath(request: ProjectPathRequest): Promise<
+  async resolveProjectPath(request: ProjectPathRequest, signal?: AbortSignal): Promise<
     | { readonly ok: true; readonly value: ResolvedPath }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
   > {
-    return this.resolvePathRequest(request);
+    return this.resolvePathRequest(request, signal);
   }
 
   private async readResolvedText(resolved: ResolvedPath): Promise<ProjectTextResult> {
@@ -755,14 +1179,21 @@ export class ProjectWorkspaceService {
     }
   }
 
-  private async resolvePathRequest(request: unknown): Promise<
+  private async resolvePathRequest(request: unknown, signal?: AbortSignal): Promise<
     | { readonly ok: true; readonly value: ResolvedPath }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
   > {
+    signal?.throwIfAborted();
     if (!this.isPathRequest(request)) return { ok: false, error: 'invalid-request' };
     const relativePath = safeRelativePath(request.relativePath);
     if (relativePath === null) return { ok: false, error: 'path-outside-root' };
-    const root = await this.resolveRoot(request.projectId, request.rootId, request.workspaceId);
+    const root = await this.resolveRoot(
+      request.projectId,
+      request.rootId,
+      request.workspaceId,
+      signal,
+    );
+    signal?.throwIfAborted();
     if (!root.ok) return root;
     const absolutePath = relativePath
       ? path.join(root.value.rootPath, ...relativePath.split('/'))
@@ -774,10 +1205,16 @@ export class ProjectWorkspaceService {
     return { ok: true, value: { ...root.value, relativePath, absolutePath } };
   }
 
-  private async resolveRoot(projectId: string, rootId: string, workspaceId?: string): Promise<
+  private async resolveRoot(
+    projectId: string,
+    rootId: string,
+    workspaceId?: string,
+    signal?: AbortSignal,
+  ): Promise<
     | { readonly ok: true; readonly value: ResolvedProjectRoot }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
   > {
+    signal?.throwIfAborted();
     const project = this.projects.list().find((candidate) =>
       rootIdForPath(candidate.primaryRoot) === projectId);
     if (!project) return { ok: false, error: 'project-not-found' };
@@ -792,7 +1229,8 @@ export class ProjectWorkspaceService {
       primary: index === 0,
     });
     if (workspaceId && workspaceId !== rootId) {
-      const described = await this.describeProjectWorkspaces(projectId);
+      const described = await this.describeProjectWorkspaces(projectId, signal);
+      signal?.throwIfAborted();
       if (!described.ok) return described;
       const selected = described.project.workspaces?.find((candidate) =>
         candidate.rootId === rootId && candidate.workspaceId === workspaceId);

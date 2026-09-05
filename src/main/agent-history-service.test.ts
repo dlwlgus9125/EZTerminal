@@ -45,6 +45,114 @@ function fakeAdapter(
 }
 
 describe('AgentHistoryService', () => {
+  it('prepares an edited Project without mutating the index and returns its exact previous identity', async () => {
+    const base = makeTemporaryDirectory('ez-agent-history-project-prepare-');
+    const primaryRoot = makeDirectory(base, 'primary');
+    const replacementRoot = makeDirectory(base, 'replacement');
+    const store = new AgentProjectStore(path.join(base, 'user-data'));
+    await store.init();
+    const service = new AgentHistoryService(store, []);
+    const saved = await service.saveProject({
+      name: 'Original', primaryRoot, additionalRoots: [], pinned: false,
+    });
+    if (!saved.ok) throw new Error('expected the Project fixture to be saved');
+
+    const prepared = await service.prepareProjectSave({
+      projectId: saved.project.projectId,
+      name: 'Replacement',
+      primaryRoot: replacementRoot,
+      additionalRoots: [primaryRoot],
+      pinned: true,
+    });
+    expect(prepared).toMatchObject({
+      ok: true,
+      project: { name: 'Replacement', primaryRoot: replacementRoot, additionalRoots: [primaryRoot] },
+      previousProject: { projectId: saved.project.projectId, name: 'Original', primaryRoot },
+    });
+    expect((await service.listProjects()).items[0]).toMatchObject({
+      projectId: saved.project.projectId,
+      name: 'Original',
+      primaryRoot,
+    });
+    if (!prepared.ok) throw new Error('expected the Project edit to be prepared');
+    await expect(service.commitPreparedProjectSave(prepared.preparation)).resolves.toMatchObject({
+      ok: true,
+      project: { name: 'Replacement', primaryRoot: replacementRoot },
+      previousProject: { projectId: saved.project.projectId, primaryRoot },
+    });
+  });
+
+  it('checks a public Project identity before a fail-closed removal workflow', async () => {
+    const base = makeTemporaryDirectory('ez-agent-history-project-presence-');
+    const primaryRoot = makeDirectory(base, 'primary');
+    const store = new AgentProjectStore(path.join(base, 'user-data'));
+    await store.init();
+    const service = new AgentHistoryService(store, []);
+    const saved = await service.saveProject({
+      name: 'Removable project',
+      primaryRoot,
+      additionalRoots: [],
+      pinned: false,
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) throw new Error('expected the Project fixture to be saved');
+
+    expect(service.hasProject(saved.project.projectId)).toBe(true);
+    await expect(service.removeProject(saved.project.projectId)).resolves.toBe(true);
+    expect(service.hasProject(saved.project.projectId)).toBe(false);
+  });
+
+  it('does not auto-import a stale Project launch target after explicit removal', async () => {
+    const base = makeTemporaryDirectory('ez-agent-history-stale-launch-');
+    const primaryRoot = makeDirectory(base, 'primary');
+    const store = new AgentProjectStore(path.join(base, 'user-data'));
+    await store.init();
+    const service = new AgentHistoryService(store, []);
+    const saved = await service.saveProject({
+      name: 'Removed project',
+      primaryRoot,
+      additionalRoots: [],
+      pinned: false,
+    });
+    if (!saved.ok) throw new Error('expected the Project fixture to be saved');
+    await service.removeProject(saved.project.projectId);
+
+    await service.recordLaunchTargetWork({
+      kind: 'project',
+      projectId: saved.project.projectId,
+    }, [primaryRoot], 200);
+
+    await expect(service.listProjects()).resolves.toMatchObject({ items: [] });
+  });
+
+  it('does not auto-import a removed Project when a resolved history session reports activity late', async () => {
+    const base = makeTemporaryDirectory('ez-agent-history-stale-resume-');
+    const primaryRoot = makeDirectory(base, 'primary');
+    const store = new AgentProjectStore(path.join(base, 'user-data'));
+    await store.init();
+    const adapter = fakeAdapter({
+      privateId: 'late-provider-session',
+      parentPrivateId: null,
+      title: 'Late resume',
+      preview: 'Resume raced Project removal',
+      createdAt: 100,
+      updatedAt: 200,
+      cwd: primaryRoot,
+      roots: [primaryRoot],
+      source: 'cli',
+      rolloutPath: null,
+    });
+    const service = new AgentHistoryService(store, [adapter]);
+    await service.recordTerminalWork([primaryRoot], 100);
+    const projects = await service.listProjects();
+    const sessions = await service.listSessions(projects.items[0]!.projectId);
+    const historyId = sessions.items[0]!.historyId;
+    await service.removeProject(projects.items[0]!.projectId);
+
+    await expect(service.recordResumeWork(historyId, 300)).resolves.toBe(false);
+    await expect(service.listProjects()).resolves.toMatchObject({ items: [] });
+  });
+
   it('returns locally saved projects without querying provider history', async () => {
     const base = makeTemporaryDirectory('ez-agent-history-local-projects-');
     const primaryRoot = makeDirectory(base, 'primary');

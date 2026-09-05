@@ -3945,7 +3945,8 @@ describe('RemoteBridge — Agent history v4', () => {
         commandText: '!codex --cd \'C:\\workspace\' resume \'provider-private-thread-id\'',
         displayCommandText: 'codex resume',
       })),
-      recordTerminalWork: vi.fn(async () => undefined),
+      recordLaunchTargetWork: vi.fn(async () => undefined),
+      recordResumeWork: vi.fn(async () => undefined),
     };
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
@@ -4027,7 +4028,8 @@ describe('RemoteBridge — Agent history v4', () => {
     });
     expect(run?.type === 'run' && run.commandText).toContain('provider-private-thread-id');
     expect(JSON.stringify(ws.sent)).not.toContain('provider-private-thread-id');
-    expect(historySource.recordTerminalWork).toHaveBeenCalledWith(session.roots, expect.any(Number));
+    expect(historySource.recordResumeWork)
+      .toHaveBeenCalledWith(session.historyId, expect.any(Number));
   });
 
   it('dispatches a Claude resume with the provider label and no session id on the wire', async () => {
@@ -4042,7 +4044,8 @@ describe('RemoteBridge — Agent history v4', () => {
         commandText: '!claude --resume \'9f2c1b74-1111-4222-8333-444455556666\'',
         displayCommandText: 'claude resume',
       })),
-      recordTerminalWork: vi.fn(async () => undefined),
+      recordLaunchTargetWork: vi.fn(async () => undefined),
+      recordResumeWork: vi.fn(async () => undefined),
     };
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
@@ -4080,10 +4083,10 @@ describe('RemoteBridge — Agent history v4', () => {
     expect(run?.type === 'run' && run.commandText)
       .toContain('9f2c1b74-1111-4222-8333-444455556666');
     expect(JSON.stringify(ws.sent)).not.toContain('9f2c1b74-1111-4222-8333-444455556666');
-    // A resume from mobile is Agent work EZTerminal ran itself, so the project
-    // is recorded exactly as a desktop resume records it.
-    expect(historySource.recordTerminalWork)
-      .toHaveBeenCalledWith(['C:\\workspace'], expect.any(Number));
+    // Resume recency is tied to the opaque history owner, so a removed Project
+    // cannot be re-imported from roots observed after its deletion.
+    expect(historySource.recordResumeWork)
+      .toHaveBeenCalledWith('claude_0123456789abcdef01234567', expect.any(Number));
   });
 });
 
@@ -4133,7 +4136,8 @@ describe('RemoteBridge — Agent projects v5', () => {
       readTranscript: vi.fn(async () => null),
       prepareResume: vi.fn(async () => null),
       resolveResume: vi.fn(async () => ({ ok: false as const, reason: 'unavailable' as const })),
-      recordTerminalWork: vi.fn(async () => undefined),
+      recordLaunchTargetWork: vi.fn(async () => undefined),
+      recordResumeWork: vi.fn(async () => undefined),
     };
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
@@ -4244,8 +4248,8 @@ describe('RemoteBridge — Agent projects v5', () => {
     });
     expect(run?.type === 'run' && run.commandText).toContain('--private-launch-secret');
     expect(JSON.stringify(ws.sent)).not.toContain('--private-launch-secret');
-    expect(historySource.recordTerminalWork)
-      .toHaveBeenCalledWith(preparation.roots, expect.any(Number));
+    expect(historySource.recordLaunchTargetWork)
+      .toHaveBeenCalledWith(preparation.target, preparation.roots, expect.any(Number));
 
     ws.clientSend({
       kind: 'agent-project-start-launch',
@@ -4290,7 +4294,7 @@ describe('RemoteBridge — Agent projects v5', () => {
         commandText: '!claude --private-direct-secret',
         displayCommandText: 'claude',
       })),
-      recordTerminalWork: vi.fn(async () => undefined),
+      recordLaunchTargetWork: vi.fn(async () => undefined),
     } as unknown as RemoteAgentHistorySource;
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
@@ -4354,8 +4358,8 @@ describe('RemoteBridge — Agent projects v5', () => {
     });
     expect(run?.type === 'run' && run.commandText).toContain('--private-direct-secret');
     expect(JSON.stringify(ws.sent)).not.toContain('--private-direct-secret');
-    expect(historySource.recordTerminalWork)
-      .toHaveBeenCalledWith(preparation.roots, expect.any(Number));
+    expect(historySource.recordLaunchTargetWork)
+      .toHaveBeenCalledWith(target, preparation.roots, expect.any(Number));
   });
 
 });

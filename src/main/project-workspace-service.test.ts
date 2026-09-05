@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { PROJECT_TEXT_MAX_BYTES } from '../shared/project-workspace';
 import { AgentProjectStore } from './agent-project-store';
+import { daemonWorkspaceId, resolvedDaemonProjectSyncDescriptor } from './daemon-project-sync';
 import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
 import { ProjectWorkspaceService } from './project-workspace-service';
 import type { WorktreeInfo, WorktreeResult } from '../shared/worktree';
@@ -289,6 +290,14 @@ describe('ProjectWorkspaceService', () => {
     expect(canonicalRoot).not.toBe(path.resolve(test.root));
     await fs.mkdir(path.join(test.root, 'src'));
 
+    const rootOnlyContext = await test.service.resolveTerminalDirectoryContext({
+      projectId: test.projectId,
+      absolutePath: test.root,
+    });
+    expect(rootOnlyContext.ok).toBe(true);
+    if (!rootOnlyContext.ok) throw new Error('expected a prepared root terminal');
+    expect(rootOnlyContext.project.workspaces?.[0]?.displayPath).toBe(canonicalRoot);
+
     const listWorktrees = async (): Promise<WorktreeResult> => ({
       ok: true,
       action: 'list',
@@ -334,6 +343,177 @@ describe('ProjectWorkspaceService', () => {
     })).resolves.toEqual({ ok: false, error: 'path-outside-root' });
   });
 
+  it('propagates shutdown abort through Project terminal worktree discovery', async () => {
+    const test = await fixture();
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const service = new ProjectWorkspaceService(test.store, {
+      listWorktrees: async (_cwd, signal) => {
+        receivedSignal = signal;
+        controller.abort(new DOMException('Project authority shutdown', 'AbortError'));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        return { ok: false, action: 'list', error: 'IO_ERROR', message: 'cancelled' };
+      },
+    });
+
+    await expect(service.resolveTerminalDirectoryContext({
+      projectId: test.projectId,
+      absolutePath: test.root,
+    }, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Project authority shutdown',
+    });
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
+  it('distinguishes non-Git and transient Git discovery failures by typed provenance', async () => {
+    const test = await fixture();
+    let listing: WorktreeResult = {
+      ok: false,
+      action: 'list',
+      error: 'NOT_A_GIT_REPOSITORY',
+      message: 'not a repository',
+    };
+    const service = new ProjectWorkspaceService(test.store, {
+      listWorktrees: async () => listing,
+    });
+
+    await expect(service.describeProjectWorkspaces(test.projectId)).resolves.toMatchObject({
+      ok: true,
+      project: {
+        workspaceDiscovery: {
+          roots: [{
+            rootId: test.rootId,
+            status: 'unavailable',
+            error: 'not-a-repository',
+          }],
+        },
+      },
+    });
+
+    listing = {
+      ok: false,
+      action: 'list',
+      error: 'GIT_FAILED',
+      message: 'temporary Git failure',
+    };
+    await expect(service.describeProjectWorkspaces(test.projectId)).resolves.toMatchObject({
+      ok: true,
+      project: {
+        workspaceDiscovery: {
+          roots: [{ rootId: test.rootId, status: 'unavailable', error: 'git-failed' }],
+        },
+      },
+    });
+  });
+
+  it('propagates shutdown abort through repeated workspace root resolution', async () => {
+    const test = await fixture();
+    const controller = new AbortController();
+    const receivedSignals: Array<AbortSignal | undefined> = [];
+    let listingCount = 0;
+    const service = new ProjectWorkspaceService(test.store, {
+      listWorktrees: async (_cwd, signal) => {
+        receivedSignals.push(signal);
+        listingCount += 1;
+        if (listingCount === 3) {
+          controller.abort(new DOMException('Project authority shutdown', 'AbortError'));
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          return { ok: false, action: 'list', error: 'IO_ERROR', message: 'cancelled' };
+        }
+        return {
+          ok: true,
+          action: 'list',
+          worktrees: [{
+            worktreeId: 'main-worktree',
+            repoId: 'repo-fixture',
+            path: test.root,
+            branch: 'main',
+            head: 'a'.repeat(40),
+            main: true,
+            locked: false,
+            managed: true,
+            prunable: false,
+          }],
+        };
+      },
+    });
+
+    await expect(service.resolveTerminalDirectoryContext({
+      projectId: test.projectId,
+      absolutePath: test.root,
+    }, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Project authority shutdown',
+    });
+    expect(receivedSignals).toEqual([
+      controller.signal,
+      controller.signal,
+      controller.signal,
+    ]);
+  });
+
+  it('propagates shutdown abort through search workspace root revalidation', async () => {
+    const test = await fixture();
+    const external = path.join(test.base, 'external-worktree');
+    await fs.mkdir(external);
+    const controller = new AbortController();
+    const receivedSignals: Array<AbortSignal | undefined> = [];
+    let listingCount = 0;
+    const service = new ProjectWorkspaceService(test.store, {
+      listWorktrees: async (_cwd, signal) => {
+        receivedSignals.push(signal);
+        listingCount += 1;
+        if (listingCount === 2) {
+          controller.abort(new DOMException('Project authority shutdown', 'AbortError'));
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          return { ok: false, action: 'list', error: 'IO_ERROR', message: 'cancelled' };
+        }
+        return {
+          ok: true,
+          action: 'list',
+          worktrees: [{
+            worktreeId: 'main-worktree',
+            repoId: 'repo-fixture',
+            path: test.root,
+            branch: 'main',
+            head: 'a'.repeat(40),
+            main: true,
+            locked: false,
+            managed: true,
+            prunable: false,
+          }, {
+            worktreeId: 'external-worktree',
+            repoId: 'repo-fixture',
+            path: external,
+            branch: 'review/external',
+            head: 'b'.repeat(40),
+            main: false,
+            locked: false,
+            managed: false,
+            prunable: false,
+          }],
+        };
+      },
+    });
+
+    await expect(service.search({
+      requestId: 'search-during-shutdown',
+      projectId: test.projectId,
+      rootId: test.rootId,
+      workspaceId: 'external-worktree',
+      query: 'needle',
+      mode: 'files',
+    }, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Project authority shutdown',
+    });
+    expect(receivedSignals).toEqual([
+      controller.signal,
+      controller.signal,
+    ]);
+  });
+
   it('requires durable consent for an external worktree and returns its canonical launch path', async () => {
     const actualParent = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-workspace-external-parent-'));
     temporaryPaths.push({ path: actualParent, kind: 'directory' });
@@ -347,6 +527,7 @@ describe('ProjectWorkspaceService', () => {
     expect(canonicalExternal).not.toBe(path.resolve(external));
     await fs.writeFile(path.join(external, 'external.txt'), 'approved content\n');
     let externalRepoId = 'repo-fixture';
+    let externalPath = external;
     const worktrees = (): readonly WorktreeInfo[] => [{
       worktreeId: 'main-worktree',
       repoId: 'repo-fixture',
@@ -360,7 +541,7 @@ describe('ProjectWorkspaceService', () => {
     }, {
       worktreeId: 'external-worktree',
       repoId: externalRepoId,
-      path: external,
+      path: externalPath,
       branch: 'review/external',
       head: 'b'.repeat(40),
       main: false,
@@ -368,11 +549,12 @@ describe('ProjectWorkspaceService', () => {
       managed: false,
       prunable: false,
     }];
-    const listWorktrees = async (): Promise<WorktreeResult> => ({
-      ok: true,
-      action: 'list',
-      worktrees: worktrees(),
-    });
+    let worktreeListingFails = false;
+    const listWorktrees = async (): Promise<WorktreeResult> => (
+      worktreeListingFails
+        ? { ok: false, action: 'list', error: 'GIT_FAILED', message: 'transient failure' }
+        : { ok: true, action: 'list', worktrees: worktrees() }
+    );
     const accessStore = new ProjectWorkspaceAccessStore(test.userData);
     await accessStore.init();
     const service = new ProjectWorkspaceService(test.store, { listWorktrees, accessStore });
@@ -388,6 +570,15 @@ describe('ProjectWorkspaceService', () => {
       kind: 'external',
       access: 'authorization-required',
     });
+    expect(before.ok && before.project.workspaceDiscovery).toEqual({
+      roots: [{ rootId: test.rootId, status: 'complete' }],
+    });
+    await expect(service.approveWorkspaceContext({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      workspaceId: test.rootId,
+    })).resolves.toEqual({ ok: false, error: 'invalid-request' });
+    expect(service.prepareWorkspaceRevocation(request)).toEqual({ ok: false });
     await expect(service.readText(request)).resolves.toEqual({ ok: false, error: 'authorization-required' });
     await expect(service.resolveSessionTarget({
       projectId: test.projectId,
@@ -403,10 +594,15 @@ describe('ProjectWorkspaceService', () => {
       absolutePath: external,
     })).resolves.toEqual({ ok: false, error: 'path-outside-root' });
 
-    await expect(service.approveWorkspace(request)).resolves.toMatchObject({
+    const approved = await service.approveWorkspaceContext(request);
+    expect(approved).toMatchObject({
       ok: true,
       workspace: { workspaceId: 'external-worktree', access: 'granted' },
     });
+    if (!approved.ok) throw new Error('expected exact Workspace approval context');
+    expect(approved.project.workspaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workspaceId: 'external-worktree', access: 'granted' }),
+    ]));
     await expect(service.readText(request)).resolves.toMatchObject({
       ok: true,
       file: { content: 'approved content\n' },
@@ -437,6 +633,50 @@ describe('ProjectWorkspaceService', () => {
       },
     });
 
+    const prepared = await service.resolveTerminalDirectoryContext({
+      projectId: test.projectId,
+      absolutePath: external,
+    });
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error('expected a prepared external-worktree terminal');
+    worktreeListingFails = true;
+    await expect(service.describeProjectWorkspaces(test.projectId)).resolves.toMatchObject({
+      ok: true,
+      project: {
+        workspaces: [{ kind: 'root' }],
+        workspaceDiscovery: {
+          roots: [{ rootId: test.rootId, status: 'unavailable', error: 'git-failed' }],
+        },
+      },
+    });
+    expect(resolvedDaemonProjectSyncDescriptor(prepared.project).workspaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: daemonWorkspaceId(test.projectId, test.rootId, 'external-worktree'),
+          rootPath: canonicalExternal,
+          kind: 'worktree',
+        }),
+      ]),
+    );
+
+    expect(service.prepareWorkspaceRevocation(request)).toEqual({
+      ok: true,
+      request: {
+        projectId: test.projectId,
+        rootId: test.rootId,
+        workspaceId: 'external-worktree',
+      },
+    });
+    await expect(service.revokeWorkspace(request)).resolves.toBe(true);
+    expect(service.prepareWorkspaceRevocation(request)).toEqual({ ok: false });
+    worktreeListingFails = false;
+    await expect(service.readText(request)).resolves.toEqual({
+      ok: false,
+      error: 'authorization-required',
+    });
+
+    await expect(service.approveWorkspace(request)).resolves.toMatchObject({ ok: true });
+
     const reloadedStore = new ProjectWorkspaceAccessStore(test.userData);
     await reloadedStore.init();
     const reloadedService = new ProjectWorkspaceService(test.store, { listWorktrees, accessStore: reloadedStore });
@@ -452,5 +692,24 @@ describe('ProjectWorkspaceService', () => {
       rootId: test.rootId,
       workspaceId: 'external-worktree',
     })).resolves.toEqual({ ok: false, error: 'authorization-required' });
+
+    externalRepoId = 'repo-fixture';
+    const replacement = path.join(test.base, 'replacement-worktree');
+    await fs.mkdir(replacement);
+    await fs.writeFile(path.join(replacement, 'external.txt'), 'replacement content\n');
+    externalPath = replacement;
+    await expect(reloadedService.describeProjectWorkspaces(test.projectId)).resolves.toMatchObject({
+      ok: true,
+      project: {
+        workspaces: expect.arrayContaining([expect.objectContaining({
+          workspaceId: 'external-worktree',
+          displayPath: await fs.realpath(replacement),
+          access: 'authorization-required',
+        })]),
+        workspaceDiscovery: {
+          roots: [{ rootId: test.rootId, status: 'complete' }],
+        },
+      },
+    });
   });
 });

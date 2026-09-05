@@ -13,6 +13,7 @@ import {
   type SessionKind,
   type WorkspaceKind,
 } from '../shared/daemon-protocol';
+import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 
 const DAEMON_CLI_PREFIX = '/v1/daemon/';
 const MAX_REVISION_RETRIES = 3;
@@ -330,10 +331,16 @@ export class DaemonCliControl {
       };
     }
     const projectId = sourceSession.projectId;
-    if (!snapshot.projects.some((project) => project.id === projectId)) {
+    if (!snapshot.projects.some((project) => project.id === projectId && project.archivedAt === undefined)) {
       return {
         ok: false,
         response: errorResponse(409, 'scope-unavailable', 'The local Project is not registered with the daemon yet.'),
+      };
+    }
+    if (!findActiveDaemonWorkspace(snapshot, sourceSession.workspaceId, projectId)) {
+      return {
+        ok: false,
+        response: errorResponse(403, 'capability-expired', 'The local Workspace capability is no longer active.'),
       };
     }
     const workspaceIds = new Set(

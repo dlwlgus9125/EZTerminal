@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { daemonWorkspaceId } from '../src/main/daemon-project-sync';
 import { launchApp } from './launch-app';
 import { readXtermBuffer } from './xterm-buffer';
 import { createRegisteredE2eTempDir, expect, test, type Locator, type Page } from './test';
@@ -313,6 +314,188 @@ test('project root terminal preserves fixed-root identity across rename and rest
     expect(beforeRestart).not.toContain(restoredSessionId);
   }
   await restoredApp.close();
+});
+
+test('newly approved worktree terminal keeps its project daemon identity', async () => {
+  const { projectRoot, userDataDir } = createProjectFixture();
+  const externalParent = createRegisteredE2eTempDir('ezterm-project-workbench-external-');
+  const externalRoot = path.join(externalParent, 'review');
+  git(projectRoot, 'worktree', 'add', '-b', 'e2e-external-review', externalRoot, 'HEAD');
+  const app = await launchApp(userDataDir);
+  const window = await app.firstWindow();
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const publicProjectId = await window.evaluate(async () =>
+    (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
+  expect(publicProjectId).toBeTruthy();
+
+  // Seed daemon project identity while the external worktree is still denied.
+  // Approval is then invoked directly so no later descriptor refresh can hide
+  // whether terminal resolution itself preserves daemon identity ordering.
+  await openRegisteredProject(window, publicProjectId!);
+  const externalWorkspace = await window.evaluate(async ({ projectId, expectedPath }) => {
+    const described = await globalThis.window.ezterminalDesktop!.describeProjectWorkspace(projectId);
+    if (!described.ok) return null;
+    return described.project.workspaces?.find((workspace) => workspace.displayPath === expectedPath) ?? null;
+  }, { projectId: publicProjectId!, expectedPath: realpathSync.native(externalRoot) });
+  expect(externalWorkspace).toMatchObject({
+    kind: 'external',
+    access: 'authorization-required',
+  });
+  if (!externalWorkspace) throw new Error('expected the external worktree descriptor');
+
+  const approved = await window.evaluate(async ({ projectId, rootId, workspaceId }) => (
+    globalThis.window.ezterminalDesktop!.approveProjectWorkspace({
+      projectId,
+      rootId,
+      workspaceId,
+    })
+  ), {
+    projectId: publicProjectId!,
+    rootId: externalWorkspace.rootId,
+    workspaceId: externalWorkspace.workspaceId,
+  });
+  expect(approved).toMatchObject({ ok: true });
+
+  await window.getByTestId('btn-toggle-files').click();
+  const pathInput = window.getByTestId('file-path-input');
+  await pathInput.fill(externalRoot);
+  await pathInput.press('Enter');
+  await expect(pathInput).toHaveAttribute('title', path.resolve(externalRoot), {
+    timeout: 10_000,
+  });
+  await window.getByTestId('file-list').click({ button: 'right', position: { x: 10, y: 350 } });
+  await window.getByTestId('ctx-open-terminal').click();
+
+  const projectTab = window.locator('.project-session-tab');
+  await expect(projectTab).toHaveCount(1);
+  const projectPane = window.locator('[data-testid="pane"]:visible');
+  await expect(projectPane).toHaveAttribute('data-session-id', /.+/);
+  const sessionId = await projectPane.getAttribute('data-session-id');
+  if (!sessionId) throw new Error('expected the external worktree pane to have a session id');
+
+  const expectedWorkspaceId = daemonWorkspaceId(
+    publicProjectId,
+    externalWorkspace.rootId,
+    externalWorkspace.workspaceId,
+  );
+  await expect.poll(async () => window.evaluate(async (id) => {
+    const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+    const session = snapshot?.sessions.find((candidate) => candidate.id === id);
+    return session ? {
+      projectId: session.projectId,
+      workspaceId: session.workspaceId,
+      state: session.state,
+      source: session.source,
+    } : null;
+  }, sessionId), {
+    timeout: 10_000,
+    message: 'The terminal should inherit the synchronized external-worktree daemon identity',
+  }).toEqual({
+    projectId: publicProjectId,
+    workspaceId: expectedWorkspaceId,
+    state: 'running',
+    source: 'legacy-pty',
+  });
+
+  const revoked = await window.evaluate(async ({ projectId, rootId, workspaceId }) => (
+    globalThis.window.ezterminalDesktop!.revokeProjectWorkspace({
+      projectId,
+      rootId,
+      workspaceId,
+    })
+  ), {
+    projectId: publicProjectId,
+    rootId: externalWorkspace.rootId,
+    workspaceId: externalWorkspace.workspaceId,
+  });
+  expect(revoked).toBe(true);
+  await expect.poll(async () => window.evaluate(async (workspaceId) => {
+    const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+    return snapshot?.workspaces.find((workspace) => workspace.id === workspaceId)?.archivedAt ?? null;
+  }, expectedWorkspaceId), {
+    timeout: 10_000,
+    message: 'Revoking external access should archive its daemon launch capability',
+  }).toEqual(expect.any(String));
+
+  const reapproved = await window.evaluate(async ({ projectId, rootId, workspaceId }) => (
+    globalThis.window.ezterminalDesktop!.approveProjectWorkspace({
+      projectId,
+      rootId,
+      workspaceId,
+    })
+  ), {
+    projectId: publicProjectId,
+    rootId: externalWorkspace.rootId,
+    workspaceId: externalWorkspace.workspaceId,
+  });
+  expect(reapproved).toMatchObject({ ok: true });
+  await window.evaluate(async (projectId) => {
+    await globalThis.window.ezterminalDesktop!.describeProjectWorkspace(projectId);
+  }, publicProjectId);
+  await expect.poll(async () => window.evaluate(async (workspaceId) => {
+    const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+    const workspace = snapshot?.workspaces.find((candidate) => candidate.id === workspaceId);
+    return workspace ? { active: workspace.archivedAt === undefined, projectId: workspace.projectId } : null;
+  }, expectedWorkspaceId), {
+    timeout: 10_000,
+    message: 'Reapproving external access should reactivate the same daemon Workspace',
+  }).toEqual({ active: true, projectId: publicProjectId });
+
+  const blockedWhileTerminalIsActive = await window.evaluate(async (projectId) => (
+    globalThis.window.ezterminal.removeAgentProject(projectId)
+  ), publicProjectId);
+  expect(blockedWhileTerminalIsActive).toBe(false);
+  await expect.poll(async () => window.evaluate(async ({ projectId, workspaceId }) => {
+    const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+    const project = snapshot?.projects.find((candidate) => candidate.id === projectId);
+    const workspace = snapshot?.workspaces.find((candidate) => candidate.id === workspaceId);
+    return {
+      projectActive: project !== undefined && project.archivedAt === undefined,
+      workspaceActive: workspace !== undefined && workspace.archivedAt === undefined,
+    };
+  }, { projectId: publicProjectId, workspaceId: expectedWorkspaceId }), {
+    message: 'Removing a Project with an active terminal must fail without partially revoking authority',
+  }).toEqual({ projectActive: true, workspaceActive: true });
+
+  await projectTab.hover();
+  await projectTab.locator('.project-session-tab__close').click();
+  await expect(projectTab).toHaveCount(0);
+  await expect.poll(async () => window.evaluate(async (id) => {
+    const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+    return snapshot?.sessions.find((candidate) => candidate.id === id)?.state ?? null;
+  }, sessionId), {
+    timeout: 10_000,
+    message: 'Closing the Project terminal should finish its daemon Session before Project removal',
+  }).toBe('completed');
+
+  const removed = await window.evaluate(async (projectId) => (
+    globalThis.window.ezterminal.removeAgentProject(projectId)
+  ), publicProjectId);
+  expect(removed).toBe(true);
+  await expect.poll(async () => window.evaluate(async ({ projectId, sessionId }) => {
+    const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+    const project = snapshot?.projects.find((candidate) => candidate.id === projectId);
+    const workspaces = snapshot?.workspaces.filter((workspace) => workspace.projectId === projectId) ?? [];
+    const session = snapshot?.sessions.find((candidate) => candidate.id === sessionId);
+    return {
+      projectArchived: typeof project?.archivedAt === 'string',
+      hasWorkspaces: workspaces.length > 0,
+      activeWorkspaceCount: workspaces.filter((workspace) => workspace.archivedAt === undefined).length,
+      sessionArchived: session?.state === 'archived',
+    };
+  }, { projectId: publicProjectId, sessionId }), {
+    timeout: 10_000,
+    message: 'Removing an Agent Project should revoke every daemon launch capability',
+  }).toEqual({
+    projectArchived: true,
+    hasWorkspaces: true,
+    activeWorkspaceCount: 0,
+    sessionArchived: true,
+  });
+
+  await app.close();
 });
 
 test('Agent Project opens changed files in one VS Code-style read-only editor', async () => {

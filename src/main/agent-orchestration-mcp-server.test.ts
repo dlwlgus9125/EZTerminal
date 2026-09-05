@@ -93,6 +93,40 @@ function withManagedChild(
   };
 }
 
+function withSecondProject(current: DaemonSnapshot): DaemonSnapshot {
+  const project = current.projects[0]!;
+  const workspace = current.workspaces[0]!;
+  const session = current.sessions[0]!;
+  const agent = current.agents[0]!;
+  return {
+    ...current,
+    projects: [...current.projects, {
+      ...project,
+      id: 'project-2',
+      name: 'Other Project',
+      rootPath: 'C:\\other',
+    }],
+    workspaces: [...current.workspaces, {
+      ...workspace,
+      id: 'workspace-2',
+      projectId: 'project-2',
+      name: 'Other Workspace',
+      rootPath: 'C:\\other',
+    }],
+    sessions: [...current.sessions, {
+      ...session,
+      id: 'lead-2',
+      projectId: 'project-2',
+      workspaceId: 'workspace-2',
+      title: 'Other Lead',
+    }],
+    agents: [...current.agents, {
+      ...agent,
+      sessionId: 'lead-2',
+    }],
+  };
+}
+
 function applied(command: DaemonCommand): DaemonCommandReceipt {
   return {
     ok: true,
@@ -450,6 +484,66 @@ describe('AgentOrchestrationMcpServer', () => {
     });
   });
 
+  it('revokes every issued capability for one Project after its sessions leave the snapshot', async () => {
+    let current = withSecondProject(withManagedChild(snapshot(), 'standard'));
+    const authority = {
+      getSnapshot: () => current,
+      execute: vi.fn(async (command: DaemonCommand) => applied(command)),
+    };
+    const server = new AgentOrchestrationMcpServer({ authority });
+    servers.push(server);
+    await server.start();
+    const lead = server.descriptorForSession('lead-1');
+    const child = server.descriptorForSession('child-1');
+    const unrelated = server.descriptorForSession('lead-2');
+
+    current = {
+      ...current,
+      projects: current.projects.filter((project) => project.id !== 'project-1'),
+      workspaces: current.workspaces.filter((workspace) => workspace.projectId !== 'project-1'),
+      sessions: current.sessions.filter((session) => session.projectId !== 'project-1'),
+      agents: current.agents.filter((agent) => agent.sessionId === 'lead-2'),
+      agentRelations: [],
+    };
+    server.revokeProject('project-1');
+    server.revokeProject('project-1');
+
+    for (const descriptor of [lead, child]) {
+      await expect(post(descriptor.endpoint, descriptor.bearerToken, rpc(10, 'ping')))
+        .resolves.toMatchObject({ status: 401 });
+    }
+    await expect(post(unrelated.endpoint, unrelated.bearerToken, rpc(11, 'ping')))
+      .resolves.toMatchObject({ status: 200 });
+    expect(authority.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects descriptor issuance when a delayed create afterCommit loses to Project revocation', async () => {
+    let current = snapshot();
+    const createToken = vi.fn(() => 'c'.repeat(40));
+    const authority = {
+      getSnapshot: () => current,
+      execute: vi.fn(async (command: DaemonCommand) => applied(command)),
+    };
+    const server = new AgentOrchestrationMcpServer({ authority, createToken });
+    servers.push(server);
+    await server.start();
+    const issuedBeforeRevoke = server.descriptorForSession('lead-1');
+    server.revokeProject('project-1');
+    createToken.mockClear();
+
+    current = {
+      ...current,
+      projects: current.projects.map((project) => ({ ...project, archivedAt: NOW })),
+    };
+    const delayedCreateAfterCommit = (): unknown => server.descriptorForSession('lead-1');
+
+    expect(delayedCreateAfterCommit).toThrow('capability is no longer active');
+    expect(createToken).not.toHaveBeenCalled();
+    await expect(post(issuedBeforeRevoke.endpoint, issuedBeforeRevoke.bearerToken, rpc(12, 'ping')))
+      .resolves.toMatchObject({ status: 401 });
+    expect(authority.execute).not.toHaveBeenCalled();
+  });
+
   it('invalidates an existing capability when the owner provider is disabled or unhealthy', async () => {
     let current = snapshot();
     const authority = {
@@ -478,6 +572,33 @@ describe('AgentOrchestrationMcpServer', () => {
     };
     const unhealthy = await post(descriptor.endpoint, descriptor.bearerToken, rpc(12, 'initialize'));
     expect(unhealthy).toMatchObject({ value: { error: { code: -32002 } } });
+    expect(authority.execute).not.toHaveBeenCalled();
+  });
+
+  it('invalidates an existing capability when its Project or Workspace is archived', async () => {
+    let current = snapshot();
+    const authority = {
+      getSnapshot: () => current,
+      execute: vi.fn(async (command: DaemonCommand) => applied(command)),
+    };
+    const server = new AgentOrchestrationMcpServer({ authority });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+
+    current = {
+      ...current,
+      projects: current.projects.map((project) => ({ ...project, archivedAt: NOW })),
+    };
+    await expect(post(descriptor.endpoint, descriptor.bearerToken, rpc(13, 'tools/list')))
+      .resolves.toMatchObject({ value: { error: { code: -32002 } } });
+
+    current = {
+      ...snapshot(),
+      workspaces: snapshot().workspaces.map((workspace) => ({ ...workspace, archivedAt: NOW })),
+    };
+    await expect(post(descriptor.endpoint, descriptor.bearerToken, rpc(14, 'initialize')))
+      .resolves.toMatchObject({ value: { error: { code: -32002 } } });
     expect(authority.execute).not.toHaveBeenCalled();
   });
 

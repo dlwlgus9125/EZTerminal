@@ -23,6 +23,7 @@ import {
   planLegacyTerminalRegistrations,
   type LegacyTerminalRegistrationOptions,
 } from './legacy-terminal-registration';
+import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 
 export type DaemonCommandExecutionResult =
   | {
@@ -460,10 +461,23 @@ export class DaemonCommandRouter {
         if (snapshot.sessions.some((entry) => entry.projectId === current.id && isActiveSession(entry.state))) {
           return { ok: false, error: commandError('invalid-state', 'Stop active Project sessions before archiving it.') };
         }
-        return { ok: true, commit: { mutations: [{ kind: 'project.upsert', value: {
+        const archivedAt = current.archivedAt ?? now;
+        const mutations: DaemonStoreMutation[] = snapshot.workspaces
+          .filter((entry) => entry.projectId === current.id && entry.archivedAt === undefined)
+          .map((entry) => ({ kind: 'workspace.upsert', value: {
+            id: entry.id,
+            projectId: entry.projectId,
+            name: entry.name,
+            kind: entry.kind,
+            rootPath: entry.rootPath,
+            ...(entry.sourceWorkspaceId ? { sourceWorkspaceId: entry.sourceWorkspaceId } : {}),
+            archivedAt,
+          } }));
+        mutations.push({ kind: 'project.upsert', value: {
           id: current.id, name: current.name, ...(current.rootPath ? { rootPath: current.rootPath } : {}),
-          source: current.source, archivedAt: current.archivedAt ?? now,
-        } }] } };
+          source: current.source, archivedAt,
+        } });
+        return { ok: true, commit: { mutations } };
       }
 
       case 'workspace.create': {
@@ -511,8 +525,8 @@ export class DaemonCommandRouter {
       }
 
       case 'session.create': {
-        const owner = workspace(command.payload.workspaceId);
-        if (!owner || owner.archivedAt) return { ok: false, error: commandError('not-found', 'Active Workspace was not found.') };
+        const owner = findActiveDaemonWorkspace(snapshot, command.payload.workspaceId);
+        if (!owner) return { ok: false, error: commandError('not-found', 'Active Workspace was not found.') };
         if (session(command.payload.sessionId)) return { ok: false, error: commandError('invalid-state', 'Session already exists.') };
         return { ok: true, commit: { mutations: [{ kind: 'session.upsert', value: {
           id: command.payload.sessionId,

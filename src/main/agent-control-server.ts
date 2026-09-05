@@ -15,6 +15,7 @@ import {
 import type { AgentCoordinationService } from './agent-coordination-service';
 import type { AgentOrchestrationService } from './agent-orchestration-service';
 import { DaemonCliControl, type DaemonCliAuthority } from './daemon-cli-control';
+import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 import type { ManagedMergeService } from './managed-merge-service';
 import type { ProjectMapService } from './project-map-service';
 import { sameSecret } from './managed-merge-service';
@@ -28,6 +29,7 @@ interface Capability {
   readonly sessionId: string;
   readonly token: string;
   readonly issuedAt: number;
+  projectId?: string;
   timestamps: number[];
   concurrent: number;
 }
@@ -37,6 +39,10 @@ interface ActivityWorkspaceIdentity {
   readonly rootId: string;
   readonly workspaceId: string;
 }
+
+type DaemonAuthorityState = 'active' | 'pending' | 'revoked';
+
+const TERMINAL_DAEMON_SESSION_STATES = new Set(['completed', 'interrupted', 'failed', 'archived']);
 
 function activityWorkspace(activity: AgentActivity): ActivityWorkspaceIdentity | null {
   const projectId = activity.participant?.projectId ?? activity.projectId;
@@ -73,8 +79,14 @@ function stateSet(value: unknown): ReadonlySet<AgentState> | null {
 export class AgentControlServer {
   private server: http.Server | null = null;
   private origin = '';
+  private startPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private stopped = false;
   private readonly capabilities = new Map<string, Capability>();
-  private readonly activeControllers = new Set<AbortController>();
+  private readonly activeControllers = new Map<AbortController, Capability>();
+  private readonly activeRequests = new Set<Promise<void>>();
+  private readonly revokedProjectIds = new Set<string>();
+  private readonly revokedSessionIds = new Set<string>();
   private readonly daemonControl?: DaemonCliControl;
 
   constructor(private readonly deps: {
@@ -87,12 +99,20 @@ export class AgentControlServer {
     this.daemonControl = deps.daemon ? new DaemonCliControl(deps.daemon) : undefined;
   }
 
-  async start(): Promise<void> {
-    if (this.server) return;
+  start(): Promise<void> {
+    if (this.stopped) return Promise.reject(new Error('Agent control server is stopped.'));
+    if (this.startPromise) return this.startPromise;
+    const starting = this.startOnce();
+    this.startPromise = starting;
+    void starting.catch(() => {
+      if (!this.stopped && this.startPromise === starting) this.startPromise = null;
+    });
+    return starting;
+  }
+
+  private async startOnce(): Promise<void> {
     const server = http.createServer((request, response) => {
-      void this.handle(request, response).catch(() => {
-        json(response, 500, { ok: false, error: 'internal-error' });
-      });
+      this.dispatchRequest(request, response);
     });
     server.keepAliveTimeout = 5_000;
     server.headersTimeout = 10_000;
@@ -103,10 +123,18 @@ export class AgentControlServer {
         resolve();
       });
     });
+    if (this.stopped) {
+      await this.closeServer(server);
+      throw new Error('Agent control server stopped during startup.');
+    }
     const address = server.address();
     if (!address || typeof address === 'string') {
-      server.close();
+      await this.closeServer(server);
       throw new Error('Agent control server has no loopback address.');
+    }
+    if (this.stopped) {
+      await this.closeServer(server);
+      throw new Error('Agent control server stopped during startup.');
     }
     this.server = server;
     this.origin = `http://127.0.0.1:${String(address.port)}`;
@@ -114,8 +142,25 @@ export class AgentControlServer {
 
   descriptorForSession(sessionId: string): string {
     if (!this.server || !this.origin) return '';
+    const projectId = this.projectIdForSession(sessionId);
+    const daemonAuthority = projectId
+      ? this.daemonAuthorityState(sessionId, projectId)
+      : 'pending';
+    if (
+      this.revokedSessionIds.has(sessionId)
+      || (projectId && this.revokedProjectIds.has(projectId))
+      || daemonAuthority === 'revoked'
+    ) {
+      this.denySession(sessionId);
+      return '';
+    }
     const existing = this.capabilities.get(sessionId);
     if (existing) {
+      if (existing.projectId && projectId && existing.projectId !== projectId) {
+        this.denySession(sessionId);
+        return '';
+      }
+      if (!existing.projectId && projectId) existing.projectId = projectId;
       return JSON.stringify({ version: 1, origin: this.origin, token: existing.token });
     }
     const token = randomBytes(32).toString('base64url');
@@ -123,6 +168,7 @@ export class AgentControlServer {
       sessionId,
       token,
       issuedAt: Date.now(),
+      ...(projectId ? { projectId } : {}),
       timestamps: [],
       concurrent: 0,
     });
@@ -130,28 +176,90 @@ export class AgentControlServer {
   }
 
   revokeSession(sessionId: string): void {
-    this.capabilities.delete(sessionId);
+    this.denySession(sessionId);
+  }
+
+  revokeProject(projectId: string): void {
+    if (typeof projectId !== 'string' || projectId.length < 1 || projectId.length > 128) return;
+    this.revokedProjectIds.add(projectId);
+    const sessionIds = new Set<string>();
+    for (const activity of this.deps.coordination.getSnapshot().activities) {
+      if (activityWorkspace(activity)?.projectId === projectId) sessionIds.add(activity.sessionId);
+    }
+    for (const session of this.deps.daemon?.getSnapshot().sessions ?? []) {
+      if (session.projectId === projectId) sessionIds.add(session.id);
+    }
+    for (const capability of this.capabilities.values()) {
+      if (capability.projectId === projectId || this.projectIdForSession(capability.sessionId) === projectId) {
+        sessionIds.add(capability.sessionId);
+      }
+    }
+    for (const sessionId of sessionIds) this.denySession(sessionId);
+  }
+
+  restoreProject(projectId: string): void {
+    this.revokedProjectIds.delete(projectId);
   }
 
   revokeAll(): void {
     this.capabilities.clear();
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopped = true;
     const server = this.server;
     this.server = null;
     this.origin = '';
     this.revokeAll();
-    for (const controller of this.activeControllers) controller.abort();
-    this.activeControllers.clear();
-    if (!server) return;
-    await new Promise<void>((resolve) => {
+    for (const controller of this.activeControllers.keys()) controller.abort();
+    const starting = this.startPromise;
+    this.stopPromise = (async () => {
+      await Promise.allSettled([
+        starting ?? Promise.resolve(),
+        this.closeServer(server),
+      ]);
+      while (this.activeRequests.size > 0) {
+        await Promise.allSettled([...this.activeRequests]);
+      }
+      this.activeControllers.clear();
+      this.revokedProjectIds.clear();
+      this.revokedSessionIds.clear();
+    })();
+    return this.stopPromise;
+  }
+
+  private closeServer(server: http.Server | null): Promise<void> {
+    if (!server || !server.listening) {
+      server?.closeAllConnections();
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();
     });
   }
 
+  private dispatchRequest(request: IncomingMessage, response: ServerResponse): void {
+    if (this.stopped) {
+      json(response, 503, { ok: false, error: 'shutting-down' });
+      return;
+    }
+    const handling = this.handle(request, response).catch(() => {
+      json(response, 500, { ok: false, error: 'internal-error' });
+    });
+    this.activeRequests.add(handling);
+    void handling.then(
+      () => this.activeRequests.delete(handling),
+      () => this.activeRequests.delete(handling),
+    );
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (this.stopped) {
+      json(response, 503, { ok: false, error: 'shutting-down' });
+      return;
+    }
     if (request.method !== 'POST' || !request.url?.startsWith('/v1/')) {
       json(response, 404, { ok: false, error: 'not-found' });
       return;
@@ -167,11 +275,21 @@ export class AgentControlServer {
     }
     let controller: AbortController | null = null;
     try {
+      const requestController = new AbortController();
+      controller = requestController;
+      this.activeControllers.set(requestController, capability);
+      response.once('close', () => {
+        if (!response.writableEnded) requestController.abort();
+      });
       const daemonRoute = request.url.startsWith('/v1/daemon/');
-      const source = daemonRoute ? null : this.sourceActivity(capability.sessionId);
+      let source = daemonRoute ? null : this.sourceActivity(capability.sessionId);
       if (!daemonRoute) {
         if (!source) {
           json(response, 403, { ok: false, error: 'collaboration-inactive' });
+          return;
+        }
+        if (!this.bindCapabilityProject(capability, source)) {
+          json(response, 403, { ok: false, error: 'capability-expired' });
           return;
         }
         if (this.deps.orchestration?.isWorkerSession(source.sessionId)
@@ -190,21 +308,26 @@ export class AgentControlServer {
           return;
         }
       }
-      const body = await this.readBody(request);
+      const body = await this.readBody(request, requestController.signal);
+      if (this.stopped || requestController.signal.aborted) {
+        json(response, 503, { ok: false, error: 'shutting-down' });
+        return;
+      }
       if (body === null) {
         json(response, 400, { ok: false, error: 'invalid-json' });
         return;
       }
-      const requestController = new AbortController();
-      controller = requestController;
-      this.activeControllers.add(requestController);
-      response.once('close', () => {
-        if (!response.writableEnded) requestController.abort();
-      });
+      if (!daemonRoute) {
+        source = this.sourceActivity(capability.sessionId);
+        if (!source || !this.bindCapabilityProject(capability, source)) {
+          json(response, 403, { ok: false, error: 'capability-expired' });
+          return;
+        }
+      }
       if (daemonRoute) {
         await this.routeDaemon(request.url, body, capability.sessionId, response);
       } else {
-        await this.route(request.url, body, source!, response, requestController.signal);
+        await this.route(request.url, body, source!, capability, response, requestController.signal);
       }
     } finally {
       if (controller) this.activeControllers.delete(controller);
@@ -216,6 +339,7 @@ export class AgentControlServer {
     url: string,
     body: Record<string, unknown>,
     source: AgentActivity,
+    capability: Capability,
     response: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
@@ -326,8 +450,8 @@ export class AgentControlServer {
         json(response, 400, { ok: false, error: 'invalid-request' });
         return;
       }
-      let activity = this.deps.coordination.resolveActivity(target);
-      if (!activity || !this.sameProject(source, activity)) {
+      let activity = this.resolveProjectActivity(source, target);
+      if (!activity) {
         json(response, 404, { ok: false, error: 'not-found' });
         return;
       }
@@ -347,6 +471,14 @@ export class AgentControlServer {
           json(response, 409, { ok: false, error: 'not-ready', activity });
           return;
         }
+      }
+      if (!this.hasActiveDaemonAuthority(activity)) {
+        json(response, 404, { ok: false, error: 'not-found' });
+        return;
+      }
+      if (!this.bindCapabilityProject(capability, source)) {
+        json(response, 403, { ok: false, error: 'capability-expired' });
+        return;
       }
       const beforeSeq = activity.stateSeq;
       const submitted = await this.deps.coordination.prompt(activity.id, text);
@@ -387,7 +519,8 @@ export class AgentControlServer {
       const activity = resolved
         ? await this.deps.coordination.waitFor(resolved.id, states, after, timeoutMs, signal)
         : null;
-      json(response, activity ? 200 : 504, { ok: Boolean(activity), activity });
+      const liveActivity = activity && this.hasActiveDaemonAuthority(activity) ? activity : null;
+      json(response, liveActivity ? 200 : 504, { ok: Boolean(liveActivity), activity: liveActivity });
       return;
     }
     if (url === '/v1/map/guide') {
@@ -581,6 +714,68 @@ export class AgentControlServer {
     return matches.length === 1 ? matches[0]! : null;
   }
 
+  private projectIdForSession(sessionId: string): string | undefined {
+    const daemonProjectId = this.deps.daemon?.getSnapshot().sessions
+      .find((session) => session.id === sessionId)?.projectId;
+    if (daemonProjectId) return daemonProjectId;
+    const source = this.sourceActivity(sessionId);
+    return source ? activityWorkspace(source)?.projectId : undefined;
+  }
+
+  private bindCapabilityProject(capability: Capability, source: AgentActivity): boolean {
+    const projectId = activityWorkspace(source)?.projectId;
+    if (
+      !projectId
+      || this.revokedSessionIds.has(capability.sessionId)
+      || this.revokedProjectIds.has(projectId)
+      || (capability.projectId !== undefined && capability.projectId !== projectId)
+    ) {
+      this.denySession(capability.sessionId);
+      return false;
+    }
+    const daemonAuthority = this.daemonAuthorityState(capability.sessionId, projectId);
+    if (daemonAuthority !== 'active') {
+      if (daemonAuthority === 'revoked') this.denySession(capability.sessionId);
+      return false;
+    }
+    capability.projectId = projectId;
+    return true;
+  }
+
+  private daemonAuthorityState(sessionId: string, projectId: string): DaemonAuthorityState {
+    const daemon = this.deps.daemon;
+    if (!daemon) return 'pending';
+    const snapshot = daemon.getSnapshot();
+    const project = snapshot.projects.find((candidate) => candidate.id === projectId);
+    if (!project) return 'pending';
+    if (project.archivedAt !== undefined) return 'revoked';
+    const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) return 'pending';
+    if (session.projectId !== projectId || TERMINAL_DAEMON_SESSION_STATES.has(session.state)) {
+      return 'revoked';
+    }
+    const workspace = snapshot.workspaces.find((candidate) => candidate.id === session.workspaceId);
+    if (!workspace) return 'pending';
+    if (workspace.projectId !== projectId || workspace.archivedAt !== undefined) return 'revoked';
+    return findActiveDaemonWorkspace(snapshot, session.workspaceId, projectId) ? 'active' : 'revoked';
+  }
+
+  private hasActiveDaemonAuthority(activity: AgentActivity): boolean {
+    const identity = activityWorkspace(activity);
+    return identity !== null
+      && this.daemonAuthorityState(activity.sessionId, identity.projectId) === 'active';
+  }
+
+  private denySession(sessionId: string): void {
+    this.revokedSessionIds.add(sessionId);
+    const capability = this.capabilities.get(sessionId);
+    this.capabilities.delete(sessionId);
+    if (!capability) return;
+    for (const [controller, activeCapability] of this.activeControllers) {
+      if (activeCapability === capability) controller.abort();
+    }
+  }
+
   private sameProject(source: AgentActivity, target: AgentActivity): boolean {
     return source.participant !== undefined
       && target.participant !== undefined
@@ -589,15 +784,29 @@ export class AgentControlServer {
 
   private resolveProjectActivity(source: AgentActivity, target: string): AgentActivity | null {
     const activity = this.deps.coordination.resolveActivity(target);
-    return activity && this.sameProject(source, activity) ? activity : null;
+    return activity && this.sameProject(source, activity) && this.hasActiveDaemonAuthority(activity)
+      ? activity
+      : null;
   }
 
-  private readBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
+  private readBody(request: IncomingMessage, signal: AbortSignal): Promise<Record<string, unknown> | null> {
     return new Promise((resolve) => {
       const chunks: Buffer[] = [];
       let bytes = 0;
       let rejected = false;
-      request.on('data', (chunk: Buffer) => {
+      let settled = false;
+      const finish = (value: Record<string, unknown> | null): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        request.off('data', onData);
+        request.off('end', onEnd);
+        request.off('aborted', onAbort);
+        request.off('error', onAbort);
+        request.off('close', onClose);
+        resolve(value);
+      };
+      const onData = (chunk: Buffer): void => {
         if (rejected) return;
         bytes += chunk.byteLength;
         if (bytes > BODY_LIMIT_BYTES) {
@@ -606,26 +815,36 @@ export class AgentControlServer {
           return;
         }
         chunks.push(chunk);
-      });
-      request.on('end', () => {
+      };
+      const onEnd = (): void => {
         if (rejected) {
-          resolve(null);
+          finish(null);
           return;
         }
         if (bytes === 0) {
-          resolve({});
+          finish({});
           return;
         }
         try {
           const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-          resolve(typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          finish(typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
             ? parsed as Record<string, unknown>
             : null);
         } catch {
-          resolve(null);
+          finish(null);
         }
-      });
-      request.on('error', () => resolve(null));
+      };
+      const onAbort = (): void => finish(null);
+      const onClose = (): void => {
+        if (!request.complete) finish(null);
+      };
+      request.on('data', onData);
+      request.once('end', onEnd);
+      request.once('aborted', onAbort);
+      request.once('error', onAbort);
+      request.once('close', onClose);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
     });
   }
 }

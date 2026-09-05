@@ -570,4 +570,64 @@ describe('DaemonCliControl', () => {
     })).resolves.toMatchObject({ status: 403, body: { ok: false, error: 'unauthorized' } });
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it('expires every CLI capability once its Project is archived', async () => {
+    const { control, execute, setSnapshot } = fixture();
+    const current = snapshot();
+    setSnapshot({
+      ...current,
+      projects: current.projects.map((project) => (
+        project.id === 'project-1'
+          ? { ...project, archivedAt: '2026-09-04T01:00:00.000Z' }
+          : project
+      )),
+    });
+
+    await expect(control.handle('/v1/daemon/status', {}, source)).resolves.toMatchObject({
+      status: 409,
+      body: { ok: false, error: 'scope-unavailable' },
+    });
+    await expect(control.handle('/v1/daemon/agents/create', {
+      sessionId: 'post-revoke-agent',
+      workspace: 'Main',
+      title: 'Must not start',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      requestId: 'post-revoke-create',
+    }, source)).resolves.toMatchObject({
+      status: 409,
+      body: { ok: false, error: 'scope-unavailable' },
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('expires a CLI bearer when its source Workspace is archived', async () => {
+    const { control, execute, setSnapshot } = fixture();
+    const current = snapshot();
+    setSnapshot({
+      ...current,
+      workspaces: current.workspaces.map((workspace) => (
+        workspace.id === 'workspace-1'
+          ? { ...workspace, archivedAt: '2026-09-04T01:00:00.000Z' }
+          : workspace
+      )),
+    });
+
+    await expect(control.handle('/v1/daemon/status', {}, source)).resolves.toMatchObject({
+      status: 403,
+      body: { ok: false, error: 'capability-expired' },
+    });
+    await expect(control.handle('/v1/daemon/agents/create', {
+      sessionId: 'post-workspace-revoke-agent',
+      workspace: 'Main',
+      title: 'Must not start',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      requestId: 'post-workspace-revoke-create',
+    }, source)).resolves.toMatchObject({
+      status: 403,
+      body: { ok: false, error: 'capability-expired' },
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
 });
