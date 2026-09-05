@@ -76,7 +76,9 @@
       "browserslist": "4.28.7",
       "postcss": "8.5.23",
       "nanoid": "3.3.18",
-      "fast-uri": "3.1.5"
+      "fast-uri": "3.1.7",
+      "plist@3.1.0>@xmldom/xmldom": "0.8.15",
+      "plist@3.1.1>@xmldom/xmldom": "0.9.12"
     },
     "patchedDependencies": {
       "@capacitor/cli@6.2.1": "patches/@capacitor__cli@6.2.1.patch",
