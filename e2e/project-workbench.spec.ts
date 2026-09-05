@@ -194,6 +194,7 @@ async function flushLayout(window: Page): Promise<void> {
 
 test('project root terminal preserves fixed-root identity across rename and restart', async () => {
   const { projectRoot, userDataDir } = createProjectFixture();
+  const explorerProjectRoot = path.resolve(projectRoot);
   const canonicalProjectRoot = realpathSync.native(projectRoot);
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
@@ -210,7 +211,10 @@ test('project root terminal preserves fixed-root identity across rename and rest
   await expect(pathInput).not.toHaveValue('', { timeout: 10_000 });
   await pathInput.fill(projectRoot);
   await pathInput.press('Enter');
-  await expect(pathInput).toHaveAttribute('title', canonicalProjectRoot, { timeout: 10_000 });
+  // File Explorer preserves the resolved spelling entered by the user, which
+  // can be a DOS 8.3 alias on Windows. Project terminal identity below is the
+  // separate canonical-path contract.
+  await expect(pathInput).toHaveAttribute('title', explorerProjectRoot, { timeout: 10_000 });
 
   const openTerminal = async (): Promise<void> => {
     await window.getByTestId('file-list').click({ button: 'right', position: { x: 10, y: 350 } });
