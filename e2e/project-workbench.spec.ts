@@ -233,8 +233,11 @@ test('project root terminal preserves fixed-root identity across rename and rest
 
   await projectTabs.nth(0).click();
   const activeProjectPane = window.locator('[data-testid="pane"]:visible');
+  // Session binding is asynchronous: the pane can become visible before its
+  // fixed-root terminal identity lands under load.
+  await expect(activeProjectPane).toHaveAttribute('data-session-id', /.+/);
   const firstSessionId = await activeProjectPane.getAttribute('data-session-id');
-  expect(firstSessionId).toBeTruthy();
+  if (!firstSessionId) throw new Error('expected the active project pane to have a data-session-id');
   await projectTabs.nth(0).dblclick();
   const rename = window.getByTestId('workspace-tab-rename');
   await rename.fill('Pinned project');
