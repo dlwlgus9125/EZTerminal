@@ -2337,6 +2337,10 @@ app.on('ready', async () => {
     }
     return described;
   });
+  ipcMain.handle('project-workspace:resolve-terminal-directory', async (_event, request: unknown) => {
+    await projectWorkspaceReady;
+    return projectWorkspaceService.resolveTerminalDirectory(request);
+  });
   ipcMain.handle('project-documents:resolve', async (_event, request: unknown) => {
     await projectWorkspaceReady;
     return projectDocumentService.resolveTarget(request);

@@ -590,6 +590,8 @@ const desktopApi: EzTerminalDesktopApi = {
   },
   describeProjectWorkspace: (projectId: string) =>
     ipcRenderer.invoke('project-workspace:describe', projectId),
+  resolveProjectTerminalDirectory: (request) =>
+    ipcRenderer.invoke('project-workspace:resolve-terminal-directory', request),
   resolveProjectDocument: (request) =>
     ipcRenderer.invoke('project-documents:resolve', request),
   listProjectDocumentDirectory: (request) =>

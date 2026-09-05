@@ -121,7 +121,6 @@ import {
 import {
   projectRelativeReviewHint,
 } from './project-diff-navigation';
-import { projectTerminalMetadataForDirectory } from './project-terminal-context';
 import {
   applyProjectReviewLayout,
   captureProjectReviewLayout,
@@ -1146,17 +1145,17 @@ export function App(): JSX.Element {
       openPanel(undefined, dirPath);
       return;
     }
-    void desktop.describeProjectWorkspace(projectId).then((described) => {
-      const projectSession = described.ok
-        ? projectTerminalMetadataForDirectory(described.project, dirPath)
-        : null;
-      if (!projectSession) {
+    void desktop.resolveProjectTerminalDirectory({
+      projectId,
+      absolutePath: dirPath,
+    }).then((resolved) => {
+      if (!resolved.ok) {
         openPanel(undefined, dirPath);
         return;
       }
       workbenchCoordinator.openTerminal({
-        title: projectSession.projectName,
-        projectSession,
+        title: resolved.projectSession.projectName,
+        projectSession: resolved.projectSession,
       });
     }).catch(() => openPanel(undefined, dirPath));
   }, [activeProjectId, openPanel, workbenchCoordinator]);

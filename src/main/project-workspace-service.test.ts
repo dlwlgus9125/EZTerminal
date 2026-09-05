@@ -278,6 +278,62 @@ describe('ProjectWorkspaceService', () => {
     })).resolves.toEqual({ ok: false, error: 'symlink-not-supported' });
   });
 
+  it('resolves a physical root alias to project terminal metadata only at the exact root', async () => {
+    const actualParent = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-terminal-parent-'));
+    temporaryPaths.push({ path: actualParent, kind: 'directory' });
+    const linkedParent = `${actualParent}-link`;
+    await fs.symlink(actualParent, linkedParent, process.platform === 'win32' ? 'junction' : 'dir');
+    temporaryPaths.push({ path: linkedParent, kind: 'link' });
+    const test = await fixture(linkedParent);
+    const canonicalRoot = await fs.realpath(test.root);
+    expect(canonicalRoot).not.toBe(path.resolve(test.root));
+    await fs.mkdir(path.join(test.root, 'src'));
+
+    const listWorktrees = async (): Promise<WorktreeResult> => ({
+      ok: true,
+      action: 'list',
+      worktrees: [{
+        worktreeId: 'main-worktree',
+        repoId: 'repo-fixture',
+        path: canonicalRoot,
+        branch: 'main',
+        head: 'a'.repeat(40),
+        main: true,
+        locked: false,
+        managed: true,
+        prunable: false,
+      }],
+    });
+    const service = new ProjectWorkspaceService(test.store, { listWorktrees });
+    const described = await service.describeProjectWorkspaces(test.projectId);
+    expect(described.ok && described.project.workspaces?.[0]?.displayPath).toBe(canonicalRoot);
+
+    await expect(service.resolveTerminalDirectory({
+      projectId: test.projectId,
+      absolutePath: test.root,
+    })).resolves.toEqual({
+      ok: true,
+      projectSession: {
+        projectId: test.projectId,
+        rootId: test.rootId,
+        workspaceId: 'main-worktree',
+        projectName: 'Fixture',
+        titleMode: 'generated',
+      },
+    });
+    await expect(service.resolveTerminalDirectory({
+      projectId: test.projectId,
+      absolutePath: path.join(test.root, 'src'),
+    })).resolves.toEqual({ ok: false, error: 'not-workspace-root' });
+    await expect(service.resolveTerminalDirectory({
+      absolutePath: test.root,
+    })).resolves.toEqual({ ok: false, error: 'invalid-request' });
+    await expect(service.resolveTerminalDirectory({
+      projectId: test.projectId,
+      absolutePath: actualParent,
+    })).resolves.toEqual({ ok: false, error: 'path-outside-root' });
+  });
+
   it('requires durable consent for an external worktree and returns its canonical launch path', async () => {
     const actualParent = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-workspace-external-parent-'));
     temporaryPaths.push({ path: actualParent, kind: 'directory' });
@@ -338,6 +394,14 @@ describe('ProjectWorkspaceService', () => {
       rootId: test.rootId,
       workspaceId: 'external-worktree',
     })).resolves.toEqual({ ok: false, error: 'authorization-required' });
+    await expect(service.resolveTerminalDirectory({
+      projectId: test.projectId,
+      absolutePath: canonicalExternal,
+    })).resolves.toEqual({ ok: false, error: 'authorization-required' });
+    await expect(service.resolveTerminalDirectory({
+      projectId: test.projectId,
+      absolutePath: external,
+    })).resolves.toEqual({ ok: false, error: 'path-outside-root' });
 
     await expect(service.approveWorkspace(request)).resolves.toMatchObject({
       ok: true,
@@ -360,6 +424,17 @@ describe('ProjectWorkspaceService', () => {
       },
       cwd: canonicalExternal,
       roots: [canonicalExternal],
+    });
+    await expect(service.resolveTerminalDirectory({
+      projectId: test.projectId,
+      absolutePath: external,
+    })).resolves.toMatchObject({
+      ok: true,
+      projectSession: {
+        projectId: test.projectId,
+        rootId: test.rootId,
+        workspaceId: 'external-worktree',
+      },
     });
 
     const reloadedStore = new ProjectWorkspaceAccessStore(test.userData);

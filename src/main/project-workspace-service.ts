@@ -21,6 +21,7 @@ import {
   type ProjectSearchMatch,
   type ProjectSearchRequest,
   type ProjectSearchResult,
+  type ProjectTerminalDirectoryResult,
   type ProjectSessionTarget,
   type ProjectTextResult,
   type ProjectWorkspaceDescriptorResult,
@@ -210,6 +211,37 @@ export class ProjectWorkspaceService {
       cwd: root.value.rootPath,
       roots,
       storedProjectId: root.value.project.projectId,
+    };
+  }
+
+  /**
+   * Resolve File Explorer's presentation path to one exact project workspace
+   * root. Physical aliases are interpreted here in main; descendants and
+   * unavailable workspaces deliberately remain ordinary cwd terminals.
+   */
+  async resolveTerminalDirectory(value: unknown): Promise<ProjectTerminalDirectoryResult> {
+    if (typeof value !== 'object'
+      || value === null
+      || Array.isArray(value)
+      || typeof (value as { readonly projectId?: unknown }).projectId !== 'string') {
+      return { ok: false, error: 'invalid-request' };
+    }
+    const resolved = await this.resolveAbsoluteProjectPath(value);
+    if (!resolved.ok) return resolved;
+    if (resolved.request.relativePath !== '') {
+      return { ok: false, error: 'not-workspace-root' };
+    }
+    const described = this.describeProject(resolved.request.projectId);
+    if (!described.ok) return described;
+    return {
+      ok: true,
+      projectSession: {
+        projectId: resolved.request.projectId,
+        rootId: resolved.request.rootId,
+        workspaceId: resolved.request.workspaceId,
+        projectName: described.project.name,
+        titleMode: 'generated',
+      },
     };
   }
 

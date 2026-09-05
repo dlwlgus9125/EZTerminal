@@ -88,6 +88,23 @@ export type ProjectWorkspaceError =
   | 'unsupported'
   | 'io-error';
 
+/** User-selected absolute directory to classify immediately before opening a terminal. */
+export interface ProjectTerminalDirectoryRequest {
+  readonly projectId: string;
+  readonly absolutePath: string;
+}
+
+/**
+ * Main-owned answer for File Explorer's "Open terminal here" action.
+ * Only an exact, currently accessible workspace root yields project metadata.
+ */
+export type ProjectTerminalDirectoryResult =
+  | { readonly ok: true; readonly projectSession: ProjectSessionPanelMetadata }
+  | {
+      readonly ok: false;
+      readonly error: ProjectWorkspaceError | 'not-workspace-root';
+    };
+
 export interface ProjectRootDescriptor {
   readonly rootId: string;
   readonly name: string;

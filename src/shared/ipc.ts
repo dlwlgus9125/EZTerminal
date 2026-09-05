@@ -27,6 +27,8 @@ import type {
   ProjectDocumentTargetResult,
   ProjectSearchRequest,
   ProjectSearchResult,
+  ProjectTerminalDirectoryRequest,
+  ProjectTerminalDirectoryResult,
   ProjectWorkspaceDescriptorResult,
   ProjectWorkspaceAccessRequest,
   ProjectWorkspaceAccessResult,
@@ -1587,6 +1589,10 @@ export interface EzTerminalDesktopApi {
 
   // Registered-project, root-contained, read-only code workbench.
   describeProjectWorkspace: (projectId: string) => Promise<ProjectWorkspaceDescriptorResult>;
+  /** Resolve a displayed absolute directory to exact, main-owned project terminal metadata. */
+  resolveProjectTerminalDirectory: (
+    request: ProjectTerminalDirectoryRequest,
+  ) => Promise<ProjectTerminalDirectoryResult>;
   /** Canonicalize tree/search/PTY/Agent targets to one workspace-qualified tab identity. */
   resolveProjectDocument: (request: ProjectDocumentTargetRequest) => Promise<ProjectDocumentTargetResult>;
   /** Lazy project tree entries with current working-tree status merged in main. */
