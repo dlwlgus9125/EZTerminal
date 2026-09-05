@@ -306,6 +306,44 @@ const ARCHIVED_DAEMON_SNAPSHOT: DaemonSnapshot = {
   heartbeats: [],
 };
 
+const OVERFLOW_DAEMON_PROJECTS = [
+  { id: 'project-ezterminal', name: 'EZTerminal', rootPath: 'C:/Workspace/ezterminal' },
+  { id: 'project-mobile-shell', name: 'Mobile shell', rootPath: 'C:/Workspace/mobile-shell' },
+  { id: 'project-release', name: 'Release validation', rootPath: 'D:/Projects/release-validation' },
+  { id: 'project-observed', name: 'Observed workspace', rootPath: 'D:/Projects/observed-workspace' },
+  { id: 'project-docs', name: 'Product documentation', rootPath: 'C:/Workspace/docs' },
+  { id: 'project-design', name: 'Design system', rootPath: 'C:/Workspace/design-system' },
+  { id: 'project-protocol', name: 'Agent protocol', rootPath: 'D:/Projects/agent-protocol' },
+  { id: 'project-mobile-release', name: 'Mobile release', rootPath: 'D:/Projects/mobile-release' },
+] as const;
+
+const OVERFLOW_DAEMON_SNAPSHOT: DaemonSnapshot = {
+  ...ARCHIVED_DAEMON_SNAPSHOT,
+  revision: 10,
+  eventSequence: 15,
+  projects: OVERFLOW_DAEMON_PROJECTS.map((project) => ({
+    ...project,
+    source: 'native' as const,
+    revision: 1,
+    createdAt: new Date(NOW - 120_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  })),
+  workspaces: OVERFLOW_DAEMON_PROJECTS.map((project) => ({
+    id: `workspace-${project.id}`,
+    projectId: project.id,
+    name: 'Main checkout',
+    kind: 'local' as const,
+    rootPath: project.rootPath,
+    revision: 1,
+    createdAt: new Date(NOW - 120_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  })),
+  sessions: [],
+  agents: [],
+  agentRelations: [],
+  transcriptHeads: [],
+};
+
 const STORY_TRANSPORT = {
   connectedHost: '100.86.12.4',
   supportsAgentProjectManagement: true,
@@ -559,6 +597,8 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
               }
             : archived
               ? { status: 'ready', snapshot: ARCHIVED_DAEMON_SNAPSHOT }
+              : overflow
+                ? { status: 'ready', snapshot: OVERFLOW_DAEMON_SNAPSHOT }
               : undefined}
           structuredTranscripts={archived
             ? { 'archived-agent': [ARCHIVED_DAEMON_TRANSCRIPT] }

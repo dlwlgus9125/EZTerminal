@@ -1238,7 +1238,7 @@ test.describe("mobile Agents touch scroll contract", () => {
       const header = page.locator(".mob-page__head");
       const filters = page.locator(".mob-agent-filters");
       const finalAgent = page.getByTestId("agent-card").last();
-      await expect(page.locator(".mob-agent-project").last()).toBeAttached();
+      await expect(page.getByTestId("mobile-daemon-project").last()).toBeAttached();
       await expect(header).toBeVisible();
       await expect(filters).toBeVisible();
 
