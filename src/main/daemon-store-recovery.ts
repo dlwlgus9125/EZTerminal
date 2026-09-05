@@ -165,12 +165,9 @@ export class DaemonStoreRecovery {
   }
 
   prepareUserDataDirectory(): void {
+    this.assertPlainDirectoryChain(this.userDataDirectory, true);
     mkdirSync(this.userDataDirectory, { recursive: true });
-    this.assertPlainDirectory(this.userDataDirectory);
-    const resolved = realpathSync.native(this.userDataDirectory);
-    if (!samePath(resolved, this.userDataDirectory)) {
-      throw new Error('Daemon user data directory must not traverse a link or reparse point.');
-    }
+    this.assertPlainDirectoryChain(this.userDataDirectory, false);
   }
 
   inspectMaterial(): DaemonDatabaseInspection {
@@ -681,6 +678,23 @@ export class DaemonStoreRecovery {
     const stats = lstatSync(directory);
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
       throw new Error('Daemon recovery path is not a plain directory.');
+    }
+  }
+
+  private assertPlainDirectoryChain(directory: string, allowMissingTail: boolean): void {
+    const resolved = path.resolve(directory);
+    const root = path.parse(resolved).root;
+    const segments = path.relative(root, resolved)
+      .split(path.sep)
+      .filter((segment) => segment.length > 0 && segment !== '.');
+    let current = root;
+    for (const segment of segments) {
+      current = path.join(current, segment);
+      if (allowMissingTail && !existsSync(current)) return;
+      const stats = lstatSync(current);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) {
+        throw new Error('Daemon user data directory must not traverse a link or reparse point.');
+      }
     }
   }
 

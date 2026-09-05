@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -1033,6 +1035,49 @@ describe('DaemonStore', () => {
     expect(recoveryManifest(quarantines[0]!).files.map((file) => file.name)).toEqual([
       DAEMON_DATABASE_FILE_NAME,
     ]);
+  });
+
+  it.runIf(
+    process.platform === 'win32'
+    && existsSync('C:\\PROGRA~1')
+    && realpathSync.native('C:\\PROGRA~1') !== 'C:\\PROGRA~1',
+  )(
+    'accepts a DOS short-name alias for a plain Windows user data directory',
+    () => {
+      const directory = 'C:\\PROGRA~1';
+      expect(realpathSync.native(directory)).not.toBe(directory);
+      const recovery = new DaemonStoreRecovery(
+        directory,
+        path.join(directory, DAEMON_DATABASE_FILE_NAME),
+        {
+          now: () => new Date(FIXED_TIME),
+          recoveryIdFactory: () => 'dos-short-name',
+        },
+      );
+
+      expect(() => recovery.prepareUserDataDirectory()).not.toThrow();
+    },
+  );
+
+  it('rejects a user data directory reached through an ancestor link or reparse junction', () => {
+    const target = makeDirectory();
+    const linkParent = makeDirectory();
+    const linkedRoot = path.join(linkParent, 'linked-root');
+    const directory = path.join(linkedRoot, 'user-data');
+    mkdirSync(path.join(target, 'user-data'));
+    symlinkSync(target, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    const recovery = new DaemonStoreRecovery(
+      directory,
+      path.join(directory, DAEMON_DATABASE_FILE_NAME),
+      {
+        now: () => new Date(FIXED_TIME),
+        recoveryIdFactory: () => 'linked-ancestor',
+      },
+    );
+
+    expect(() => recovery.prepareUserDataDirectory()).toThrow(
+      /link|reparse/u,
+    );
   });
 
   it('fails closed when the recovery root is a symlink or Windows reparse junction', async () => {

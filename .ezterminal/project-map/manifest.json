@@ -69,9 +69,9 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:40cd751f8d14d3d264b4f03df09df10328aa4b0c9edb70c10729dfe5eaa1b880",
-        "decision": "map-updated",
-        "reason": "The lifecycle now follows crash-safe daemon-store verification and rehydration, optional background window lifetime, terminal-only safe mode, and the exact ingress-to-provider-to-SQLite shutdown barrier."
+        "inputDigest": "sha256:00f8bfd2f621f2349e86f2739cace33b8e269f1b69d3c0973815e40eff001728",
+        "decision": "no-semantic-impact",
+        "reason": "Directory preparation now accepts plain Windows DOS short-name aliases while rejecting any linked or reparse ancestor; the mapped startup, recovery, safe-mode, active, and shutdown lifecycle remains unchanged."
       }
     },
     {
