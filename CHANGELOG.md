@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [1.0.48] - 2026-09-06
+
+### Fixed
+
+- Fixed the Claude Agent provider being impossible to enable in an installed
+  build, which also removed Claude from the New Agent draft's provider list.
+  EZTerminal now accepts a stable Claude Code CLI at or above the `2.1.260`
+  minimum within the same major version instead of requiring one exact build
+  that an auto-updating installation would rarely match.
+- Removed the bundled-executable lookup that resolved a package the installer
+  does not ship. It succeeded only in a development tree and always failed in
+  the packaged app, so development and packaged builds now resolve the same
+  user-installed Claude Code CLI.
+
+### Changed
+
+- An incompatible Claude executable version is now reported with the version
+  found and the minimum required, instead of only stating that the executable
+  is invalid.
+
+### Security
+
+- Claude Code prereleases, versions below `2.1.260`, next-major versions,
+  malformed or unreadable version output, and a missing executable continue to
+  fail closed. Launch readiness still re-resolves the canonical executable path
+  and requires the on-disk version to equal the reviewed launch descriptor's
+  exact version, so a Claude Code update invalidates the stored review instead
+  of silently launching an unreviewed build.
+
 ## [1.0.47] - 2026-09-06
 
 ### Added

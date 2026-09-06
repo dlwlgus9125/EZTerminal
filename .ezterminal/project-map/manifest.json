@@ -38,12 +38,13 @@
         { "rootAlias": "app", "relativePath": "src/main/agent-provider-registry.ts" },
         { "rootAlias": "app", "relativePath": "src/main/codex-provider-adapter.ts" },
         { "rootAlias": "app", "relativePath": "src/main/claude-provider-adapter.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/provider-version.ts" },
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:da2889e1d180ae48c72c0f6174f53e977d5e5a297ad6761b45d934aa0b9d65db",
+        "inputDigest": "sha256:0c3c9fc63719b190ebdfe93fb409825171c505ab533f09f6ee6f0ebb42ba3bec",
         "decision": "map-updated",
-        "reason": "Codex stable releases above the app-server floor avoid per-release review; incompatible builds fail closed. Desktop first Send awaits exact memory-only recovery escrow, requires fresh authority, and preserves one Session ID through bounded conflicts and uncertain recovery."
+        "reason": "Codex and Claude gate a user-installed CLI through one shared semantic-version parser: stable builds at or above each floor need no per-release review, incompatible ones fail closed. Claude resolves only the installed CLI, so dev and packaged agree."
       }
     },
     {

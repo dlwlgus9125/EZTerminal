@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -5,13 +6,12 @@ import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-a
 
 import type { AgentProviderEvent, ProviderSessionContext } from './agent-provider-adapter';
 import {
-  CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION,
+  CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION,
   ClaudeProviderAdapter,
   ClaudeProviderError,
   MemoryClaudeProviderEnablementStore,
   classifyClaudeAuthentication,
   classifyClaudeProviderError,
-  resolveBundledClaudeExecutable,
   resolveClaudeExecutable,
   type ClaudeProviderEnablement,
   type ClaudeQuerySession,
@@ -224,6 +224,45 @@ describe('Claude executable resolution', () => {
   });
 });
 
+describe('Claude executable version gate', () => {
+  async function probeWithVersion(version: string): Promise<boolean> {
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      resolveExecutable: async () => executablePath,
+      readExecutableVersion: async () => version,
+    });
+    return (await adapter.probe()).available;
+  }
+
+  it('accepts an installed CLI newer than the minimum supported version', async () => {
+    await expect(probeWithVersion('2.1.261')).resolves.toBe(true);
+    await expect(probeWithVersion('2.2.0')).resolves.toBe(true);
+    await expect(probeWithVersion(CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION)).resolves.toBe(true);
+  });
+
+  it('rejects older, next-major, prerelease and unreadable versions', async () => {
+    await expect(probeWithVersion('2.1.259')).resolves.toBe(false);
+    await expect(probeWithVersion('3.0.0')).resolves.toBe(false);
+    await expect(probeWithVersion('2.1.261-rc.1')).resolves.toBe(false);
+    await expect(probeWithVersion('unknown')).resolves.toBe(false);
+  });
+
+  it('explains why an incompatible executable version was rejected', async () => {
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      resolveExecutable: async () => executablePath,
+      readExecutableVersion: async () => '2.1.259',
+    });
+
+    const probe = await adapter.probe();
+
+    expect(probe.available).toBe(false);
+    expect(probe.unavailableReason).toContain('CLAUDE_EXECUTABLE_INVALID');
+    expect(probe.unavailableReason).toContain('2.1.259');
+    expect(probe.unavailableReason).toContain(CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION);
+  });
+});
+
 describe('Claude provider review and enablement', () => {
   it('is disabled by default and exposes required review notices without credentials', async () => {
     const adapter = new ClaudeProviderAdapter({
@@ -336,8 +375,7 @@ describe('Claude provider review and enablement', () => {
   });
 
   it('fails before SDK process creation when the reviewed CLI version drifts', async () => {
-    const bundledExecutable = await resolveBundledClaudeExecutable();
-    expect(bundledExecutable).not.toBeNull();
+    const reviewedExecutable = await realpath(process.execPath);
     const queryFactory = vi.fn(() => {
       throw new Error('query must not start');
     });
@@ -349,8 +387,8 @@ describe('Claude provider review and enablement', () => {
     adapter.setLaunchDescriptor({
       providerId: 'claude',
       protocol: 'claude-agent-sdk',
-      executablePath: bundledExecutable!,
-      executableVersion: CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION,
+      executablePath: reviewedExecutable,
+      executableVersion: CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION,
       argv: [
         '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json',
         '--permission-prompt-tool', 'stdio',

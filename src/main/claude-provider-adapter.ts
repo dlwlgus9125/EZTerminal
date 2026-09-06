@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import {
@@ -42,6 +41,7 @@ import {
   sameEnvironmentVariableSet,
   sanitizeProviderDiagnostic,
 } from './provider-process-security';
+import { compareSemanticVersions, semanticVersion } from './provider-version';
 
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 15_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 5_000;
@@ -49,7 +49,8 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_500;
 const MAX_SAFE_TEXT_LENGTH = 20_000;
 const MAX_RECONCILIATION_ITEMS = 2_000;
 const MAX_PROVIDER_HISTORY_MESSAGES = 5_000;
-export const CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION = '2.1.260';
+/** Oldest Claude Code CLI this adapter will review, enable and launch. */
+export const CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION = '2.1.260';
 const CLAUDE_AGENT_SDK_ARGV = [
   '--output-format',
   'stream-json',
@@ -186,22 +187,6 @@ export interface ClaudeExecutableResolutionOptions {
   readonly pathValue?: string;
   readonly isFile?: (candidate: string) => Promise<boolean>;
   readonly realpath?: (candidate: string) => Promise<string>;
-}
-
-const moduleRequire = createRequire(import.meta.url);
-
-/** Resolves the platform binary shipped with the pinned Agent SDK package. */
-export async function resolveBundledClaudeExecutable(): Promise<string | null> {
-  const packageSuffix = `${process.platform}-${process.arch}`;
-  const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
-  try {
-    const packageJson = moduleRequire.resolve(
-      `@anthropic-ai/claude-agent-sdk-${packageSuffix}/package.json`,
-    );
-    return fs.realpath(path.join(path.dirname(packageJson), binaryName));
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -421,7 +406,23 @@ function safeText(value: unknown, maxLength = MAX_SAFE_TEXT_LENGTH): string {
 }
 
 function compatibleClaudeExecutableVersion(version: string): boolean {
-  return version === CLAUDE_AGENT_SDK_BUNDLED_CLI_VERSION;
+  const candidate = semanticVersion(version);
+  const minimum = semanticVersion(CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION);
+  if (!candidate || !minimum) return false;
+  if (candidate.prerelease !== undefined) return false;
+  if (candidate.core[0] !== minimum.core[0]) return false;
+  return compareSemanticVersions(candidate, minimum) >= 0;
+}
+
+function incompatibleClaudeVersionReason(version: string): string {
+  const candidate = semanticVersion(version);
+  if (!candidate) {
+    return `The installed Claude Code version could not be read; install ${CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION} or newer.`;
+  }
+  if (candidate.prerelease !== undefined) {
+    return `Claude Code ${version} is a prerelease; install stable ${CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION} or newer.`;
+  }
+  return `Claude Code ${version} is outside the supported range; install ${CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION} or newer within the same major version.`;
 }
 
 function claudeEnvironmentVariableNames(
@@ -730,7 +731,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       if (options.executablePath) {
         return resolveClaudeExecutable({ configuredPath: options.executablePath });
       }
-      return await resolveBundledClaudeExecutable() ?? resolveClaudeExecutable();
+      return resolveClaudeExecutable();
     });
     this.readExecutableVersion = options.readExecutableVersion ?? defaultExecutableVersion;
     this.createId = options.createId ?? randomUUID;
@@ -803,12 +804,18 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const executableVersion = executablePath
       ? await abortable(this.executableVersion(executablePath, undefined, signal), signal)
       : 'unavailable';
+    const versionIncompatible = executablePath !== null
+      && !compatibleClaudeExecutableVersion(executableVersion);
     const executableError = !executablePath
       ? new ClaudeProviderError('CLAUDE_EXECUTABLE_NOT_FOUND')
-      : !compatibleClaudeExecutableVersion(executableVersion)
+      : versionIncompatible
         ? new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID')
         : null;
     const unavailable = policyError ?? executableError;
+    const unavailableDetail = unavailable !== null && unavailable === executableError
+      && versionIncompatible
+      ? ` ${incompatibleClaudeVersionReason(executableVersion)}`
+      : '';
     return {
       providerId: this.providerId,
       displayName: 'Claude Agent',
@@ -848,7 +855,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
           url: 'https://code.claude.com/docs/en/agent-sdk/overview',
         },
       ],
-      ...(unavailable ? { unavailableReason: `${unavailable.code}: ${unavailable.message}` } : {}),
+      ...(unavailable
+        ? { unavailableReason: `${unavailable.code}: ${unavailable.message}${unavailableDetail}` }
+        : {}),
     };
   }
 

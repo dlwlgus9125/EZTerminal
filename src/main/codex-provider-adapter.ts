@@ -37,6 +37,7 @@ import {
   sameEnvironmentVariableSet,
   sanitizeProviderDiagnostic,
 } from './provider-process-security';
+import { compareSemanticVersions, semanticVersion } from './provider-version';
 
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 const MAX_MODELS = 2_000;
@@ -359,25 +360,6 @@ async function canonicalExecutable(
   return fs.realpath(selected);
 }
 
-interface SemanticVersion {
-  readonly core: readonly [number, number, number];
-  readonly prerelease?: string;
-}
-
-const SEMANTIC_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
-
-function semanticVersion(value: string): SemanticVersion | undefined {
-  const match = SEMANTIC_VERSION_PATTERN.exec(value);
-  if (!match) return undefined;
-  const core = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
-  if (!core.every(Number.isSafeInteger)) return undefined;
-  const prerelease = match[4];
-  if (prerelease?.split('.').some((part) => /^\d+$/u.test(part) && part.length > 1 && part.startsWith('0'))) {
-    return undefined;
-  }
-  return { core, ...(prerelease ? { prerelease } : {}) };
-}
-
 function parseVersion(output: string): string | undefined {
   for (const line of output.split(/\r?\n/u)) {
     const candidate = /^codex-cli\s+(\S+)(?:\s+.*)?$/u.exec(line.trim())?.[1];
@@ -392,11 +374,7 @@ function compatibleVersion(version: string | undefined): boolean {
   const minimum = semanticVersion(CODEX_APP_SERVER_BASELINE_VERSION);
   if (!candidate || !minimum) return false;
   if (candidate.prerelease !== undefined) return false;
-  for (let index = 0; index < candidate.core.length; index += 1) {
-    const difference = candidate.core[index]! - minimum.core[index]!;
-    if (difference !== 0) return difference > 0;
-  }
-  return true;
+  return compareSemanticVersions(candidate, minimum) >= 0;
 }
 
 function incompatibleVersionReason(version: string): string {

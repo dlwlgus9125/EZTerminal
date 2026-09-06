@@ -8,12 +8,12 @@
 
 Structured pipelines · block history · full PTY/TUI support · Agent workbench · Android remote control
 
-[![Release](https://img.shields.io/badge/release-v1.0.47-brightgreen)](docs/release/release-notes-1.0.47.md)
+[![Release](https://img.shields.io/badge/release-v1.0.48-brightgreen)](docs/release/release-notes-1.0.48.md)
 [![CI](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Review the v1.0.47 release candidate](docs/release/release-notes-1.0.47.md) ·
+[Review the v1.0.48 release candidate](docs/release/release-notes-1.0.48.md) ·
 [Open published releases](https://github.com/dlwlgus9125/EZTerminal/releases) ·
 [Review the security model](SECURITY.md)
 
@@ -171,19 +171,19 @@ desktop, audio, privacy mode, and Ctrl+Alt+Delete are not supported.
 
 ## Install
 
-The current release candidate is **v1.0.47**. It targets a draft GitHub Release;
+The current release candidate is **v1.0.48**. It targets a draft GitHub Release;
 public distribution requires a separate approval.
 
 | Platform | Supported system | Release asset |
 | --- | --- | --- |
 | Windows desktop | Windows 10 22H2 or Windows 11, x64 | `EZTerminal-Setup.exe` |
-| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.47-vc68.apk` |
+| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.48-vc69.apk` |
 
 Release reviewers must inspect both artifacts, `release-manifest.json`, and
 `SHA256SUMS.txt` in the draft before any separate publication decision.
 
 > [!IMPORTANT]
-> The v1.0.47 Windows installer candidate is unsigned while the SignPath Foundation application is
+> The v1.0.48 Windows installer candidate is unsigned while the SignPath Foundation application is
 > pending, so Windows displays an unknown-publisher warning. Verify the release manifest and SHA-256
 > checksums before opening it. The in-app updater performs the same digest verification and never
 > installs an update silently.
@@ -238,7 +238,7 @@ boundaries, data flows, and native components are documented in the
 | Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
 | Local Agent runtime, orchestration, and managed merge | [docs/design/agent-collaboration.md](docs/design/agent-collaboration.md) |
-| Current release candidate | [v1.0.47 notes](docs/release/release-notes-1.0.47.md) · [1.0.47 validation policy](docs/release/validation-policy-1.0.47.md) |
+| Current release candidate | [v1.0.48 notes](docs/release/release-notes-1.0.48.md) · [1.0.48 validation policy](docs/release/validation-policy-1.0.48.md) |
 | Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |
 

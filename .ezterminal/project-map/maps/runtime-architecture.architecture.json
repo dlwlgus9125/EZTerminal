@@ -435,24 +435,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 590,
-          "endLine": 614,
+          "startLine": 568,
+          "endLine": 592,
           "lineDigest": "sha256:eab206cc23f1a71e24d8ad28d57e3edf2e6772c22faa42357eb388d19fd297cb",
           "claim": "Codex creates a persistent app-server thread rooted in the selected Workspace and registers its handle only if the Provider lifecycle generation is still current."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 666,
-          "endLine": 765,
+          "startLine": 644,
+          "endLine": 743,
           "lineDigest": "sha256:e7b7a0453f8551629e4c961475cffda9645813311771f5f2b1404187bbd32a73",
           "claim": "The turn-start response establishes ownership, then replays pre-response started, completed, or error events before dispatching a deferred interrupt; failures carry local turn scope."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 916,
-          "endLine": 982,
+          "startLine": 894,
+          "endLine": 960,
           "lineDigest": "sha256:67e54584cba98a5e8a7e23d869bfae39714bc851b24f00f78b90c8aa47695419",
           "claim": "Deactivation advances the lifecycle, settles pending interrupts, clears approvals and thread ownership, closes app-server, and leaves reviewed configuration reusable."
         }
@@ -470,16 +470,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1185,
-          "endLine": 1219,
+          "startLine": 1194,
+          "endLine": 1228,
           "lineDigest": "sha256:3434f720206a2e137ffb3a959b6a18439a9bc332deab492193e3bb54e0bd2ad6",
           "claim": "Claude SDK receives Workspace cwd, reviewed executable, permissions, optional Session MCP, and persistent identity, then installs its query only under the current lifecycle generation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1101,
-          "endLine": 1123,
+          "startLine": 1110,
+          "endLine": 1132,
           "lineDigest": "sha256:b8c612b6dc8bde2171a18d00eb2eb427984d11a273c2066a6eee2ea1f4bd48a5",
           "claim": "Deactivation advances the serialized lifecycle and closes every live SDK query, while permanent disposal separately clears listeners after that drain."
         }
@@ -879,16 +879,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 367,
-          "endLine": 412,
-          "lineDigest": "sha256:baaf360724ca40861c30a14cef97b112ed032cb6ead6d0b742bd8f023eb5561e",
+          "startLine": 363,
+          "endLine": 391,
+          "lineDigest": "sha256:c96ece4b5f9ef9029668a55bedef5e88d7376569dcba6247b9e6cc0bab7ef34f",
           "claim": "Codex accepts only its labeled stable semantic version at or above the observed app-server baseline, while malformed output, prereleases, and older versions fail closed."
         },
         {
           "rootAlias": "app",
+          "relativePath": "src/main/provider-version.ts",
+          "startLine": 7,
+          "endLine": 33,
+          "lineDigest": "sha256:d757af03e827db4da55a4e6aaeac4c3b9bc044afb8f12f34004269f0f0fc2c2c",
+          "claim": "Codex and Claude share one semantic-version parser that rejects any version string it cannot order, so an unreadable version can never satisfy either provider baseline."
+        },
+        {
+          "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 476,
-          "endLine": 531,
+          "startLine": 454,
+          "endLine": 509,
           "lineDigest": "sha256:d9cbbe05b3b11bb23c8cc8ffa7758344f85331ba087514e59488b8cd873c6f13",
           "claim": "Codex accepts only an absolute reviewed app-server launch descriptor with the fixed process contract and stable version floor, then reports the current compatible version and capabilities."
         }
@@ -903,8 +911,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/claude-provider-adapter.ts",
-        "startLine": 743,
-        "endLine": 786,
+        "startLine": 744,
+        "endLine": 787,
         "lineDigest": "sha256:29cedf01d29574da23cc9c1b68d497329738f1f4e3461e1c48b3b55412a1f9c5",
         "claim": "Claude accepts only the reviewed SDK executable contract and persists consent policy without implementing an OAuth or login flow."
       }]
