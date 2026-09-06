@@ -8,7 +8,10 @@ import type {
   DaemonTranscriptItem,
   PermissionPreset,
 } from '../shared/daemon-protocol';
-import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
+import {
+  CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
+  type ProviderLaunchDescriptor,
+} from '../shared/daemon-provider';
 import type {
   AgentProviderAdapter,
   AgentProviderEvent,
@@ -132,6 +135,12 @@ function asObject(value: unknown): JsonObject | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as JsonObject
     : undefined;
+}
+
+function requireObjectResult(method: string, value: unknown): JsonObject {
+  const result = asObject(value);
+  if (!result) throw new Error(`Codex ${method} returned an invalid result.`);
+  return result;
 }
 
 function asString(value: unknown): string | undefined {
@@ -350,13 +359,57 @@ async function canonicalExecutable(
   return fs.realpath(selected);
 }
 
-function parseVersion(output: string): string | undefined {
-  return /(?:codex-cli\s+)?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/u.exec(output)?.[1];
+interface SemanticVersion {
+  readonly core: readonly [number, number, number];
+  readonly prerelease?: string;
 }
 
-function compatibleVersion(version: string): boolean {
-  const match = /^0\.152\.(\d+)$/u.exec(version);
-  return match !== null && Number(match[1]) >= 1;
+const SEMANTIC_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+
+function semanticVersion(value: string): SemanticVersion | undefined {
+  const match = SEMANTIC_VERSION_PATTERN.exec(value);
+  if (!match) return undefined;
+  const core = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
+  if (!core.every(Number.isSafeInteger)) return undefined;
+  const prerelease = match[4];
+  if (prerelease?.split('.').some((part) => /^\d+$/u.test(part) && part.length > 1 && part.startsWith('0'))) {
+    return undefined;
+  }
+  return { core, ...(prerelease ? { prerelease } : {}) };
+}
+
+function parseVersion(output: string): string | undefined {
+  for (const line of output.split(/\r?\n/u)) {
+    const candidate = /^codex-cli\s+(\S+)(?:\s+.*)?$/u.exec(line.trim())?.[1];
+    if (candidate && semanticVersion(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function compatibleVersion(version: string | undefined): boolean {
+  if (!version) return false;
+  const candidate = semanticVersion(version);
+  const minimum = semanticVersion(CODEX_APP_SERVER_BASELINE_VERSION);
+  if (!candidate || !minimum) return false;
+  if (candidate.prerelease !== undefined) return false;
+  for (let index = 0; index < candidate.core.length; index += 1) {
+    const difference = candidate.core[index]! - minimum.core[index]!;
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+
+function incompatibleVersionReason(version: string): string {
+  if (semanticVersion(version)?.prerelease !== undefined) {
+    return `Codex ${version} is a prerelease; install stable Codex ${CODEX_APP_SERVER_BASELINE_VERSION} or newer.`;
+  }
+  return `Codex ${version} is older than the minimum supported ${CODEX_APP_SERVER_BASELINE_VERSION} app-server version.`;
+}
+
+function versionCheckFailure(detail: unknown): Error {
+  const reason = sanitizeProviderDiagnostic(detail, { maxLength: 1_024 }).text.trim()
+    || 'the version command did not provide an error';
+  return new Error(`Codex version check failed before launch (${reason}). Reinstall or update Codex, then try again.`);
 }
 
 function orchestrationConfig(context: ProviderSessionContext): JsonObject | undefined {
@@ -376,7 +429,7 @@ function orchestrationConfig(context: ProviderSessionContext): JsonObject | unde
   };
 }
 
-/** Structured Codex adapter targeting the observed 0.152.1 app-server schema. */
+/** Structured Codex adapter requiring at least the observed 0.152.1 app-server schema. */
 export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
 
@@ -471,9 +524,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
           'approvals', 'native-subagents', 'history-reconciliation',
         ],
         authenticationState: 'first-launch',
-        authenticationDetail: 'Codex authentication is verified by app-server when the first Agent session starts.',
+        authenticationDetail: CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
         ...(compatible ? {} : {
-          unavailableReason: `Codex ${executableVersion} has not been reviewed for the ${CODEX_APP_SERVER_BASELINE_VERSION} app-server contract.`,
+          unavailableReason: incompatibleVersionReason(executableVersion),
         }),
       };
     } catch (error) {
@@ -722,13 +775,16 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const state = this.requireSession(input.sessionId, input.providerSessionId);
     if (input.model === undefined && input.permissionPreset === undefined) return this.handleFor(state);
     if (input.model !== undefined && !input.model.trim()) throw new Error('Codex model must not be empty.');
-    await this.requireConnection().request('thread/settings/update', {
-      threadId: input.providerSessionId,
-      ...(input.model === undefined ? {} : { model: input.model }),
-      ...(input.permissionPreset === undefined
-        ? {}
-        : permissionUpdateSettings(input.permissionPreset, state.workspaceRoot)),
-    });
+    requireObjectResult(
+      'thread/settings/update',
+      await this.requireConnection().request('thread/settings/update', {
+        threadId: input.providerSessionId,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.permissionPreset === undefined
+          ? {}
+          : permissionUpdateSettings(input.permissionPreset, state.workspaceRoot)),
+      }),
+    );
     if (input.model !== undefined) state.model = input.model;
     if (input.permissionPreset !== undefined) state.permissionPreset = input.permissionPreset;
     return this.handleFor(state);
@@ -949,11 +1005,21 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ? canonical.toLocaleLowerCase('en-US') === descriptor.executablePath.toLocaleLowerCase('en-US')
         : canonical === descriptor.executablePath;
       if (!samePath) throw new Error('Codex executable realpath changed after review. Inspect the provider again.');
-      const result = await this.runCommand(canonical, ['--version'], deadlineSignal);
-      const version = parseVersion(`${result.stdout}\n${result.stderr}`);
-      if (result.exitCode !== 0 || version !== descriptor.executableVersion || !compatibleVersion(version)) {
-        throw new Error('Codex executable version changed after review. Inspect the provider again.');
+      let result: CodexCommandResult;
+      try {
+        result = await this.runCommand(canonical, ['--version'], deadlineSignal);
+      } catch (error) {
+        if (deadlineSignal.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
+        throw versionCheckFailure(error);
       }
+      const version = parseVersion(`${result.stdout}\n${result.stderr}`);
+      if (result.exitCode !== 0) {
+        throw versionCheckFailure(result.stderr.trim() || `Codex exited with code ${result.exitCode}.`);
+      }
+      if (!version) {
+        throw new Error('Codex version check returned no valid semantic version before launch. Reinstall or update Codex, then try again.');
+      }
+      if (!compatibleVersion(version)) throw new Error(`${incompatibleVersionReason(version)} Update Codex, then try again.`);
     });
   }
 
@@ -1289,7 +1355,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     void Promise.resolve().then(() => this.requireConnection().request('turn/interrupt', {
       threadId: state.providerSessionId,
       turnId: providerTurnId,
-    })).then(
+    })).then((result) => {
+      requireObjectResult('turn/interrupt', result);
+    }).then(
       () => this.settlePendingInterrupt(active),
       (error) => {
         if (!this.settlePendingInterrupt(active, error)) return;

@@ -30,6 +30,7 @@ import {
   RENDERER_RECOVERY_MAX_HISTORY,
   RENDERER_RECOVERY_VERSION,
   type RendererRecoveryCheckpoint,
+  type RendererRecoveryStructuredAgentCreate,
 } from '../shared/renderer-recovery';
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
@@ -88,6 +89,10 @@ import {
   structuredAgentSessionHistoryId,
   StructuredAgentDockPanel,
 } from './StructuredAgentDockPanel';
+import {
+  structuredAgentCreateCheckpointRecords,
+  StructuredAgentCreateRecoveryRegistry,
+} from './structured-agent-create-recovery';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
@@ -315,6 +320,11 @@ interface StructuredAgentNavigationContextValue {
   }) => void;
 }
 const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
+interface StructuredAgentCreateRecoveryContextValue {
+  readonly registry: StructuredAgentCreateRecoveryRegistry;
+  readonly persistBeforeSend: () => Promise<boolean>;
+}
+const StructuredAgentCreateRecoveryContext = createContext<StructuredAgentCreateRecoveryContextValue | null>(null);
 const TerminalRuntimeContext = createContext<TerminalRuntimeOptions>(DEFAULT_TERMINAL_RUNTIME_OPTIONS);
 interface ProjectReviewNavigationContextValue {
   readonly openHistoryReview: (
@@ -550,8 +560,16 @@ function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
 function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const navigation = useContext(StructuredAgentNavigationContext);
+  const createRecovery = useContext(StructuredAgentCreateRecoveryContext);
   return isStructuredAgentDockHistoryId(historyId)
-    ? <StructuredAgentDockPanel {...props} onOpenSession={navigation?.openSession} />
+    ? (
+        <StructuredAgentDockPanel
+          {...props}
+          createRecoveryRegistry={createRecovery?.registry}
+          persistCreateRecovery={createRecovery?.persistBeforeSend}
+          onOpenSession={navigation?.openSession}
+        />
+      )
     : <LegacyAgentSessionDockPanel {...props} />;
 }
 
@@ -685,6 +703,7 @@ async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
 
 function buildRendererRecoveryCheckpoint(
   api: DockviewApi,
+  structuredAgentCreates: readonly RendererRecoveryStructuredAgentCreate[],
 ): RendererRecoveryCheckpoint | null {
   const rawLayout = structuredClone(api.toJSON()) as unknown as Record<string, unknown>;
   // Cwd/adoption are forbidden in durable layouts. The volatile checkpoint
@@ -705,6 +724,11 @@ function buildRendererRecoveryCheckpoint(
   const layout = buildLayoutEnvelope(rawLayout, new Date(savedAt).toISOString());
   if (!layout) return null;
   const panelIds = new Set(Object.keys(layout.layout.panels));
+  const panelBoundStructuredAgentCreates = structuredAgentCreateCheckpointRecords(
+    structuredAgentCreates,
+    panelIds,
+  );
+  if (!panelBoundStructuredAgentCreates) return null;
   const panes = listPaneSnapshots()
     .filter((pane) => panelIds.has(pane.panelId))
     .map((pane) => {
@@ -729,6 +753,7 @@ function buildRendererRecoveryCheckpoint(
     savedAt,
     layout,
     panes: Object.freeze(panes),
+    structuredAgentCreates: Object.freeze(panelBoundStructuredAgentCreates),
     activePanelId: api.activePanel?.id ?? null,
   });
 }
@@ -779,6 +804,11 @@ export function App(): JSX.Element {
   const sidebarReflow = useSidebarReflow();
   const projectWide = useSidebarReflow('(min-width: 1024px)');
   const apiRef = useRef<DockviewApi | null>(null);
+  const structuredAgentCreateRecoveryRegistryRef = useRef<StructuredAgentCreateRecoveryRegistry | null>(null);
+  if (structuredAgentCreateRecoveryRegistryRef.current === null) {
+    structuredAgentCreateRecoveryRegistryRef.current = new StructuredAgentCreateRecoveryRegistry();
+  }
+  const structuredAgentCreateRecoveryRegistry = structuredAgentCreateRecoveryRegistryRef.current;
   const dockWindowCoordinatorRef = useRef<DockWindowCoordinator | null>(null);
   const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
@@ -1236,11 +1266,22 @@ export function App(): JSX.Element {
     const api = apiRef.current;
     const desktop = window.ezterminalDesktop;
     if (!api || !desktop) return null;
-    const checkpoint = buildRendererRecoveryCheckpoint(api);
+    const checkpoint = buildRendererRecoveryCheckpoint(
+      api,
+      structuredAgentCreateRecoveryRegistry.list(),
+    );
     if (!checkpoint) return null;
     const saved = await desktop.saveRendererRecoveryCheckpoint(checkpoint).catch(() => false);
     return saved ? checkpoint : null;
-  }, []);
+  }, [structuredAgentCreateRecoveryRegistry]);
+
+  const structuredAgentCreateRecoveryValue = useMemo<StructuredAgentCreateRecoveryContextValue>(
+    () => ({
+      registry: structuredAgentCreateRecoveryRegistry,
+      persistBeforeSend: async () => (await writeRendererRecoveryCheckpoint()) !== null,
+    }),
+    [structuredAgentCreateRecoveryRegistry, writeRendererRecoveryCheckpoint],
+  );
 
   const scheduleRendererRecoveryCheckpoint = useCallback((): void => {
     if (recoverySaveTimerRef.current !== null) clearTimeout(recoverySaveTimerRef.current);
@@ -1248,6 +1289,12 @@ export function App(): JSX.Element {
       void writeRendererRecoveryCheckpoint();
     }, 300);
   }, [writeRendererRecoveryCheckpoint]);
+
+  useEffect(() => structuredAgentCreateRecoveryRegistry.subscribe(() => {
+    // Create-envelope escrow changes are sparse and safety-critical. Save them
+    // immediately rather than sharing the ordinary 300 ms layout debounce.
+    void writeRendererRecoveryCheckpoint();
+  }), [structuredAgentCreateRecoveryRegistry, writeRendererRecoveryCheckpoint]);
 
   const scheduleSave = useCallback(
     (): void => workbenchCoordinator.scheduleLayoutSave(),
@@ -1788,6 +1835,16 @@ export function App(): JSX.Element {
         rejectAuxiliaryClose(request, false);
         return;
       }
+      if (structuredAgentCreateRecoveryRegistry.blocksAuxiliaryClose(
+        targets.map((target) => target.panelId),
+      )) {
+        void desktop.resolveAuxiliaryClose(request.requestId, 'cancel');
+        pushToast({
+          title: t('safetyDialog.agentCreateRecoveryBlocked'),
+          variant: 'warning',
+        });
+        return;
+      }
       if (targets.length === 0) {
         void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
         return;
@@ -1817,8 +1874,11 @@ export function App(): JSX.Element {
       agentSessionIds,
       completeAuxiliaryClose,
       paneLifecycleCoordinator,
+      pushToast,
       rejectAuxiliaryClose,
       resolveAuxiliaryTargets,
+      structuredAgentCreateRecoveryRegistry,
+      t,
     ],
   );
 
@@ -2226,6 +2286,13 @@ export function App(): JSX.Element {
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, instanceToken: object, close: () => void): void => {
+      if (structuredAgentCreateRecoveryRegistry.blocksPanelClose(panelId)) {
+        pushToast({
+          title: t('safetyDialog.agentCreateRecoveryBlocked'),
+          variant: 'warning',
+        });
+        return;
+      }
       // A read-only Agent Session has no pane handle and closes immediately.
       // After its first send it mounts TerminalPane in the same Dockview panel,
       // so the handle (rather than the component name) becomes the close guard.
@@ -2330,6 +2397,7 @@ export function App(): JSX.Element {
       focusActivePane,
       paneLifecycleCoordinator,
       pushToast,
+      structuredAgentCreateRecoveryRegistry,
       t,
     ],
   );
@@ -2753,6 +2821,13 @@ export function App(): JSX.Element {
 
   const applyPreset = useCallback(
     (name: string): void => {
+      if (structuredAgentCreateRecoveryRegistry.blocksWorkspaceReplacement()) {
+        pushToast({
+          title: t('safetyDialog.agentCreateRecoveryBlocked'),
+          variant: 'warning',
+        });
+        return;
+      }
       const showPresetStateChanged = (): void => {
         setCloseDialog({
           title: t('safetyDialog.terminalStateChangedTitle'),
@@ -2856,6 +2931,7 @@ export function App(): JSX.Element {
       focusActivePane,
       pushToast,
       scheduleSave,
+      structuredAgentCreateRecoveryRegistry,
       t,
       workspaceReplacementCoordinator,
     ],
@@ -3991,6 +4067,7 @@ export function App(): JSX.Element {
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
                 <PaneApprovalContext.Provider value={paneApprovalValue}>
                 <AgentOrchestrationContext.Provider value={agentOrchestrationSnapshot}>
+                <StructuredAgentCreateRecoveryContext.Provider value={structuredAgentCreateRecoveryValue}>
                 <StructuredAgentNavigationContext.Provider value={structuredAgentNavigationValue}>
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
@@ -4019,6 +4096,7 @@ export function App(): JSX.Element {
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
                 </StructuredAgentNavigationContext.Provider>
+                </StructuredAgentCreateRecoveryContext.Provider>
                 </AgentOrchestrationContext.Provider>
                 </PaneApprovalContext.Provider>
               </AgentTabStatusContext.Provider>

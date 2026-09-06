@@ -63,7 +63,7 @@
     {
       "id": "mobile-agent-command",
       "label": "Mobile Agent command",
-      "detail": "A typed daemon command carries a stable command and idempotency identity; mobile never replays it after a dropped connection.",
+      "detail": "A typed daemon command carries a stable command and idempotency identity; the transport never replays it automatically after a dropped connection.",
       "kind": "source",
       "stage": "mobile-intent",
       "order": 0,
@@ -73,7 +73,7 @@
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
           "startLine": 1987,
           "endLine": 2018,
-          "lineDigest": "sha256:36acf0398a8b0347c4e17ef04682d9635eb1e997cc7f34d18abb965b6fbe65f8",
+          "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "Mobile sends one daemon command request, rejects it locally in safe mode, and converts an unavailable connection into an explicit delivery-uncertain receipt."
         },
         {
@@ -229,8 +229,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1591,
-          "endLine": 1623,
+          "startLine": 1589,
+          "endLine": 1621,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -324,7 +324,7 @@
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
           "startLine": 1987,
           "endLine": 2018,
-          "lineDigest": "sha256:36acf0398a8b0347c4e17ef04682d9635eb1e997cc7f34d18abb965b6fbe65f8",
+          "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "A command enters the transport once and immediately becomes delivery-uncertain when it cannot be sent."
         },
         {
@@ -425,8 +425,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-        "startLine": 1591,
-        "endLine": 1623,
+          "startLine": 1589,
+          "endLine": 1621,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },

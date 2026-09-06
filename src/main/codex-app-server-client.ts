@@ -8,22 +8,35 @@ import { sanitizeProviderDiagnostic } from './provider-process-security';
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_CONFIGURABLE_LINE_BYTES = 16 * 1024 * 1024;
+const MAX_RETIRED_REQUEST_IDS = 256;
 
 export type CodexJsonRpcId = string | number;
 
 interface JsonRpcErrorObject {
-  readonly code?: unknown;
-  readonly message?: unknown;
+  readonly code: number;
+  readonly message: string;
   readonly data?: unknown;
 }
 
 interface JsonRpcMessage {
+  readonly jsonrpc?: unknown;
   readonly id?: unknown;
   readonly method?: unknown;
   readonly params?: unknown;
   readonly result?: unknown;
-  readonly error?: JsonRpcErrorObject;
+  readonly error?: unknown;
 }
+
+interface ValidJsonRpcResponse {
+  readonly id: number;
+  readonly outcome:
+    | { readonly kind: 'result'; readonly value: unknown }
+    | { readonly kind: 'error'; readonly value: JsonRpcErrorObject };
+}
+
+type JsonRpcResponseValidation =
+  | { readonly ok: true; readonly response: ValidJsonRpcResponse }
+  | { readonly ok: false; readonly reason: string };
 
 interface PendingRequest {
   readonly method: string;
@@ -124,6 +137,72 @@ function rpcId(value: unknown): CodexJsonRpcId | undefined {
     : undefined;
 }
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function validateJsonRpcResponse(message: JsonRpcMessage): JsonRpcResponseValidation {
+  if (hasOwn(message, 'jsonrpc') && message.jsonrpc !== '2.0') {
+    return { ok: false, reason: 'jsonrpc must be omitted or exactly "2.0"' };
+  }
+  if (typeof message.id !== 'number' || !Number.isSafeInteger(message.id)) {
+    return { ok: false, reason: 'id must be an exact safe integer request id' };
+  }
+  if (hasOwn(message, 'method')) {
+    return { ok: false, reason: 'a response must not contain method' };
+  }
+  const hasResult = hasOwn(message, 'result');
+  const hasError = hasOwn(message, 'error');
+  if (hasResult === hasError) {
+    return { ok: false, reason: 'exactly one of result or error is required' };
+  }
+  if (hasError) {
+    if (
+      !isRecord(message.error)
+      || !Number.isSafeInteger(message.error.code)
+      || typeof message.error.message !== 'string'
+    ) {
+      return { ok: false, reason: 'error must contain a safe integer code and string message' };
+    }
+    return {
+      ok: true,
+      response: {
+        id: message.id,
+        outcome: {
+          kind: 'error',
+          value: {
+            code: message.error.code as number,
+            message: message.error.message,
+            ...(hasOwn(message.error, 'data') ? { data: message.error.data } : {}),
+          },
+        },
+      },
+    };
+  }
+  return {
+    ok: true,
+    response: {
+      id: message.id,
+      outcome: { kind: 'result', value: message.result },
+    },
+  };
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isInitializeResult(value: unknown): boolean {
+  return isRecord(value)
+    && isNonEmptyString(value.userAgent)
+    && isNonEmptyString(value.platformFamily)
+    && isNonEmptyString(value.platformOs);
+}
+
 /**
  * Bidirectional newline-delimited JSON-RPC transport for `codex app-server`.
  *
@@ -135,6 +214,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
   private startPromise: Promise<void> | undefined;
   private nextId = 1;
   private readonly pending = new Map<CodexJsonRpcId, PendingRequest>();
+  private readonly retiredRequestIds = new Set<number>();
   private readonly notificationHandlers = new Map<string, Set<CodexNotificationHandler>>();
   private readonly serverRequestHandlers = new Map<string, CodexServerRequestHandler>();
   private readonly closeListeners = new Set<(event: CodexConnectionClose) => void>();
@@ -222,6 +302,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     this.process = undefined;
     this.startPromise = undefined;
     this.inputBuffer = '';
+    this.retiredRequestIds.clear();
     if (child) {
       child.stdout.removeAllListeners('data');
       child.removeAllListeners('error');
@@ -298,6 +379,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     ) as ChildProcessWithoutNullStreams;
     this.expectedExit = false;
     this.inputBuffer = '';
+    this.retiredRequestIds.clear();
     this.process = child;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -322,16 +404,22 @@ export class CodexAppServerClient implements CodexAppServerConnection {
         );
         this.guardianEnrolled = true;
       }
-      await this.sendRequest(child, 'initialize', {
+      const initializeResult = await this.sendRequest(child, 'initialize', {
         clientInfo: { name: 'ezterminal', title: 'EZTerminal', version: '2' },
         capabilities: {
           experimentalApi: true,
           requestAttestation: false,
         },
       }, { timeoutMs: this.requestTimeoutMs, signal });
+      if (!isInitializeResult(initializeResult)) {
+        throw new Error(
+          'Codex app-server returned an invalid initialize result; expected non-empty userAgent, platformFamily, and platformOs strings.',
+        );
+      }
       await this.writeMessage(child, { jsonrpc: '2.0', method: 'initialized' });
     } catch (error) {
       if (this.process === child) this.process = undefined;
+      this.retiredRequestIds.clear();
       this.rejectAll(error instanceof Error ? error : new Error(String(error)));
       if (this.guardianEnrolled && this.options.processGuardian) {
         try {
@@ -371,6 +459,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
         const pending = this.pending.get(id);
         if (!pending) return;
         this.pending.delete(id);
+        this.retireRequestId(id);
         this.removeAbortListener(pending);
         reject(new Error(`Codex app-server request ${method} timed out after ${timeoutMs}ms.`));
       }, timeoutMs);
@@ -385,6 +474,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
       if (options.signal) {
         pending.abort = () => {
           if (!this.pending.delete(id)) return;
+          this.retireRequestId(id);
           clearTimeout(timer);
           reject(abortError(method));
         };
@@ -446,39 +536,57 @@ export class CodexAppServerClient implements CodexAppServerConnection {
       this.reportError(`[codex-app-server] ignored malformed JSON-RPC frame: ${String(error)}`);
       return;
     }
-    if (typeof message.method === 'string') {
+    const method = typeof message.method === 'string' ? message.method : undefined;
+    const isMethodMessage = (
+      method !== undefined
+      && !hasOwn(message, 'result')
+      && !hasOwn(message, 'error')
+    );
+    if (isMethodMessage) {
+      if (hasOwn(message, 'jsonrpc') && message.jsonrpc !== '2.0') {
+        this.failProtocol(
+          child,
+          'Codex app-server sent an invalid JSON-RPC message: jsonrpc must be omitted or exactly "2.0".',
+        );
+        return;
+      }
       const id = rpcId(message.id);
-      if (id === undefined) this.dispatchNotification(message.method, message.params);
-      else this.dispatchServerRequest(child, id, message.method, message.params);
+      if (id === undefined) this.dispatchNotification(method, message.params);
+      else this.dispatchServerRequest(child, id, method, message.params);
       return;
     }
-    const id = rpcId(message.id);
-    if (id === undefined) {
-      this.reportError('[codex-app-server] ignored JSON-RPC frame without a method or valid id.');
-      return;
-    }
-    this.handleResponse(id, message);
+    this.handleResponse(child, message);
   }
 
-  private handleResponse(id: CodexJsonRpcId, response: JsonRpcMessage): void {
+  private handleResponse(child: ChildProcessWithoutNullStreams, message: JsonRpcMessage): void {
+    const validation = validateJsonRpcResponse(message);
+    if (!validation.ok) {
+      this.failProtocol(child, `Codex app-server sent an invalid JSON-RPC response: ${validation.reason}.`);
+      return;
+    }
+    const { id, outcome } = validation.response;
     const pending = this.pending.get(id);
     if (!pending) {
-      this.reportError(`[codex-app-server] ignored response for unknown id ${String(id)}.`);
+      if (this.retiredRequestIds.delete(id)) {
+        this.reportError(`[codex-app-server] ignored late response for retired JSON-RPC request id ${String(id)}.`);
+        return;
+      }
+      this.failProtocol(child, `Codex app-server sent a response for unknown JSON-RPC response id ${String(id)}.`);
       return;
     }
     this.pending.delete(id);
     clearTimeout(pending.timer);
     this.removeAbortListener(pending);
-    if (response.error) {
+    if (outcome.kind === 'error') {
       pending.reject(new CodexJsonRpcError(
         pending.method,
-        typeof response.error.code === 'number' ? response.error.code : undefined,
-        typeof response.error.message === 'string' ? response.error.message : `Codex request ${pending.method} failed.`,
-        response.error.data,
+        outcome.value.code,
+        outcome.value.message,
+        outcome.value.data,
       ));
       return;
     }
-    pending.resolve(response.result);
+    pending.resolve(outcome.value);
   }
 
   private dispatchNotification(method: string, params: unknown): void {
@@ -533,6 +641,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     if (this.process !== child) return;
     this.process = undefined;
     this.inputBuffer = '';
+    this.retiredRequestIds.clear();
     this.guardianEnrolled = false;
     this.rejectAll(new Error(message));
     this.emitClose({ expected: this.expectedExit || this.disposed, message });
@@ -550,6 +659,13 @@ export class CodexAppServerClient implements CodexAppServerConnection {
 
   private removeAbortListener(pending: PendingRequest): void {
     if (pending.signal && pending.abort) pending.signal.removeEventListener('abort', pending.abort);
+  }
+
+  private retireRequestId(id: number): void {
+    this.retiredRequestIds.add(id);
+    if (this.retiredRequestIds.size <= MAX_RETIRED_REQUEST_IDS) return;
+    const oldest = this.retiredRequestIds.values().next();
+    if (!oldest.done) this.retiredRequestIds.delete(oldest.value);
   }
 
   private rejectAll(error: Error): void {

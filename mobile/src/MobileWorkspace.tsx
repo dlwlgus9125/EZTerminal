@@ -46,6 +46,16 @@ import type {
   DaemonRuntimeViewState,
   WsEzTerminalTransport,
 } from './transport/ws-ezterminal';
+import {
+  MobileAgentCreateRecoveryStore,
+  mobileAgentCreateAuthorityFingerprint,
+  mobileAgentCreateRecoveryFromCommand,
+  type MobileAgentCreateRecoveryController,
+  type MobileAgentCreateRecoveryStatus,
+  type MobileAgentCreateRecoveryStoreLike,
+  type UncertainAgentCreate,
+} from './mobile-agent-create-recovery-store';
+import type { MobileWorkspaceTerminalResult } from './workspace-terminal';
 import { usePageVisible } from './use-page-visible';
 import {
   createInitialAppUpdateSnapshot,
@@ -148,6 +158,7 @@ export function MobileWorkspace({
   roundTripMs = null,
   onDisconnect,
   appUpdateController = UNAVAILABLE_APP_UPDATE_CONTROLLER,
+  agentCreateRecoveryStore,
 }: {
   transport: WsEzTerminalTransport;
   /** Capacitor activity, independent of WebView visibility quirks. */
@@ -157,6 +168,8 @@ export function MobileWorkspace({
   roundTripMs?: number | null;
   onDisconnect: () => void;
   readonly appUpdateController?: MobileAppUpdateController;
+  /** Injectable Android Keystore-backed escrow; MobileWorkspace owns its lifecycle. */
+  readonly agentCreateRecoveryStore?: MobileAgentCreateRecoveryStoreLike;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences: uiPreferences } = useMobileUiPreferences();
@@ -181,6 +194,18 @@ export function MobileWorkspace({
     status: 'loading',
     snapshot: null,
   });
+  const recoveryStoreRef = useRef<MobileAgentCreateRecoveryStoreLike | null>(null);
+  if (recoveryStoreRef.current === null) {
+    recoveryStoreRef.current = agentCreateRecoveryStore ?? new MobileAgentCreateRecoveryStore();
+  }
+  const [agentCreateRecoveryState, setAgentCreateRecoveryState] = useState<{
+    readonly status: MobileAgentCreateRecoveryStatus;
+    readonly recovery: UncertainAgentCreate | null;
+  }>({ status: 'loading', recovery: null });
+  const agentCreateRecoveryStateRef = useRef(agentCreateRecoveryState);
+  agentCreateRecoveryStateRef.current = agentCreateRecoveryState;
+  const agentCreateRecoveryAuthorityRef = useRef<string | null>(null);
+  const agentCreateRecoveryLoadGenerationRef = useRef(0);
   const [connected, setConnected] = useState(false);
   const [authGeneration, setAuthGeneration] = useState(0);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
@@ -195,6 +220,125 @@ export function MobileWorkspace({
   const subPageReturnTargetRef = useRef('shell-tab-home');
   const restoreTabFocusRef = useRef(false);
   const cwdMapRef = useRef(new Map<string, string>());
+
+  const updateAgentCreateRecoveryState = useCallback((next: {
+    readonly status: MobileAgentCreateRecoveryStatus;
+    readonly recovery: UncertainAgentCreate | null;
+  }): void => {
+    agentCreateRecoveryStateRef.current = next;
+    setAgentCreateRecoveryState(next);
+  }, []);
+
+  const reloadAgentCreateRecovery = useCallback<
+    MobileAgentCreateRecoveryController['reload']
+  >(async () => {
+    const generation = agentCreateRecoveryLoadGenerationRef.current + 1;
+    agentCreateRecoveryLoadGenerationRef.current = generation;
+    agentCreateRecoveryAuthorityRef.current = null;
+    updateAgentCreateRecoveryState({ status: 'loading', recovery: null });
+    if (!connected || !transport.isAuthed) return false;
+    try {
+      const token = await transport.getRemoteToken();
+      const authorityFingerprint = await mobileAgentCreateAuthorityFingerprint(token);
+      agentCreateRecoveryAuthorityRef.current = authorityFingerprint;
+      const result = await recoveryStoreRef.current!.load(authorityFingerprint);
+      if (agentCreateRecoveryLoadGenerationRef.current !== generation) return false;
+      if (!result.available) {
+        updateAgentCreateRecoveryState({
+          status: result.reason === 'invalid-record' ? 'invalid' : 'unavailable',
+          recovery: null,
+        });
+        return false;
+      }
+      updateAgentCreateRecoveryState({ status: 'ready', recovery: result.recovery });
+      if (result.recovery) {
+        preloadOnIntent(MOBILE_FEATURE_LOADERS.agents);
+        setSheet(null);
+        setSubPage(null);
+        setTab('agents');
+      }
+      return true;
+    } catch {
+      if (agentCreateRecoveryLoadGenerationRef.current === generation) {
+        updateAgentCreateRecoveryState({ status: 'unavailable', recovery: null });
+      }
+      return false;
+    }
+  }, [connected, transport, updateAgentCreateRecoveryState]);
+
+  useEffect(() => {
+    void reloadAgentCreateRecovery();
+    return () => {
+      agentCreateRecoveryLoadGenerationRef.current += 1;
+      agentCreateRecoveryAuthorityRef.current = null;
+    };
+  }, [reloadAgentCreateRecovery]);
+
+  const prepareAgentCreateRecovery = useCallback<
+    MobileAgentCreateRecoveryController['prepare']
+  >(async (command) => {
+    const authorityFingerprint = agentCreateRecoveryAuthorityRef.current;
+    if (agentCreateRecoveryStateRef.current.status !== 'ready' || !authorityFingerprint) return false;
+    try {
+      const recovery = mobileAgentCreateRecoveryFromCommand(command);
+      await recoveryStoreRef.current!.save(recovery, authorityFingerprint);
+      if (agentCreateRecoveryAuthorityRef.current !== authorityFingerprint) return false;
+      updateAgentCreateRecoveryState({ status: 'ready', recovery });
+      return true;
+    } catch {
+      if (agentCreateRecoveryAuthorityRef.current === authorityFingerprint) {
+        const reconciled = await recoveryStoreRef.current!.load(authorityFingerprint).catch(() => null);
+        if (agentCreateRecoveryAuthorityRef.current === authorityFingerprint) {
+          updateAgentCreateRecoveryState(reconciled?.available
+            ? { status: 'ready', recovery: reconciled.recovery }
+            : {
+                status: reconciled?.reason === 'invalid-record' ? 'invalid' : 'unavailable',
+                recovery: null,
+              });
+        }
+      }
+      return false;
+    }
+  }, [updateAgentCreateRecoveryState]);
+
+  const clearAgentCreateRecovery = useCallback<
+    MobileAgentCreateRecoveryController['clear']
+  >(async () => {
+    const authorityFingerprint = agentCreateRecoveryAuthorityRef.current;
+    if (!authorityFingerprint) return false;
+    try {
+      await recoveryStoreRef.current!.clear(authorityFingerprint);
+      if (agentCreateRecoveryAuthorityRef.current !== authorityFingerprint) return false;
+      updateAgentCreateRecoveryState({ status: 'ready', recovery: null });
+      return true;
+    } catch {
+      if (agentCreateRecoveryAuthorityRef.current === authorityFingerprint) {
+        const reconciled = await recoveryStoreRef.current!.load(authorityFingerprint).catch(() => null);
+        if (agentCreateRecoveryAuthorityRef.current === authorityFingerprint) {
+          updateAgentCreateRecoveryState(reconciled?.available
+            ? { status: 'ready', recovery: reconciled.recovery }
+            : {
+                status: reconciled?.reason === 'invalid-record' ? 'invalid' : 'unavailable',
+                recovery: null,
+              });
+        }
+      }
+      return false;
+    }
+  }, [updateAgentCreateRecoveryState]);
+
+  const agentCreateRecovery = useMemo<MobileAgentCreateRecoveryController>(() => ({
+    ...agentCreateRecoveryState,
+    prepare: prepareAgentCreateRecovery,
+    clear: clearAgentCreateRecovery,
+    reload: reloadAgentCreateRecovery,
+    discard: clearAgentCreateRecovery,
+  }), [
+    agentCreateRecoveryState,
+    clearAgentCreateRecovery,
+    prepareAgentCreateRecovery,
+    reloadAgentCreateRecovery,
+  ]);
 
   const openSubPage = useCallback((next: MobileSubPage, returnTarget: string) => {
     const loader = next === 'files'
@@ -490,6 +634,40 @@ export function MobileWorkspace({
     acceptSurfaceBinding(binding);
     return binding;
   }, [acceptSurfaceBinding, createOwnedSurface]);
+
+  const createWorkspaceTerminal = useCallback(async (
+    workspaceId: string,
+  ): Promise<MobileWorkspaceTerminalResult> => {
+    let snapshot: Awaited<ReturnType<WsEzTerminalTransport['getDaemonSnapshot']>>;
+    try {
+      snapshot = await transport.getDaemonSnapshot();
+    } catch {
+      return { ok: false, reason: 'authority-refresh-failed' };
+    }
+    if (!snapshot) {
+      return { ok: false, reason: 'authority-unavailable' };
+    }
+
+    const workspace = snapshot.workspaces.find((entry) => (
+      entry.id === workspaceId && entry.archivedAt === undefined
+    ));
+    const projectIsActive = workspace !== undefined && snapshot.projects.some((entry) => (
+      entry.id === workspace.projectId && entry.archivedAt === undefined
+    ));
+    if (!workspace || !projectIsActive) {
+      return { ok: false, reason: 'workspace-unavailable' };
+    }
+    if (workspace.rootPath.trim().length === 0) {
+      return { ok: false, reason: 'workspace-root-unavailable' };
+    }
+
+    try {
+      await openOwnedTab(workspace.rootPath);
+    } catch {
+      return { ok: false, reason: 'surface-open-failed' };
+    }
+    return { ok: true };
+  }, [openOwnedTab, transport]);
 
   const pendingAdoptionsRef = useRef(new Map<string, Promise<void>>());
   const adoptAndOpenTab = useCallback((sessionId: string): Promise<void> => {
@@ -842,6 +1020,8 @@ export function MobileWorkspace({
           onReadGitStatus: (directory) => transport.getGitStatus(directory),
           onResumeHistory: startAgentBootstrap,
           onLaunchAgent: startAgentBootstrap,
+          onCreateWorkspaceTerminal: createWorkspaceTerminal,
+          agentCreateRecovery,
           transport,
           onFocusSession: (sessionId) => {
             const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);

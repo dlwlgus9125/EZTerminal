@@ -89,6 +89,8 @@ function initializationResponder(child: FakeCodexChild, next?: (frame: RpcFrame)
   };
 }
 
+type RpcFrameFactory = (request: RpcFrame) => RpcFrame;
+
 describe('CodexAppServerClient', () => {
   it('launches reviewed argv, enrolls the process, and performs initialize/initialized', async () => {
     const child = new FakeCodexChild();
@@ -130,6 +132,129 @@ describe('CodexAppServerClient', () => {
     expect(guardian.terminateGroup).toHaveBeenCalledWith('provider:codex');
   });
 
+  it('fails closed instead of accepting an initialize response without a result or error', async () => {
+    const child = new FakeCodexChild();
+    child.onFrame = (frame) => {
+      if (frame.method === 'initialize') child.send({ id: frame.id });
+    };
+    const client = new CodexAppServerClient({ spawnProcess: () => child.asChildProcess() });
+
+    try {
+      await expect(client.notify('client/ready')).rejects.toThrow(/JSON-RPC response/u);
+      expect(child.killed).toBe(true);
+      expect(child.frames).not.toContainEqual({ jsonrpc: '2.0', method: 'initialized' });
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it('accepts omitted JSON-RPC headers and the stable initialize result fields', async () => {
+    const child = new FakeCodexChild();
+    child.onFrame = (frame) => {
+      if (frame.method === 'initialize') {
+        child.send({
+          id: frame.id,
+          result: {
+            userAgent: 'codex-cli/0.153.4',
+            platformFamily: 'windows',
+            platformOs: 'windows',
+            futureField: { accepted: true },
+          },
+        });
+        return;
+      }
+      if (frame.method === 'model/list') child.send({ id: frame.id, result: { data: [] } });
+    };
+    const client = new CodexAppServerClient({ spawnProcess: () => child.asChildProcess() });
+
+    await expect(client.request('model/list')).resolves.toEqual({ data: [] });
+    expect(child.frames).toContainEqual({ jsonrpc: '2.0', method: 'initialized' });
+    await client.dispose();
+  });
+
+  it.each<readonly [string, RpcFrameFactory]>([
+    ['a wrong JSON-RPC version', (request) => ({ jsonrpc: '1.0', id: request.id, result: {} })],
+    ['both result and error', (request) => ({
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {},
+      error: { code: -32_000, message: 'must not coexist with result' },
+    })],
+    ['neither result nor error', (request) => ({ jsonrpc: '2.0', id: request.id })],
+    ['a string response id', (request) => ({ id: String(request.id), result: {} })],
+    ['a fractional response id', () => ({ id: 1.5, result: {} })],
+    ['an unsafe response id', () => ({ id: Number.MAX_SAFE_INTEGER + 1, result: {} })],
+    ['a non-object error', (request) => ({ id: request.id, error: 'server error' })],
+    ['a non-integer error code', (request) => ({
+      id: request.id,
+      error: { code: -32_000.5, message: 'server error' },
+    })],
+    ['a non-string error message', (request) => ({
+      id: request.id,
+      error: { code: -32_000, message: 42 },
+    })],
+  ])('fails closed on a response with %s', async (_label, malformedResponse) => {
+    const child = new FakeCodexChild();
+    initializationResponder(child, (frame) => {
+      if (frame.method !== 'thread/start') return;
+      child.send(malformedResponse(frame));
+      child.respondTo(frame, { thread: { id: 'must-not-resolve' } });
+    });
+    const reportError = vi.fn();
+    const client = new CodexAppServerClient({
+      spawnProcess: () => child.asChildProcess(),
+      reportError,
+    });
+
+    try {
+      await expect(client.request('thread/start')).rejects.toThrow(/invalid JSON-RPC response/u);
+      expect(child.killed).toBe(true);
+      expect(reportError).toHaveBeenCalledWith(expect.stringContaining('invalid JSON-RPC response'));
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it('fails closed on a valid response envelope with an unknown request id', async () => {
+    const child = new FakeCodexChild();
+    initializationResponder(child, (frame) => {
+      if (frame.method !== 'thread/start') return;
+      child.send({ id: 99_999, result: { thread: { id: 'unknown' } } });
+      child.respondTo(frame, { thread: { id: 'must-not-resolve' } });
+    });
+    const client = new CodexAppServerClient({ spawnProcess: () => child.asChildProcess() });
+
+    try {
+      await expect(client.request('thread/start')).rejects.toThrow(/unknown JSON-RPC response id 99999/u);
+      expect(child.killed).toBe(true);
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it.each([
+    ['a non-object result', null],
+    ['a missing user agent', { platformFamily: 'windows', platformOs: 'windows' }],
+    ['an empty user agent', { userAgent: ' ', platformFamily: 'windows', platformOs: 'windows' }],
+    ['a missing platform family', { userAgent: 'codex-cli/0.153.4', platformOs: 'windows' }],
+    ['a missing platform OS', { userAgent: 'codex-cli/0.153.4', platformFamily: 'windows' }],
+  ])('rejects initialize with %s before sending initialized', async (_label, result) => {
+    const child = new FakeCodexChild();
+    child.onFrame = (frame) => {
+      if (frame.method === 'initialize') child.send({ id: frame.id, result });
+    };
+    const client = new CodexAppServerClient({ spawnProcess: () => child.asChildProcess() });
+
+    try {
+      await expect(client.notify('client/ready')).rejects.toThrow(/invalid initialize result/u);
+      expect(child.killed).toBe(true);
+      expect(child.frames).not.toContainEqual({ jsonrpc: '2.0', method: 'initialized' });
+      expect(child.frames.some((frame) => frame.method === 'client/ready')).toBe(false);
+    } finally {
+      await client.dispose();
+    }
+  });
+
   it('revalidates before spawn and does not launch after descriptor drift', async () => {
     const spawnProcess = vi.fn(() => new FakeCodexChild().asChildProcess());
     const beforeSpawn = vi.fn(async () => {
@@ -146,6 +271,51 @@ describe('CodexAppServerClient', () => {
     await expect(client.request('model/list')).rejects.toThrow(/changed after review/);
     expect(beforeSpawn).toHaveBeenCalledOnce();
     expect(spawnProcess).not.toHaveBeenCalled();
+    await client.dispose();
+  });
+
+  it('revalidates a changed executable before respawn and blocks an incompatible second launch', async () => {
+    const reviewedExecutable = {
+      path: 'C:\\Tools\\codex.exe',
+      version: '0.152.1',
+    };
+    let preflightResult = reviewedExecutable;
+    const child = new FakeCodexChild();
+    initializationResponder(child, (frame) => {
+      if (frame.method === 'model/list') child.respondTo(frame, { data: [], nextCursor: null });
+    });
+    const beforeSpawn = vi.fn(async () => {
+      if (
+        preflightResult.path !== reviewedExecutable.path
+        || preflightResult.version !== reviewedExecutable.version
+      ) {
+        throw new Error(
+          `Codex ${preflightResult.version} at ${preflightResult.path} is incompatible with the reviewed executable.`,
+        );
+      }
+    });
+    const spawnProcess = vi.fn(() => child.asChildProcess());
+    const client = new CodexAppServerClient({
+      command: reviewedExecutable.path,
+      beforeSpawn,
+      spawnProcess,
+    });
+
+    await expect(client.request('model/list')).resolves.toEqual({ data: [], nextCursor: null });
+    expect(beforeSpawn).toHaveBeenCalledOnce();
+    expect(spawnProcess).toHaveBeenCalledOnce();
+
+    child.crash(9);
+    preflightResult = {
+      path: 'D:\\Unreviewed\\codex.exe',
+      version: '0.152.0',
+    };
+
+    await expect(client.request('model/list')).rejects.toThrow(
+      /Codex 0\.152\.0 at D:\\Unreviewed\\codex\.exe is incompatible/u,
+    );
+    expect(beforeSpawn).toHaveBeenCalledTimes(2);
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
     await client.dispose();
   });
 
@@ -318,13 +488,15 @@ describe('CodexAppServerClient', () => {
     await client.dispose();
   });
 
-  it('supports request cancellation and timeouts without accepting late responses', async () => {
+  it('ignores a valid late response for a locally cancelled request without closing the connection', async () => {
     const child = new FakeCodexChild();
-    initializationResponder(child, () => undefined);
+    initializationResponder(child, (frame) => {
+      if (frame.method === 'after-late-response') child.respondTo(frame, { ok: true });
+    });
     const reportError = vi.fn();
+    const spawnProcess = vi.fn(() => child.asChildProcess());
     const client = new CodexAppServerClient({
-      spawnProcess: () => child.asChildProcess(),
-      requestTimeoutMs: 20,
+      spawnProcess,
       reportError,
     });
     const controller = new AbortController();
@@ -335,9 +507,117 @@ describe('CodexAppServerClient', () => {
     await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
     if (!cancelledFrame) throw new Error('cancelled request was not written');
     child.respondTo(cancelledFrame, { too: 'late' });
-    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(expect.stringContaining('unknown id')));
+
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(expect.stringContaining('retired JSON-RPC request id')));
+    expect(child.killed).toBe(false);
+    await expect(client.request('after-late-response')).resolves.toEqual({ ok: true });
+    expect(spawnProcess).toHaveBeenCalledOnce();
+    await client.dispose();
+  });
+
+  it.each([
+    ['notification', { jsonrpc: '1.0', method: 'turn/started', params: {} }],
+    ['server request', {
+      jsonrpc: '1.0',
+      id: 'approval-invalid-version',
+      method: 'item/commandExecution/requestApproval',
+      params: {},
+    }],
+  ])('fails closed on a %s with a wrong JSON-RPC version', async (_label, frame) => {
+    const child = new FakeCodexChild();
+    initializationResponder(child, (request) => {
+      if (request.method === 'thread/read') child.respondTo(request, { thread: { id: 'thread-1' } });
+    });
+    const reportError = vi.fn();
+    const client = new CodexAppServerClient({
+      spawnProcess: () => child.asChildProcess(),
+      reportError,
+    });
+    await client.request('thread/read');
+
+    child.send(frame);
+
+    await vi.waitFor(() => expect(child.killed).toBe(true));
+    expect(reportError).toHaveBeenCalledWith(expect.stringContaining('invalid JSON-RPC message'));
+    await client.dispose();
+  });
+
+  it('ignores a valid late response for a timed-out request without closing the connection', async () => {
+    const child = new FakeCodexChild();
+    initializationResponder(child, (frame) => {
+      if (frame.method === 'after-late-response') child.respondTo(frame, { ok: true });
+    });
+    const reportError = vi.fn();
+    const spawnProcess = vi.fn(() => child.asChildProcess());
+    const client = new CodexAppServerClient({
+      spawnProcess,
+      requestTimeoutMs: 20,
+      reportError,
+    });
 
     await expect(client.request('time-out')).rejects.toThrow(/timed out after 20ms/);
+    const timedOutFrame = child.frames.find((frame) => frame.method === 'time-out');
+    if (!timedOutFrame) throw new Error('timed-out request was not written');
+    child.respondTo(timedOutFrame, { too: 'late' });
+
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(expect.stringContaining('retired JSON-RPC request id')));
+    expect(child.killed).toBe(false);
+    await expect(client.request('after-late-response')).resolves.toEqual({ ok: true });
+    expect(spawnProcess).toHaveBeenCalledOnce();
+    await client.dispose();
+  });
+
+  it('clears retired request IDs before a replacement process generation starts', async () => {
+    const firstChild = new FakeCodexChild();
+    const secondChild = new FakeCodexChild();
+    initializationResponder(firstChild, () => undefined);
+    const spawnProcess = vi.fn()
+      .mockReturnValueOnce(firstChild.asChildProcess())
+      .mockReturnValueOnce(secondChild.asChildProcess());
+    const client = new CodexAppServerClient({ spawnProcess });
+    const controller = new AbortController();
+    const cancelled = client.request('cancel-before-respawn', {}, { signal: controller.signal });
+    await vi.waitFor(() => expect(firstChild.frames.some((frame) => frame.method === 'cancel-before-respawn')).toBe(true));
+    const cancelledFrame = firstChild.frames.find((frame) => frame.method === 'cancel-before-respawn');
+    if (typeof cancelledFrame?.id !== 'number') throw new Error('cancelled request has no numeric id');
+    const retiredId = cancelledFrame.id;
+    initializationResponder(secondChild, (frame) => {
+      if (frame.method !== 'after-respawn') return;
+      secondChild.send({ id: retiredId, result: { stale: true } });
+      secondChild.respondTo(frame, { mustNotResolve: true });
+    });
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    firstChild.crash(9);
+
+    await expect(client.request('after-respawn')).rejects.toThrow(
+      new RegExp(`unknown JSON-RPC response id ${retiredId}`, 'u'),
+    );
+    expect(secondChild.killed).toBe(true);
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+    await client.dispose();
+  });
+
+  it('bounds retired request IDs by evicting the oldest entry', async () => {
+    const child = new FakeCodexChild();
+    initializationResponder(child, () => undefined);
+    const client = new CodexAppServerClient({ spawnProcess: () => child.asChildProcess() });
+    await client.notify('ready');
+    const controllers = Array.from({ length: 257 }, () => new AbortController());
+    const outcomes = controllers.map((controller, index) => (
+      client.request(`cancel-${index}`, {}, { signal: controller.signal }).catch((error: unknown) => error)
+    ));
+    await vi.waitFor(() => {
+      expect(child.frames.filter((frame) => frame.method?.startsWith('cancel-')).length).toBe(257);
+    });
+    const oldestFrame = child.frames.find((frame) => frame.method === 'cancel-0');
+    controllers.forEach((controller) => controller.abort());
+    await Promise.all(outcomes);
+    if (!oldestFrame) throw new Error('oldest cancelled request was not written');
+
+    child.respondTo(oldestFrame, { too: 'late' });
+
+    await vi.waitFor(() => expect(child.killed).toBe(true));
     await client.dispose();
   });
 

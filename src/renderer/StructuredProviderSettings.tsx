@@ -2,6 +2,7 @@ import { RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   DEFAULT_CLAUDE_PROVIDER_ENABLEMENT,
   type ClaudeAuthenticationPath,
   type ClaudeProviderEnablement,
@@ -50,15 +51,31 @@ export function daemonProviderMatchesProbe(
   probe: ProviderProbeResult,
   reviewDigest: string,
 ): boolean {
-  return Boolean(provider
-    && provider.reviewDigest === reviewDigest
-    && provider.displayName === probe.displayName
+  if (!provider || provider.id !== probe.providerId) return false;
+  const stableIdentityMatches = provider.displayName === probe.displayName
     && provider.protocol === probe.protocol
     && provider.executablePath === probe.executablePath
-    && provider.executableVersion === probe.executableVersion
     && arraysEqual(provider.argv, probe.argv)
     && arraysEqual(provider.environmentVariableNames, probe.environmentVariableNames)
-    && arraysEqual(provider.capabilities, probe.capabilities));
+    && arraysEqual(provider.capabilities, probe.capabilities);
+  if (!stableIdentityMatches) return false;
+
+  const versionMatches = provider.executableVersion === probe.executableVersion;
+  const reviewMatches = provider.reviewDigest === reviewDigest;
+  if (versionMatches && reviewMatches) return true;
+
+  return !versionMatches
+    && !reviewMatches
+    && provider.enabled
+    && provider.id === 'codex'
+    && probe.providerId === 'codex'
+    && provider.protocol === 'codex-app-server'
+    && probe.available
+    && probe.authenticationState === 'first-launch'
+    && probe.authenticationDetail === CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL
+    && probe.unavailableReason === undefined
+    && (probe.reviewNotices?.length ?? 0) === 0
+    && Boolean(provider.reviewDigest);
 }
 
 function claudeEnablementEqual(

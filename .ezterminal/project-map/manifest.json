@@ -41,9 +41,9 @@
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:ef592b65817e751905b4b97c9867a63cd63291d2d8d377718543c135c4f42cd7",
+        "inputDigest": "sha256:da2889e1d180ae48c72c0f6174f53e977d5e5a297ad6761b45d934aa0b9d65db",
         "decision": "map-updated",
-        "reason": "Mapped active ownership gates, explicit tombstone reactivation, discovery-completeness fail-closed sync, crash-recoverable consent, and the Project FIFO. Project edits and removal stop orchestration and retire descendants and tokens before replacement."
+        "reason": "Codex stable releases above the app-server floor avoid per-release review; incompatible builds fail closed. Desktop first Send awaits exact memory-only recovery escrow, requires fresh authority, and preserves one Session ID through bounded conflicts and uncertain recovery."
       }
     },
     {
@@ -87,9 +87,9 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:976757a23b37b0a63f41330c1df2a34da0f65adf6d48d9a1b3f4f4ffc28f631c",
+        "inputDigest": "sha256:bd9b8166fdaa0fe9d8c53bd48740414f4e1b78e9ecc7200e23c7a6e4cf395fda",
         "decision": "map-updated",
-        "reason": "Startup recovers Workspace consent before Project sync and providers. Quit closes main-owned startup and local mutation ingress, drains OpenClaw bootstrap recovery and accepted work through named cleanup dependencies, and keeps normal SQLite close behind exact writer barriers."
+        "reason": "Startup recovers Workspace consent before Project sync and providers. Ordinary main-window close now fails closed while an Agent-create recovery is pending; confirmed Quit still drains main-owned ingress and accepted work through the existing exact shutdown barriers."
       }
     },
     {
@@ -107,9 +107,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:4fb45f5e024c0ca91ce765ebb47a7cbf4ab39734cc56b4d61576ca87486cad42",
+        "inputDigest": "sha256:17215f132916bf5eefa586b89f9de346b043f98d0486becfb77b9072de805792",
         "decision": "map-updated",
-        "reason": "Remote launch and resume activity retains its exact AgentLaunchTarget or historyId and joins the Project FIFO before synchronization. Project targets and resumes cannot recreate removed Projects; only a direct-directory launch carries explicit re-registration intent."
+        "reason": "Remote transport remains single-attempt and never auto-replays a command; an unavailable send becomes delivery-uncertain so its caller can reconcile and explicitly resend the exact envelope. Launch and resume identity handling is unchanged."
       }
     },
     {
@@ -132,9 +132,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:829f80e6ca57a64e16dd274f2a3a47690501f97db6d46dd9fbefd5c327e7dd48",
+        "inputDigest": "sha256:000b0cd65f69390440c6c5f3b3c89fa2c6f18ac0c121ee53650477cd26c9f1e4",
         "decision": "no-semantic-impact",
-        "reason": "Project- and Session-wide capability revocation now aborts stale Agent-control requests, but the dedicated Project Map launch, scoped guide/check/report, human approval, and verified export workflow is unchanged."
+        "reason": "Desktop Agent-create recovery adds close guards around the workbench, but the dedicated Project Map launch, scoped guide/check/report, human approval, and verified export workflow is unchanged."
       }
     }
   ]

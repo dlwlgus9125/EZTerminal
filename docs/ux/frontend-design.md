@@ -360,8 +360,11 @@ locale은 결함이다.
 Agent content 순서는 Attention, Projects, Active, Recent다. Global launch는 Agent와
 location이 모두 비어 있는 Agent 전용 흐름이다. Desktop project의 `새 세션`은 project
 목록의 main 또는 Explorer에서 선택한 checkout/worktree를 고정하고 기본 Agent와 optional
-Terminal을 제공한다. Android의 기존 `MobileActionSheet` launch는 mobile 범위를 유지한다.
-각 surface는 같은 main-side Agent validation과 Launch/Cancel 의미를 사용한다.
+Terminal을 제공한다. Android Agents header의 전역 `+`와 활성 Workspace header의 문맥
+`+`는 모두 전체 화면 `새 세션` draft를 연다. 전역 진입은 Project와 Workspace를 비워 두고,
+문맥 진입은 정확한 Workspace를 잠근다. draft는 Agent를 기본으로 하고 Terminal을 같은
+위치 선택 안의 대안으로 제공한다. 각 surface는 같은 host-side Agent validation과
+Launch/Cancel 의미를 사용한다.
 
 Location은 saved/observed project와 직접 host folder를 제공한다. 선택 또는 취소만으로
 project를 쓰지 않으며 성공한 direct-directory launch만 unpinned observed project가
@@ -429,6 +432,39 @@ approval, stop, archive와 detach를 제공한다. provider 설치, browser host
 Desktop host에서만 가능한 action은 이유와 복구 위치를 설명하고 가짜 control을 만들지 않는다.
 Mobile merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
 revision 의미를 유지한다.
+
+Android `새 세션`은 선택만으로 어떤 entity나 terminal surface도 만들지 않는다. Agent는
+첫 Send에서 최신 daemon snapshot으로 active Project·Workspace와 ready provider를 다시
+검증한 뒤 하나의 `agent.create`로 session과 첫 prompt를 함께 제출한다. 성공 receipt 뒤에는
+로컬 첫 메시지와 starting/queued session을 즉시 보여 주고 authoritative snapshot과 transcript가
+같은 session id로 이를 대체한다. revision conflict는 동일한 논리 session id와 title을 유지한 채
+제한 횟수만 새 command id로 재시도한다. delivery 결과를 확인할 수 없으면 초안의 provider,
+model, permission, Workspace와 prompt를 잠그고 같은 idempotency command를 먼저 조회·재전송한다.
+사용자가 다른 초안으로 중복 session을 만들 수 있게 자동 전환하지 않는다.
+
+Android는 각 `agent.create`를 전송하기 전에 exact command를 Keystore-backed secure storage에
+기록하고 read-back까지 확인한다. 앱 프로세스가 다시 시작되면 이 한 건을 잠긴 draft로 복원한 뒤
+최신 daemon snapshot에서 기존 session을 먼저 대조한다. secure storage가 loading 또는 unavailable이면
+Agent 생성만 비활성화하고 이유와 `Retry`를 제공하며 Terminal 선택과 생성은 유지한다. 복구 레코드와
+secure key는 현재 인증 bearer의 SHA-256 fingerprint에 결속하므로 다른 Desktop의 미확정 command를
+현재 연결에 노출하거나 재전송하지 않는다. raw bearer, prompt, command의 plaintext/localStorage
+fallback은 두지 않는다. 레코드가 유효하지 않으면 일반 unavailable과 구분해 설명하고, `복구 기록 폐기`는
+이전 command가 이미 도달했을 때 중복될 수 있음을 알리는 alert dialog와 안전한 Cancel 초기 focus를
+거친다. 해독할 수 없는 현재 authority 레코드도 같은 확인을 거친 뒤 해당 raw secure-storage key만
+제거할 수 있어야 한다. draft가 이미 열린 뒤 유효한 복구 레코드의 loading이 끝나도 뒤로 갔다 다시
+열도록 요구하지 않고, 같은 화면에서 exact provider·model·permission·Project·Workspace·prompt를
+동기화해 잠근다. Desktop은 같은 경계에서 main-process의 memory-only
+renderer checkpoint 저장 완료를 기다리며, 미확정 생성이 있는 tab·window·layout 교체를 우발적으로
+닫지 않는다. keep-running 창 닫기는 process와 checkpoint를 유지한 채 숨기지만, quit-on-close는 복구
+경로를 잃으므로 차단한다. 명시적 Quit은 Cancel을 기본값으로 두고 복구 정보 폐기와 중복 생성 위험을
+추가로 설명한다. 첫 prompt는 durable Dockview layout에 직렬화하지 않는다.
+
+Terminal은 provider 상태와 무관하지만 선택한 Workspace의 최신 active 상태와 rootPath를 host에서
+다시 검증한 뒤 기존 mobile terminal surface 생성 경로를 사용한다. 기존 Terminal tab의 빠른 `+`는
+기본 위치 terminal shortcut으로 유지한다. provider 설치와 Claude 요구 사항 동의는 Desktop
+Settings → Agents에서만 수행하며 mobile draft는 해당 복구 위치를 설명한다. full-screen draft와
+생성된 Agent session은 공통 mobile history layer를 사용해 UI Back, browser Back과 Android Back이
+한 단계만 닫히도록 하고, 닫은 뒤 Agents header의 `+`로 focus를 돌려준다.
 
 Button은 raw terminal Git 명령을 전송하지 않고 main의 관리 merge operation만 호출한다.
 preparing/validating/merging 중에는 중복 action을 막고 현재 단계 label을 유지한다. 성공,

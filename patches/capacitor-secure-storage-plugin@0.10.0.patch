@@ -37,3 +37,22 @@ index 1ee07cb..5ba28f1 100644
          }
      }
  
+diff --git a/android/src/main/java/com/whitestein/securestorage/SecureStoragePluginPlugin.java b/android/src/main/java/com/whitestein/securestorage/SecureStoragePluginPlugin.java
+--- a/android/src/main/java/com/whitestein/securestorage/SecureStoragePluginPlugin.java
++++ b/android/src/main/java/com/whitestein/securestorage/SecureStoragePluginPlugin.java
+@@ -59,12 +59,9 @@ public class SecureStoragePluginPlugin extends Plugin {
+     public void remove(PluginCall call) {
+         String key = call.getString("key");
+         try {
+-            if(this.has(key)) {
+-                call.resolve(this._remove(key));
+-            }
+-            else {
+-                call.reject("Item with given key does not exist");
+-            }
++            // Delete by key without decrypting first. This keeps an unreadable
++            // encrypted entry recoverable through an explicit app-level discard.
++            call.resolve(this._remove(key));
+         } catch (Exception exception) {
+             call.reject(exception.getMessage(), exception);
+         }

@@ -1,9 +1,11 @@
 import type {
   RendererRecoveryCheckpoint,
   RendererRecoveryPane,
+  RendererRecoveryStructuredAgentCreate,
 } from '../shared/renderer-recovery';
 
 let panesByPanelId: ReadonlyMap<string, RendererRecoveryPane> = new Map();
+let structuredAgentCreatesByPanelId: Map<string, RendererRecoveryStructuredAgentCreate> = new Map();
 let recoveredActivePanelId: string | null = null;
 let recoveryCheckpoint: RendererRecoveryCheckpoint | null = null;
 let clearTimer: ReturnType<typeof setTimeout> | null = null;
@@ -16,6 +18,9 @@ export function seedRendererRecoveryState(checkpoint: RendererRecoveryCheckpoint
   clearTimer = null;
   recoveryCheckpoint = checkpoint;
   panesByPanelId = new Map(checkpoint.panes.map((pane) => [pane.panelId, pane]));
+  structuredAgentCreatesByPanelId = new Map(
+    checkpoint.structuredAgentCreates.map((recovery) => [recovery.panelId, recovery]),
+  );
   recoveredActivePanelId = checkpoint.activePanelId;
 }
 
@@ -29,6 +34,25 @@ export function peekRendererRecoveryPane(panelId: string): RendererRecoveryPane 
   return panesByPanelId.get(panelId);
 }
 
+/** Read during render; consumption waits until the panel commits so React
+ * StrictMode's discarded render cannot lose the only recovery envelope. */
+export function peekRendererRecoveryStructuredAgentCreate(
+  panelId: string,
+): RendererRecoveryStructuredAgentCreate | undefined {
+  return structuredAgentCreatesByPanelId.get(panelId);
+}
+
+/** Transfer one exact create envelope into the App-lifetime recovery registry. */
+export function consumeRendererRecoveryStructuredAgentCreate(
+  panelId: string,
+  commandId?: string,
+): RendererRecoveryStructuredAgentCreate | undefined {
+  const recovery = structuredAgentCreatesByPanelId.get(panelId);
+  if (commandId !== undefined && recovery?.command.commandId !== commandId) return undefined;
+  if (recovery) structuredAgentCreatesByPanelId.delete(panelId);
+  return recovery;
+}
+
 export function peekRendererRecoveryActivePanelId(): string | null {
   return recoveredActivePanelId;
 }
@@ -38,6 +62,7 @@ export function clearRendererRecoveryState(): void {
   clearTimer = null;
   recoveryCheckpoint = null;
   panesByPanelId = new Map();
+  structuredAgentCreatesByPanelId = new Map();
   recoveredActivePanelId = null;
 }
 

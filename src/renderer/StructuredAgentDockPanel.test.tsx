@@ -1,16 +1,23 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type {
-  DaemonCommand,
-  DaemonEvent,
-  DaemonSnapshot,
-  DaemonTranscriptItem,
+import {
+  createDaemonCommand,
+  type DaemonCommand,
+  type DaemonEvent,
+  type DaemonSnapshot,
+  type DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
+import { LAYOUT_SCHEMA_VERSION } from '../shared/layout-schema';
+import {
+  RENDERER_RECOVERY_MAX_STRUCTURED_AGENT_CREATES,
+  RENDERER_RECOVERY_VERSION,
+  type RendererRecoveryCheckpoint,
+} from '../shared/renderer-recovery';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import {
   mergeOptimisticTranscript,
@@ -19,6 +26,12 @@ import {
   StructuredAgentDockPanel,
 } from './StructuredAgentDockPanel';
 import { AppI18nProvider } from './i18n';
+import {
+  clearRendererRecoveryState,
+  peekRendererRecoveryStructuredAgentCreate,
+  seedRendererRecoveryState,
+} from './renderer-recovery-state';
+import { StructuredAgentCreateRecoveryRegistry } from './structured-agent-create-recovery';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,6 +94,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   Object.defineProperty(window, 'ezterminal', { configurable: true, value: undefined });
+  clearRendererRecoveryState();
   vi.restoreAllMocks();
 });
 
@@ -117,10 +131,14 @@ describe('StructuredAgentDockPanel', () => {
     };
     const updateParameters = vi.fn((next: Record<string, unknown>) => { params = next; });
     const setTitle = vi.fn();
+    const createRecoveryRegistry = new StructuredAgentCreateRecoveryRegistry();
+    const persistCreateRecovery = vi.fn(async () => true);
     const props = {
+      createRecoveryRegistry,
+      persistCreateRecovery,
       params,
       api: {
-        id: 'agent-session-draft',
+        id: 'agent-session-structured-draft-test',
         getParameters: () => params,
         updateParameters,
         setTitle,
@@ -146,6 +164,8 @@ describe('StructuredAgentDockPanel', () => {
     await flush();
 
     expect(sent).toHaveLength(1);
+    expect(persistCreateRecovery.mock.invocationCallOrder[0])
+      .toBeLessThan(sendDaemonCommand.mock.invocationCallOrder[0]!);
     expect(sent[0]).toMatchObject({
       protocolVersion: 12,
       expectedRevision: 4,
@@ -165,6 +185,696 @@ describe('StructuredAgentDockPanel', () => {
     expect(setTitle).toHaveBeenCalledWith('Create only after this send');
     expect(container.querySelector('[data-testid="structured-agent-session"]')).not.toBeNull();
     expect(setSubscribed).toHaveBeenNthCalledWith(1, true);
+  });
+
+  it('does not cross the transport boundary when main rejects pre-send recovery escrow', async () => {
+    const sendDaemonCommand = vi.fn();
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        getDaemonSnapshot: vi.fn(async () => snapshot),
+        getDaemonTranscript: vi.fn(async () => []),
+        sendDaemonCommand,
+        onDaemonEvent: vi.fn(() => () => undefined),
+        setDaemonEventsSubscribed: vi.fn(async () => undefined),
+      },
+    });
+    const createRecoveryRegistry = new StructuredAgentCreateRecoveryRegistry();
+    const persistCreateRecovery = vi.fn(async () => false);
+    const params = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}escrow-failure`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const props = {
+      createRecoveryRegistry,
+      persistCreateRecovery,
+      params,
+      api: {
+        id: 'agent-session-structured-draft-escrow-failure',
+        getParameters: () => params,
+        updateParameters: vi.fn(),
+        setTitle: vi.fn(),
+      },
+    } as unknown as IDockviewPanelProps;
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    const prompt = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(prompt, 'Do not send without escrow');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(persistCreateRecovery).toHaveBeenCalledOnce();
+    expect(sendDaemonCommand).not.toHaveBeenCalled();
+    expect(createRecoveryRegistry.blocksWorkspaceReplacement()).toBe(false);
+    expect(container.textContent).toContain('No command was sent');
+  });
+
+  it('fails closed before send when recovery registry is already at checkpoint capacity', async () => {
+    const sendDaemonCommand = vi.fn(async (command: DaemonCommand) => ({
+      ok: true as const,
+      status: 'applied' as const,
+      commandId: command.commandId,
+      revision: snapshot.revision + 1,
+      eventSequence: snapshot.eventSequence + 1,
+    }));
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        getDaemonSnapshot: vi.fn(async () => snapshot),
+        getDaemonTranscript: vi.fn(async () => []),
+        sendDaemonCommand,
+        onDaemonEvent: vi.fn(() => () => undefined),
+        setDaemonEventsSubscribed: vi.fn(async () => undefined),
+      },
+    });
+    const createRecoveryRegistry = new StructuredAgentCreateRecoveryRegistry();
+    for (let index = 0; index < RENDERER_RECOVERY_MAX_STRUCTURED_AGENT_CREATES; index += 1) {
+      const commandId = `existing-command-${index}`;
+      const sessionId = `existing-agent-${index}`;
+      createRecoveryRegistry.register({
+        panelId: `agent-session-structured-draft-existing-${index}`,
+        historyId: `structured-draft-existing-${index}`,
+        sessionId,
+        phase: 'sending',
+        command: createDaemonCommand({
+          commandId,
+          idempotencyKey: commandId,
+          expectedRevision: snapshot.revision,
+          issuedAt: NOW,
+          principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+          type: 'agent.create',
+          payload: {
+            sessionId,
+            workspaceId: 'project-1.root-1.workspace-1',
+            title: `Existing Agent ${index}`,
+            providerId: 'codex',
+            permissionPreset: 'standard',
+            initialPrompt: `Keep existing recovery ${index}`,
+          },
+        }),
+      });
+    }
+    const clearRecovery = vi.spyOn(createRecoveryRegistry, 'clear');
+    const persistCreateRecovery = vi.fn(async () => true);
+    const params = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}overflow`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const props = {
+      createRecoveryRegistry,
+      persistCreateRecovery,
+      params,
+      api: {
+        id: 'agent-session-structured-draft-overflow',
+        getParameters: () => params,
+        updateParameters: vi.fn(),
+        setTitle: vi.fn(),
+      },
+    } as unknown as IDockviewPanelProps;
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    const prompt = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(prompt, 'This command must not outgrow its escrow');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(sendDaemonCommand).not.toHaveBeenCalled();
+    expect(persistCreateRecovery).not.toHaveBeenCalled();
+    expect(createRecoveryRegistry.list()).toHaveLength(
+      RENDERER_RECOVERY_MAX_STRUCTURED_AGENT_CREATES,
+    );
+    expect(createRecoveryRegistry.get('agent-session-structured-draft-overflow')).toBeUndefined();
+    expect(createRecoveryRegistry.get('agent-session-structured-draft-existing-0')).toBeDefined();
+    expect(clearRecovery).toHaveBeenCalledWith(
+      'agent-session-structured-draft-overflow',
+      expect.stringMatching(/^command-/u),
+    );
+    expect(container.textContent).toContain('No command was sent');
+  });
+
+  it('locks an uncertain draft and replays its exact create command after a fresh snapshot check', async () => {
+    const sent: DaemonCommand[] = [];
+    const getSnapshot = vi.fn(async () => snapshot);
+    const sendCommand = vi.fn(async (command: DaemonCommand) => {
+      sent.push(command);
+      if (sent.length === 1) {
+        return {
+          ok: false as const,
+          status: 'delivery-uncertain' as const,
+          commandId: command.commandId,
+          revision: snapshot.revision,
+          error: {
+            code: 'delivery-uncertain' as const,
+            message: 'The connection closed before acknowledgement.',
+            retryable: true,
+          },
+        };
+      }
+      return {
+        ok: true as const,
+        status: 'replayed' as const,
+        commandId: command.commandId,
+        revision: snapshot.revision + 1,
+        eventSequence: snapshot.eventSequence + 1,
+      };
+    });
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: getReadyAvailability,
+        getSnapshot,
+        getTranscript: async () => [],
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    let params: Record<string, unknown> = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}uncertain`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const updateParameters = vi.fn((next: Record<string, unknown>) => { params = next; });
+    const setTitle = vi.fn();
+    const createRecoveryRegistry = new StructuredAgentCreateRecoveryRegistry();
+    const props = {
+      capabilities: access,
+      createRecoveryRegistry,
+      persistCreateRecovery: vi.fn(async () => true),
+      params,
+      api: {
+        id: 'agent-session-structured-draft-uncertain',
+        getParameters: () => params,
+        updateParameters,
+        setTitle,
+      },
+    } as unknown as IDockviewPanelProps & { capabilities: CapabilityAccess };
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    const prompt = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(prompt, 'Recover the same Desktop session');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(sent).toHaveLength(1);
+    const originalCommand = sent[0]!;
+    expect(originalCommand.type).toBe('agent.create');
+    if (originalCommand.type !== 'agent.create') throw new Error('Expected agent.create.');
+    expect(updateParameters).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent)
+      .toContain('This exact draft is locked');
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-provider"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-model"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-workspace"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLFieldSetElement>('.structured-agent-permissions')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')?.disabled)
+      .toBe(true);
+    const retrySend = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!;
+    expect(retrySend.disabled).toBe(false);
+
+    act(() => retrySend.click());
+    await flush();
+    await flush();
+
+    expect(sent).toHaveLength(2);
+    expect(getSnapshot.mock.invocationCallOrder[2])
+      .toBeLessThan(sendCommand.mock.invocationCallOrder[1]!);
+    const replayedCommand = sent[1]!;
+    expect(replayedCommand.type).toBe('agent.create');
+    if (replayedCommand.type !== 'agent.create') throw new Error('Expected agent.create replay.');
+    expect(replayedCommand).toBe(originalCommand);
+    expect(replayedCommand.commandId).toBe(originalCommand.commandId);
+    expect(replayedCommand.idempotencyKey).toBe(originalCommand.idempotencyKey);
+    expect(replayedCommand.payload.sessionId).toBe(originalCommand.payload.sessionId);
+    expect(new Set(sent.map((command) => command.commandId))).toEqual(new Set([originalCommand.commandId]));
+    expect(new Set(sent.map((command) => command.type === 'agent.create'
+      ? command.payload.sessionId
+      : 'unexpected'))).toEqual(new Set([originalCommand.payload.sessionId]));
+
+    expect(updateParameters).toHaveBeenCalledOnce();
+    expect(updateParameters).toHaveBeenCalledWith(expect.objectContaining({
+      historyId: `${STRUCTURED_AGENT_SESSION_PREFIX}${originalCommand.payload.sessionId}`,
+      provider: 'codex',
+    }));
+    expect(setTitle).toHaveBeenCalledWith('Recover the same Desktop session');
+    expect(container.querySelectorAll('[data-testid="structured-agent-session"]')).toHaveLength(1);
+    expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
+      .toBe(originalCommand.payload.sessionId);
+    expect(container.querySelector('[data-kind="user-message"]')?.textContent)
+      .toContain('Recover the same Desktop session');
+  });
+
+  it('retains an uncertain exact create across panel unmount and remount', async () => {
+    const registry = new StructuredAgentCreateRecoveryRegistry();
+    const sent: DaemonCommand[] = [];
+    const getSnapshot = vi.fn(async () => snapshot);
+    const sendCommand = vi.fn(async (command: DaemonCommand) => {
+      sent.push(command);
+      if (sent.length === 1) {
+        return {
+          ok: false as const,
+          status: 'delivery-uncertain' as const,
+          commandId: command.commandId,
+          revision: snapshot.revision,
+          error: {
+            code: 'delivery-uncertain' as const,
+            message: 'The connection closed before acknowledgement.',
+            retryable: true,
+          },
+        };
+      }
+      return {
+        ok: true as const,
+        status: 'replayed' as const,
+        commandId: command.commandId,
+        revision: snapshot.revision + 1,
+        eventSequence: snapshot.eventSequence + 1,
+      };
+    });
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: getReadyAvailability,
+        getSnapshot,
+        getTranscript: async () => [],
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    let params: Record<string, unknown> = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}remount`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const updateParameters = vi.fn((next: Record<string, unknown>) => { params = next; });
+    const panelProps = {
+      capabilities: access,
+      createRecoveryRegistry: registry,
+      persistCreateRecovery: vi.fn(async () => true),
+      params,
+      api: {
+        id: 'agent-session-structured-draft-remount',
+        getParameters: () => params,
+        updateParameters,
+        setTitle: vi.fn(),
+      },
+    } as unknown as IDockviewPanelProps & {
+      capabilities: CapabilityAccess;
+      createRecoveryRegistry: StructuredAgentCreateRecoveryRegistry;
+    };
+    const render = (): void => {
+      root.render(
+        <AppI18nProvider locale="en" languages={['en']}>
+          <StructuredAgentDockPanel {...panelProps} />
+        </AppI18nProvider>,
+      );
+    };
+    act(render);
+    await flush();
+
+    const prompt = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(prompt, 'Recover after a Desktop panel remount');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    const originalCommand = sent[0]!;
+    expect(originalCommand.type).toBe('agent.create');
+    if (originalCommand.type !== 'agent.create') throw new Error('Expected agent.create.');
+    expect(registry.get('agent-session-structured-draft-remount')?.command).toBe(originalCommand);
+    expect(registry.blocksPanelClose('agent-session-structured-draft-remount')).toBe(true);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    act(render);
+    await flush();
+
+    expect(container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )?.value).toBe('Recover after a Desktop panel remount');
+    expect(container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )?.disabled).toBe(true);
+
+    act(() => container.querySelector<HTMLButtonElement>(
+      '[data-testid="structured-agent-create"]',
+    )!.click());
+    await flush();
+    await flush();
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toBe(originalCommand);
+    expect(new Set(sent.map((command) => command.commandId))).toEqual(new Set([originalCommand.commandId]));
+    expect(new Set(sent.map((command) => command.type === 'agent.create'
+      ? command.payload.sessionId
+      : 'unexpected'))).toEqual(new Set([originalCommand.payload.sessionId]));
+    expect(registry.get('agent-session-structured-draft-remount')).toBeUndefined();
+    expect(updateParameters).toHaveBeenCalledOnce();
+    expect(container.querySelectorAll('[data-testid="structured-agent-session"]')).toHaveLength(1);
+  });
+
+  it('restores a crash checkpoint through StrictMode and consumes it only after registry transfer', async () => {
+    const registry = new StructuredAgentCreateRecoveryRegistry();
+    const command = createDaemonCommand({
+      commandId: 'command-crash-recovery',
+      idempotencyKey: 'command-crash-recovery',
+      expectedRevision: snapshot.revision,
+      issuedAt: NOW,
+      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+      type: 'agent.create',
+      payload: {
+        sessionId: 'agent-crash-recovery',
+        workspaceId: 'project-1.root-1.workspace-1',
+        title: 'Recover after renderer crash',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Recover after renderer crash',
+      },
+    });
+    const checkpoint: RendererRecoveryCheckpoint = {
+      version: RENDERER_RECOVERY_VERSION,
+      savedAt: Date.parse(NOW),
+      layout: {
+        schemaVersion: LAYOUT_SCHEMA_VERSION,
+        savedAt: NOW,
+        layout: {
+          grid: {
+            root: { type: 'branch', data: [] },
+            width: 800,
+            height: 600,
+            orientation: 'HORIZONTAL',
+          },
+          panels: {
+            'agent-session-structured-draft-crash-recovery': {
+              id: 'agent-session-structured-draft-crash-recovery',
+              contentComponent: 'agent-session',
+              renderer: 'always',
+              params: { historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}crash-recovery` },
+            },
+          },
+        },
+      },
+      panes: [],
+      structuredAgentCreates: [{
+        panelId: 'agent-session-structured-draft-crash-recovery',
+        historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}crash-recovery`,
+        sessionId: 'agent-crash-recovery',
+        phase: 'delivery-uncertain',
+        command,
+      }],
+      activePanelId: 'agent-session-structured-draft-crash-recovery',
+    };
+    seedRendererRecoveryState(checkpoint);
+    const sendCommand = vi.fn(async () => ({
+      ok: true as const,
+      status: 'replayed' as const,
+      commandId: command.commandId,
+      revision: snapshot.revision + 1,
+      eventSequence: snapshot.eventSequence + 1,
+    }));
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: getReadyAvailability,
+        getSnapshot: async () => snapshot,
+        getTranscript: async () => [],
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    const params = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}crash-recovery`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const props = {
+      capabilities: access,
+      createRecoveryRegistry: registry,
+      persistCreateRecovery: vi.fn(async () => true),
+      params,
+      api: {
+        id: 'agent-session-structured-draft-crash-recovery',
+        getParameters: () => params,
+        updateParameters: vi.fn(),
+        setTitle: vi.fn(),
+      },
+    } as unknown as IDockviewPanelProps & {
+      capabilities: CapabilityAccess;
+      createRecoveryRegistry: StructuredAgentCreateRecoveryRegistry;
+    };
+
+    act(() => root.render(
+      <StrictMode>
+        <AppI18nProvider locale="en" languages={['en']}>
+          <StructuredAgentDockPanel {...props} />
+        </AppI18nProvider>
+      </StrictMode>,
+    ));
+    await flush();
+
+    expect(container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )?.value).toBe('Recover after renderer crash');
+    expect(registry.get('agent-session-structured-draft-crash-recovery')?.command).toBe(command);
+    expect(peekRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-crash-recovery')).toBeUndefined();
+
+    act(() => container.querySelector<HTMLButtonElement>(
+      '[data-testid="structured-agent-create"]',
+    )!.click());
+    await flush();
+    await flush();
+
+    expect(sendCommand).toHaveBeenCalledOnce();
+    expect(sendCommand).toHaveBeenCalledWith(command);
+    expect(registry.get('agent-session-structured-draft-crash-recovery')).toBeUndefined();
+    expect(container.querySelectorAll('[data-testid="structured-agent-session"]')).toHaveLength(1);
+  });
+
+  it('does not create from a cached display snapshot when the fresh read fails', async () => {
+    const getSnapshot = vi.fn()
+      .mockResolvedValueOnce(snapshot)
+      .mockRejectedValue(new Error('offline'));
+    const sendCommand = vi.fn();
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: getReadyAvailability,
+        getSnapshot,
+        getTranscript: async () => [],
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    const params = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}fresh-required`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const props = {
+      capabilities: access,
+      params,
+      api: {
+        id: 'agent-session-fresh-required',
+        getParameters: () => params,
+        updateParameters: vi.fn(),
+        setTitle: vi.fn(),
+      },
+    } as unknown as IDockviewPanelProps & { capabilities: CapabilityAccess };
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    const prompt = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(prompt, 'Never send against cached authority');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('The Agent daemon is unavailable.');
+    expect(container.querySelector('[data-testid="structured-agent-draft"]')).not.toBeNull();
+  });
+
+  it('keeps an uncertain recovery escrowed when its fresh confirmation is unavailable', async () => {
+    const registry = new StructuredAgentCreateRecoveryRegistry();
+    let snapshotUnavailable = false;
+    const getSnapshot = vi.fn(async () => snapshotUnavailable ? null : snapshot);
+    const sendCommand = vi.fn(async (command: DaemonCommand) => ({
+      ok: false as const,
+      status: 'delivery-uncertain' as const,
+      commandId: command.commandId,
+      revision: snapshot.revision,
+      error: {
+        code: 'delivery-uncertain' as const,
+        message: 'The connection closed before acknowledgement.',
+        retryable: true,
+      },
+    }));
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: getReadyAvailability,
+        getSnapshot,
+        getTranscript: async () => [],
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    const params = {
+      historyId: `${STRUCTURED_AGENT_DRAFT_PREFIX}unavailable-recovery`,
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    };
+    const props = {
+      capabilities: access,
+      createRecoveryRegistry: registry,
+      persistCreateRecovery: vi.fn(async () => true),
+      params,
+      api: {
+        id: 'agent-session-structured-draft-unavailable-recovery',
+        getParameters: () => params,
+        updateParameters: vi.fn(),
+        setTitle: vi.fn(),
+      },
+    } as unknown as IDockviewPanelProps & {
+      capabilities: CapabilityAccess;
+      createRecoveryRegistry: StructuredAgentCreateRecoveryRegistry;
+    };
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    const prompt = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(prompt, 'Keep this exact command escrowed');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(sendCommand).toHaveBeenCalledOnce();
+    const originalCommand = sendCommand.mock.calls[0]![0];
+    snapshotUnavailable = true;
+    act(() => container.querySelector<HTMLButtonElement>(
+      '[data-testid="structured-agent-create"]',
+    )!.click());
+    await flush();
+
+    expect(sendCommand).toHaveBeenCalledOnce();
+    expect(registry.get('agent-session-structured-draft-unavailable-recovery')?.command).toBe(originalCommand);
+    expect(registry.blocksPanelClose('agent-session-structured-draft-unavailable-recovery')).toBe(true);
+    expect([...container.querySelectorAll('[role="alert"]')].map((node) => node.textContent).join(' '))
+      .toContain('Delivery was not retried');
+    expect(container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="structured-agent-first-prompt"]',
+    )?.disabled).toBe(true);
   });
 
   it('pages persisted transcript forward and incrementally catches transcript events', async () => {

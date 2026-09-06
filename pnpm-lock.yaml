@@ -30,7 +30,7 @@ patchedDependencies:
     hash: 0db89bb5b4292135c536d86707895f64437da6d15500015e7e2fb52637907a1a
     path: patches/brace-expansion@5.0.9.patch
   capacitor-secure-storage-plugin@0.10.0:
-    hash: 7f0c8db85f8af360285e0e2b519099a9b144a17a8961c71e96da57592bdb255d
+    hash: cd619345dcbd18c47b396ec3e95865d5878a094c8f852c9ae31e23581bbc1a2f
     path: patches/capacitor-secure-storage-plugin@0.10.0.patch
   dockview-core@7.0.2:
     hash: 5f9bc0a999b8ca9e9d14955731363642d14feb94a885ee66d51e067877b6e34a
@@ -298,7 +298,7 @@ importers:
         version: 6.0.6
       capacitor-secure-storage-plugin:
         specifier: 0.10.0
-        version: 0.10.0(patch_hash=7f0c8db85f8af360285e0e2b519099a9b144a17a8961c71e96da57592bdb255d)(@capacitor/core@6.2.1)
+        version: 0.10.0(patch_hash=cd619345dcbd18c47b396ec3e95865d5878a094c8f852c9ae31e23581bbc1a2f)(@capacitor/core@6.2.1)
       i18next:
         specifier: ^26.3.6
         version: 26.3.6(typescript@5.9.3)
@@ -8330,7 +8330,7 @@ snapshots:
     dependencies:
       nan: 2.28.0
 
-  capacitor-secure-storage-plugin@0.10.0(patch_hash=7f0c8db85f8af360285e0e2b519099a9b144a17a8961c71e96da57592bdb255d)(@capacitor/core@6.2.1):
+  capacitor-secure-storage-plugin@0.10.0(patch_hash=cd619345dcbd18c47b396ec3e95865d5878a094c8f852c9ae31e23581bbc1a2f)(@capacitor/core@6.2.1):
     dependencies:
       '@capacitor/core': 6.2.1
 

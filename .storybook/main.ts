@@ -22,6 +22,7 @@ const config: StorybookConfig = {
         '@capacitor/clipboard',
         '@capacitor/core',
         '@capacitor/device',
+        'capacitor-secure-storage-plugin',
       ],
     };
 

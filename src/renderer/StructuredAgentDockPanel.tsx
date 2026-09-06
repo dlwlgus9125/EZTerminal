@@ -11,6 +11,7 @@ import {
 } from '../shared/daemon-protocol';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
+import type { RendererRecoveryStructuredAgentCreate } from '../shared/renderer-recovery';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import {
@@ -23,10 +24,25 @@ import {
   StructuredAgentSessionPanel,
   type StructuredAgentChildTrackItem,
   type StructuredAgentDraftInput,
-  type StructuredAgentProviderOption,
   type StructuredAgentUiResult,
   type StructuredAgentWorkspaceOption,
 } from './StructuredAgentSession';
+import {
+  createStructuredAgentSession,
+  resolvePreferredDaemonWorkspaceId,
+  structuredAgentModelOptions,
+  structuredAgentProviderOptions,
+  structuredAgentWorkspaceOptions,
+  type StructuredAgentCreateOutcome,
+  type StructuredAgentCreateCommand,
+} from './structured-agent-create';
+import { type StructuredAgentCreateRecoveryRegistry } from './structured-agent-create-recovery';
+import {
+  consumeRendererRecoveryStructuredAgentCreate,
+  peekRendererRecoveryStructuredAgentCreate,
+} from './renderer-recovery-state';
+
+export { resolvePreferredDaemonWorkspaceId } from './structured-agent-create';
 
 export const STRUCTURED_AGENT_DRAFT_PREFIX = 'structured-draft-';
 export const STRUCTURED_AGENT_SESSION_PREFIX = 'structured-session-';
@@ -64,72 +80,6 @@ function opaqueId(prefix: string): string {
   if (random) return `${prefix}-${random}`;
   fallbackId += 1;
   return `${prefix}-${Date.now().toString(36)}-${fallbackId.toString(36)}`;
-}
-
-function modelOptions(
-  capabilities: readonly string[],
-  current?: string,
-  catalog?: readonly { readonly id: string; readonly displayName: string }[],
-) {
-  const labels = new Map(catalog?.map((model) => [model.id, model.displayName]) ?? []);
-  const capabilityIds = capabilities.flatMap((capability) => {
-    const match = /^(?:model:|model=)(.+)$/u.exec(capability);
-    return match?.[1] ? [match[1]] : [];
-  });
-  for (const id of capabilityIds) if (!labels.has(id)) labels.set(id, id);
-  if (current && !labels.has(current)) labels.set(current, current);
-  return [...labels].map(([id, label]) => ({ id, label }));
-}
-
-function providerOptions(
-  snapshot: DaemonSnapshot | null,
-  catalogs: Readonly<Record<string, readonly { readonly id: string; readonly displayName: string }[]>>,
-): readonly StructuredAgentProviderOption[] {
-  return (snapshot?.providers ?? [])
-    .filter((provider) => provider.enabled)
-    .map((provider) => ({
-      id: provider.id,
-      label: provider.displayName,
-      models: modelOptions(provider.capabilities, undefined, catalogs[provider.id]),
-      disabled: provider.health !== 'ready',
-      description: provider.healthDetail,
-    }));
-}
-
-function workspaceOptions(
-  snapshot: DaemonSnapshot | null,
-  projectId?: string,
-): readonly StructuredAgentWorkspaceOption[] {
-  return (snapshot?.workspaces ?? [])
-    .filter((workspace) => workspace.archivedAt === undefined && (!projectId || workspace.projectId === projectId))
-    .map((workspace) => ({
-      id: workspace.id,
-      label: workspace.name,
-      kind: workspace.kind,
-      path: workspace.rootPath,
-    }));
-}
-
-export function resolvePreferredDaemonWorkspaceId(
-  workspaces: readonly StructuredAgentWorkspaceOption[],
-  projectId?: string,
-  rootId?: string,
-  preferredWorkspaceId?: string,
-): string | undefined {
-  if (!preferredWorkspaceId) return undefined;
-  if (rootId) {
-    const fullyQualified = projectId
-      ? `${projectId}.${rootId}.${preferredWorkspaceId}`
-      : undefined;
-    const namespaced = workspaces.find((workspace) => (
-      workspace.id === fullyQualified
-      || workspace.id.endsWith(`.${rootId}.${preferredWorkspaceId}`)
-    ));
-    if (namespaced) return namespaced.id;
-  }
-  return workspaces.some((workspace) => workspace.id === preferredWorkspaceId)
-    ? preferredWorkspaceId
-    : undefined;
 }
 
 function resultOf(receipt: DaemonCommandReceipt): StructuredAgentUiResult {
@@ -189,14 +139,52 @@ export function mergeOptimisticTranscript(
   ];
 }
 
-function sessionTitle(prompt: string): string {
-  const oneLine = prompt.replace(/\s+/gu, ' ').trim();
-  return oneLine.length <= 52 ? oneLine : `${oneLine.slice(0, 49)}…`;
-}
-
 interface CreatedDraftState extends StructuredAgentDraftInput {
   readonly sessionId: string;
   readonly title: string;
+}
+
+interface UncertainDraftState {
+  readonly input: StructuredAgentDraftInput;
+  readonly outcome: Extract<StructuredAgentCreateOutcome, { readonly kind: 'delivery-uncertain' }>;
+}
+
+function recoveryDraftState(
+  recovery: RendererRecoveryStructuredAgentCreate,
+): UncertainDraftState {
+  const payload = recovery.command.payload;
+  return {
+    input: {
+      providerId: payload.providerId,
+      ...(payload.model ? { model: payload.model } : {}),
+      workspaceId: payload.workspaceId,
+      permissionPreset: payload.permissionPreset,
+      initialPrompt: payload.initialPrompt,
+    },
+    outcome: {
+      kind: 'delivery-uncertain',
+      sessionId: recovery.sessionId,
+      title: payload.title,
+      command: recovery.command,
+      message: recovery.phase === 'sending'
+        ? 'The Agent command was still being delivered when this panel was restored.'
+        : 'The Agent command delivery could not be confirmed.',
+    },
+  };
+}
+
+function recoveryRecord(
+  panelId: string,
+  historyId: string,
+  command: StructuredAgentCreateCommand,
+): RendererRecoveryStructuredAgentCreate {
+  return Object.freeze({
+    panelId,
+    historyId,
+    sessionId: command.payload.sessionId,
+    phase: 'sending',
+    command,
+  });
 }
 
 /**
@@ -207,6 +195,9 @@ interface CreatedDraftState extends StructuredAgentDraftInput {
 export function StructuredAgentDockPanel(
   props: IDockviewPanelProps & {
     readonly capabilities?: CapabilityAccess;
+    readonly createRecoveryRegistry?: StructuredAgentCreateRecoveryRegistry;
+    /** Resolves true only after main has accepted the current memory-only checkpoint. */
+    readonly persistCreateRecovery?: () => Promise<boolean>;
     readonly onOpenSession?: (input: {
       readonly sessionId: string;
       readonly title?: string;
@@ -215,6 +206,8 @@ export function StructuredAgentDockPanel(
   },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
+  const createRecoveryRegistry = props.createRecoveryRegistry;
+  const persistCreateRecovery = props.persistCreateRecovery;
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const projectId = typeof props.params?.projectId === 'string' ? props.params.projectId : undefined;
   const rootId = typeof props.params?.rootId === 'string' ? props.params.rootId : undefined;
@@ -228,6 +221,18 @@ export function StructuredAgentDockPanel(
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createdDraft, setCreatedDraft] = useState<CreatedDraftState | null>(null);
+  const recoveredCreateRef = useRef<RendererRecoveryStructuredAgentCreate | undefined>(undefined);
+  const checkpointCreateRef = useRef<RendererRecoveryStructuredAgentCreate | undefined>(undefined);
+  const [uncertainDraft, setUncertainDraft] = useState<UncertainDraftState | null>(() => {
+    const registered = createRecoveryRegistry?.get(props.api.id);
+    const checkpoint = registered
+      ? undefined
+      : peekRendererRecoveryStructuredAgentCreate(props.api.id);
+    const recovery = registered ?? checkpoint;
+    recoveredCreateRef.current = recovery;
+    checkpointCreateRef.current = checkpoint;
+    return recovery ? recoveryDraftState(recovery) : null;
+  });
   const [localItems, setLocalItems] = useState<readonly DaemonTranscriptItem[]>([]);
   const [authoritativeItems, setAuthoritativeItems] = useState<readonly DaemonTranscriptItem[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(restoredSessionId !== null);
@@ -245,6 +250,19 @@ export function StructuredAgentDockPanel(
   const transcriptSessionRef = useRef<string | null>(restoredSessionId);
   const transcriptGenerationRef = useRef(0);
   const transcriptInFlightRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    const recovery = recoveredCreateRef.current;
+    if (recovery) createRecoveryRegistry?.register(recovery);
+    const checkpoint = checkpointCreateRef.current;
+    if (checkpoint) {
+      consumeRendererRecoveryStructuredAgentCreate(
+        checkpoint.panelId,
+        checkpoint.command.commandId,
+      );
+      checkpointCreateRef.current = undefined;
+    }
+  }, [createRecoveryRegistry]);
 
   const refresh = useCallback(async (): Promise<DaemonSnapshot | null> => {
     if (refreshInFlight.current) return refreshInFlight.current;
@@ -495,64 +513,171 @@ export function StructuredAgentDockPanel(
   }, [capabilities, refresh]);
 
   const latestSnapshot = useCallback(async (): Promise<DaemonSnapshot | null> => {
-    return await refresh() ?? snapshotRef.current;
+    return await refresh();
   }, [refresh]);
 
-  const create = useCallback(async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
-    const authority = await latestSnapshot();
-    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
-    const provider = authority.providers.find((candidate) => candidate.id === input.providerId);
-    if (!provider || !provider.enabled || provider.health !== 'ready') {
-      return { ok: false, message: 'The selected provider is not ready.' };
-    }
-    const workspace = authority.workspaces.find((candidate) => (
-      candidate.id === input.workspaceId && candidate.archivedAt === undefined
-    ));
-    if (!workspace) return { ok: false, message: 'The selected workspace is no longer available.' };
-    const nextSessionId = opaqueId('agent');
-    const commandId = opaqueId('command');
-    const title = sessionTitle(input.initialPrompt);
-    const command = createDaemonCommand({
-      commandId,
-      idempotencyKey: commandId,
-      expectedRevision: authority.revision,
-      issuedAt: new Date().toISOString(),
-      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-      type: 'agent.create',
-      payload: {
-        sessionId: nextSessionId,
-        workspaceId: input.workspaceId,
-        title,
-        providerId: input.providerId,
-        ...(input.model ? { model: input.model } : {}),
-        permissionPreset: input.permissionPreset,
-        initialPrompt: input.initialPrompt,
-      },
+  const finishCreatedDraft = useCallback((
+    outcome: Extract<StructuredAgentCreateOutcome, { readonly kind: 'created' | 'delivery-uncertain' }>,
+  ): StructuredAgentUiResult => {
+    const createdInput = outcome.command.payload;
+    const nextHistoryId = structuredAgentSessionHistoryId(outcome.sessionId);
+    setCreatedDraft({
+      providerId: createdInput.providerId,
+      ...(createdInput.model ? { model: createdInput.model } : {}),
+      workspaceId: createdInput.workspaceId,
+      permissionPreset: createdInput.permissionPreset,
+      initialPrompt: createdInput.initialPrompt,
+      sessionId: outcome.sessionId,
+      title: outcome.title,
     });
-    const receipt = await sendCommand(command);
-    if (!receipt) return { ok: false, message: 'The Agent daemon is unavailable.' };
-    const result = resultOf(receipt);
-    if (!result.ok) return result;
-    const nextHistoryId = structuredAgentSessionHistoryId(nextSessionId);
-    setCreatedDraft({ ...input, sessionId: nextSessionId, title });
-    setSessionId(nextSessionId);
-    setLocalItems([localUserItem(nextSessionId, commandId, 1, input.initialPrompt)]);
+    setSessionId(outcome.sessionId);
+    setLocalItems([localUserItem(
+      outcome.sessionId,
+      outcome.command.commandId,
+      1,
+      createdInput.initialPrompt,
+    )]);
+    setUncertainDraft(null);
     props.api.updateParameters({
       ...(props.api.getParameters?.() ?? props.params ?? {}),
       historyId: nextHistoryId,
-      ...(input.providerId === 'codex' || input.providerId === 'claude'
-        ? { provider: input.providerId }
+      ...(createdInput.providerId === 'codex' || createdInput.providerId === 'claude'
+        ? { provider: createdInput.providerId }
         : {}),
     });
-    props.api.setTitle(title);
-    return result;
-  }, [latestSnapshot, props.api, props.params, sendCommand]);
+    props.api.setTitle(outcome.title);
+    // Clear escrow only after Dockview carries the durable Session identity, so
+    // the immediate prompt-free checkpoint cannot regress to a blank draft.
+    createRecoveryRegistry?.clear(props.api.id, outcome.command.commandId);
+    return { ok: true };
+  }, [createRecoveryRegistry, props.api, props.params]);
+
+  const create = useCallback(async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
+    let registeredCommandId = uncertainDraft?.outcome.command.commandId;
+    const registerPreparedCommand = async (command: StructuredAgentCreateCommand): Promise<void> => {
+      if (!createRecoveryRegistry || !persistCreateRecovery) {
+        throw new Error('Desktop Agent recovery escrow is unavailable.');
+      }
+      registeredCommandId = command.commandId;
+      if (!createRecoveryRegistry.register(recoveryRecord(props.api.id, historyId, command))) {
+        throw new Error('Desktop Agent recovery escrow is at capacity.');
+      }
+      if (!(await persistCreateRecovery())) {
+        throw new Error('Desktop Agent recovery escrow could not be confirmed.');
+      }
+    };
+    const access = {
+      getSnapshot: latestSnapshot,
+      sendCommand: async (command: Extract<DaemonCommand, { readonly type: 'agent.create' }>) => {
+        const receipt = await sendCommand(command);
+        if (!receipt) throw new Error('The Agent daemon is unavailable.');
+        return receipt;
+      },
+    };
+    let outcome: StructuredAgentCreateOutcome;
+    if (uncertainDraft) {
+      const authority = await latestSnapshot();
+      if (!authority) {
+        return {
+          ok: false,
+          message: 'The Agent daemon is unavailable. Delivery was not retried.',
+        };
+      }
+      const alreadyCreated = authority.sessions.some((candidate) => (
+        candidate.id === uncertainDraft.outcome.sessionId
+        && candidate.kind === 'agent'
+        && candidate.source === 'structured'
+      ));
+      if (alreadyCreated) return finishCreatedDraft(uncertainDraft.outcome);
+
+      const replay = await sendCommand(uncertainDraft.outcome.command);
+      if (!replay || (!replay.ok && replay.status === 'delivery-uncertain')) {
+        createRecoveryRegistry?.markDeliveryUncertain(
+          props.api.id,
+          uncertainDraft.outcome.command.commandId,
+        );
+        if (replay && !replay.ok) {
+          setUncertainDraft({
+            input,
+            outcome: {
+              ...uncertainDraft.outcome,
+              receipt: replay,
+              message: replay.error.message,
+            },
+          });
+        }
+        return {
+          ok: false,
+          message: 'Delivery is still unconfirmed. Send this locked draft again after the connection recovers.',
+        };
+      }
+      if (replay.ok) {
+        outcome = {
+          kind: 'created',
+          sessionId: uncertainDraft.outcome.sessionId,
+          title: uncertainDraft.outcome.title,
+          command: uncertainDraft.outcome.command,
+          receipt: replay,
+        };
+      } else if (replay.error.code === 'revision-conflict') {
+        outcome = await createStructuredAgentSession(input, {
+          access,
+          principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+          createId: opaqueId,
+          sessionId: uncertainDraft.outcome.sessionId,
+          onCommandPrepared: registerPreparedCommand,
+        });
+      } else {
+        const confirmation = await latestSnapshot();
+        const createdDespiteReceipt = confirmation?.sessions.some((candidate) => (
+          candidate.id === uncertainDraft.outcome.sessionId
+          && candidate.kind === 'agent'
+          && candidate.source === 'structured'
+        ));
+        if (createdDespiteReceipt) return finishCreatedDraft(uncertainDraft.outcome);
+        setUncertainDraft(null);
+        createRecoveryRegistry?.clear(props.api.id, uncertainDraft.outcome.command.commandId);
+        return { ok: false, message: replay.error.message };
+      }
+    } else {
+      outcome = await createStructuredAgentSession(input, {
+        access,
+        principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+        createId: opaqueId,
+        onCommandPrepared: registerPreparedCommand,
+      });
+    }
+    if (outcome.kind === 'created') return finishCreatedDraft(outcome);
+    if (outcome.kind === 'delivery-uncertain') {
+      createRecoveryRegistry?.markDeliveryUncertain(props.api.id, outcome.command.commandId);
+      setUncertainDraft({ input, outcome });
+      return {
+        ok: false,
+        message: 'Delivery could not be confirmed. This exact draft is locked; Send again to verify or safely retry the same session.',
+      };
+    }
+    setUncertainDraft(null);
+    if (registeredCommandId) createRecoveryRegistry?.clear(props.api.id, registeredCommandId);
+    return { ok: false, message: outcome.message };
+  }, [
+    createRecoveryRegistry,
+    finishCreatedDraft,
+    historyId,
+    latestSnapshot,
+    persistCreateRecovery,
+    props.api.id,
+    sendCommand,
+    uncertainDraft,
+  ]);
 
   const providers = useMemo(
-    () => providerOptions(snapshot, providerModelCatalogs),
+    () => structuredAgentProviderOptions(snapshot, providerModelCatalogs),
     [providerModelCatalogs, snapshot],
   );
-  const workspaces = useMemo(() => workspaceOptions(snapshot, projectId), [projectId, snapshot]);
+  const workspaces = useMemo(
+    () => structuredAgentWorkspaceOptions(snapshot, projectId),
+    [projectId, snapshot],
+  );
   const initialWorkspaceId = useMemo(() => resolvePreferredDaemonWorkspaceId(
     workspaces,
     projectId,
@@ -587,7 +712,12 @@ export function StructuredAgentDockPanel(
       <StructuredAgentDraftPanel
         providers={providers}
         workspaces={workspaces}
-        initialWorkspaceId={initialWorkspaceId}
+        initialProviderId={uncertainDraft?.input.providerId}
+        initialModel={uncertainDraft?.input.model}
+        initialWorkspaceId={uncertainDraft?.input.workspaceId ?? initialWorkspaceId}
+        initialPermissionPreset={uncertainDraft?.input.permissionPreset}
+        initialPrompt={uncertainDraft?.input.initialPrompt}
+        deliveryRecovery={uncertainDraft !== null}
         loading={loading}
         loadError={loadError}
         onRetry={() => void refresh()}
@@ -825,7 +955,7 @@ export function StructuredAgentDockPanel(
       providerLabel={provider?.displayName ?? (providerId || 'Agent')}
       workspace={workspaceOption}
       model={currentModel}
-      modelOptions={modelOptions(
+      modelOptions={structuredAgentModelOptions(
         provider?.capabilities ?? [],
         currentModel,
         providerModelCatalogs[providerId],

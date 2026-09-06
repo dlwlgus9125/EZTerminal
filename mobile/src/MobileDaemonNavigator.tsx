@@ -8,6 +8,7 @@ import {
   GitBranch,
   Globe,
   Play,
+  Plus,
   RefreshCw,
   Server,
   SquareTerminal,
@@ -55,6 +56,7 @@ interface NavigatorCopy {
   readonly backToWorkspaces: string;
   readonly backToCurrent: string;
   readonly openSession: string;
+  readonly newSession: string;
 }
 
 const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
@@ -84,6 +86,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
     backToWorkspaces: 'Back to workspaces',
     backToCurrent: 'Back to current sessions',
     openSession: 'Open session',
+    newSession: 'New session',
   },
   ko: {
     title: '프로젝트',
@@ -111,6 +114,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
     backToWorkspaces: '워크스페이스로 돌아가기',
     backToCurrent: '현재 세션으로 돌아가기',
     openSession: '세션 열기',
+    newSession: '새 세션',
   },
 };
 
@@ -161,18 +165,30 @@ function sessionMeta(
 
 export type MobileDaemonNavigatorVisibility = 'active' | 'archived';
 
+export interface MobileDaemonNavigatorLocation {
+  readonly projectId: string | null;
+  readonly workspaceId: string | null;
+}
+
 export function MobileDaemonNavigator({
   state,
   onRetry,
   onSelectSession,
+  onCreateSession,
   visibility,
   onVisibilityChange,
+  initialLocation,
+  onLocationChange,
 }: {
   readonly state: DaemonRuntimeViewState;
   readonly onRetry: () => void;
   readonly onSelectSession: (sessionId: string) => void;
+  readonly onCreateSession?: (workspaceId: string) => void;
   readonly visibility?: MobileDaemonNavigatorVisibility;
   readonly onVisibilityChange?: (visibility: MobileDaemonNavigatorVisibility) => void;
+  /** Restores the drill-down after a contextual New Session page closes. */
+  readonly initialLocation?: MobileDaemonNavigatorLocation;
+  readonly onLocationChange?: (location: MobileDaemonNavigatorLocation) => void;
 }): JSX.Element {
   const { i18n } = useAppTranslation();
   const language: 'en' | 'ko' = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko')
@@ -182,8 +198,8 @@ export function MobileDaemonNavigator({
   const [internalVisibility, setInternalVisibility] = useState<MobileDaemonNavigatorVisibility>('active');
   const resolvedVisibility = visibility ?? internalVisibility;
   const showArchived = resolvedVisibility === 'archived';
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(initialLocation?.projectId ?? null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(initialLocation?.workspaceId ?? null);
   const snapshot = state.snapshot;
   const agents = useMemo(
     () => new Map(snapshot?.agents.map((agent) => [agent.sessionId, agent]) ?? []),
@@ -246,6 +262,10 @@ export function MobileDaemonNavigator({
     }
   }, [workspaceId, workspaces]);
 
+  useEffect(() => {
+    onLocationChange?.({ projectId, workspaceId });
+  }, [onLocationChange, projectId, workspaceId]);
+
   const statusMessage = state.status === 'loading'
     ? copy.loading
     : state.error === 'event-gap'
@@ -271,14 +291,30 @@ export function MobileDaemonNavigator({
           )}
         </div>
         {workspace ? (
-          <button
-            type="button"
-            className="mob-icon-btn"
-            aria-label={copy.backToWorkspaces}
-            onClick={() => setWorkspaceId(null)}
-          >
-            <ChevronLeft aria-hidden="true" />
-          </button>
+          <div className="mob-agent-projects__head-actions">
+            <button
+              type="button"
+              className="mob-icon-btn"
+              aria-label={copy.backToWorkspaces}
+              onClick={() => setWorkspaceId(null)}
+            >
+              <ChevronLeft aria-hidden="true" />
+            </button>
+            {!showArchived
+              && state.status === 'ready'
+              && state.availability?.state !== 'legacy-only-safe-mode'
+              && onCreateSession && (
+              <button
+                type="button"
+                className="mob-icon-btn mob-icon-btn--accent"
+                aria-label={`${copy.newSession}: ${workspace.name}`}
+                onClick={() => onCreateSession(workspace.id)}
+                data-testid="mobile-daemon-create-session"
+              >
+                <Plus aria-hidden="true" />
+              </button>
+            )}
+          </div>
         ) : project ? (
           <button
             type="button"

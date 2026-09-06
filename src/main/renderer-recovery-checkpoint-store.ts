@@ -41,12 +41,27 @@ export class RendererRecoveryCheckpointStore {
     if (!current || current.recoverableUntil === null) return null;
     const recoverableUntil = current.recoverableUntil;
     const now = this.now();
-    if (now > recoverableUntil || now > current.checkpoint.savedAt + this.ttlMs) {
+    const hasPendingStructuredAgentCreate = current.checkpoint.structuredAgentCreates.length > 0;
+    // Delivery uncertainty has no safe time-based resolution. Keep that exact,
+    // memory-only envelope for this main-process lifetime; ordinary checkpoints
+    // continue to obey both TTL bounds below.
+    if (
+      !hasPendingStructuredAgentCreate
+      && (now > recoverableUntil || now > current.checkpoint.savedAt + this.ttlMs)
+    ) {
       this.records.delete(webContentsId);
       return null;
     }
     current.recoverableUntil = null;
     return current.checkpoint;
+  }
+
+  hasPendingStructuredAgentCreate(webContentsId: number): boolean {
+    return (this.records.get(webContentsId)?.checkpoint.structuredAgentCreates.length ?? 0) > 0;
+  }
+
+  blocksMainWindowClose(webContentsId: number, keepRunning: boolean): boolean {
+    return !keepRunning && this.hasPendingStructuredAgentCreate(webContentsId);
   }
 
   clear(webContentsId: number): void {

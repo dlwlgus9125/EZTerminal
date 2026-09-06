@@ -5,6 +5,8 @@ import { useLayoutEffect, type ReactNode } from 'react';
 import { MobileAgentFolderPicker } from '../../../mobile/src/MobileAgentFolderPicker';
 import { MobileAgentHistorySheet } from '../../../mobile/src/MobileAgentHistorySheet';
 import { MobileAgentView } from '../../../mobile/src/MobileAgentView';
+import { MobileDaemonNavigator } from '../../../mobile/src/MobileDaemonNavigator';
+import { MobileNewSessionDraft } from '../../../mobile/src/MobileNewSessionDraft';
 import { MobileFileView } from '../../../mobile/src/MobileFileView';
 import { MobileMoreSheet } from '../../../mobile/src/MobileMoreSheet';
 import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavigationHistory';
@@ -40,6 +42,14 @@ type ActiveMobileSurface =
   | 'agents-offline'
   | 'agents-archived'
   | 'agents-safe-mode'
+  | 'agents-workspace-create'
+  | 'new-session-global'
+  | 'new-session-workspace'
+  | 'new-session-long-path'
+  | 'new-session-provider-unavailable'
+  | 'new-session-recovery-loading'
+  | 'new-session-recovery-unavailable'
+  | 'new-session-recovery-invalid'
   | 'files'
   | 'stats'
   | 'openclaw'
@@ -344,6 +354,35 @@ const OVERFLOW_DAEMON_SNAPSHOT: DaemonSnapshot = {
   transcriptHeads: [],
 };
 
+const DRAFT_DAEMON_SNAPSHOT: DaemonSnapshot = {
+  ...ARCHIVED_DAEMON_SNAPSHOT,
+  revision: 10,
+  eventSequence: 15,
+  sessions: [],
+  agents: [],
+  turns: [],
+  transcriptHeads: [],
+};
+
+const PROVIDER_UNAVAILABLE_DAEMON_SNAPSHOT: DaemonSnapshot = {
+  ...DRAFT_DAEMON_SNAPSHOT,
+  revision: 11,
+  eventSequence: 16,
+  providers: DRAFT_DAEMON_SNAPSHOT.providers.map((provider) => ({
+    ...provider,
+    health: 'unavailable',
+    healthDetail: 'Finish provider setup in Desktop Settings.',
+  })),
+};
+
+const LONG_PATH_DAEMON_SNAPSHOT: DaemonSnapshot = {
+  ...DRAFT_DAEMON_SNAPSHOT,
+  workspaces: DRAFT_DAEMON_SNAPSHOT.workspaces.map((workspace) => ({
+    ...workspace,
+    rootPath: 'C:\\Users\\developer\\source\\commercial-products\\EZTerminal\\worktrees\\feature-mobile-agent-session-recovery-with-an-extremely-long-unbroken-directory-name',
+  })),
+};
+
 const STORY_TRANSPORT = {
   connectedHost: '100.86.12.4',
   supportsAgentProjectManagement: true,
@@ -609,6 +648,53 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
       );
       break;
     }
+    case 'agents-workspace-create':
+      content = (
+        <MobileDaemonNavigator
+          state={{ status: 'ready', snapshot: ARCHIVED_DAEMON_SNAPSHOT }}
+          onRetry={close}
+          onSelectSession={close}
+          onCreateSession={close}
+        />
+      );
+      break;
+    case 'new-session-global':
+    case 'new-session-workspace':
+    case 'new-session-long-path':
+    case 'new-session-provider-unavailable':
+    case 'new-session-recovery-loading':
+    case 'new-session-recovery-unavailable':
+    case 'new-session-recovery-invalid': {
+      const contextual = surface !== 'new-session-global';
+      const providerUnavailable = surface === 'new-session-provider-unavailable';
+      const longPath = surface === 'new-session-long-path';
+      const recoveryStatus = surface === 'new-session-recovery-loading'
+        ? 'loading'
+        : surface === 'new-session-recovery-invalid'
+          ? 'invalid'
+          : surface === 'new-session-recovery-unavailable'
+            ? 'unavailable'
+            : 'ready';
+      content = (
+        <MobileNewSessionDraft
+          state={{
+            status: 'ready',
+            snapshot: providerUnavailable
+              ? PROVIDER_UNAVAILABLE_DAEMON_SNAPSHOT
+              : longPath ? LONG_PATH_DAEMON_SNAPSHOT : DRAFT_DAEMON_SNAPSHOT,
+          }}
+          agentRecoveryStatus={recoveryStatus}
+          contextWorkspaceId={contextual ? 'workspace-main' : undefined}
+          onBack={close}
+          onRetry={close}
+          onRetryAgentRecovery={close}
+          onDiscardAgentRecovery={close}
+          onCreateAgent={async () => ({ ok: true })}
+          onCreateTerminal={async () => ({ ok: true })}
+        />
+      );
+      break;
+    }
     case 'files':
       content = (
         <MobileFileView
@@ -751,6 +837,115 @@ export const AgentsTerminalOnlySafeMode: Story = {
     await expect(canvas.getByText(/Existing terminal sessions remain available/u)).toBeVisible();
     await expect(canvas.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     await expect(canvas.queryByText(/Local recovery location/u)).not.toBeInTheDocument();
+  },
+};
+export const AgentsWorkspaceCreate: Story = {
+  args: { surface: 'agents-workspace-create' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByText('EZTerminal'));
+    await userEvent.click(await canvas.findByText('Main checkout'));
+    await expect(canvas.getByTestId('mobile-daemon-create-session')).toHaveAccessibleName(
+      'New session: Main checkout',
+    );
+    await expect(canvas.getByLabelText('Back to workspaces')).toBeVisible();
+  },
+};
+export const NewSessionGlobalDraft: Story = {
+  args: { surface: 'new-session-global' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('mobile-new-session-agent')).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas.getByTestId('mobile-new-session-project')).toHaveValue('');
+    await expect(canvas.getByTestId('mobile-new-session-workspace')).toHaveValue('');
+    await expect(canvas.getByTestId('mobile-new-session-workspace')).toBeDisabled();
+  },
+};
+export const NewSessionContextualWorkspace: Story = {
+  args: { surface: 'new-session-workspace' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('mobile-new-session-agent')).toHaveAttribute('aria-pressed', 'true');
+    const location = canvas.getByTestId('mobile-new-session-locked-workspace');
+    await expect(location).toHaveTextContent('EZTerminal');
+    await expect(location).toHaveTextContent('Main checkout');
+    await expect(canvas.queryByTestId('mobile-new-session-project')).not.toBeInTheDocument();
+    await expect(canvas.queryByTestId('mobile-new-session-workspace')).not.toBeInTheDocument();
+  },
+};
+export const NewSessionLongWorkspacePath: Story = {
+  args: { surface: 'new-session-long-path' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('mobile-new-session-terminal'));
+    const terminalPanelElement = canvas.getByTestId('mobile-new-session-terminal-panel');
+    await waitFor(() => expect(terminalPanelElement).not.toHaveAttribute('hidden'));
+    const terminalPanel = within(terminalPanelElement);
+    const path = terminalPanel.getByText(/feature-mobile-agent-session-recovery/u);
+    await waitFor(() => expect(path).toBeVisible());
+    await expect(getComputedStyle(path.parentElement!).minWidth).toBe('0px');
+  },
+};
+export const NewSessionProviderUnavailable: Story = {
+  args: { surface: 'new-session-provider-unavailable' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const agent = canvas.getByTestId('mobile-new-session-agent');
+    await userEvent.click(agent);
+    await expect(agent).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas.getByTestId('mobile-new-session-agent-panel')).not.toHaveAttribute('hidden');
+    const providerRecovery = canvas.getByText(/No ready Agent provider is available/u);
+    await waitFor(() => expect(providerRecovery).toBeVisible());
+    await userEvent.click(canvas.getByTestId('mobile-new-session-terminal'));
+    await expect(canvas.getByTestId('mobile-new-session-terminal')).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas.getByTestId('mobile-new-session-open-terminal')).toBeEnabled();
+  },
+};
+export const NewSessionRecoveryLoading: Story = {
+  args: { surface: 'new-session-recovery-loading' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('mobile-new-session-recovery-status')).toHaveTextContent(
+      'Checking secure Agent recovery',
+    );
+    await expect(canvas.getByTestId('structured-agent-create')).toBeDisabled();
+    await expect(canvas.queryByTestId('mobile-new-session-recovery-retry')).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByTestId('mobile-new-session-terminal'));
+    await expect(canvas.getByTestId('mobile-new-session-open-terminal')).toBeEnabled();
+  },
+};
+export const NewSessionRecoveryUnavailable: Story = {
+  args: { surface: 'new-session-recovery-unavailable' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole('alert')).toHaveTextContent(
+      'Secure Agent recovery storage is unavailable',
+    );
+    await expect(canvas.getByTestId('structured-agent-create')).toBeDisabled();
+    await expect(canvas.getByTestId('mobile-new-session-recovery-retry')).toBeEnabled();
+    await userEvent.click(canvas.getByTestId('mobile-new-session-terminal'));
+    await expect(canvas.getByTestId('mobile-new-session-open-terminal')).toBeEnabled();
+  },
+};
+export const NewSessionRecoveryInvalid: Story = {
+  args: { surface: 'new-session-recovery-invalid' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole('alert')).toHaveTextContent(
+      'pending Agent recovery record is damaged',
+    );
+    await expect(canvas.getByTestId('structured-agent-create')).toBeDisabled();
+    await userEvent.click(canvas.getByTestId('mobile-new-session-recovery-discard'));
+    const page = within(canvasElement.ownerDocument.body);
+    await waitFor(() => expect(page.getByRole('alertdialog')).toBeVisible());
+    await expect(page.getByRole('alertdialog')).toHaveTextContent(
+      'creating another Agent later could duplicate the work',
+    );
+    await waitFor(() => expect(page.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+    await userEvent.click(page.getByRole('button', { name: 'Cancel' }));
+    await expect(page.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByTestId('mobile-new-session-terminal'));
+    await expect(canvas.getByTestId('mobile-new-session-open-terminal')).toBeEnabled();
   },
 };
 export const AgentsArchivedHistory: Story = {

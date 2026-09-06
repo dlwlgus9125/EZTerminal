@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createDaemonCommand } from '../shared/daemon-protocol';
 import { LAYOUT_SCHEMA_VERSION } from '../shared/layout-schema';
 import {
   RENDERER_RECOVERY_VERSION,
@@ -7,8 +8,10 @@ import {
 } from '../shared/renderer-recovery';
 import {
   clearRendererRecoveryState,
+  consumeRendererRecoveryStructuredAgentCreate,
   peekRendererRecoveryCheckpoint,
   peekRendererRecoveryPane,
+  peekRendererRecoveryStructuredAgentCreate,
   scheduleRendererRecoveryStateClear,
   seedRendererRecoveryState,
 } from './renderer-recovery-state';
@@ -41,7 +44,49 @@ const checkpoint: RendererRecoveryCheckpoint = {
     activeRunIds: [],
     scrollTop: 0,
   }],
+  structuredAgentCreates: [],
   activePanelId: 'tab-1',
+};
+
+const structuredAgentCheckpoint: RendererRecoveryCheckpoint = {
+  ...checkpoint,
+  layout: {
+    ...checkpoint.layout,
+    layout: {
+      ...checkpoint.layout.layout,
+      panels: {
+        ...checkpoint.layout.layout.panels,
+        'agent-session-structured-draft-1': {
+          id: 'agent-session-structured-draft-1',
+          contentComponent: 'agent-session',
+          renderer: 'always',
+          params: { historyId: 'structured-draft-1' },
+        },
+      },
+    },
+  },
+  structuredAgentCreates: [{
+    panelId: 'agent-session-structured-draft-1',
+    historyId: 'structured-draft-1',
+    sessionId: 'agent-1',
+    phase: 'delivery-uncertain',
+    command: createDaemonCommand({
+      commandId: 'command-1',
+      idempotencyKey: 'command-1',
+      expectedRevision: 4,
+      issuedAt: '2026-09-06T00:00:00.000Z',
+      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+      type: 'agent.create',
+      payload: {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Create an Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Create an Agent',
+      },
+    }),
+  }],
 };
 
 afterEach(() => {
@@ -73,5 +118,23 @@ describe('renderer recovery startup cache', () => {
     vi.advanceTimersByTime(50);
 
     expect(peekRendererRecoveryCheckpoint()).toBe(checkpoint);
+  });
+
+  it('transfers a structured Agent recovery envelope exactly once and clears unconsumed entries', () => {
+    seedRendererRecoveryState(structuredAgentCheckpoint);
+
+    expect(peekRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-1')?.command.commandId)
+      .toBe('command-1');
+    expect(consumeRendererRecoveryStructuredAgentCreate(
+      'agent-session-structured-draft-1',
+      'stale-command',
+    )).toBeUndefined();
+    const consumed = consumeRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-1');
+    expect(consumed?.command.commandId).toBe('command-1');
+    expect(consumeRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-1')).toBeUndefined();
+
+    seedRendererRecoveryState(structuredAgentCheckpoint);
+    clearRendererRecoveryState();
+    expect(consumeRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-1')).toBeUndefined();
   });
 });

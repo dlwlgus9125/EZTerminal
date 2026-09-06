@@ -1,5 +1,8 @@
+import fs from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
 import type {
   AgentProviderEvent,
   ProviderSessionContext,
@@ -15,6 +18,7 @@ import type {
 import {
   CODEX_APP_SERVER_BASELINE_VERSION,
   CodexProviderAdapter,
+  type CodexProviderAdapterOptions,
 } from './codex-provider-adapter';
 
 interface RequestRecord {
@@ -99,6 +103,21 @@ const context = (overrides: Partial<ProviderSessionContext> = {}): ProviderSessi
   ...overrides,
 });
 
+const launchDescriptor = (
+  overrides: Partial<ProviderLaunchDescriptor> = {},
+): ProviderLaunchDescriptor => ({
+  providerId: 'codex',
+  protocol: 'codex-app-server',
+  executablePath: 'C:\\Tools\\codex.exe',
+  executableVersion: CODEX_APP_SERVER_BASELINE_VERSION,
+  argv: ['app-server'],
+  environmentVariableNames: [
+    'PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  ],
+  reviewDigest: 'a'.repeat(64),
+  ...overrides,
+});
+
 async function attachedAdapter(connection: FakeCodexConnection): Promise<CodexProviderAdapter> {
   connection.requestImpl = async (method) => {
     if (method === 'thread/start') return {
@@ -117,17 +136,31 @@ async function attachedAdapter(connection: FakeCodexConnection): Promise<CodexPr
 
 function reviewedAdapter(connectionFactory: () => CodexAppServerConnection): CodexProviderAdapter {
   const adapter = new CodexProviderAdapter({ connectionFactory });
-  adapter.setLaunchDescriptor({
-    providerId: 'codex',
-    protocol: 'codex-app-server',
-    executablePath: 'C:\\Tools\\codex.exe',
-    executableVersion: CODEX_APP_SERVER_BASELINE_VERSION,
-    argv: ['app-server'],
-    environmentVariableNames: [
-      'PATH', 'CODEX_HOME', 'OPENAI_API_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-    ],
-    reviewDigest: 'a'.repeat(64),
+  adapter.setLaunchDescriptor(launchDescriptor());
+  return adapter;
+}
+
+async function launchPreflightAdapter(
+  runCommand: NonNullable<CodexProviderAdapterOptions['runCommand']>,
+): Promise<CodexProviderAdapter> {
+  const connection = new FakeCodexConnection();
+  let verifyBeforeSpawn: ((signal?: AbortSignal) => Promise<void>) | undefined;
+  connection.requestImpl = async (method) => {
+    await verifyBeforeSpawn?.();
+    verifyBeforeSpawn = undefined;
+    if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+    throw new Error(`Unexpected request: ${method}`);
+  };
+  const adapter = new CodexProviderAdapter({
+    connectionFactory: (options) => {
+      verifyBeforeSpawn = options.beforeSpawn;
+      return connection;
+    },
+    runCommand,
   });
+  adapter.setLaunchDescriptor(launchDescriptor({
+    executablePath: await fs.realpath(process.execPath),
+  }));
   return adapter;
 }
 
@@ -186,7 +219,7 @@ async function pendingTurnFixture(
 }
 
 describe('CodexProviderAdapter', () => {
-  it('probes a canonical reviewed 0.152.x executable without starting app-server', async () => {
+  it('probes the minimum supported executable without starting app-server', async () => {
     const connection = new FakeCodexConnection();
     const resolveExecutable = vi.fn(async () => 'C:\\Tools\\codex.exe');
     const runCommand = vi.fn(async () => ({ stdout: 'codex-cli 0.152.1\n', stderr: '', exitCode: 0 }));
@@ -264,20 +297,54 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
-  it('fails closed for an unreviewed protocol version and reports a missing binary', async () => {
-    const connection = new FakeCodexConnection();
-    const newer = new CodexProviderAdapter({
-      connection,
+  it.each(['0.152.0', '0.151.99'])('fails closed for Codex %s below the supported minimum', async (version) => {
+    const adapter = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
       resolveExecutable: async () => 'C:\\Tools\\codex.exe',
-      runCommand: async () => ({ stdout: 'codex-cli 0.153.0', stderr: '', exitCode: 0 }),
+      runCommand: async () => ({ stdout: `codex-cli ${version}`, stderr: '', exitCode: 0 }),
     });
-    await expect(newer.probe()).resolves.toMatchObject({
-      available: false,
-      executableVersion: '0.153.0',
-      unavailableReason: expect.stringContaining('has not been reviewed'),
-    });
-    await newer.dispose();
 
+    await expect(adapter.probe()).resolves.toMatchObject({
+      available: false,
+      executableVersion: version,
+      unavailableReason: `Codex ${version} is older than the minimum supported ${CODEX_APP_SERVER_BASELINE_VERSION} app-server version.`,
+    });
+    expect(() => adapter.setLaunchDescriptor(launchDescriptor({ executableVersion: version })))
+      .toThrow(/incompatible/u);
+    await adapter.dispose();
+  });
+
+  it('fails closed for malformed, unlabeled, and unsuccessful version commands', async () => {
+    const malformed = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
+      resolveExecutable: async () => 'C:\\Tools\\codex.exe',
+      runCommand: async () => ({
+        stdout: 'dependency warning 9.9.9\ncodex-cli 0.153.4-invalid..version',
+        stderr: '',
+        exitCode: 0,
+      }),
+    });
+    await expect(malformed.probe()).resolves.toMatchObject({
+      available: false,
+      executableVersion: 'unknown',
+      unavailableReason: 'Codex did not report a semantic version.',
+    });
+    await malformed.dispose();
+
+    const unsuccessful = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
+      resolveExecutable: async () => 'C:\\Tools\\codex.exe',
+      runCommand: async () => ({ stdout: 'codex-cli 0.153.4', stderr: 'version command failed', exitCode: 9 }),
+    });
+    await expect(unsuccessful.probe()).resolves.toMatchObject({
+      available: false,
+      executableVersion: 'unknown',
+      unavailableReason: 'version command failed',
+    });
+    await unsuccessful.dispose();
+  });
+
+  it('reports a missing Codex binary', async () => {
     const missingConnection = new FakeCodexConnection();
     const missing = new CodexProviderAdapter({
       connection: missingConnection,
@@ -290,6 +357,84 @@ describe('CodexProviderAdapter', () => {
       unavailableReason: 'codex was not found on PATH',
     });
     await missing.dispose();
+  });
+
+  it.each([
+    '0.152.2',
+    '0.153.4',
+    '1.0.0',
+    '0.153.4+dist.1',
+  ])('keeps compatible Codex %s available without a per-release allowlist', async (version) => {
+    const adapter = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
+      resolveExecutable: async () => 'C:\\Tools\\codex.exe',
+      runCommand: async () => ({ stdout: `codex-cli ${version}`, stderr: '', exitCode: 0 }),
+    });
+
+    await expect(adapter.probe()).resolves.toMatchObject({
+      available: true,
+      executableVersion: version,
+    });
+    expect(() => adapter.setLaunchDescriptor(launchDescriptor({ executableVersion: version })))
+      .not.toThrow();
+    await adapter.dispose();
+  });
+
+  it('fails closed for a future prerelease', async () => {
+    const version = '0.153.0-alpha.1';
+    const adapter = new CodexProviderAdapter({
+      connection: new FakeCodexConnection(),
+      resolveExecutable: async () => 'C:\\Tools\\codex.exe',
+      runCommand: async () => ({ stdout: `codex-cli ${version}`, stderr: '', exitCode: 0 }),
+    });
+
+    await expect(adapter.probe()).resolves.toMatchObject({
+      available: false,
+      executableVersion: version,
+      unavailableReason: `Codex ${version} is a prerelease; install stable Codex ${CODEX_APP_SERVER_BASELINE_VERSION} or newer.`,
+    });
+    expect(() => adapter.setLaunchDescriptor(launchDescriptor({ executableVersion: version })))
+      .toThrow(/incompatible/u);
+    await adapter.dispose();
+  });
+
+  it('keeps an approved Codex launch usable after a compatible in-place update', async () => {
+    const adapter = await launchPreflightAdapter(
+      async () => ({ stdout: 'codex-cli 0.153.4', stderr: '', exitCode: 0 }),
+    );
+
+    await expect(adapter.createSession(context())).resolves.toMatchObject({
+      providerSessionId: 'thread-1',
+    });
+    await adapter.dispose();
+  });
+
+  it.each([
+    {
+      condition: 'the installed version is below the minimum',
+      runCommand: async () => ({ stdout: 'codex-cli 0.152.0', stderr: '', exitCode: 0 }),
+      expectedMessage: `Codex 0.152.0 is older than the minimum supported ${CODEX_APP_SERVER_BASELINE_VERSION} app-server version. Update Codex, then try again.`,
+    },
+    {
+      condition: 'the version output is malformed',
+      runCommand: async () => ({ stdout: 'codex-cli 0.153.4-invalid..version', stderr: '', exitCode: 0 }),
+      expectedMessage: 'Codex version check returned no valid semantic version before launch. Reinstall or update Codex, then try again.',
+    },
+    {
+      condition: 'the version command fails',
+      runCommand: async () => ({ stdout: 'codex-cli 0.153.4', stderr: 'version command failed', exitCode: 9 }),
+      expectedMessage: 'Codex version check failed before launch (version command failed). Reinstall or update Codex, then try again.',
+    },
+    {
+      condition: 'the version command cannot start',
+      runCommand: async (): Promise<never> => { throw new Error('spawn failed'); },
+      expectedMessage: 'Codex version check failed before launch (spawn failed). Reinstall or update Codex, then try again.',
+    },
+  ])('fails launch closed with an actionable error when $condition', async ({ runCommand, expectedMessage }) => {
+    const adapter = await launchPreflightAdapter(runCommand);
+
+    await expect(adapter.createSession(context())).rejects.toThrow(expectedMessage);
+    await adapter.dispose();
   });
 
   it('lists and normalizes every visible model page with cursor-loop protection', async () => {
@@ -555,6 +700,37 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it.each([
+    ['null', null],
+    ['a scalar', 'updated'],
+    ['an array', []],
+  ])('does not mutate local settings when thread/settings/update returns %s', async (_label, result) => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/settings/update') return result;
+      throw new Error(`Unexpected request: ${method}`);
+    };
+
+    try {
+      await expect(adapter.setSettings({
+        sessionId: 'session-1',
+        providerSessionId: 'thread-1',
+        model: 'gpt-new',
+        permissionPreset: 'full-access',
+      })).rejects.toThrow(/thread\/settings\/update returned an invalid result/u);
+      await expect(adapter.setSettings({
+        sessionId: 'session-1',
+        providerSessionId: 'thread-1',
+      })).resolves.toMatchObject({
+        model: 'gpt-5.6-sol',
+        permissionPreset: 'standard',
+      });
+    } finally {
+      await adapter.dispose();
+    }
+  });
+
   it('queues an interrupt until turn identity arrives and sends it exactly once across notification and response', async () => {
     const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
     expect(connection.requests.filter((request) => request.method === 'turn/interrupt')).toEqual([]);
@@ -584,6 +760,34 @@ describe('CodexProviderAdapter', () => {
       expect.objectContaining({ params: { threadId: 'thread-1', turnId: 'provider-turn-1' } }),
     ]);
     await adapter.dispose();
+  });
+
+  it.each([
+    ['null', null],
+    ['a scalar', true],
+    ['an array', []],
+  ])('rejects an interrupt when turn/interrupt returns %s', async (_label, result) => {
+    const fixture = await pendingTurnFixture(async () => result);
+    const { adapter, interrupting, resolveTurnStart, submitting } = fixture;
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const interruptFailure = expect(interrupting).rejects.toThrow(
+      /turn\/interrupt returned an invalid result/u,
+    );
+
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+
+    try {
+      await submitting;
+      await interruptFailure;
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: 'provider-error',
+        code: 'turn-interrupt-failed',
+        message: expect.stringContaining('turn/interrupt returned an invalid result'),
+      }));
+    } finally {
+      await adapter.dispose();
+    }
   });
 
   it('settles a pending interrupt without dispatch when the provider completes first', async () => {

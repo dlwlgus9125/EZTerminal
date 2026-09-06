@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppI18nProvider } from '../../src/renderer/i18n';
 import type { DaemonSnapshot } from '../../src/shared/daemon-protocol';
-import { MobileDaemonNavigator } from './MobileDaemonNavigator';
+import {
+  MobileDaemonNavigator,
+  type MobileDaemonNavigatorLocation,
+} from './MobileDaemonNavigator';
 import type { DaemonRuntimeViewState } from './transport/ws-ezterminal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -46,14 +49,21 @@ function renderNavigator(
   options: {
     readonly onRetry?: () => void;
     readonly onSelectSession?: (sessionId: string) => void;
+    readonly onCreateSession?: (workspaceId: string) => void;
+    readonly initialLocation?: MobileDaemonNavigatorLocation;
+    readonly onLocationChange?: (location: MobileDaemonNavigatorLocation) => void;
+    readonly locale?: 'en' | 'ko';
   } = {},
 ): void {
   act(() => root.render(
-    <AppI18nProvider locale="en" languages={['en']}>
+    <AppI18nProvider locale={options.locale ?? 'en'} languages={[options.locale ?? 'en']}>
       <MobileDaemonNavigator
         state={state}
         onRetry={options.onRetry ?? (() => undefined)}
         onSelectSession={options.onSelectSession ?? (() => undefined)}
+        initialLocation={options.initialLocation}
+        onLocationChange={options.onLocationChange}
+        {...(options.onCreateSession ? { onCreateSession: options.onCreateSession } : {})}
       />
     </AppI18nProvider>,
   ));
@@ -121,6 +131,7 @@ describe('MobileDaemonNavigator', () => {
 
   it('navigates Project → Workspace → Session and emits the stable session id', () => {
     const onSelectSession = vi.fn();
+    const onCreateSession = vi.fn();
     const model = snapshot({
       projects: [{
         id: 'project-1',
@@ -175,7 +186,7 @@ describe('MobileDaemonNavigator', () => {
       }],
     });
 
-    renderNavigator({ status: 'ready', snapshot: model }, { onSelectSession });
+    renderNavigator({ status: 'ready', snapshot: model }, { onSelectSession, onCreateSession });
     act(() => buttonContaining('EZTerminal').click());
     expect(container.querySelector('[data-testid="mobile-daemon-revision"]')?.textContent).toContain('7');
     const workspaceRows = Array.from(container.querySelectorAll<HTMLElement>('[data-testid="mobile-daemon-workspace"]'));
@@ -183,6 +194,17 @@ describe('MobileDaemonNavigator', () => {
     expect(workspaceRows[1]?.dataset.workspaceKind).toBe('worktree');
 
     act(() => buttonContaining('Main checkout').click());
+    const createSession = container.querySelector<HTMLButtonElement>(
+      '[data-testid="mobile-daemon-create-session"]',
+    );
+    expect(createSession?.classList.contains('mob-icon-btn')).toBe(true);
+    expect(createSession?.classList.contains('mob-icon-btn--accent')).toBe(true);
+    expect(createSession?.getAttribute('aria-label')).toBe('New session: Main checkout');
+    expect(createSession?.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(container.querySelector('[aria-label="Back to workspaces"]')).not.toBeNull();
+    act(() => createSession?.click());
+    expect(onCreateSession).toHaveBeenCalledWith('workspace-main');
+
     const agent = container.querySelector<HTMLButtonElement>('[data-session-id="agent-session-1"]');
     const terminal = container.querySelector<HTMLButtonElement>('[data-session-id="terminal-session-1"]');
     expect(agent?.dataset.sessionKind).toBe('agent');
@@ -196,6 +218,7 @@ describe('MobileDaemonNavigator', () => {
 
   it('keeps archived Agents out of current sessions and opens them from concise history navigation', () => {
     const onSelectSession = vi.fn();
+    const onCreateSession = vi.fn();
     const model = snapshot({
       projects: [{
         id: 'project-1', name: 'EZTerminal', rootPath: 'C:\\Working\\EZTerminal', source: 'native',
@@ -225,7 +248,7 @@ describe('MobileDaemonNavigator', () => {
       }],
     });
 
-    renderNavigator({ status: 'ready', snapshot: model }, { onSelectSession });
+    renderNavigator({ status: 'ready', snapshot: model }, { onSelectSession, onCreateSession });
     expect(container.querySelector('[data-testid="mobile-daemon-archived"]')?.textContent)
       .toContain('Archived');
     act(() => buttonContaining('EZTerminal').click());
@@ -239,6 +262,7 @@ describe('MobileDaemonNavigator', () => {
     expect(container.querySelector('h2')?.textContent).toBe('Archived');
     act(() => buttonContaining('EZTerminal').click());
     act(() => buttonContaining('Main checkout').click());
+    expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')).toBeNull();
 
     const archived = container.querySelector<HTMLButtonElement>(
       '[data-session-id="failed-before-provider"]',
@@ -248,6 +272,80 @@ describe('MobileDaemonNavigator', () => {
     expect(container.querySelector('[data-session-id="active-agent"]')).toBeNull();
     act(() => archived!.click());
     expect(onSelectSession).toHaveBeenCalledWith('failed-before-provider');
+    expect(onCreateSession).not.toHaveBeenCalled();
+  });
+
+  it('localizes the create action and removes it when the active workspace becomes unavailable', () => {
+    const onCreateSession = vi.fn();
+    const model = snapshot({
+      projects: [{
+        id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1,
+        createdAt: NOW, updatedAt: NOW,
+      }],
+      workspaces: [{
+        id: 'workspace-main', projectId: 'project-1', name: 'Main checkout', kind: 'local',
+        rootPath: 'C:\\Working\\EZTerminal', revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+    });
+
+    renderNavigator(
+      { status: 'ready', snapshot: model },
+      { onCreateSession, locale: 'ko' },
+    );
+    act(() => buttonContaining('EZTerminal').click());
+    act(() => buttonContaining('Main checkout').click());
+    expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')?.getAttribute('aria-label'))
+      .toBe('새 세션: Main checkout');
+
+    renderNavigator(
+      { status: 'error', snapshot: model, error: 'connection-lost' },
+      { onCreateSession, locale: 'ko' },
+    );
+    expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')).toBeNull();
+    expect(onCreateSession).not.toHaveBeenCalled();
+  });
+
+  it('restores a saved Workspace drill-down after the navigator remounts', () => {
+    const model = snapshot({
+      projects: [{
+        id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1,
+        createdAt: NOW, updatedAt: NOW,
+      }],
+      workspaces: [{
+        id: 'workspace-main', projectId: 'project-1', name: 'Main checkout', kind: 'local',
+        rootPath: 'C:\\Working\\EZTerminal', revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+    });
+
+    renderNavigator({ status: 'ready', snapshot: model }, {
+      initialLocation: { projectId: 'project-1', workspaceId: 'workspace-main' },
+      onCreateSession: vi.fn(),
+    });
+
+    expect(container.querySelector('[aria-current="page"]')?.textContent).toBe('Main checkout');
+    expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')).not.toBeNull();
+  });
+
+  it('does not offer contextual creation from a stale recovering snapshot', () => {
+    const onCreateSession = vi.fn();
+    const model = snapshot({
+      projects: [{
+        id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1,
+        createdAt: NOW, updatedAt: NOW,
+      }],
+      workspaces: [{
+        id: 'workspace-main', projectId: 'project-1', name: 'Main checkout', kind: 'local',
+        rootPath: 'C:\\Working\\EZTerminal', revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+    });
+
+    renderNavigator({ status: 'recovering', snapshot: model, error: 'event-gap' }, {
+      onCreateSession,
+      initialLocation: { projectId: 'project-1', workspaceId: 'workspace-main' },
+    });
+
+    expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')).toBeNull();
+    expect(onCreateSession).not.toHaveBeenCalled();
   });
 
   it('keeps a stale projection visible while reporting event-gap recovery', () => {

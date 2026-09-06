@@ -178,6 +178,25 @@ detach 의미를 제공한다. child click은 기존 tab을 재사용하거나 �
 browser hosting, service 구성과 고위험 merge override는 Desktop-only이며 Mobile에서 불가능한 control을
 disabled affordance로 남기지 않는다.
 
+새 Agent의 첫 Send는 client에서도 복구 가능한 전송 경계다. Android는 exact idempotent
+`agent.create` 한 건을 Keystore-backed secure storage에 쓰고 동일 값 read-back을 확인한 뒤에만
+WebSocket으로 전송한다. 안전 저장소를 확인할 수 없으면 plaintext로 대체하지 않고 Agent 생성만
+fail closed하며 Terminal은 유지한다. 레코드와 secure-storage key는 인증에 사용된 bearer의
+domain-separated SHA-256 fingerprint별로 분리한다. raw bearer는 복구 레코드에 저장하지 않으며 다른
+Desktop authority에서 만든 command를 현재 연결로 재전송하지 않는다. 앱 재시작은 현재 인증 authority와
+일치하는 저장 command에서만 잠긴 draft를 재구성하고 fresh snapshot으로 기존 session을 먼저 대조한 뒤
+같은 command만 재전송한다. 일시적인 secure-storage 오류는 화면의 명시적 Retry로 다시 확인할 수 있고,
+현재 authority의 레코드가 영구적으로 손상되면 중복 가능성을 설명하는 확인 대화상자를 거친 명시적
+폐기만 허용한다. 암호문을 해독할 수 없는 경우에도 이 명시적 폐기는 먼저 복호화를 시도하지 않고 해당
+authority의 raw secure-storage key만 제거한다. definitively settled command만 자동으로 저장소에서 제거한다. Desktop은 첫 prompt를
+layout 파일에 넣지 않고 main-process memory-only renderer
+checkpoint에 exact command를 확인 저장한 뒤 전송한다. 미확정 create는 그 main process가 살아 있는 동안
+일반 renderer checkpoint TTL로 만료되지 않고 한 번만 복구되거나 명시적으로 clear된다. 미확정 command가
+있는 pane, quit-on-close 창, auxiliary window, workspace preset 교체는 복구 경로를 잃지 않도록 차단한다.
+명시적 앱 종료는 Cancel을 기본값으로 유지하면서 메모리 복구 정보의 폐기와 다음 실행의 중복 생성 위험을
+함께 경고한다. 메모리 checkpoint의 동시 미확정 create 상한은 64개이며, 상한을 넘는 새 create는 기존
+레코드를 잘라내지 않고 persistence와 daemon 전송 전에 fail closed한다.
+
 Desktop quit, daemon restart와 Android reconnect를 거쳐도 prompt가 중복 제출되거나 process가 orphan되지
 않아야 한다. 복구할 수 없는 turn은 성공이나 실행 중으로 가장하지 않고 interrupted 또는
 delivery-uncertain으로 표시한다. 명시적 Quit은 queued/working/blocked turn과 관련 schedule run을

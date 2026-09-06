@@ -4,7 +4,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ClaudeProviderEnablement, ProviderInspection } from '../shared/daemon-provider';
+import {
+  CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
+  type ClaudeProviderEnablement,
+  type ProviderInspection,
+  type ProviderProbeResult,
+} from '../shared/daemon-provider';
 import type {
   DaemonCommand,
   DaemonCommandReceipt,
@@ -13,7 +18,7 @@ import type {
 } from '../shared/daemon-protocol';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { AppI18nProvider } from './i18n';
-import { StructuredProviderSettings } from './StructuredProviderSettings';
+import { daemonProviderMatchesProbe, StructuredProviderSettings } from './StructuredProviderSettings';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -43,6 +48,10 @@ function inspection(
       argv: providerId === 'codex' ? ['app-server'] : ['--output-format', 'stream-json'],
       environmentVariableNames: providerId === 'codex' ? ['PATH'] : ['PATH', 'ANTHROPIC_API_KEY'],
       capabilities: ['create', 'resume', 'interrupt'],
+      ...(providerId === 'codex' ? {
+        authenticationState: 'first-launch' as const,
+        authenticationDetail: CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
+      } : {}),
       reviewNotices: providerId === 'claude' ? [{
         id: 'anthropic-commercial-terms',
         level: 'required',
@@ -192,6 +201,110 @@ afterEach(() => {
 });
 
 describe('StructuredProviderSettings', () => {
+  it('keeps an enabled Codex provider ready after a compatible in-place version update', () => {
+    const reviewedSource = inspection('codex', 'reviewed-0.152.1');
+    const reviewed = providerRecord({
+      ...reviewedSource,
+      probe: { ...reviewedSource.probe, executableVersion: '0.152.1' },
+    });
+    const currentSource = inspection('codex', 'current-0.153.4');
+    const current = {
+      ...currentSource,
+      probe: { ...currentSource.probe, executableVersion: '0.153.4' },
+    };
+
+    expect(daemonProviderMatchesProbe(reviewed, current.probe, current.reviewDigest)).toBe(true);
+  });
+
+  it('keeps the compatible Codex update in Ready UI without reopening review', async () => {
+    const reviewedSource = inspection('codex', 'reviewed-0.152.1');
+    const reviewed = providerRecord({
+      ...reviewedSource,
+      probe: { ...reviewedSource.probe, executableVersion: '0.152.1' },
+    });
+    const currentSource = inspection('codex', 'current-0.153.4');
+    const current = {
+      ...currentSource,
+      probe: { ...currentSource.probe, executableVersion: '0.153.4' },
+    };
+    renderSettings(capabilities({
+      inspect: async (providerId) => ({
+        ok: true,
+        value: providerId === 'codex' ? current : inspection('claude', 'claude'),
+      }),
+      getSnapshot: async () => snapshot(4, [reviewed]),
+    }));
+    await flush();
+
+    const card = container.querySelector('[data-testid="structured-provider-codex"]')!;
+    expect(card.textContent).toContain('Ready');
+    expect(card.querySelector<HTMLDetailsElement>('.structured-provider-review')?.open).toBe(false);
+    expect(card.querySelector('[data-testid="provider-enable-codex"]')).toBeNull();
+    expect(card.querySelector('[data-testid="provider-disable-codex"]')).not.toBeNull();
+  });
+
+  it('keeps Codex identity drift, one-field review drift, and Claude version updates stale', () => {
+    const reviewedSource = inspection('codex', 'reviewed-0.152.1');
+    const reviewed = providerRecord({
+      ...reviewedSource,
+      probe: { ...reviewedSource.probe, executableVersion: '0.152.1' },
+    });
+    const currentSource = inspection('codex', 'current-0.153.4');
+    const current = {
+      ...currentSource,
+      probe: { ...currentSource.probe, executableVersion: '0.153.4' },
+    };
+    const identityDrift = [
+      { ...current.probe, executablePath: 'C:\\Tools\\codex-next.exe' },
+      { ...current.probe, argv: [...current.probe.argv, '--changed'] },
+      { ...current.probe, environmentVariableNames: [...current.probe.environmentVariableNames, 'CODEX_HOME'] },
+      { ...current.probe, capabilities: [...current.probe.capabilities, 'model-change'] },
+      { ...current.probe, available: false },
+      { ...current.probe, authenticationState: 'verified' },
+      { ...current.probe, authenticationDetail: 'Authentication policy changed.' },
+      { ...current.probe, unavailableReason: 'Codex is unavailable.' },
+      {
+        ...current.probe,
+        reviewNotices: [{
+          id: 'codex-updated-review',
+          level: 'required' as const,
+          title: 'Updated review',
+          message: 'Review the updated provider terms.',
+        }],
+      },
+    ] satisfies readonly ProviderProbeResult[];
+
+    for (const probe of identityDrift) {
+      expect(daemonProviderMatchesProbe(reviewed, probe, current.reviewDigest)).toBe(false);
+    }
+    expect(daemonProviderMatchesProbe(
+      reviewed,
+      { ...reviewedSource.probe, executableVersion: '0.152.1' },
+      current.reviewDigest,
+    )).toBe(false);
+    expect(daemonProviderMatchesProbe(
+      reviewed,
+      current.probe,
+      reviewedSource.reviewDigest,
+    )).toBe(false);
+
+    const reviewedClaudeSource = inspection('claude', 'reviewed-claude', true);
+    const reviewedClaude = providerRecord({
+      ...reviewedClaudeSource,
+      probe: { ...reviewedClaudeSource.probe, executableVersion: '2.1.260' },
+    });
+    const currentClaudeSource = inspection('claude', 'current-claude', true);
+    const currentClaude = {
+      ...currentClaudeSource,
+      probe: { ...currentClaudeSource.probe, executableVersion: '2.1.261' },
+    };
+    expect(daemonProviderMatchesProbe(
+      reviewedClaude,
+      currentClaude.probe,
+      currentClaude.reviewDigest,
+    )).toBe(false);
+  });
+
   it('invalidates a digest-bound review when a fresh inspection changes identity', async () => {
     let codexChecks = 0;
     const inspect = vi.fn(async (providerId: string) => ({

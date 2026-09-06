@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [1.0.47] - 2026-09-06
+
+### Added
+
+- Added Android Agents **New session** entry points both globally and from an
+  active Workspace. The shared draft lets the user create either an Agent or a
+  Terminal while keeping archived and unavailable Workspace state read-only.
+- Added first-Send Agent creation that commits the initial prompt with the
+  Session in one daemon command, revalidates the selected Project, Workspace,
+  and provider from a fresh snapshot, and preserves the logical Session and
+  command identity when delivery cannot be confirmed.
+
+### Changed
+
+- Replaced the per-version Codex allowlist with a stable compatibility floor:
+  Codex `0.152.1` or newer patch, minor, and major releases remain eligible
+  without another version-only approval. Every app-server process launch still
+  performs a bounded version and executable-path preflight.
+- Kept provider enablement, authentication guidance, executable review, and
+  adapter trust in Desktop Settings. Android consumes the resulting provider
+  readiness and offers recovery guidance without duplicating host setup.
+
+### Security
+
+- Codex prereleases, versions below `0.152.1`, malformed or failed version
+  reports, executable path or identity changes, and app-server contract drift
+  continue to fail closed with actionable recovery instead of being accepted
+  by the open-ended stable version policy. Response envelopes now require an
+  exact request ID and one valid result/error branch, and initialization is not
+  accepted until its required identity fields are validated.
+- Bounded revision-conflict retries and idempotent delivery reconciliation
+  prevent stale Workspace selection or an uncertain mobile response from
+  creating a duplicate Agent Session.
+- Android verifies a Keystore-backed exact-command recovery record before each
+  first Send and has no plaintext fallback. The record and secure key are
+  namespaced by a SHA-256 fingerprint of the authenticated Desktop bearer, so
+  an uncertain command cannot cross authorities; transient storage errors can
+  be retried without disabling Terminal, while corrupt records require an
+  explicit duplicate-risk confirmation before raw per-key discard, even when
+  ciphertext cannot be decrypted. Desktop acknowledges a volatile
+  main-process checkpoint before delivery, retains an unconfirmed create for
+  that process lifetime, guards accidental close or layout replacement, and
+  adds recovery-discard and duplicate risk to the cancel-first Quit warning.
+
+Remote protocol v12 is unchanged. See
+[1.0.47 release notes](docs/release/release-notes-1.0.47.md).
+
 ## [1.0.46] - 2026-09-05
 
 ### Added

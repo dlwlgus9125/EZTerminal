@@ -6,7 +6,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileWorkspace } from './MobileWorkspace';
+import {
+  MobileAgentCreateRecoveryStore,
+  mobileAgentCreateAuthorityFingerprint,
+  type MobileAgentCreateRecoveryLoadResult,
+  type MobileAgentCreateRecoveryStoreLike,
+  type SecureStorageLike,
+} from './mobile-agent-create-recovery-store';
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './transport/ws-ezterminal';
+import type { DaemonSnapshot } from '../../src/shared/daemon-protocol';
 import { REMOTE_PROTOCOL_VERSION } from '../../src/shared/remote-protocol';
 
 // Silences React's "not configured to support act()" warning for this file's
@@ -57,26 +65,95 @@ class FakeSocket implements WsLike {
   }
 }
 
-function makeAuthedTransport(capabilities: readonly string[] = []): { transport: WsEzTerminalTransport; socket: FakeSocket } {
+function makeAuthedTransport(
+  capabilities: readonly string[] = [],
+  token = 'tok',
+  issuedToken?: string,
+): { transport: WsEzTerminalTransport; socket: FakeSocket } {
   let socket: FakeSocket;
   const createSocket: CreateSocket = () => {
     socket = new FakeSocket();
     return socket;
   };
-  const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
-  socket!.triggerMessage({ kind: 'auth-ok', capabilities });
+  const transport = new WsEzTerminalTransport({ url: 'ws://x', token, createSocket });
+  socket!.triggerMessage({ kind: 'auth-ok', capabilities, ...(issuedToken ? { issuedToken } : {}) });
   return { transport, socket: socket! };
+}
+
+class PersistentSecureStorage implements SecureStorageLike {
+  readonly values = new Map<string, string>();
+
+  async get({ key }: { key: string }): Promise<{ value: string }> {
+    const value = this.values.get(key);
+    if (value === undefined) throw new Error('missing secure value');
+    return { value };
+  }
+
+  async set({ key, value }: { key: string; value: string }): Promise<{ value: boolean }> {
+    this.values.set(key, value);
+    return { value: true };
+  }
+
+  async remove({ key }: { key: string }): Promise<{ value: boolean }> {
+    return { value: this.values.delete(key) };
+  }
+
+  async keys(): Promise<{ value: string[] }> {
+    return { value: [...this.values.keys()] };
+  }
+
+  async getPlatform(): Promise<{ value: string }> {
+    return { value: 'android' };
+  }
+}
+
+const DAEMON_NOW = '2026-09-06T00:00:00.000Z';
+
+function daemonSnapshot(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapshot {
+  return {
+    protocolVersion: 12,
+    revision: 1,
+    eventSequence: 1,
+    generatedAt: DAEMON_NOW,
+    runtime: {
+      keepRunning: false,
+      startAtLogin: false,
+      orchestrationToolsEnabled: true,
+      browserEnabled: false,
+    },
+    projects: [],
+    workspaces: [],
+    sessions: [],
+    agents: [],
+    agentRelations: [],
+    turns: [],
+    transcriptHeads: [],
+    approvals: [],
+    providers: [],
+    schedules: [],
+    heartbeats: [],
+    ...overrides,
+  };
 }
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-function renderWorkspace(transport: WsEzTerminalTransport): HTMLDivElement {
+function renderWorkspace(
+  transport: WsEzTerminalTransport,
+  agentCreateRecoveryStore?: MobileAgentCreateRecoveryStoreLike,
+): HTMLDivElement {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<MobileWorkspace transport={transport} onDisconnect={vi.fn()} />);
+    root!.render(
+      <MobileWorkspace
+        transport={transport}
+        onDisconnect={vi.fn()}
+        agentCreateRecoveryStore={agentCreateRecoveryStore}
+      />,
+    );
   });
   return container;
 }
@@ -85,6 +162,34 @@ function tap(el: HTMLElement, testId: string): void {
   const target = el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
   if (!target) throw new Error(`missing [data-testid="${testId}"]`);
   act(() => target.click());
+}
+
+function changeSelect(el: HTMLElement, testId: string, value: string): void {
+  const select = el.querySelector<HTMLSelectElement>(`[data-testid="${testId}"]`);
+  if (!select) throw new Error(`missing select [data-testid="${testId}"]`);
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+  act(() => {
+    setter.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+function fillTextarea(el: HTMLElement, testId: string, value: string): void {
+  const textarea = el.querySelector<HTMLTextAreaElement>(`[data-testid="${testId}"]`);
+  if (!textarea) throw new Error(`missing textarea [data-testid="${testId}"]`);
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+  act(() => {
+    setter.call(textarea, value);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function flushAsync(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 async function waitForTestId(
@@ -407,6 +512,334 @@ describe('MobileWorkspace — dead status subscription self-heals on availabilit
     });
 
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
+  });
+});
+
+describe('MobileWorkspace - durable Agent create recovery', () => {
+  it('binds recovery to the issued bearer after one-time pairing, never the spent code', async () => {
+    const issuedBearer = 'a'.repeat(64);
+    const { transport } = makeAuthedTransport([], 'ABCD-EFGH', issuedBearer);
+    const store: MobileAgentCreateRecoveryStoreLike = {
+      load: vi.fn(async (): Promise<MobileAgentCreateRecoveryLoadResult> => ({
+        available: true,
+        recovery: null,
+      })),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+    };
+
+    renderWorkspace(transport, store);
+    await flushAsync();
+
+    const issuedFingerprint = await mobileAgentCreateAuthorityFingerprint(issuedBearer);
+    const pairingFingerprint = await mobileAgentCreateAuthorityFingerprint('ABCD-EFGH');
+    expect(store.load).toHaveBeenCalledWith(issuedFingerprint);
+    expect(store.load).not.toHaveBeenCalledWith(pairingFingerprint);
+  });
+
+  it('rechecks a transient secure-storage failure from the inline retry action', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const authority = daemonSnapshot();
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    let loadCount = 0;
+    const store: MobileAgentCreateRecoveryStoreLike = {
+      load: vi.fn(async (): Promise<MobileAgentCreateRecoveryLoadResult> => {
+        loadCount += 1;
+        return loadCount === 1
+          ? { available: false, recovery: null, reason: 'storage-unavailable' }
+          : { available: true, recovery: null };
+      }),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+    };
+
+    const el = renderWorkspace(transport, store);
+    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    await flushAsync();
+    tap(el, 'shell-tab-agents');
+    await waitForTestId(el, 'mobile-agent-new-session');
+    tap(el, 'mobile-agent-new-session');
+    await waitForTestId(el, 'mobile-new-session-recovery-retry');
+
+    tap(el, 'mobile-new-session-recovery-retry');
+    await flushAsync();
+
+    expect(store.load).toHaveBeenCalledTimes(2);
+    expect(el.querySelector('[data-testid="mobile-new-session-recovery-status"]')).toBeNull();
+  });
+
+  it('discards only the authenticated host record after explicit confirmation', async () => {
+    const { transport, socket } = makeAuthedTransport([], 'desktop-corrupt-token');
+    const authority = daemonSnapshot();
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    const clear = vi.fn(async () => undefined);
+    const store: MobileAgentCreateRecoveryStoreLike = {
+      load: vi.fn(async (): Promise<MobileAgentCreateRecoveryLoadResult> => ({
+        available: false,
+        recovery: null,
+        reason: 'invalid-record',
+      })),
+      save: vi.fn(async () => undefined),
+      clear,
+    };
+
+    const el = renderWorkspace(transport, store);
+    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    await flushAsync();
+    tap(el, 'shell-tab-agents');
+    await waitForTestId(el, 'mobile-agent-new-session');
+    tap(el, 'mobile-agent-new-session');
+    await waitForTestId(el, 'mobile-new-session-recovery-discard');
+    tap(el, 'mobile-new-session-recovery-discard');
+    const confirm = await waitForTestId(document.body, 'mobile-new-session-recovery-discard-confirm');
+    act(() => confirm.click());
+    await flushAsync();
+
+    const expectedFingerprint = await mobileAgentCreateAuthorityFingerprint('desktop-corrupt-token');
+    expect(clear).toHaveBeenCalledWith(expectedFingerprint);
+    expect(el.querySelector('[data-testid="mobile-new-session-recovery-status"]')).toBeNull();
+  });
+
+  it('restores a persisted exact envelope after a full remount and retries it safely', async () => {
+    const secure = new PersistentSecureStorage();
+    const { transport, socket } = makeAuthedTransport();
+    const authority = daemonSnapshot({
+      revision: 51,
+      eventSequence: 51,
+      projects: [{
+        id: 'project-agent',
+        name: 'Mobile Agent Project',
+        source: 'native',
+        revision: 1,
+        createdAt: DAEMON_NOW,
+        updatedAt: DAEMON_NOW,
+      }],
+      workspaces: [{
+        id: 'workspace-agent',
+        projectId: 'project-agent',
+        name: 'Mobile Agent Workspace',
+        kind: 'local',
+        rootPath: '/workspace/agent',
+        revision: 1,
+        createdAt: DAEMON_NOW,
+        updatedAt: DAEMON_NOW,
+      }],
+      providers: [{
+        id: 'codex',
+        displayName: 'Codex',
+        protocol: 'codex-app-server',
+        executablePath: 'codex',
+        executableVersion: '0.153.4',
+        argv: [],
+        environmentVariableNames: [],
+        capabilities: ['model:gpt-5.6'],
+        enabled: true,
+        health: 'ready',
+        revision: 1,
+        createdAt: DAEMON_NOW,
+        updatedAt: DAEMON_NOW,
+      }],
+    });
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    let sendCount = 0;
+    const send = vi.spyOn(transport, 'sendDaemonCommand').mockImplementation(async (command) => {
+      sendCount += 1;
+      return sendCount === 1 ? {
+        ok: false as const,
+        status: 'delivery-uncertain' as const,
+        commandId: command.commandId,
+        revision: authority.revision,
+        error: {
+          code: 'delivery-uncertain' as const,
+          message: 'Connection closed before acknowledgement.',
+          retryable: true,
+        },
+      } : {
+        ok: true as const,
+        status: 'replayed' as const,
+        commandId: command.commandId,
+        revision: authority.revision + 1,
+        eventSequence: authority.eventSequence + 1,
+      };
+    });
+
+    let el = renderWorkspace(transport, new MobileAgentCreateRecoveryStore(secure));
+    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    tap(el, 'shell-tab-agents');
+    await waitForTestId(el, 'mobile-agent-new-session');
+    tap(el, 'mobile-agent-new-session');
+    await waitForTestId(el, 'mobile-new-session-draft');
+    changeSelect(el, 'mobile-new-session-project', 'project-agent');
+    changeSelect(el, 'mobile-new-session-workspace', 'workspace-agent');
+    fillTextarea(el, 'structured-agent-first-prompt', 'Resume this exact persisted Agent create.');
+    tap(el, 'structured-agent-create');
+    await flushAsync();
+
+    expect(send).toHaveBeenCalledOnce();
+    const originalCommand = send.mock.calls[0]![0];
+    expect(originalCommand.type).toBe('agent.create');
+    expect(secure.values.size).toBe(1);
+    await waitForTestId(el, 'mobile-new-session-delivery-recovery');
+
+    act(() => root!.unmount());
+    root = null;
+    container!.remove();
+    container = null;
+
+    const { transport: otherTransport, socket: otherSocket } = makeAuthedTransport([], 'desktop-b-token');
+    vi.spyOn(otherTransport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    const otherSend = vi.spyOn(otherTransport, 'sendDaemonCommand');
+    el = renderWorkspace(otherTransport, new MobileAgentCreateRecoveryStore(secure));
+    act(() => otherSocket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    await flushAsync();
+
+    expect(el.querySelector('[data-testid="mobile-new-session-draft"]')).toBeNull();
+    expect(otherSend).not.toHaveBeenCalled();
+    expect(secure.values.size).toBe(1);
+
+    act(() => root!.unmount());
+    root = null;
+    container!.remove();
+    container = null;
+
+    const remountedStore = new MobileAgentCreateRecoveryStore(secure);
+    const loadPersistedRecovery = remountedStore.load.bind(remountedStore);
+    let loadedCommand: unknown;
+    vi.spyOn(remountedStore, 'load').mockImplementation(async (authorityFingerprint) => {
+      const result = await loadPersistedRecovery(authorityFingerprint);
+      loadedCommand = result.recovery?.outcome.command;
+      return result;
+    });
+    el = renderWorkspace(transport, remountedStore);
+    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    await waitForTestId(el, 'mobile-new-session-draft');
+
+    expect(el.querySelector('[data-testid="mobile-new-session-locked-workspace"]')?.textContent)
+      .toContain('Mobile Agent Project · Mobile Agent Workspace');
+    expect(el.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')?.value)
+      .toBe('Resume this exact persisted Agent create.');
+
+    tap(el, 'structured-agent-create');
+    await flushAsync();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const replayedCommand = send.mock.calls[1]![0];
+    expect(replayedCommand).toBe(loadedCommand);
+    expect(replayedCommand).toStrictEqual(originalCommand);
+    expect(replayedCommand.commandId).toBe(originalCommand.commandId);
+    expect(replayedCommand.idempotencyKey).toBe(originalCommand.idempotencyKey);
+    if (originalCommand.type !== 'agent.create' || replayedCommand.type !== 'agent.create') {
+      throw new Error('Expected the persisted agent.create envelope to be replayed.');
+    }
+    expect(replayedCommand.payload.sessionId).toBe(originalCommand.payload.sessionId);
+    expect(secure.values.size).toBe(0);
+    expect(el.querySelector('[data-testid="mobile-structured-agent-session"]')).toBeTruthy();
+  });
+});
+
+describe('MobileWorkspace - daemon Workspace terminal creation', () => {
+  const project = {
+    id: 'project-1',
+    name: 'EZTerminal',
+    source: 'native',
+    revision: 1,
+    createdAt: DAEMON_NOW,
+    updatedAt: DAEMON_NOW,
+  } as const;
+  const staleWorkspace = {
+    id: 'workspace-main',
+    projectId: project.id,
+    name: 'Main checkout',
+    kind: 'local',
+    rootPath: '/stale/root',
+    revision: 1,
+    createdAt: DAEMON_NOW,
+    updatedAt: DAEMON_NOW,
+  } as const;
+
+  async function openWorkspaceTerminalAction(
+    el: HTMLDivElement,
+    socket: FakeSocket,
+  ): Promise<HTMLButtonElement> {
+    act(() => {
+      socket.triggerMessage({
+        kind: 'daemon-snapshot',
+        snapshot: daemonSnapshot({ projects: [project], workspaces: [staleWorkspace] }),
+      });
+    });
+    tap(el, 'shell-tab-agents');
+    await waitForTestId(el, 'mobile-daemon-navigator');
+    tap(el, 'mobile-daemon-project');
+    tap(el, 'mobile-daemon-workspace');
+    tap(el, 'mobile-daemon-create-session');
+    await waitForTestId(el, 'mobile-new-session-draft');
+    tap(el, 'mobile-new-session-terminal');
+    return waitForTestId(el, 'mobile-new-session-open-terminal') as Promise<HTMLButtonElement>;
+  }
+
+  it('revalidates against a fresh daemon snapshot and owns the new Terminal surface', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
+    const authoritativeWorkspace = {
+      ...staleWorkspace,
+      rootPath: '/authoritative/root',
+      revision: 2,
+      updatedAt: '2026-09-06T00:01:00.000Z',
+    } as const;
+    const refresh = vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(daemonSnapshot({
+      revision: 2,
+      eventSequence: 2,
+      projects: [project],
+      workspaces: [authoritativeWorkspace],
+    }));
+    const open = vi.spyOn(transport, 'openSessionSurface').mockImplementation(async (surfaceId) => ({
+      ok: true,
+      binding: {
+        surfaceId,
+        bindingId: 'binding-workspace-create',
+        session: { sessionId: 'session-workspace-create', cwd: authoritativeWorkspace.rootPath },
+        role: 'owner',
+      },
+    }));
+    const el = renderWorkspace(transport);
+    const openTerminal = await openWorkspaceTerminalAction(el, socket);
+
+    await act(async () => {
+      openTerminal.click();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(
+      expect.stringMatching(/^mobile-tab:/),
+      { kind: 'create', cwd: authoritativeWorkspace.rootPath },
+    );
+    expect(el.querySelector('[data-testid="mobile-session-view"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
+  });
+
+  it('does not create a surface when the authoritative Project has been archived', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(daemonSnapshot({
+      revision: 2,
+      eventSequence: 2,
+      projects: [{ ...project, archivedAt: '2026-09-06T00:01:00.000Z' }],
+      workspaces: [staleWorkspace],
+    }));
+    const open = vi.spyOn(transport, 'openSessionSurface');
+    const el = renderWorkspace(transport);
+    const openTerminal = await openWorkspaceTerminalAction(el, socket);
+
+    await act(async () => {
+      openTerminal.click();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(el.querySelector('[data-testid="mobile-new-session-draft"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-new-session-locked-workspace"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-new-session-terminal-panel"] [role="alert"]')?.textContent)
+      .toContain('This Workspace is no longer available.');
   });
 });
 

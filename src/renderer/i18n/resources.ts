@@ -135,6 +135,8 @@ export const appResources = {
         terminalStateChangedTitle: 'Terminal state changed',
         terminalStateChangedDescription:
           'The workspace was not replaced because one or more terminal sessions could not be verified. Review the active terminals and try again.',
+        agentCreateRecoveryBlocked:
+          'Agent creation is still being confirmed. Retry Send before closing or replacing this workspace.',
         applyPresetTitle: 'Apply preset “{{name}}”?',
         replaceWorkspaceDescription: 'The current workspace layout will be replaced.',
         applyPreset: 'Apply preset',
@@ -2202,6 +2204,8 @@ export const appResources = {
         terminalStateChangedTitle: '터미널 상태가 변경됨',
         terminalStateChangedDescription:
           '하나 이상의 터미널 세션을 확인할 수 없어 작업 공간을 교체하지 않았습니다. 활성 터미널을 검토한 후 다시 시도하세요.',
+        agentCreateRecoveryBlocked:
+          'Agent 생성 전송을 아직 확인 중입니다. 탭을 닫거나 작업 공간을 바꾸기 전에 Send를 다시 시도하세요.',
         applyPresetTitle: '프리셋 “{{name}}”을 적용하시겠습니까?',
         replaceWorkspaceDescription: '현재 작업 공간 레이아웃이 교체됩니다.',
         applyPreset: '프리셋 적용',

@@ -313,13 +313,22 @@ export interface StructuredAgentDraftPanelProps {
   readonly initialProviderId?: string;
   readonly initialModel?: string;
   readonly initialWorkspaceId?: string;
+  /** Optional controlled Workspace selection for a parent-owned session draft. */
+  readonly selectedWorkspaceId?: string;
+  readonly onWorkspaceChange?: (workspaceId: string) => void;
+  /** The parent renders the shared location control while this form keeps validation ownership. */
+  readonly hideWorkspaceField?: boolean;
   readonly initialPermissionPreset?: PermissionPreset;
   readonly initialPrompt?: string;
+  /** Locks submitted values while Send reconciles an uncertain delivery. */
+  readonly deliveryRecovery?: boolean;
   readonly loading?: boolean;
   readonly loadError?: string | null;
   readonly onRetry?: () => void;
   readonly onCreate: (input: StructuredAgentDraftInput) => Promise<StructuredAgentUiResult>;
   readonly variant?: 'desktop' | 'mobile';
+  /** Omits the standalone title when composed inside a broader New Session surface. */
+  readonly embedded?: boolean;
 }
 
 export function StructuredAgentDraftPanel({
@@ -328,22 +337,31 @@ export function StructuredAgentDraftPanel({
   initialProviderId,
   initialModel = '',
   initialWorkspaceId,
+  selectedWorkspaceId,
+  onWorkspaceChange,
+  hideWorkspaceField = false,
   initialPermissionPreset = 'standard',
   initialPrompt = '',
+  deliveryRecovery = false,
   loading = false,
   loadError = null,
   onRetry,
   onCreate,
   variant = 'desktop',
+  embedded = false,
 }: StructuredAgentDraftPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const promptId = useId();
   const draftTitleId = useId();
   const permissionName = useId();
   const firstProvider = providers.find((provider) => !provider.disabled)?.id ?? '';
+  const hasReadyProvider = firstProvider.length > 0;
   const [providerId, setProviderId] = useState(initialProviderId ?? firstProvider);
   const [model, setModel] = useState(initialModel);
-  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId ?? workspaces[0]?.id ?? '');
+  const [internalWorkspaceId, setInternalWorkspaceId] = useState(
+    initialWorkspaceId ?? workspaces[0]?.id ?? '',
+  );
+  const workspaceId = selectedWorkspaceId ?? internalWorkspaceId;
   const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(initialPermissionPreset);
   const [prompt, setPrompt] = useState(initialPrompt);
   const [attempted, setAttempted] = useState(false);
@@ -351,26 +369,63 @@ export function StructuredAgentDraftPanel({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const models = selectedProvider?.models ?? [];
+  const hasUsableProvider = deliveryRecovery ? providerId.length > 0 : hasReadyProvider;
+  const hasUsableWorkspace = deliveryRecovery
+    ? workspaceId.length > 0
+    : workspaces.length > 0 && workspaceId.length > 0;
+  const unavailableProviderDetail = !hasReadyProvider && providers.length > 0
+    ? providers
+      .filter((provider) => provider.disabled)
+      .map((provider) => provider.description
+        ? `${provider.label}: ${provider.description}`
+        : provider.label)
+      .join(' · ')
+    : undefined;
+
+  const selectWorkspace = (nextWorkspaceId: string): void => {
+    if (selectedWorkspaceId === undefined) setInternalWorkspaceId(nextWorkspaceId);
+    onWorkspaceChange?.(nextWorkspaceId);
+    setSubmitError(null);
+  };
 
   useEffect(() => {
+    if (deliveryRecovery) return;
     if (firstProvider && !providers.some((provider) => provider.id === providerId && !provider.disabled)) {
       setProviderId(firstProvider);
       setModel('');
     }
-  }, [firstProvider, providerId, providers]);
+  }, [deliveryRecovery, firstProvider, providerId, providers]);
 
   useEffect(() => {
+    if (!deliveryRecovery) return;
+    setProviderId(initialProviderId ?? '');
+    setModel(initialModel);
+    if (selectedWorkspaceId === undefined) setInternalWorkspaceId(initialWorkspaceId ?? '');
+    setPermissionPreset(initialPermissionPreset);
+    setPrompt(initialPrompt);
+  }, [
+    deliveryRecovery,
+    initialModel,
+    initialPermissionPreset,
+    initialPrompt,
+    initialProviderId,
+    initialWorkspaceId,
+    selectedWorkspaceId,
+  ]);
+
+  useEffect(() => {
+    if (selectedWorkspaceId !== undefined) return;
     const preferred = initialWorkspaceId
       ? workspaces.find((workspace) => workspace.id === initialWorkspaceId)
       : undefined;
     if (!workspaceId && preferred) {
-      setWorkspaceId(preferred.id);
+      setInternalWorkspaceId(preferred.id);
       return;
     }
     if (workspaces[0] && !workspaces.some((workspace) => workspace.id === workspaceId)) {
-      setWorkspaceId(preferred?.id ?? workspaces[0].id);
+      setInternalWorkspaceId(preferred?.id ?? workspaces[0].id);
     }
-  }, [initialWorkspaceId, workspaceId, workspaces]);
+  }, [initialWorkspaceId, selectedWorkspaceId, workspaceId, workspaces]);
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -397,14 +452,19 @@ export function StructuredAgentDraftPanel({
     <section
       className="structured-agent structured-agent--draft"
       data-variant={variant}
+      data-embedded={embedded || undefined}
       data-testid="structured-agent-draft"
-      aria-labelledby={draftTitleId}
+      {...(embedded
+        ? { 'aria-label': copy.newSession }
+        : { 'aria-labelledby': draftTitleId })}
     >
-      <header className="structured-agent__draft-header">
-        <span className="structured-agent__eyebrow">{copy.draftEyebrow}</span>
-        <h1 id={draftTitleId}>{copy.newSession}</h1>
-        <p>{copy.draftDescription}</p>
-      </header>
+      {!embedded && (
+        <header className="structured-agent__draft-header">
+          <span className="structured-agent__eyebrow">{copy.draftEyebrow}</span>
+          <h1 id={draftTitleId}>{copy.newSession}</h1>
+          <p>{copy.draftDescription}</p>
+        </header>
+      )}
 
       {loadError && (
         <div className="structured-agent__banner structured-agent__banner--error" role="alert">
@@ -418,12 +478,13 @@ export function StructuredAgentDraftPanel({
         <div className="structured-agent-draft-form__grid">
           <Field
             label={copy.provider}
+            description={selectedProvider?.description ?? unavailableProviderDetail}
             required
             error={attempted && !providerId ? copy.required : undefined}
           >
             <Select
               value={providerId}
-              disabled={loading || submitting || providers.length === 0}
+              disabled={loading || submitting || deliveryRecovery || !hasReadyProvider}
               onChange={(event) => {
                 setProviderId(event.currentTarget.value);
                 setModel('');
@@ -432,6 +493,9 @@ export function StructuredAgentDraftPanel({
               data-testid="structured-agent-provider"
             >
               <option value="">{providers.length === 0 ? copy.noProviders : copy.provider}</option>
+              {deliveryRecovery && providerId && !providers.some((provider) => provider.id === providerId) && (
+                <option value={providerId}>{providerId}</option>
+              )}
               {providers.map((provider) => (
                 <option key={provider.id} value={provider.id} disabled={provider.disabled}>
                   {provider.label}
@@ -443,7 +507,7 @@ export function StructuredAgentDraftPanel({
           <Field label={copy.model}>
             <Select
               value={model}
-              disabled={loading || submitting || !providerId}
+              disabled={loading || submitting || deliveryRecovery || !providerId}
               onChange={(event) => {
                 setModel(event.currentTarget.value);
                 setSubmitError(null);
@@ -451,37 +515,42 @@ export function StructuredAgentDraftPanel({
               data-testid="structured-agent-model"
             >
               <option value="">{copy.providerDefault}</option>
+              {deliveryRecovery && model && !models.some((option) => option.id === model) && (
+                <option value={model}>{model}</option>
+              )}
               {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
             </Select>
           </Field>
 
-          <Field
-            className="structured-agent-draft-form__workspace"
-            label={copy.workspace}
-            description={copy.workspaceHint}
-            required
-            error={attempted && !workspaceId ? copy.required : undefined}
-          >
-            <Select
-              value={workspaceId}
-              disabled={loading || submitting || workspaces.length === 0}
-              onChange={(event) => {
-                setWorkspaceId(event.currentTarget.value);
-                setSubmitError(null);
-              }}
-              data-testid="structured-agent-workspace"
+          {!hideWorkspaceField && (
+            <Field
+              className="structured-agent-draft-form__workspace"
+              label={copy.workspace}
+              description={copy.workspaceHint}
+              required
+              error={attempted && !workspaceId ? copy.required : undefined}
             >
-              <option value="">{workspaces.length === 0 ? copy.noWorkspaces : copy.workspace}</option>
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}
-                </option>
-              ))}
-            </Select>
-          </Field>
+              <Select
+                value={workspaceId}
+                disabled={loading || submitting || deliveryRecovery || workspaces.length === 0}
+                onChange={(event) => selectWorkspace(event.currentTarget.value)}
+                data-testid="structured-agent-workspace"
+              >
+                <option value="">{workspaces.length === 0 ? copy.noWorkspaces : copy.workspace}</option>
+                {deliveryRecovery && workspaceId && !workspaces.some((workspace) => workspace.id === workspaceId) && (
+                  <option value={workspaceId}>{workspaceId}</option>
+                )}
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
         </div>
 
-        <fieldset className="structured-agent-permissions" disabled={loading || submitting}>
+        <fieldset className="structured-agent-permissions" disabled={loading || submitting || deliveryRecovery}>
           <legend>{copy.permission}</legend>
           <div className="structured-agent-permissions__grid">
             {PERMISSION_ORDER.map((preset) => {
@@ -526,7 +595,7 @@ export function StructuredAgentDraftPanel({
             maxLength={65_536}
             value={prompt}
             placeholder={copy.firstPromptPlaceholder}
-            disabled={loading || submitting}
+            disabled={loading || submitting || deliveryRecovery}
             onChange={(event) => {
               setPrompt(event.currentTarget.value);
               setSubmitError(null);
@@ -543,7 +612,7 @@ export function StructuredAgentDraftPanel({
             size="lg"
             loading={submitting}
             loadingLabel={copy.creating}
-            disabled={loading || providers.length === 0 || workspaces.length === 0}
+            disabled={loading || !hasUsableProvider || !hasUsableWorkspace}
             leadingIcon={<Send />}
             data-testid="structured-agent-create"
           >

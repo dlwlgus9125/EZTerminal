@@ -1984,9 +1984,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
-  /** Commands are never replayed by the mobile client. The daemon's command
-   * idempotency key owns de-duplication; a dropped connection yields an
-   * explicit delivery-uncertain receipt for the original command id. */
+  /** The transport never replays commands automatically. The daemon's command
+   * idempotency key owns de-duplication; after a delivery-uncertain receipt a
+   * caller may explicitly resend the exact original envelope to reconcile it. */
   sendDaemonCommand(command: DaemonCommand): Promise<DaemonCommandReceipt> {
     if (this.daemonRuntimeState.availability?.state === 'legacy-only-safe-mode') {
       return Promise.resolve({

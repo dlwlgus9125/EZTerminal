@@ -33,6 +33,7 @@ export default defineConfig({
       '@tanstack/react-table',
       '@tanstack/react-virtual',
       'ansi_up',
+      'capacitor-secure-storage-plugin',
     ],
   },
   test: {

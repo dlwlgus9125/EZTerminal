@@ -1,5 +1,5 @@
-﻿import { Bot, Check, ChevronLeft } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Check, Plus } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentActivity,
@@ -36,7 +36,20 @@ import { useGitBranches } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { AgentFollowupComposer } from '../../src/renderer/AgentFollowupComposer';
 import { AgentRelativeAge } from '../../src/renderer/AgentTime';
-import { StructuredAgentChildTrack } from '../../src/renderer/StructuredAgentSession';
+import {
+  StructuredAgentChildTrack,
+  type StructuredAgentDraftInput,
+  type StructuredAgentUiResult,
+  type StructuredAgentWorkspaceOption,
+} from '../../src/renderer/StructuredAgentSession';
+import {
+  createStructuredAgentSession,
+  structuredAgentProviderOptions,
+  structuredAgentWorkspaceOptions,
+  type StructuredAgentCreateAccess,
+  type StructuredAgentCreateOutcome,
+} from '../../src/renderer/structured-agent-create';
+import { IconButton } from '../../src/renderer/ui';
 import {
   createDaemonCommand,
   type DaemonCommand,
@@ -48,14 +61,29 @@ import { isDaemonSessionArchived } from '../../src/shared/daemon-session-visibil
 import { MobileActionSheet } from './MobileActionSheet';
 import {
   MobileDaemonNavigator,
+  type MobileDaemonNavigatorLocation,
   type MobileDaemonNavigatorVisibility,
 } from './MobileDaemonNavigator';
+import { MobileNewSessionDraft } from './MobileNewSessionDraft';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
+import { MobilePageHeader } from './MobilePageHeader';
 import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
 import { useMobileToast } from './MobileToast';
 import type {
   DaemonRuntimeViewState,
   WsEzTerminalTransport,
 } from './transport/ws-ezterminal';
+import type {
+  MobileWorkspaceTerminalFailureReason,
+  MobileWorkspaceTerminalResult,
+} from './workspace-terminal';
+import {
+  mobileAgentCreateRecoveryFromCommand,
+  type MobileAgentCreateRecoveryController,
+  type UncertainAgentCreate,
+} from './mobile-agent-create-recovery-store';
+
+export type { UncertainAgentCreate } from './mobile-agent-create-recovery-store';
 
 /** Used when the host predates the Git arms; every card then shows its cwd. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
@@ -85,6 +113,76 @@ const EMPTY_STRUCTURED_TRANSCRIPTS: Readonly<Record<string, readonly DaemonTrans
 const EMPTY_TRANSCRIPT: readonly DaemonTranscriptItem[] = [];
 const TRANSCRIPT_PAGE_SIZE = 500;
 const TRANSCRIPT_PAGES_PER_YIELD = 10;
+
+interface MobileNewSessionTarget {
+  readonly workspaceId?: string;
+}
+
+interface PendingCreatedAgent {
+  readonly sessionId: string;
+  readonly commandId: string;
+  readonly title: string;
+  readonly input: StructuredAgentDraftInput;
+  readonly projectId: string;
+  readonly workspace: StructuredAgentWorkspaceOption;
+  readonly providerLabel: string;
+  readonly localItem: DaemonTranscriptItem;
+}
+
+const CREATE_FAILURE_COPY = {
+  en: {
+    'invalid-prompt': 'Enter a first prompt before creating the Agent session.',
+    'daemon-unavailable': 'The Agent service is unavailable. Reconnect and try again.',
+    'recovery-unavailable': 'Secure Agent recovery storage is unavailable. Agent creation is disabled to prevent a duplicate session. Terminal creation remains available.',
+    'provider-not-ready': 'The selected Agent provider is not ready. Finish setup on Desktop and try again.',
+    'workspace-unavailable': 'The selected Workspace is no longer available. Refresh and choose an active Workspace.',
+    'command-rejected': 'The Agent session could not be created. Refresh the Desktop state and try again.',
+  },
+  ko: {
+    'invalid-prompt': 'Agent 세션을 만들려면 첫 프롬프트를 입력하세요.',
+    'daemon-unavailable': 'Agent 서비스에 연결할 수 없습니다. 다시 연결한 뒤 시도하세요.',
+    'recovery-unavailable': '안전한 Agent 복구 저장소를 사용할 수 없습니다. 중복 세션 생성을 막기 위해 Agent 생성이 비활성화되었습니다. Terminal 생성은 계속 사용할 수 있습니다.',
+    'provider-not-ready': '선택한 Agent Provider를 사용할 수 없습니다. Desktop에서 설정을 마친 뒤 다시 시도하세요.',
+    'workspace-unavailable': '선택한 Workspace를 더 이상 사용할 수 없습니다. 새로 고친 뒤 활성 Workspace를 선택하세요.',
+    'command-rejected': 'Agent 세션을 만들지 못했습니다. Desktop 상태를 새로 고친 뒤 다시 시도하세요.',
+  },
+} as const;
+
+const SECURE_RECOVERY_FAILURE_COPY = {
+  en: 'Secure Agent recovery storage is unavailable. Agent creation is disabled to prevent a duplicate session. Terminal creation remains available.',
+  ko: '안전한 Agent 복구 저장소를 사용할 수 없습니다. 중복 세션 생성을 막기 위해 Agent 생성이 비활성화되었습니다. Terminal 생성은 계속 사용할 수 있습니다.',
+} as const;
+
+const TERMINAL_FAILURE_COPY: Readonly<Record<
+  'en' | 'ko',
+  Readonly<Record<MobileWorkspaceTerminalFailureReason, string>>
+>> = {
+  en: {
+    'authority-refresh-failed': 'Could not refresh the Desktop Workspace state. Reconnect and try again.',
+    'authority-unavailable': 'The Desktop Workspace state is unavailable. Reconnect and try again.',
+    'workspace-unavailable': 'This Workspace is no longer available. Refresh Agents and choose an active Workspace.',
+    'workspace-root-unavailable': 'This Workspace has no runnable directory. Open it on Desktop and try again.',
+    'surface-open-failed': 'Could not open a Terminal for this Workspace.',
+  },
+  ko: {
+    'authority-refresh-failed': 'Desktop의 Workspace 상태를 새로 고치지 못했습니다. 다시 연결한 뒤 시도하세요.',
+    'authority-unavailable': 'Desktop의 Workspace 상태를 사용할 수 없습니다. 다시 연결한 뒤 시도하세요.',
+    'workspace-unavailable': '이 Workspace를 더 이상 사용할 수 없습니다. Agents를 새로 고친 뒤 활성 Workspace를 선택하세요.',
+    'workspace-root-unavailable': '이 Workspace에는 실행할 수 있는 디렉터리가 없습니다. Desktop에서 연 뒤 다시 시도하세요.',
+    'surface-open-failed': '이 Workspace의 Terminal을 열지 못했습니다.',
+  },
+};
+
+function sameStructuredAgentDraft(
+  left: StructuredAgentDraftInput,
+  right: StructuredAgentDraftInput,
+): boolean {
+  return left.providerId === right.providerId
+    && left.model === right.model
+    && left.workspaceId === right.workspaceId
+    && left.permissionPreset === right.permissionPreset
+    && left.initialPrompt.trim() === right.initialPrompt.trim();
+}
 
 function mergeTranscriptPages(
   current: readonly DaemonTranscriptItem[],
@@ -186,9 +284,11 @@ export function MobileAgentView({
   onDecideApproval,
   onLoadDiff,
   onReadGitStatus,
+  onCreateWorkspaceTerminal,
   transport,
   daemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
   structuredTranscripts = EMPTY_STRUCTURED_TRANSCRIPTS,
+  agentCreateRecovery,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
@@ -207,13 +307,19 @@ export function MobileAgentView({
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   readonly onResumeHistory?: (bootstrap: AgentResumeBootstrap) => Promise<void>;
   readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
+  readonly onCreateWorkspaceTerminal?: (workspaceId: string) => Promise<MobileWorkspaceTerminalResult>;
   readonly transport?: WsEzTerminalTransport;
   readonly daemonRuntimeState?: DaemonRuntimeViewState;
   /** Optional transcript seed used by tests and hosts that already own a page cache. */
   readonly structuredTranscripts?: Readonly<Record<string, readonly DaemonTranscriptItem[]>>;
+  /** Workspace-owned durable recovery boundary. Missing controllers fail Agent creation closed. */
+  readonly agentCreateRecovery?: MobileAgentCreateRecoveryController;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
+  const navigation = useMobileNavigationHistory();
+  const detailLayerId = `mobile-agent-detail-${useId()}`;
+  const newSessionButtonRef = useRef<HTMLButtonElement>(null);
   const [filter, setFilter] = useState<AgentFilter>('all');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
@@ -223,8 +329,16 @@ export function MobileAgentView({
   const [overrideReason, setOverrideReason] = useState('');
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(null);
+  const [newSessionTarget, setNewSessionTarget] = useState<MobileNewSessionTarget | null>(null);
+  const [pendingCreatedAgent, setPendingCreatedAgent] = useState<PendingCreatedAgent | null>(null);
+  const [preparedAgentCreate, setPreparedAgentCreate] = useState<UncertainAgentCreate | null>(
+    agentCreateRecovery?.recovery ?? null,
+  );
+  const uncertainAgentCreate = preparedAgentCreate ?? agentCreateRecovery?.recovery ?? null;
   const [daemonNavigatorVisibility, setDaemonNavigatorVisibility]
     = useState<MobileDaemonNavigatorVisibility>('active');
+  const [daemonNavigatorLocation, setDaemonNavigatorLocation]
+    = useState<MobileDaemonNavigatorLocation>({ projectId: null, workspaceId: null });
   const [loadedTranscriptSessionId, setLoadedTranscriptSessionId] = useState<string | null>(null);
   const [authoritativeTranscript, setAuthoritativeTranscript] = useState<readonly DaemonTranscriptItem[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -239,6 +353,11 @@ export function MobileAgentView({
   const transcriptItemsRef = useRef<readonly DaemonTranscriptItem[]>([]);
   const handledGapRef = useRef<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const language: 'en' | 'ko' = locale.startsWith('ko') ? 'ko' : 'en';
+
+  useEffect(() => {
+    setPreparedAgentCreate(agentCreateRecovery?.recovery ?? null);
+  }, [agentCreateRecovery?.recovery]);
   const workerActivityIds = useMemo(
     () => orchestrationWorkerActivityIds(orchestrationSnapshot),
     [orchestrationSnapshot],
@@ -256,9 +375,16 @@ export function MobileAgentView({
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
-  const selectedTranscriptSeed = selectedDaemonSessionId
-    ? structuredTranscripts[selectedDaemonSessionId] ?? EMPTY_TRANSCRIPT
-    : EMPTY_TRANSCRIPT;
+  const selectedTranscriptSeed = useMemo<readonly DaemonTranscriptItem[]>(() => (
+    selectedDaemonSessionId
+      ? pendingCreatedAgent?.sessionId === selectedDaemonSessionId
+        ? mergeTranscriptPages(
+            [pendingCreatedAgent.localItem],
+            structuredTranscripts[selectedDaemonSessionId] ?? EMPTY_TRANSCRIPT,
+          )
+        : structuredTranscripts[selectedDaemonSessionId] ?? EMPTY_TRANSCRIPT
+      : EMPTY_TRANSCRIPT
+  ), [pendingCreatedAgent, selectedDaemonSessionId, structuredTranscripts]);
   const selectedTranscriptHead = selectedDaemonSessionId
     ? daemonRuntimeState.snapshot?.transcriptHeads.find((head) => (
       head.sessionId === selectedDaemonSessionId
@@ -383,10 +509,7 @@ export function MobileAgentView({
 
   useEffect(() => {
     if (daemonRuntimeState.snapshot) {
-      daemonRevisionRef.current = Math.max(
-        daemonRevisionRef.current,
-        daemonRuntimeState.snapshot.revision,
-      );
+      daemonRevisionRef.current = daemonRuntimeState.snapshot.revision;
     }
   }, [daemonRuntimeState.snapshot]);
 
@@ -395,10 +518,10 @@ export function MobileAgentView({
       session.id === selectedDaemonSessionId
       && session.kind === 'agent'
       && session.source === 'structured'
-    ))) {
+    )) && pendingCreatedAgent?.sessionId !== selectedDaemonSessionId) {
       setSelectedDaemonSessionId(null);
     }
-  }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
+  }, [daemonRuntimeState.snapshot, pendingCreatedAgent?.sessionId, selectedDaemonSessionId]);
 
   useEffect(() => {
     transcriptGenerationRef.current += 1;
@@ -624,29 +747,323 @@ export function MobileAgentView({
   const selectSession = (sessionId: string): void => {
     const daemonSession = daemonRuntimeState.snapshot?.sessions.find((session) => session.id === sessionId);
     if (daemonSession?.kind === 'agent' && daemonSession.source === 'structured') {
+      setNewSessionTarget(null);
       setSelectedDaemonSessionId(sessionId);
     }
     onFocusSession(sessionId);
   };
+
+  const clearSettledAgentCreate = useCallback(async (): Promise<boolean> => {
+    setPreparedAgentCreate(null);
+    return agentCreateRecovery ? agentCreateRecovery.clear() : false;
+  }, [agentCreateRecovery]);
+
+  const finishAgentCreation = useCallback(async (
+    input: StructuredAgentDraftInput,
+    outcome: Extract<StructuredAgentCreateOutcome, { readonly kind: 'created' | 'delivery-uncertain' }>,
+    snapshotOverride = daemonRuntimeState.snapshot,
+  ): Promise<StructuredAgentUiResult> => {
+    await clearSettledAgentCreate();
+    const workspaceRecord = snapshotOverride?.workspaces.find((workspace) => (
+      workspace.id === input.workspaceId
+    ));
+    const workspace = structuredAgentWorkspaceOptions(snapshotOverride).find((option) => (
+      option.id === input.workspaceId
+    )) ?? {
+      id: input.workspaceId,
+      label: workspaceRecord?.name ?? input.workspaceId,
+      kind: workspaceRecord?.kind ?? 'local',
+      path: workspaceRecord?.rootPath ?? '',
+    };
+    const providerLabel = structuredAgentProviderOptions(snapshotOverride).find((provider) => (
+      provider.id === input.providerId
+    ))?.label ?? input.providerId;
+    const createdAt = new Date().toISOString();
+
+    if (outcome.kind === 'created') daemonRevisionRef.current = outcome.receipt.revision;
+    setPendingCreatedAgent({
+      sessionId: outcome.sessionId,
+      commandId: outcome.command.commandId,
+      title: outcome.title,
+      input,
+      projectId: workspaceRecord?.projectId ?? '',
+      workspace,
+      providerLabel,
+      localItem: {
+        id: `local-${outcome.command.commandId}`,
+        sessionId: outcome.sessionId,
+        sequence: 1,
+        kind: 'user-message',
+        text: input.initialPrompt.trim(),
+        isDelta: false,
+        isSensitive: false,
+        createdAt,
+      },
+    });
+    setNewSessionTarget(null);
+    setSelectedDaemonSessionId(outcome.sessionId);
+    if (transport && typeof transport.getDaemonSnapshot === 'function') {
+      void transport.getDaemonSnapshot().catch(() => null);
+    }
+    return { ok: true };
+  }, [clearSettledAgentCreate, daemonRuntimeState.snapshot, transport]);
+
+  const createAgentSession = useCallback(async (
+    input: StructuredAgentDraftInput,
+  ): Promise<StructuredAgentUiResult> => {
+    if (!transport || disconnected) {
+      return {
+        ok: false,
+        message: locale.startsWith('ko')
+          ? '데스크톱에 다시 연결한 뒤 Agent 세션을 만드세요.'
+          : 'Reconnect to Desktop before creating an Agent session.',
+      };
+    }
+    if (!agentCreateRecovery || agentCreateRecovery.status !== 'ready') {
+      return { ok: false, message: SECURE_RECOVERY_FAILURE_COPY[language] };
+    }
+
+    let prepareFailed = false;
+    let preparedThisAttempt = false;
+    const access: StructuredAgentCreateAccess = {
+      getSnapshot: () => transport.getDaemonSnapshot(),
+      sendCommand: async (command) => {
+        const recovery = mobileAgentCreateRecoveryFromCommand(command);
+        const prepared = await agentCreateRecovery.prepare(command).catch(() => false);
+        if (!prepared) {
+          prepareFailed = true;
+          setPreparedAgentCreate(null);
+          throw new Error('Secure mobile Agent recovery storage is unavailable.');
+        }
+        preparedThisAttempt = true;
+        setPreparedAgentCreate(recovery);
+        return transport.sendDaemonCommand(command);
+      },
+    };
+    let outcome: StructuredAgentCreateOutcome;
+    if (uncertainAgentCreate) {
+      if (!sameStructuredAgentDraft(uncertainAgentCreate.input, input)) {
+        return {
+          ok: false,
+          message: locale.startsWith('ko')
+            ? '이전 Agent 생성 결과를 확인할 수 없습니다. 중복 생성을 막기 위해 기존 초안 그대로 다시 Send 하세요.'
+            : 'The previous Agent creation is still uncertain. Restore the same draft and Send again to avoid a duplicate session.',
+        };
+      }
+
+      const latest = await transport.getDaemonSnapshot().catch(() => null);
+      if (!latest) {
+        return { ok: false, message: CREATE_FAILURE_COPY[language]['daemon-unavailable'] };
+      }
+      const alreadyCreated = latest?.sessions.some((session) => (
+        session.id === uncertainAgentCreate.outcome.sessionId
+        && session.kind === 'agent'
+        && session.source === 'structured'
+      ));
+      if (alreadyCreated) {
+        return finishAgentCreation(input, uncertainAgentCreate.outcome, latest);
+      }
+
+      const replay = await transport.sendDaemonCommand(uncertainAgentCreate.outcome.command)
+        .catch(() => null);
+      if (!replay || (!replay.ok && replay.status === 'delivery-uncertain')) {
+        if (replay && !replay.ok) {
+          setPreparedAgentCreate({
+            input,
+            outcome: {
+              ...uncertainAgentCreate.outcome,
+              receipt: replay,
+              message: replay.error.message,
+            },
+          });
+        }
+        return {
+          ok: false,
+          message: locale.startsWith('ko')
+            ? '전송 결과를 아직 확인할 수 없습니다. 연결을 확인한 뒤 같은 초안으로 다시 Send 하세요.'
+            : 'Delivery is still unconfirmed. Check the connection, then Send the same draft again.',
+        };
+      }
+      if (replay.ok) {
+        outcome = {
+          kind: 'created',
+          sessionId: uncertainAgentCreate.outcome.sessionId,
+          title: uncertainAgentCreate.outcome.title,
+          command: uncertainAgentCreate.outcome.command,
+          receipt: replay,
+        };
+      } else if (replay.error.code === 'revision-conflict') {
+        outcome = await createStructuredAgentSession(input, {
+          access,
+          principal: { kind: 'android', id: 'mobile-agent-ui' },
+          sessionId: uncertainAgentCreate.outcome.sessionId,
+        });
+      } else {
+        const confirmation = await transport.getDaemonSnapshot().catch(() => null);
+        const createdDespiteReceipt = confirmation?.sessions.some((session) => (
+          session.id === uncertainAgentCreate.outcome.sessionId
+          && session.kind === 'agent'
+          && session.source === 'structured'
+        ));
+        if (createdDespiteReceipt) {
+          return finishAgentCreation(input, uncertainAgentCreate.outcome, confirmation);
+        }
+        if (!(await clearSettledAgentCreate())) {
+          return { ok: false, message: SECURE_RECOVERY_FAILURE_COPY[language] };
+        }
+        return { ok: false, message: CREATE_FAILURE_COPY[language]['command-rejected'] };
+      }
+    } else {
+      outcome = await createStructuredAgentSession(input, {
+        access,
+        principal: { kind: 'android', id: 'mobile-agent-ui' },
+      });
+    }
+
+    if (prepareFailed) {
+      return { ok: false, message: SECURE_RECOVERY_FAILURE_COPY[language] };
+    }
+    if (outcome.kind === 'rejected' && outcome.reason === 'recovery-unavailable') {
+      return { ok: false, message: SECURE_RECOVERY_FAILURE_COPY[language] };
+    }
+    if (outcome.kind === 'created') return finishAgentCreation(input, outcome);
+    if (outcome.kind === 'delivery-uncertain') {
+      setPreparedAgentCreate({ input, outcome });
+      return {
+        ok: false,
+        message: locale.startsWith('ko')
+          ? '전송 결과를 확인할 수 없습니다. 이 초안을 유지한 채 다시 Send 하면 동일 세션을 확인하고 안전하게 재시도합니다.'
+          : 'Delivery could not be confirmed. Keep this draft and Send again to verify or safely retry the same session.',
+      };
+    }
+    if ((uncertainAgentCreate || preparedThisAttempt) && !(await clearSettledAgentCreate())) {
+      return { ok: false, message: SECURE_RECOVERY_FAILURE_COPY[language] };
+    }
+    return { ok: false, message: CREATE_FAILURE_COPY[language][outcome.reason] };
+  }, [
+    agentCreateRecovery,
+    clearSettledAgentCreate,
+    disconnected,
+    finishAgentCreation,
+    language,
+    locale,
+    transport,
+    uncertainAgentCreate,
+  ]);
+
+  const createTerminalSession = useCallback(async (
+    workspaceId: string,
+  ): Promise<StructuredAgentUiResult> => {
+    if (!onCreateWorkspaceTerminal) {
+      return {
+        ok: false,
+        message: locale.startsWith('ko')
+          ? '이 클라이언트에서는 Workspace Terminal을 열 수 없습니다.'
+          : 'This client cannot open a Workspace Terminal.',
+      };
+    }
+    try {
+      const result = await onCreateWorkspaceTerminal(workspaceId);
+      return result.ok
+        ? { ok: true }
+        : { ok: false, message: TERMINAL_FAILURE_COPY[language][result.reason] };
+    } catch {
+      return {
+        ok: false,
+        message: TERMINAL_FAILURE_COPY[language]['surface-open-failed'],
+      };
+    }
+  }, [language, locale, onCreateWorkspaceTerminal]);
+
+  const openNewSession = useCallback((workspaceId?: string): void => {
+    setSelectedDaemonSessionId(null);
+    setNewSessionTarget({
+      ...(uncertainAgentCreate?.input.workspaceId
+        ? { workspaceId: uncertainAgentCreate.input.workspaceId }
+        : workspaceId ? { workspaceId } : {}),
+    });
+  }, [uncertainAgentCreate]);
+
+  useEffect(() => {
+    if (!uncertainAgentCreate) return;
+    setSelectedDaemonSessionId(null);
+    setNewSessionTarget({ workspaceId: uncertainAgentCreate.input.workspaceId });
+  }, [uncertainAgentCreate]);
+
+  const closeDetailState = useCallback((): void => {
+    setNewSessionTarget(null);
+    setSelectedDaemonSessionId(null);
+    queueMicrotask(() => newSessionButtonRef.current?.focus());
+  }, []);
+  const detailOpen = newSessionTarget !== null || selectedDaemonSessionId !== null;
+  useEffect(() => {
+    if (!detailOpen) return undefined;
+    return navigation.pushLayer({
+      id: detailLayerId,
+      kind: 'page',
+      onBack: closeDetailState,
+    });
+  }, [closeDetailState, detailLayerId, detailOpen, navigation]);
+  const closeDetailFromUi = useCallback((): void => {
+    navigation.closeLayer(detailLayerId, 'ui');
+  }, [detailLayerId, navigation]);
 
   const dispatchDaemonCommand = async (command: DaemonCommand) => {
     if (!transport || disconnected) return { ok: false as const, message: 'Not connected to EZTerminal.' };
     const receipt = await transport.sendDaemonCommand(command).catch(() => null);
     if (!receipt) return { ok: false as const, message: 'The command could not be delivered.' };
     if (!receipt.ok) return { ok: false as const, message: receipt.error.message };
-    daemonRevisionRef.current = Math.max(daemonRevisionRef.current, receipt.revision);
+    daemonRevisionRef.current = receipt.revision;
     return { ok: true as const };
   };
 
-  const selectedDaemonSession = daemonRuntimeState.snapshot?.sessions.find((session) => (
+  const authoritativeDaemonSession = daemonRuntimeState.snapshot?.sessions.find((session) => (
     session.id === selectedDaemonSessionId && session.kind === 'agent' && session.source === 'structured'
   ));
-  const selectedDaemonAgent = daemonRuntimeState.snapshot?.agents.find((agent) => (
+  const authoritativeDaemonAgent = daemonRuntimeState.snapshot?.agents.find((agent) => (
     agent.sessionId === selectedDaemonSessionId
   ));
-  const selectedDaemonWorkspace = daemonRuntimeState.snapshot?.workspaces.find((workspace) => (
-    workspace.id === selectedDaemonSession?.workspaceId
+  const authoritativeDaemonWorkspace = daemonRuntimeState.snapshot?.workspaces.find((workspace) => (
+    workspace.id === authoritativeDaemonSession?.workspaceId
   ));
+  const pendingSelection = pendingCreatedAgent?.sessionId === selectedDaemonSessionId
+    ? pendingCreatedAgent
+    : undefined;
+  const optimisticTimestamp = pendingSelection?.localItem.createdAt ?? new Date().toISOString();
+  const selectedDaemonSession = authoritativeDaemonSession ?? (pendingSelection ? {
+    id: pendingSelection.sessionId,
+    projectId: pendingSelection.projectId,
+    workspaceId: pendingSelection.workspace.id,
+    kind: 'agent' as const,
+    title: pendingSelection.title,
+    state: 'starting' as const,
+    source: 'structured' as const,
+    revision: daemonRevisionRef.current,
+    createdAt: optimisticTimestamp,
+    updatedAt: optimisticTimestamp,
+  } : undefined);
+  const selectedDaemonAgent = authoritativeDaemonAgent ?? (pendingSelection ? {
+    sessionId: pendingSelection.sessionId,
+    providerId: pendingSelection.input.providerId,
+    ...(pendingSelection.input.model ? { model: pendingSelection.input.model } : {}),
+    permissionPreset: pendingSelection.input.permissionPreset,
+    state: 'queued' as const,
+    queuedTurnCount: 1,
+    orchestrationEnabled: true,
+    revision: daemonRevisionRef.current,
+    createdAt: optimisticTimestamp,
+    updatedAt: optimisticTimestamp,
+  } : undefined);
+  const selectedDaemonWorkspace = authoritativeDaemonWorkspace ?? (pendingSelection ? {
+    id: pendingSelection.workspace.id,
+    projectId: pendingSelection.projectId,
+    name: pendingSelection.workspace.label,
+    kind: pendingSelection.workspace.kind,
+    rootPath: pendingSelection.workspace.path,
+    revision: daemonRevisionRef.current,
+    createdAt: optimisticTimestamp,
+    updatedAt: optimisticTimestamp,
+  } : undefined);
   const selectedDaemonProvider = daemonRuntimeState.snapshot?.providers.find((provider) => (
     provider.id === selectedDaemonAgent?.providerId
   ));
@@ -678,6 +1095,28 @@ export function MobileAgentView({
       }];
     });
   }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
+
+  if (newSessionTarget) {
+    return (
+      <MobileNewSessionDraft
+        state={daemonRuntimeState}
+        disconnected={disconnected}
+        contextWorkspaceId={newSessionTarget.workspaceId}
+        initialAgentDraft={uncertainAgentCreate?.input}
+        agentRecoveryStatus={agentCreateRecovery?.status ?? 'unavailable'}
+        onBack={closeDetailFromUi}
+        onRetry={() => {
+          if (transport && typeof transport.getDaemonSnapshot === 'function') {
+            void transport.getDaemonSnapshot();
+          }
+        }}
+        onRetryAgentRecovery={() => void agentCreateRecovery?.reload()}
+        onDiscardAgentRecovery={() => void agentCreateRecovery?.discard()}
+        onCreateAgent={createAgentSession}
+        onCreateTerminal={createTerminalSession}
+      />
+    );
+  }
 
   if (selectedDaemonSession && selectedDaemonAgent && selectedDaemonWorkspace) {
     const selectedTranscript = loadedTranscriptSessionId === selectedDaemonSession.id
@@ -726,7 +1165,9 @@ export function MobileAgentView({
         sessionId={selectedDaemonSession.id}
         title={selectedDaemonSession.title}
         providerId={selectedDaemonAgent.providerId}
-        providerLabel={selectedDaemonProvider?.displayName ?? selectedDaemonAgent.providerId}
+        providerLabel={selectedDaemonProvider?.displayName
+          ?? pendingSelection?.providerLabel
+          ?? selectedDaemonAgent.providerId}
         workspace={{
           id: selectedDaemonWorkspace.id,
           label: selectedDaemonWorkspace.name,
@@ -755,7 +1196,7 @@ export function MobileAgentView({
             />
           ),
         } : {})}
-        onBack={() => setSelectedDaemonSessionId(null)}
+        onBack={closeDetailFromUi}
         onRetryTranscript={() => {
           void reloadTranscript(selectedDaemonSession.id, selectedTranscriptHead);
           if (transport && typeof transport.getDaemonSnapshot === 'function') {
@@ -819,19 +1260,28 @@ export function MobileAgentView({
 
   return (
     <main className="mob-page" data-testid="mobile-agent-view" aria-label={t('agentHub.activity')}>
-      <header className="mob-page__head">
-        <button type="button" className="mob-icon-btn" onClick={onBack} aria-label={t('common.back')} data-testid="mobile-agent-close">
-          <ChevronLeft aria-hidden="true" />
-        </button>
-        <div>
-          <h1 className="mob-page__title">{t('mobile.agents')}</h1>
-          {counts.attention > 0 && (
-            <p className="mob-page__subtitle" data-testid="agent-attention-summary">
-              {t('mobile.agentView.waitingCount', { value: counts.attention })}
-            </p>
-          )}
-        </div>
-      </header>
+      <MobilePageHeader
+        title={t('mobile.agents')}
+        backLabel={t('common.back')}
+        backTestId="mobile-agent-close"
+        onBack={onBack}
+        status={counts.attention > 0 ? (
+          <span data-testid="agent-attention-summary">
+            {t('mobile.agentView.waitingCount', { value: counts.attention })}
+          </span>
+        ) : undefined}
+        actions={(
+          <IconButton
+            ref={newSessionButtonRef}
+            icon={Plus}
+            variant="primary"
+            size="md"
+            aria-label={locale.startsWith('ko') ? '새 세션' : 'New session'}
+            onClick={() => openNewSession()}
+            data-testid="mobile-agent-new-session"
+          />
+        )}
+      />
 
       {disconnected && <div className="mob-empty" role="status">{t('agentHub.reconnecting')}</div>}
 
@@ -939,10 +1389,13 @@ export function MobileAgentView({
                   state={daemonRuntimeState}
                   visibility={daemonNavigatorVisibility}
                   onVisibilityChange={setDaemonNavigatorVisibility}
+                  initialLocation={daemonNavigatorLocation}
+                  onLocationChange={setDaemonNavigatorLocation}
                   onRetry={() => {
                     void transport!.getDaemonSnapshot();
                   }}
                   onSelectSession={selectSession}
+                  onCreateSession={openNewSession}
                 />
               );
             }

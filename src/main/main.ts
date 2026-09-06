@@ -35,6 +35,7 @@ import {
 } from './app-renderer-protocol';
 import { DesktopWindowManager } from './desktop-window-manager';
 import { buildMenuTemplate } from './app-menu';
+import { buildExplicitQuitDialogOptions } from './explicit-quit-dialog';
 import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
 import { getAvailableThemes, importTheme } from './theme-store';
@@ -492,18 +493,15 @@ function requestExplicitQuit(): void {
   if (appIsQuitting || quitConfirmationOpen) return;
   quitConfirmationOpen = true;
   const korean = app.getLocale().toLowerCase().startsWith('ko');
-  const options = {
-    type: 'warning' as const,
-    title: 'EZTerminal',
-    message: korean ? 'EZTerminal을 종료할까요?' : 'Quit EZTerminal?',
-    detail: korean
-      ? '실행 중인 터미널과 에이전트 세션이 모두 종료됩니다. 창만 닫으려면 취소한 뒤 닫기 버튼을 사용하세요.'
-      : 'All running terminal and agent sessions will stop. To close only the window, cancel and use the window close button.',
-    buttons: korean ? ['취소', '종료'] : ['Cancel', 'Quit'],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  };
+  const hasPendingStructuredAgentCreate = Boolean(
+    mainWindowRef
+    && !mainWindowRef.isDestroyed()
+    && rendererRecoveryCheckpoints.hasPendingStructuredAgentCreate(mainWindowRef.webContents.id),
+  );
+  const options = buildExplicitQuitDialogOptions(
+    korean ? 'ko' : 'en',
+    hasPendingStructuredAgentCreate,
+  );
   const owner = mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible()
     ? mainWindowRef
     : null;
@@ -776,8 +774,8 @@ app.on('ready', async () => {
     isAppQuitting: () => appIsQuitting,
     handleMainWindowClose: (window, event) => {
       if (daemonRuntime) {
-        daemonRuntime.handleMainWindowClose(event, window);
-        return;
+        if (blockMainWindowCloseForAgentCreate(window, event)) return;
+        return daemonRuntime.handleMainWindowClose(event, window);
       }
       event.preventDefault();
       app.quit();
@@ -3563,6 +3561,44 @@ app.on('ready', async () => {
       },
     ],
   });
+
+  let agentCreateRecoveryDialogOpen = false;
+  function blockMainWindowCloseForAgentCreate(
+    window: BrowserWindow,
+    event: { preventDefault(): void },
+  ): boolean {
+    if (
+      !daemonRuntime
+      || !rendererRecoveryCheckpoints.blocksMainWindowClose(
+        window.webContents.id,
+        daemonRuntime.shouldKeepRunning(),
+      )
+    ) return false;
+    event.preventDefault();
+    if (agentCreateRecoveryDialogOpen) return true;
+    agentCreateRecoveryDialogOpen = true;
+    const korean = app.getLocale().toLowerCase().startsWith('ko');
+    void dialog.showMessageBox(window, {
+      type: 'warning',
+      title: 'EZTerminal',
+      message: korean
+        ? 'Agent 생성을 확인한 뒤 창을 닫아 주세요.'
+        : 'Finish confirming Agent creation before closing EZTerminal.',
+      detail: korean
+        ? 'Agent 생성 명령이 이미 전달되었을 수 있습니다. 잠긴 초안으로 돌아가 Send를 눌러 확인하거나 같은 세션을 안전하게 다시 시도하세요.'
+        : 'An Agent create command may already have been delivered. Return to its locked draft and choose Send to verify or safely retry the same Session.',
+      buttons: [korean ? '확인' : 'OK'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    }).catch((error) => {
+      mainLog?.line(`Agent create recovery close warning failed: ${String(error)}`);
+    }).finally(() => {
+      agentCreateRecoveryDialogOpen = false;
+    });
+    return true;
+  }
+
   app.on('before-quit', (event) => gracefulShutdown.handleBeforeQuit(event));
 
   // Session surfaces are the only renderer-facing session lifecycle API. Main

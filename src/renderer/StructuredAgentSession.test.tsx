@@ -126,6 +126,45 @@ describe('StructuredAgentDraftPanel', () => {
     expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')?.disabled).toBe(true);
     expect(container.querySelector('label[for]')?.getAttribute('for')).toBeTruthy();
   });
+
+  it('locks an uncertain delivery draft but keeps exact-command recovery available', async () => {
+    const onCreate = vi.fn(async () => ({ ok: false as const, message: 'Still checking delivery' }));
+    render(
+      <StructuredAgentDraftPanel
+        providers={[{
+          id: 'codex',
+          label: 'Codex',
+          models: [{ id: 'gpt-5', label: 'GPT-5' }],
+          disabled: true,
+        }]}
+        workspaces={[{ id: 'workspace-1', label: 'Feature worktree', kind: 'worktree' }]}
+        initialProviderId="codex"
+        initialModel="gpt-5"
+        initialPermissionPreset="plan"
+        initialPrompt="Recover this exact Agent"
+        deliveryRecovery
+        onCreate={onCreate}
+      />,
+    );
+
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-provider"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-model"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')?.disabled)
+      .toBe(true);
+    const send = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!;
+    expect(send.disabled).toBe(false);
+    act(() => send.click());
+    await flush();
+    expect(onCreate).toHaveBeenCalledWith({
+      providerId: 'codex',
+      model: 'gpt-5',
+      workspaceId: 'workspace-1',
+      permissionPreset: 'plan',
+      initialPrompt: 'Recover this exact Agent',
+    });
+  });
 });
 
 describe('StructuredAgentTranscript', () => {

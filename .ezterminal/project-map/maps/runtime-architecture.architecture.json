@@ -56,7 +56,7 @@
     {
       "id": "agent-workbench",
       "label": "Structured Agent workbench",
-      "detail": "A draft becomes a durable Agent on first send; users can open and control managed child Sessions directly.",
+      "detail": "First Send creates one durable Agent through current daemon authority; uncertain delivery is reconciled before transition, and child Sessions remain directly controllable.",
       "kind": "surface",
       "group": "client-surfaces",
       "rank": 0,
@@ -65,26 +65,26 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 501,
-          "endLine": 549,
-          "lineDigest": "sha256:970c3e65a7d1524986d29c106c2f1a5f03db5d755f8ff67eaa175c5cb3ca6b8f",
-          "claim": "The structured panel sends typed submit commands and creates the durable Agent only when the draft's first prompt is submitted."
+          "startLine": 515,
+          "endLine": 671,
+          "lineDigest": "sha256:ac9dd45551fc1ff0d6c4bca3dd3fb3ae0ff2ecb796f0e0d00efa0699479c1272",
+          "claim": "The panel requires fresh authority and acknowledged exact-envelope recovery escrow before send. On uncertainty it checks the Session before exact replay or bounded conflict retries with the same Session ID."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 693,
-          "endLine": 717,
-          "lineDigest": "sha256:7f80283135138391beb918eecdcbee046ffbaf3f5cb8a1b1ac53791afda4d841",
-          "claim": "The active relation and direct-child list let the user open a managed child as its own structured Session surface."
+          "startLine": 820,
+          "endLine": 849,
+          "lineDigest": "sha256:2a9d4f74a7659c4f0c320ed6bb93c4600aff2a62b788b124392e10074bfdbd63",
+          "claim": "The active relation, attached direct-child projection, and related-session lookup let users open managed or provider-owned children as structured Session surfaces."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 840,
-          "endLine": 872,
-          "lineDigest": "sha256:64787c3dd9944eb2d5ad686f125283c0ae30c56b7d24c4d342575a1d8fbf8f53",
-          "claim": "The Session surface wires submit, interrupt-and-submit, settings, approvals, related-session opening, and managed cancel, archive, or detach actions."
+          "startLine": 950,
+          "endLine": 1004,
+          "lineDigest": "sha256:41bad530d450886d765765b68e618861a691824b3565d3912a9da57286df0a09",
+          "claim": "The Session surface wires transcript recovery, submit, interrupt-and-submit, settings, approvals, related-session opening, heartbeat controls, and guarded managed lifecycle actions."
         }
       ]
     },
@@ -179,16 +179,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1954,
-          "endLine": 2003,
+          "startLine": 1952,
+          "endLine": 2001,
           "lineDigest": "sha256:6d1e43fe7176736977a5bcd58d409d25d26377a5eba237fb282c450f74b11a2f",
           "claim": "Only after Project preflight and ordered MCP, Agent, and automation startup does main publish ready availability; any failure is cleaned up and latched as terminal-only safe mode."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1474,
-          "endLine": 1584,
+          "startLine": 1472,
+          "endLine": 1582,
           "lineDigest": "sha256:f7370e46d70e7d0705763f51e9508b7bf8425b72581f70db23ce9332994bdeb9",
           "claim": "The closeable Project FIFO serializes discovery and fresh-snapshot sync, propagates cancellation, and passes reactivation ids only for explicit user intent."
         }
@@ -426,7 +426,7 @@
     {
       "id": "codex-app-server",
       "label": "Codex app-server adapter",
-      "detail": "A reviewed Codex executable provides persistent app-server threads, generation-fenced transport, pre-response lifecycle correlation, and turn cancellation.",
+      "detail": "Stable Codex releases at or above the app-server floor run without per-release review; persistent threads retain generation fences, lifecycle correlation, and cancellation.",
       "kind": "runtime",
       "group": "provider-boundary",
       "rank": 6,
@@ -435,24 +435,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 537,
-          "endLine": 561,
+          "startLine": 590,
+          "endLine": 614,
           "lineDigest": "sha256:eab206cc23f1a71e24d8ad28d57e3edf2e6772c22faa42357eb388d19fd297cb",
           "claim": "Codex creates a persistent app-server thread rooted in the selected Workspace and registers its handle only if the Provider lifecycle generation is still current."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 613,
-          "endLine": 712,
+          "startLine": 666,
+          "endLine": 765,
           "lineDigest": "sha256:e7b7a0453f8551629e4c961475cffda9645813311771f5f2b1404187bbd32a73",
           "claim": "The turn-start response establishes ownership, then replays pre-response started, completed, or error events before dispatching a deferred interrupt; failures carry local turn scope."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 860,
-          "endLine": 926,
+          "startLine": 916,
+          "endLine": 982,
           "lineDigest": "sha256:67e54584cba98a5e8a7e23d869bfae39714bc851b24f00f78b90c8aa47695419",
           "claim": "Deactivation advances the lifecycle, settles pending interrupts, clears approvals and thread ownership, closes app-server, and leaves reviewed configuration reusable."
         }
@@ -511,8 +511,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 2231,
-        "endLine": 2299,
+          "startLine": 2229,
+          "endLine": 2297,
         "lineDigest": "sha256:9cb1b4638413526069997620c454f4de8b143af2c9b68c9a58e7b2f98f189430",
         "claim": "Main resolves the desktop Session principal, bounds transcript reads, gates safe mode, and overwrites the command principal before execution."
       }]
@@ -556,8 +556,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 927,
-        "endLine": 1004,
+          "startLine": 925,
+          "endLine": 1002,
         "lineDigest": "sha256:34a9825ab1adef9609bd6cf1ea7146ec9853a31f8d64abfb8365e52b0349f0a5",
         "claim": "Main wires the provider-neutral Agent and automation handlers into one DaemonCommandRouter backed by the SQLite store."
       }]
@@ -571,8 +571,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1796,
-        "endLine": 1949,
+          "startLine": 1794,
+          "endLine": 1947,
         "lineDigest": "sha256:4ac6add5222b9ed6995f1b5e2cec33c55311834d78a51011ef20981b9825f6a9",
         "claim": "The Project FIFO persists approval or revocation intent before changing daemon authority, finalizes consent afterward, compensates failed approval, and recovers pending work before provider startup."
       }]
@@ -635,16 +635,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1644,
-          "endLine": 1774,
+          "startLine": 1642,
+          "endLine": 1772,
           "lineDigest": "sha256:f413e4b30da9c13756c3aa31a25071a66eeb6ae3d5134eb739c9277499ee2dd8",
           "claim": "Project save stops active orchestration when authority shrinks, retires obsolete daemon descendants and capabilities, clears removed consent and auxiliary authority, then publishes and explicitly reactivates the replacement."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1855,
-          "endLine": 1893,
+          "startLine": 1853,
+          "endLine": 1891,
           "lineDigest": "sha256:74a21e03bc0ef6f81e53fdbb270edc7a2757b88d7d971b4f2c949b7192d70c50",
           "claim": "Full removal stops Project runs, applies the fail-closed daemon transition, revokes MCP and Agent-control tokens, and only then removes consent, coordination, orchestration, and history records."
         }
@@ -738,8 +738,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1591,
-          "endLine": 1623,
+          "startLine": 1589,
+          "endLine": 1621,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Launch, resume, and Project or worker activity records enter the same main-owned FIFO; only direct-directory launch conveys explicit Project re-registration intent before sync."
         },
@@ -770,8 +770,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 927,
-        "endLine": 960,
+          "startLine": 925,
+          "endLine": 958,
         "lineDigest": "sha256:76fe2fe54769dcacc184d4fd4ed502fe822f0565c782c519e0d42a2e0394ee20",
         "claim": "DaemonAgentRuntime receives only snapshot, durable transition, transcript, command, and orchestration capability seams before its handlers join the router."
       }]
@@ -875,14 +875,24 @@
       "to": "codex-app-server",
       "label": "codex-app-server",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/codex-provider-adapter.ts",
-        "startLine": 423,
-        "endLine": 474,
-        "lineDigest": "sha256:054803426c93008c333e0f7ec6e26a4fe34251d9f7ceeabdc33d63d68c2e398e",
-        "claim": "Codex accepts only an absolute reviewed app-server launch descriptor and reports the capabilities and version that review covered."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/codex-provider-adapter.ts",
+          "startLine": 367,
+          "endLine": 412,
+          "lineDigest": "sha256:baaf360724ca40861c30a14cef97b112ed032cb6ead6d0b742bd8f023eb5561e",
+          "claim": "Codex accepts only its labeled stable semantic version at or above the observed app-server baseline, while malformed output, prereleases, and older versions fail closed."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/codex-provider-adapter.ts",
+          "startLine": 476,
+          "endLine": 531,
+          "lineDigest": "sha256:d9cbbe05b3b11bb23c8cc8ffa7758344f85331ba087514e59488b8cd873c6f13",
+          "claim": "Codex accepts only an absolute reviewed app-server launch descriptor with the fixed process contract and stable version floor, then reports the current compatible version and capabilities."
+        }
+      ]
     },
     {
       "id": "registry-to-claude",
