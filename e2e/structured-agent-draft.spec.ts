@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { createRegisteredE2eTempDir, expect, test } from './test';
@@ -237,7 +237,8 @@ test('Project New Session opens a regular terminal and its closed view can be re
     expect(sessionId).toBeTruthy();
     const sessions = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
     expect(sessions).toHaveLength(before.length + 1);
-    expect(path.resolve(sessions.find((session) => session.sessionId === sessionId)!.cwd)).toBe(path.resolve(projectRoot));
+    // Project terminal identity is canonical, even when TEMP uses a DOS 8.3 alias.
+    expect(path.resolve(sessions.find((session) => session.sessionId === sessionId)!.cwd)).toBe(realpathSync.native(projectRoot));
     await pane.getByTestId('cmd-input').fill('echo preserved-draft');
     await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
     await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`)).toHaveCount(0);
