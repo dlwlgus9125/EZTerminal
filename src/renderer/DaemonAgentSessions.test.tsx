@@ -389,7 +389,7 @@ describe('DaemonAgentSessions', () => {
     });
 
     act(() => listener?.(daemonEvent(7, 4)));
-    expect(container.textContent).toContain('Restoring the live Agent session list');
+    expect(container.textContent).toContain('Restoring the live session list');
     expect(container.querySelector('[data-session-id="lead"]')).not.toBeNull();
 
     await act(async () => resolveRecovery?.(snapshotOf({ revision: 4, eventSequence: 7 })));
@@ -439,14 +439,14 @@ describe('DaemonAgentSessions', () => {
       observeEvents: () => () => undefined,
     });
 
-    expect(container.textContent).toContain('Could not load structured Agent sessions');
+    expect(container.textContent).toContain('Could not load sessions');
     const retry = [...container.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('Retry'));
     expect(retry).toBeDefined();
     act(() => retry!.click());
     await flush();
 
-    expect(container.textContent).toContain('No saved structured Agent sessions yet');
+    expect(container.textContent).toContain('No sessions yet');
     expect(container.getAttribute('aria-busy')).not.toBe('true');
   });
 });

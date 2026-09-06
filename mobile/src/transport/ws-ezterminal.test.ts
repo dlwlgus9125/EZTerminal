@@ -1040,6 +1040,19 @@ describe('WsEzTerminalTransport — listRuns (M1 mirror-active-runs)', () => {
 });
 
 describe('WsEzTerminalTransport — runCommand: _ezPort handoff + frame delivery to a REAL BlockController', () => {
+  it('detaches a closed terminal view without relaying destructive close', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const capture = captureEzPort('run-detach');
+    await transport.runCommand('ls', 'run-detach', 'sess-1');
+    capture.stop();
+    const controller = new BlockController('ls', capture.port!);
+    controller.detach();
+    controller.dispose();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'control', runId: 'run-detach', control: { type: 'detach' } });
+  });
+
   it('delivers InterpreterFrames from the WS to a real BlockController via the reproduced _ezPort message', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

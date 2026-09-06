@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { X } from 'lucide-react';
+import { readSessionViewState, saveSessionViewState, type TerminalSessionViewState } from './session-view-state';
 import {
   DockviewReact,
   type DockviewApi,
@@ -30,6 +31,7 @@ import {
   RENDERER_RECOVERY_MAX_HISTORY,
   RENDERER_RECOVERY_VERSION,
   type RendererRecoveryCheckpoint,
+  type RendererRecoveryPane,
   type RendererRecoveryStructuredAgentCreate,
 } from '../shared/renderer-recovery';
 import {
@@ -313,6 +315,9 @@ interface PaneApprovalContextValue {
 const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
 const AgentOrchestrationContext = createContext<AgentOrchestrationSnapshot>(EMPTY_AGENT_ORCHESTRATION_SNAPSHOT);
 interface StructuredAgentNavigationContextValue {
+  readonly openTerminal: (workspaceId?: string, directory?: string) => Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
+  readonly launchCli: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
+  readonly openSettings: () => void;
   readonly openSession: (input: {
     readonly sessionId: string;
     readonly title?: string;
@@ -450,7 +455,8 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     return () => disposable.dispose();
   }, [props.api]);
   const runtimeLifecycleTier = usePanelRuntimeLifecycle(props.api);
-  const recoveryStateRef = useRef(peekRendererRecoveryPane(props.api.id));
+  const recoveryStateRef = useRef(peekRendererRecoveryPane(props.api.id)
+    ?? readSessionViewState<RendererRecoveryPane>(`desktop-terminal:${String(props.params?.adoptSessionId ?? '')}`));
   const recoveryState = recoveryStateRef.current;
   const binding = useContext(SessionBindingContext);
   const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
@@ -568,6 +574,16 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
           createRecoveryRegistry={createRecovery?.registry}
           persistCreateRecovery={createRecovery?.persistBeforeSend}
           onOpenSession={navigation?.openSession}
+          onOpenTerminal={navigation ? async (workspaceId, directory) => {
+            const result = await navigation.openTerminal(workspaceId, directory);
+            if (result.ok) props.api.close();
+            return result;
+          } : undefined}
+          onLaunchCli={navigation ? async (bootstrap) => {
+            await navigation.launchCli(bootstrap);
+            props.api.close();
+          } : undefined}
+          onOpenSettings={navigation?.openSettings}
         />
       )
     : <LegacyAgentSessionDockPanel {...props} />;
@@ -1531,7 +1547,12 @@ export function App(): JSX.Element {
       const activePanelId = api?.activePanel?.id;
       const panelId =
         candidates.find((binding) => binding.panelId === activePanelId)?.panelId ?? candidates[0]?.panelId;
-      if (panelId) workbenchCoordinator.activatePanel(panelId);
+      if (panelId) {
+        workbenchCoordinator.activatePanel(panelId);
+        const panel = api?.getPanel(panelId);
+        if (panel) dockWindowCoordinatorRef.current?.focusPanelWindow(panel);
+      }
+      else workbenchCoordinator.openTerminal({ adoptSessionId: sessionId });
       for (const activity of agentSnapshot.items) {
         if (activity.sessionId === sessionId && activity.state === 'done') {
           void window.ezterminal.markAgentSeen(activity.id, activity.stateSeq);
@@ -1789,6 +1810,15 @@ export function App(): JSX.Element {
             rejectAuxiliaryClose(request, true);
             return;
           }
+          const view = getPaneHandle(target.panelId)?.getSnapshot();
+          const projectSession = panel.api.getParameters()?.projectSession;
+          if (view?.sessionId) saveSessionViewState<TerminalSessionViewState>(`desktop-terminal:${view.sessionId}`, {
+            panelId: target.panelId, sessionId: view.sessionId, sessionSurfaceId: null,
+            cwd: view.cwd, draft: view.draft, history: view.history,
+            scrollTop: view.scrollTop, activeRunIds: view.activeRunIds,
+            title: panel.api.title,
+            ...(isProjectSessionPanelMetadata(projectSession) ? { projectSession } : {}),
+          });
           panel.api.close();
         }
 
@@ -1859,16 +1889,8 @@ export function App(): JSX.Element {
         rejectAuxiliaryClose(request, false);
         return;
       }
-      if (!preparation.plan.requiresConfirmation) {
-        void completeAuxiliaryClose(request, popout.window, preparation.plan, new Map());
-        return;
-      }
-      setAuxiliaryCloseDialog({
-        request,
-        targetWindow: popout.window,
-        plan: preparation.plan,
-        busy: false,
-      });
+      void completeAuxiliaryClose(request, popout.window, preparation.plan,
+        new Map(preparation.plan.items.filter((item) => item.creator).map((item) => [item.panelId, 'keep' as const])));
     },
     [
       agentSessionIds,
@@ -1895,8 +1917,8 @@ export function App(): JSX.Element {
   const structuredAgentDraftSequence = useRef(0);
 
   const openStructuredAgentDraft = useCallback((
-    project?: AgentProjectSummary,
-    target?: ProjectSessionTarget,
+    project?: Pick<AgentProjectSummary, 'projectId' | 'name'>,
+    target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
   ): void => {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     structuredAgentDraftSequence.current += 1;
@@ -1905,15 +1927,15 @@ export function App(): JSX.Element {
     dockWindowCoordinatorRef.current?.addPanel({
       id: `agent-session-${draftId}`,
       component: 'agent-session',
-      title: project
-        ? `${project.name} · ${korean ? '새 Agent' : 'New Agent'}`
-        : korean ? '새 Agent' : 'New Agent',
+      title: project?.name
+        ? `${project.name} · ${korean ? '새 세션' : 'New session'}`
+        : korean ? '새 세션' : 'New session',
       renderer: 'always',
       params: {
         historyId: draftId,
         ...(project ? { projectId: project.projectId } : {}),
-        ...(target?.rootId && target.workspaceId
-          ? { rootId: target.rootId, workspaceId: target.workspaceId }
+        ...(target?.workspaceId
+          ? { ...(target.rootId ? { rootId: target.rootId } : {}), workspaceId: target.workspaceId }
           : {}),
       },
     }, { kind: 'main-tab' });
@@ -1951,7 +1973,33 @@ export function App(): JSX.Element {
 
   const structuredAgentNavigationValue = useMemo<StructuredAgentNavigationContextValue>(() => ({
     openSession: openStructuredAgentSession,
-  }), [openStructuredAgentSession]);
+    openSettings: () => {
+      setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
+      setSidebarDestination('settings');
+    },
+    openTerminal: async (workspaceId, directory) => {
+      let cwd = directory;
+      let projectSession: ProjectSessionPanelMetadata | undefined;
+      if (workspaceId) {
+        const snapshot = await window.ezterminal.getDaemonSnapshot();
+        const workspace = snapshot?.workspaces.find((item) => item.id === workspaceId && !item.archivedAt);
+        const project = snapshot?.projects.find((item) => item.id === workspace?.projectId && !item.archivedAt);
+        if (!workspace || !project) return { ok: false, message: t('agentHub.projects.launchFailed') };
+        cwd = workspace.rootPath;
+        if (project.source === 'native' && window.ezterminalDesktop) {
+          const resolved = await window.ezterminalDesktop.resolveProjectTerminalDirectory({ projectId: project.id, absolutePath: cwd });
+          if (!resolved.ok) return { ok: false, message: t('agentHub.projects.launchFailed') };
+          projectSession = resolved.projectSession;
+        }
+      }
+      const opened = workbenchCoordinator.openTerminal(projectSession ? { projectSession, title: projectSession.projectName } : { cwd });
+      return opened ? { ok: true } : { ok: false, message: t('agentHub.projects.launchFailed') };
+    },
+    launchCli: async (bootstrap) => {
+      const opened = workbenchCoordinator.openTerminal({ cwd: bootstrap.cwd, title: bootstrap.name, agentBootstrap: bootstrap });
+      if (!opened) throw new Error(t('agentHub.projects.launchFailed'));
+    },
+  }), [openStructuredAgentSession, workbenchCoordinator, t]);
 
   const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,
@@ -2350,6 +2398,15 @@ export function App(): JSX.Element {
             retryAfterStateCheck();
             return;
           }
+          const view = getPaneHandle(panelId)?.getSnapshot();
+          const panel = apiRef.current?.getPanel(panelId);
+          const projectSession = panel?.api.getParameters()?.projectSession;
+          if (view?.sessionId) saveSessionViewState<TerminalSessionViewState>(`desktop-terminal:${view.sessionId}`, {
+            panelId, sessionId: view.sessionId, sessionSurfaceId: null, cwd: view.cwd,
+            draft: view.draft, history: view.history, activeRunIds: view.activeRunIds, scrollTop: view.scrollTop,
+            title: panel?.api.title,
+            ...(isProjectSessionPanelMetadata(projectSession) ? { projectSession } : {}),
+          });
           close();
           focusActivePane();
           if (result.commit.keptSessionIds.length > 0) {
@@ -2358,38 +2415,7 @@ export function App(): JSX.Element {
         });
       };
 
-      if (!plan.requiresConfirmation) {
-        commitClose('terminate');
-        return;
-      }
-      const risk = plan.items[0]?.risk;
-      if (!risk) {
-        retryAfterStateCheck();
-        return;
-      }
-      setCloseDialog(
-        (current) =>
-          current ?? {
-            title: t('safetyDialog.closeActiveTitle'),
-            description: t('safetyDialog.closeActiveDescription', {
-              risk: t(CLOSE_RISK_I18N_KEY[risk]),
-            }),
-            confirmLabel: t('safetyDialog.closeTerminal'),
-            // Closing the pane without destroying the session. The session keeps
-            // running and stays reclaimable from the Command Center, which is
-            // what makes this a real third option rather than a way to strand a
-            // PTY with no route back to it.
-            alternateLabel: t('safetyDialog.keepInBackground'),
-            onAlternate: () => {
-              setCloseDialog(null);
-              commitClose('keep');
-            },
-            onConfirm: () => {
-              setCloseDialog(null);
-              commitClose('terminate');
-            },
-          },
-      );
+      commitClose('keep');
     },
     [
       agentSessionIds,
@@ -3859,7 +3885,13 @@ export function App(): JSX.Element {
           onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
           onOpenStructuredAgentSession: openStructuredAgentSession,
+          onCreateWorkspaceSession: (projectId, workspaceId) => openStructuredAgentDraft({ projectId, name: '' }, { workspaceId }),
           onOpenProjectTerminal: openProjectTerminal,
+          onCreateWorkspaceTerminal: (workspaceId) => {
+            void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {
+              if (!result.ok) pushToast({ title: result.message, variant: 'danger' });
+            }).catch(() => pushToast({ title: t('agentHub.projects.launchFailed'), variant: 'danger' }));
+          },
           onOpenAgentSettings: () => {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
@@ -3957,6 +3989,7 @@ export function App(): JSX.Element {
         commandCenterOpen={quickOpenMode !== null}
         effectIntensity={uiPreferences.effectIntensity}
         onNewTerminal={addTab}
+        onNewSession={() => openStructuredAgentDraft()}
         onOpenAttention={() => setAgentsOpen((open) => !open)}
         onOpenCommandCenter={() => openQuickOpen('all')}
         onOpenEffectSettings={() => {

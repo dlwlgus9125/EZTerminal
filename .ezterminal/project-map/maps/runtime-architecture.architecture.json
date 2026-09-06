@@ -65,24 +65,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 515,
-          "endLine": 671,
+          "startLine": 520,
+          "endLine": 676,
           "lineDigest": "sha256:ac9dd45551fc1ff0d6c4bca3dd3fb3ae0ff2ecb796f0e0d00efa0699479c1272",
           "claim": "The panel requires fresh authority and acknowledged exact-envelope recovery escrow before send. On uncertainty it checks the Session before exact replay or bounded conflict retries with the same Session ID."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 820,
-          "endLine": 849,
+          "startLine": 847,
+          "endLine": 876,
           "lineDigest": "sha256:2a9d4f74a7659c4f0c320ed6bb93c4600aff2a62b788b124392e10074bfdbd63",
           "claim": "The active relation, attached direct-child projection, and related-session lookup let users open managed or provider-owned children as structured Session surfaces."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 950,
-          "endLine": 1004,
+          "startLine": 977,
+          "endLine": 1031,
           "lineDigest": "sha256:41bad530d450886d765765b68e618861a691824b3565d3912a9da57286df0a09",
           "claim": "The Session surface wires transcript recovery, submit, interrupt-and-submit, settings, approvals, related-session opening, heartbeat controls, and guarded managed lifecycle actions."
         }
@@ -100,16 +100,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2493,
-          "endLine": 2530,
+          "startLine": 2494,
+          "endLine": 2531,
           "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
           "claim": "The remote bridge binds an authenticated Android identity to each parsed v12 daemon command and returns the authority receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1201,
-          "endLine": 1208,
+          "startLine": 1202,
+          "endLine": 1209,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source records a successful launch with its exact target and a successful resume with its exact history identity."
         }
@@ -526,8 +526,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1862,
-        "endLine": 1978,
+        "startLine": 1863,
+        "endLine": 1979,
         "lineDigest": "sha256:d93f66535174bdf502daf2f0e039370d579722db844ca51f365b9c7286fc6b4c",
         "claim": "No operational remote frame is accepted before bearer or one-shot pairing authentication and exact v12 client negotiation complete."
       }]

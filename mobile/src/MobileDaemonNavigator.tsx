@@ -19,6 +19,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { DaemonSafeModeNotice } from '../../src/renderer/DaemonSafeModeNotice';
+import { TerminalSessionActions } from '../../src/renderer/TerminalSessionActions';
+import type { EzTerminalApi } from '../../src/shared/ipc';
+import type { AgentActivity } from '../../src/shared/agent';
 import type {
   DaemonSession,
   DaemonSnapshot,
@@ -66,7 +69,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
     workspaces: 'Workspaces',
     sessions: 'Sessions',
     archived: 'Archived',
-    archivedDescription: 'Saved Agent history',
+    archivedDescription: 'Agent history and ended terminals',
     loading: 'Loading projects from the desktop…',
     reconnecting: 'Reconnecting and checking the latest project state…',
     loadFailed: 'The desktop project state is unavailable.',
@@ -94,7 +97,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
     workspaces: '워크스페이스',
     sessions: '세션',
     archived: '보관됨',
-    archivedDescription: '저장된 Agent 기록',
+    archivedDescription: 'Agent 기록과 종료된 터미널',
     loading: '데스크톱에서 프로젝트를 불러오는 중…',
     reconnecting: '다시 연결하고 최신 프로젝트 상태를 확인하는 중…',
     loadFailed: '데스크톱 프로젝트 상태를 불러올 수 없습니다.',
@@ -179,6 +182,9 @@ export function MobileDaemonNavigator({
   onVisibilityChange,
   initialLocation,
   onLocationChange,
+  terminalAccess,
+  onNewTerminal,
+  activities,
 }: {
   readonly state: DaemonRuntimeViewState;
   readonly onRetry: () => void;
@@ -189,8 +195,11 @@ export function MobileDaemonNavigator({
   /** Restores the drill-down after a contextual New Session page closes. */
   readonly initialLocation?: MobileDaemonNavigatorLocation;
   readonly onLocationChange?: (location: MobileDaemonNavigatorLocation) => void;
+  readonly terminalAccess?: Pick<EzTerminalApi, 'listRuns' | 'terminateSessionGuarded'>;
+  readonly onNewTerminal?: (workspaceId: string) => void;
+  readonly activities?: readonly AgentActivity[];
 }): JSX.Element {
-  const { i18n } = useAppTranslation();
+  const { i18n, t } = useAppTranslation();
   const language: 'en' | 'ko' = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko')
     ? 'ko'
     : 'en';
@@ -206,8 +215,8 @@ export function MobileDaemonNavigator({
     [snapshot],
   );
   const archivedSessions = useMemo(() => snapshot ? snapshot.sessions.filter((session) => (
-    isStructuredDaemonAgentSession(session)
-    && isDaemonSessionArchived(session, agents.get(session.id))
+    (isStructuredDaemonAgentSession(session) || session.kind === 'terminal')
+    && (isDaemonSessionArchived(session, agents.get(session.id)) || (session.kind === 'terminal' && ['completed', 'interrupted', 'failed'].includes(session.state)))
   )) : [], [agents, snapshot]);
   const archivedCount = archivedSessions.length;
   const projects = useMemo(() => {
@@ -238,6 +247,7 @@ export function MobileDaemonNavigator({
     return snapshot.sessions.filter((session) => (
       session.workspaceId === workspace.id
       && !isDaemonSessionArchived(session, agents.get(session.id))
+      && !(session.kind === 'terminal' && ['completed', 'interrupted', 'failed'].includes(session.state))
     ));
   }, [agents, archivedSessions, showArchived, snapshot, workspace]);
   const rootLabel = showArchived ? copy.archived : copy.projects;
@@ -459,6 +469,7 @@ export function MobileDaemonNavigator({
                 : snapshot.sessions.filter((candidate) => (
                   candidate.workspaceId === entry.id
                   && !isDaemonSessionArchived(candidate, agents.get(candidate.id))
+                  && !(candidate.kind === 'terminal' && ['completed', 'interrupted', 'failed'].includes(candidate.state))
                 )).length;
               return (
                 <li key={entry.id}>
@@ -499,13 +510,14 @@ export function MobileDaemonNavigator({
           <ul className="mob-daemon-nav__list">
             {sessions.map((session) => {
               const Icon = SESSION_ICON[session.kind];
+              const activity = activities?.find((entry) => entry.live && entry.sessionId === session.id);
               return (
                 <li key={session.id}>
                 <button
                   type="button"
                   className="mob-daemon-nav__row"
-                  onClick={() => onSelectSession(session.id)}
-                  aria-label={`${copy.openSession}: ${session.title}`}
+                  onClick={() => showArchived && session.kind === 'terminal' ? onNewTerminal?.(session.workspaceId) : onSelectSession(session.id)}
+                  aria-label={`${showArchived && session.kind === 'terminal' ? t('sessionNavigation.newAtLocation') : copy.openSession}: ${session.title}`}
                   data-testid="mobile-daemon-session"
                   data-session-id={session.id}
                   data-session-kind={session.kind}
@@ -514,10 +526,12 @@ export function MobileDaemonNavigator({
                   <Icon aria-hidden="true" />
                   <span>
                     <strong>{session.title}</strong>
-                    <small>{sessionMeta(session, language, showArchived ? copy.archived : undefined)}</small>
+                    <small>{session.kind === 'terminal' ? `${activity?.providerLabel ?? activity?.provider ?? 'Terminal'} · ${showArchived ? t('sessionNavigation.ended') : activity ? t(`agentHub.status.${activity.status}`) : t('sessionNavigation.available')}` : sessionMeta(session, language, showArchived ? copy.archived : undefined)}</small>
+                    {showArchived && session.kind === 'terminal' && <small>{t('sessionNavigation.newAtLocation')}</small>}
                   </span>
                   <ChevronRight aria-hidden="true" />
                 </button>
+                {terminalAccess && session.kind === 'terminal' && !showArchived && <TerminalSessionActions sessionId={session.id} title={session.title} access={terminalAccess} />}
                 </li>
               );
             })}

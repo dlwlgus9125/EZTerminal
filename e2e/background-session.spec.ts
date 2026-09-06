@@ -26,12 +26,9 @@ test('keeping a risky pane running leaves its session reclaimable', async () => 
   const sessionId = await window.getByTestId('pane').getAttribute('data-session-id');
   expect(sessionId).toBeTruthy();
 
-  // A live run must be confirmed before the pane goes anywhere.
+  // The tab closes only its view, even with a live run.
   await window.locator('.ez-dock .dv-tab .dv-default-tab-action').first().click();
   const dialog = window.getByTestId('risky-close-dialog');
-  await expect(dialog).toBeVisible();
-
-  await window.getByTestId('risky-close-alternate').click();
   await expect(dialog).toHaveCount(0);
   await expect(window.getByTestId('pane')).toHaveCount(0);
 
@@ -55,5 +52,34 @@ test('keeping a risky pane running leaves its session reclaimable', async () => 
 
   await expect(window.getByTestId('pane')).toHaveCount(1);
   await expect(window.getByTestId('pane')).toHaveAttribute('data-session-id', sessionId!);
+  await expect.poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 }).toContain('READY');
+  await window.locator('[data-testid="pty-block"]:visible').click();
+  await window.keyboard.type('after-reopen');
+  await window.keyboard.press('Enter');
+  await expect.poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 }).toContain('ECHO:');
+  await app.close();
+});
+
+test('closing and reopening a completed terminal restores output, draft, and custom tab title', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByTestId('cmd-input')).toBeVisible();
+  await window.getByTestId('cmd-input').fill('gen-rows 3');
+  await window.getByTestId('btn-run').click();
+  await expect(window.getByTestId('block-status')).toHaveText('done');
+  await window.getByTestId('cmd-input').fill('unfinished command');
+  const sessionId = await window.getByTestId('pane').getAttribute('data-session-id');
+  await window.locator('.agent-aware-tab').dblclick();
+  await window.getByTestId('workspace-tab-rename').fill('Saved output');
+  await window.getByTestId('workspace-tab-rename').press('Enter');
+  await window.locator('.dv-default-tab-action').first().click();
+  await expect(window.getByTestId('pane')).toHaveCount(0);
+  await window.getByTestId('btn-command-center').click();
+  await window.getByTestId(`quick-open-row-background-session-${sessionId}`).click();
+  await expect(window.getByRole('tab', { name: 'Saved output', exact: true })).toBeVisible();
+  await expect(window.getByTestId('pane')).toHaveAttribute('data-session-id', sessionId!);
+  await expect(window.getByTestId('result-table')).toContainText('row-3');
+  await expect(window.getByTestId('cmd-input')).toHaveValue('unfinished command');
+  await expect(window.getByTestId('btn-run')).toBeEnabled();
   await app.close();
 });

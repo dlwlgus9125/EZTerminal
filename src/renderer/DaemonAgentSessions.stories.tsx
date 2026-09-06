@@ -217,6 +217,18 @@ type Story = StoryObj<typeof meta>;
 
 export const ProjectWorkspaceHierarchy: Story = {};
 
+export const AgentAndTerminal: Story = {
+  render: () => <AppI18nProvider locale="en" languages={['en']}>
+    <div style={{ width: 390, padding: 12 }}><DaemonAgentSessions
+      onOpenSession={fn()} onOpenTerminal={fn()} onNewTerminal={fn()} onNewSession={fn()}
+      access={{ ...access, getSnapshot: async () => ({ ...snapshot, sessions: [...snapshot.sessions,
+        { ...snapshot.sessions[0], id: 'terminal-live', title: 'Build terminal', kind: 'terminal', source: 'legacy-pty', state: 'idle' },
+        { ...snapshot.sessions[0], id: 'terminal-ended', title: 'Previous terminal', kind: 'terminal', source: 'legacy-pty', state: 'completed' },
+      ] }) }}
+    /></div>
+  </AppI18nProvider>,
+};
+
 export const ArchivedHistory: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

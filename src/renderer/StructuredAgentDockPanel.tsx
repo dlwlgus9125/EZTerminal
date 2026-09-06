@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
+import type { AgentLaunchBootstrap } from '../shared/agent-history';
+import { NewSessionDraftPanel } from './NewSessionDraftPanel';
 
 import {
   createDaemonCommand,
@@ -198,6 +200,9 @@ export function StructuredAgentDockPanel(
     readonly createRecoveryRegistry?: StructuredAgentCreateRecoveryRegistry;
     /** Resolves true only after main has accepted the current memory-only checkpoint. */
     readonly persistCreateRecovery?: () => Promise<boolean>;
+    readonly onOpenTerminal?: (workspaceId?: string, directory?: string) => Promise<StructuredAgentUiResult>;
+    readonly onLaunchCli?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
+    readonly onOpenSettings?: () => void;
     readonly onOpenSession?: (input: {
       readonly sessionId: string;
       readonly title?: string;
@@ -699,7 +704,7 @@ export function StructuredAgentDockPanel(
     });
   }, [transcriptItems]);
 
-  if (availability?.state === 'legacy-only-safe-mode') {
+  if (availability?.state === 'legacy-only-safe-mode' && (sessionId || !props.onOpenTerminal)) {
     return (
       <div className="structured-agent-safe-mode" data-testid="structured-agent-safe-mode">
         <DaemonSafeModeNotice availability={availability} showRecoveryPath />
@@ -708,6 +713,28 @@ export function StructuredAgentDockPanel(
   }
 
   if (!sessionId) {
+    if (props.onOpenTerminal && props.onLaunchCli) {
+      return <NewSessionDraftPanel
+        snapshot={snapshot}
+        projectId={projectId}
+        workspaceId={initialWorkspaceId ?? (preferredWorkspaceId ? `${projectId && rootId ? `${projectId}.${rootId}.` : ''}${preferredWorkspaceId}` : undefined)}
+        access={window.ezterminal}
+        onTerminal={props.onOpenTerminal}
+        onLaunchCli={props.onLaunchCli}
+        onSettings={props.onOpenSettings}
+        agent={{
+          providers, workspaces,
+          initialProviderId: uncertainDraft?.input.providerId,
+          initialModel: uncertainDraft?.input.model,
+          initialWorkspaceId: uncertainDraft?.input.workspaceId ?? initialWorkspaceId,
+          initialPermissionPreset: uncertainDraft?.input.permissionPreset,
+          initialPrompt: uncertainDraft?.input.initialPrompt,
+          deliveryRecovery: uncertainDraft !== null,
+          loading: loading || availability?.state === 'legacy-only-safe-mode',
+          loadError, onRetry: () => void refresh(), onCreate: create,
+        }}
+      />;
+    }
     return (
       <StructuredAgentDraftPanel
         providers={providers}

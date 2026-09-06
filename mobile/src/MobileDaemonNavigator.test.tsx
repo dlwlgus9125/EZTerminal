@@ -210,7 +210,7 @@ describe('MobileDaemonNavigator', () => {
     expect(agent?.dataset.sessionKind).toBe('agent');
     expect(agent?.getAttribute('aria-label')).toBe('Open session: Codex implementation');
     expect(terminal?.dataset.sessionKind).toBe('terminal');
-    expect(terminal?.textContent).toContain('Legacy PTY');
+    expect(terminal?.textContent).toContain('Terminal · Available');
 
     act(() => agent?.click());
     expect(onSelectSession).toHaveBeenCalledWith('agent-session-1');

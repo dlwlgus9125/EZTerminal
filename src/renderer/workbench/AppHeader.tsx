@@ -1,4 +1,4 @@
-import { BellRing, ChevronDown, PanelsTopLeft, Plus, ScanLine, Search } from 'lucide-react';
+import { BellRing, ChevronDown, PanelsTopLeft, Plus, ScanLine, Search, SquareTerminal } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import { useAppTranslation } from '../i18n';
@@ -14,6 +14,7 @@ export function AppHeader({
   commandCenterOpen,
   effectIntensity,
   onNewTerminal,
+  onNewSession,
   onOpenAttention,
   onOpenCommandCenter,
   onOpenEffectSettings,
@@ -26,6 +27,7 @@ export function AppHeader({
   readonly commandCenterOpen: boolean;
   readonly effectIntensity: number;
   readonly onNewTerminal: () => void;
+  readonly onNewSession?: () => void;
   readonly onOpenAttention: () => void;
   readonly onOpenCommandCenter: () => void;
   readonly onOpenEffectSettings: () => void;
@@ -79,7 +81,7 @@ export function AppHeader({
     items[next].focus();
   };
   return (
-    <header className="workbench-header" data-testid="workbench-header">
+    <header className={`workbench-header${onNewSession ? ' workbench-header--session-actions' : ''}`} data-testid="workbench-header">
       <div className="workbench-header-zone workbench-header-zone--new">
         <BrandMark />
         {appVersion ? (
@@ -92,12 +94,13 @@ export function AppHeader({
           variant="primary"
           className="workbench-new-terminal"
           leadingIcon={<Plus />}
-          onClick={onNewTerminal}
-          data-testid="btn-new-tab"
-          title={t('header.newTerminal')}
+          onClick={onNewSession ?? onNewTerminal}
+          data-testid={onNewSession ? 'btn-new-session' : 'btn-new-tab'}
+          title={onNewSession ? t('agentHub.projects.newSession') : t('header.newTerminal')}
         >
-          {t('header.newTerminal')}
+          {onNewSession ? t('agentHub.projects.newSession') : t('header.newTerminal')}
         </Button>
+        {onNewSession && <Button variant="ghost" onClick={onNewTerminal} data-testid="btn-new-tab" title={t('header.newTerminal')} aria-label={t('header.newTerminal')}><SquareTerminal aria-hidden="true" /></Button>}
       </div>
       <div className="workbench-header-zone workbench-header-zone--search">
         {/* Still the Command Center zone, just widened into its search anchor.
@@ -161,7 +164,7 @@ export function AppHeader({
         >
           <span className="effect-profile-trigger__fx" aria-hidden="true">FX</span>
           <span className="effect-profile-trigger__separator" aria-hidden="true">·</span>
-          <span className="effect-profile-trigger__value">{`NEON ${effectIntensity}`}</span>
+          <span className="effect-profile-trigger__value"><span className="effect-profile-trigger__name">NEON </span>{effectIntensity}</span>
         </Button>
         <Button
           variant={attentionCount > 0 ? 'secondary' : 'ghost'}

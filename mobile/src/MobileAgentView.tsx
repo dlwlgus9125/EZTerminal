@@ -1,4 +1,4 @@
-import { Bot, Check, Plus } from 'lucide-react';
+import { Bot, Check, History, Plus } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -67,7 +67,10 @@ import {
 import { MobileNewSessionDraft } from './MobileNewSessionDraft';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { MobilePageHeader } from './MobilePageHeader';
+import { MobileAgentProjects } from './MobileAgentProjects';
 import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
+import { sessionViewKey } from '../../src/renderer/session-view-state';
+import { useLiveTerminalSessions, withLiveTerminalSessions } from '../../src/renderer/use-live-terminal-sessions';
 import { useMobileToast } from './MobileToast';
 import type {
   DaemonRuntimeViewState,
@@ -285,6 +288,11 @@ export function MobileAgentView({
   onLoadDiff,
   onReadGitStatus,
   onCreateWorkspaceTerminal,
+  onCreateLocalTerminal,
+  newSessionRequest = 0,
+  onNewSessionRequestConsumed,
+  onLaunchAgent,
+  onResumeHistory,
   transport,
   daemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
   structuredTranscripts = EMPTY_STRUCTURED_TRANSCRIPTS,
@@ -308,6 +316,9 @@ export function MobileAgentView({
   readonly onResumeHistory?: (bootstrap: AgentResumeBootstrap) => Promise<void>;
   readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
   readonly onCreateWorkspaceTerminal?: (workspaceId: string) => Promise<MobileWorkspaceTerminalResult>;
+  readonly onCreateLocalTerminal?: () => Promise<StructuredAgentUiResult>;
+  readonly newSessionRequest?: number;
+  readonly onNewSessionRequestConsumed?: () => void;
   readonly transport?: WsEzTerminalTransport;
   readonly daemonRuntimeState?: DaemonRuntimeViewState;
   /** Optional transcript seed used by tests and hosts that already own a page cache. */
@@ -316,6 +327,8 @@ export function MobileAgentView({
   readonly agentCreateRecovery?: MobileAgentCreateRecoveryController;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
+  const liveTerminalIds = useLiveTerminalSessions(transport);
+  const navigationSnapshot = useMemo(() => withLiveTerminalSessions(daemonRuntimeState.snapshot, liveTerminalIds), [daemonRuntimeState.snapshot, liveTerminalIds]);
   const showToast = useMobileToast();
   const navigation = useMobileNavigationHistory();
   const detailLayerId = `mobile-agent-detail-${useId()}`;
@@ -330,6 +343,7 @@ export function MobileAgentView({
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(null);
   const [newSessionTarget, setNewSessionTarget] = useState<MobileNewSessionTarget | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingCreatedAgent, setPendingCreatedAgent] = useState<PendingCreatedAgent | null>(null);
   const [preparedAgentCreate, setPreparedAgentCreate] = useState<UncertainAgentCreate | null>(
     agentCreateRecovery?.recovery ?? null,
@@ -985,17 +999,24 @@ export function MobileAgentView({
   }, [uncertainAgentCreate]);
 
   useEffect(() => {
+    if (!newSessionRequest) return;
+    openNewSession();
+    onNewSessionRequestConsumed?.();
+  }, [newSessionRequest, onNewSessionRequestConsumed, openNewSession]);
+
+  useEffect(() => {
     if (!uncertainAgentCreate) return;
     setSelectedDaemonSessionId(null);
     setNewSessionTarget({ workspaceId: uncertainAgentCreate.input.workspaceId });
   }, [uncertainAgentCreate]);
 
   const closeDetailState = useCallback((): void => {
+    setHistoryOpen(false);
     setNewSessionTarget(null);
     setSelectedDaemonSessionId(null);
     queueMicrotask(() => newSessionButtonRef.current?.focus());
   }, []);
-  const detailOpen = newSessionTarget !== null || selectedDaemonSessionId !== null;
+  const detailOpen = historyOpen || newSessionTarget !== null || selectedDaemonSessionId !== null;
   useEffect(() => {
     if (!detailOpen) return undefined;
     return navigation.pushLayer({
@@ -1096,6 +1117,13 @@ export function MobileAgentView({
     });
   }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
 
+  if (historyOpen && transport && onResumeHistory && onLaunchAgent) return (
+    <main className="mob-page" data-testid="mobile-project-history-page">
+      <MobilePageHeader title={t('sessionNavigation.projectHistory')} backLabel={t('common.back')} onBack={closeDetailState} />
+      <div className="mob-page__body"><MobileAgentProjects transport={transport} onResumeHistory={onResumeHistory} onLaunchAgent={onLaunchAgent} hideLaunchActions /></div>
+    </main>
+  );
+
   if (newSessionTarget) {
     return (
       <MobileNewSessionDraft
@@ -1114,6 +1142,9 @@ export function MobileAgentView({
         onDiscardAgentRecovery={() => void agentCreateRecovery?.discard()}
         onCreateAgent={createAgentSession}
         onCreateTerminal={createTerminalSession}
+        onCreateLocalTerminal={onCreateLocalTerminal}
+        launchAccess={transport}
+        onLaunchCli={onLaunchAgent}
       />
     );
   }
@@ -1162,6 +1193,7 @@ export function MobileAgentView({
       && !archivedHistory;
     return (
       <MobileStructuredAgentSession
+        viewStateKey={transport ? sessionViewKey(transport, `agent:${selectedDaemonSession.id}`) : undefined}
         sessionId={selectedDaemonSession.id}
         title={selectedDaemonSession.title}
         providerId={selectedDaemonAgent.providerId}
@@ -1271,6 +1303,8 @@ export function MobileAgentView({
           </span>
         ) : undefined}
         actions={(
+          <div className="mob-agent-projects__head-actions">
+          {transport && onResumeHistory && onLaunchAgent && <IconButton icon={History} aria-label={t('sessionNavigation.projectHistory')} onClick={() => setHistoryOpen(true)} data-testid="mobile-project-history" />}
           <IconButton
             ref={newSessionButtonRef}
             icon={Plus}
@@ -1280,12 +1314,13 @@ export function MobileAgentView({
             onClick={() => openNewSession()}
             data-testid="mobile-agent-new-session"
           />
+          </div>
         )}
       />
 
       {disconnected && <div className="mob-empty" role="status">{t('agentHub.reconnecting')}</div>}
 
-      <div className="mob-agent-filters" role="group" aria-label={t('mobile.agentView.filterLabel')}>
+      {!navigationSnapshot && <div className="mob-agent-filters" role="group" aria-label={t('mobile.agentView.filterLabel')}>
         {filters.map((entry) => (
           <button
             key={entry.id}
@@ -1298,7 +1333,7 @@ export function MobileAgentView({
             {entry.label} {entry.count}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div className="mob-page__body" data-testid="mobile-agent-scroll-region">
         <div className="mob-column">
@@ -1380,13 +1415,13 @@ export function MobileAgentView({
           {[
             ...visible.filter((item) => bucketOf(item.status) === 'attention'),
             ...(transport ? [null] : []),
-            ...visible.filter((item) => bucketOf(item.status) !== 'attention'),
+            ...(!navigationSnapshot ? visible.filter((item) => bucketOf(item.status) !== 'attention') : []),
           ].map((item) => {
             if (item === null) {
               return (
                 <MobileDaemonNavigator
                   key="daemon-projects"
-                  state={daemonRuntimeState}
+                  state={{ ...daemonRuntimeState, snapshot: navigationSnapshot }}
                   visibility={daemonNavigatorVisibility}
                   onVisibilityChange={setDaemonNavigatorVisibility}
                   initialLocation={daemonNavigatorLocation}
@@ -1395,7 +1430,10 @@ export function MobileAgentView({
                     void transport!.getDaemonSnapshot();
                   }}
                   onSelectSession={selectSession}
+                  terminalAccess={transport}
+                  onNewTerminal={(workspaceId) => { void createTerminalSession(workspaceId).then((result) => { if (!result.ok) showToast(result.message); }); }}
                   onCreateSession={openNewSession}
+                  activities={snapshot.items}
                 />
               );
             }

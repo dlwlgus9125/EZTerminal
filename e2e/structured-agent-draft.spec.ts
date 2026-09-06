@@ -170,7 +170,10 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(provider.locator('option[value="codex"]')).toHaveText('Codex');
     await expect(provider.locator('option[value="codex"]')).toBeEnabled();
 
-    const workspace = draft.getByTestId('structured-agent-workspace');
+    const project = window.getByTestId('new-session-project');
+    await project.selectOption(restoredSnapshot!.workspaces[0].projectId);
+    const workspace = window.getByTestId('new-session-workspace');
+    await workspace.selectOption(restoredSnapshot!.workspaces[0].id);
     await expect(workspace).not.toHaveValue('');
     await draft.getByTestId('structured-agent-first-prompt').fill('Verify the ready provider.');
     const send = draft.getByTestId('structured-agent-create');
@@ -201,4 +204,54 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
   } finally {
     await app.close();
   }
+});
+
+test('Project New Session opens a regular terminal and its closed view can be reopened', async () => {
+  const projectRoot = createRegisteredE2eTempDir('ezterm-session-root-');
+  const userDataDir = createRegisteredE2eTempDir('ezterm-session-data-');
+  const seedProjectId = 'session-ux-regression';
+  writeFileSync(path.join(userDataDir, 'agent-projects.json'), JSON.stringify({ version: 3, projects: [{
+    projectId: seedProjectId, name: 'Session UX fixture', primaryRoot: projectRoot, additionalRoots: [], pinned: true,
+    origin: 'terminal', lastActiveAt: 1_785_181_625_234, createdAt: 1_785_181_600_000, updatedAt: 1_785_181_625_234,
+  }] }), 'utf8');
+  const app = await launchApp(userDataDir);
+  try {
+    const window = await app.firstWindow();
+    await window.setViewportSize({ width: 1440, height: 900 });
+    await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+    await window.getByTestId('btn-toggle-agents').click();
+    const registered = await window.evaluate(async () => (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items);
+    const projectId = registered.find((entry) => entry.name === 'Session UX fixture')?.projectId;
+    expect(projectId, JSON.stringify(registered)).toBeTruthy();
+    const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
+    await window.getByTestId(`agent-project-new-chat-${projectId}`).click();
+    await expect(window.getByTestId('new-session-draft')).toBeVisible();
+    await window.getByTestId('new-session-terminal').click();
+    await expect(window.getByTestId('new-session-open-terminal')).toBeEnabled();
+    expect(await window.evaluate(() => globalThis.window.ezterminal.listSessions())).toHaveLength(before.length);
+    await window.getByTestId('new-session-open-terminal').click();
+    await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
+    const pane = window.locator('[data-testid="pane"]:visible');
+    await expect(pane).toHaveCount(1);
+    const sessionId = await pane.getAttribute('data-session-id');
+    expect(sessionId).toBeTruthy();
+    const sessions = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
+    expect(sessions).toHaveLength(before.length + 1);
+    expect(path.resolve(sessions.find((session) => session.sessionId === sessionId)!.cwd)).toBe(path.resolve(projectRoot));
+    await pane.getByTestId('cmd-input').fill('echo preserved-draft');
+    await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
+    await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`)).toHaveCount(0);
+    const group = window.locator('.daemon-agent-project').filter({ has: window.getByTestId(`agent-project-open-${projectId}`) });
+    await group.locator('summary').click();
+    const row = group.locator(`button.daemon-agent-session[data-session-id="${sessionId}"]`);
+    await expect(row).toBeVisible();
+    await row.click();
+    const reopened = window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`);
+    await expect(reopened).toBeVisible();
+    await expect(reopened.getByTestId('cmd-input')).toHaveValue('echo preserved-draft');
+    await row.locator('..').getByTestId('session-end').click();
+    await expect(window.getByTestId('session-end-dialog')).toBeVisible();
+    await window.getByTestId('session-end-confirm').click();
+    await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).some((session) => session.sessionId === sessionId)).toBe(false);
+  } finally { await app.close(); }
 });

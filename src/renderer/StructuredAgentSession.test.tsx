@@ -14,6 +14,7 @@ import {
   coalesceStructuredAgentTranscript,
 } from './StructuredAgentSession';
 import { AppI18nProvider } from './i18n';
+import { clearSessionViewStates } from './session-view-state';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -73,6 +74,7 @@ function setValue(control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectEl
 }
 
 beforeEach(() => {
+  clearSessionViewStates();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -282,6 +284,18 @@ describe('StructuredAgentChildTrack', () => {
 });
 
 describe('StructuredAgentComposer', () => {
+  it('restores each session draft without leaking it into a different session', () => {
+    const show = (sessionId: string) => render(<StructuredAgentSessionPanel
+      sessionId={sessionId} title={sessionId} providerId="codex" providerLabel="Codex"
+      workspace={{ id: 'main', label: 'Main', kind: 'local' }} permissionPreset="standard" state="idle"
+      items={[]} onSend={async () => ({ ok: true })}
+    />);
+    const input = () => container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
+    show('session-a'); setValue(input(), 'Unsent draft for A');
+    show('session-b'); expect(input().value).toBe(''); setValue(input(), 'Unsent draft for B');
+    show('session-a'); expect(input().value).toBe('Unsent draft for A');
+    show('session-b'); expect(input().value).toBe('Unsent draft for B');
+  });
   it('keeps FIFO Send available while busy and requires an explicit Interrupt & Send action', async () => {
     const onSend = vi.fn(async () => ({ ok: false as const, message: 'Queue unavailable' }));
     const onInterrupt = vi.fn(async () => ({ ok: true as const }));

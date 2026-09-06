@@ -188,6 +188,8 @@ export interface AgentHubProps {
   /** Injectable seam for deterministic component stories and tests. */
   readonly daemonAgentSessionAccess?: DaemonAgentSessionListAccess;
   readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
+  readonly onCreateWorkspaceTerminal?: (workspaceId: string) => void;
+  readonly onCreateWorkspaceSession?: (projectId: string, workspaceId: string) => void;
   readonly onOpenAgentSettings?: () => void;
   readonly onDecideManagedMerge?: (
     input: ManagedMergeDecisionInput,
@@ -234,6 +236,8 @@ export function AgentHub({
   onOpenStructuredAgentSession,
   daemonAgentSessionAccess,
   onOpenProjectTerminal,
+  onCreateWorkspaceTerminal,
+  onCreateWorkspaceSession,
   onOpenAgentSettings,
   onDecideManagedMerge,
   onClose,
@@ -1400,12 +1404,19 @@ export function AgentHub({
                   : t('agentHub.projects.empty')}
               </p>
             )}
-            <ol className="agent-project-list">
-              {projects.map((project) => {
+            <DaemonAgentSessions
+              access={daemonAccess}
+              onOpenSession={onOpenStructuredAgentSession ?? (() => undefined)}
+              onOpenTerminal={onOpenStructuredAgentSession ? onFocusSession : undefined}
+              onNewTerminal={onCreateWorkspaceTerminal}
+              onNewSession={onCreateWorkspaceSession}
+              activities={coordinatedActivities}
+              query={debouncedProjectQuery}
+              projectHeaders={projects.map((project) => {
                 const coordination = coordinationProjects.get(project.projectId);
                 const activeParticipants = coordination?.participants.length ?? 0;
-                return (
-                  <li className="agent-project" key={project.projectId}>
+                return { id: project.projectId, content: (
+                  <div className="agent-project">
                     <div className="agent-project-row">
                       <button
                         type="button"
@@ -1504,16 +1515,10 @@ export function AgentHub({
                         </span>
                       </div>
                     ) : null}
-                  </li>
-                );
+                  </div>
+                ) };
               })}
-            </ol>
-            {!mobile && onOpenStructuredAgentSession && !daemonSafeMode && (
-              <DaemonAgentSessions
-                access={daemonAccess}
-                onOpenSession={onOpenStructuredAgentSession}
-              />
-            )}
+            />
             {projectCursor && (
               <Button
                 className="agent-projects-more"
@@ -1531,8 +1536,8 @@ export function AgentHub({
           {!onOpenStructuredAgentSession && coordinatedActivities.length === 0 && (
             <div className="agent-empty">{t('agentHub.empty')}</div>
           )}
-          {renderGroup('active', t('agentHub.groups.active'), groups.active)}
-          {renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
+          {!onOpenStructuredAgentSession && renderGroup('active', t('agentHub.groups.active'), groups.active)}
+          {!onOpenStructuredAgentSession && renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
           </>
         )}
       </div>

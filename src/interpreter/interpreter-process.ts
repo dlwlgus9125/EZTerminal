@@ -146,6 +146,7 @@ class ExecutionSession implements Execution {
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
   private orphanTimer: ReturnType<typeof setTimeout> | null = null;
+  private retainedWithoutView = false;
   /** First post-crash attach owns explicit-close semantics even though PTY
    * replay still uses an attach handle instead of the dead primary stream. */
   private recoveryOwnerPort: MessagePortMain | null = null;
@@ -679,7 +680,7 @@ class ExecutionSession implements Execution {
   }
 
   private scheduleOrphanDisposal(): void {
-    if (this.disposed || this.orphanTimer !== null) return;
+    if (this.disposed || this.retainedWithoutView || this.orphanTimer !== null) return;
     this.orphanTimer = setTimeout(() => {
       this.orphanTimer = null;
       if (!this.primaryPort && this.attachPorts.size === 0) {
@@ -699,6 +700,14 @@ class ExecutionSession implements Execution {
     switch (control?.type) {
       case 'cancel':
         this.abort();
+        break;
+      case 'detach':
+        // Deliberate view close differs from renderer crash grace. The host
+        // session still owns this execution. Releasing the primary port also
+        // releases ACK backpressure so output keeps flowing without a view.
+        this.retainedWithoutView = true;
+        this.clearOrphanTimer();
+        port.close();
         break;
       case 'close':
         // Only the PRIMARY port's close ends the run for everyone (T2.2c) —

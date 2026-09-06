@@ -4,7 +4,9 @@ param(
     [string]$Api35Avd = 'EZTerminalApi35',
     [string]$KeystorePath = '.release-secrets/android-release.jks',
     [string]$EncryptedPasswordPath = '.release-secrets/android-release-password.dpapi.key',
-    [string]$KeyAlias = 'ezterminal-release'
+    [string]$KeyAlias = 'ezterminal-release',
+    # Local release binaries only; never certifies a publishable release.
+    [switch]$InstallersOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -124,6 +126,16 @@ function Invoke-SignedAndroidReleaseBuild {
     }
 }
 
+function Invoke-InstallerCommand {
+    param([string[]]$Arguments)
+    & pnpm @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Installer command failed: pnpm $($Arguments -join ' ')"
+    }
+}
+
+$previousBuildSha = $env:EZTERMINAL_BUILD_SHA
+$previousMobileBuildSha = $env:VITE_BUILD_SHA
 Push-Location $repoRoot
 try {
     $sha = Get-ExactGitHead
@@ -133,34 +145,72 @@ try {
     if (
         [int]$contract.schemaVersion -ne 1 -or
         $version -notmatch '^\d+\.\d+\.\d+$' -or
-        [string]$contract.validationProfile -cne 'full'
+        ([string]$contract.validationProfile -cne 'full' -and -not (
+            $InstallersOnly -and
+            [string]$contract.validationProfile -ceq 'functional-hotfix'
+        ))
     ) {
         throw 'The local signed candidate wrapper requires a valid full release contract.'
     }
     $sha8 = $sha.Substring(0, 8)
 
-    & (Join-Path $PSScriptRoot 'verify-release-candidate.ps1') `
-        -Api29Avd $Api29Avd `
-        -Api35Avd $Api35Avd
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Non-performance release-candidate validation failed.'
-    }
-    Assert-FrozenCandidate $sha 'after candidate validation and before signing'
+    if ($InstallersOnly) {
+        foreach ($name in @(
+            'EZTERMINAL_RUN_RELEASE_PERFORMANCE',
+            'EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC',
+            'EZ_OUT_DIR'
+        )) {
+            if (-not [string]::IsNullOrWhiteSpace(
+                [Environment]::GetEnvironmentVariable($name)
+            )) {
+                throw "Installer-only builds refuse inherited $name."
+            }
+        }
+        if ([string]$contract.windowsSigningMode -cne 'unsigned') {
+            throw 'Use the protected release workflow for signed Windows builds.'
+        }
+        & node --input-type=module -e "import { resolveWindowsSigningMode, releaseWindowsSigningMode } from './scripts/resolve-windows-signing-mode.mjs'; resolveWindowsSigningMode(releaseWindowsSigningMode(), process.env);"
+        if ($LASTEXITCODE -ne 0) { throw 'Windows signing configuration is inconsistent.' }
+        $env:EZTERMINAL_BUILD_SHA = $sha
+        $env:VITE_BUILD_SHA = $sha
+        Invoke-InstallerCommand @('verify:version')
+        Invoke-InstallerCommand @('docs:check')
+        Invoke-InstallerCommand @('project-map:check')
+        # This prepares unsigned payloads locally; it sends no SignPath request.
+        Invoke-InstallerCommand @('signpath:prepare')
+        Invoke-InstallerCommand @('test:e2e:packaged')
+        Invoke-InstallerCommand @('--dir', 'mobile', 'build:release')
+        Invoke-InstallerCommand @('--dir', 'mobile', 'cap:sync')
+        Push-Location (Join-Path $repoRoot 'mobile/android')
+        try {
+            & ./gradlew.bat lintDebug testDebugUnitTest --no-daemon
+            if ($LASTEXITCODE -ne 0) { throw 'Android validation failed.' }
+        } finally { Pop-Location }
+        Assert-FrozenCandidate $sha 'after installer builds and before signing'
+    } else {
+        & (Join-Path $PSScriptRoot 'verify-release-candidate.ps1') `
+            -Api29Avd $Api29Avd `
+            -Api35Avd $Api35Avd
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Non-performance release-candidate validation failed.'
+        }
+        Assert-FrozenCandidate $sha 'after candidate validation and before signing'
 
-    $evidenceDirectory = Join-Path $repoRoot (
-        "release-assets\.evidence-$version-$sha8-candidate"
-    )
-    $reportPath = Join-Path $evidenceDirectory 'local-rc-report.json'
-    $soakReportPath = Join-Path $evidenceDirectory 'mobile-soak-report.json'
-    if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
-        throw "Candidate validation did not produce $reportPath."
+        $evidenceDirectory = Join-Path $repoRoot (
+            "release-assets\.evidence-$version-$sha8-candidate"
+        )
+        $reportPath = Join-Path $evidenceDirectory 'local-rc-report.json'
+        $soakReportPath = Join-Path $evidenceDirectory 'mobile-soak-report.json'
+        if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            throw "Candidate validation did not produce $reportPath."
+        }
+        if (-not (Test-Path -LiteralPath $soakReportPath -PathType Leaf)) {
+            throw "Candidate validation did not produce $soakReportPath."
+        }
+        $reportHash = (
+            Get-FileHash -LiteralPath $reportPath -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
     }
-    if (-not (Test-Path -LiteralPath $soakReportPath -PathType Leaf)) {
-        throw "Candidate validation did not produce $soakReportPath."
-    }
-    $reportHash = (
-        Get-FileHash -LiteralPath $reportPath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
 
     $resolvedKeystore = Resolve-RepoFile $KeystorePath 'Android release keystore'
     $resolvedPassword = Resolve-RepoFile $EncryptedPasswordPath 'DPAPI password'
@@ -200,6 +250,13 @@ try {
     }
     Assert-FrozenCandidate $sha 'after signed Android assembly'
 
+    if ($InstallersOnly) {
+        & (Join-Path $PSScriptRoot 'stage-local-installers.ps1') -ExpectedCommit $sha
+        if ($LASTEXITCODE -ne 0) { throw 'Local installer verification failed.' }
+        Assert-FrozenCandidate $sha 'after local installer staging'
+        return
+    }
+
     & (Join-Path $PSScriptRoot 'stage-release-artifacts.ps1') `
         -AndroidApkPath 'mobile/android/app/build/outputs/apk/release/app-release.apk' `
         -AndroidMetadataPath 'mobile/android/app/build/outputs/apk/release/output-metadata.json' `
@@ -237,5 +294,7 @@ try {
     Write-Host "Local release candidate: $artifactDirectory"
     Write-Host 'publicationEligible=false; desktop performance remains pending.'
 } finally {
+    $env:EZTERMINAL_BUILD_SHA = $previousBuildSha
+    $env:VITE_BUILD_SHA = $previousMobileBuildSha
     Pop-Location
 }

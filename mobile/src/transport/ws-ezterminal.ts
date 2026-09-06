@@ -1692,7 +1692,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   runCommand(commandText: string, runId: string, sessionId: string): Promise<void> {
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId, control });
-      if (control.type === 'close') {
+      if (control.type === 'close' || control.type === 'detach') {
         this.clearResumeRetry(runId);
         this.ports.delete(runId);
       }
@@ -1763,7 +1763,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     const resumeOwned = this.restartResumableRuns.delete(runKey(sessionId, runId));
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId, control });
-      if (control.type === 'close') {
+      if (control.type === 'close' || control.type === 'detach') {
         this.clearResumeRetry(runId);
         this.ports.delete(runId);
       }
@@ -2453,7 +2453,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId: request.runId, control });
-      if (control.type === 'close') {
+      if (control.type === 'close' || control.type === 'detach') {
         this.clearResumeRetry(request.runId);
         this.ports.delete(request.runId);
       }
@@ -2521,7 +2521,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId: request.runId, control });
-      if (control.type === 'close') {
+      if (control.type === 'close' || control.type === 'detach') {
         this.clearResumeRetry(request.runId);
         this.ports.delete(request.runId);
       }
@@ -2631,7 +2631,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId: request.runId, control });
-      if (control.type === 'close') {
+      if (control.type === 'close' || control.type === 'detach') {
         this.clearResumeRetry(request.runId);
         this.ports.delete(request.runId);
       }

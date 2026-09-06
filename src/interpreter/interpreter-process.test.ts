@@ -331,6 +331,22 @@ describe('interpreter-process — ExecutionSession port fanout (M2 T2.2b, Critic
     expect(expired.posted).toEqual([{ type: 'error', message: 'run run-1 does not exist' }]);
   });
 
+  it('keeps an explicitly detached view beyond crash grace and replays the same run', async () => {
+    vi.useFakeTimers();
+    const { handler, posted } = await importInterpreter();
+    const { primary, sessionId } = beginRun(handler, posted, 'run-view-close');
+    primary.send({ type: 'detach' });
+    primary.close();
+    vi.advanceTimersByTime(5 * 60_000);
+    const reopened = new FakePort();
+    handler({ data: { type: 'attach-run', sessionId, runId: 'run-view-close' }, ports: [reopened] });
+    expect(reopened.posted.some((frame) => (frame as InterpreterFrame).type === 'start')).toBe(true);
+    reopened.send({ type: 'close' });
+    const ended = new FakePort();
+    handler({ data: { type: 'attach-run', sessionId, runId: 'run-view-close' }, ports: [ended] });
+    expect(ended.posted).toEqual([{ type: 'error', message: 'run run-view-close does not exist' }]);
+  });
+
   it('treats an explicit close from the recovered owner as immediate teardown', async () => {
     const { handler, posted } = await importInterpreter();
     const { primary } = beginRun(handler, posted, 'run-recovered-close');

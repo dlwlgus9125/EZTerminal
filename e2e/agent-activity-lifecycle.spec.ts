@@ -58,12 +58,15 @@ test('terminating an Agent terminal session removes its activity and focus targe
   const sessionId = await pane.getAttribute('data-session-id');
   expect(sessionId).toBeTruthy();
   await window.getByTestId('btn-toggle-agents').click();
-  await expect(window.getByTestId('agent-focus')).toHaveCount(1, { timeout: 15_000 });
-
-  await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
-  const dialog = window.getByTestId('risky-close-dialog');
+  const row = window.locator(`button.daemon-agent-session[data-session-id="${sessionId}"]`);
+  await expect(row).toHaveCount(1, { timeout: 15_000 });
+  const project = window.locator('.daemon-agent-project').filter({ has: row });
+  await project.locator('summary').click();
+  await expect(row).toBeVisible();
+  await row.locator('..').getByTestId('session-end').click();
+  const dialog = window.getByTestId('session-end-dialog');
   await expect(dialog).toBeVisible();
-  await window.getByTestId('risky-close-confirm').click();
+  await window.getByTestId('session-end-confirm').click();
   await expect(dialog).toHaveCount(0);
 
   await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId!}"]`))
@@ -74,6 +77,7 @@ test('terminating an Agent terminal session removes its activity and focus targe
     .toBe(false);
   await expect(window.getByTestId('agent-row')).toHaveCount(0, { timeout: 15_000 });
   await expect(window.getByTestId('agent-focus')).toHaveCount(0);
+  await expect(row).toHaveCount(0);
 
   await app.close();
 });

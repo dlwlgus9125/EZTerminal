@@ -507,6 +507,11 @@ export interface CloseControl {
   readonly type: 'close';
 }
 
+/** Close only this view; the host retains the run until explicit teardown. */
+export interface DetachControl {
+  readonly type: 'detach';
+}
+
 /**
  * Keystrokes (or pasted text) from a focused `pty` block's xterm, forwarded to
  * the PTY child's stdin (Phase 2 TUI). `data` is xterm's `onData` payload.
@@ -580,6 +585,7 @@ export type RendererControl =
   | RequestRowsControl
   | SetViewportControl
   | CloseControl
+  | DetachControl
   | PtyInputControl
   | PtySubmitOnReadyControl
   | PtyResizeControl

@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [1.0.49] - 2026-09-07
+
+### Changed
+
+- Unified desktop and Android New Session entry points with Agent / Terminal
+  choices and separate in-app conversation / terminal CLI Agent modes.
+- Organized navigation around Project, Workspace and Session while preserving
+  standalone terminals and provider-native CLI history.
+- Closing a tab or auxiliary view now keeps its work running. Reopening the
+  session restores output, completed blocks, draft and view metadata; ending
+  a terminal is a separate guarded action.
+- Added an explicit local installer-only build path with exact clean-source
+  identity, the existing Android release key, verified Windows signing state
+  and checksums. It does not certify publication eligibility.
+
+### Fixed
+
+- Detaching a terminal view no longer closes its host run or starts the orphan
+  crash-recovery timeout. Reattachment preserves working input and output.
+- Kept New Session and quick Terminal actions reachable alongside native window
+  controls at narrow widths and 150% UI scale.
+
+### Security
+
+- Provider review, consent, launch validation, guarded termination, SSH attach
+  restrictions and main-window quit/tray policies remain unchanged.
+
 ## [1.0.48] - 2026-09-06
 
 ### Fixed

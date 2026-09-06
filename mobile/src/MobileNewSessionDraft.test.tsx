@@ -89,6 +89,7 @@ function renderDraft(options: {
   readonly locale?: 'en' | 'ko';
   readonly onCreateAgent?: ReturnType<typeof vi.fn>;
   readonly onCreateTerminal?: ReturnType<typeof vi.fn>;
+  readonly onCreateLocalTerminal?: ReturnType<typeof vi.fn>;
   readonly onRetryAgentRecovery?: ReturnType<typeof vi.fn>;
   readonly onDiscardAgentRecovery?: ReturnType<typeof vi.fn>;
 } = {}): void {
@@ -102,6 +103,7 @@ function renderDraft(options: {
         onBack={() => undefined}
         onRetry={() => undefined}
         onRetryAgentRecovery={options.onRetryAgentRecovery}
+        onCreateLocalTerminal={options.onCreateLocalTerminal}
         onDiscardAgentRecovery={options.onDiscardAgentRecovery}
         onCreateAgent={options.onCreateAgent ?? vi.fn(async () => ({ ok: true as const }))}
         onCreateTerminal={options.onCreateTerminal ?? vi.fn(async () => ({ ok: true as const }))}
@@ -122,6 +124,17 @@ afterEach(() => {
 });
 
 describe('MobileNewSessionDraft', () => {
+  it('offers a standalone terminal while structured daemon authority is unavailable', async () => {
+    const onCreateLocalTerminal = vi.fn(async () => ({ ok: true as const }));
+    renderDraft({ state: { status: 'error', snapshot: null, error: 'invalid-snapshot' }, onCreateLocalTerminal });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
+    changeSelect('mobile-new-session-project', 'local');
+    const open = container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-open-terminal"]')!;
+    expect(open.disabled).toBe(false);
+    expect(onCreateLocalTerminal).not.toHaveBeenCalled();
+    act(() => { open.click(); open.click(); }); await flush();
+    expect(onCreateLocalTerminal).toHaveBeenCalledOnce();
+  });
   it('starts in Agent mode and creates only after an explicit location and first prompt', async () => {
     const onCreateAgent = vi.fn(async () => ({ ok: true as const }));
     renderDraft({ onCreateAgent });

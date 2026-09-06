@@ -31,8 +31,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/TerminalPane.tsx",
-        "startLine": 585,
-        "endLine": 607,
+        "startLine": 595,
+        "endLine": 617,
         "lineDigest": "sha256:2ec7eb3628fc84be7e39162a986d916dbcebf19889c51c407f7310abc5935d8b",
         "claim": "TerminalPane registers run correlation before asking preload to submit the command."
       }]
@@ -70,8 +70,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/interpreter/interpreter-process.ts",
-        "startLine": 1073,
-        "endLine": 1119,
+        "startLine": 1082,
+        "endLine": 1128,
         "lineDigest": "sha256:489749075dc83f715f4019ce2fde4afec1c2dfa59a3323dab5efbf20214bcbd6",
         "claim": "The utility runtime accepts typed parent-port requests and posts bounded replies."
       }]
@@ -101,8 +101,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/TerminalPane.tsx",
-        "startLine": 597,
-        "endLine": 605,
+        "startLine": 607,
+        "endLine": 615,
         "lineDigest": "sha256:7e0a45a9a19a0f6b71da0246acb57141229280fc80cd7522820f0de88bc2ca92",
         "claim": "The renderer sends command text only after recording the runId correlation."
       }]
@@ -165,8 +165,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/interpreter/interpreter-process.ts",
-        "startLine": 1199,
-        "endLine": 1245,
+        "startLine": 1208,
+        "endLine": 1254,
         "lineDigest": "sha256:cf918282513f475625374ce14cd92d5cf945520dfd4d252cf3d40126c6528f5d",
         "claim": "A run message enters the interpreter execution path that owns its transferred port."
       }]

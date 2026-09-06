@@ -689,6 +689,16 @@ export class BlockController {
 
   /** Tear down the block: tell the interpreter to release the store, close the port. */
   dispose(): void {
+    this.teardown('close');
+  }
+
+  /** Release only this renderer view; retain host execution and replay stores. */
+  detach(): void {
+    this.teardown('detach');
+  }
+
+  private teardown(type: 'close' | 'detach'): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.clearCodexRecovery();
     this.ptyFlowEpoch += 1;
@@ -699,7 +709,7 @@ export class BlockController {
     this.plainSinkFlush = null;
     this.plainAnsi = new AnsiHtmlStream();
     try {
-      this.port.postMessage({ type: 'close' });
+      this.port.postMessage({ type });
     } catch {
       // Port already gone.
     }

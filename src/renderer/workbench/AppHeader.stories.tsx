@@ -46,6 +46,7 @@ function AppHeaderStory({
           commandCenterOpen={false}
           effectIntensity={intensity}
           onNewTerminal={() => undefined}
+          onNewSession={() => undefined}
           onOpenAttention={() => undefined}
           onOpenCommandCenter={() => undefined}
           onOpenEffectSettings={() => undefined}

@@ -1,4 +1,6 @@
-import { Bot, RefreshCw, SquareTerminal, Trash2 } from 'lucide-react';
+import { RefreshCw, SquareTerminal, Trash2 } from 'lucide-react';
+import type { AgentLaunchBootstrap } from '../../src/shared/agent-history';
+import { CliAgentLaunchPanel, SessionStartOptions, type SessionLaunchAccess } from '../../src/renderer/SessionStartOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -137,6 +139,9 @@ export function MobileNewSessionDraft({
   onDiscardAgentRecovery,
   onCreateAgent,
   onCreateTerminal,
+  onCreateLocalTerminal,
+  launchAccess,
+  onLaunchCli,
 }: {
   readonly state: DaemonRuntimeViewState;
   readonly disconnected?: boolean;
@@ -150,6 +155,9 @@ export function MobileNewSessionDraft({
   readonly onDiscardAgentRecovery?: () => void;
   readonly onCreateAgent: (input: StructuredAgentDraftInput) => Promise<StructuredAgentUiResult>;
   readonly onCreateTerminal: (workspaceId: string) => Promise<StructuredAgentUiResult>;
+  readonly onCreateLocalTerminal?: () => Promise<StructuredAgentUiResult>;
+  readonly launchAccess?: SessionLaunchAccess;
+  readonly onLaunchCli?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
 }): JSX.Element {
   const { i18n, t } = useAppTranslation();
   const language: 'en' | 'ko' = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko')
@@ -176,6 +184,7 @@ export function MobileNewSessionDraft({
     ? activeWorkspaces.find((workspace) => workspace.id === contextWorkspaceId)
     : undefined;
   const [kind, setKind] = useState<MobileNewSessionKind>('agent');
+  const [agentMode, setAgentMode] = useState<'conversation' | 'cli'>('conversation');
   const recoveredWorkspace = initialAgentDraft
     ? snapshot?.workspaces.find((workspace) => workspace.id === initialAgentDraft.workspaceId)
     : undefined;
@@ -186,6 +195,8 @@ export function MobileNewSessionDraft({
     contextWorkspace?.id ?? recoveredWorkspace?.id ?? '',
   );
   const [terminalBusy, setTerminalBusy] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const terminalLock = useRef(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [discardRecoveryOpen, setDiscardRecoveryOpen] = useState(false);
   const discardRecoveryCancelRef = useRef<HTMLButtonElement>(null);
@@ -229,6 +240,7 @@ export function MobileNewSessionDraft({
   useEffect(() => {
     if (!initialAgentDraft) return;
     setKind('agent');
+    setAgentMode('conversation');
     setProjectId(recoveredWorkspace?.projectId ?? '');
     setWorkspaceId(initialAgentDraft.workspaceId);
     setTerminalError(null);
@@ -249,14 +261,18 @@ export function MobileNewSessionDraft({
         : null;
 
   const createTerminal = async (): Promise<void> => {
-    if (!workspaceId || terminalBusy || busyAuthority) return;
+    if (terminalLock.current || initialAgentDraft || disconnected || (projectId !== 'local' && (!workspaceId || busyAuthority))) return;
+    const create = projectId === 'local' ? onCreateLocalTerminal : () => onCreateTerminal(workspaceId);
+    if (!create) return;
+    terminalLock.current = true;
     setTerminalBusy(true);
     setTerminalError(null);
-    const result = await onCreateTerminal(workspaceId).catch((): StructuredAgentUiResult => ({
+    const result = await create().catch((): StructuredAgentUiResult => ({
       ok: false,
       message: copy.terminalFailed,
     }));
     setTerminalBusy(false);
+    terminalLock.current = false;
     if (!result.ok) setTerminalError(result.message);
   };
 
@@ -267,7 +283,7 @@ export function MobileNewSessionDraft({
         title={copy.title}
         backLabel={t('common.back')}
         backTestId="mobile-new-session-back"
-        onBack={onBack}
+        onBack={() => { if (!terminalBusy && !agentBusy) onBack(); }}
       />
 
       <div className="mob-new-session__scroll">
@@ -276,29 +292,7 @@ export function MobileNewSessionDraft({
             <p>{copy.description}</p>
           </header>
 
-          <div className="mob-new-session__types" role="group" aria-label={copy.sessionType}>
-            <button
-              type="button"
-              aria-pressed={kind === 'agent'}
-              onClick={() => {
-                setKind('agent');
-                setTerminalError(null);
-              }}
-              data-testid="mobile-new-session-agent"
-            >
-              <Bot aria-hidden="true" />
-              <span>{copy.agent}</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={kind === 'terminal'}
-              onClick={() => setKind('terminal')}
-              data-testid="mobile-new-session-terminal"
-            >
-              <SquareTerminal aria-hidden="true" />
-              <span>{copy.terminal}</span>
-            </button>
-          </div>
+          <SessionStartOptions kind={kind} agentMode={agentMode} onKindChange={setKind} onModeChange={setAgentMode} locked={initialAgentDraft !== undefined || terminalBusy || agentBusy} prefix="mobile-new-session" />
 
           {authorityMessage && (
             <div className="mob-new-session__notice" role={state.status === 'error' ? 'alert' : 'status'}>
@@ -326,7 +320,7 @@ export function MobileNewSessionDraft({
                 <Field label={copy.project} required>
                   <Select
                     value={projectId}
-                    disabled={busyAuthority || projects.length === 0 || terminalBusy}
+                    disabled={disconnected || terminalBusy || agentBusy}
                     onChange={(event) => {
                       setProjectId(event.currentTarget.value);
                       setWorkspaceId('');
@@ -336,12 +330,13 @@ export function MobileNewSessionDraft({
                   >
                     <option value="">{projects.length === 0 ? copy.noProjects : copy.selectProject}</option>
                     {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                    {onCreateLocalTerminal && <option value="local">{language === 'ko' ? '일반 터미널 (기본 폴더)' : 'Local terminal (default folder)'}</option>}
                   </Select>
                 </Field>
                 <Field label={copy.workspace} required>
                   <Select
                     value={workspaceId}
-                    disabled={busyAuthority || !projectId || projectWorkspaces.length === 0 || terminalBusy}
+                    disabled={busyAuthority || !projectId || projectWorkspaces.length === 0 || terminalBusy || agentBusy}
                     onChange={(event) => {
                       setWorkspaceId(event.currentTarget.value);
                       setTerminalError(null);
@@ -360,7 +355,7 @@ export function MobileNewSessionDraft({
             )}
           </section>
 
-          <div hidden={kind !== 'agent'} data-testid="mobile-new-session-agent-panel">
+          <div hidden={kind !== 'agent' || agentMode !== 'conversation'} data-testid="mobile-new-session-agent-panel">
             {agentRecoveryStatus !== 'ready' && (
               <div
                 className="mob-new-session__provider-recovery"
@@ -427,8 +422,14 @@ export function MobileNewSessionDraft({
               loading={busyAuthority || agentRecoveryStatus !== 'ready'}
               onRetry={onRetry}
               onCreate={onCreateAgent}
+              onBusyChange={setAgentBusy}
             />
           </div>
+
+          {launchAccess && onLaunchCli && <div hidden={kind !== 'agent' || agentMode !== 'cli'}>
+            <CliAgentLaunchPanel access={launchAccess} workspaceId={workspaceId} disabled={busyAuthority || terminalBusy || initialAgentDraft !== undefined} onLaunch={onLaunchCli} onBusyChange={setAgentBusy} />
+          </div>}
+          {(!launchAccess || !onLaunchCli) && kind === 'agent' && agentMode === 'cli' && <p role="status">{copy.unavailable}</p>}
 
           <div hidden={kind !== 'terminal'} data-testid="mobile-new-session-terminal-panel">
             <section className="mob-new-session__terminal">
@@ -447,7 +448,7 @@ export function MobileNewSessionDraft({
                 leadingIcon={<SquareTerminal />}
                 loading={terminalBusy}
                 loadingLabel={copy.openingTerminal}
-                disabled={busyAuthority || !workspaceId}
+                disabled={disconnected || initialAgentDraft !== undefined || (projectId !== 'local' && (busyAuthority || !workspaceId))}
                 onClick={() => void createTerminal()}
                 data-testid="mobile-new-session-open-terminal"
               >

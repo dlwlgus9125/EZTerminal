@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LayoutEnvelope } from '../shared/layout-schema';
+import { clearSessionViewStates, saveSessionViewState } from './session-view-state';
 import {
   WorkbenchCoordinator,
   type TerminalPaneOpenRequest,
@@ -206,9 +207,20 @@ function coordinatorOptions(
 
 afterEach(() => {
   vi.useRealTimers();
+  clearSessionViewStates();
 });
 
 describe('WorkbenchCoordinator lifecycle', () => {
+  it('reopens the same terminal with its custom title and fixed project identity', () => {
+    const coordinator = new WorkbenchCoordinator(coordinatorOptions());
+    const dock = new FakeDockAdapter();
+    coordinator.attach(dock);
+    const projectSession = { projectId: 'p1', rootId: 'r1', workspaceId: 'w1', projectName: 'App', titleMode: 'custom' };
+    saveSessionViewState('desktop-terminal:s1', { title: 'Build logs', projectSession });
+    coordinator.openTerminal({ adoptSessionId: 's1' });
+    expect(dock.added[0]).toMatchObject({ title: 'Build logs', projectSession, adoptSessionId: 's1' });
+  });
+
   it('rejects stale events, transactions, and attachment callbacks after replacement', async () => {
     const options = coordinatorOptions();
     const coordinator = new WorkbenchCoordinator(options);
@@ -348,6 +360,18 @@ describe('WorkbenchCoordinator lifecycle', () => {
 });
 
 describe('WorkbenchCoordinator pane and recent-panel contract', () => {
+  it('reuses a terminal view during repeated adoption before its pane registers', async () => {
+    const coordinator = new WorkbenchCoordinator(coordinatorOptions());
+    const adapter = new FakeDockAdapter();
+    coordinator.attach(adapter);
+    const first = coordinator.openTerminal({ adoptSessionId: 'session-live' });
+    const second = coordinator.openTerminal({ adoptSessionId: 'session-live' });
+    expect(second?.panelId).toBe(first?.panelId);
+    expect(adapter.added.filter((entry) => entry.adoptSessionId === 'session-live')).toHaveLength(1);
+    adapter.getPanel(first!.panelId)!.close();
+    expect(coordinator.openTerminal({ adoptSessionId: 'session-live' })?.panelId).not.toBe(first?.panelId);
+    coordinator.detach();
+  });
   it('authorizes semantic workspace replacement immediately before restore', async () => {
     const coordinator = new WorkbenchCoordinator(coordinatorOptions());
     const dock = new FakeDockAdapter(['tab-1'], 'tab-1');

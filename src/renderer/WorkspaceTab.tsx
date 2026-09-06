@@ -270,6 +270,25 @@ export function WorkspaceTab({
 }: WorkspaceTabProps): JSX.Element {
   const { t } = useAppTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
+  // Dockview's tab is the focus target. A focusable close button nested inside
+  // role=tab is invalid; expose Delete on the tab and keep the glyph pointer-only.
+  useEffect(() => {
+    const control = rootRef.current?.querySelector<HTMLElement>('.dv-default-tab-action');
+    control?.setAttribute('title', t('sessionNavigation.closeView'));
+    const tab = rootRef.current?.closest<HTMLElement>('[role="tab"]') ?? rootRef.current;
+    if (!tab) return;
+    tab.setAttribute('aria-keyshortcuts', 'Delete');
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Delete' || event.target !== tab) return;
+      event.preventDefault(); event.stopPropagation();
+      requestClose(() => props.api.close());
+    };
+    tab.addEventListener('keydown', onKey);
+    return () => {
+      tab.removeEventListener('keydown', onKey);
+      tab.removeAttribute('aria-keyshortcuts');
+    };
+  });
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelRenameRef = useRef(false);
   const [menu, setMenu] = useState<MenuInvocation | null>(null);
@@ -396,7 +415,8 @@ export function WorkspaceTab({
     },
     {
       action: 'close',
-      label: t('common.close'),
+      label: t('sessionNavigation.closeView'),
+      shortcut: 'Delete',
       onClick: () => requestClose(() => props.api.close()),
     },
   ];

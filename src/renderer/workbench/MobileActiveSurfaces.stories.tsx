@@ -324,6 +324,10 @@ const OVERFLOW_DAEMON_PROJECTS = [
   { id: 'project-docs', name: 'Product documentation', rootPath: 'C:/Workspace/docs' },
   { id: 'project-design', name: 'Design system', rootPath: 'C:/Workspace/design-system' },
   { id: 'project-protocol', name: 'Agent protocol', rootPath: 'D:/Projects/agent-protocol' },
+  { id: 'project-cli', name: 'CLI tools', rootPath: 'C:/Workspace/cli-tools' },
+  { id: 'project-integration', name: 'Integration tests', rootPath: 'D:/Projects/integration' },
+  { id: 'project-examples', name: 'Agent examples', rootPath: 'C:/Workspace/examples' },
+  { id: 'project-web', name: 'Web companion', rootPath: 'D:/Projects/web-companion' },
   { id: 'project-mobile-release', name: 'Mobile release', rootPath: 'D:/Projects/mobile-release' },
 ] as const;
 

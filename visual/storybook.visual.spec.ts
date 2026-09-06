@@ -1237,10 +1237,10 @@ test.describe("mobile Agents touch scroll contract", () => {
       const scrollRegion = page.getByTestId("mobile-agent-scroll-region");
       const header = page.locator(".mobile-page-header");
       const filters = page.locator(".mob-agent-filters");
-      const finalAgent = page.getByTestId("agent-card").last();
+      const finalProject = page.getByTestId("mobile-daemon-project").last();
       await expect(page.getByTestId("mobile-daemon-project").last()).toBeAttached();
       await expect(header).toBeVisible();
-      await expect(filters).toBeVisible();
+      await expect(filters).toHaveCount(0);
 
       const initial = await scrollRegion.evaluate((element) => ({
         clientHeight: element.clientHeight,
@@ -1287,16 +1287,15 @@ test.describe("mobile Agents touch scroll contract", () => {
       await expect.poll(() => scrollRegion.evaluate(
         (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
       )).toBeLessThanOrEqual(1);
-      await expect(finalAgent).toBeInViewport();
+      await expect(finalProject).toBeInViewport();
       await expect(header).toBeVisible();
-      await expect(filters).toBeVisible();
+      await expect(filters).toHaveCount(0);
       await expect(page.getByTestId("mobile-toast")).toHaveCount(0);
       expect(await page.evaluate(() => document.scrollingElement?.scrollTop ?? 0)).toBe(initial.documentScrollTop);
 
       await page.waitForTimeout(500);
-      await page.getByTestId("agent-filter-running").tap();
-      await expect(page.getByTestId("agent-filter-running")).toHaveAttribute("aria-pressed", "true");
-      await expect(page.getByTestId("agent-card")).toHaveCount(1);
+      await finalProject.tap();
+      await expect(page.getByTestId("mobile-daemon-workspace")).toHaveCount(1);
     });
   }
 });

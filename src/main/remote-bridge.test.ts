@@ -1741,15 +1741,15 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
     expect(() => ws.clientSend({ kind: 'control', runId: 'no-such-run', control: { type: 'cancel' } })).not.toThrow();
   });
 
-  it('a close control closes the port and stops further relays for that runId', async () => {
+  it.each(['close', 'detach'] as const)('a %s control closes the view port and stops further relays for that runId', async (type) => {
     const ws = new FakeWs();
     const { options, channels } = makeOptions();
     await authed(ws, options);
     ws.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: 'ls' });
 
-    ws.clientSend({ kind: 'control', runId: 'run-1', control: { type: 'close' } });
+    ws.clientSend({ kind: 'control', runId: 'run-1', control: { type } });
 
-    expect(channels[0].port1.posted).toContainEqual({ type: 'close' });
+    expect(channels[0].port1.posted).toContainEqual({ type });
     expect(channels[0].port1.closed).toBe(true);
 
     // Interpreter side is closed too (peer), so a post-close frame from the

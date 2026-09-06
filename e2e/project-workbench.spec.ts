@@ -462,12 +462,24 @@ test('newly approved worktree terminal keeps its project daemon identity', async
   await projectTab.hover();
   await projectTab.locator('.project-session-tab__close').click();
   await expect(projectTab).toHaveCount(0);
+  // Closing the view keeps work reachable. Project removal needs an explicit
+  // guarded session end, not the former implicit teardown from the tab glyph.
+  await expect.poll(async () => window.evaluate(async (id) => (
+    (await globalThis.window.ezterminal.listSessions()).some((session) => session.sessionId === id)
+  ), sessionId)).toBe(true);
+  const ended = await window.evaluate(async (id) => {
+    const runs = await globalThis.window.ezterminal.listRuns();
+    return globalThis.window.ezterminal.terminateSessionGuarded(
+      id, runs.filter((run) => run.sessionId === id).map((run) => run.runId),
+    );
+  }, sessionId);
+  expect(ended.ok).toBe(true);
   await expect.poll(async () => window.evaluate(async (id) => {
     const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
     return snapshot?.sessions.find((candidate) => candidate.id === id)?.state ?? null;
   }, sessionId), {
     timeout: 10_000,
-    message: 'Closing the Project terminal should finish its daemon Session before Project removal',
+    message: 'Explicitly ending the Project terminal finishes its daemon Session before Project removal',
   }).toBe('completed');
 
   const removed = await window.evaluate(async (projectId) => (

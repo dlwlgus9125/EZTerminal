@@ -56,7 +56,7 @@ status/feedback 영역을 사용한다. Sidebar는 280–440px, 기본 320px이�
 
 Header는 제품 기능 기준으로 정확히 네 zone을 가진다.
 
-1. **New Terminal** — signal mark와 전체 wordmark, terminal 생성 action
+1. **New Session** — signal mark와 전체 wordmark, 새 세션 draft와 빠른 Terminal 생성 action
 2. **Command Center** — 실제 shortcut을 표시하는 넓은 anchor field
 3. **Workspace** — Split, Layout과 Presets
 4. **Agent Attention** — attention count와 focus/open action
@@ -72,7 +72,7 @@ card는 12px radius와 인접 pane이 합쳐 만드는 14px gutter를 사용한�
 
 위에서 아래 순서는 고정한다.
 
-1. Agents
+1. Projects
 2. Monitor
 3. Remote
 4. Explorer
@@ -85,8 +85,9 @@ name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 
 ### 3.4 Sidebar destinations
 
 - Explorer는 file navigation, breadcrumb와 preview 진입점을 소유한다.
-- Agents는 Attention, Projects, Active, Recent 순서와 follow-up/launch/history를
-  소유한다.
+- Projects는 Attention 다음 Project → Workspace → Session 탐색과 생성·재열기·기록을
+  소유한다. Agent와 일반 Terminal을 같은 목록에서 구분하며 중복 Active/Recent 목록은
+  authoritative session 탐색이 불가능한 호환 경로에서만 유지한다.
 - Monitor는 system stats와 packet/traffic을 합친다. producer는 실제로 visible할 때만
   poll/capture한다.
 - Remote는 pairing, remote access, device roster, PC Control 상태와 SSH forwarding을
@@ -119,11 +120,13 @@ panel instance를 이동하며 session, draft, selection과 실행 중 command�
 
 Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 선택한 Project와
 checkout/worktree를 소유하는 Workspace에 빈 draft tab을 즉시 열며 modal을 추가하지 않는다.
-draft는 Agent/Terminal 중 하나를 고르고 Agent인 경우 provider, model, `Plan`/`Standard`/
-`Full access` 권한 preset과 첫 prompt를 같은 작업면에서 편집한다. 실제 provider session은 첫
-`Send`에서만 생성하므로 tab을 닫거나 draft를 취소해도 provider history나 process를 남기지 않는다.
+draft는 Agent/Terminal 중 하나를 고르고 Agent에서는 `앱에서 대화`와 `터미널 CLI`를
+명시적으로 선택한다. 대화는 provider, model, `Plan`/`Standard`/`Full access` 권한 preset과
+첫 prompt를 같은 작업면에서 편집하고 첫 `Send`에서만 생성한다. CLI는 준비된 실행기를
+선택한 뒤 `Agent 실행`, 일반 Terminal은 `터미널 열기`에서만 생성한다. 선택·취소만으로
+provider history나 process를 남기지 않는다.
 승인되지 않았거나 사용할 수 없는 worktree에서는 Send를 비활성화하고 main이 제출 직전에 접근
-상태를 다시 검증한다. 전역 `새 에이전트 실행`도 같은 draft를 열되 location을 선택할 수 있다.
+상태를 다시 검증한다. 전역 `새 세션`도 같은 draft를 열되 location을 선택할 수 있다.
 
 명시적으로 프로젝트에서 연 terminal tab은 프로젝트 이름과 항상 보이는 compact Badge를
 함께 표시한다. active Agent가 있으면 `Codex`, `Claude` 또는 설정된 generic Agent 이름을,
@@ -357,14 +360,15 @@ locale은 결함이다.
 
 ## 10. Agent UI 계약
 
-Agent content 순서는 Attention, Projects, Active, Recent다. Global launch는 Agent와
-location이 모두 비어 있는 Agent 전용 흐름이다. Desktop project의 `새 세션`은 project
+Project content 순서는 Attention 다음 Project → Workspace → Session이다. Global launch는
+location이 비어 있는 공통 새 세션 draft다. Desktop project의 `새 세션`은 project
 목록의 main 또는 Explorer에서 선택한 checkout/worktree를 고정하고 기본 Agent와 optional
 Terminal을 제공한다. Android Agents header의 전역 `+`와 활성 Workspace header의 문맥
 `+`는 모두 전체 화면 `새 세션` draft를 연다. 전역 진입은 Project와 Workspace를 비워 두고,
 문맥 진입은 정확한 Workspace를 잠근다. draft는 Agent를 기본으로 하고 Terminal을 같은
-위치 선택 안의 대안으로 제공한다. 각 surface는 같은 host-side Agent validation과
-Launch/Cancel 의미를 사용한다.
+위치 선택 안의 대안으로 제공한다. Agent는 앱 대화와 CLI를 구분하며, 일반 Terminal은
+provider 없이도 열 수 있다. 기본 폴더의 독립 Terminal도 선택할 수 있다. 각 surface는
+같은 host-side Agent validation과 Launch/Cancel 의미를 사용한다.
 
 Location은 saved/observed project와 직접 host folder를 제공한다. 선택 또는 취소만으로
 project를 쓰지 않으며 성공한 direct-directory launch만 unpinned observed project가
@@ -378,12 +382,12 @@ Claude는 각각 `#e58a6b`, `#9a3f28`, `#ff9b7a`를 기준으로 contrast 보정
 
 ### 10.1 Desktop rail 우선순위와 프로젝트 세션 기록
 
-Desktop Activity Rail의 상단 순서는 Agents, Monitor, Remote, Files(Explorer), OpenClaw다.
+Desktop Activity Rail의 상단 순서는 Projects, Monitor, Remote, Files(Explorer), OpenClaw다.
 Files는 네 번째 위치를 유지하며 OpenClaw가 숨겨져도 앞선 세 destination의 순서는
 압축하지 않는다. Settings는 계속 하단에 고정한다. keyboard focus 순서는 이 시각 순서와
 같고 tooltip, localized accessible name과 selected state 계약은 3.3을 따른다.
 
-프로젝트의 이전 세션은 프로젝트 행의 disclosure/accordion으로 펼치지 않는다. 검토한
+프로젝트의 이전 CLI transcript 기록은 프로젝트 행의 disclosure/accordion으로 펼치지 않는다. 검토한
 방향은 (1) 기존 인라인 accordion 유지, (2) 프로젝트 `…` 메뉴의 **Session history**가
 Agent sidebar 내부 전용 하위 화면을 여는 방식, (3) 같은 메뉴에서 modal을 여는 방식이다.
 사용자가 선택한 방향은 2다. 프로젝트 목록의 밀도를 유지하면서도 기록 탐색에 전체
@@ -408,7 +412,7 @@ Back, loading/empty/error/pagination을 검증한다. Storybook/visual lane은 r
 
 ### 10.2 Project, Workspace, Session과 관리 머지
 
-Agents의 기본 정보 구조는 Project → Workspace → Session이다. Project는 저장소와 사용자의
+Projects의 기본 정보 구조는 Project → Workspace → Session이다. Project는 저장소와 사용자의
 지속적인 작업 맥락, Workspace는 local checkout 또는 managed worktree, Session은 Agent,
 Terminal, Diff/Review, opt-in Browser, Script/Service tab을 소유한다. 기존 독립 terminal은
 호환되는 Local workspace 아래에 비파괴적으로 등록한다. 별도의 `협업 설정` destination이나
@@ -419,6 +423,22 @@ Project별 enable/profile/limit form은 만들지 않는다.
 동작은 layout만 바꾸며 실행이나 history를 종료하지 않는다. Cancel은 현재 turn, Archive는
 실행을 종료한 뒤 기본 목록에서 숨김, Detach는 parent edge만 제거하고 최상위 session으로
 승격하는 서로 다른 action이다.
+
+Desktop project 행의 `세션` disclosure와 Android drill-down은 같은 daemon identity로
+일반 Terminal과 Agent를 보여 준다. CLI가 실행 중인 Terminal은 감지된 provider와 상태를
+표시한다. 저장된 PTY 기록만으로 실행 중이라고 간주하지 않고 live session 목록과 대조한다.
+종료된 Terminal은 재접속 대신 `같은 위치에서 새 터미널`을 제공한다. 이전 CLI transcript와
+지원되는 resume는 Desktop 프로젝트 메뉴와 Android의 `프로젝트 관리 · CLI 기록`에서 연다.
+
+Tab의 `×`/`화면 닫기`와 auxiliary window 닫기는 보기만 제거하고 실행을 유지한다. 같은
+session을 다시 열면 완료된 block을 포함한 기존 output을 재연결하고 process-local draft,
+scroll, 사용자 tab 이름과 project identity를 복원한다. 명시적 view detach는 crash 복구 유예와
+구별하며, 화면 없이도 host 작업이 계속 실행된다. 기존 SSH late-attach 제한은 유지한다.
+Agent follow-up draft와 transcript scroll도 session별로 유지하며 Android 연결 사이에 공유하지
+않는다. 이 presentation state는 일반 layout이나 plaintext storage에 저장하지 않는다.
+Terminal의 `세션 종료`는 별도 action이며 Cancel 초기 focus와 실행 중 작업 수를 보여 준 뒤
+최신 run set을 확인하고 guarded termination한다. 관찰 실패·상태 변경이면 종료하지 않는다.
+Agent의 현재 turn 중단과 종료·보관은 별도 action이다. 앱 메인 창의 quit/tray 정책은 그대로다.
 
 관리 merge queue는 source→target, Agent alias, immutable request revision, validation
 상태와 warning/error를 한 card에서 읽을 수 있어야 한다. Candidate review는 정확한

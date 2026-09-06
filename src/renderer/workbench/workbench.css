@@ -8,7 +8,7 @@
   display: grid;
   /* The Command Center zone is the elastic one so its search field can centre
      itself and absorb every width change; the other three stay intrinsic. */
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(var(--ui-control-height-lg), 1fr) auto auto;
   align-items: center;
   gap: var(--ui-space-2);
   padding: var(--ui-space-2) var(--ui-space-3);
@@ -24,7 +24,7 @@
 }
 
 .workbench-header:has(> .window-controls) {
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(var(--ui-control-height-lg), 1fr) auto auto auto;
 }
 
 .workbench-header button,
@@ -100,6 +100,7 @@
 }
 
 .workbench-header-zone--new {
+  min-inline-size: max-content;
   gap: var(--ui-space-3);
 }
 
@@ -1125,6 +1126,55 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   }
 
   .workbench-command-field__keys {
+    display: none;
+  }
+}
+
+/* Two session actions need compact labels earlier. Keep single-action hosts at
+   their existing breakpoint; a roomy header must not lose its search field. */
+@container workbench-header (max-width: 75em) {
+  .workbench-header--session-actions .workbench-shortcut,
+  .workbench-header--session-actions .effect-profile-trigger__fx,
+  .workbench-header--session-actions .effect-profile-trigger__separator,
+  .workbench-header--session-actions .workbench-version-chip,
+  .workbench-header--session-actions .workbench-header-divider,
+  .workbench-header--session-actions .workbench-command-field__keys {
+    display: none;
+  }
+
+  .workbench-header--session-actions .workbench-new-terminal .ez-ui-button__label,
+  .workbench-header--session-actions .workbench-workspace-menu > .ez-ui-button .ez-ui-button__label,
+  .workbench-header--session-actions .workbench-command-field__label {
+    inline-size: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+
+  .workbench-header--session-actions .workbench-command-field {
+    max-inline-size: min(var(--ui-control-height-lg), 100%);
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
+
+@container workbench-header (max-width: 61em) {
+  .workbench-header--session-actions .workbench-header-zone--new,
+  .workbench-header--session-actions .workbench-header-zone--attention {
+    gap: var(--ui-space-1);
+  }
+
+  .workbench-header--session-actions .workbench-new-terminal,
+  .workbench-header--session-actions .workbench-workspace-menu > .ez-ui-button {
+    gap: 0;
+  }
+
+  .workbench-header--session-actions .workbench-workspace-menu > .ez-ui-button > .ez-ui-button__icon:last-child {
+    display: none;
+  }
+}
+
+@container workbench-header (max-width: 45em) {
+  .workbench-header:has(> .window-controls) .effect-profile-trigger__name {
     display: none;
   }
 }

@@ -179,6 +179,14 @@ describe('BlockController — windowing / prune / dedup', () => {
     expect(port.posted).toContainEqual({ type: 'close' });
     expect(port.closed).toBe(true);
   });
+
+  it('detach() releases view resources without sending a destructive close', () => {
+    const { port, controller } = make();
+    controller.detach();
+    controller.dispose();
+    expect(port.posted).toEqual([{ type: 'detach' }]);
+    expect(port.closed).toBe(true);
+  });
 });
 
 describe('BlockController Codex in-session recovery', () => {

@@ -105,8 +105,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1862,
-          "endLine": 1943,
+          "startLine": 1863,
+          "endLine": 1944,
           "lineDigest": "sha256:d7c9f4ba52ddcc24de61885963dfb0905e5f5c5facd9ec8a390ed60948214f29",
           "claim": "The host ignores non-auth frames, verifies bearer or consumes a matching pairing generation, enforces exact v12 identity, then marks the socket authenticated."
         }
@@ -122,8 +122,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2493,
-        "endLine": 2530,
+        "startLine": 2494,
+        "endLine": 2531,
         "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
         "claim": "The command handler requires v12 and a bound client, replaces principal with that Android id, strictly parses the result, checks availability, and executes it."
       }]
@@ -179,8 +179,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1778,
-          "endLine": 1783,
+          "startLine": 1779,
+          "endLine": 1784,
           "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
           "claim": "The bridge emits daemon events only to authenticated, explicitly subscribed v12 connections."
         }
@@ -196,8 +196,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2434,
-        "endLine": 2465,
+        "startLine": 2435,
+        "endLine": 2466,
         "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
         "claim": "Transcript reads require ready v12 authority and return either the exact bounded Session page or an explicit unavailable empty page."
       }]
@@ -213,8 +213,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1201,
-          "endLine": 1208,
+          "startLine": 1202,
+          "endLine": 1209,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source separates target-aware successful launch recording from history-aware successful resume recording."
         },
@@ -262,8 +262,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1123,
-        "endLine": 1150,
+        "startLine": 1124,
+        "endLine": 1151,
         "lineDigest": "sha256:dc53275637a10c00aa6a0cd59061566213a552752462d69286499b8ad5ba6d0d",
         "claim": "RemoteDaemonSource is narrowed to snapshot, transcript, command, and event methods, and its availability is redacted before serialization."
       }]
@@ -346,8 +346,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2493,
-        "endLine": 2508,
+        "startLine": 2494,
+        "endLine": 2509,
         "lineDigest": "sha256:a86dadd123a9026b869c1906a5faad520b47ec978e68d2a29fbd9af4263e4be9",
         "claim": "Only the authenticated connection's client id becomes the Android principal of the strict daemon command."
       }]
@@ -377,24 +377,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2845,
-          "endLine": 2849,
+          "startLine": 2846,
+          "endLine": 2850,
           "lineDigest": "sha256:6ae1b97f47409e427806b6e930f0f493671f45ee81ae827240c7024f79291e00",
           "claim": "A successful Project launch records the exact Project launch target rather than reconstructing it from a reported working directory."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2938,
-          "endLine": 2942,
+          "startLine": 2939,
+          "endLine": 2943,
           "lineDigest": "sha256:2e02a59d7ea06680b0d60888320c21e35b577143de42312112f9085818a6a125",
           "claim": "A general successful launch passes its exact AgentLaunchTarget into activity recording."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 3071,
-          "endLine": 3071,
+          "startLine": 3072,
+          "endLine": 3072,
           "lineDigest": "sha256:de84c56e97e3e35cb078746525f9bdac031ea5c9003d064f767a8b22c0c7447e",
           "claim": "A successful resume records the original indexed history id."
         }
@@ -464,8 +464,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1778,
-        "endLine": 1783,
+        "startLine": 1779,
+        "endLine": 1784,
         "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
         "claim": "Only an authenticated v12 socket with an active daemon subscription receives the event envelope."
       }]
@@ -509,8 +509,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2434,
-        "endLine": 2465,
+        "startLine": 2435,
+        "endLine": 2466,
         "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
         "claim": "The host returns transcript items with the original request and Session ids or explicitly marks the page unavailable."
       }]
@@ -539,8 +539,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2000,
-        "endLine": 2010,
+        "startLine": 2001,
+        "endLine": 2011,
         "lineDigest": "sha256:1c7c6e9fe0085f95d654460a7ef58e52143ff70bdb0bbd162948e044c2191ac8",
         "claim": "Immediately after authentication the host sends redacted availability and sends a structured snapshot only when authority state is ready."
       }]

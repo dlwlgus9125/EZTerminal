@@ -149,17 +149,17 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/App.tsx",
-          "startLine": 2270,
-          "endLine": 2278,
+          "startLine": 2318,
+          "endLine": 2326,
           "lineDigest": "sha256:269830d8137e1d7644219237fbf0421fd14414ce31b5cc6a69f7671d4548a92b",
           "claim": "The Project Map navigation callback routes the validated bootstrap and project session into a new workbench terminal and reports whether it opened."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/workbench-coordinator.ts",
-          "startLine": 198,
-          "endLine": 221,
-          "lineDigest": "sha256:dedb8d8eec4c440eb21ae705a1c642eaee927278ae3892254ee4967978ac37c6",
+          "startLine": 201,
+          "endLine": 233,
+          "lineDigest": "sha256:6c492767b4b516990a25087250d73bffdaebcf2178ee5f091066506b6f1aa16c",
           "claim": "The normal workbench path registers the bootstrap before adding a fresh terminal pane and clears it if pane creation fails."
         }
       ]
@@ -211,8 +211,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/TerminalPane.tsx",
-          "startLine": 737,
-          "endLine": 790,
+          "startLine": 747,
+          "endLine": 800,
           "lineDigest": "sha256:89aec42c8a7ff0e40e79c04563114057bb3d698e0d81d19b9ff8e3aa5f214ab2",
           "claim": "The fresh Agent terminal dispatches the Project Map request through its own BlockController and retains an in-tab retry path for startup or queue failure."
         }

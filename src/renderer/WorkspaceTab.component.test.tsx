@@ -120,6 +120,18 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 }
 
 describe('WorkspaceTab interactions', () => {
+  it('closes the focused tab view with Delete without nesting a focusable button', () => {
+    container.setAttribute('role', 'tab');
+    container.tabIndex = 0;
+    const { api, requestClose } = renderTab();
+    const glyph = container.querySelector<HTMLElement>('.dv-default-tab-action')!;
+    expect(glyph.tabIndex).toBe(-1);
+    expect(glyph.title).toBe('Close view');
+    act(() => container.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true })));
+    expect(requestClose).toHaveBeenCalledTimes(1);
+    expect(api.close).toHaveBeenCalledTimes(1);
+  });
+
   it('formats Agent history tabs as project and provider', () => {
     expect(agentHistoryTabTitle(' EZTerminal ', 'codex')).toBe('EZTerminal · Codex');
     expect(agentHistoryTabTitle('Project Alpha', 'claude')).toBe('Project Alpha · Claude');

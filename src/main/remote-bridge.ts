@@ -436,6 +436,7 @@ function isRendererControl(value: unknown): value is RendererControl {
   switch (value.type) {
     case 'cancel':
     case 'close':
+    case 'detach':
     case 'pty-claim-control':
       return true;
     case 'requestRows':
@@ -2311,7 +2312,7 @@ export function attachConnection(
         const record = runs.get(msg.runId);
         if (!record) break;
         record.port.postMessage(msg.control);
-        if (msg.control.type === 'close') {
+        if (msg.control.type === 'close' || msg.control.type === 'detach') {
           record.port.close();
           runs.delete(msg.runId);
         }

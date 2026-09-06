@@ -1,4 +1,3 @@
-import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SessionInfo } from '../../src/shared/ipc';
@@ -237,7 +236,7 @@ export function SessionSwitcher({
                 aria-label={t('mobile.sessionManager.destroyAria')}
                 data-testid="session-destroy"
               >
-                <X aria-hidden="true" size={18} />
+                {t('sessionNavigation.end')}
               </button>
             </li>
           ))}

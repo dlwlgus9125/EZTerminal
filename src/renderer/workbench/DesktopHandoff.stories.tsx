@@ -490,6 +490,8 @@ function providerSettingsCapabilities(
     },
   };
 }
+const HANDOFF_AGENT_SESSION_ACCESS = providerSettingsCapabilities('ready').daemon;
+
 const REMOTE_DESKTOP_API: RemotePanelDesktopApi = {
   getPairingCode: async () => ({ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }),
   issuePairingCode: async () => ({ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }),
@@ -739,6 +741,7 @@ function AgentHubFixture(): JSX.Element {
   return (
     <AgentHub
       snapshot={AGENTS}
+      daemonAgentSessionAccess={HANDOFF_AGENT_SESSION_ACCESS}
       currentTime={NOW}
       onFocusSession={() => undefined}
       onSendFollowup={async () => ({ ok: true })}
@@ -932,6 +935,7 @@ function AgentCoordinationFixture(): JSX.Element {
   return (
     <AgentHub
       snapshot={AGENTS}
+      daemonAgentSessionAccess={HANDOFF_AGENT_SESSION_ACCESS}
       coordinationSnapshot={AGENT_COORDINATION}
       currentTime={NOW}
       onFocusSession={() => undefined}
@@ -1078,7 +1082,7 @@ function CommandCenterFixture(): JSX.Element {
       id: 'handoff-agent',
       kind: 'agent',
       title: 'Claude Code',
-      detail: t('rail.agents'),
+      detail: t('commandCenter.kinds.agent'),
       sourceLabel: 'Claude',
     },
     ...buildCommandCenterActionRows(t, true),

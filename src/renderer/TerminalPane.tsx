@@ -6,6 +6,7 @@ import type {
   AgentDecisionResult,
 } from '../shared/agent';
 import { BlockController } from './block-controller';
+import { retainTerminalBlocks, takeRetainedTerminalBlocks } from './retained-terminal-blocks';
 import { TerminalBlockEntries } from './TerminalBlockEntries';
 import { Button } from './ui';
 import { formatCwd } from './format-cwd';
@@ -317,7 +318,9 @@ export function TerminalPane({
   // can call it from an async `listRuns()` continuation even though the
   // callback is declared later in this file. Same "latest callback in a ref"
   // idiom as the pane lease factory above.
-  const attachToRunRef = useRef<((info: RunStartedInfo) => void) | null>(null);
+  const attachToRunRef = useRef<((info: RunStartedInfo, activate?: boolean) => void) | null>(null);
+  const retainedSessionIdRef = useRef<string | null>(null);
+  retainedSessionIdRef.current = sessionId;
   // Port handoffs belong to the current pane/session binding. The scope is
   // replaced before paint when that binding changes, so late transfers cannot
   // create controllers after unmount, session death, or adoption replacement.
@@ -442,12 +445,15 @@ export function TerminalPane({
     if (!sessionId || sessionDead) return;
     let cancelled = false;
     const boundSessionId = sessionId;
+    const retained = takeRetainedTerminalBlocks(window.ezterminal, sessionId);
     void window.ezterminal?.listRuns?.().then((runs) => {
       if (cancelled || sessionIdRef.current !== boundSessionId) return;
-      for (const run of runs) {
+      const activeIds = new Set(runs.map((run) => run.runId));
+      const discovered = new Map([...retained, ...runs].map((run) => [run.runId, run]));
+      for (const run of discovered.values()) {
         if (run.sessionId !== boundSessionId) continue;
         if (blocksRef.current.some((entry) => entry.id === run.runId)) continue;
-        attachToRunRef.current?.(run);
+        attachToRunRef.current?.(run, activeIds.has(run.runId));
       }
     });
     return () => {
@@ -519,15 +525,19 @@ export function TerminalPane({
     return () => cancelAnimationFrame(raf);
   }, [activeTakeover]);
 
-  // Dispose every controller on unmount so the interpreter releases its stores. This
-  // runs before the session-destroy cleanup above so the pane tears down its blocks,
-  // then its session (Codex B6 ordering).
+  // Unmount closes only the view. Release renderer resources without destroying
+  // host execution/replay stores, including completed output blocks.
   useEffect(() => {
     const pendingRunIds = pendingHandoffRunIdsRef.current;
     const knownRunIds = knownRunIdsRef.current;
     return () => {
       activeUnsub.current?.();
-      for (const entry of blocksRef.current) entry.controller?.dispose();
+      const retainedSessionId = retainedSessionIdRef.current;
+      if (retainedSessionId && window.ezterminal) {
+        retainTerminalBlocks(window.ezterminal, retainedSessionId, blocksRef.current);
+      } else {
+        for (const entry of blocksRef.current) entry.controller?.dispose();
+      }
       pendingRunIds.clear();
       knownRunIds.clear();
     };
@@ -937,7 +947,7 @@ export function TerminalPane({
   // progress when this pane bound to the session) — both already know the
   // run isn't one of this pane's own before calling this.
   const attachToRun = useCallback(
-    (info: RunStartedInfo): void => {
+    (info: RunStartedInfo, activate = true): void => {
       if (knownRunIdsRef.current.has(info.runId)) return;
       const handoffController = new AbortController();
       const handoffSignal = handoffController.signal;
@@ -969,7 +979,7 @@ export function TerminalPane({
             mirror: true,
             controlTarget: { panelId, sessionId: info.sessionId, runId: info.runId },
           });
-          bindActiveController(controller);
+          if (activate) bindActiveController(controller);
           setBlocks((prev) =>
             prev.map((entry) => (
               entry.id === info.runId ? { ...entry, controller } : entry

@@ -133,7 +133,7 @@ describe('MobileSessionView session-surface lifecycle', () => {
     expect(onCloseTab).toHaveBeenCalledOnce();
   });
 
-  it('terminates an idle owner atomically without prompting', async () => {
+  it('closes an idle owner view while keeping the session reachable', async () => {
     const h = makeTransport('owner', []);
     const onCloseTab = vi.fn();
     const view = await renderSurface(binding('owner'), h.transport, onCloseTab);
@@ -143,12 +143,12 @@ describe('MobileSessionView session-surface lifecycle', () => {
 
     expect(view.host.querySelector('[data-testid="terminal-close-dialog"]')).toBeNull();
     expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-token-1', [{
-      bindingId: 'binding-1', disposition: 'terminate',
+      bindingId: 'binding-1', disposition: 'keep',
     }]);
     expect(onCloseTab).toHaveBeenCalledOnce();
   });
 
-  it('offers keep, terminate, and cancel for a risky owner', async () => {
+  it('keeps a risky owner running when its view is closed', async () => {
     const run = {
       sessionId: SESSION.sessionId,
       runId: 'run-1',
@@ -162,13 +162,7 @@ describe('MobileSessionView session-surface lifecycle', () => {
 
     await click(view.host, 'terminal-close-tab');
     const dialog = view.host.querySelector('[data-testid="terminal-close-dialog"]');
-    expect(dialog?.textContent).toContain('active SSH connection');
-    expect(view.host.querySelector('[data-testid="terminal-close-cancel"]')).not.toBeNull();
-    expect(view.host.querySelector('[data-testid="terminal-close-keep"]')).not.toBeNull();
-    expect(view.host.querySelector('[data-testid="terminal-close-terminate"]')).not.toBeNull();
-    expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
-
-    await click(view.host, 'terminal-close-keep');
+    expect(dialog).toBeNull();
     expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-token-1', [{
       bindingId: 'binding-1', disposition: 'keep',
     }]);
@@ -190,7 +184,6 @@ describe('MobileSessionView session-surface lifecycle', () => {
     mounted.push(view);
 
     await click(view.host, 'terminal-close-tab');
-    await click(view.host, 'terminal-close-terminate');
 
     expect(h.commitSessionSurfaceClose).not.toHaveBeenCalled();
     expect(onCloseTab).not.toHaveBeenCalled();

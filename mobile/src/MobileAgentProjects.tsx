@@ -38,10 +38,12 @@ export function MobileAgentProjects({
   transport,
   onResumeHistory,
   onLaunchAgent,
+  hideLaunchActions = false,
 }: {
   readonly transport: WsEzTerminalTransport;
   readonly onResumeHistory: (bootstrap: AgentResumeBootstrap) => Promise<void>;
   readonly onLaunchAgent: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
+  readonly hideLaunchActions?: boolean;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [projects, setProjects] = useState<readonly AgentProjectSummary[]>([]);
@@ -314,7 +316,7 @@ export function MobileAgentProjects({
       <div className="mob-agent-projects__head">
         <h2>{t('agentHub.projects.title')}</h2>
         <div className="mob-agent-projects__head-actions">
-          {canManage && (
+          {canManage && !hideLaunchActions && (
             <button
               type="button"
               className="mob-btn-ghost"
@@ -389,7 +391,7 @@ export function MobileAgentProjects({
                 )}
               </button>
               <div className="mob-agent-project__actions">
-                {canManage && (
+                {canManage && !hideLaunchActions && (
                   <button
                     type="button"
                     className="mob-btn-ghost"

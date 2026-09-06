@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { formatCwd } from '../../src/renderer/format-cwd';
 
 import { BlockController, type BlockStatus } from '../../src/renderer/block-controller';
+import { retainTerminalBlocks, takeRetainedTerminalBlocks } from '../../src/renderer/retained-terminal-blocks';
 import { TerminalBlockEntries } from '../../src/renderer/TerminalBlockEntries';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
@@ -21,6 +22,7 @@ import {
 } from '../../src/shared/close-risk';
 import type { SessionSurfaceBinding } from '../../src/shared/session-surface';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
+import { readSessionViewState, saveSessionViewState, sessionViewKey } from '../../src/renderer/session-view-state';
 import type { AgentActivitySnapshot } from '../../src/shared/agent';
 import type { AgentOrchestrationSnapshot } from '../../src/shared/agent-orchestration';
 import {
@@ -51,14 +53,6 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 /** Handoff §3: a single scrollable row of recent commands, not a history page. */
 const SNIPPET_LIMIT = 5;
-
-const CLOSE_RISK_LABEL_KEY = {
-  'ssh-prompt': 'mobile.sessionManager.risk.sshPrompt',
-  'active-agent': 'mobile.sessionManager.risk.activeAgent',
-  'ssh-active': 'mobile.sessionManager.risk.sshActive',
-  'running-command': 'mobile.sessionManager.risk.runningCommand',
-  unknown: 'mobile.sessionManager.risk.unknown',
-} as const satisfies Record<CloseRisk, string>;
 
 interface MobileCloseObservation {
   readonly activeRunIds: readonly string[];
@@ -304,9 +298,11 @@ export function MobileSessionView({
   const showToast = useMobileToast();
   const [runtimeLifecycleTier, setRuntimeLifecycleTier] = useState<RuntimeLifecycleTier>('passive');
   const runtimeLifecycleRef = useRef<RuntimeSurfaceLifecycle | null>(null);
-  const [command, setCommand] = useState('');
+  const viewKey = transport ? sessionViewKey(transport, `terminal:${sessionId}`) : '';
+  const savedView = useRef(readSessionViewState<{ command: string; history: string[]; scrollTop: number; followTail?: boolean }>(viewKey)).current;
+  const [command, setCommand] = useState(savedView?.command ?? '');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(savedView?.history ?? []);
   const historyIndex = useRef<number | null>(null);
   const draftBeforeRecall = useRef('');
   const activeController = useRef<BlockController | null>(null);
@@ -449,7 +445,20 @@ export function MobileSessionView({
   }, [t, terminalPathAction]);
 
   const blockListRef = useRef<HTMLDivElement>(null);
-  const stickToBottom = useRef(true);
+  const viewStateRef = useRef({ command, history });
+  viewStateRef.current = { command, history };
+  const restoreScrollRef = useRef(savedView?.scrollTop);
+  const lastScrollRef = useRef(savedView?.scrollTop ?? 0);
+  useEffect(() => () => {
+    if (viewKey) saveSessionViewState(viewKey, { ...viewStateRef.current, scrollTop: lastScrollRef.current, followTail: stickToBottom.current });
+  }, [viewKey]);
+  useEffect(() => {
+    if (blocks.length && blockListRef.current && restoreScrollRef.current !== undefined) {
+      blockListRef.current.scrollTop = restoreScrollRef.current;
+      restoreScrollRef.current = undefined;
+    }
+  }, [blocks.length]);
+  const stickToBottom = useRef(savedView?.followTail ?? true);
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
   const handoffAbortByRunRef = useRef(new Map<string, AbortController>());
@@ -581,11 +590,7 @@ export function MobileSessionView({
         return;
       }
       const observation = await collectCloseObservation(binding);
-      if (observation.risk !== null) {
-        setClosePrompt({ observation, risk: observation.risk });
-        return;
-      }
-      await commitSurfaceClose(binding, observation, 'terminate');
+      await commitSurfaceClose(binding, observation, 'keep');
     } catch {
       showToast(t('safetyDialog.terminalStateChangedDescription'));
     } finally {
@@ -664,6 +669,7 @@ export function MobileSessionView({
   const onBlockListScroll = useCallback((): void => {
     const el = blockListRef.current;
     if (!el) return;
+    lastScrollRef.current = el.scrollTop;
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
   }, []);
 
@@ -713,19 +719,19 @@ export function MobileSessionView({
     if (stickToBottom.current) scrollBlockListToBottom();
   }, [blocks, scrollBlockListToBottom]);
 
-  // Dispose every controller on unmount (switching sessions, or navigating
-  // back) so the interpreter releases their stores. Unlike TerminalPane, there
-  // is no session destroy here — SessionSwitcher owns that lifecycle.
+  // Removing a view must not send the primary run's destructive close control.
+  // Scope saved run descriptors to this transport; another host cannot claim them.
   useEffect(() => {
     const pendingRunIds = pendingHandoffRunIdsRef.current;
     const knownRunIds = knownRunIdsRef.current;
     return () => {
       activeUnsub.current?.();
-      for (const entry of blocksRef.current) entry.controller?.dispose();
+      if (transport) retainTerminalBlocks(transport, sessionId, blocksRef.current);
+      else for (const entry of blocksRef.current) entry.controller?.dispose();
       pendingRunIds.clear();
       knownRunIds.clear();
     };
-  }, []);
+  }, [sessionId, transport]);
 
   // Bind a run's controller as this view's ACTIVE one — shared by a run this
   // view itself started (handleRun below) and one it's MIRRORING (another
@@ -947,7 +953,7 @@ export function MobileSessionView({
   // synchronously before transport I/O, so self-echo and concurrent catch-up
   // cannot create duplicate attach requests before React commits the block.
   const attachToRun = useCallback(
-    (info: RunStartedInfo): void => {
+    (info: RunStartedInfo, activate = true): void => {
       if (knownRunIdsRef.current.has(info.runId)) return; // already handled
       const handoffController = new AbortController();
       const handoffSignal = handoffController.signal;
@@ -977,7 +983,7 @@ export function MobileSessionView({
         }
         try {
           const controller = new BlockController(info.commandText, port, { mirror: true });
-          bindActiveController(controller);
+          if (activate) bindActiveController(controller);
           setBlocks((prev) =>
             prev.map((entry) => (
               entry.id === info.runId ? { ...entry, controller } : entry
@@ -1030,17 +1036,20 @@ export function MobileSessionView({
   useEffect(() => {
     if (!connected || sessionDead) return;
     let cancelled = false;
+    const retained = transport ? takeRetainedTerminalBlocks(transport, sessionId) : [];
     void window.ezterminal.listRuns().then((runs) => {
       if (cancelled) return;
-      for (const run of runs) {
+      const activeIds = new Set(runs.map((run) => run.runId));
+      const discovered = new Map([...retained, ...runs].map((run) => [run.runId, run]));
+      for (const run of discovered.values()) {
         if (run.sessionId !== sessionId) continue;
-        attachToRun(run);
+        attachToRun(run, activeIds.has(run.runId));
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [connected, sessionDead, sessionId, attachToRun]);
+  }, [connected, sessionDead, sessionId, attachToRun, transport]);
 
   const handleCancel = useCallback(() => {
     activeController.current?.cancel();
@@ -1220,11 +1229,8 @@ export function MobileSessionView({
 
       {closePrompt && (
         <MobileActionSheet
-          title={t('mobile.sessionManager.closeTabTitle')}
-          description={t('mobile.sessionManager.closeTabDescription', {
-            risk: t(CLOSE_RISK_LABEL_KEY[closePrompt.risk]),
-            cwd: liveCwd,
-          })}
+          title={t('sessionNavigation.closeView')}
+          description={t('safetyDialog.terminalStateChangedDescription')}
           onClose={cancelSurfaceClose}
           returnFocusRef={closeReturnFocusRef}
           role="alertdialog"
@@ -1250,17 +1256,6 @@ export function MobileSessionView({
           >
             <span className="mobile-action-sheet-row-label">
               {t('mobile.sessionManager.keepInBackground')}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="mobile-action-sheet-row mobile-action-sheet-row--danger"
-            onClick={() => void confirmSurfaceClose('terminate')}
-            disabled={closeBusy}
-            data-testid="terminal-close-terminate"
-          >
-            <span className="mobile-action-sheet-row-label">
-              {t('mobile.sessionManager.terminateAndClose')}
             </span>
           </button>
         </MobileActionSheet>
@@ -1310,7 +1305,7 @@ export function MobileSessionView({
             data-testid="terminal-close-tab"
           >
             <X aria-hidden="true" width={11} height={11} />
-            {t('mobile.closeTab')}
+            {t('sessionNavigation.closeView')}
           </button>
         )}
       </div>

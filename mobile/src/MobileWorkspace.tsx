@@ -179,6 +179,7 @@ export function MobileWorkspace({
   const tabsStateRef = useRef(tabsState);
   tabsStateRef.current = tabsState;
   const [tab, setTab] = useState<MobileShellTab>('home');
+  const [newSessionRequest, setNewSessionRequest] = useState(0);
   const [subPage, setSubPage] = useState<MobileSubPage | null>(null);
   const [sheet, setSheet] = useState<MobileSheet | null>(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
@@ -369,6 +370,11 @@ export function MobileWorkspace({
     setSubPage(null);
     setTab(next);
   }, []);
+
+  const openNewSession = useCallback(() => {
+    setNewSessionRequest((value) => value + 1);
+    selectTab('agents');
+  }, [selectTab]);
 
   useEffect(() => {
     if (subPage !== null || !restoreTabFocusRef.current) return;
@@ -1021,6 +1027,12 @@ export function MobileWorkspace({
           onResumeHistory: startAgentBootstrap,
           onLaunchAgent: startAgentBootstrap,
           onCreateWorkspaceTerminal: createWorkspaceTerminal,
+          onCreateLocalTerminal: async () => {
+            try { await openOwnedTab(); return { ok: true as const }; }
+            catch { return { ok: false as const, message: t('sessionNavigation.openFailed') }; }
+          },
+          newSessionRequest,
+          onNewSessionRequestConsumed: () => setNewSessionRequest(0),
           agentCreateRecovery,
           transport,
           onFocusSession: (sessionId) => {
@@ -1126,7 +1138,7 @@ export function MobileWorkspace({
                   <p>{t('mobile.noTerminalTabsHint')}</p>
                 </div>
                 <div className="mobile-terminal-empty-actions">
-                  <button type="button" className="mob-cta" onClick={quickNewTab} disabled={!connected}>
+                  <button type="button" className="mob-cta" onClick={openNewSession} disabled={!connected}>
                     <Plus aria-hidden="true" /> {t('mobile.home.newSession')}
                   </button>
                 </div>
@@ -1207,7 +1219,7 @@ export function MobileWorkspace({
                 }}
                 onCreate={() => {
                   setSheet(null);
-                  quickNewTab();
+                  openNewSession();
                 }}
               />
             )}

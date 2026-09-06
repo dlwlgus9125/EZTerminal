@@ -1,5 +1,6 @@
-import { Archive, Bot, CornerDownRight } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Archive, Bot, CornerDownRight, SquareTerminal } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { AgentActivity } from '../shared/agent';
 
 import {
   classifyDaemonEvent,
@@ -21,6 +22,9 @@ import {
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
+import { TerminalSessionActions } from './TerminalSessionActions';
+import { useLiveTerminalSessions, withLiveTerminalSessions } from './use-live-terminal-sessions';
+import { readSessionViewState, saveSessionViewState } from './session-view-state';
 import './daemon-agent-sessions.css';
 
 export type DaemonAgentSessionListAccess = Pick<
@@ -37,13 +41,19 @@ export interface DaemonAgentSessionOpenInput {
 export interface DaemonAgentSessionsProps {
   readonly onOpenSession: (input: DaemonAgentSessionOpenInput) => void;
   readonly access?: DaemonAgentSessionListAccess;
+  readonly onOpenTerminal?: (sessionId: string) => void;
+  readonly onNewTerminal?: (workspaceId: string) => void;
+  readonly onNewSession?: (projectId: string, workspaceId: string) => void;
+  readonly projectHeaders?: readonly { readonly id: string; readonly content: ReactNode }[];
+  readonly activities?: readonly AgentActivity[];
+  readonly query?: string;
 }
 
 export type DaemonAgentSessionVisibility = 'active' | 'archived';
 
 interface SessionNode {
   readonly session: DaemonSession;
-  readonly agent: DaemonAgent;
+  readonly agent?: DaemonAgent;
   readonly providerLabel: string;
   readonly workspaceLabel: string;
   readonly relation?: DaemonAgentRelation;
@@ -101,7 +111,7 @@ function timestamp(value: string): number {
 }
 
 function compareNodes(left: Omit<SessionNode, 'children'>, right: Omit<SessionNode, 'children'>): number {
-  return STATE_RANK[left.agent.state] - STATE_RANK[right.agent.state]
+  return STATE_RANK[left.agent?.state ?? 'idle'] - STATE_RANK[right.agent?.state ?? 'idle']
     || timestamp(right.session.updatedAt) - timestamp(left.session.updatedAt)
     || left.session.title.localeCompare(right.session.title)
     || left.session.id.localeCompare(right.session.id);
@@ -118,6 +128,7 @@ function compareNodes(left: Omit<SessionNode, 'children'>, right: Omit<SessionNo
 export function projectDaemonAgentSessions(
   snapshot: DaemonSnapshot,
   visibility: DaemonAgentSessionVisibility = 'active',
+  includeTerminals = false,
 ): readonly ProjectGroup[] {
   const providers = new Map(snapshot.providers.map((provider) => [provider.id, provider.displayName]));
   const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
@@ -127,16 +138,17 @@ export function projectDaemonAgentSessions(
   const sessions = new Map<string, Omit<SessionNode, 'children'>>();
 
   for (const session of snapshot.sessions) {
-    if (!isStructuredDaemonAgentSession(session)) continue;
+    const terminal = includeTerminals && session.kind === 'terminal';
+    if (!terminal && !isStructuredDaemonAgentSession(session)) continue;
     const agent = agents.get(session.id);
-    if (!agent) continue;
-    const archived = isDaemonSessionArchived(session, agent);
+    if (!agent && !terminal) continue;
+    const archived = isDaemonSessionArchived(session, agent) || (terminal && ['completed', 'interrupted', 'failed'].includes(session.state));
     if ((visibility === 'archived') !== archived) continue;
     const workspace = workspaces.get(session.workspaceId);
     sessions.set(session.id, {
       session,
       agent,
-      providerLabel: providers.get(agent.providerId) ?? agent.providerId,
+      providerLabel: agent ? providers.get(agent.providerId) ?? agent.providerId : 'Terminal',
       workspaceLabel: workspace?.name ?? session.workspaceId,
     });
   }
@@ -238,6 +250,16 @@ export function projectDaemonAgentSessions(
     workspaceGroups.set(projectId, siblings);
   }
 
+  if (includeTerminals && visibility === 'active') {
+    for (const workspace of snapshot.workspaces) {
+      if (workspace.archivedAt || projects.get(workspace.projectId)?.archivedAt) continue;
+      const siblings = workspaceGroups.get(workspace.projectId) ?? [];
+      if (!siblings.some((entry) => entry.id === workspace.id)) siblings.push({
+        id: workspace.id, label: workspace.name, kind: workspace.kind, path: workspace.rootPath, sessions: [],
+      });
+      workspaceGroups.set(workspace.projectId, siblings);
+    }
+  }
   return [...workspaceGroups]
     .map(([projectId, groups]): ProjectGroup => ({
       id: projectId,
@@ -268,14 +290,25 @@ function sessionCount(groups: readonly ProjectGroup[]): number {
 function SessionRow({
   node,
   onOpenSession,
+  onOpenTerminal,
+  onNewTerminal,
+  activities,
 }: {
   readonly node: SessionNode;
   readonly onOpenSession: (input: DaemonAgentSessionOpenInput) => void;
+  readonly onOpenTerminal?: (sessionId: string) => void;
+  readonly onNewTerminal?: (workspaceId: string) => void;
+  readonly activities?: readonly AgentActivity[];
 }): JSX.Element {
   const { t } = useAppTranslation();
   const providerOwned = node.relation?.owner === 'provider-native';
   const attached = node.relation !== undefined;
-  const stateLabel = t(`agentHub.structuredSessions.state.${node.agent.state}`);
+  const terminal = node.session.kind === 'terminal';
+  const ended = terminal && ['completed', 'interrupted', 'failed', 'archived'].includes(node.session.state);
+  const activity = activities?.find((item) => item.sessionId === node.session.id && item.live);
+  const providerLabel = activity?.providerLabel ?? activity?.provider ?? node.providerLabel;
+  const state = node.agent?.state ?? (ended ? 'done' : 'idle');
+  const stateLabel = terminal ? ended ? t('sessionNavigation.ended') : activity ? t(`agentHub.status.${activity.status}`) : t('sessionNavigation.available') : t(`agentHub.structuredSessions.state.${state}`);
   const provenance = providerOwned
     ? t('agentHub.structuredSessions.providerChild', { parent: node.parentTitle ?? node.relation?.parentSessionId })
     : attached
@@ -288,26 +321,27 @@ function SessionRow({
         type="button"
         className="daemon-agent-session"
         data-session-id={node.session.id}
-        data-state={node.agent.state}
+        data-state={state}
         data-owner={providerOwned ? 'provider-native' : 'managed'}
-        onClick={() => onOpenSession({
+        onClick={() => terminal ? ended ? onNewTerminal?.(node.session.workspaceId) : onOpenTerminal?.(node.session.id) : onOpenSession({
           sessionId: node.session.id,
           title: node.session.title,
           providerLabel: node.providerLabel,
         })}
         aria-label={t('agentHub.structuredSessions.open', {
           title: node.session.title,
-          provider: node.providerLabel,
+          provider: providerLabel,
           state: stateLabel,
         })}
       >
-        {attached ? <CornerDownRight aria-hidden="true" /> : <Bot aria-hidden="true" />}
+        {terminal ? <SquareTerminal aria-hidden="true" /> : attached ? <CornerDownRight aria-hidden="true" /> : <Bot aria-hidden="true" />}
         <span className="daemon-agent-session__identity">
           <strong>{node.session.title}</strong>
           <small>
-            <span>{node.providerLabel}</span>
-            {node.agent.model && <span>{node.agent.model}</span>}
+            <span>{providerLabel}</span>
+            {node.agent?.model && <span>{node.agent.model}</span>}
             <span>{stateLabel}</span>
+            {ended && <span>{t('sessionNavigation.newAtLocation')}</span>}
           </small>
           {provenance && (
             <small className="daemon-agent-session__provenance">
@@ -316,15 +350,16 @@ function SessionRow({
             </small>
           )}
         </span>
-        <span className="daemon-agent-session__state" data-state={node.agent.state}>
+        <span className="daemon-agent-session__state" data-state={state}>
           <span aria-hidden="true" />
           <span className="ez-ui-visually-hidden">{stateLabel}</span>
         </span>
       </button>
+      {terminal && !ended && onOpenTerminal && window.ezterminal && <TerminalSessionActions sessionId={node.session.id} title={node.session.title} access={window.ezterminal} />}
       {node.children.length > 0 && (
         <ol className="daemon-agent-session-children">
           {node.children.map((child) => (
-            <SessionRow key={child.session.id} node={child} onOpenSession={onOpenSession} />
+            <SessionRow key={child.session.id} node={child} onOpenSession={onOpenSession} onOpenTerminal={onOpenTerminal} onNewTerminal={onNewTerminal} activities={activities} />
           ))}
         </ol>
       )}
@@ -336,6 +371,12 @@ function SessionRow({
 export function DaemonAgentSessions({
   onOpenSession,
   access = rendererCapabilities.daemon,
+  onOpenTerminal,
+  onNewTerminal,
+  onNewSession,
+  projectHeaders,
+  activities,
+  query = '',
 }: DaemonAgentSessionsProps): JSX.Element {
   const { t } = useAppTranslation();
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
@@ -344,6 +385,9 @@ export function DaemonAgentSessions({
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<'load' | 'refresh' | null>(null);
   const [visibility, setVisibility] = useState<DaemonAgentSessionVisibility>('active');
+  const liveIds = useLiveTerminalSessions(onOpenTerminal ? window.ezterminal : undefined);
+  const navigationSnapshot = useMemo(() => withLiveTerminalSessions(snapshot, liveIds), [snapshot, liveIds]);
+  const [expanded, setExpanded] = useState<readonly string[]>(() => readSessionViewState('desktop-project-sessions-expanded') ?? []);
   const mountedRef = useRef(false);
   const lifecycleGenerationRef = useRef(0);
   const snapshotRef = useRef<DaemonSnapshot | null>(null);
@@ -483,16 +527,21 @@ export function DaemonAgentSessions({
   }, [access, availability, refresh]);
 
   const activeGroups = useMemo(
-    () => snapshot ? projectDaemonAgentSessions(snapshot, 'active') : [],
-    [snapshot],
+    () => navigationSnapshot ? projectDaemonAgentSessions(navigationSnapshot, 'active', Boolean(onOpenTerminal)) : [],
+    [navigationSnapshot, onOpenTerminal],
   );
   const archivedGroups = useMemo(
-    () => snapshot ? projectDaemonAgentSessions(snapshot, 'archived') : [],
-    [snapshot],
+    () => navigationSnapshot ? projectDaemonAgentSessions(navigationSnapshot, 'archived', Boolean(onOpenTerminal)) : [],
+    [navigationSnapshot, onOpenTerminal],
   );
   const activeCount = useMemo(() => sessionCount(activeGroups), [activeGroups]);
   const archivedCount = useMemo(() => sessionCount(archivedGroups), [archivedGroups]);
-  const groups = visibility === 'archived' ? archivedGroups : activeGroups;
+  const baseGroups = visibility === 'archived' ? archivedGroups : activeGroups;
+  const groups = [...baseGroups];
+  if (visibility === 'active') for (const header of projectHeaders ?? []) {
+    if (!groups.some((group) => group.id === header.id)) groups.push({ id: header.id, label: '', workspaces: [] });
+  }
+  const visibleGroups = groups.filter((group) => !query.trim() || projectHeaders?.some((header) => header.id === group.id) || group.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const titleId = useId();
 
   if (availability?.state === 'legacy-only-safe-mode') {
@@ -507,6 +556,7 @@ export function DaemonAgentSessions({
           <h3 id={titleId}>{t('agentHub.structuredSessions.title')}</h3>
         </div>
         <DaemonSafeModeNotice availability={availability} showRecoveryPath compact />
+        {projectHeaders && <ol className="daemon-agent-project-list">{projectHeaders.map((header) => <li className="daemon-agent-project" key={header.id}>{header.content}</li>)}</ol>}
       </section>
     );
   }
@@ -570,15 +620,25 @@ export function DaemonAgentSessions({
       )}
       {groups.length > 0 && (
         <ol className="daemon-agent-project-list">
-          {groups.map((project) => (
+          {visibleGroups.map((project) => (
             <li className="daemon-agent-project" key={project.id}>
-              <h4>{project.label}</h4>
+              {projectHeaders?.find((header) => header.id === project.id)?.content ?? <h4>{project.label}</h4>}
+              <details open={!projectHeaders || expanded.includes(project.id)} onToggle={(event) => {
+                const open = event.currentTarget.open;
+                setExpanded((current) => {
+                  const next = open ? [...new Set([...current, project.id])] : current.filter((id) => id !== project.id);
+                  saveSessionViewState('desktop-project-sessions-expanded', next);
+                  return next;
+                });
+              }}>
+              <summary>{t('sessionNavigation.sessions', { count: sessionCount([project]) })}</summary>
               <ol className="daemon-agent-workspace-list">
                 {project.workspaces.map((workspace) => (
                   <li className="daemon-agent-workspace" key={workspace.id}>
                     <div className="daemon-agent-workspace__heading">
                       <h5>{workspace.label}</h5>
                       <span>{t(`agentHub.structuredSessions.workspace.${workspace.kind}`)}</span>
+                      {visibility === 'active' && onNewSession && <Button variant="ghost" size="sm" onClick={() => onNewSession(project.id, workspace.id)} aria-label={`${t('agentHub.newAgentRun')}: ${workspace.label}`}>{t('agentHub.newAgentRun')}</Button>}
                     </div>
                     {workspace.path && <small title={workspace.path}>{workspace.path}</small>}
                     <ol className="daemon-agent-session-list">
@@ -587,12 +647,16 @@ export function DaemonAgentSessions({
                           key={session.session.id}
                           node={session}
                           onOpenSession={onOpenSession}
+                          onOpenTerminal={onOpenTerminal}
+                          onNewTerminal={onNewTerminal}
+                          activities={activities}
                         />
                       ))}
                     </ol>
                   </li>
                 ))}
               </ol>
+              </details>
             </li>
           ))}
         </ol>

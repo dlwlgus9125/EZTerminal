@@ -36,6 +36,7 @@ import type {
 } from '../shared/daemon-protocol';
 import { ProgressiveSafeMarkdown } from './ProgressiveSafeMarkdown';
 import { useAppTranslation } from './i18n';
+import { readSessionViewState, saveSessionViewState } from './session-view-state';
 import { Button, Field, Select } from './ui';
 
 export type StructuredAgentUiResult =
@@ -201,9 +202,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     readOnly: 'Read only',
     openRelated: 'Open related session',
     lifecycle: 'Session actions',
-    stopAgent: 'Stop Agent',
-    stoppingAgent: 'Stopping Agent',
-    archiveSession: 'Archive',
+    stopAgent: 'Stop current turn',
+    stoppingAgent: 'Stopping current turn',
+    archiveSession: 'End & archive',
     archivingSession: 'Archiving session',
     detachSession: 'Detach',
     detachingSession: 'Detaching session',
@@ -271,9 +272,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     readOnly: '읽기 전용',
     openRelated: '관련 세션 열기',
     lifecycle: '세션 동작',
-    stopAgent: 'Agent 중지',
+    stopAgent: '현재 작업 중단',
     stoppingAgent: 'Agent 중지 중',
-    archiveSession: '보관',
+    archiveSession: '종료하고 보관',
     archivingSession: '세션 보관 중',
     detachSession: '분리',
     detachingSession: '세션 분리 중',
@@ -329,6 +330,7 @@ export interface StructuredAgentDraftPanelProps {
   readonly variant?: 'desktop' | 'mobile';
   /** Omits the standalone title when composed inside a broader New Session surface. */
   readonly embedded?: boolean;
+  readonly onBusyChange?: (busy: boolean) => void;
 }
 
 export function StructuredAgentDraftPanel({
@@ -349,6 +351,7 @@ export function StructuredAgentDraftPanel({
   onCreate,
   variant = 'desktop',
   embedded = false,
+  onBusyChange,
 }: StructuredAgentDraftPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const promptId = useId();
@@ -366,13 +369,14 @@ export function StructuredAgentDraftPanel({
   const [prompt, setPrompt] = useState(initialPrompt);
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const models = selectedProvider?.models ?? [];
   const hasUsableProvider = deliveryRecovery ? providerId.length > 0 : hasReadyProvider;
   const hasUsableWorkspace = deliveryRecovery
     ? workspaceId.length > 0
-    : workspaces.length > 0 && workspaceId.length > 0;
+    : workspaces.some((workspace) => workspace.id === workspaceId);
   const unavailableProviderDetail = !hasReadyProvider && providers.length > 0
     ? providers
       .filter((provider) => provider.disabled)
@@ -432,8 +436,10 @@ export function StructuredAgentDraftPanel({
     setAttempted(true);
     setSubmitError(null);
     const firstPrompt = prompt.trim();
-    if (!providerId || !workspaceId || !firstPrompt || submitting || loading) return;
+    if (!providerId || !hasUsableProvider || !hasUsableWorkspace || !firstPrompt || submittingRef.current || loading) return;
+    submittingRef.current = true;
     setSubmitting(true);
+    onBusyChange?.(true);
     const result = await onCreate({
       providerId,
       ...(model ? { model } : {}),
@@ -445,6 +451,8 @@ export function StructuredAgentDraftPanel({
       message: 'The Agent session could not be created.',
     }));
     setSubmitting(false);
+    submittingRef.current = false;
+    onBusyChange?.(false);
     if (!result.ok) setSubmitError(result.message);
   };
 
@@ -675,6 +683,7 @@ const APPROVAL_STATE_ICON = {
 } as const;
 
 export interface StructuredAgentTranscriptProps {
+  readonly stateKey?: string;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
   readonly providerLabel: string;
@@ -689,6 +698,7 @@ export interface StructuredAgentTranscriptProps {
 }
 
 export const StructuredAgentTranscript = memo(function StructuredAgentTranscript({
+  stateKey,
   items,
   approvals = [],
   providerLabel,
@@ -700,7 +710,8 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const viewportRef = useRef<HTMLDivElement>(null);
-  const followTailRef = useRef(true);
+  const savedScroll = useRef(stateKey ? readSessionViewState<{ top: number; follow: boolean }>(stateKey) : undefined);
+  const followTailRef = useRef(savedScroll.current?.follow ?? true);
   const displayItems = useMemo(() => {
     const representedApprovals = new Set(
       items.filter((item) => item.kind === 'approval').map((item) => item.id),
@@ -730,7 +741,11 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
 
   useEffect(() => {
     const viewport = viewportRef.current;
-    if (viewport && followTailRef.current) viewport.scrollTop = viewport.scrollHeight;
+    if (!viewport || displayItems.length === 0) return;
+    if (savedScroll.current) {
+      viewport.scrollTop = savedScroll.current.follow ? viewport.scrollHeight : savedScroll.current.top;
+      savedScroll.current = undefined;
+    } else if (followTailRef.current) viewport.scrollTop = viewport.scrollHeight;
   }, [displayItems]);
 
   const resolveApproval = async (approvalId: string, decision: 'allow' | 'deny'): Promise<void> => {
@@ -753,6 +768,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       onScroll={(event) => {
         const target = event.currentTarget;
         followTailRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
+        if (stateKey) saveSessionViewState(stateKey, { top: target.scrollTop, follow: followTailRef.current });
       }}
     >
       {error && (
@@ -959,6 +975,7 @@ export function StructuredAgentChildTrack({
 }
 
 export interface StructuredAgentComposerProps {
+  readonly stateKey?: string;
   readonly busy: boolean;
   readonly queuedCount?: number;
   readonly disabled?: boolean;
@@ -971,6 +988,7 @@ export interface StructuredAgentComposerProps {
 
 /** Owns the draft below the transcript so streamed items never disturb typing. */
 export const StructuredAgentComposer = memo(function StructuredAgentComposer({
+  stateKey,
   busy,
   queuedCount = 0,
   disabled = false,
@@ -983,7 +1001,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const copy = useStructuredAgentCopy();
   const composerId = useId();
   const disabledReasonId = `${composerId}-disabled-reason`;
-  const [draft, setDraft] = useState(initialDraft);
+  const [draft, setDraft] = useState(() => stateKey ? readSessionViewState<string>(stateKey) ?? initialDraft : initialDraft);
+  useEffect(() => { if (stateKey) saveSessionViewState(stateKey, draft); }, [draft, stateKey]);
   const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1097,6 +1116,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
 });
 
 export interface StructuredAgentSessionPanelProps {
+  readonly viewStateKey?: string;
   readonly sessionId: string;
   readonly title: string;
   readonly providerId: string;
@@ -1161,6 +1181,7 @@ type StructuredAgentLifecycleAction = 'cancel' | 'archive' | 'detach';
 
 export function StructuredAgentSessionPanel({
   sessionId,
+  viewStateKey,
   title,
   providerId,
   providerLabel,
@@ -1412,6 +1433,8 @@ export function StructuredAgentSessionPanel({
       </header>
 
       <StructuredAgentTranscript
+        key={`transcript:${viewStateKey ?? sessionId}`}
+        stateKey={viewStateKey ? `${viewStateKey}:transcript` : variant === 'desktop' ? `desktop-agent-transcript:${sessionId}` : undefined}
         items={items}
         approvals={approvals}
         providerLabel={providerLabel}
@@ -1429,6 +1452,8 @@ export function StructuredAgentSessionPanel({
       {heartbeatControl}
       {!historyOnly && (
         <StructuredAgentComposer
+          key={`composer:${viewStateKey ?? sessionId}`}
+          stateKey={viewStateKey ? `${viewStateKey}:composer` : variant === 'desktop' ? `desktop-agent-composer:${sessionId}` : undefined}
           busy={busy}
           queuedCount={queuedCount}
           disabled={composerDisabled || lifecycleBusy !== null}

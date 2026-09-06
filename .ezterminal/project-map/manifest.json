@@ -42,9 +42,9 @@
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:0c3c9fc63719b190ebdfe93fb409825171c505ab533f09f6ee6f0ebb42ba3bec",
-        "decision": "map-updated",
-        "reason": "Codex and Claude gate a user-installed CLI through one shared semantic-version parser: stable builds at or above each floor need no per-release review, incompatible ones fail closed. Claude resolves only the installed CLI, so dev and packaged agree."
+        "inputDigest": "sha256:86433b1011c3ce1d50bb9922bc700c5d40759ede06bda390d9de995649f8da80",
+        "decision": "no-semantic-impact",
+        "reason": "The unified session picker changes entry navigation; first Send, exact-envelope recovery, child ownership, provider review, and authenticated Agent authority boundaries remain unchanged. Evidence anchors were relocated to identical source ranges."
       }
     },
     {
@@ -60,9 +60,9 @@
         { "rootAlias": "app", "relativePath": "src/interpreter/pty-session.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:d885a2d45e076c145885162cb38773e39d90ec4ffb230cf62da6e00d9d10ef19",
+        "inputDigest": "sha256:33652ac59b335b6f346a0ab4fffabf3467fd8fed58afb0923fcd48954a3c0611",
         "decision": "no-semantic-impact",
-        "reason": "The Lead worker strip adds a main-owned status projection beside the terminal while ordinary shell command correlation, MessagePort handoff, PTY streaming, and acknowledgement flow remain unchanged."
+        "reason": "The mapped command submission, port handoff, and attached-view byte/flush/ACK sequence are unchanged. Deliberate view detach now retains host execution separately from renderer crash grace; existing command-path anchors moved without content changes."
       }
     },
     {
@@ -108,9 +108,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:17215f132916bf5eefa586b89f9de346b043f98d0486becfb77b9072de805792",
-        "decision": "map-updated",
-        "reason": "Remote transport remains single-attempt and never auto-replays a command; an unavailable send becomes delivery-uncertain so its caller can reconcile and explicitly resend the exact envelope. Launch and resume identity handling is unchanged."
+        "inputDigest": "sha256:839bcfddac099198a63833e9d2e18c15d9a80d1557a1f06d52b9276bd001f49b",
+        "decision": "no-semantic-impact",
+        "reason": "PTY view detach is now a separate transport control. The mapped authenticated v12 structured-Agent command, transcript, event, availability, and target-aware history dataflow remains unchanged; its evidence ranges are identical at their new locations."
       }
     },
     {
@@ -133,9 +133,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:000b0cd65f69390440c6c5f3b3c89fa2c6f18ac0c121ee53650477cd26c9f1e4",
+        "inputDigest": "sha256:f4865aa6d42d90098ebf1e94b2ee4b0b48346c1aae5cbf05440f6ac9f704ef14",
         "decision": "no-semantic-impact",
-        "reason": "Desktop Agent-create recovery adds close guards around the workbench, but the dedicated Project Map launch, scoped guide/check/report, human approval, and verified export workflow is unchanged."
+        "reason": "Closed views reuse session identity, but Project Map still registers a fresh bootstrap before opening its dedicated terminal. Scoped job delivery, validation, human approval, and export are unchanged; reviewed anchors now match the relocated implementation."
       }
     }
   ]

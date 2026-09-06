@@ -1,6 +1,7 @@
 import type { DockviewApi } from 'dockview-react';
 
 import { maxTabSuffix, type LayoutEnvelope } from '../shared/layout-schema';
+import { readSessionViewState, type TerminalSessionViewState } from './session-view-state';
 import {
   advanceRecentPanelSwitch,
   reconcileRecentPanelSwitch,
@@ -119,6 +120,7 @@ export class WorkbenchCoordinator {
   private attachmentGeneration = 0;
   private transactionGeneration = 0;
   private panelCounter = 0;
+  private adoptedPanels = new Map<string, OpenedWorkbenchPane>();
   private savesSuppressed = true;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saveTail: Promise<void> = Promise.resolve();
@@ -181,6 +183,7 @@ export class WorkbenchCoordinator {
   }
 
   public detach(): void {
+    this.adoptedPanels.clear();
     this.cancelScheduledSave();
     this.layoutDisposable?.dispose();
     this.layoutDisposable = null;
@@ -199,28 +202,39 @@ export class WorkbenchCoordinator {
     if (this.options.isPaneCreationLocked() && !request.allowDuringRecovery) return null;
     const adapter = this.adapter;
     if (!adapter) return null;
+    if (request.adoptSessionId && !request.placement) {
+      const opened = this.adoptedPanels.get(request.adoptSessionId);
+      if (opened && adapter.getPanel(opened.panelId)?.instanceToken === opened.instanceToken) {
+        this.activatePanel(opened.panelId);
+        return opened;
+      }
+      this.adoptedPanels.delete(request.adoptSessionId);
+    }
     this.panelCounter += 1;
+    const saved = request.adoptSessionId
+      ? readSessionViewState<TerminalSessionViewState>(`desktop-terminal:${request.adoptSessionId}`)
+      : undefined;
+    const projectSession = request.projectSession ?? saved?.projectSession;
     const panelId = `tab-${this.panelCounter}`;
     if (request.agentBootstrap) registerAgentTerminalBootstrap(panelId, request.agentBootstrap);
     let panel;
     try {
       panel = adapter.addTerminalPane({
         id: panelId,
-        title: request.title ?? `Terminal ${this.panelCounter}`,
+        title: request.title ?? saved?.title ?? `Terminal ${this.panelCounter}`,
         placement: request.placement ?? { kind: 'main-tab' },
-        ...(request.projectSession
-          ? { projectSession: request.projectSession }
-          : {
-              ...(request.cwd ? { cwd: request.cwd } : {}),
-              ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
-            }),
+        ...(projectSession ? { projectSession } : {}),
+        ...(request.cwd && !projectSession ? { cwd: request.cwd } : {}),
+        ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
       });
     } catch (error) {
       clearAgentTerminalBootstrap(panelId);
       throw error;
     }
     this.options.onPanelSetChange?.();
-    return { panelId: panel.id, instanceToken: panel.instanceToken };
+    const opened = { panelId: panel.id, instanceToken: panel.instanceToken };
+    if (request.adoptSessionId && !request.placement) this.adoptedPanels.set(request.adoptSessionId, opened);
+    return opened;
   }
 
   public splitPanel(
@@ -526,12 +540,9 @@ export function createDockviewWorkbenchAdapter(
     getPanel: pane,
     addTerminalPane: (options) => {
       const params = {
-        ...(options.projectSession
-          ? { projectSession: options.projectSession }
-          : {
-              ...(options.cwd ? { cwd: options.cwd } : {}),
-              ...(options.adoptSessionId ? { adoptSessionId: options.adoptSessionId } : {}),
-            }),
+        ...(options.projectSession ? { projectSession: options.projectSession } : {}),
+        ...(options.cwd && !options.projectSession ? { cwd: options.cwd } : {}),
+        ...(options.adoptSessionId ? { adoptSessionId: options.adoptSessionId } : {}),
       };
       const panel = windows.addPanel({
         id: options.id,
@@ -541,7 +552,7 @@ export function createDockviewWorkbenchAdapter(
         ...(Object.keys(params).length > 0 ? { params } : {}),
       }, options.placement);
       if (options.projectSession) {
-        panel.api.updateParameters({ projectSession: options.projectSession });
+        panel.api.updateParameters(params);
       }
       return {
         id: panel.id,
