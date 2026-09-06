@@ -209,6 +209,22 @@ async function waitForTestId(
   throw new Error(`timed out waiting for ${selector}`);
 }
 
+async function waitForTestIdToDisappear(
+  el: HTMLElement,
+  testId: string,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const selector = `[data-testid="${testId}"]`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!el.querySelector(selector)) return;
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    });
+  }
+  throw new Error(`timed out waiting for ${selector} to disappear`);
+}
+
 /** The More sheet renders in the overlay host, outside `container`'s page
  * shell but inside the same React tree — query the document for it. */
 function openMoreSheet(el: HTMLElement): void {
@@ -541,6 +557,18 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     const { transport, socket } = makeAuthedTransport();
     const authority = daemonSnapshot();
     vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    let releaseRetryToken: (() => void) | undefined;
+    const retryTokenGate = new Promise<void>((resolve) => {
+      releaseRetryToken = resolve;
+    });
+    let tokenReadCount = 0;
+    vi.spyOn(transport, 'getRemoteToken').mockImplementation(async () => {
+      tokenReadCount += 1;
+      if (tokenReadCount === 2) {
+        await retryTokenGate;
+      }
+      return 'tok';
+    });
     let loadCount = 0;
     const store: MobileAgentCreateRecoveryStoreLike = {
       load: vi.fn(async (): Promise<MobileAgentCreateRecoveryLoadResult> => {
@@ -563,9 +591,12 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
 
     tap(el, 'mobile-new-session-recovery-retry');
     await flushAsync();
+    expect(store.load).toHaveBeenCalledTimes(1);
+    expect(el.querySelector('[data-testid="mobile-new-session-recovery-status"]')).not.toBeNull();
 
+    await act(async () => releaseRetryToken?.());
+    await waitForTestIdToDisappear(el, 'mobile-new-session-recovery-status');
     expect(store.load).toHaveBeenCalledTimes(2);
-    expect(el.querySelector('[data-testid="mobile-new-session-recovery-status"]')).toBeNull();
   });
 
   it('discards only the authenticated host record after explicit confirmation', async () => {
