@@ -78,8 +78,8 @@ const nativeHostLib = await readFile(resolve(root, 'native/remote-host/src/lib.r
 const readme = await readFile(resolve(root, 'README.md'), 'utf8');
 const changelog = await readFile(resolve(root, 'CHANGELOG.md'), 'utf8');
 const roadmap = await readFile(resolve(root, 'docs/ROADMAP.md'), 'utf8');
-const appHeaderStory = await readFile(
-  resolve(root, 'src/renderer/workbench/AppHeader.stories.tsx'),
+const rendererApp = await readFile(
+  resolve(root, 'src/renderer/App.tsx'),
   'utf8',
 );
 const releaseVerifier = await readFile(
@@ -285,8 +285,10 @@ assert(
   'CHANGELOG.md is missing a dated section for release/version.json.',
 );
 assert(
-  appHeaderStory.includes(`appVersion="${contract.version}"`),
-  'The current AppHeader Storybook release fixture differs from release/version.json.',
+  rendererApp.includes(
+    'appVersion={rendererCapabilities.runtimeVersions()?.app ?? null}',
+  ),
+  'The production AppHeader does not read the runtime application version.',
 );
 assert(
   new RegExp(

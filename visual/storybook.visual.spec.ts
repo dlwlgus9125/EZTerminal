@@ -1235,7 +1235,7 @@ test.describe("mobile Agents touch scroll contract", () => {
       });
 
       const scrollRegion = page.getByTestId("mobile-agent-scroll-region");
-      const header = page.locator(".mob-page__head");
+      const header = page.locator(".mobile-page-header");
       const filters = page.locator(".mob-agent-filters");
       const finalAgent = page.getByTestId("agent-card").last();
       await expect(page.getByTestId("mobile-daemon-project").last()).toBeAttached();
