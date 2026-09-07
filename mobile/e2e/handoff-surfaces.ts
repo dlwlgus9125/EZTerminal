@@ -38,6 +38,7 @@ import path from 'node:path';
 
 import {
   APP_ID,
+  SHELL_ROOT_TEST_ID,
   EMULATOR_HOST_URL,
   assertNoWebViewJavaScriptRuntimeErrors,
   clearAppDataAndWaitForQuiescence,
@@ -248,10 +249,10 @@ async function main(): Promise<void> {
     await setTestIdTextValue('connect-token', code);
     await tapTestId('connect-submit');
     const outcome = await waitForAnyTestId(
-      ['connect-error', 'connect-protocol-incompatible', 'mobile-home-view'],
+      ['connect-error', 'connect-protocol-incompatible', SHELL_ROOT_TEST_ID],
       45_000,
     );
-    if (outcome === 'mobile-home-view') {
+    if (outcome === SHELL_ROOT_TEST_ID) {
       throw new Error('a spent pairing code authenticated a second device — it must be single use');
     }
     console.log(`[surfaces] step OK: the spent code was refused (${outcome})`);
@@ -268,7 +269,7 @@ async function main(): Promise<void> {
     await waitForTestId('connect-screen', 45_000);
     await waitForTestId('connect-saved-summary');
     await tapTestId('connect-saved-go');
-    await waitForTestId('mobile-home-view', 45_000);
+    await waitForTestId(SHELL_ROOT_TEST_ID, 45_000);
     console.log('[surfaces] step OK: the issued bearer was persisted and still authenticates after a restart');
 
     assertNoWebViewJavaScriptRuntimeErrors();

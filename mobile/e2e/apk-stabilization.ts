@@ -54,6 +54,11 @@ async function main(): Promise<void> {
   try {
     await connectAndAuth(token);
 
+    // The product starts at Terminal. This scenario exercises returning to
+    // the Home invoker, so establish that root before opening destinations.
+    await tapTestId('shell-tab-home');
+    await waitForTestId('mobile-home-view');
+
     // Keep the OpenClaw destination visible even when the fixture machine has
     // no CLI. The page must then render its typed unavailable guidance.
     await openFromHub({ action: 'more-settings', view: 'mobile-settings-view' });
