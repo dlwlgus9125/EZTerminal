@@ -42,9 +42,9 @@
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:4c1bbbb5c8b169e559865cc8b717f55ae9cb1cf557b844dcbe352c8072049a96",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
+        "inputDigest": "sha256:2e504d4c7de4417ff0d8882f53ab472ac8888c23da467e17b99d272ebcc05758",
+        "decision": "map-updated",
+        "reason": "Reviewed empty Agent creation and deferred first submission; updated the workbench detail and creation evidence. CLI model overrides retain existing permissions. Authority, shutdown, port ownership and transport identity remain as mapped."
       }
     },
     {
@@ -60,9 +60,9 @@
         { "rootAlias": "app", "relativePath": "src/interpreter/pty-session.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:33652ac59b335b6f346a0ab4fffabf3467fd8fed58afb0923fcd48954a3c0611",
+        "inputDigest": "sha256:e444d707989d1f2c36b61a322355b3138febecacf390204b003381c6d3836dda",
         "decision": "no-semantic-impact",
-        "reason": "The mapped command submission, port handoff, and attached-view byte/flush/ACK sequence are unchanged. Deliberate view detach now retains host execution separately from renderer crash grace; existing command-path anchors moved without content changes."
+        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
       }
     },
     {
@@ -88,9 +88,9 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:588642601bdb601e982c7f079ee4a78ac9780ccad3541724771decfbef0682cf",
+        "inputDigest": "sha256:c1bd976b2ead67eedb8b34dc80072969abc56516eefe3fcf5f3cbf214f5b4d4c",
         "decision": "map-updated",
-        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
+        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
       }
     },
     {
@@ -108,9 +108,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:24ea2cbad3c6ce4ca0ebec3f12df890fc425a1383be2213bbb0612b334fa535f",
+        "inputDigest": "sha256:07c2ce162e3ff6cd5a64dde280b2c67a5ec7656df86483533f51310a669d3cd5",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
+        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
       }
     },
     {
@@ -133,9 +133,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:e0be36b2714e6bb23df1a2368bc8051d70553addea127789d7ff0872f291066d",
+        "inputDigest": "sha256:128a4a2603c9e6a22f44615e064a72263a4f409fa16c09511ae45297da3e45e7",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
+        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
       }
     }
   ]

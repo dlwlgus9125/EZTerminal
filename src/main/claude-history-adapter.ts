@@ -627,7 +627,7 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
     if (launch?.provider === 'claude') {
       if (launch.model) parts.push('--model', quoteEzArgument(launch.model));
       if (launch.effort) parts.push('--effort', launch.effort);
-      parts.push('--permission-mode', launch.permissionMode);
+      if (launch.permissionMode) parts.push('--permission-mode', launch.permissionMode);
     }
     // Claude has no --cd. The caller creates the shell at primaryRoot, while
     // its variadic --add-dir receives every additional project root at once.

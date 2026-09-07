@@ -162,14 +162,7 @@ function changeSelect(testId: string, value: string): void {
   });
 }
 
-function fillTextarea(testId: string, value: string): void {
-  const textarea = testIds(testId)[0] as HTMLTextAreaElement;
-  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-  act(() => {
-    setValue.call(textarea, value);
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-}
+
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -400,7 +393,6 @@ describe('MobileAgentView', () => {
 
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-1');
-    fillTextarea('structured-agent-first-prompt', 'Build the mobile creation path.');
 
     expect(sendDaemonCommand).not.toHaveBeenCalled();
     expect(onCreateWorkspaceTerminal).not.toHaveBeenCalled();
@@ -421,10 +413,9 @@ describe('MobileAgentView', () => {
       principal: { kind: 'android', id: 'mobile-agent-ui' },
       payload: {
         workspaceId: 'workspace-1',
-        title: 'Build the mobile creation path.',
+        title: 'Codex',
         providerId: 'codex',
         permissionPreset: 'standard',
-        initialPrompt: 'Build the mobile creation path.',
       },
     });
     expect(command.idempotencyKey).toBe(command.commandId);
@@ -439,8 +430,8 @@ describe('MobileAgentView', () => {
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
     expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
       .toBe(command.payload.sessionId);
-    expect(container.querySelector('[data-kind="user-message"]')?.textContent)
-      .toContain('Build the mobile creation path.');
+    expect(container.querySelector('[data-kind="user-message"]')).toBeNull();
+    expect(container.textContent).toContain('Not started');
   });
 
   it.each([
@@ -468,7 +459,6 @@ describe('MobileAgentView', () => {
     act(() => testIds('mobile-agent-new-session')[0]!.click());
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-1');
-    fillTextarea('structured-agent-first-prompt', 'Do not send without durable recovery.');
     act(() => testIds('structured-agent-create')[0]!.click());
     await flush();
 
@@ -552,7 +542,6 @@ describe('MobileAgentView', () => {
     act(() => testIds('mobile-agent-new-session')[0]!.click());
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-1');
-    fillTextarea('structured-agent-first-prompt', 'Recover this exact mobile session.');
 
     act(() => testIds('structured-agent-create')[0]!.click());
     await flush();
@@ -560,8 +549,7 @@ describe('MobileAgentView', () => {
     expect(sendDaemonCommand).toHaveBeenCalledOnce();
     const originalCommand = sendDaemonCommand.mock.calls[0]![0];
     expect(testIds('mobile-new-session-draft')).toHaveLength(1);
-    expect((testIds('structured-agent-first-prompt')[0] as HTMLTextAreaElement).value)
-      .toBe('Recover this exact mobile session.');
+    expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
     expect(container.querySelector('[role="alert"]')?.textContent)
       .toContain('Delivery could not be confirmed');
 
@@ -590,8 +578,7 @@ describe('MobileAgentView', () => {
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
     expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
       .toBe(originalCommand.payload.sessionId);
-    expect(container.querySelector('[data-kind="user-message"]')?.textContent)
-      .toContain('Recover this exact mobile session.');
+    expect(container.querySelector('[data-kind="user-message"]')).toBeNull();
   });
 
   it('keeps an uncertain command locked without replay when fresh authority is unavailable', async () => {
@@ -625,7 +612,6 @@ describe('MobileAgentView', () => {
     act(() => testIds('mobile-agent-new-session')[0]!.click());
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-1');
-    fillTextarea('structured-agent-first-prompt', 'Wait for fresh mobile authority.');
     act(() => testIds('structured-agent-create')[0]!.click());
     await flush();
     const originalCommand = sendDaemonCommand.mock.calls[0]![0];
@@ -637,8 +623,7 @@ describe('MobileAgentView', () => {
     expect(sendDaemonCommand).toHaveBeenCalledOnce();
     expect(sendDaemonCommand.mock.calls[0]![0]).toBe(originalCommand);
     expect(testIds('mobile-new-session-draft')).toHaveLength(1);
-    expect((testIds('structured-agent-first-prompt')[0] as HTMLTextAreaElement).value)
-      .toBe('Wait for fresh mobile authority.');
+    expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
     expect(container.querySelector('[role="alert"]')?.textContent)
       .toContain('Agent service is unavailable');
   });
@@ -706,7 +691,6 @@ describe('MobileAgentView', () => {
     act(() => testIds('mobile-agent-new-session')[0]!.click());
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-1');
-    fillTextarea('structured-agent-first-prompt', 'Survive the mobile tab switch.');
     act(() => testIds('structured-agent-create')[0]!.click());
     await flush();
 
@@ -716,8 +700,7 @@ describe('MobileAgentView', () => {
     act(() => testIds('show-agent-view')[0]!.click());
 
     expect(testIds('mobile-new-session-draft')).toHaveLength(1);
-    expect((testIds('structured-agent-first-prompt')[0] as HTMLTextAreaElement).value)
-      .toBe('Survive the mobile tab switch.');
+    expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
     act(() => testIds('structured-agent-create')[0]!.click());
     await flush();
 
@@ -791,13 +774,13 @@ describe('MobileAgentView', () => {
 
     render(<LateRecoveryHost />);
     act(() => testIds('mobile-agent-new-session')[0]!.click());
-    expect((testIds('structured-agent-first-prompt')[0] as HTMLTextAreaElement).value).toBe('');
-    expect((testIds('structured-agent-first-prompt')[0] as HTMLTextAreaElement).disabled).toBe(true);
+    expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
+    expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
 
     act(() => testIds('load-agent-recovery')[0]!.click());
     await flush();
 
-    expect((testIds('structured-agent-first-prompt')[0] as HTMLTextAreaElement).value)
+    expect((testIds('structured-agent-recovery-prompt')[0] as HTMLTextAreaElement).value)
       .toBe('Restore the exact late recovery.');
     expect((testIds('structured-agent-provider')[0] as HTMLSelectElement).value).toBe('claude');
     expect((testIds('structured-agent-model')[0] as HTMLSelectElement).value)
@@ -898,7 +881,6 @@ describe('MobileAgentView', () => {
     act(() => testIds('mobile-agent-new-session')[0]!.click());
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-1');
-    fillTextarea('structured-agent-first-prompt', 'Retry this mobile create safely.');
     act(() => testIds('structured-agent-create')[0]!.click());
     await flush();
 

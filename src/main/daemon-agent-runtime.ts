@@ -581,10 +581,12 @@ export class DaemonAgentRuntime {
         providerId: command.payload.providerId,
         ...(command.payload.model ? { model: command.payload.model } : {}),
         permissionPreset: command.payload.permissionPreset,
-        state: 'queued',
-        queuedTurnCount: 1,
+        state: command.payload.initialPrompt ? 'queued' : 'idle',
+        queuedTurnCount: command.payload.initialPrompt ? 1 : 0,
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled,
       } },
+    ];
+    if (command.payload.initialPrompt) mutations.push(
       { kind: 'turn.upsert', value: {
         id: turnId,
         sessionId: command.payload.sessionId,
@@ -599,7 +601,7 @@ export class DaemonAgentRuntime {
         command.payload.initialPrompt,
         now,
       )]),
-    ];
+    );
     if (relation?.ok) {
       mutations.push({ kind: 'agent-relation.upsert', value: {
         id: stableId('relation', relation.value.treeId, command.payload.sessionId),
@@ -610,7 +612,7 @@ export class DaemonAgentRuntime {
         depth: relation.value.depth,
       } });
     }
-    return { ok: true, commit: { mutations }, afterCommit: () => this.queuePump() };
+    return { ok: true, commit: { mutations }, ...(command.payload.initialPrompt ? { afterCommit: () => this.queuePump() } : {}) };
   }
 
   private async resume(
@@ -803,7 +805,8 @@ export class DaemonAgentRuntime {
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.set-settings') return commandError('invalid-command', 'Unexpected Agent settings command.');
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
-    if (!agent?.providerSessionId) return commandError('not-found', 'Agent Session was not found.');
+    if (!agent) return commandError('not-found', 'Agent Session was not found.');
+    if (TERMINAL_AGENT_STATES.has(agent.state)) return commandError('invalid-state', 'Agent Session has ended.');
     if (agent.currentTurnId) return commandError('invalid-state', 'Change Agent settings between turns.');
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
@@ -815,7 +818,7 @@ export class DaemonAgentRuntime {
         ...(nextModel ? { model: nextModel } : {}),
         permissionPreset: nextPermissionPreset,
       }) }] },
-      afterCommit: () => this.runBackground(
+      afterCommit: () => agent.providerSessionId ? this.runBackground(
         `update Agent settings ${agent.sessionId}`,
         () => this.applyProviderSettings(
           agent.sessionId,
@@ -824,7 +827,7 @@ export class DaemonAgentRuntime {
           nextModel,
           nextPermissionPreset,
         ),
-      ),
+      ) : undefined,
     };
   }
 

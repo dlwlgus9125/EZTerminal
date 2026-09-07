@@ -319,3 +319,10 @@ describe('CodexHistoryAdapter', () => {
     });
   });
 });
+
+it('a model-only CLI override leaves Codex sandbox configuration intact', () => {
+  const adapter = new CodexHistoryAdapter(requester(vi.fn()));
+  const command = adapter.buildNewCommand(['C:\\Work'], { provider: 'codex', model: 'custom-model' });
+  expect(command?.commandText).toContain("--model 'custom-model'");
+  expect(command?.commandText).not.toContain('--sandbox');
+});

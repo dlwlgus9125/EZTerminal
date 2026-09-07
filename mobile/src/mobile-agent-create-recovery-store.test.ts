@@ -156,6 +156,19 @@ describe('MobileAgentCreateRecoveryStore', () => {
     store = new MobileAgentCreateRecoveryStore(secure);
   });
 
+  it('round-trips an empty Agent create through secure storage', async () => {
+    const command = JSON.parse(JSON.stringify(agentCreateCommand()));
+    delete command.payload.initialPrompt;
+    secure.values.set(SECURE_KEY, rawRecord(command));
+    const result = await store.load(AUTHORITY);
+    expect(result.available).toBe(true);
+    if (!result.available || !result.recovery) throw new Error('Expected empty Agent recovery');
+    expect(result.recovery.outcome.command).toEqual(command);
+    expect(result.recovery.input.initialPrompt).toBeUndefined();
+    await store.save(result.recovery, AUTHORITY);
+    expect(JSON.parse(secure.values.get(SECURE_KEY)!)).toEqual(JSON.parse(rawRecord(command)));
+  });
+
   it('stores the authority binding and exact command, then reconstructs the draft and uncertain outcome', async () => {
     const recovery = recoveryFrom();
     await store.save(recovery, AUTHORITY);

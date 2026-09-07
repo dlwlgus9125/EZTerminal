@@ -536,12 +536,12 @@ export function StructuredAgentDockPanel(
       title: outcome.title,
     });
     setSessionId(outcome.sessionId);
-    setLocalItems([localUserItem(
+    setLocalItems(createdInput.initialPrompt ? [localUserItem(
       outcome.sessionId,
       outcome.command.commandId,
       1,
       createdInput.initialPrompt,
-    )]);
+    )] : []);
     setUncertainDraft(null);
     props.api.updateParameters({
       ...(props.api.getParameters?.() ?? props.params ?? {}),
@@ -658,7 +658,7 @@ export function StructuredAgentDockPanel(
       setUncertainDraft({ input, outcome });
       return {
         ok: false,
-        message: 'Delivery could not be confirmed. This exact draft is locked; Send again to verify or safely retry the same session.',
+        message: 'Delivery could not be confirmed. This exact draft is locked; choose Create Agent again to verify or safely retry the same session.',
       };
     }
     setUncertainDraft(null);
@@ -715,7 +715,7 @@ export function StructuredAgentDockPanel(
   if (!sessionId) {
     if (props.onOpenTerminal && props.onLaunchCli) {
       return <NewSessionDraftPanel
-          initialIntent={{ kind: 'agent', agentMode: 'cli' }}
+          initialIntent={{ kind: 'agent' }}
         snapshot={snapshot}
         projectId={projectId}
         workspaceId={initialWorkspaceId ?? (preferredWorkspaceId ? `${projectId && rootId ? `${projectId}.${rootId}.` : ''}${preferredWorkspaceId}` : undefined)}
@@ -989,7 +989,8 @@ export function StructuredAgentDockPanel(
         providerModelCatalogs[providerId],
       )}
       permissionPreset={agent?.permissionPreset ?? createdDraft?.permissionPreset ?? 'standard'}
-      state={historyOnly ? 'archived' : agent?.state ?? (createdDraft || loading ? 'starting' : 'error')}
+      awaitingFirstMessage={!historyOnly && (agent ? agent.state === 'idle' && !agent.providerSessionId && !snapshot?.turns.some((turn) => turn.sessionId === sessionId) : Boolean(createdDraft && !createdDraft.initialPrompt))}
+      state={historyOnly ? 'archived' : agent?.state ?? (createdDraft ? createdDraft.initialPrompt ? 'starting' : 'idle' : loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
       items={transcriptItems}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}

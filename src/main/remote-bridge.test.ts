@@ -4304,10 +4304,11 @@ describe('RemoteBridge — Agent projects v5', () => {
       kind: 'agent-launch-prepare',
       requestId: 'direct-prepare',
       target,
+      model: 'custom-model',
       launcherId: preparation.launcherId,
     });
     await flush();
-    expect(historySource.prepareLaunch).toHaveBeenCalledWith(target, preparation.launcherId);
+    expect(historySource.prepareLaunch).toHaveBeenCalledWith(target, preparation.launcherId, 'custom-model');
     expect(ws.sent).toContainEqual({
       kind: 'agent-launch-prepare-reply',
       requestId: 'direct-prepare',
@@ -4336,12 +4337,13 @@ describe('RemoteBridge — Agent projects v5', () => {
         sessionId: 'direct-terminal',
         runId: 'direct-run',
         revision: preparation.revision,
+        model: 'custom-model',
       },
     });
     await flush();
 
     expect(historySource.resolveLaunch)
-      .toHaveBeenCalledWith(target, preparation.launcherId, preparation.revision);
+      .toHaveBeenCalledWith(target, preparation.launcherId, preparation.revision, 'custom-model');
     expect(ws.sent).toContainEqual({
       kind: 'agent-launch-start-reply',
       requestId: 'direct-start',

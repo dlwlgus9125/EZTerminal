@@ -160,7 +160,7 @@ export function resolvePreferredDaemonWorkspaceId(
 }
 
 /**
- * Transport-neutral first-Send authority. It keeps the logical Session stable
+ * Transport-neutral Agent creation authority. It keeps the logical Session stable
  * across optimistic-revision retries while assigning each definitively
  * rejected command a fresh idempotency identity.
  */
@@ -168,11 +168,11 @@ export async function createStructuredAgentSession(
   input: StructuredAgentDraftInput,
   options: StructuredAgentCreateOptions,
 ): Promise<StructuredAgentCreateOutcome> {
-  const initialPrompt = input.initialPrompt.trim();
+  const initialPrompt = input.initialPrompt?.trim();
   const createId = options.createId ?? defaultCreateId;
   const sessionId = options.sessionId ?? createId('agent');
-  const title = structuredAgentSessionTitle(initialPrompt);
-  if (!initialPrompt) {
+  const title = initialPrompt ? structuredAgentSessionTitle(initialPrompt) : input.providerId === 'claude' ? 'Claude Code' : input.providerId === 'codex' ? 'Codex' : input.providerId;
+  if (input.initialPrompt !== undefined && !initialPrompt) {
     return {
       kind: 'rejected',
       reason: 'invalid-prompt',
@@ -242,7 +242,7 @@ export async function createStructuredAgentSession(
         providerId: input.providerId,
         ...(input.model ? { model: input.model } : {}),
         permissionPreset: input.permissionPreset,
-        initialPrompt,
+        ...(initialPrompt ? { initialPrompt } : {}),
       },
     });
     try {

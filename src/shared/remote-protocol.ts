@@ -570,6 +570,7 @@ export interface AgentProjectStartLaunchRequest {
 }
 
 export interface AgentLaunchPrepareRequest {
+  readonly model?: string;
   readonly kind: 'agent-launch-prepare';
   readonly requestId: string;
   readonly target: AgentLaunchTarget;

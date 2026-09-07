@@ -224,3 +224,12 @@ describe('renderer recovery checkpoint validation', () => {
     expect(validateRendererRecoveryCheckpoint(checkpoint)).toBeNull();
   });
 });
+
+it('restores an empty Agent creation envelope without inventing a first message', () => {
+  const checkpoint = structuredAgentRecoveryCheckpoint();
+  const records = checkpoint.structuredAgentCreates as { command: { payload: { initialPrompt?: string } } }[];
+  delete records[0]!.command.payload.initialPrompt;
+  const recovered = validateRendererRecoveryCheckpoint(JSON.parse(JSON.stringify(checkpoint)));
+  expect(recovered?.structuredAgentCreates).toHaveLength(1);
+  expect(recovered?.structuredAgentCreates[0]?.command.payload).not.toHaveProperty('initialPrompt');
+});

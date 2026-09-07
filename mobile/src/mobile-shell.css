@@ -3512,3 +3512,13 @@
 
   .mob-agent-card__progress span { width: 48%; }
 }
+
+/* New-session controls share one compact form on touch screens. */
+.mob-new-session .session-start-options__choices > .ez-ui-button { flex: 1; min-height: 2.75rem; }
+.mob-new-session .ez-ui-select, .mob-new-session .ez-ui-input { min-height: 2.75rem; }
+.mob-new-session__location { padding: 0; border: 0; background: transparent; }
+.mob-new-session__locked-location { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface); }
+.mob-new-session .structured-agent[data-embedded='true'] { border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.mob-new-session .structured-agent[data-embedded='true'] .structured-agent-draft-form { padding: 0; gap: var(--ui-space-4); }
+.mob-new-session .structured-agent-draft-form__actions .ez-ui-button,
+.mob-new-session__terminal-action .ez-ui-button { width: 100%; }

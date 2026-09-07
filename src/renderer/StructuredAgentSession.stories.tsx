@@ -12,6 +12,7 @@ import {
 import { AppI18nProvider } from './i18n';
 import './index.css';
 import './structured-agent.css';
+import './session-start.css';
 
 const NOW = '2026-09-04T09:30:00.000Z';
 
@@ -79,7 +80,7 @@ const base: StructuredAgentSessionPanelProps = {
 function Frame({ children }: { readonly children: ReactNode }): JSX.Element {
   return (
     <AppI18nProvider locale="en" languages={['en']}>
-      <div style={{ width: 'min(100vw, 1040px)', height: 'min(88vh, 760px)' }}>{children}</div>
+      <div style={{ width: 'min(calc(100vw - 32px), 1040px)', height: 'min(88vh, 760px)' }}>{children}</div>
     </AppI18nProvider>
   );
 }
@@ -208,3 +209,6 @@ export const ChildAgentsAndLifecycle: Story = {
     onDetach: fn(async () => ({ ok: true as const })),
   },
 };
+
+export const NotStarted: Story = { args: { title: 'Codex', awaitingFirstMessage: true } };
+export const MobileNotStarted: Story = { args: { title: 'Codex', awaitingFirstMessage: true, variant: 'mobile' } };

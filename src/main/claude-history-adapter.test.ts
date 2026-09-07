@@ -579,3 +579,9 @@ describe('ClaudeHistoryAdapter.buildResumeCommand', () => {
     })).toBeNull();
   });
 });
+
+it('a model-only CLI override leaves Claude permission configuration intact', () => {
+  const adapter = new ClaudeHistoryAdapter({ homeDir: os.tmpdir() });
+  expect(adapter.buildNewCommand(['C:\\Work'], { provider: 'claude', model: 'custom-model' }))
+    .toEqual({ commandText: "!claude --model 'custom-model'", displayCommandText: 'claude' });
+});

@@ -3,11 +3,11 @@ import type { AgentLaunchBootstrap } from '../shared/agent-history';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import type { NewSessionDraftIntent } from '../shared/session-navigation';
 import { StructuredAgentDraftPanel, type StructuredAgentDraftPanelProps, type StructuredAgentUiResult } from './StructuredAgentSession';
-import { CliAgentLaunchPanel, SessionStartOptions, useSessionCopy, type SessionLaunchAccess } from './SessionStartOptions';
+import { TerminalLaunchPanel, SessionStartOptions, useSessionCopy, type SessionLaunchAccess } from './SessionStartOptions';
 import { Button, Field, Input, Select } from './ui';
 
 export interface NewSessionDraftPanelProps {
-  readonly initialIntent?: Pick<NewSessionDraftIntent, 'kind' | 'agentMode'>;
+  readonly initialIntent?: Pick<NewSessionDraftIntent, 'kind'>;
   readonly snapshot: DaemonSnapshot | null;
   readonly projectId?: string;
   readonly workspaceId?: string;
@@ -22,7 +22,6 @@ export interface NewSessionDraftPanelProps {
 export function NewSessionDraftPanel({ initialIntent, snapshot, projectId, workspaceId, agent, access, onTerminal, onLaunchCli, onSettings }: NewSessionDraftPanelProps): JSX.Element {
   const copy = useSessionCopy();
   const [kind, setKind] = useState<NewSessionDraftIntent['kind']>(initialIntent?.kind ?? 'terminal');
-  const [mode, setMode] = useState<NewSessionDraftIntent['agentMode']>(initialIntent?.agentMode ?? 'cli');
   const [selectedProject, setProject] = useState(projectId ?? (initialIntent?.kind === 'agent' ? '' : 'local'));
   const [selectedWorkspace, setWorkspace] = useState(workspaceId ?? '');
   const [directory, setDirectory] = useState('');
@@ -40,7 +39,7 @@ export function NewSessionDraftPanel({ initialIntent, snapshot, projectId, works
   }, [workspaceId]);
   useEffect(() => {
     if (recovery && agent.initialWorkspaceId) {
-      setKind('agent'); setMode('conversation'); setWorkspace(agent.initialWorkspaceId);
+      setKind('agent'); setWorkspace(agent.initialWorkspaceId);
       const owner = snapshot?.workspaces.find((entry) => entry.id === agent.initialWorkspaceId);
       if (owner) setProject(owner.projectId);
     }
@@ -62,18 +61,17 @@ export function NewSessionDraftPanel({ initialIntent, snapshot, projectId, works
     finally { busyRef.current = false; setBusy(false); }
   };
   const validLocation = Boolean(selected) || (selectedProject === 'local' && kind === 'terminal')
-    || (selectedProject === 'direct' && directory.trim().length > 0 && (kind === 'terminal' || mode === 'cli'));
+    || (selectedProject === 'direct' && directory.trim().length > 0 && kind === 'terminal');
   return <section className="session-start-draft" data-testid="new-session-draft" aria-label={copy.title}>
     <header><h1>{copy.title}</h1></header>
-    <SessionStartOptions kind={kind} agentMode={mode} locked={locked || busy} onKindChange={(next) => { setKind(next); if (next === 'agent' && selectedProject === 'local') setProject(''); }} onModeChange={setMode} />
+    <SessionStartOptions kind={kind} locked={locked || busy} onKindChange={(next) => { setKind(next); if (next === 'agent' && (selectedProject === 'local' || selectedProject === 'direct')) setProject(''); }} />
     <div className="session-start-location">
       <Field label={copy.project} required>
         <Select value={selectedProject} disabled={Boolean(projectId) || locked || busy} onChange={(event) => { setProject(event.currentTarget.value); setWorkspace(''); setError(null); }} data-testid="new-session-project">
           <option value="">{copy.selectProject}</option>
           {projects.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
           {projectId && !projects.some((entry) => entry.id === projectId) && <option value={projectId}>{projectId}</option>}
-          <option value="local">{copy.local}</option>
-          <option value="direct">{copy.direct}</option>
+          {kind === 'terminal' && <><option value="local">{copy.local}</option><option value="direct">{copy.direct}</option></>}
         </Select>
       </Field>
       {selectedProject === 'direct' ? <Field label={copy.folder} required><Input value={directory} disabled={busy || locked} onChange={(event) => setDirectory(event.currentTarget.value)} /></Field> : selectedProject !== 'local' && <Field label={copy.workspace} required>
@@ -85,18 +83,17 @@ export function NewSessionDraftPanel({ initialIntent, snapshot, projectId, works
       </Field>}
       {selected && <p title={selected.rootPath}>{selected.rootPath}</p>}
     </div>
-    <div hidden={kind !== 'agent' || mode !== 'conversation'}>
-      {!agent.providers.some((entry) => !entry.disabled) && <p role="status">{copy.noProvider} <Button variant="ghost" disabled={locked || busy} onClick={() => setMode('cli')}>{copy.cli}</Button></p>}
-      {onSettings && <Button variant="ghost" disabled={locked || busy} onClick={onSettings}>{copy.setup}</Button>}
+    <div hidden={kind !== 'agent'}>
+      {!agent.providers.some((entry) => !entry.disabled) && <p role="status">{copy.noProvider} </p>}
+      {onSettings && !agent.providers.some((entry) => !entry.disabled) && <Button variant="ghost" disabled={locked || busy} onClick={onSettings}>{copy.setup}</Button>}
       <StructuredAgentDraftPanel {...agent} embedded hideWorkspaceField selectedWorkspaceId={selectedWorkspace} workspaces={agent.workspaces.filter((entry) => workspaces.some((workspace) => workspace.id === entry.id))} loading={agent.loading || busy} onBusyChange={setAgentBusy} />
     </div>
-    <div hidden={kind !== 'agent' || mode !== 'cli'}>
-      <CliAgentLaunchPanel access={access} workspaceId={selected?.id} directory={selectedProject === 'direct' ? directory.trim() : undefined} disabled={recovery || busy || !validLocation} onLaunch={onLaunchCli} onSettings={onSettings} onBusyChange={setAgentBusy} />
-    </div>
     {kind === 'terminal' && <div className="session-start-cli" data-testid="new-session-terminal-panel">
+      <TerminalLaunchPanel access={access} workspaceId={selected?.id} directory={selectedProject === 'direct' ? directory.trim() : undefined} disabled={recovery || busy || !validLocation} locked={locked || busy} onLaunch={onLaunchCli} onSettings={onSettings} onBusyChange={setAgentBusy} terminalAction={<>
       <p>{copy.terminalHint}</p>
       {error && <p role="alert">{error}</p>}
       <Button variant="primary" disabled={locked || !validLocation} loading={busy} onClick={() => void openTerminal()} data-testid="new-session-open-terminal">{copy.openTerminal}</Button>
+      </>} />
     </div>}
   </section>;
 }

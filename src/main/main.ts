@@ -182,6 +182,8 @@ import type {
   AgentResumeStartResult,
 } from '../shared/agent-history';
 import {
+  cliModelLaunchOptions,
+  isAgentLaunchModel,
   MAX_AGENT_LAUNCH_DIRECTORY_LENGTH,
   MAX_AGENT_PROJECTS,
 } from '../shared/agent-history';
@@ -288,6 +290,7 @@ function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartReq
     && isBoundedAgentString(request.sessionId, 256)
     && isBoundedAgentString(request.runId, 256)
     && isBoundedAgentString(request.revision, 128)
+    && isAgentLaunchModel(request.launcherId, request.model)
   );
 }
 
@@ -2745,6 +2748,7 @@ app.on('ready', async () => {
       candidate.target,
       candidate.launcherId,
       candidate.revision,
+      cliModelLaunchOptions(candidate.launcherId, candidate.model),
     );
     if (!resolved.ok) return resolved;
     const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
@@ -2770,12 +2774,13 @@ app.on('ready', async () => {
     _event,
     target: unknown,
     launcherId: unknown,
+    model?: unknown,
   ) => {
     await Promise.all([agentHistoryReady, agentInfrastructureReady]);
-    if (!isAgentLaunchTarget(target) || !isBoundedAgentString(launcherId, 128)) {
+    if (!isAgentLaunchTarget(target) || !isBoundedAgentString(launcherId, 128) || !isAgentLaunchModel(launcherId, model)) {
       return { ok: false, reason: 'invalid' };
     }
-    return agentHistoryService.prepareLaunch(target, launcherId);
+    return agentHistoryService.prepareLaunch(target, launcherId, cliModelLaunchOptions(launcherId, model as string | undefined));
   });
   ipcMain.handle('agent-launch:start', gateLocalMutation(desktopAgentMutationIngress, async (
     event,
@@ -4963,17 +4968,17 @@ app.on('ready', async () => {
       }
     }),
     listLaunchers: () => agentHistoryService.listLaunchers(),
-    prepareLaunch: (target, launcherId) => localAgentOperationIngress.run(() => (
-      agentHistoryService.prepareLaunch(target, launcherId)
+    prepareLaunch: (target, launcherId, model) => localAgentOperationIngress.run(() => (
+      agentHistoryService.prepareLaunch(target, launcherId, cliModelLaunchOptions(launcherId, model))
     )),
     prepareProjectLaunch: (projectId, launcherId) => (
       localAgentOperationIngress.run(() => (
         agentHistoryService.prepareProjectLaunch(projectId, launcherId)
       ))
     ),
-    resolveLaunch: (target, launcherId, revision) => (
+    resolveLaunch: (target, launcherId, revision, model) => (
       localAgentOperationIngress.run(() => (
-        agentHistoryService.resolveLaunch(target, launcherId, revision)
+        agentHistoryService.resolveLaunch(target, launcherId, revision, cliModelLaunchOptions(launcherId, model))
       ))
     ),
     listSessions: (projectId, cursor, limit, force) => (

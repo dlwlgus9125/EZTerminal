@@ -1433,6 +1433,7 @@ export interface EzTerminalApi extends SessionSurfaceApi {
   prepareAgentLaunch: (
     target: AgentLaunchTarget,
     launcherId: string,
+    model?: string,
   ) => Promise<AgentLaunchPreparation>;
   /** Starts a private Agent CLI in an already-created target-rooted session. */
   startAgentLaunch: (

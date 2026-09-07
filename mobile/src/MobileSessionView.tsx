@@ -880,6 +880,7 @@ export function MobileSessionView({
           const preparation = await window.ezterminal.prepareAgentLaunch(
             agentBootstrap.target,
             agentBootstrap.launcherId,
+            agentBootstrap.model,
           );
           if (!preparation.ok) {
             throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
@@ -893,6 +894,7 @@ export function MobileSessionView({
           sessionId,
           runId,
           revision: launchRevision,
+          ...(agentBootstrap.model ? { model: agentBootstrap.model } : {}),
         });
         if (!result.ok) throw new Error(`Agent project launch failed: ${result.reason}`);
       },

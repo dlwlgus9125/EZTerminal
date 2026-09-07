@@ -26,7 +26,7 @@ function setup(overrides: Partial<NewSessionDraftPanelProps> = {}) {
     agent: { providers: [], workspaces: sessionStartSnapshot.workspaces.map((workspace) => ({ id: workspace.id, label: workspace.name, kind: workspace.kind })), onCreate: vi.fn(async () => ({ ok: true as const })) },
     access: {
       getDaemonSnapshot: vi.fn(async () => sessionStartSnapshot),
-      listAgentProjectLaunchers: vi.fn(async () => [{ launcherId: 'codex-cli', provider: 'codex' as const, name: 'Codex CLI', supportsAdditionalRoots: true }]),
+      listAgentProjectLaunchers: vi.fn(async () => [{ launcherId: 'codex-cli', provider: 'codex' as const, name: 'Codex CLI', supportsAdditionalRoots: true, supportsModel: true }]),
       prepareAgentLaunch: vi.fn(async (target, launcherId) => ({ ok: true as const, target, launcherId, provider: 'codex' as const, name: 'Codex CLI', cwd: sessionStartSnapshot.workspaces[1].rootPath, roots: [], ignoredAdditionalRootCount: 0, revision: 'reviewed' })),
     },
     onTerminal: vi.fn(async () => ({ ok: true as const })), onLaunchCli: vi.fn(async () => undefined), ...overrides,
@@ -63,13 +63,13 @@ describe('New session routing', () => {
 
   it('revalidates the exact worktree and launches one CLI only after Start', async () => {
     const props = setup(); await flush();
-    click('new-session-agent');
-    expect(button('new-session-cli').getAttribute('aria-pressed')).toBe('true'); select('session-cli-launcher', 'codex-cli');
+    click('new-session-terminal');
+    select('session-cli-launcher', 'codex-cli');
     expect(props.access.prepareAgentLaunch).not.toHaveBeenCalled();
     act(() => { button('session-cli-start').click(); button('session-cli-start').click(); });
     expect(button('new-session-terminal').disabled).toBe(true);
     await flush();
-    expect(props.access.prepareAgentLaunch).toHaveBeenCalledExactlyOnceWith({ kind: 'directory', directory: sessionStartSnapshot.workspaces[1].rootPath }, 'codex-cli');
+    expect(props.access.prepareAgentLaunch).toHaveBeenCalledExactlyOnceWith({ kind: 'directory', directory: sessionStartSnapshot.workspaces[1].rootPath }, 'codex-cli', undefined);
     expect(props.onLaunchCli).toHaveBeenCalledOnce();
     expect(props.onTerminal).not.toHaveBeenCalled();
   });
@@ -77,8 +77,8 @@ describe('New session routing', () => {
   it('rejects a workspace removed between selection and CLI Start', async () => {
     const props = setup(); await flush();
     vi.mocked(props.access.getDaemonSnapshot).mockResolvedValue({ ...sessionStartSnapshot, workspaces: [] });
-    click('new-session-agent');
-    expect(button('new-session-cli').getAttribute('aria-pressed')).toBe('true'); select('session-cli-launcher', 'codex-cli'); click('session-cli-start'); await flush();
+    click('new-session-terminal');
+    select('session-cli-launcher', 'codex-cli'); click('session-cli-start'); await flush();
     expect(props.onLaunchCli).not.toHaveBeenCalled();
     expect(props.access.prepareAgentLaunch).not.toHaveBeenCalled();
     expect(host.textContent).toContain('selected workspace is unavailable');
@@ -87,7 +87,27 @@ describe('New session routing', () => {
   it('locks type and location during uncertain Agent delivery', async () => {
     const props = setup({ agent: { providers: [], workspaces: [], deliveryRecovery: true, initialWorkspaceId: 'feature', initialProviderId: 'codex', initialPrompt: 'submitted', onCreate: vi.fn(async () => ({ ok: true as const })) } }); await flush();
     expect(button('new-session-terminal').disabled).toBe(true);
-    expect(button('new-session-cli').disabled).toBe(true);
+    expect(host.querySelector('[data-testid="new-session-cli"]')).toBeNull();
     expect(props.onTerminal).not.toHaveBeenCalled();
   });
+});
+
+it('passes a custom CLI model and resets it when returning to the shell', async () => {
+  const props = setup(); await flush();
+  select('session-cli-launcher', 'codex-cli');
+  select('session-cli-model', 'custom');
+  expect(button('session-cli-start').disabled).toBe(true);
+  const input = host.querySelector<HTMLInputElement>('[data-testid="session-cli-model-name"]')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'custom-model');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  click('session-cli-start'); await flush();
+  expect(props.access.prepareAgentLaunch).toHaveBeenLastCalledWith(expect.anything(), 'codex-cli', 'custom-model');
+  expect(props.onLaunchCli).toHaveBeenCalledWith(expect.objectContaining({ model: 'custom-model' }));
+  select('session-cli-launcher', '');
+  expect(host.querySelector('[data-testid="session-cli-model"]')).toBeNull();
+  expect(button('new-session-open-terminal').disabled).toBe(false);
+  select('session-cli-launcher', 'codex-cli');
+  expect(host.querySelector<HTMLSelectElement>('[data-testid="session-cli-model"]')?.value).toBe('default');
 });

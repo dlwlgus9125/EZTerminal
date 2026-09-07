@@ -1,3 +1,4 @@
+import { isAgentLaunchModel } from '../shared/agent-history';
 /**
  * RemoteBridge — WS multiplexer for the mobile remote-control bridge (M0).
  *
@@ -747,6 +748,7 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && value.requestId.length > 0
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
         && isRemoteAgentLaunchTarget(value.target)
+        && isAgentLaunchModel(value.launcherId, value.model)
         && typeof value.launcherId === 'string'
         && value.launcherId.length > 0
         && value.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
@@ -759,6 +761,7 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
         && request !== null
         && isRemoteAgentLaunchTarget(request.target)
+        && isAgentLaunchModel(request.launcherId, request.model)
         && typeof request.launcherId === 'string'
         && request.launcherId.length > 0
         && request.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
@@ -1178,12 +1181,13 @@ export interface RemoteAgentHistorySource {
   saveProject?(input: AgentProjectInput): Promise<AgentProjectMutationResult>;
   removeProject?(projectId: string): Promise<boolean>;
   listLaunchers?(): readonly AgentProjectLauncherSummary[];
-  prepareLaunch?(target: AgentLaunchTarget, launcherId: string): Promise<AgentLaunchPreparation>;
+  prepareLaunch?(target: AgentLaunchTarget, launcherId: string, model?: string): Promise<AgentLaunchPreparation>;
   prepareProjectLaunch?(projectId: string, launcherId: string): Promise<AgentProjectLaunchPreparation>;
   resolveLaunch?(
     target: AgentLaunchTarget,
     launcherId: string,
     revision: string,
+    model?: string,
   ): Promise<
     | {
       readonly ok: true;
@@ -2862,7 +2866,7 @@ export function attachConnection(
 
       case 'agent-launch-prepare':
         if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
-        void (options.agentHistorySource?.prepareLaunch?.(msg.target, msg.launcherId)
+        void (options.agentHistorySource?.prepareLaunch?.(msg.target, msg.launcherId, ...msg.model === undefined ? [] : [msg.model])
           ?? Promise.resolve({ ok: false, reason: 'unavailable' } as const))
           .then((result) => {
             if (authed) {
@@ -2899,6 +2903,7 @@ export function attachConnection(
           msg.request.target,
           msg.request.launcherId,
           msg.request.revision,
+          ...msg.request.model === undefined ? [] : [msg.request.model],
         ).then((resolved) => {
           if (!authed) return;
           if (!resolved.ok) {

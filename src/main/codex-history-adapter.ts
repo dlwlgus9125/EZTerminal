@@ -354,7 +354,7 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
         ...(launch?.provider === 'codex' && launch.model
           ? [`--model ${quoteEzArgument(launch.model)}`]
           : []),
-        ...(launch?.provider === 'codex' ? [`--sandbox ${launch.sandbox}`] : []),
+        ...(launch?.provider === 'codex' && launch.sandbox ? [`--sandbox ${launch.sandbox}`] : []),
         ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
       ].join(' '),
       displayCommandText: 'codex',

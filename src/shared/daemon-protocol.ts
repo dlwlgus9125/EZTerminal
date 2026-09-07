@@ -322,7 +322,7 @@ export interface DaemonCommandPayloads {
     readonly providerId: string;
     readonly model?: string;
     readonly permissionPreset: PermissionPreset;
-    readonly initialPrompt: string;
+    readonly initialPrompt?: string;
     readonly parentSessionId?: string;
   };
   readonly 'agent.resume': {
@@ -582,7 +582,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     providerId: IdentifierSchema,
     model: NonEmptyStringSchema.optional(),
     permissionPreset: PermissionPresetSchema,
-    initialPrompt: NonEmptyStringSchema,
+    initialPrompt: NonEmptyStringSchema.optional(),
     parentSessionId: IdentifierSchema.optional(),
   }).strict(),
   'agent.resume': z.object({

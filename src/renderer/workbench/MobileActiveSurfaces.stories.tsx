@@ -43,6 +43,7 @@ type ActiveMobileSurface =
   | 'agents-archived'
   | 'agents-safe-mode'
   | 'agents-workspace-create'
+  | 'new-session-cli'
   | 'new-session-global'
   | 'new-session-workspace'
   | 'new-session-long-path'
@@ -662,6 +663,7 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
         />
       );
       break;
+    case 'new-session-cli':
     case 'new-session-global':
     case 'new-session-workspace':
     case 'new-session-long-path':
@@ -687,6 +689,13 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
               ? PROVIDER_UNAVAILABLE_DAEMON_SNAPSHOT
               : longPath ? LONG_PATH_DAEMON_SNAPSHOT : DRAFT_DAEMON_SNAPSHOT,
           }}
+          initialIntent={{ kind: surface === 'new-session-cli' || surface === 'new-session-global' ? 'terminal' : 'agent' }}
+          launchAccess={{
+            getDaemonSnapshot: async () => DRAFT_DAEMON_SNAPSHOT,
+            listAgentProjectLaunchers: async () => [{ launcherId: 'codex', name: 'Codex CLI', provider: 'codex', installed: true, supportsModel: true, supportsAdditionalRoots: true }],
+            prepareAgentLaunch: async () => ({ ok: false, reason: 'unavailable' }),
+          }}
+          onLaunchCli={async () => undefined}
           agentRecoveryStatus={recoveryStatus}
           contextWorkspaceId={contextual ? 'workspace-main' : undefined}
           onBack={close}
@@ -850,7 +859,7 @@ export const AgentsWorkspaceCreate: Story = {
     await userEvent.click(await canvas.findByText('EZTerminal'));
     await userEvent.click(await canvas.findByText('Main checkout'));
     await expect(canvas.getByTestId('mobile-daemon-create-session')).toHaveAccessibleName(
-      'New session: Main checkout',
+      'New terminal: Main checkout',
     );
     await expect(canvas.getByLabelText('Back to workspaces')).toBeVisible();
   },
@@ -859,7 +868,7 @@ export const NewSessionGlobalDraft: Story = {
   args: { surface: 'new-session-global' },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByTestId('mobile-new-session-agent')).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas.getByTestId('mobile-new-session-terminal')).toHaveAttribute('aria-pressed', 'true');
     await expect(canvas.getByTestId('mobile-new-session-project')).toHaveValue('');
     await expect(canvas.getByTestId('mobile-new-session-workspace')).toHaveValue('');
     await expect(canvas.getByTestId('mobile-new-session-workspace')).toBeDisabled();
@@ -1021,3 +1030,15 @@ export const ThemeSheet: Story = { args: { surface: 'theme-sheet' } };
 export const PairingScannerUnavailable: Story = { args: { surface: 'pairing-scanner-unavailable' } };
 export const AgentHistoryError: Story = { args: { surface: 'agent-history-error' } };
 export const AgentFolderPicker: Story = { args: { surface: 'agent-folder-picker' } };
+
+export const NewSessionCliModel: Story = {
+  args: { surface: 'new-session-cli', locale: 'ko' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.selectOptions(canvas.getByTestId('session-cli-launcher'), 'codex');
+    await userEvent.selectOptions(canvas.getByTestId('session-cli-model'), 'custom');
+    await expect(canvas.getByTestId('session-cli-start')).toBeDisabled();
+    await userEvent.type(canvas.getByTestId('session-cli-model-name'), 'custom-model');
+    await expect(canvas.getByTestId('session-cli-start')).toBeEnabled();
+  },
+};

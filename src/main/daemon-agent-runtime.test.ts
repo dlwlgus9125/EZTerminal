@@ -3703,3 +3703,64 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 });
+
+
+it('persists empty Agents across restart and dispatches only the first submitted message once', async () => {
+  const h = await harness();
+  let restoredStore: DaemonStore | undefined;
+  let restoredRuntime: DaemonAgentRuntime | undefined;
+  let closed = false;
+  try {
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    for (const sessionId of ['empty-agent', 'archive-empty']) {
+      expect((await h.execute('agent.create', {
+        sessionId, workspaceId: 'workspace-1', title: 'Codex', providerId: 'codex', permissionPreset: 'standard',
+      })).ok).toBe(true);
+    }
+    expect(h.codex.createSession).not.toHaveBeenCalled();
+    expect(h.codex.submit).not.toHaveBeenCalled();
+    expect(h.router.getSnapshot().turns).toEqual([]);
+    expect(h.router.readTranscript('empty-agent', 0, 100)).toEqual([]);
+    expect((await h.execute('agent.set-settings', { sessionId: 'empty-agent', model: 'chosen-model', permissionPreset: 'plan' })).ok).toBe(true);
+    expect(h.codex.setSettings).not.toHaveBeenCalled();
+    expect((await h.execute('agent.archive', { sessionId: 'archive-empty' })).ok).toBe(true);
+    await h.runtime.dispose('process-loss');
+    await h.store.close(); closed = true;
+    const store = new DaemonStore(h.directory); restoredStore = store;
+    await store.init();
+    const codex = fakeAdapter('codex', 'codex-app-server');
+    const registry = new AgentProviderRegistry([codex]);
+    const runtime: DaemonAgentRuntime = new DaemonAgentRuntime({
+      providers: registry,
+      getSnapshot: () => router.getSnapshot(),
+      applySystemCommit: (commit) => router.applySystemCommit(commit),
+      applySystemTransition: (transition) => router.applySystemTransition(transition),
+      readTranscript: (id, sequence, limit) => router.readTranscript(id, sequence, limit),
+      findCommand: (id) => store.findCommand(id)?.command,
+    });
+    restoredRuntime = runtime;
+    const router: DaemonCommandRouter = new DaemonCommandRouter(store, { handlers: runtime.handlers() });
+    await runtime.start(); await runtime.whenIdle();
+    expect(codex.createSession).not.toHaveBeenCalled();
+    expect(codex.resumeSession).not.toHaveBeenCalled();
+    expect(router.getSnapshot().agents.find((agent) => agent.sessionId === 'empty-agent'))
+      .toMatchObject({ state: 'idle', queuedTurnCount: 0, model: 'chosen-model', permissionPreset: 'plan' });
+    const command = createDaemonCommand({
+      commandId: 'first-message', idempotencyKey: 'first-message', expectedRevision: store.getRevision(),
+      issuedAt: new Date().toISOString(), principal: { kind: 'desktop', id: 'test' },
+      type: 'agent.submit', payload: { sessionId: 'empty-agent', prompt: 'Start now.' },
+    });
+    expect((await router.execute(command)).ok).toBe(true);
+    await runtime.whenIdle();
+    expect((await router.execute(command)).ok).toBe(true);
+    await runtime.whenIdle();
+    expect(codex.createSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ model: 'chosen-model', permissionPreset: 'plan' }), expect.anything());
+    expect(codex.submit).toHaveBeenCalledOnce();
+    expect(codex.submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'Start now.' }), expect.anything());
+    expect(router.getSnapshot().turns).toHaveLength(1);
+  } finally {
+    await restoredRuntime?.dispose(); await restoredStore?.close();
+    if (!closed) { await h.runtime.dispose(); await h.store.close(); }
+  }
+});

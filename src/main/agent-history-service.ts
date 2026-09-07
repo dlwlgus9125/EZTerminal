@@ -430,6 +430,7 @@ export class AgentHistoryService {
     return [
       ...(this.adapters.has('codex') ? [{
         launcherId: 'codex',
+        supportsModel: true,
         provider: 'codex' as const,
         name: 'Codex',
         ...(this.isCliInstalled ? { installed: this.isCliInstalled('codex') } : {}),
@@ -437,6 +438,7 @@ export class AgentHistoryService {
       }] : []),
       ...(this.adapters.has('claude') ? [{
         launcherId: 'claude',
+        supportsModel: true,
         provider: 'claude' as const,
         name: 'Claude Code',
         ...(this.isCliInstalled ? { installed: this.isCliInstalled('claude') } : {}),

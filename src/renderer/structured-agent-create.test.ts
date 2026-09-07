@@ -409,3 +409,17 @@ describe('createStructuredAgentSession', () => {
     expect(sendCommand).not.toHaveBeenCalled();
   });
 });
+
+it('creates an empty Agent with recovery escrow and no initial prompt', async () => {
+  const sendCommand = vi.fn(async (command: StructuredAgentCreateCommand) => applied(command.commandId, 5));
+  const prepared = vi.fn(async () => undefined);
+  const outcome = await createStructuredAgentSession({ providerId: 'codex', workspaceId: draft.workspaceId, permissionPreset: 'standard' }, {
+    access: { getSnapshot: async () => daemonSnapshot(), sendCommand },
+    principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+    onCommandPrepared: prepared,
+  });
+  expect(outcome.kind).toBe('created');
+  expect(prepared.mock.invocationCallOrder[0]).toBeLessThan(sendCommand.mock.invocationCallOrder[0]!);
+  expect(sendCommand.mock.calls[0]![0].payload).not.toHaveProperty('initialPrompt');
+  expect(outcome.title).toBe('Codex');
+});

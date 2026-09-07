@@ -115,7 +115,7 @@ function structuredAgentCreateFromValue(
     || command.commandId !== command.idempotencyKey
     || command.payload.parentSessionId !== undefined
     || command.payload.sessionId !== candidate.sessionId
-    || command.payload.initialPrompt.length > RENDERER_RECOVERY_MAX_STRUCTURED_AGENT_PROMPT_CHARS
+    || (command.payload.initialPrompt?.length ?? 0) > RENDERER_RECOVERY_MAX_STRUCTURED_AGENT_PROMPT_CHARS
     || command.payload.title.length > 256
     || command.issuedAt.length > 128
   ) return null;

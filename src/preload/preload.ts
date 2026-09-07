@@ -291,7 +291,8 @@ const api: EzTerminalApi = {
   prepareAgentLaunch: (
     target: import('../shared/agent-history').AgentLaunchTarget,
     launcherId: string,
-  ) => ipcRenderer.invoke('agent-launch:prepare', target, launcherId),
+    model?: string,
+  ) => ipcRenderer.invoke('agent-launch:prepare', target, launcherId, model),
   startAgentLaunch: (
     request: import('../shared/agent-history').AgentLaunchStartRequest,
   ) => ipcRenderer.invoke('agent-launch:start', request),

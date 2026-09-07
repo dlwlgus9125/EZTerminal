@@ -99,7 +99,7 @@ afterEach(() => {
 });
 
 describe('StructuredAgentDraftPanel', () => {
-  it('does not create anything before first Send and preserves the typed prompt after a failure', async () => {
+  it('creates an empty Agent only on Create and preserves selection after a failure', async () => {
     const onCreate = vi.fn(async () => ({ ok: false as const, message: 'Provider unavailable' }));
     render(
       <StructuredAgentDraftPanel
@@ -110,8 +110,7 @@ describe('StructuredAgentDraftPanel', () => {
     );
 
     expect(onCreate).not.toHaveBeenCalled();
-    const prompt = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')!;
-    setValue(prompt, 'Implement the semantic session UI');
+    expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
     act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
     await flush();
 
@@ -119,9 +118,8 @@ describe('StructuredAgentDraftPanel', () => {
       providerId: 'codex',
       workspaceId: 'workspace-1',
       permissionPreset: 'standard',
-      initialPrompt: 'Implement the semantic session UI',
     });
-    expect(prompt.value).toBe('Implement the semantic session UI');
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-provider"]')?.value).toBe('codex');
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('Provider unavailable');
   });
 
@@ -165,7 +163,7 @@ describe('StructuredAgentDraftPanel', () => {
       .toBe(true);
     expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-model"]')?.disabled)
       .toBe(true);
-    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')?.disabled)
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-recovery-prompt"]')?.readOnly)
       .toBe(true);
     const send = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!;
     expect(send.disabled).toBe(false);
@@ -452,4 +450,27 @@ describe('StructuredAgentSessionPanel', () => {
     expect(container.querySelector('[data-testid="structured-agent-composer-disabled-reason"]')?.textContent)
       .toContain('보관된 세션');
   });
+});
+
+it('uses Enter to send once on desktop, preserves IME/newlines, and requires Send on mobile', async () => {
+  const onSend = vi.fn(async () => ({ ok: true as const }));
+  render(<StructuredAgentComposer busy={false} onSend={onSend} />);
+  const input = container.querySelector<HTMLTextAreaElement>('textarea')!;
+  setValue(input, 'First message');
+  act(() => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+  });
+  expect(onSend).not.toHaveBeenCalled();
+  act(() => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  });
+  await flush(); expect(onSend).toHaveBeenCalledExactlyOnceWith('First message');
+  render(<StructuredAgentComposer busy={false} onSend={onSend} variant="mobile" />);
+  setValue(input, 'Mobile message');
+  act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  expect(onSend).toHaveBeenCalledOnce();
+  act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+  await flush(); expect(onSend).toHaveBeenLastCalledWith('Mobile message');
 });

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.0.51] - 2026-09-07
+
+### Changed
+
+- New Session has Terminal and Agent choices on desktop and Android. Terminal
+  offers the ordinary shell and installed CLI launchers, with model selection
+  for supported CLI providers.
+- Agent opens an empty conversation. The first sent message starts provider
+  work; creating or restoring an unused conversation does not launch a provider.
+- Desktop chat sends with Enter and inserts a newline with Shift+Enter, with
+  IME composition protected. Android keeps multiline input and a send button.
+- Session model and permission settings are collapsed during Agent creation.
+  Legacy recovered prompts remain available without an extra app-chat mode.
+
 ## [1.0.50] - 2026-09-07
 
 ### Changed

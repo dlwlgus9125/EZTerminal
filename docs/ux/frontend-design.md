@@ -122,13 +122,18 @@ panel instance를 이동하며 session, draft, selection과 실행 중 command�
 
 Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 선택한 Project와
 checkout/worktree를 소유하는 Workspace에 빈 draft tab을 즉시 열며 modal을 추가하지 않는다.
-draft는 Agent/Terminal 중 하나를 고르고 Agent에서는 `앱에서 대화`와 `터미널 CLI`를
-명시적으로 선택한다. 대화는 provider, model, `Plan`/`Standard`/`Full access` 권한 preset과
-첫 prompt를 같은 작업면에서 편집하고 첫 `Send`에서만 생성한다. CLI는 준비된 실행기를
-선택한 뒤 `Agent 실행`, 일반 Terminal은 `터미널 열기`에서만 생성한다. 선택·취소만으로
-provider history나 process를 남기지 않는다.
-승인되지 않았거나 사용할 수 없는 worktree에서는 Send를 비활성화하고 main이 제출 직전에 접근
-상태를 다시 검증한다. 전역 `새 세션`도 같은 draft를 열되 location을 선택할 수 있다.
+draft는 Terminal/Agent 두 종류만 보여 준다. Terminal의 `실행할 프로그램`에서 일반 셸,
+설치된 Codex CLI, Claude Code와 사용자 실행기를 고른다. 내장 CLI를 선택하면 모델이 바로
+나타나며 `CLI 기본 모델`은 기존 CLI 설정을 유지하고 `모델 직접 지정`은 그 실행에만 적용한다.
+모델 지정 지원을 알리지 않는 이전 호스트에서는 기본 CLI 실행을 유지한다.
+Agent는 앱 대화창을 뜻하며 provider와 작업 위치를 선택한다. model과
+`Plan`/`Standard`/`Full access` 권한은 접힌 `세션 설정` 안에 둔다.
+`Agent 만들기`는 첫 prompt 없이 빈 세션을 저장하고 대화창을 연다. `시작 전` 상태에서
+메시지를 보내야 provider session과 첫 turn을 시작한다. Desktop은 composer에 focus하며
+Enter 전송, Shift+Enter 줄바꿈, IME 조합 중 Enter 무시를 지킨다. Android는 키보드 Enter로
+줄바꿈하고 전송 버튼으로 시작한다. 빈 세션도 재시작·다시 열기·설정 변경·보관이 가능하다.
+선택·취소만으로 entity나 process를 남기지 않는다. 사용할 수 없는 작업 폴더에서는 생성을
+비활성화하고 main이 제출 직전에 접근 상태를 다시 검증한다. 전역 `새 세션`도 같은 draft를 열되 location을 선택할 수 있다.
 
 명시적으로 프로젝트에서 연 terminal tab은 프로젝트 이름과 항상 보이는 compact Badge를
 함께 표시한다. active Agent가 있으면 `Codex`, `Claude` 또는 설정된 generic Agent 이름을,
@@ -374,14 +379,14 @@ locale은 결함이다.
 제품의 기본 작업은 Terminal이며 Agent는 선택 기능이다. Desktop header의 주 버튼과 일반
 `새 세션` 동작은 기본 폴더의 Terminal을 바로 연다. Project 행에서는 main checkout,
 Explorer와 Android Workspace에서는 선택한 정확한 작업 폴더로 바로 연다. 별도의 종류
-선택을 요구하지 않는다. 명시적인 `Agent 실행`은 draft를 열며 기본 방식은 `터미널 CLI`다.
-`앱에서 대화`는 사용자가 별도로 선택한다. 공통 draft 자체의 기본 종류도 Terminal이다.
+선택을 요구하지 않는다. 명시적인 Agent 생성은 Agent draft를 연다. 공통 draft 자체의 기본 종류는 Terminal이며
+CLI 프로그램과 모델은 Terminal에서 선택한다. Agent의 실행 방식 하위 선택은 두지 않는다.
 전역 Agent draft는 실행 위치를 비워 두고, 문맥 Agent draft는 선택한 위치를 유지한다.
 선택·취소만으로 entity나 process를 만들지 않으며 실행 버튼에서만 생성한다.
 
 CLI 설치 탐색은 앱 대화 SDK 버전·인증·hook 준비와 분리한다. 이전 Codex/Claude CLI도
 설치되어 있으면 Terminal에서 실행할 수 있다. 앱 대화가 준비되지 않았으면 짧은 안내와
-`Agent 설정`, `터미널 CLI` 전환을 제공한다. 실제 실행 권한과 위험 작업 승인은 유지한다.
+`Agent 설정`을 제공한다. CLI는 Terminal 종류에서 실행한다. 실제 실행 권한과 위험 작업 승인은 유지한다.
 
 Settings → Agents는 Terminal CLI 설치 및 선택적 상태 연동을 먼저 보여 주고, `앱에서 대화`와
 `자동화`는 접힌 별도 영역으로 제공한다. 알림·승인·사용자 CLI는 상세 옵션에 둔다.
@@ -479,14 +484,15 @@ Desktop host에서만 가능한 action은 이유와 복구 위치를 설명하�
 Mobile merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
 revision 의미를 유지한다.
 
-Android Agent draft는 선택만으로 어떤 entity나 terminal surface도 만들지 않는다. 앱 대화는
-첫 Send에서 최신 daemon snapshot으로 active Project·Workspace와 ready provider를 다시
-검증한 뒤 하나의 `agent.create`로 session과 첫 prompt를 함께 제출한다. 성공 receipt 뒤에는
-로컬 첫 메시지와 starting/queued session을 즉시 보여 주고 authoritative snapshot과 transcript가
-같은 session id로 이를 대체한다. revision conflict는 동일한 논리 session id와 title을 유지한 채
-제한 횟수만 새 command id로 재시도한다. delivery 결과를 확인할 수 없으면 초안의 provider,
-model, permission, Workspace와 prompt를 잠그고 같은 idempotency command를 먼저 조회·재전송한다.
-사용자가 다른 초안으로 중복 session을 만들 수 있게 자동 전환하지 않는다.
+Android Agent draft는 선택만으로 어떤 entity나 terminal surface도 만들지 않는다.
+`Agent 만들기`에서 최신 daemon snapshot으로 active Project·Workspace와 ready provider를
+검증한 뒤 첫 prompt가 없는 `agent.create`를 제출한다. 성공 receipt 뒤에는 빈 idle 세션을
+즉시 열고 같은 session id의 authoritative snapshot이 이를 대체한다. 첫 메시지는 별도
+`agent.submit`으로 전송한다. 이전 버전의 prompt 포함 생성 명령은 복구와 자동화를 위해
+계속 지원한다. revision conflict는 동일한 논리 session id와 title을 유지한 채 제한 횟수만
+새 command id로 재시도한다. 생성 결과를 확인할 수 없으면 provider, model, permission,
+Workspace를 잠그고 같은 idempotency command를 먼저 조회·재전송한다. 이전 복구 명령에
+prompt가 있으면 읽기 전용으로 표시한다. 자동으로 다른 초안이나 중복 세션을 만들지 않는다.
 
 Android는 각 `agent.create`를 전송하기 전에 exact command를 Keystore-backed secure storage에
 기록하고 read-back까지 확인한다. 앱 프로세스가 다시 시작되면 이 한 건을 잠긴 draft로 복원한 뒤

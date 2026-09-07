@@ -53,14 +53,16 @@ test('New Terminal opens immediately and an older Codex CLI starts without app-c
     const inspection = await window.evaluate(() => globalThis.window.ezterminal.inspectDaemonProvider('codex'));
     expect(inspection.ok && inspection.value.probe.available).toBe(false);
     await window.getByTestId('btn-new-session').click();
-    await expect(window.getByTestId('new-session-cli')).toHaveAttribute('aria-pressed', 'true');
+    await window.getByTestId('new-session-terminal').click();
     await window.getByTestId('new-session-project').selectOption('direct');
     await window.getByRole('textbox', { name: 'Host folder path' }).fill(userDataDir);
     await window.getByTestId('session-cli-launcher').selectOption('codex');
+    await window.getByTestId('session-cli-model').selectOption('custom');
+    await window.getByTestId('session-cli-model-name').fill('chosen-cli-model');
     await window.getByTestId('session-cli-start').click();
     const terminal = window.locator('[data-testid="pane"]:visible').getByTestId('pty-block');
     await expect(terminal).toBeVisible();
-    await expect.poll(() => readXtermBuffer(terminal), { timeout: 20000 }).toContain('FAKE-CODEX-READY');
+    await expect.poll(() => readXtermBuffer(terminal), { timeout: 20000 }).toContain('CLI-MODEL:chosen-cli-model');
   } finally { await app.close(); }
 });
 
@@ -78,11 +80,11 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
     await window.getByTestId('btn-toggle-agents').click();
     await window.getByTestId('agent-new-run').click();
 
-    await expect(window.getByTestId('new-session-cli')).toHaveAttribute('aria-pressed', 'true');
-    await window.getByTestId('new-session-conversation').click();
+    await expect(window.getByTestId('new-session-agent')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('new-session-conversation')).toHaveCount(0);
     const draft = window.getByTestId('structured-agent-draft');
     await expect(draft).toBeVisible();
-    await expect(draft.getByTestId('structured-agent-first-prompt')).toBeVisible();
+    await expect(draft.getByTestId('structured-agent-first-prompt')).toHaveCount(0);
 
     const after = await window.evaluate(async () => (
       globalThis.window.ezterminal.getDaemonSnapshot()
@@ -192,8 +194,8 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await window.getByTestId('btn-toggle-agents').click();
     await window.getByTestId('agent-new-run').click();
 
-    await expect(window.getByTestId('new-session-cli')).toHaveAttribute('aria-pressed', 'true');
-    await window.getByTestId('new-session-conversation').click();
+    await expect(window.getByTestId('new-session-agent')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('new-session-conversation')).toHaveCount(0);
     const draft = window.getByTestId('structured-agent-draft');
     await expect(draft).toBeVisible();
     const provider = draft.getByTestId('structured-agent-provider');
@@ -209,7 +211,6 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     const workspace = window.getByTestId('new-session-workspace');
     await workspace.selectOption(restoredSnapshot!.workspaces[0].id);
     await expect(workspace).not.toHaveValue('');
-    await draft.getByTestId('structured-agent-first-prompt').fill('Verify the ready provider.');
     const send = draft.getByTestId('structured-agent-create');
     await expect(send).toBeEnabled();
     await send.click();
@@ -219,6 +220,18 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(session).toHaveAttribute('data-provider', 'codex');
     const sessionId = await session.getAttribute('data-session-id');
     expect(sessionId).toBeTruthy();
+    await expect(session).toContainText('Not started');
+    const empty = await window.evaluate(async (id) => {
+      const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+      return { agent: snapshot?.agents.find((agent) => agent.sessionId === id), turns: snapshot?.turns.filter((turn) => turn.sessionId === id) };
+    }, sessionId!);
+    expect(empty.agent).toMatchObject({ state: 'idle', queuedTurnCount: 0 });
+    expect(empty.agent?.providerSessionId).toBeUndefined();
+    expect(empty.turns).toEqual([]);
+    const composer = session.getByTestId('structured-agent-composer-input');
+    await expect(composer).toBeFocused();
+    await composer.fill('Verify the ready provider.');
+    await composer.press('Enter');
     await expect.poll(async () => window.evaluate(async (createdSessionId) => {
       const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
       const agent = snapshot?.agents.find((candidate) => candidate.sessionId === createdSessionId);

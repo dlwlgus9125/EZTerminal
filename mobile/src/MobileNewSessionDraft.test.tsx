@@ -64,16 +64,7 @@ function changeSelect(testId: string, value: string): void {
   });
 }
 
-function fillPrompt(value: string): void {
-  const textarea = container.querySelector<HTMLTextAreaElement>(
-    '[data-testid="structured-agent-first-prompt"]',
-  )!;
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-  act(() => {
-    setter.call(textarea, value);
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-}
+
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -140,8 +131,7 @@ describe('MobileNewSessionDraft', () => {
     renderDraft({ onCreateAgent });
     expect(container.querySelector('[data-testid="mobile-new-session-terminal"]')?.getAttribute('aria-pressed')).toBe('true');
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-agent"]')!.click());
-    expect(container.querySelector('[data-testid="mobile-new-session-cli"]')?.getAttribute('aria-pressed')).toBe('true');
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-conversation"]')!.click());
+    expect(container.querySelector('[data-testid="mobile-new-session-conversation"]')).toBeNull();
 
     expect(container.querySelector('[data-testid="mobile-new-session-agent"]')?.getAttribute('aria-pressed'))
       .toBe('true');
@@ -151,7 +141,6 @@ describe('MobileNewSessionDraft', () => {
 
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-main');
-    fillPrompt('Create the mobile session.');
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
@@ -159,7 +148,6 @@ describe('MobileNewSessionDraft', () => {
       providerId: 'codex',
       workspaceId: 'workspace-main',
       permissionPreset: 'standard',
-      initialPrompt: 'Create the mobile session.',
     });
   });
 
@@ -196,7 +184,6 @@ describe('MobileNewSessionDraft', () => {
 
     changeSelect('mobile-new-session-project', 'project-1');
     changeSelect('mobile-new-session-workspace', 'workspace-main');
-    fillPrompt('Agent creation remains blocked.');
     expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')?.disabled)
       .toBe(true);
     const notice = container.querySelector('[data-testid="mobile-new-session-recovery-status"]');

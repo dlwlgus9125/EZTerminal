@@ -1,6 +1,6 @@
 import { RefreshCw, SquareTerminal, Trash2 } from 'lucide-react';
 import type { AgentLaunchBootstrap } from '../../src/shared/agent-history';
-import { CliAgentLaunchPanel, SessionStartOptions, type SessionLaunchAccess } from '../../src/renderer/SessionStartOptions';
+import { TerminalLaunchPanel, SessionStartOptions, type SessionLaunchAccess } from '../../src/renderer/SessionStartOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -76,7 +76,7 @@ const COPY: Readonly<Record<'en' | 'ko', MobileNewSessionCopy>> = {
     safeMode: 'Agent sessions are unavailable in terminal-only safe mode. Use the Terminal tab for a default Terminal.',
     retry: 'Retry',
     providerRecovery: 'No ready Agent provider is available. Finish provider setup in Desktop Settings → Agents. Terminal creation remains available.',
-    deliveryRecovery: 'The previous Send was not confirmed. This exact Agent draft is locked; Send again to verify or safely retry the same session.',
+    deliveryRecovery: 'Creation is unconfirmed. Choose Create Agent again to recover the same session.',
     recoveryLoading: 'Checking secure Agent recovery before creation. Terminal creation remains available.',
     recoveryUnavailable: 'Secure Agent recovery storage is unavailable. Agent creation is disabled to prevent a duplicate session. Terminal creation remains available.',
     recoveryInvalid: 'The pending Agent recovery record is damaged and cannot be replayed. Terminal remains available.',
@@ -111,7 +111,7 @@ const COPY: Readonly<Record<'en' | 'ko', MobileNewSessionCopy>> = {
     safeMode: 'Terminal 전용 안전 모드에서는 Agent 세션을 만들 수 없습니다. 기본 Terminal은 Terminal 탭에서 열어 주세요.',
     retry: '다시 시도',
     providerRecovery: '사용 가능한 Agent Provider가 없습니다. Desktop 설정 → Agents에서 설정을 완료하세요. Terminal 생성은 계속 사용할 수 있습니다.',
-    deliveryRecovery: '이전 Send 결과를 확인할 수 없습니다. 중복 세션을 막기 위해 이 Agent 초안을 잠갔습니다. 같은 세션을 확인하거나 안전하게 재시도하려면 다시 Send 하세요.',
+    deliveryRecovery: '생성 결과를 확인하지 못했습니다. Agent 만들기를 다시 누르면 같은 세션을 복구합니다.',
     recoveryLoading: 'Agent 생성 전에 안전한 복구 저장소를 확인하고 있습니다. Terminal 생성은 계속 사용할 수 있습니다.',
     recoveryUnavailable: '안전한 Agent 복구 저장소를 사용할 수 없습니다. 중복 세션 생성을 막기 위해 Agent 생성이 비활성화되었습니다. Terminal 생성은 계속 사용할 수 있습니다.',
     recoveryInvalid: '대기 중인 Agent 복구 레코드가 손상되어 같은 명령을 재생할 수 없습니다. Terminal은 계속 사용할 수 있습니다.',
@@ -147,7 +147,7 @@ export function MobileNewSessionDraft({
   readonly state: DaemonRuntimeViewState;
   readonly disconnected?: boolean;
   readonly contextWorkspaceId?: string;
-  readonly initialIntent?: { readonly kind: MobileNewSessionKind; readonly agentMode: 'conversation' | 'cli' };
+  readonly initialIntent?: { readonly kind: MobileNewSessionKind };
   /** Restores the exact logical draft while reconciling an uncertain delivery. */
   readonly initialAgentDraft?: StructuredAgentDraftInput;
   readonly agentRecoveryStatus: MobileAgentCreateRecoveryStatus;
@@ -186,12 +186,11 @@ export function MobileNewSessionDraft({
     ? activeWorkspaces.find((workspace) => workspace.id === contextWorkspaceId)
     : undefined;
   const [kind, setKind] = useState<MobileNewSessionKind>(initialAgentDraft ? 'agent' : initialIntent?.kind ?? 'terminal');
-  const [agentMode, setAgentMode] = useState<'conversation' | 'cli'>(initialAgentDraft ? 'conversation' : initialIntent?.agentMode ?? 'cli');
   const recoveredWorkspace = initialAgentDraft
     ? snapshot?.workspaces.find((workspace) => workspace.id === initialAgentDraft.workspaceId)
     : undefined;
   const [projectId, setProjectId] = useState(
-    contextWorkspace?.projectId ?? recoveredWorkspace?.projectId ?? (initialIntent?.kind === 'agent' ? '' : 'local'),
+    contextWorkspace?.projectId ?? recoveredWorkspace?.projectId ?? (initialIntent?.kind === 'agent' || !onCreateLocalTerminal ? '' : 'local'),
   );
   const [workspaceId, setWorkspaceId] = useState(
     contextWorkspace?.id ?? recoveredWorkspace?.id ?? '',
@@ -242,7 +241,6 @@ export function MobileNewSessionDraft({
   useEffect(() => {
     if (!initialAgentDraft) return;
     setKind('agent');
-    setAgentMode('conversation');
     setProjectId(recoveredWorkspace?.projectId ?? '');
     setWorkspaceId(initialAgentDraft.workspaceId);
     setTerminalError(null);
@@ -290,11 +288,7 @@ export function MobileNewSessionDraft({
 
       <div className="mob-new-session__scroll">
         <div className="mob-new-session__content">
-          <header className="mob-new-session__intro">
-            <p>{copy.description}</p>
-          </header>
-
-          <SessionStartOptions kind={kind} agentMode={agentMode} onKindChange={(next) => { setKind(next); if (next === 'agent' && projectId === 'local') setProjectId(''); }} onModeChange={setAgentMode} locked={initialAgentDraft !== undefined || terminalBusy || agentBusy} prefix="mobile-new-session" />
+          <SessionStartOptions kind={kind} onKindChange={(next) => { setKind(next); if (next === 'agent' && projectId === 'local') setProjectId(''); }} locked={initialAgentDraft !== undefined || terminalBusy || agentBusy} prefix="mobile-new-session" />
 
           {authorityMessage && (
             <div className="mob-new-session__notice" role={state.status === 'error' ? 'alert' : 'status'}>
@@ -308,10 +302,6 @@ export function MobileNewSessionDraft({
           )}
 
           <section className="mob-new-session__location" aria-label={copy.location}>
-            <div className="mob-new-session__section-copy">
-              <strong>{copy.location}</strong>
-              <small>{copy.locationHint}</small>
-            </div>
             {lockedLocation ? (
               <div className="mob-new-session__locked-location" data-testid="mobile-new-session-locked-workspace">
                 <strong>{selectedProject?.name ?? copy.project} · {selectedWorkspace?.name ?? copy.workspace}</strong>
@@ -332,10 +322,10 @@ export function MobileNewSessionDraft({
                   >
                     <option value="">{projects.length === 0 ? copy.noProjects : copy.selectProject}</option>
                     {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                    {onCreateLocalTerminal && <option value="local">{language === 'ko' ? '일반 터미널 (기본 폴더)' : 'Local terminal (default folder)'}</option>}
+                    {kind === 'terminal' && onCreateLocalTerminal && <option value="local">{language === 'ko' ? '일반 터미널 (기본 폴더)' : 'Local terminal (default folder)'}</option>}
                   </Select>
                 </Field>
-                <Field label={copy.workspace} required>
+                {projectId !== 'local' && <Field label={copy.workspace} required>
                   <Select
                     value={workspaceId}
                     disabled={busyAuthority || !projectId || projectWorkspaces.length === 0 || terminalBusy || agentBusy}
@@ -352,12 +342,12 @@ export function MobileNewSessionDraft({
                       </option>
                     ))}
                   </Select>
-                </Field>
+                </Field>}
               </div>
             )}
           </section>
 
-          <div hidden={kind !== 'agent' || agentMode !== 'conversation'} data-testid="mobile-new-session-agent-panel">
+          <div hidden={kind !== 'agent'} data-testid="mobile-new-session-agent-panel">
             {agentRecoveryStatus !== 'ready' && (
               <div
                 className="mob-new-session__provider-recovery"
@@ -428,12 +418,8 @@ export function MobileNewSessionDraft({
             />
           </div>
 
-          {launchAccess && onLaunchCli && <div hidden={kind !== 'agent' || agentMode !== 'cli'}>
-            <CliAgentLaunchPanel access={launchAccess} workspaceId={workspaceId} disabled={busyAuthority || terminalBusy || initialAgentDraft !== undefined} onLaunch={onLaunchCli} onBusyChange={setAgentBusy} />
-          </div>}
-          {(!launchAccess || !onLaunchCli) && kind === 'agent' && agentMode === 'cli' && <p role="status">{copy.unavailable}</p>}
-
           <div hidden={kind !== 'terminal'} data-testid="mobile-new-session-terminal-panel">
+            <TerminalLaunchPanel access={launchAccess} workspaceId={workspaceId} disabled={busyAuthority || terminalBusy || initialAgentDraft !== undefined} locked={terminalBusy || agentBusy || initialAgentDraft !== undefined} onLaunch={onLaunchCli} onBusyChange={setAgentBusy} terminalAction={<>
             <section className="mob-new-session__terminal">
               <SquareTerminal aria-hidden="true" />
               <div>
@@ -457,6 +443,7 @@ export function MobileNewSessionDraft({
                 {copy.openTerminal}
               </Button>
             </div>
+            </>} />
           </div>
         </div>
       </div>

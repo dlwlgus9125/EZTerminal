@@ -141,6 +141,7 @@ if (args.includes('--version')) {
       process.stdout.write('\x1b[?2004h\x1b[?1004h');
     }
     process.stdout.write('FAKE-CODEX-READY COPY-ME\r\n');
+    if (args.includes('--model')) process.stdout.write(`CLI-MODEL:${args[args.indexOf('--model') + 1]}\r\n`);
   }
 
   process.stdin.setRawMode(true);

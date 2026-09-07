@@ -16,13 +16,13 @@ export type AgentFreshLaunchOptions =
   | {
       readonly provider: 'codex';
       readonly model?: string;
-      readonly sandbox: 'read-only' | 'workspace-write';
+      readonly sandbox?: 'read-only' | 'workspace-write';
     }
   | {
       readonly provider: 'claude';
       readonly model?: string;
       readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-      readonly permissionMode: 'plan' | 'manual' | 'acceptEdits';
+      readonly permissionMode?: 'plan' | 'manual' | 'acceptEdits';
     };
 
 export interface AgentLauncherCapabilities {
@@ -168,6 +168,8 @@ export interface AgentProjectLauncherSummary {
   readonly supportsAdditionalRoots: boolean;
   /** Undefined on older hosts. Independent of app-chat provider readiness. */
   readonly installed?: boolean;
+  /** Explicit capability: older hosts keep their normal CLI launch path. */
+  readonly supportsModel?: boolean;
 }
 
 export type AgentLaunchTarget =
@@ -199,6 +201,7 @@ export type AgentLaunchPreparation =
     };
 
 export interface AgentLaunchStartRequest {
+  readonly model?: string;
   readonly target: AgentLaunchTarget;
   readonly launcherId: string;
   readonly sessionId: string;
@@ -221,6 +224,7 @@ export type AgentLaunchStartResult =
 
 /** Renderer-only one-shot handoff from the launch picker into a fresh terminal. */
 export interface AgentLaunchBootstrap {
+  readonly model?: string;
   readonly kind: 'new-chat';
   readonly target: AgentLaunchTarget;
   readonly launcherId: string;
@@ -286,3 +290,16 @@ export const MAX_AGENT_PROJECT_NAME_LENGTH = 80;
 export const MAX_AGENT_LAUNCH_DIRECTORY_LENGTH = 8_192;
 export const MAX_AGENT_HISTORY_PAGE_SIZE = 100;
 export const MAX_AGENT_TRANSCRIPT_PAGE_SIZE = 20;
+
+/** Model overrides never carry shell controls or apply to generic launchers. */
+export function isAgentLaunchModel(launcherId: unknown, model: unknown): boolean {
+  return model === undefined || ((launcherId === 'codex' || launcherId === 'claude')
+    && typeof model === 'string' && model.length > 0 && model.length <= 200
+    && model.trim() === model && [...model].every((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127));
+}
+
+export function cliModelLaunchOptions(launcherId: string, model?: string): AgentFreshLaunchOptions | undefined {
+  if (!isAgentLaunchModel(launcherId, model)) throw new Error('Invalid CLI model.');
+  if (model === undefined) return undefined;
+  return { provider: launcherId as 'codex' | 'claude', model };
+}

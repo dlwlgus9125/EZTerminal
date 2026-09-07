@@ -68,11 +68,13 @@ export interface StructuredAgentDraftInput {
   readonly model?: string;
   readonly workspaceId: string;
   readonly permissionPreset: PermissionPreset;
-  readonly initialPrompt: string;
+  readonly initialPrompt?: string;
 }
 
 interface StructuredAgentCopy {
   readonly newSession: string;
+  readonly create: string;
+  readonly notStarted: string;
   readonly draftEyebrow: string;
   readonly draftDescription: string;
   readonly provider: string;
@@ -122,6 +124,8 @@ interface StructuredAgentCopy {
   readonly sending: string;
   readonly queued: string;
   readonly busyHint: string;
+  readonly desktopSendHint: string;
+  readonly mobileSendHint: string;
   readonly settings: string;
   readonly status: string;
   readonly childTrack: string;
@@ -144,9 +148,13 @@ interface StructuredAgentCopy {
 
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   en: {
+    desktopSendHint: 'Enter to send · Shift+Enter for a new line',
+    mobileSendHint: 'Use Send to send a message',
     newSession: 'New Agent session',
+    create: 'Create Agent',
+    notStarted: 'Not started',
     draftEyebrow: 'SESSION DRAFT',
-    draftDescription: 'Choose the workspace and safety boundary, then send the first prompt. Nothing is created before Send.',
+    draftDescription: 'Create a conversation, then send a message to start.',
     provider: 'Provider',
     model: 'Model',
     providerDefault: 'Provider default',
@@ -188,7 +196,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     denied: 'Denied',
     expired: 'Expired',
     message: 'Message Agent',
-    messagePlaceholder: 'Send a follow-up…',
+    messagePlaceholder: 'Describe what you want to work on…',
     queue: 'Queue message',
     interruptSend: 'Interrupt & Send',
     sending: 'Sending',
@@ -214,9 +222,13 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     endedReadOnly: 'This session has ended. Its transcript remains available, but new messages are disabled.',
   },
   ko: {
+    desktopSendHint: 'Enter 전송 · Shift+Enter 줄바꿈',
+    mobileSendHint: '전송 버튼으로 보내기',
     newSession: '새 Agent 세션',
+    create: 'Agent 만들기',
+    notStarted: '시작 전',
     draftEyebrow: '세션 초안',
-    draftDescription: 'Workspace와 권한 범위를 정한 뒤 첫 프롬프트를 보내세요. Send 전에는 세션이 생성되지 않습니다.',
+    draftDescription: '대화창을 만든 뒤 메시지를 보내면 시작합니다.',
     provider: 'Provider',
     model: 'Model',
     providerDefault: 'Provider 기본값',
@@ -258,7 +270,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     denied: '거부됨',
     expired: '만료됨',
     message: 'Agent에게 메시지',
-    messagePlaceholder: '후속 메시지를 보내세요…',
+    messagePlaceholder: '원하는 작업을 입력하세요…',
     queue: '메시지 대기열 추가',
     interruptSend: '중단 후 보내기',
     sending: '보내는 중',
@@ -366,7 +378,6 @@ export function StructuredAgentDraftPanel({
   );
   const workspaceId = selectedWorkspaceId ?? internalWorkspaceId;
   const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(initialPermissionPreset);
-  const [prompt, setPrompt] = useState(initialPrompt);
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -406,7 +417,6 @@ export function StructuredAgentDraftPanel({
     setModel(initialModel);
     if (selectedWorkspaceId === undefined) setInternalWorkspaceId(initialWorkspaceId ?? '');
     setPermissionPreset(initialPermissionPreset);
-    setPrompt(initialPrompt);
   }, [
     deliveryRecovery,
     initialModel,
@@ -435,8 +445,7 @@ export function StructuredAgentDraftPanel({
     event.preventDefault();
     setAttempted(true);
     setSubmitError(null);
-    const firstPrompt = prompt.trim();
-    if (!providerId || !hasUsableProvider || !hasUsableWorkspace || !firstPrompt || submittingRef.current || loading) return;
+    if (!providerId || !hasUsableProvider || !hasUsableWorkspace || submittingRef.current || loading) return;
     submittingRef.current = true;
     setSubmitting(true);
     onBusyChange?.(true);
@@ -445,7 +454,7 @@ export function StructuredAgentDraftPanel({
       ...(model ? { model } : {}),
       workspaceId,
       permissionPreset,
-      initialPrompt: firstPrompt,
+      ...(deliveryRecovery && initialPrompt ? { initialPrompt } : {}),
     }).catch((): StructuredAgentUiResult => ({
       ok: false,
       message: 'The Agent session could not be created.',
@@ -512,23 +521,7 @@ export function StructuredAgentDraftPanel({
             </Select>
           </Field>
 
-          <Field label={copy.model}>
-            <Select
-              value={model}
-              disabled={loading || submitting || deliveryRecovery || !providerId}
-              onChange={(event) => {
-                setModel(event.currentTarget.value);
-                setSubmitError(null);
-              }}
-              data-testid="structured-agent-model"
-            >
-              <option value="">{copy.providerDefault}</option>
-              {deliveryRecovery && model && !models.some((option) => option.id === model) && (
-                <option value={model}>{model}</option>
-              )}
-              {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-            </Select>
-          </Field>
+
 
           {!hideWorkspaceField && (
             <Field
@@ -558,6 +551,25 @@ export function StructuredAgentDraftPanel({
           )}
         </div>
 
+        <details className="structured-agent-draft-settings">
+          <summary>{copy.settings}</summary>
+          <Field label={copy.model}>
+            <Select
+              value={model}
+              disabled={loading || submitting || deliveryRecovery || !providerId}
+              onChange={(event) => {
+                setModel(event.currentTarget.value);
+                setSubmitError(null);
+              }}
+              data-testid="structured-agent-model"
+            >
+              <option value="">{copy.providerDefault}</option>
+              {deliveryRecovery && model && !models.some((option) => option.id === model) && (
+                <option value={model}>{model}</option>
+              )}
+              {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </Select>
+          </Field>
         <fieldset className="structured-agent-permissions" disabled={loading || submitting || deliveryRecovery}>
           <legend>{copy.permission}</legend>
           <div className="structured-agent-permissions__grid">
@@ -589,28 +601,12 @@ export function StructuredAgentDraftPanel({
             })}
           </div>
         </fieldset>
+        </details>
 
-        <Field
-          id={promptId}
-          label={copy.firstPrompt}
-          required
-          error={attempted && !prompt.trim() ? copy.required : undefined}
-        >
-          <textarea
-            id={promptId}
-            className="structured-agent-textarea structured-agent-textarea--draft"
-            rows={6}
-            maxLength={65_536}
-            value={prompt}
-            placeholder={copy.firstPromptPlaceholder}
-            disabled={loading || submitting || deliveryRecovery}
-            onChange={(event) => {
-              setPrompt(event.currentTarget.value);
-              setSubmitError(null);
-            }}
-            data-testid="structured-agent-first-prompt"
-          />
-        </Field>
+        {deliveryRecovery && initialPrompt && <Field id={promptId} label={copy.firstPrompt}>
+          <textarea id={promptId} className="structured-agent-textarea" rows={3} value={initialPrompt} readOnly data-testid="structured-agent-recovery-prompt" />
+        </Field>}
+
 
         {submitError && <p className="structured-agent__form-error" role="alert">{submitError}</p>}
         <div className="structured-agent-draft-form__actions">
@@ -621,10 +617,10 @@ export function StructuredAgentDraftPanel({
             loading={submitting}
             loadingLabel={copy.creating}
             disabled={loading || !hasUsableProvider || !hasUsableWorkspace}
-            leadingIcon={<Send />}
+            leadingIcon={<Bot />}
             data-testid="structured-agent-create"
           >
-            {copy.send}
+            {copy.create}
           </Button>
         </div>
       </form>
@@ -998,6 +994,7 @@ export interface StructuredAgentComposerProps {
   readonly disabled?: boolean;
   readonly disabledReason?: string;
   readonly initialDraft?: string;
+  readonly autoFocus?: boolean;
   readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
   readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
   readonly variant?: 'desktop' | 'mobile';
@@ -1011,6 +1008,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   disabled = false,
   disabledReason,
   initialDraft = '',
+  autoFocus = false,
   onSend,
   onInterruptAndSend,
   variant = 'desktop',
@@ -1020,6 +1018,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const disabledReasonId = `${composerId}-disabled-reason`;
   const [draft, setDraft] = useState(() => stateKey ? readSessionViewState<string>(stateKey) ?? initialDraft : initialDraft);
   useEffect(() => { if (stateKey) saveSessionViewState(stateKey, draft); }, [draft, stateKey]);
+  const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1028,14 +1027,16 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     setAttempted(true);
     setError(null);
     const prompt = draft.trim();
-    if (!prompt || disabled || submitting) return;
+    if (!prompt || disabled || submittingRef.current) return;
     const action = mode === 'interrupt' ? onInterruptAndSend : onSend;
     if (!action) return;
+    submittingRef.current = true;
     setSubmitting(mode);
     const result = await action(prompt).catch((): StructuredAgentUiResult => ({
       ok: false,
       message: 'The message could not be delivered.',
     }));
+    submittingRef.current = false;
     setSubmitting(null);
     if (result.ok) {
       setDraft('');
@@ -1046,7 +1047,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   };
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (variant === 'mobile' || event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     void deliver('send');
   };
@@ -1069,6 +1070,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       >
         <textarea
           id={composerId}
+          autoFocus={autoFocus}
           className="structured-agent-textarea structured-agent-textarea--composer"
           rows={2}
           maxLength={65_536}
@@ -1096,7 +1098,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       )}
       <div className="structured-agent-composer__meta">
         <span aria-live="polite">
-          {queuedCount > 0 ? formatTemplate(copy.queued, { count: queuedCount }) : busy ? copy.busyHint : ''}
+          {queuedCount > 0 ? formatTemplate(copy.queued, { count: queuedCount }) : busy ? copy.busyHint : variant === 'mobile' ? copy.mobileSendHint : copy.desktopSendHint}
         </span>
         <div className="structured-agent-composer__actions">
           {busy && onInterruptAndSend && (
@@ -1143,6 +1145,7 @@ export interface StructuredAgentSessionPanelProps {
   readonly modelOptions?: readonly StructuredAgentModelOption[];
   readonly permissionPreset: PermissionPreset;
   readonly state: ManagedAgentState;
+  readonly awaitingFirstMessage?: boolean;
   readonly queuedCount?: number;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
@@ -1208,6 +1211,7 @@ export function StructuredAgentSessionPanel({
   permissionPreset,
   state,
   queuedCount = 0,
+  awaitingFirstMessage = false,
   items,
   approvals = [],
   transcriptLoading = false,
@@ -1336,7 +1340,7 @@ export function StructuredAgentSessionPanel({
         <div className="structured-agent-session-header__status">
           <span className="structured-agent-state" data-state={state}>
             <span aria-hidden="true" />
-            <span className="ez-ui-visually-hidden">{copy.status}: </span>{state}
+            <span className="ez-ui-visually-hidden">{copy.status}: </span>{awaitingFirstMessage ? copy.notStarted : state}
           </span>
           {owner === 'provider-native' && (
             <span className="structured-agent-session-header__owner">
@@ -1472,6 +1476,7 @@ export function StructuredAgentSessionPanel({
           key={`composer:${viewStateKey ?? sessionId}`}
           stateKey={viewStateKey ? `${viewStateKey}:composer` : variant === 'desktop' ? `desktop-agent-composer:${sessionId}` : undefined}
           busy={busy}
+          autoFocus={awaitingFirstMessage && variant === 'desktop'}
           queuedCount={queuedCount}
           disabled={composerDisabled || lifecycleBusy !== null}
           disabledReason={composerDisabledReason ?? lifecycleDisabledReason}

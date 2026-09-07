@@ -1,7 +1,6 @@
 /** UI intents only. Execution and persisted identities remain host-owned. */
 export interface NewSessionDraftIntent {
   readonly kind: 'agent' | 'terminal';
-  readonly agentMode: 'conversation' | 'cli';
   readonly projectId?: string;
   readonly workspaceId?: string;
 }

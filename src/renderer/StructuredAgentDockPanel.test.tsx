@@ -152,15 +152,7 @@ describe('StructuredAgentDockPanel', () => {
     await flush();
 
     expect(sendDaemonCommand).not.toHaveBeenCalled();
-    const prompt = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'Create only after this send');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(sent).toHaveLength(1);
@@ -175,14 +167,13 @@ describe('StructuredAgentDockPanel', () => {
         workspaceId: 'project-1.root-1.workspace-1',
         providerId: 'codex',
         permissionPreset: 'standard',
-        initialPrompt: 'Create only after this send',
       },
     });
     expect(updateParameters).toHaveBeenCalledWith(expect.objectContaining({
       historyId: expect.stringMatching(new RegExp(`^${STRUCTURED_AGENT_SESSION_PREFIX}`)),
       provider: 'codex',
     }));
-    expect(setTitle).toHaveBeenCalledWith('Create only after this send');
+    expect(setTitle).toHaveBeenCalledWith('Codex');
     expect(container.querySelector('[data-testid="structured-agent-session"]')).not.toBeNull();
     expect(setSubscribed).toHaveBeenNthCalledWith(1, true);
   });
@@ -225,17 +216,7 @@ describe('StructuredAgentDockPanel', () => {
     ));
     await flush();
 
-    const prompt = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'Do not send without escrow');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(persistCreateRecovery).toHaveBeenCalledOnce();
@@ -315,17 +296,7 @@ describe('StructuredAgentDockPanel', () => {
     ));
     await flush();
 
-    const prompt = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'This command must not outgrow its escrow');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(sendDaemonCommand).not.toHaveBeenCalled();
@@ -412,17 +383,7 @@ describe('StructuredAgentDockPanel', () => {
     ));
     await flush();
 
-    const prompt = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'Recover the same Desktop session');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(sent).toHaveLength(1);
@@ -440,8 +401,7 @@ describe('StructuredAgentDockPanel', () => {
       .toBe(true);
     expect(container.querySelector<HTMLFieldSetElement>('.structured-agent-permissions')?.disabled)
       .toBe(true);
-    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')?.disabled)
-      .toBe(true);
+    expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
     const retrySend = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!;
     expect(retrySend.disabled).toBe(false);
 
@@ -469,12 +429,11 @@ describe('StructuredAgentDockPanel', () => {
       historyId: `${STRUCTURED_AGENT_SESSION_PREFIX}${originalCommand.payload.sessionId}`,
       provider: 'codex',
     }));
-    expect(setTitle).toHaveBeenCalledWith('Recover the same Desktop session');
+    expect(setTitle).toHaveBeenCalledWith('Codex');
     expect(container.querySelectorAll('[data-testid="structured-agent-session"]')).toHaveLength(1);
     expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
       .toBe(originalCommand.payload.sessionId);
-    expect(container.querySelector('[data-kind="user-message"]')?.textContent)
-      .toContain('Recover the same Desktop session');
+    expect(container.querySelector('[data-kind="user-message"]')).toBeNull();
   });
 
   it('retains an uncertain exact create across panel unmount and remount', async () => {
@@ -552,17 +511,7 @@ describe('StructuredAgentDockPanel', () => {
     act(render);
     await flush();
 
-    const prompt = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'Recover after a Desktop panel remount');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     const originalCommand = sent[0]!;
@@ -576,12 +525,8 @@ describe('StructuredAgentDockPanel', () => {
     act(render);
     await flush();
 
-    expect(container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )?.value).toBe('Recover after a Desktop panel remount');
-    expect(container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
 
     act(() => container.querySelector<HTMLButtonElement>(
       '[data-testid="structured-agent-create"]',
@@ -706,9 +651,7 @@ describe('StructuredAgentDockPanel', () => {
     ));
     await flush();
 
-    expect(container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )?.value).toBe('Recover after renderer crash');
+    expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
     expect(registry.get('agent-session-structured-draft-crash-recovery')?.command).toBe(command);
     expect(peekRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-crash-recovery')).toBeUndefined();
 
@@ -768,17 +711,7 @@ describe('StructuredAgentDockPanel', () => {
     ));
     await flush();
 
-    const prompt = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'Never send against cached authority');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(getSnapshot).toHaveBeenCalledTimes(2);
@@ -846,17 +779,7 @@ describe('StructuredAgentDockPanel', () => {
     ));
     await flush();
 
-    const prompt = container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(prompt, 'Keep this exact command escrowed');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    act(() => {
-      prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(sendCommand).toHaveBeenCalledOnce();
@@ -872,9 +795,7 @@ describe('StructuredAgentDockPanel', () => {
     expect(registry.blocksPanelClose('agent-session-structured-draft-unavailable-recovery')).toBe(true);
     expect([...container.querySelectorAll('[role="alert"]')].map((node) => node.textContent).join(' '))
       .toContain('Delivery was not retried');
-    expect(container.querySelector<HTMLTextAreaElement>(
-      '[data-testid="structured-agent-first-prompt"]',
-    )?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
   });
 
   it('pages persisted transcript forward and incrementally catches transcript events', async () => {

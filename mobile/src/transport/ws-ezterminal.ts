@@ -2410,19 +2410,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   async prepareAgentLaunch(
     target: AgentLaunchTarget,
     launcherId: string,
+    model?: string,
   ): Promise<AgentLaunchPreparation> {
     if ((this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) {
       return new Promise((resolve) => {
         const requestId = this.newId();
         if (!this.tryStartMapRequest(
-          { kind: 'agent-launch-prepare', requestId, target, launcherId },
+          { kind: 'agent-launch-prepare', requestId, target, launcherId, ...(model ? { model } : {}) },
           this.pendingAgentLaunchPreparation,
           requestId,
           resolve,
         )) resolve({ ok: false, reason: 'unavailable' });
       });
     }
-    if (target.kind !== 'project') return { ok: false, reason: 'unavailable' };
+    if (model || target.kind !== 'project') return { ok: false, reason: 'unavailable' };
     const preparation = await this.prepareAgentProjectLaunch(target.projectId, launcherId);
     return preparation.ok
       ? {
@@ -2441,7 +2442,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   startAgentLaunch(request: AgentLaunchStartRequest): Promise<AgentLaunchStartResult> {
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) {
-      return request.target.kind === 'project'
+      return !request.model && request.target.kind === 'project'
         ? this.startAgentProjectLaunch({
             projectId: request.target.projectId,
             launcherId: request.launcherId,

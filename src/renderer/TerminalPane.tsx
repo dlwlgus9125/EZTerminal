@@ -712,6 +712,7 @@ export function TerminalPane({
           const preparation = await window.ezterminal.prepareAgentLaunch(
             bootstrap.target,
             bootstrap.launcherId,
+            bootstrap.model,
           );
           if (!preparation.ok) {
             throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
@@ -725,6 +726,7 @@ export function TerminalPane({
           sessionId: runSessionId,
           runId,
           revision: launchRevision,
+          ...(bootstrap.model ? { model: bootstrap.model } : {}),
         });
         if (!result.ok) throw new Error(`Agent launch failed: ${result.reason}`);
       },

@@ -56,7 +56,7 @@
     {
       "id": "agent-workbench",
       "label": "Structured Agent workbench",
-      "detail": "First Send creates one durable Agent through current daemon authority; uncertain delivery is reconciled before transition, and child Sessions remain directly controllable.",
+      "detail": "Create opens a durable empty Agent; its first message starts provider work. Uncertain creation is reconciled before transition, and child Sessions remain directly controllable.",
       "kind": "surface",
       "group": "client-surfaces",
       "rank": 0,
@@ -67,7 +67,7 @@
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
           "startLine": 520,
           "endLine": 676,
-          "lineDigest": "sha256:ac9dd45551fc1ff0d6c4bca3dd3fb3ae0ff2ecb796f0e0d00efa0699479c1272",
+          "lineDigest": "sha256:d4b86b1ba07153bfd337de0764890e53a4a9e4b272213fd3b9f366ac495b9645",
           "claim": "The panel requires fresh authority and acknowledged exact-envelope recovery escrow before send. On uncertainty it checks the Session before exact replay or bounded conflict retries with the same Session ID."
         },
         {
@@ -82,8 +82,8 @@
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
           "startLine": 978,
-          "endLine": 1032,
-          "lineDigest": "sha256:41bad530d450886d765765b68e618861a691824b3565d3912a9da57286df0a09",
+          "endLine": 1033,
+          "lineDigest": "sha256:2c325c872fd5fab0c14ca86cbb5b30ceb10b19ff81b30e08daab3f1b896bfd7e",
           "claim": "The Session surface wires transcript recovery, submit, interrupt-and-submit, settings, approvals, related-session opening, heartbeat controls, and guarded managed lifecycle actions."
         }
       ]
@@ -100,16 +100,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2494,
-          "endLine": 2531,
+          "startLine": 2498,
+          "endLine": 2535,
           "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
           "claim": "The remote bridge binds an authenticated Android identity to each parsed v12 daemon command and returns the authority receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1202,
-          "endLine": 1209,
+          "startLine": 1206,
+          "endLine": 1213,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source records a successful launch with its exact target and a successful resume with its exact history identity."
         }
@@ -179,16 +179,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1954,
-          "endLine": 2003,
+          "startLine": 1957,
+          "endLine": 2006,
           "lineDigest": "sha256:6d1e43fe7176736977a5bcd58d409d25d26377a5eba237fb282c450f74b11a2f",
           "claim": "Only after Project preflight and ordered MCP, Agent, and automation startup does main publish ready availability; any failure is cleaned up and latched as terminal-only safe mode."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1474,
-          "endLine": 1584,
+          "startLine": 1477,
+          "endLine": 1587,
           "lineDigest": "sha256:f7370e46d70e7d0705763f51e9508b7bf8425b72581f70db23ce9332994bdeb9",
           "claim": "The closeable Project FIFO serializes discovery and fresh-snapshot sync, propagates cancellation, and passes reactivation ids only for explicit user intent."
         }
@@ -354,16 +354,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 831,
-          "endLine": 933,
+          "startLine": 834,
+          "endLine": 936,
           "lineDigest": "sha256:69d9eb25be7c38db2a3cf898b6f8aa229b2bc66735cf23abba9e42a224b6913e",
           "claim": "Cancel commits every queued turn as interrupted and clears the queue; the adjacent turn-scoped interrupt contract explicitly preserves queued successors and the Provider Session."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 1164,
-          "endLine": 1268,
+          "startLine": 1167,
+          "endLine": 1271,
           "lineDigest": "sha256:df27a9aa3a0a02983498a38084f8b20b0bae3a793e10fe21193cb9a866ab5300",
           "claim": "Provider disable commits unavailable state before advancing its generation, revoking Session capabilities, and deactivating the captured adapter; re-enable pumps only the current generation."
         }
@@ -511,8 +511,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-          "startLine": 2231,
-          "endLine": 2299,
+          "startLine": 2234,
+          "endLine": 2302,
         "lineDigest": "sha256:9cb1b4638413526069997620c454f4de8b143af2c9b68c9a58e7b2f98f189430",
         "claim": "Main resolves the desktop Session principal, bounds transcript reads, gates safe mode, and overwrites the command principal before execution."
       }]
@@ -526,8 +526,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1863,
-        "endLine": 1979,
+        "startLine": 1867,
+        "endLine": 1983,
         "lineDigest": "sha256:d93f66535174bdf502daf2f0e039370d579722db844ca51f365b9c7286fc6b4c",
         "claim": "No operational remote frame is accepted before bearer or one-shot pairing authentication and exact v12 client negotiation complete."
       }]
@@ -556,8 +556,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-          "startLine": 926,
-          "endLine": 1003,
+          "startLine": 929,
+          "endLine": 1006,
         "lineDigest": "sha256:34a9825ab1adef9609bd6cf1ea7146ec9853a31f8d64abfb8365e52b0349f0a5",
         "claim": "Main wires the provider-neutral Agent and automation handlers into one DaemonCommandRouter backed by the SQLite store."
       }]
@@ -571,8 +571,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-          "startLine": 1796,
-          "endLine": 1949,
+          "startLine": 1799,
+          "endLine": 1952,
         "lineDigest": "sha256:4ac6add5222b9ed6995f1b5e2cec33c55311834d78a51011ef20981b9825f6a9",
         "claim": "The Project FIFO persists approval or revocation intent before changing daemon authority, finalizes consent afterward, compensates failed approval, and recovers pending work before provider startup."
       }]
@@ -635,16 +635,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1644,
-          "endLine": 1774,
+          "startLine": 1647,
+          "endLine": 1777,
           "lineDigest": "sha256:f413e4b30da9c13756c3aa31a25071a66eeb6ae3d5134eb739c9277499ee2dd8",
           "claim": "Project save stops active orchestration when authority shrinks, retires obsolete daemon descendants and capabilities, clears removed consent and auxiliary authority, then publishes and explicitly reactivates the replacement."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1855,
-          "endLine": 1893,
+          "startLine": 1858,
+          "endLine": 1896,
           "lineDigest": "sha256:74a21e03bc0ef6f81e53fdbb270edc7a2757b88d7d971b4f2c949b7192d70c50",
           "claim": "Full removal stops Project runs, applies the fail-closed daemon transition, revokes MCP and Agent-control tokens, and only then removes consent, coordination, orchestration, and history records."
         }
@@ -676,23 +676,23 @@
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
           "startLine": 549,
-          "endLine": 651,
-          "lineDigest": "sha256:ca285e10b18ee66142d75fb7a72b99fc85455e787871e7ded91bdd8bbc689540",
-          "claim": "Agent creation and resume require a Workspace that resolves through the requested active Project before any durable Agent state is accepted."
+          "endLine": 653,
+          "lineDigest": "sha256:99a9e034a080fb39cf3004d7903de0dfd88d0da8612f4fc9779ecf8b76b50142",
+          "claim": "Agent creation and resume validate active Workspace ownership. Creation without a prompt persists idle with no turn; legacy prompt-bearing creation queues its first turn."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 718,
-          "endLine": 739,
+          "startLine": 720,
+          "endLine": 741,
           "lineDigest": "sha256:5c3f56dc07c8442578d4e7f4c11ad0d070075aedfcec613d0d24016b05238110",
           "claim": "Turn submission revalidates the Session's complete active Project and Workspace ownership chain."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 1402,
-          "endLine": 1525,
+          "startLine": 1405,
+          "endLine": 1528,
           "lineDigest": "sha256:ecf6e900baaf3e8c040029aadf006e366e8e5fbbc656fa84dda53f238d06f6ee",
           "claim": "The queue pump rechecks active Project and Workspace ownership before claiming or delivering a durable turn."
         }
@@ -738,8 +738,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1591,
-          "endLine": 1623,
+          "startLine": 1594,
+          "endLine": 1626,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Launch, resume, and Project or worker activity records enter the same main-owned FIFO; only direct-directory launch conveys explicit Project re-registration intent before sync."
         },
@@ -770,8 +770,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-          "startLine": 926,
-          "endLine": 959,
+          "startLine": 929,
+          "endLine": 962,
         "lineDigest": "sha256:76fe2fe54769dcacc184d4fd4ed502fe822f0565c782c519e0d42a2e0394ee20",
         "claim": "DaemonAgentRuntime receives only snapshot, durable transition, transcript, command, and orchestration capability seams before its handlers join the router."
       }]
@@ -800,8 +800,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-agent-runtime.ts",
-        "startLine": 1335,
-        "endLine": 1353,
+        "startLine": 1338,
+        "endLine": 1356,
         "lineDigest": "sha256:4bc3d743b94bd3f840ee42bf780aea21e87ecbab1db6b640f73d60beffb95d1f",
         "claim": "An orchestration-enabled managed Session receives only its own loopback MCP descriptor in the provider context."
       }]
@@ -830,8 +830,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-agent-runtime.ts",
-        "startLine": 1402,
-        "endLine": 1525,
+        "startLine": 1405,
+        "endLine": 1528,
         "lineDigest": "sha256:ecf6e900baaf3e8c040029aadf006e366e8e5fbbc656fa84dda53f238d06f6ee",
         "claim": "The FIFO claims one durable turn only through the complete active Project and Workspace chain, waits the Provider lifecycle barrier, rechecks state and the enabled adapter, then invokes the provider-neutral Session contract."
       }]
@@ -854,16 +854,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 1895,
-          "endLine": 2020,
+          "startLine": 1898,
+          "endLine": 2023,
           "lineDigest": "sha256:3dd2b14dd3f25f0792ec3b4adfd0b338f9b0c6ea7a8891e1a9e4c3ce52864c3e",
           "claim": "Scoped errors resolve one active turn and mutate Agent and Session only when current; recoverable scoped or Session-wide errors preserve an existing interrupt fence."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 2640,
-          "endLine": 2706,
+          "startLine": 2643,
+          "endLine": 2709,
           "lineDigest": "sha256:69865f8c2d18eab45c905c880ee93363f29cee142d01fe0cbfea1c1082556027",
           "claim": "Late interrupt failure commits delivery-uncertain only when the expected turn is still current and non-terminal, preventing stale callbacks from corrupting successors."
         }

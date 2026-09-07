@@ -129,7 +129,7 @@ interface PendingCreatedAgent {
   readonly projectId: string;
   readonly workspace: StructuredAgentWorkspaceOption;
   readonly providerLabel: string;
-  readonly localItem: DaemonTranscriptItem;
+  readonly localItem?: DaemonTranscriptItem;
 }
 
 const CREATE_FAILURE_COPY = {
@@ -184,7 +184,7 @@ function sameStructuredAgentDraft(
     && left.model === right.model
     && left.workspaceId === right.workspaceId
     && left.permissionPreset === right.permissionPreset
-    && left.initialPrompt.trim() === right.initialPrompt.trim();
+    && (left.initialPrompt?.trim() ?? '') === (right.initialPrompt?.trim() ?? '');
 }
 
 function mergeTranscriptPages(
@@ -398,7 +398,7 @@ export function MobileAgentView({
     selectedDaemonSessionId
       ? pendingCreatedAgent?.sessionId === selectedDaemonSessionId
         ? mergeTranscriptPages(
-            [pendingCreatedAgent.localItem],
+            pendingCreatedAgent.localItem ? [pendingCreatedAgent.localItem] : [],
             structuredTranscripts[selectedDaemonSessionId] ?? EMPTY_TRANSCRIPT,
           )
         : structuredTranscripts[selectedDaemonSessionId] ?? EMPTY_TRANSCRIPT
@@ -808,7 +808,7 @@ export function MobileAgentView({
       projectId: workspaceRecord?.projectId ?? '',
       workspace,
       providerLabel,
-      localItem: {
+      localItem: input.initialPrompt ? {
         id: `local-${outcome.command.commandId}`,
         sessionId: outcome.sessionId,
         sequence: 1,
@@ -817,7 +817,7 @@ export function MobileAgentView({
         isDelta: false,
         isSensitive: false,
         createdAt,
-      },
+      } : undefined,
     });
     setNewSessionTarget(null);
     setSelectedDaemonSessionId(outcome.sessionId);
@@ -865,8 +865,8 @@ export function MobileAgentView({
         return {
           ok: false,
           message: locale.startsWith('ko')
-            ? '이전 Agent 생성 결과를 확인할 수 없습니다. 중복 생성을 막기 위해 기존 초안 그대로 다시 Send 하세요.'
-            : 'The previous Agent creation is still uncertain. Restore the same draft and Send again to avoid a duplicate session.',
+            ? '이전 Agent 생성 결과를 확인할 수 없습니다. 중복 생성을 막기 위해 기존 초안 그대로 다시 Agent 만들기를 누르세요.'
+            : 'The previous Agent creation is still uncertain. Restore the same draft and choose Create Agent again to avoid a duplicate session.',
         };
       }
 
@@ -899,7 +899,7 @@ export function MobileAgentView({
         return {
           ok: false,
           message: locale.startsWith('ko')
-            ? '전송 결과를 아직 확인할 수 없습니다. 연결을 확인한 뒤 같은 초안으로 다시 Send 하세요.'
+            ? '전송 결과를 아직 확인할 수 없습니다. 연결을 확인한 뒤 같은 초안으로 다시 Agent 만들기를 누르세요.'
             : 'Delivery is still unconfirmed. Check the connection, then Send the same draft again.',
         };
       }
@@ -951,8 +951,8 @@ export function MobileAgentView({
       return {
         ok: false,
         message: locale.startsWith('ko')
-          ? '전송 결과를 확인할 수 없습니다. 이 초안을 유지한 채 다시 Send 하면 동일 세션을 확인하고 안전하게 재시도합니다.'
-          : 'Delivery could not be confirmed. Keep this draft and Send again to verify or safely retry the same session.',
+          ? '전송 결과를 확인할 수 없습니다. 이 초안을 유지한 채 다시 Agent 만들기를 누르면 동일 세션을 확인하고 안전하게 재시도합니다.'
+          : 'Delivery could not be confirmed. Keep this draft and choose Create Agent again to verify or safely retry the same session.',
       };
     }
     if ((uncertainAgentCreate || preparedThisAttempt) && !(await clearSettledAgentCreate())) {
@@ -1067,14 +1067,14 @@ export function MobileAgentView({
   const pendingSelection = pendingCreatedAgent?.sessionId === selectedDaemonSessionId
     ? pendingCreatedAgent
     : undefined;
-  const optimisticTimestamp = pendingSelection?.localItem.createdAt ?? new Date().toISOString();
+  const optimisticTimestamp = pendingSelection?.localItem?.createdAt ?? new Date().toISOString();
   const selectedDaemonSession = authoritativeDaemonSession ?? (pendingSelection ? {
     id: pendingSelection.sessionId,
     projectId: pendingSelection.projectId,
     workspaceId: pendingSelection.workspace.id,
     kind: 'agent' as const,
     title: pendingSelection.title,
-    state: 'starting' as const,
+    state: pendingSelection.input.initialPrompt ? 'starting' as const : 'idle' as const,
     source: 'structured' as const,
     revision: daemonRevisionRef.current,
     createdAt: optimisticTimestamp,
@@ -1085,8 +1085,8 @@ export function MobileAgentView({
     providerId: pendingSelection.input.providerId,
     ...(pendingSelection.input.model ? { model: pendingSelection.input.model } : {}),
     permissionPreset: pendingSelection.input.permissionPreset,
-    state: 'queued' as const,
-    queuedTurnCount: 1,
+    state: pendingSelection.input.initialPrompt ? 'queued' as const : 'idle' as const,
+    queuedTurnCount: pendingSelection.input.initialPrompt ? 1 : 0,
     orchestrationEnabled: true,
     revision: daemonRevisionRef.current,
     createdAt: optimisticTimestamp,
@@ -1144,7 +1144,7 @@ export function MobileAgentView({
   if (newSessionTarget) {
     return (
       <MobileNewSessionDraft
-        initialIntent={{ kind: 'agent', agentMode: 'cli' }}
+        initialIntent={{ kind: 'agent' }}
         state={daemonRuntimeState}
         disconnected={disconnected}
         contextWorkspaceId={newSessionTarget.workspaceId}
@@ -1227,6 +1227,7 @@ export function MobileAgentView({
         model={selectedDaemonAgent.model}
         modelOptions={availableModels}
         permissionPreset={selectedDaemonAgent.permissionPreset}
+        awaitingFirstMessage={selectedDaemonAgent.state === 'idle' && !selectedDaemonAgent.providerSessionId && !daemonRuntimeState.snapshot?.turns.some((turn) => turn.sessionId === selectedDaemonSessionId)}
         state={selectedDaemonAgent.state}
         queuedCount={selectedDaemonAgent.queuedTurnCount}
         items={selectedTranscript}
