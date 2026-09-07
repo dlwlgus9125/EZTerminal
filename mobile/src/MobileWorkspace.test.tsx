@@ -175,16 +175,6 @@ function changeSelect(el: HTMLElement, testId: string, value: string): void {
   });
 }
 
-function fillTextarea(el: HTMLElement, testId: string, value: string): void {
-  const textarea = el.querySelector<HTMLTextAreaElement>(`[data-testid="${testId}"]`);
-  if (!textarea) throw new Error(`missing textarea [data-testid="${testId}"]`);
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-  act(() => {
-    setter.call(textarea, value);
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-}
-
 async function flushAsync(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -638,7 +628,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     expect(el.querySelector('[data-testid="mobile-new-session-recovery-status"]')).toBeNull();
   });
 
-  it('restores a persisted exact envelope after a full remount and retries it safely', async () => {
+  it('restores a persisted exact envelope for an empty Agent after a full remount and retries it safely', async () => {
     const secure = new PersistentSecureStorage();
     const { transport, socket } = makeAuthedTransport();
     const authority = daemonSnapshot({
@@ -709,13 +699,14 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     await waitForTestId(el, 'mobile-new-session-draft');
     changeSelect(el, 'mobile-new-session-project', 'project-agent');
     changeSelect(el, 'mobile-new-session-workspace', 'workspace-agent');
-    fillTextarea(el, 'structured-agent-first-prompt', 'Resume this exact persisted Agent create.');
+    expect(el.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
     tap(el, 'structured-agent-create');
     await flushAsync();
 
     expect(send).toHaveBeenCalledOnce();
     const originalCommand = send.mock.calls[0]![0];
     expect(originalCommand.type).toBe('agent.create');
+    expect(originalCommand.payload).not.toHaveProperty('initialPrompt');
     expect(secure.values.size).toBe(1);
     await waitForTestId(el, 'mobile-new-session-delivery-recovery');
 
@@ -754,8 +745,8 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
 
     expect(el.querySelector('[data-testid="mobile-new-session-locked-workspace"]')?.textContent)
       .toContain('Mobile Agent Project · Mobile Agent Workspace');
-    expect(el.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-first-prompt"]')?.value)
-      .toBe('Resume this exact persisted Agent create.');
+    expect(el.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
+    expect(el.querySelector('[data-testid="structured-agent-recovery-prompt"]')).toBeNull();
 
     tap(el, 'structured-agent-create');
     await flushAsync();

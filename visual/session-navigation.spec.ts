@@ -39,13 +39,25 @@ for (const [width, height, locale] of [[1440, 900, 'en'], [800, 600, 'ko'], [390
     await testInfo.attach('terminal-choice', { path: testInfo.outputPath('terminal-choice.png'), contentType: 'image/png' });
     const results = await new AxeBuilder({ page }).include('#storybook-root').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
     expect(results.violations).toEqual([]);
+    await page.getByTestId('session-cli-launcher').selectOption('codex-cli');
+    await expect(page.getByTestId('session-cli-model')).toHaveValue('default');
+    await page.getByTestId('session-cli-model').selectOption('custom');
+    await expect(page.getByTestId('session-cli-start')).toBeDisabled();
+    await page.getByTestId('session-cli-model-name').fill('my-model');
+    await expect(page.getByTestId('session-cli-start')).toBeEnabled();
+    await page.getByTestId('session-cli-start').click({ trial: true });
+    await page.screenshot({ path: testInfo.outputPath('terminal-cli-model.png'), animations: 'disabled' });
     await page.getByTestId('new-session-agent').click();
-    await page.screenshot({ path: testInfo.outputPath('agent-conversation.png'), animations: 'disabled' });
-    await page.getByTestId('new-session-cli').click();
-    await expect(page.getByTestId('session-cli-launcher')).toBeVisible();
+    await expect(page.getByTestId('new-session-cli')).toHaveCount(0);
+    await expect(page.getByTestId('structured-agent-draft').getByRole('textbox')).toHaveCount(0);
+    await expect(page.getByTestId('structured-agent-model')).not.toBeVisible();
+    await expect(page.getByTestId('structured-agent-create')).toBeEnabled();
+    await page.getByTestId('structured-agent-create').click({ trial: true });
     await expect(page.getByTestId('new-session-project')).toBeInViewport({ ratio: 1 });
     await expect(page.getByTestId('new-session-workspace')).toBeInViewport({ ratio: 1 });
-    await page.screenshot({ path: testInfo.outputPath('agent-cli.png'), animations: 'disabled' });
+    await page.screenshot({ path: testInfo.outputPath('agent-create.png'), animations: 'disabled' });
+    const agentResults = await new AxeBuilder({ page }).include('#storybook-root').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+    expect(agentResults.violations).toEqual([]);
   });
 }
 
