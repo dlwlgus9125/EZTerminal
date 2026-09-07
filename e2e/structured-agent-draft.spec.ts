@@ -1,4 +1,5 @@
-import { realpathSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { createRegisteredE2eTempDir, expect, test } from './test';
@@ -253,48 +254,64 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
   }
 });
 
-test('Project New Session opens a regular terminal and its closed view can be reopened', async () => {
-  const projectRoot = createRegisteredE2eTempDir('ezterm-session-root-');
-  const userDataDir = createRegisteredE2eTempDir('ezterm-session-data-');
-  const seedProjectId = 'session-ux-regression';
-  writeFileSync(path.join(userDataDir, 'agent-projects.json'), JSON.stringify({ version: 3, projects: [{
-    projectId: seedProjectId, name: 'Session UX fixture', primaryRoot: projectRoot, additionalRoots: [], pinned: true,
-    origin: 'terminal', lastActiveAt: 1_785_181_625_234, createdAt: 1_785_181_600_000, updatedAt: 1_785_181_625_234,
-  }] }), 'utf8');
-  const app = await launchApp(userDataDir);
-  try {
-    const window = await app.firstWindow();
-    await window.setViewportSize({ width: 1440, height: 900 });
-    await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
-    await window.getByTestId('btn-toggle-agents').click();
-    const registered = await window.evaluate(async () => (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items);
-    const projectId = registered.find((entry) => entry.name === 'Session UX fixture')?.projectId;
-    expect(projectId, JSON.stringify(registered)).toBeTruthy();
-    const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
-    await window.getByTestId(`agent-project-new-chat-${projectId}`).click();
-    await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
-    const pane = window.locator('[data-testid="pane"]:visible');
-    await expect(pane).toHaveCount(1);
-    const sessionId = await pane.getAttribute('data-session-id');
-    expect(sessionId).toBeTruthy();
-    const sessions = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
-    expect(sessions).toHaveLength(before.length + 1);
-    // Project terminal identity is canonical, even when TEMP uses a DOS 8.3 alias.
-    expect(path.resolve(sessions.find((session) => session.sessionId === sessionId)!.cwd)).toBe(realpathSync.native(projectRoot));
-    await pane.getByTestId('cmd-input').fill('echo preserved-draft');
-    await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
-    await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`)).toHaveCount(0);
-    const group = window.locator('.daemon-agent-project').filter({ has: window.getByTestId(`agent-project-open-${projectId}`) });
-    await group.locator('summary').click();
-    const row = group.locator(`button.daemon-agent-session[data-session-id="${sessionId}"]`);
-    await expect(row).toBeVisible();
-    await row.click();
-    const reopened = window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`);
-    await expect(reopened).toBeVisible();
-    await expect(reopened.getByTestId('cmd-input')).toHaveValue('echo preserved-draft');
-    await row.locator('..').getByTestId('session-end').click();
-    await expect(window.getByTestId('session-end-dialog')).toBeVisible();
-    await window.getByTestId('session-end-confirm').click();
-    await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).some((session) => session.sessionId === sessionId)).toBe(false);
-  } finally { await app.close(); }
-});
+for (const storedRootKind of ['directory', 'DOS alias'] as const) {
+  test(`Project New Session opens a regular terminal and its closed view can be reopened (${storedRootKind})`, async () => {
+    test.skip(storedRootKind === 'DOS alias' && process.platform !== 'win32', 'Windows short paths');
+    const projectParent = createRegisteredE2eTempDir('ezterm-session-root-');
+    const projectRoot = path.join(projectParent, 'project');
+    mkdirSync(projectRoot);
+    const userDataDir = createRegisteredE2eTempDir('ezterm-session-data-');
+    const storedRoot = storedRootKind === 'DOS alias'
+      ? path.join(execFileSync('powershell.exe', ['-NoProfile', '-Command', `
+        Add-Type -Namespace EzTerminalTest -Name ShortPath -MemberDefinition '[DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint GetShortPathName(string path, System.Text.StringBuilder buffer, uint length);'
+        $buffer = New-Object System.Text.StringBuilder 32768
+        $length = [EzTerminalTest.ShortPath]::GetShortPathName($env:EZTERMINAL_TEST_PROJECT_ROOT, $buffer, 32768)
+        if ($length -eq 0) { throw 'GetShortPathName failed' }
+        $buffer.ToString()
+      `], { encoding: 'utf8', env: { ...process.env, EZTERMINAL_TEST_PROJECT_ROOT: projectParent } }).trim(), 'project')
+      : projectRoot;
+    test.skip(storedRootKind === 'DOS alias' && storedRoot === realpathSync.native(projectRoot), '8.3 names are unavailable on the fixture volume');
+    const seedProjectId = 'session-ux-regression';
+    writeFileSync(path.join(userDataDir, 'agent-projects.json'), JSON.stringify({ version: 3, projects: [{
+      projectId: seedProjectId, name: 'Session UX fixture', primaryRoot: storedRoot, additionalRoots: [], pinned: true,
+      origin: 'terminal', lastActiveAt: 1_785_181_625_234, createdAt: 1_785_181_600_000, updatedAt: 1_785_181_625_234,
+    }] }), 'utf8');
+    const app = await launchApp(userDataDir);
+    try {
+      const window = await app.firstWindow();
+      await window.setViewportSize({ width: 1440, height: 900 });
+      await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+      await window.getByTestId('btn-toggle-agents').click();
+      const registered = await window.evaluate(async () => (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items);
+      const projectId = registered.find((entry) => entry.name === 'Session UX fixture')?.projectId;
+      expect(projectId, JSON.stringify(registered)).toBeTruthy();
+      const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
+      await window.getByTestId(`agent-project-new-chat-${projectId}`).click();
+      await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
+      const pane = window.locator('[data-testid="pane"]:visible');
+      await expect(pane).toHaveCount(1);
+      await expect(pane).toHaveAttribute('data-session-id', /\S+/);
+      const sessionId = await pane.getAttribute('data-session-id');
+      expect(sessionId).toBeTruthy();
+      const sessions = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
+      expect(sessions).toHaveLength(before.length + 1);
+      // Project terminal identity is canonical, even when TEMP uses a DOS 8.3 alias.
+      expect(path.resolve(sessions.find((session) => session.sessionId === sessionId)!.cwd)).toBe(realpathSync.native(projectRoot));
+      await pane.getByTestId('cmd-input').fill('echo preserved-draft');
+      await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
+      await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`)).toHaveCount(0);
+      const group = window.locator('.daemon-agent-project').filter({ has: window.getByTestId(`agent-project-open-${projectId}`) });
+      await group.locator('summary').click();
+      const row = group.locator(`button.daemon-agent-session[data-session-id="${sessionId}"]`);
+      await expect(row).toBeVisible();
+      await row.click();
+      const reopened = window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`);
+      await expect(reopened).toBeVisible();
+      await expect(reopened.getByTestId('cmd-input')).toHaveValue('echo preserved-draft');
+      await row.locator('..').getByTestId('session-end').click();
+      await expect(window.getByTestId('session-end-dialog')).toBeVisible();
+      await window.getByTestId('session-end-confirm').click();
+      await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).some((session) => session.sessionId === sessionId)).toBe(false);
+    } finally { await app.close(); }
+  });
+}

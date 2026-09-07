@@ -42,9 +42,9 @@
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:2e504d4c7de4417ff0d8882f53ab472ac8888c23da467e17b99d272ebcc05758",
-        "decision": "map-updated",
-        "reason": "Reviewed empty Agent creation and deferred first submission; updated the workbench detail and creation evidence. CLI model overrides retain existing permissions. Authority, shutdown, port ownership and transport identity remain as mapped."
+        "inputDigest": "sha256:c788a52ab0f42c5890e48e9663e18d29954a97bdf73b76c6d1a529d8dfb9a6a0",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed awaited terminal registration: physical directory matching reuses Project and Workspace IDs across Windows aliases. The router FIFO still owns the fresh snapshot and durable commit; mapped authority and lifecycle boundaries are unchanged."
       }
     },
     {
@@ -62,7 +62,7 @@
       "review": {
         "inputDigest": "sha256:e444d707989d1f2c36b61a322355b3138febecacf390204b003381c6d3836dda",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
+        "reason": "Reviewed physical directory matching during legacy-terminal registration. Awaiting path resolution inside the existing router FIFO preserves the mapped principal, revision, outbox, durable commit, and authenticated event projection contracts."
       }
     },
     {
@@ -108,7 +108,7 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:07c2ce162e3ff6cd5a64dde280b2c67a5ec7656df86483533f51310a669d3cd5",
+        "inputDigest": "sha256:d4c32ff51b2cf58e5838357c1366fcd6991b7b4412b3525118d765018f758aca",
         "decision": "no-semantic-impact",
         "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
       }

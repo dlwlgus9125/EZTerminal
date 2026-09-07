@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
@@ -51,19 +52,32 @@ function displayName(rootPath: string): string {
  * Produces an idempotent import plan. It never mutates or removes the legacy
  * interpreter directory; callers transact only entries absent from snapshot.
  */
-export function planLegacyTerminalRegistrations(
+export async function planLegacyTerminalRegistrations(
   legacySessions: readonly SessionInfo[],
   snapshot: Pick<DaemonSnapshot, 'projects' | 'workspaces' | 'sessions'>,
   options: LegacyTerminalRegistrationOptions = {},
-): LegacyTerminalRegistrationPlan {
+): Promise<LegacyTerminalRegistrationPlan> {
   const existingSessionIds = new Set(snapshot.sessions.map((session) => session.id));
+  const paths = new Set([
+    ...legacySessions.map((session) => session.cwd),
+    ...snapshot.projects.flatMap((project) => project.rootPath ? [project.rootPath] : []),
+    ...snapshot.workspaces.map((workspace) => workspace.rootPath),
+  ]);
+  // The interpreter resolves Windows short paths and ancestor junctions. Match
+  // those physical directories without rewriting durable project/workspace IDs.
+  // Unavailable roots retain their lexical identity; this grants no path access.
+  const pathKeys = new Map(await Promise.all([...paths].map(async (value) => {
+    const resolved = await fs.realpath(value).catch(() => value);
+    return [value, canonicalWindowsPath(resolved)] as const;
+  })));
+  const pathKey = (value: string): string => pathKeys.get(value)!;
   const projectsByRoot = new Map(
     snapshot.projects
       .filter((project): project is typeof project & { readonly rootPath: string } => Boolean(project.rootPath))
-      .map((project) => [canonicalWindowsPath(project.rootPath), project]),
+      .map((project) => [pathKey(project.rootPath), project]),
   );
   const workspacesByRoot = new Map(
-    snapshot.workspaces.map((workspace) => [canonicalWindowsPath(workspace.rootPath), workspace]),
+    snapshot.workspaces.map((workspace) => [pathKey(workspace.rootPath), workspace]),
   );
 
   const plannedProjects = new Map<string, LegacyTerminalRegistrationPlan['projects'][number]>();
@@ -73,7 +87,7 @@ export function planLegacyTerminalRegistrations(
   for (const legacy of legacySessions) {
     if (!legacy.sessionId.trim() || !legacy.cwd.trim() || existingSessionIds.has(legacy.sessionId)) continue;
 
-    const rootKey = canonicalWindowsPath(legacy.cwd);
+    const rootKey = pathKey(legacy.cwd);
     const existingWorkspace = workspacesByRoot.get(rootKey);
     let projectId = existingWorkspace?.projectId;
     let workspaceId = existingWorkspace?.id;

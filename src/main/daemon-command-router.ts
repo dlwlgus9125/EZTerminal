@@ -276,7 +276,7 @@ export class DaemonCommandRouter {
   ): Promise<{ readonly revision: number; readonly eventSequence: number }> {
     return this.gate.runExclusive(async () => {
       const snapshot = this.store.getSnapshot();
-      const plan = planLegacyTerminalRegistrations(sessions, snapshot, options);
+      const plan = await planLegacyTerminalRegistrations(sessions, snapshot, options);
       const projectsById = new Map(snapshot.projects.map((project) => [project.id, project]));
       const plannedProjectsById = new Map(plan.projects.map((project) => [project.projectId, project]));
       const workspacesById = new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace]));
