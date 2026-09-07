@@ -39,12 +39,27 @@
         { "rootAlias": "app", "relativePath": "src/main/codex-provider-adapter.ts" },
         { "rootAlias": "app", "relativePath": "src/main/claude-provider-adapter.ts" },
         { "rootAlias": "app", "relativePath": "src/main/provider-version.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
+        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-message-validation.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-openclaw-session.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-collaboration-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-history-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/app-update-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/file-tools-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/openclaw-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/session-surface-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/settings-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/terminal-tools-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:c788a52ab0f42c5890e48e9663e18d29954a97bdf73b76c6d1a529d8dfb9a6a0",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed awaited terminal registration: physical directory matching reuses Project and Workspace IDs across Windows aliases. The router FIFO still owns the fresh snapshot and durable commit; mapped authority and lifecycle boundaries are unchanged."
+        "inputDigest": "sha256:aaf4c2a8261034c392ef665b07e74f9496a561c2fbbafeb41bfeafdf7856efe1",
+        "decision": "map-updated",
+        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
       }
     },
     {
@@ -85,12 +100,25 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-availability.ts" },
         { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
+        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-collaboration-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-history-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/app-update-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/file-tools-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/openclaw-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/session-surface-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/settings-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/terminal-tools-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:c1bd976b2ead67eedb8b34dc80072969abc56516eefe3fcf5f3cbf214f5b4d4c",
+        "inputDigest": "sha256:b0f993624c3cf7269b3c88ccfbe63cf7cc42778ec88330bc3f5caff46242e008",
         "decision": "map-updated",
-        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
+        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
       }
     },
     {
@@ -105,12 +133,30 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/daemon-authority.ts" },
-        { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
+        { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-message-validation.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-openclaw-session.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-collaboration-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-history-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/app-update-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/file-tools-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/openclaw-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-workspace-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/session-surface-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/settings-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/terminal-tools-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" },
+        { "rootAlias": "app", "relativePath": "mobile/src/transport/remote-openclaw-client.ts" },
+        { "rootAlias": "app", "relativePath": "mobile/src/transport/remote-agent-history-client.ts" },
+        { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-transport-contract.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:d4c32ff51b2cf58e5838357c1366fcd6991b7b4412b3525118d765018f758aca",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
+        "inputDigest": "sha256:ef50764982a6132760e24116c9d87d8cc8a7acaa114577799cf68502c8686320",
+        "decision": "map-updated",
+        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
       }
     },
     {
@@ -130,12 +176,17 @@
         { "rootAlias": "app", "relativePath": "src/main/project-map-exporter.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/project-map.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/project-map-scene.ts" },
-        { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
+        { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" },
+        { "rootAlias": "app", "relativePath": "src/renderer/useDesktopAppearance.ts" },
+        { "rootAlias": "app", "relativePath": "src/renderer/useTerminalPreferences.ts" },
+        { "rootAlias": "app", "relativePath": "src/renderer/useCommandCenterCatalog.ts" },
+        { "rootAlias": "app", "relativePath": "src/renderer/useProjectDocumentNavigation.ts" },
+        { "rootAlias": "app", "relativePath": "src/renderer/useRendererRecovery.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:128a4a2603c9e6a22f44615e064a72263a4f409fa16c09511ae45297da3e45e7",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed CLI model handoff and empty Agent creation against this map. The mapped shutdown, port ownership, authentication, project activity and dedicated Project Map workflow contracts remain unchanged; source anchors were refreshed."
+        "inputDigest": "sha256:a7b357e75370ac5cce6459da82a4f33b84c3bc40f60418f8ba3797cb369bed1d",
+        "decision": "map-updated",
+        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
       }
     }
   ]

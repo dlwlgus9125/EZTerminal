@@ -1,185 +1,47 @@
+import { gateLocalMutation } from './local-mutation-ipc';
+import type {
+  IpcMainInvokeEvent,
+  MessagePortMain,
+  UtilityProcess,
+  WebContents
+} from 'electron';
 import {
   app,
   BrowserWindow,
-  clipboard,
   crashReporter,
   dialog,
   ipcMain,
   Menu,
   MessageChannelMain,
   net,
-  nativeTheme,
   Notification,
   protocol,
   session,
   shell,
   utilityProcess,
 } from 'electron';
-import type {
-  IpcMainInvokeEvent,
-  MessagePortMain,
-  OpenDialogOptions,
-  UtilityProcess,
-  WebContents,
-} from 'electron';
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
+import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history-ipc';
+import { installAppUpdateIpc } from './app-update-ipc';
+import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
+import { installFileToolsIpc } from './file-tools-ipc';
+import { installOpenClawChatIpc, installOpenClawManagementIpc, installOpenClawVisibilityIpc } from './openclaw-ipc';
+import { installProjectMapIpc } from './project-map-ipc';
+import { installProjectWorkspaceIpc } from './project-workspace-ipc';
+import { installSessionSurfaceIpc } from './session-surface-ipc';
+import { installLayoutIpc, installPreferencesIpc, installThemeIpc } from './settings-ipc';
+import { installTerminalToolsIpc } from './terminal-tools-ipc';
 
-import { isAppUrl } from './url-guard';
-import { APP_RENDERER_ORIGIN } from '../shared/desktop-window';
-import {
-  rendererEntryUrls,
-  resolveRendererAssetPath,
-} from './app-renderer-protocol';
-import { DesktopWindowManager } from './desktop-window-manager';
-import { buildMenuTemplate } from './app-menu';
-import { buildExplicitQuitDialogOptions } from './explicit-quit-dialog';
-import { FileService } from './file-service';
-import { LayoutStore } from './layout-store';
-import { getAvailableThemes, importTheme } from './theme-store';
-import { ScriptHostRegistry } from './script-host-registry';
-import { PacketCaptureRegistry } from './packet-capture-registry';
-import { PacketMirror } from './packet-mirror';
-import { KnownHostsStore } from './known-hosts-store';
-import { LogFile, pruneCrashDumps } from './diagnostics';
-import { SystemStatsService } from './system-stats-service';
-import { StatsVisibility } from './stats-visibility';
-import { RendererCrashRecovery } from './renderer-crash-recovery';
-import { RendererRecoveryCheckpointStore } from './renderer-recovery-checkpoint-store';
-import { installRunCommandIpc } from './run-command-ipc';
-import { GracefulShutdownCoordinator } from './graceful-shutdown';
-import { OpenClawService } from './openclaw-service';
-import { OpenClawLifecycleCoordinator } from './openclaw-lifecycle-coordinator';
-import { OpenClawChatViewManager } from './openclaw-chat-view';
-import { OpenClawChatSurfaceRevisionGate } from './openclaw-chat-surface-revisions';
-import { mintOpenClawChatTicket, startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
-import { resolveOpenClawVisibility } from './openclaw-visibility';
-import { InterpreterBroker, type BrokerInterpreter, type RemotePort } from './interpreter-broker';
-import { SshForwardService } from './ssh-forward-service';
-import { sshForwardFailure, type SshForwardResult } from '../shared/ssh-forward';
-import { AgentActivityService, type AgentActivityTransition } from './agent-activity-service';
-import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
-import { AgentHookInstaller } from './agent-hook-installer';
-import { AgentSettingsStore } from './agent-settings-store';
-import { AgentProjectStore, canonicalAgentDirectory } from './agent-project-store';
-import { AgentCoordinationStore } from './agent-coordination-store';
-import { AgentCoordinationService } from './agent-coordination-service';
-import { AgentOrchestrationStore } from './agent-orchestration-store';
-import { AgentAdapterService } from './agent-adapter-service';
-import { AcpWorkerRuntime } from './acp-worker-runtime';
-import {
-  AgentOrchestrationService,
-  type WorkerLaunchResult,
-} from './agent-orchestration-service';
-import { AgentValidationRunner } from './agent-validation-runner';
-import { ManagedMergeService } from './managed-merge-service';
-import { AgentControlServer } from './agent-control-server';
-import { AgentCliShim } from './agent-cli-shim';
-import { AgentHistoryService } from './agent-history-service';
-import { terminalCliInstalled } from './terminal-cli-discovery';
-import { recordAgentProjectObservation } from './agent-project-observation';
-import { CodexAppServerClient } from './codex-app-server-client';
-import { CodexHistoryAdapter } from './codex-history-adapter';
-import { ClaudeHistoryAdapter } from './claude-history-adapter';
-import { GitStatusService } from './git-status-service';
-import { PairingCodeService } from './pairing-code-service';
-import { QuickCommandStore } from './quick-command-store';
-import { WorkspaceFileSearchService } from './workspace-file-search-service';
-import {
-  ProjectWorkspaceService,
-  projectWorkspaceDescriptorForProject,
-} from './project-workspace-service';
-import { ProjectReviewService } from './project-review-service';
-import { ProjectDocumentService } from './project-document-service';
-import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
-import { ProjectMapBindingStore } from './project-map-binding-store';
-import { ProjectMapCacheStore } from './project-map-cache-store';
-import { ProjectMapApprovalStore } from './project-map-approval-store';
-import { ProjectMapJobStore } from './project-map-job-store';
-import { exportProjectMap } from './project-map-exporter';
-import { ProjectMapService } from './project-map-service';
-import { GitRunner, WorktreeService } from './worktree-service';
-import { AsyncMutationGate } from './async-mutation-gate';
-import { LocalMutationIngress, raceLocalOperationWithAbort } from './local-mutation-ingress';
-import { OwnedStartupBarrier, waitForStartupGroup } from './owned-startup-barrier';
-import { SessionWorktreeGuard } from './session-worktree-guard';
-import { SessionSurfaceAuthority } from './session-surface-authority';
 import type {
-  RemoteAgentOrchestrationSource,
-  RemoteAgentHistorySource,
-  RemoteFileSource,
-  RemoteOpenClawSource,
-  RemotePacketSource,
-  RemoteQuickCommandSource,
-  RemoteStatsSource,
-} from './remote-bridge';
-import { RemoteDeviceRoster } from './remote-device-roster';
-import type { DesktopRuntime } from './desktop-runtime';
-import { createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
-import {
-  TerminalRendererPreferenceSchema,
-  type EffectParamsSettings,
-  type OpenClawMode,
-  type RollbarSettings,
-  type StartupPref,
-  type ThemeName,
-} from '../shared/layout-schema';
-import {
-  MAX_GUARDED_DESTROY_RUN_IDS,
-} from '../shared/ipc';
-import {
-  isProjectMapBindingRequest,
-  isProjectMapCollectionRequest,
-  isProjectMapApprovalRequest,
-  isProjectMapExportRequest,
-  isProjectMapJobRequest,
-  isProjectMapReadRequest,
-  isProjectMapStartJobRequest,
-} from '../shared/project-map';
-import {
-  EMPTY_AGENT_COORDINATION_SNAPSHOT,
-  type AgentParticipantInput,
-  type AgentProjectCoordinationInput,
-  type ManagedMergeDecisionInput,
-  type ManagedMergeGrantInput,
-} from '../shared/agent-coordination';
-import type {
-  InterpreterToMain,
-  MainToInterpreter,
-  RunStartedInfo,
-  SessionInfo,
-  SystemStatsSnapshot,
-} from '../shared/ipc';
-import {
-  isOpenClawChatSurfaceSnapshot,
-  type OpenClawAutostartAction,
-  type OpenClawControlSnapshot,
-  type OpenClawLifecycleAction,
-  type OpenClawLifecycleReceipt,
-  type OpenClawVisibility,
-} from '../shared/openclaw';
-import type { AgentDecisionResult } from '../shared/agent';
-import type {
-  AgentProfile,
-  AgentProviderRef,
-  CollaborationPolicy,
-  CollaborationPolicyInput,
-} from '../shared/agent-orchestration';
-import type { InstallAgentAdapterInput } from '../shared/agent-adapter';
-import { normalizeExternalHttpUrl } from '../shared/external-url';
-import type {
-  AgentLaunchStartRequest,
-  AgentLaunchStartResult,
-  AgentLaunchTarget,
   AgentFreshLaunchOptions,
   AgentLauncherCapabilities,
-  AgentProjectLaunchStartRequest,
-  AgentProjectLaunchStartResult,
+  AgentLaunchStartRequest,
+  AgentLaunchTarget,
   AgentProjectInput,
-  AgentResumeStartRequest,
-  AgentResumeStartResult,
 } from '../shared/agent-history';
 import {
   cliModelLaunchOptions,
@@ -187,73 +49,168 @@ import {
   MAX_AGENT_LAUNCH_DIRECTORY_LENGTH,
   MAX_AGENT_PROJECTS,
 } from '../shared/agent-history';
-import { classifyRecentPanelInput } from './recent-panel-input';
-import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
-import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
+import type {
+  AgentProfile,
+  AgentProviderRef,
+  CollaborationPolicy
+} from '../shared/agent-orchestration';
+import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
+import { APP_RENDERER_ORIGIN } from '../shared/desktop-window';
+import type {
+  InterpreterToMain,
+  MainToInterpreter,
+  SessionInfo,
+  SystemStatsSnapshot
+} from '../shared/ipc';
+import {
+  type OpenClawControlSnapshot,
+  type OpenClawLifecycleAction,
+  type OpenClawLifecycleReceipt,
+  type OpenClawVisibility,
+} from '../shared/openclaw';
 import {
   isProjectSessionTarget,
   type ProjectWorkspaceDescriptor,
 } from '../shared/project-workspace';
-import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
-import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import {
-  isSessionSurfaceCloseDecisions,
-  isSessionSurfaceCloseEntries,
-  isSessionSurfaceId,
-  isSessionSurfaceIntent,
+  isSessionSurfaceId
 } from '../shared/session-surface';
 import {
-  readTerminalClipboardSnapshot,
-  writeTerminalClipboardText,
-} from './terminal-clipboard';
-import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
-import { TerminalFileCapabilityStore } from './terminal-file-capability';
-import { AppUpdateService } from './app-update-service';
-import { resolveNativeHostPath } from './native-host-path';
-import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
+  resolveUiLocale,
+  type UiLocalePreference
+} from '../shared/ui-preferences';
+import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
+import { AcpWorkerRuntime } from './acp-worker-runtime';
+import { AgentActivityService, type AgentActivityTransition } from './agent-activity-service';
+import { AgentAdapterService } from './agent-adapter-service';
+import { AgentCliShim } from './agent-cli-shim';
+import { AgentControlServer } from './agent-control-server';
+import { AgentCoordinationService } from './agent-coordination-service';
+import { AgentCoordinationStore } from './agent-coordination-store';
+import { AgentHistoryService } from './agent-history-service';
+import { AgentHookInstaller } from './agent-hook-installer';
+import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
+import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
 import {
-  DaemonLifecycleSettingsController,
-  synchronizeDaemonLifecycleAuthority,
-} from './daemon-lifecycle-settings';
-import { DaemonRuntime } from './daemon-runtime';
-import { DaemonStore } from './daemon-store';
+  AgentOrchestrationService,
+  type WorkerLaunchResult,
+} from './agent-orchestration-service';
+import { AgentOrchestrationStore } from './agent-orchestration-store';
+import { recordAgentProjectObservation } from './agent-project-observation';
+import { AgentProjectStore, canonicalAgentDirectory } from './agent-project-store';
+import { AgentProviderRegistry } from './agent-provider-registry';
+import { AgentSettingsStore } from './agent-settings-store';
+import { AgentValidationRunner } from './agent-validation-runner';
+import { buildMenuTemplate } from './app-menu';
+import {
+  rendererEntryUrls,
+  resolveRendererAssetPath,
+} from './app-renderer-protocol';
+import { ElectronUpdateHttpClient } from './app-update-network';
+import { AppUpdateService } from './app-update-service';
+import { AsyncMutationGate } from './async-mutation-gate';
+import { ClaudeHistoryAdapter } from './claude-history-adapter';
+import { ClaudeProviderAdapter } from './claude-provider-adapter';
+import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
+import { CodexAppServerClient } from './codex-app-server-client';
+import { CodexHistoryAdapter } from './codex-history-adapter';
+import { CodexProviderAdapter } from './codex-provider-adapter';
+import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import {
   readyDaemonAuthorityAvailability,
   safeModeDaemonAuthorityAvailability,
 } from './daemon-authority-availability';
-import { DaemonCommandRouter } from './daemon-command-router';
-import { DaemonAgentRuntime } from './daemon-agent-runtime';
-import { DaemonAutomationRuntime } from './daemon-automation-runtime';
 import {
-  DaemonAuthorityShutdown,
   closeDaemonStoreAfterAuthorityDrain,
+  DaemonAuthorityShutdown,
   disposeAgentsForAuthorityAvailability,
 } from './daemon-authority-shutdown';
-import { AgentProviderRegistry } from './agent-provider-registry';
-import { CodexProviderAdapter } from './codex-provider-adapter';
-import { ClaudeProviderAdapter } from './claude-provider-adapter';
-import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
+import { DaemonAutomationRuntime } from './daemon-automation-runtime';
+import { DaemonCommandRouter } from './daemon-command-router';
+import {
+  DaemonLifecycleSettingsController
+} from './daemon-lifecycle-settings';
 import {
   daemonProjectRemovalTransition,
   daemonProjectSaveRevocationTransition,
   daemonProjectSyncDescriptor,
   daemonWorkspaceId,
-  planDaemonProjectSync,
   daemonWorkspaceRevocationTransition,
+  planDaemonProjectSync,
   resolvedDaemonProjectSyncDescriptor,
   trustedDaemonWorkspaceReactivationIds,
   type DaemonProjectSyncOptions,
 } from './daemon-project-sync';
-import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
 import { installDaemonProviderIpc } from './daemon-provider-ipc';
-import type { DaemonCommandReceipt } from '../shared/daemon-protocol';
-import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
-import { ElectronUpdateHttpClient } from './app-update-network';
+import { DaemonRuntime } from './daemon-runtime';
+import { DaemonStore } from './daemon-store';
+import type { DesktopRuntime } from './desktop-runtime';
+import { DesktopWindowManager } from './desktop-window-manager';
+import { LogFile, pruneCrashDumps } from './diagnostics';
+import { createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
+import { buildExplicitQuitDialogOptions } from './explicit-quit-dialog';
+import { FileService } from './file-service';
+import { GitStatusService } from './git-status-service';
+import { GracefulShutdownCoordinator } from './graceful-shutdown';
+import { InterpreterBroker, type BrokerInterpreter, type RemotePort } from './interpreter-broker';
+import { KnownHostsStore } from './known-hosts-store';
+import { LayoutStore } from './layout-store';
+import { LocalMutationIngress, raceLocalOperationWithAbort } from './local-mutation-ingress';
+import { ManagedMergeService } from './managed-merge-service';
+import { resolveNativeHostPath } from './native-host-path';
+import { OpenClawChatViewManager } from './openclaw-chat-view';
+import { OpenClawLifecycleCoordinator } from './openclaw-lifecycle-coordinator';
 import {
-  UiPreferencesPatchSchema,
-  resolveUiLocale,
-  type UiLocalePreference,
-} from '../shared/ui-preferences';
+  DEFAULT_OPENCLAW_PROXY_PORT,
+  mintOpenClawChatTicket,
+  startOpenClawProxy,
+  type OpenClawProxyHandle,
+} from './openclaw-proxy';
+import { OpenClawService } from './openclaw-service';
+import { resolveOpenClawVisibility } from './openclaw-visibility';
+import { OwnedStartupBarrier, waitForStartupGroup } from './owned-startup-barrier';
+import { PacketCaptureRegistry } from './packet-capture-registry';
+import { PacketMirror } from './packet-mirror';
+import { PairingCodeService } from './pairing-code-service';
+import { ProcessGuardian, ProcessResourceGuardian } from './process-guardian';
+import { ProjectDocumentService } from './project-document-service';
+import { ProjectMapApprovalStore } from './project-map-approval-store';
+import { ProjectMapBindingStore } from './project-map-binding-store';
+import { ProjectMapCacheStore } from './project-map-cache-store';
+import { ProjectMapJobStore } from './project-map-job-store';
+import { ProjectMapService } from './project-map-service';
+import { ProjectReviewService } from './project-review-service';
+import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
+import {
+  projectWorkspaceDescriptorForProject,
+  ProjectWorkspaceService,
+} from './project-workspace-service';
+import { QuickCommandStore } from './quick-command-store';
+import { classifyRecentPanelInput } from './recent-panel-input';
+import type {
+  RemoteAgentHistorySource,
+  RemoteAgentOrchestrationSource,
+  RemoteFileSource,
+  RemoteOpenClawSource,
+  RemotePacketSource,
+  RemoteQuickCommandSource,
+  RemoteStatsSource,
+} from './remote-bridge';
+import { RemoteDeviceRoster } from './remote-device-roster';
+import { RendererCrashRecovery } from './renderer-crash-recovery';
+import { RendererRecoveryCheckpointStore } from './renderer-recovery-checkpoint-store';
+import { installRunCommandIpc } from './run-command-ipc';
+import { ScriptHostRegistry } from './script-host-registry';
+import { SessionSurfaceAuthority } from './session-surface-authority';
+import { SessionWorktreeGuard } from './session-worktree-guard';
+import { SshForwardService } from './ssh-forward-service';
+import { StatsVisibility } from './stats-visibility';
+import { SystemStatsService } from './system-stats-service';
+import { terminalCliInstalled } from './terminal-cli-discovery';
+import { TerminalFileCapabilityStore } from './terminal-file-capability';
+import { isAppUrl } from './url-guard';
+import { WorkspaceFileSearchService } from './workspace-file-search-service';
+import { GitRunner, WorktreeService } from './worktree-service';
 
 const osc52LastWrite = new WeakMap<object, number>();
 const OSC52_MAIN_MAX_BYTES = 64 * 1024;
@@ -742,6 +699,12 @@ const createWindow = (): BrowserWindow => {
 };
 
 app.on('ready', async () => {
+  const featureIpcDisposers: Array<() => void> = [];
+  app.once('will-quit', () => {
+    for (const dispose of featureIpcDisposers.reverse()) {
+      try { dispose(); } catch (error) { console.error('[main] feature IPC cleanup failed:', error); }
+    }
+  });
   console.log('[main] EZTerminal main process ready');
 
   if (process.platform === 'win32') {
@@ -902,7 +865,7 @@ app.on('ready', async () => {
     }),
     claudeProviderAdapter,
   ]);
-  const daemonRouterRef: { current?: DaemonCommandRouter } = {};
+  const daemonRouterRef: { current?: DaemonCommandRouter; } = {};
   const uninstallDaemonProviderIpc = installDaemonProviderIpc({
     ipc: ipcMain,
     registry: providerRegistry,
@@ -1111,25 +1074,10 @@ app.on('ready', async () => {
       win.webContents.send('app-update:snapshot', snapshot);
     }
   });
-  ipcMain.handle('app-update:get-snapshot', () => appUpdateService.getSnapshot());
-  ipcMain.handle('app-update:check', () => appUpdateService.check());
-  ipcMain.handle('app-update:download', () => appUpdateService.download());
-  ipcMain.handle('app-update:cancel-download', () => appUpdateService.cancelDownload());
-  ipcMain.handle('app-update:open', (_event, options: unknown) => {
-    if (
-      typeof options !== 'object'
-      || options === null
-      || Array.isArray(options)
-      || Object.keys(options).length !== 1
-      || typeof (options as { acknowledgeUnsigned?: unknown }).acknowledgeUnsigned !== 'boolean'
-    ) {
-      return { ok: false as const, reason: 'failed' as const };
-    }
-    return appUpdateService.openDownloadedUpdate(
-      (options as { acknowledgeUnsigned: boolean }).acknowledgeUnsigned,
-    );
-  });
-
+  featureIpcDisposers.push(installAppUpdateIpc({
+    ipc: ipcMain,
+    appUpdateService,
+  }));
   // Agent activity persistence + loopback hook relay. The relay binds only to
   // 127.0.0.1 and its bearer descriptor is injected into interpreter shell
   // sessions below; it never crosses preload or the mobile bridge.
@@ -1456,24 +1404,6 @@ app.on('ready', async () => {
   // prefix: every admitted Agent operation drains before its services close.
   const desktopAgentMutationIngress = localAgentOperationIngress;
   const desktopProjectMapMutationIngress = new LocalMutationIngress('Desktop Project Map IPC');
-  const gateLocalMutation = <TArgs extends unknown[], TResult>(
-    ingress: LocalMutationIngress,
-    handler: (event: IpcMainInvokeEvent, ...args: TArgs) => TResult | PromiseLike<TResult>,
-  ) => (
-    event: IpcMainInvokeEvent,
-    ...args: TArgs
-  ): Promise<TResult> => ingress.run(() => handler(event, ...args));
-  const gateAbortableLocalMutation = <TArgs extends unknown[], TResult>(
-    ingress: LocalMutationIngress,
-    handler: (
-      signal: AbortSignal,
-      event: IpcMainInvokeEvent,
-      ...args: TArgs
-    ) => TResult | PromiseLike<TResult>,
-  ) => (
-    event: IpcMainInvokeEvent,
-    ...args: TArgs
-  ): Promise<TResult> => ingress.run((signal) => handler(signal, event, ...args));
   let daemonProjectOperationIngressClosed = false;
   let daemonProjectOperationsShutdownDrain: Promise<void> | undefined;
   const daemonProjectOperationAbortController = new AbortController();
@@ -1631,7 +1561,7 @@ app.on('ready', async () => {
     }
   }
   const retireDaemonWorkspaceAuthority = async (
-    request: { readonly projectId: string; readonly rootId: string; readonly workspaceId: string },
+    request: { readonly projectId: string; readonly rootId: string; readonly workspaceId: string; },
   ): Promise<void> => {
     const receipt = await daemonCommandRouter.applySystemTransition(daemonWorkspaceRevocationTransition(
       request,
@@ -2031,68 +1961,17 @@ app.on('ready', async () => {
     }
     return result;
   });
-  ipcMain.handle('files:list', (_event, path: string) => fileService.listDirectory(path));
-  ipcMain.handle('files:roots', () => fileService.listRoots());
-  ipcMain.handle('files:read-text', (_event, path: string) => fileService.readTextFile(path));
-  ipcMain.handle('files:read-preview', async (event, path: string, capability?: unknown) => {
-    if (capability === undefined) return fileService.readFilePreview(path);
-    const authorized = await terminalCapabilitiesFor(event.sender).consumeAndOpen(capability, path);
-    if (!authorized.ok) return { ok: false as const, error: 'Terminal preview authorization expired or the file changed.' };
-    return fileService.readFilePreview(path, authorized.handle);
-  });
-  ipcMain.handle('files:mkdir', (_event, dirPath: string, name: string) =>
-    fileService.createFolder(dirPath, name),
-  );
-  ipcMain.handle('files:rename', (_event, path: string, newName: string) =>
-    fileService.renameEntry(path, newName),
-  );
-  ipcMain.handle('files:trash', (_event, path: string) => fileService.trashEntry(path));
-  ipcMain.handle('files:open-path', async (_event, path: string) => {
-    const err = await openPathForUser(path);
-    if (err) console.error('[main] shell.openPath failed:', err);
-  });
-  ipcMain.handle('files:reveal', async (_event, path: string) => {
-    await revealPathForUser(path);
-  });
-  ipcMain.handle('external:open-http-url', async (_event, value: unknown): Promise<boolean> => {
-    if (typeof value !== 'string') return false;
-    const url = normalizeExternalHttpUrl(value);
-    if (!url) return false;
-    try {
-      await openExternalForUser(url);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-
-  ipcMain.handle('quick-commands:list', async () => {
-    await quickCommandsReady;
-    return quickCommandStore.list();
-  });
-  ipcMain.handle('quick-commands:create', async (_event, input: unknown) => {
-    await quickCommandsReady;
-    return quickCommandStore.create(input);
-  });
-  ipcMain.handle('quick-commands:update', async (_event, id: unknown, input: unknown) => {
-    await quickCommandsReady;
-    return typeof id === 'string'
-      ? quickCommandStore.update(id, input)
-      : { ok: false, error: 'not-found', message: 'quick command not found' } as const;
-  });
-  ipcMain.handle('quick-commands:delete', async (_event, id: unknown) => {
-    await quickCommandsReady;
-    return typeof id === 'string'
-      ? quickCommandStore.delete(id)
-      : { ok: false, error: 'not-found', message: 'quick command not found' } as const;
-  });
-  ipcMain.handle('workspace-files:search', (_event, request: WorkspaceFileSearchRequest) =>
-    workspaceFileSearch.search(request),
-  );
-  ipcMain.on('workspace-files:cancel', (_event, requestId: unknown) => {
-    if (typeof requestId === 'string') workspaceFileSearch.cancel(requestId);
-  });
-
+  featureIpcDisposers.push(installFileToolsIpc({
+    ipc: ipcMain,
+    fileService,
+    terminalCapabilitiesFor,
+    openPathForUser,
+    revealPathForUser,
+    openExternalForUser,
+    quickCommandsReady,
+    quickCommandStore,
+    workspaceFileSearch,
+  }));
   // ── Packet capture (Phase 2B, off-by-default sub-view) + mobile tee (M3) ──
   // main only forks the host and brokers its port to the renderer — it never
   // sees packet rows or capture status (both flow host -> renderer directly
@@ -2128,759 +2007,76 @@ app.on('ready', async () => {
   const knownHostsReady = knownHostsStore.init().catch((err) => {
     console.error('[main] known_hosts store init failed:', err);
   });
-  ipcMain.handle('layout:load', async () => {
-    await storeReady;
-    return layoutStore.loadLayout();
-  });
-  ipcMain.handle('layout:save', async (_event, rawLayout: unknown) => {
-    await storeReady;
-    layoutStore.saveLayout(rawLayout);
-  });
-  ipcMain.handle('layout:flush', async () => {
-    await storeReady;
-    await layoutStore.flush();
-  });
-  ipcMain.handle('layout:quarantine', async () => {
-    await storeReady;
-    await layoutStore.quarantineLayout();
-  });
-  ipcMain.handle('presets:list', async () => {
-    await storeReady;
-    return layoutStore.listPresets();
-  });
-  ipcMain.handle('presets:get', async (_event, name: string) => {
-    await storeReady;
-    return typeof name === 'string' ? layoutStore.getPreset(name) : null;
-  });
-  ipcMain.handle('presets:save', async (_event, name: string, rawLayout: unknown) => {
-    await storeReady;
-    return typeof name === 'string' ? layoutStore.savePreset(name, rawLayout) : false;
-  });
-  ipcMain.handle('presets:delete', async (_event, name: string) => {
-    await storeReady;
-    if (typeof name === 'string') await layoutStore.deletePreset(name);
-  });
-  ipcMain.handle('settings:get-startup', async () => {
-    await storeReady;
-    return layoutStore.getStartup();
-  });
-  ipcMain.handle('settings:set-startup', async (_event, pref: StartupPref) => {
-    await storeReady;
-    await layoutStore.setStartup(pref);
-  });
-  ipcMain.handle('settings:get-daemon-lifecycle', async () => {
-    await daemonRuntimeReady;
-    return daemonRuntime!.settingsSnapshot();
-  });
-  ipcMain.handle('settings:set-daemon-lifecycle', async (_event, value: unknown) => {
-    await daemonRuntimeReady;
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      throw new Error('Invalid daemon lifecycle settings.');
-    }
-    const candidate = value as Record<string, unknown>;
-    if (
-      Object.keys(candidate).some((key) => key !== 'keepRunning' && key !== 'startAtLogin')
-      || ('keepRunning' in candidate && typeof candidate.keepRunning !== 'boolean')
-      || ('startAtLogin' in candidate && typeof candidate.startAtLogin !== 'boolean')
-    ) {
-      throw new Error('Invalid daemon lifecycle settings.');
-    }
-    const lifecycle = await daemonRuntime!.updateSettings({
-      ...('keepRunning' in candidate ? { keepRunning: candidate.keepRunning as boolean } : {}),
-      ...('startAtLogin' in candidate ? { startAtLogin: candidate.startAtLogin as boolean } : {}),
-    });
-    await synchronizeDaemonLifecycleAuthority(lifecycle, {
-      availability: await daemonAvailabilityReady,
-      authorityReady: daemonAuthorityReady,
-      getCurrent: () => daemonCommandRouter.getSnapshot().runtime,
-      apply: async (settings) => {
-        await daemonCommandRouter.applySystemCommit({
-          mutations: [{
-            kind: 'runtime.update',
-            value: {
-              keepRunning: settings.keepRunning,
-              startAtLogin: settings.startAtLogin,
-            },
-          }],
-        });
-      },
-      notifyChanged: () => daemonAutomationRuntime.notifyAuthorityChanged(),
-    });
-    return lifecycle;
-  });
-  const rejectedDaemonCommand = (
-    value: unknown,
-    message: string,
-    code: 'unauthorized' | 'internal-error' = 'unauthorized',
-    details?: Readonly<Record<string, unknown>>,
-  ): DaemonCommandReceipt => ({
-    ok: false,
-    status: 'rejected',
-    commandId: (
-      typeof value === 'object'
-      && value !== null
-      && !Array.isArray(value)
-      && typeof (value as { commandId?: unknown }).commandId === 'string'
-    ) ? (value as { commandId: string }).commandId : 'invalid-command',
-    revision: (() => {
-      try {
-        return daemonCommandRouter.getSnapshot().revision;
-      } catch {
-        return 0;
-      }
-    })(),
-    error: { code, message, retryable: false, ...(details ? { details } : {}) },
-  });
-  ipcMain.handle('daemon:get-availability', async (event, clientInstanceId: unknown) => {
-    const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-    if (!principalId) return null;
-    return daemonAvailabilityReady;
-  });
-  ipcMain.handle('daemon:get-snapshot', async (event, clientInstanceId: unknown) => {
-    const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-    if (!principalId) return null;
-    try {
-      await Promise.all([daemonAuthorityReady, daemonProjectsReady]);
-      return daemonCommandRouter.getSnapshot();
-    } catch {
-      return null;
-    }
-  });
-  ipcMain.handle(
-    'daemon:get-transcript',
-    async (
-      event,
-      clientInstanceId: unknown,
-      sessionId: unknown,
-      afterSequence: unknown,
-      limit: unknown,
-    ) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (
-        !principalId
-        || !isSessionSurfaceId(sessionId)
-        || !Number.isSafeInteger(afterSequence)
-        || (afterSequence as number) < 0
-        || !Number.isSafeInteger(limit)
-        || (limit as number) < 1
-        || (limit as number) > 2_000
-      ) return [];
-      try {
-        await daemonAuthorityReady;
-        return daemonCommandRouter.getTranscript(
-          sessionId,
-          afterSequence as number,
-          limit as number,
-        );
-      } catch {
-        return [];
-      }
-    },
-  );
-  ipcMain.handle('daemon:command', async (event, clientInstanceId: unknown, value: unknown) => {
-    const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-    if (!principalId) return rejectedDaemonCommand(value, 'Desktop daemon authority is unavailable.');
-    try {
-      await Promise.all([daemonAuthorityReady, daemonProjectsReady]);
-    } catch {
-      const availability = await daemonAvailabilityReady;
-      return rejectedDaemonCommand(
-        value,
-        availability.state === 'legacy-only-safe-mode'
-          ? 'Structured Agent authority is unavailable in terminal-only safe mode.'
-          : 'The daemon store could not be initialized.',
-        'internal-error',
-        { availability },
-      );
-    }
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      return daemonCommandRouter.execute(value);
-    }
-    return daemonCommandRouter.execute({
-      ...(value as Record<string, unknown>),
-      principal: { kind: 'desktop', id: principalId },
-    });
-  });
-  ipcMain.handle(
-    'daemon:set-events-subscribed',
-    async (event, clientInstanceId: unknown, subscribed: unknown) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (!principalId || typeof subscribed !== 'boolean') return;
-      const availability = await daemonAvailabilityReady;
-      if (availability.state !== 'ready') {
-        setDaemonEventSubscription(event.sender, false);
-        return;
-      }
-      await daemonAuthorityReady;
-      setDaemonEventSubscription(event.sender, subscribed);
-    },
-  );
-  ipcMain.handle('settings:get-ui-preferences', async () => {
-    await storeReady;
-    return layoutStore.getUiPreferences();
-  });
-  ipcMain.handle('settings:set-ui-preferences', async (_event, preferences: unknown) => {
-    await storeReady;
-    const parsed = UiPreferencesPatchSchema.safeParse(preferences);
-    if (!parsed.success) return layoutStore.getUiPreferences();
-    const persisted = await layoutStore.setUiPreferences(parsed.data);
-    applyNativeMenuLocale(persisted.locale);
-    systemStatsService?.setResourceProfile(persisted.resourceProfile);
-    return persisted;
-  });
-  ipcMain.handle('settings:refresh-native-menu-locale', async () => {
-    await storeReady;
-    const preferences = await layoutStore.getUiPreferences();
-    applyNativeMenuLocale(preferences.locale);
-  });
-  ipcMain.handle('settings:get-theme', async () => {
-    await storeReady;
-    return layoutStore.getTheme();
-  });
-  ipcMain.handle('settings:set-theme', async (_event, theme: ThemeName) => {
-    await storeReady;
-    await layoutStore.setTheme(theme);
-  });
-  ipcMain.handle('settings:get-ui-scale', async () => {
-    await storeReady;
-    return layoutStore.getUiScale();
-  });
-  ipcMain.handle('settings:set-ui-scale', async (_event, uiScale: number) => {
-    await storeReady;
-    if (typeof uiScale === 'number') await layoutStore.setUiScale(uiScale);
-  });
-  ipcMain.handle('settings:get-scrollback', async () => {
-    await storeReady;
-    return layoutStore.getScrollback();
-  });
-  ipcMain.handle('settings:set-scrollback', async (_event, scrollback: number) => {
-    await storeReady;
-    if (typeof scrollback === 'number') await layoutStore.setScrollback(scrollback);
-  });
-  ipcMain.handle('settings:get-terminal-renderer', async () => {
-    await storeReady;
-    return layoutStore.getTerminalRenderer();
-  });
-  ipcMain.handle('settings:set-terminal-renderer', async (_event, preference: unknown) => {
-    const parsed = TerminalRendererPreferenceSchema.safeParse(preference);
-    if (!parsed.success) return;
-    await storeReady;
-    await layoutStore.setTerminalRenderer(parsed.data);
-  });
-  ipcMain.handle('settings:get-confirm-risky-pane-close', async () => {
-    await storeReady;
-    return layoutStore.getConfirmRiskyPaneClose();
-  });
-  ipcMain.handle('settings:set-confirm-risky-pane-close', async (_event, enabled: unknown) => {
-    if (typeof enabled !== 'boolean') return;
-    await storeReady;
-    await layoutStore.setConfirmRiskyPaneClose(enabled);
-  });
-  ipcMain.handle('settings:get-boot-intro', async () => {
-    await storeReady;
-    return layoutStore.getBootIntro();
-  });
-  ipcMain.handle('settings:set-boot-intro', async (_event, enabled: unknown) => {
-    if (typeof enabled !== 'boolean') return;
-    await storeReady;
-    await layoutStore.setBootIntro(enabled);
-  });
-  ipcMain.handle('settings:get-allow-osc52-clipboard', async () => {
-    await storeReady;
-    return layoutStore.getAllowOsc52Clipboard();
-  });
-  ipcMain.handle('settings:set-allow-osc52-clipboard', async (_event, enabled: unknown) => {
-    if (typeof enabled !== 'boolean') return;
-    await storeReady;
-    await layoutStore.setAllowOsc52Clipboard(enabled);
-  });
-  ipcMain.handle('settings:get-terminal-paste-preferences', async () => {
-    await storeReady;
-    return layoutStore.getTerminalPastePreferences();
-  });
-  ipcMain.handle('settings:set-terminal-paste-preferences', async (_event, preferences: unknown) => {
-    if (!isTerminalPastePreferences(preferences)) return;
-    await storeReady;
-    await layoutStore.setTerminalPastePreferences(preferences);
-  });
-  ipcMain.handle('terminal:read-clipboard', () => readTerminalClipboardSnapshot(clipboard));
-  ipcMain.handle('terminal:write-clipboard', (_event, text: unknown): boolean =>
-    writeTerminalClipboardText(clipboard, text));
-  ipcMain.handle('terminal:write-osc52-clipboard', async (event, text: unknown): Promise<boolean> => {
-    if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > OSC52_MAIN_MAX_BYTES) return false;
-    await storeReady;
-    if (!(await layoutStore.getAllowOsc52Clipboard())) return false;
-    const now = Date.now();
-    const previous = osc52LastWrite.get(event.sender) ?? Number.NEGATIVE_INFINITY;
-    if (now - previous < OSC52_MAIN_MIN_INTERVAL_MS) return false;
-    osc52LastWrite.set(event.sender, now);
-    clipboard.writeText(text);
-    return true;
-  });
-  ipcMain.handle('terminal:resolve-file-location', (event, request: TerminalFileLocationRequest) =>
-    resolveTerminalFileLocation(request, terminalCapabilitiesFor(event.sender)));
-  ipcMain.handle('ssh-forwards:list', () => sshForwardService?.listAll() ?? []);
-  ipcMain.handle(
-    'ssh-forwards:stop',
-    async (_event, connectionId: unknown, forwardId: unknown): Promise<SshForwardResult> => {
-      if (typeof connectionId !== 'string' || typeof forwardId !== 'string') {
-        return sshForwardFailure(new Error('invalid SSH forward stop request'));
-      }
-      try {
-        if (!sshForwardService) throw new Error('SSH forwarding service is unavailable');
-        return { ok: true, forwards: [await sshForwardService.stop(connectionId, forwardId)] };
-      } catch (error) {
-        return sshForwardFailure(error);
-      }
-    },
-  );
-  ipcMain.handle('agents:get-snapshot', () => agentActivityService?.getSnapshot() ?? { revision: 0, items: [] });
-  ipcMain.handle('agents:get-coordination-snapshot', () => (
-    agentCoordinationService?.getSnapshot() ?? EMPTY_AGENT_COORDINATION_SNAPSHOT
-  ));
-  ipcMain.handle('agents:get-orchestration-snapshot', async () => {
-    await agentOrchestrationReady;
-    return agentOrchestrationService?.getSnapshot() ?? {
-      revision: 0,
-      providers: [],
-      profiles: [],
-      policies: [],
-      runs: [],
-      events: [],
-      migration: agentOrchestrationStore.migrationStatus,
-    };
-  });
-  ipcMain.handle('agents:save-collaboration-policy', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
-    await agentOrchestrationReady;
-    if (!agentOrchestrationService || typeof input !== 'object' || input === null || Array.isArray(input)) {
-      return { ok: false, error: 'invalid', message: 'Invalid collaboration policy.' } as const;
-    }
-    return agentOrchestrationService.savePolicy(input as CollaborationPolicyInput);
+  featureIpcDisposers.push(installLayoutIpc({
+    ipc: ipcMain,
+    storeReady,
+    layoutStore,
   }));
-  ipcMain.handle('agents:confirm-team-migration', gateLocalMutation(desktopAgentMutationIngress, async () => {
-    await agentOrchestrationReady;
-    return agentOrchestrationService?.confirmLegacyMigration() ?? agentOrchestrationStore.migrationStatus;
+  featureIpcDisposers.push(installDaemonAuthorityIpc({
+    ipc: ipcMain,
+    daemonRuntimeReady,
+    get daemonRuntime() { return daemonRuntime; },
+    daemonAvailabilityReady,
+    daemonAuthorityReady,
+    daemonCommandRouter,
+    daemonAutomationRuntime,
+    resolveDesktopSessionPrincipal,
+    daemonProjectsReady,
+    setDaemonEventSubscription,
   }));
-  ipcMain.handle('agents:cancel-worker', gateLocalMutation(desktopAgentMutationIngress, async (_event, runId: unknown, taskId: unknown) => {
-    if (!agentOrchestrationService || typeof runId !== 'string' || typeof taskId !== 'string') {
-      return { ok: false, error: 'invalid', message: 'Invalid worker cancellation.' } as const;
-    }
-    const run = agentOrchestrationStore.getRun(runId);
-    const lead = run ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId) : undefined;
-    return lead
-      ? agentOrchestrationService.cancelWorker(lead, taskId)
-      : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+  featureIpcDisposers.push(installPreferencesIpc({
+    ipc: ipcMain,
+    storeReady,
+    layoutStore,
+    applyNativeMenuLocale,
+    get systemStatsService() { return systemStatsService; },
   }));
-  ipcMain.handle('agents:archive-worker', gateLocalMutation(desktopAgentMutationIngress, async (_event, runId: unknown, taskId: unknown) => {
-    if (!agentOrchestrationService || typeof runId !== 'string' || typeof taskId !== 'string') {
-      return { ok: false, error: 'invalid', message: 'Invalid worker archive request.' } as const;
-    }
-    const run = agentOrchestrationStore.getRun(runId);
-    const lead = run ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId) : undefined;
-    return lead
-      ? agentOrchestrationService.archiveWorker(lead, taskId)
-      : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+  featureIpcDisposers.push(installTerminalToolsIpc({
+    ipc: ipcMain,
+    OSC52_MAIN_MAX_BYTES,
+    storeReady,
+    layoutStore,
+    osc52LastWrite,
+    OSC52_MAIN_MIN_INTERVAL_MS,
+    terminalCapabilitiesFor,
+    get sshForwardService() { return sshForwardService; },
   }));
-  ipcMain.handle('agents:stop-orchestration-run', gateLocalMutation(desktopAgentMutationIngress, async (_event, runId: unknown) => {
-    if (!agentOrchestrationService || typeof runId !== 'string') {
-      return { ok: false, error: 'invalid', message: 'Invalid Lead run.' } as const;
-    }
-    const run = agentOrchestrationStore.getRun(runId);
-    const lead = run ? agentActivityService?.getSnapshot().items.find((item) => item.id === run.leadActivityId) : undefined;
-    return lead
-      ? agentOrchestrationService.stopRun(lead, runId)
-      : { ok: false, error: 'not-found', message: 'Lead session is unavailable.' } as const;
+  featureIpcDisposers.push(installAgentCollaborationIpc({
+    ipc: ipcMain,
+    get agentActivityService() { return agentActivityService; },
+    get agentCoordinationService() { return agentCoordinationService; },
+    agentOrchestrationReady,
+    get agentOrchestrationService() { return agentOrchestrationService; },
+    agentOrchestrationStore,
+    desktopAgentMutationIngress,
+    agentAdapterReady,
+    agentAdapterService,
+    get mainWindowRef() { return mainWindowRef; },
+    get agentControlServer() { return agentControlServer; },
+    get broker() { return broker; },
+    agentCliShim,
+    get managedMergeService() { return managedMergeService; },
   }));
-  ipcMain.handle('agents:get-adapter-snapshot', async () => {
-    await agentAdapterReady;
-    return agentAdapterService.getSnapshot();
-  });
-  ipcMain.handle('agents:select-adapter-bundle', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, event) => {
-    await raceLocalOperationWithAbort(agentAdapterReady, signal);
-    signal.throwIfAborted();
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
-    const options: OpenDialogOptions = {
-      title: 'Install an Agent adapter',
-      properties: ['openFile'],
-      filters: [{ name: 'EZTerminal Agent adapter', extensions: ['ezadapter'] }],
-    };
-    let selected: Electron.OpenDialogReturnValue;
-    try {
-      selected = await raceLocalOperationWithAbort(
-        owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options),
-        signal,
-      );
-    } catch (error) {
-      if (signal.aborted) return null;
-      throw error;
-    }
-    const archivePath = selected.filePaths[0];
-    return selected.canceled || !archivePath ? null : agentAdapterService.inspect(archivePath);
+  featureIpcDisposers.push(installAgentHistoryIpc({
+    ipc: ipcMain,
+    agentHistoryReady,
+    agentHistoryService,
+    desktopAgentMutationIngress,
+    get broker() { return broker; },
+    directoryKey,
+    requestAgentResumeWork,
+    agentInfrastructureReady,
+    requestAgentLaunchWork,
+    isAgentLaunchTarget,
+    isBoundedAgentString,
+    isAgentLaunchStartRequest,
   }));
-  ipcMain.handle('agents:install-adapter', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
-    await agentAdapterReady;
-    if (!input || typeof input !== 'object' || Array.isArray(input)) {
-      return { ok: false, error: 'invalid', message: 'Invalid adapter installation request.' } as const;
-    }
-    return agentAdapterService.install(input as InstallAgentAdapterInput);
-  }));
-  ipcMain.handle('agents:set-adapter-enabled', gateLocalMutation(desktopAgentMutationIngress, async (_event, adapterId: unknown, enabled: unknown) => {
-    await agentAdapterReady;
-    if (typeof adapterId !== 'string' || typeof enabled !== 'boolean') {
-      return { ok: false, error: 'invalid', message: 'Invalid adapter state request.' } as const;
-    }
-    return agentAdapterService.setEnabled(adapterId, enabled);
-  }));
-  ipcMain.handle('agents:remove-adapter', gateLocalMutation(desktopAgentMutationIngress, async (_event, adapterId: unknown) => {
-    await agentAdapterReady;
-    if (typeof adapterId !== 'string') {
-      return { ok: false, error: 'invalid', message: 'Invalid adapter removal request.' } as const;
-    }
-    return agentAdapterService.remove(adapterId);
-  }));
-  ipcMain.handle('agents:join-collaboration', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
-      return { ok: false, error: 'invalid', message: 'Invalid collaboration request.' } as const;
-    }
-    const result = await agentCoordinationService.join(input as AgentParticipantInput);
-    if (result.ok && agentControlServer && broker) {
-      const descriptor = agentControlServer.descriptorForSession(result.value.participant.sessionId);
-      broker.setPrivateSessionEnvironment(result.value.participant.sessionId, {
-        EZTERMINAL_AGENT_CONTROL_DESCRIPTOR: descriptor,
-        PATH: agentCliShim.prependToPath(process.env.PATH),
-      });
-    }
-    return result;
-  }));
-  ipcMain.handle('agents:leave-collaboration', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: unknown) => {
-    if (typeof activityId !== 'string' || !agentCoordinationService) return false;
-    return agentCoordinationService.leave(activityId);
-  }));
-  ipcMain.handle('agents:save-coordination-project', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
-      return { ok: false, error: 'invalid', message: 'Invalid Project coordination settings.' } as const;
-    }
-    return agentCoordinationService.saveProject(input as AgentProjectCoordinationInput);
-  }));
-  ipcMain.handle('agents:mark-seen', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: unknown, stateSeq: unknown) => (
-    typeof activityId === 'string'
-    && typeof stateSeq === 'number'
-    && Number.isSafeInteger(stateSeq)
-    && agentCoordinationService?.markSeen(activityId, stateSeq) === true
-  )));
-  ipcMain.handle('agents:prompt', gateAbortableLocalMutation(desktopAgentMutationIngress, (
-    signal,
-    _event,
-    activityId: unknown,
-    text: unknown,
-    options?: unknown,
-  ) => {
-    const validOptions = options === undefined || (
-      typeof options === 'object'
-      && options !== null
-      && !Array.isArray(options)
-      && Object.keys(options).every((key) => key === 'whenReady')
-      && (
-        (options as { readonly whenReady?: unknown }).whenReady === undefined
-        || typeof (options as { readonly whenReady?: unknown }).whenReady === 'boolean'
-      )
-    );
-    if (
-      typeof activityId !== 'string'
-      || typeof text !== 'string'
-      || !validOptions
-      || !agentActivityService
-    ) {
-      return { ok: false, error: 'invalid-text' } as const;
-    }
-    const whenReady = (options as { readonly whenReady?: boolean } | undefined)?.whenReady === true;
-    if (whenReady) {
-      return agentCoordinationService?.prompt(activityId, text, { whenReady: true, signal })
-        ?? { ok: false, error: 'not-found' } as const;
-    }
-    return agentActivityService.sendPrompt(activityId, text);
-  }));
-  ipcMain.handle('agents:request-managed-merge', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: unknown, targetBranch: unknown) => {
-    if (typeof activityId !== 'string' || typeof targetBranch !== 'string' || !managedMergeService) {
-      return { ok: false, error: 'invalid', message: 'Invalid managed merge request.' } as const;
-    }
-    return managedMergeService.requestForActivity(activityId, targetBranch);
-  }));
-  ipcMain.handle('agents:decide-managed-merge', gateLocalMutation(desktopAgentMutationIngress, (_event, input: unknown) => {
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !managedMergeService) {
-      return { ok: false, error: 'invalid', message: 'Invalid managed merge decision.' } as const;
-    }
-    return managedMergeService.decide({
-      ...(input as ManagedMergeDecisionInput),
-      actor: 'desktop',
-    });
-  }));
-  ipcMain.handle('agents:grant-next-managed-merge', gateLocalMutation(desktopAgentMutationIngress, (_event, input: unknown) => {
-    if (typeof input !== 'object' || input === null || Array.isArray(input) || !managedMergeService) {
-      return { ok: false, error: 'invalid', message: 'Invalid one-shot merge grant.' } as const;
-    }
-    return managedMergeService.grantNext(input as ManagedMergeGrantInput);
-  }));
-  ipcMain.handle('agents:get-managed-merge-diff', gateLocalMutation(desktopAgentMutationIngress, (_event, requestId: unknown, revision: unknown) => {
-    if (
-      typeof requestId !== 'string'
-      || typeof revision !== 'number'
-      || !Number.isSafeInteger(revision)
-      || !managedMergeService
-    ) return { ok: false, error: 'git-failed' } as const;
-    return managedMergeService.readCandidateDiff(requestId, revision);
-  }));
-  ipcMain.handle('agent-history:list-projects', async (
-    _event,
-    force?: unknown,
-    cursor?: unknown,
-    limit?: unknown,
-    query?: unknown,
-  ) => {
-    await agentHistoryReady;
-    return agentHistoryService.listProjects(
-      force === true,
-      typeof cursor === 'string' ? cursor : undefined,
-      typeof limit === 'number' ? limit : undefined,
-      typeof query === 'string' ? query : undefined,
-    );
-  });
-  ipcMain.handle('agent-history:list-sessions', async (
-    _event,
-    projectId: unknown,
-    cursor?: unknown,
-    limit?: unknown,
-    force?: unknown,
-  ) => {
-    await agentHistoryReady;
-    if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 128) {
-      return { items: [], nextCursor: null };
-    }
-    return agentHistoryService.listSessions(
-      projectId,
-      typeof cursor === 'string' ? cursor : undefined,
-      typeof limit === 'number' ? limit : undefined,
-      force === true,
-    );
-  });
-  ipcMain.handle('agent-history:read', async (
-    _event,
-    historyId: unknown,
-    cursor?: unknown,
-    limit?: unknown,
-  ) => {
-    await agentHistoryReady;
-    if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
-    return agentHistoryService.readTranscript(
-      historyId,
-      typeof cursor === 'string' ? cursor : undefined,
-      typeof limit === 'number' ? limit : undefined,
-    );
-  });
-  ipcMain.handle('agent-history:prepare-resume', async (_event, historyId: unknown) => {
-    await agentHistoryReady;
-    if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
-    return agentHistoryService.prepareResume(historyId);
-  });
-  ipcMain.handle('agent-history:start-resume', gateLocalMutation(desktopAgentMutationIngress, async (
-    event,
-    request: unknown,
-  ): Promise<AgentResumeStartResult> => {
-    await agentHistoryReady;
-    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
-      return { ok: false, reason: 'invalid' };
-    }
-    const candidate = request as Partial<AgentResumeStartRequest>;
-    if (
-      typeof candidate.historyId !== 'string'
-      || candidate.historyId.length === 0
-      || candidate.historyId.length > 128
-      || typeof candidate.sessionId !== 'string'
-      || candidate.sessionId.length === 0
-      || candidate.sessionId.length > 256
-      || typeof candidate.runId !== 'string'
-      || candidate.runId.length === 0
-      || candidate.runId.length > 256
-      || typeof candidate.revision !== 'string'
-      || candidate.revision.length === 0
-      || candidate.revision.length > 128
-      || (candidate.rootChoice !== 'recorded' && candidate.rootChoice !== 'current')
-    ) {
-      return { ok: false, reason: 'invalid' };
-    }
-    const resolved = await agentHistoryService.resolveResume(
-      candidate.historyId,
-      candidate.revision,
-      candidate.rootChoice,
-    );
-    if (!resolved.ok) return resolved;
-    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
-    if (!session || !resolved.roots[0]
-      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
-      return { ok: false, reason: 'session-mismatch' };
-    }
-    // The launch line is built by the provider adapter; the provider's session id
-    // remains main/interpreter private and renderer frames and shell history
-    // receive only the redacted display text.
-    const port = broker?.runPrivateCommand(
-      candidate.sessionId,
-      candidate.runId,
-      resolved.commandText,
-      resolved.displayCommandText,
-    );
-    if (!port) return { ok: false, reason: 'unavailable' };
-    void requestAgentResumeWork(candidate.historyId, Date.now())
-      .catch((err) => {
-        console.error('[main] failed to record resumed Agent project:', err);
-      });
-    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
-    return { ok: true };
-  }));
-  ipcMain.handle('agent-projects:list-launchers', async () => {
-    await agentInfrastructureReady;
-    return agentHistoryService.listLaunchers();
-  });
-  const startAgentLaunchInSession = async (
-    event: IpcMainInvokeEvent,
-    candidate: AgentLaunchStartRequest,
-  ): Promise<AgentLaunchStartResult> => {
-    const resolved = await agentHistoryService.resolveLaunch(
-      candidate.target,
-      candidate.launcherId,
-      candidate.revision,
-      cliModelLaunchOptions(candidate.launcherId, candidate.model),
-    );
-    if (!resolved.ok) return resolved;
-    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
-    if (!session || !resolved.roots[0]
-      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
-      return { ok: false, reason: 'session-mismatch' };
-    }
-    const port = broker?.runPrivateCommand(
-      candidate.sessionId,
-      candidate.runId,
-      resolved.commandText,
-      resolved.displayCommandText,
-    );
-    if (!port) return { ok: false, reason: 'unavailable' };
-    void requestAgentLaunchWork(candidate.target, resolved.roots, Date.now())
-      .catch((err) => {
-        console.error('[main] failed to record launched Agent project:', err);
-      });
-    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
-    return { ok: true };
-  };
-  ipcMain.handle('agent-launch:prepare', async (
-    _event,
-    target: unknown,
-    launcherId: unknown,
-    model?: unknown,
-  ) => {
-    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
-    if (!isAgentLaunchTarget(target) || !isBoundedAgentString(launcherId, 128) || !isAgentLaunchModel(launcherId, model)) {
-      return { ok: false, reason: 'invalid' };
-    }
-    return agentHistoryService.prepareLaunch(target, launcherId, cliModelLaunchOptions(launcherId, model as string | undefined));
-  });
-  ipcMain.handle('agent-launch:start', gateLocalMutation(desktopAgentMutationIngress, async (
-    event,
-    request: unknown,
-  ): Promise<AgentLaunchStartResult> => {
-    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
-    return isAgentLaunchStartRequest(request)
-      ? startAgentLaunchInSession(event, request)
-      : { ok: false, reason: 'invalid' };
-  }));
-  ipcMain.handle('agent-projects:prepare-launch', async (
-    _event,
-    projectId: unknown,
-    launcherId: unknown,
-  ) => {
-    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
-    if (
-      typeof projectId !== 'string'
-      || projectId.length === 0
-      || projectId.length > 128
-      || typeof launcherId !== 'string'
-      || launcherId.length === 0
-      || launcherId.length > 128
-    ) {
-      return { ok: false, reason: 'invalid' };
-    }
-    return agentHistoryService.prepareProjectLaunch(projectId, launcherId);
-  });
-  ipcMain.handle('agent-projects:start-launch', gateLocalMutation(desktopAgentMutationIngress, async (
-    event,
-    request: unknown,
-  ): Promise<AgentProjectLaunchStartResult> => {
-    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
-    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
-      return { ok: false, reason: 'invalid' };
-    }
-    const candidate = request as Partial<AgentProjectLaunchStartRequest>;
-    if (
-      typeof candidate.projectId !== 'string'
-      || candidate.projectId.length === 0
-      || candidate.projectId.length > 128
-      || typeof candidate.launcherId !== 'string'
-      || candidate.launcherId.length === 0
-      || candidate.launcherId.length > 128
-      || typeof candidate.sessionId !== 'string'
-      || candidate.sessionId.length === 0
-      || candidate.sessionId.length > 256
-      || typeof candidate.runId !== 'string'
-      || candidate.runId.length === 0
-      || candidate.runId.length > 256
-      || typeof candidate.revision !== 'string'
-      || candidate.revision.length === 0
-      || candidate.revision.length > 128
-    ) {
-      return { ok: false, reason: 'invalid' };
-    }
-    return startAgentLaunchInSession(event, {
-      target: { kind: 'project', projectId: candidate.projectId },
-      launcherId: candidate.launcherId,
-      sessionId: candidate.sessionId,
-      runId: candidate.runId,
-      revision: candidate.revision,
-    });
-  }));
-  ipcMain.handle('agent-projects:save', gateLocalMutation(desktopAgentMutationIngress, async (_event, input: unknown) => {
-    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-      return { ok: false, reason: 'invalid' };
-    }
-    try {
-      return await requestAgentProjectSave(input as AgentProjectInput);
-    } catch (error) {
-      console.error('[main] saved Agent Project daemon sync failed:', error);
-      return { ok: false, reason: 'invalid' } as const;
-    }
-  }));
-  ipcMain.handle('agent-projects:remove', gateLocalMutation(desktopAgentMutationIngress, async (_event, projectId: unknown) => {
-    try {
-      return await requestAgentProjectRemoval(projectId);
-    } catch (error) {
-      console.error('[main] Agent Project daemon revocation failed:', error);
-      return false;
-    }
-  }));
-  ipcMain.handle('agent-projects:select-folders', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, event, multiple?: unknown) => {
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
-    const options: Electron.OpenDialogOptions = {
-      title: 'Select project folders',
-      properties: ['openDirectory', ...(multiple === false ? [] : ['multiSelections' as const])],
-    };
-    let result: Electron.OpenDialogReturnValue;
-    try {
-      result = await raceLocalOperationWithAbort(
-        owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options),
-        signal,
-      );
-    } catch (error) {
-      if (signal.aborted) return { canceled: true, paths: [] } as const;
-      throw error;
-    }
-    return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
+  featureIpcDisposers.push(installAgentProjectsIpc({
+    ipc: ipcMain,
+    desktopAgentMutationIngress,
+    requestAgentProjectSave,
+    requestAgentProjectRemoval,
+    get mainWindowRef() { return mainWindowRef; },
   }));
   ipcMain.handle('renderer-recovery:save-checkpoint', (event, checkpoint: unknown) => (
     rendererRecoveryCheckpoints.save(event.sender.id, checkpoint)
@@ -2891,234 +2087,25 @@ app.on('ready', async () => {
   ipcMain.handle('renderer-recovery:prepare', (event) => {
     prepareDesktopRendererRecovery(event.sender.id);
   });
-  ipcMain.handle('project-workspace:describe', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, _event, projectId: unknown) => {
-    await raceLocalOperationWithAbort(projectWorkspaceReady, signal);
-    signal.throwIfAborted();
-    const described = await projectWorkspaceService.describeProjectWorkspaces(projectId, signal);
-    if (described.ok) {
-      await requestDaemonProjectSync().catch((error) => {
-        console.error('[main] described Agent Project daemon sync failed:', error);
-      });
-    }
-    return described;
+  featureIpcDisposers.push(installProjectWorkspaceIpc({
+    ipc: ipcMain,
+    desktopAgentMutationIngress,
+    projectWorkspaceReady,
+    projectWorkspaceService,
+    requestDaemonProjectSync,
+    resolveProjectTerminalDirectory,
+    projectDocumentService,
+    projectWorkspaceSearches,
+    requestProjectWorkspaceApproval,
+    requestDaemonWorkspaceRevocation,
   }));
-  ipcMain.handle('project-workspace:resolve-terminal-directory', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, _event, request: unknown) => {
-    try {
-      signal.throwIfAborted();
-      // Resolution and its exact daemon commit share one FIFO operation with
-      // revocation, so neither can publish a stale external-worktree grant.
-      return await resolveProjectTerminalDirectory(request, signal);
-    } catch (error) {
-      console.error('[main] project terminal daemon sync failed:', error);
-      return { ok: false, error: 'io-error' } as const;
-    }
-  }));
-  ipcMain.handle('project-documents:resolve', async (_event, request: unknown) => {
-    await projectWorkspaceReady;
-    return projectDocumentService.resolveTarget(request);
-  });
-  ipcMain.handle('project-documents:list-directory', async (_event, request: unknown) => {
-    await projectWorkspaceReady;
-    return projectDocumentService.listDirectory(request);
-  });
-  ipcMain.handle('project-documents:read', async (_event, request: unknown) => {
-    await projectWorkspaceReady;
-    return projectDocumentService.readDocument(request);
-  });
-  ipcMain.handle('project-workspace:search', gateAbortableLocalMutation(desktopAgentMutationIngress, async (signal, event, request: unknown) => {
-    await raceLocalOperationWithAbort(projectWorkspaceReady, signal);
-    signal.throwIfAborted();
-    const requestId = typeof request === 'object' && request !== null && !Array.isArray(request)
-      ? (request as { readonly requestId?: unknown }).requestId
-      : undefined;
-    if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128) {
-      return projectWorkspaceService.search(request, signal);
-    }
-    const key = `${String(event.sender.id)}:${requestId}`;
-    projectWorkspaceSearches.get(key)?.abort();
-    const controller = new AbortController();
-    projectWorkspaceSearches.set(key, controller);
-    const abortSearch = (): void => controller.abort(signal.reason);
-    signal.addEventListener('abort', abortSearch, { once: true });
-    if (signal.aborted) abortSearch();
-    try {
-      return await projectWorkspaceService.search(request, controller.signal);
-    } finally {
-      signal.removeEventListener('abort', abortSearch);
-      if (projectWorkspaceSearches.get(key) === controller) projectWorkspaceSearches.delete(key);
-    }
-  }));
-  ipcMain.on('project-workspace:cancel-search', (event, requestId: unknown) => {
-    if (typeof requestId !== 'string') return;
-    const key = `${String(event.sender.id)}:${requestId}`;
-    projectWorkspaceSearches.get(key)?.abort();
-    projectWorkspaceSearches.delete(key);
-  });
-  ipcMain.handle('project-workspace:approve', gateLocalMutation(desktopAgentMutationIngress, async (_event, request: unknown) => {
-    try {
-      return await requestProjectWorkspaceApproval(request);
-    } catch (error) {
-      console.error('[main] project workspace daemon approval sync failed:', error);
-      return { ok: false, error: 'io-error' } as const;
-    }
-  }));
-  ipcMain.handle('project-workspace:revoke', gateLocalMutation(desktopAgentMutationIngress, async (_event, request: unknown) => {
-    try {
-      // Archive the launch capability and remove persisted consent in the same
-      // FIFO operation used by Project discovery and terminal preparation.
-      return await requestDaemonWorkspaceRevocation(request);
-    } catch (error) {
-      console.error('[main] project workspace daemon revocation failed:', error);
-      return false;
-    }
-  }));
-  ipcMain.handle('project-map:describe', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapCollectionRequest(request)) {
-      return {
-        ok: false,
-        error: 'invalid-request',
-        collection: {
-          projectId: '',
-          state: 'invalid',
-          roots: [],
-          bindings: [],
-          maps: [],
-          diagnostics: [{
-            severity: 'error',
-            code: 'request.invalid',
-            subject: '$',
-            message: 'Invalid Project Map collection request.',
-          }],
-        },
-      };
-    }
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    return projectMapService.describe(request);
-  }));
-  ipcMain.handle('project-map:set-bindings', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapBindingRequest(request)) {
-      return {
-        ok: false,
-        error: 'invalid-request',
-        collection: {
-          projectId: '',
-          state: 'binding-required',
-          roots: [],
-          bindings: [],
-          maps: [],
-          diagnostics: [{
-            severity: 'error',
-            code: 'request.invalid',
-            subject: '$',
-            message: 'Invalid Project Map root binding request.',
-          }],
-        },
-      };
-    }
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    return projectMapService.setBindings(request);
-  }));
-  const readProjectMap = async (request: unknown) => {
-    if (!isProjectMapReadRequest(request)) {
-      return {
-        ok: false,
-        error: 'invalid-request',
-        state: 'invalid',
-        diagnostics: [{
-          severity: 'error',
-          code: 'request.invalid',
-          subject: '$',
-          message: 'Invalid Project Map read request.',
-        }],
-      };
-    }
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    return projectMapService.read(request);
-  };
-  ipcMain.handle('project-map:read', gateLocalMutation(
+  featureIpcDisposers.push(installProjectMapIpc({
+    ipc: ipcMain,
     desktopProjectMapMutationIngress,
-    (_event, request: unknown) => readProjectMap(request),
-  ));
-  ipcMain.handle('project-map:refresh', gateLocalMutation(
-    desktopProjectMapMutationIngress,
-    (_event, request: unknown) => readProjectMap(request),
-  ));
-  const invalidProjectMapOpen = () => ({
-    ok: false as const,
-    error: 'invalid-request',
-    snapshot: {
-      collection: {
-        projectId: '',
-        state: 'invalid' as const,
-        roots: [],
-        bindings: [],
-        maps: [],
-        diagnostics: [{
-          severity: 'error' as const,
-          code: 'request.invalid',
-          subject: '$',
-          message: 'Invalid Project Map request.',
-        }],
-      },
-      freshness: 'verified' as const,
-      verificationPending: false,
-    },
-  });
-  ipcMain.handle('project-map:open', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapReadRequest(request)) return invalidProjectMapOpen();
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    return projectMapService.open(request);
-  }));
-  ipcMain.handle('project-map:refresh-v2', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapReadRequest(request)) return invalidProjectMapOpen();
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    return projectMapService.open(request, true);
-  }));
-  ipcMain.handle('project-map:approve', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapApprovalRequest(request)) return invalidProjectMapOpen();
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    return projectMapService.approve(request);
-  }));
-  ipcMain.handle('project-map:start-job', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapStartJobRequest(request)) return { ok: false, error: 'invalid-request' };
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    try {
-      return { ok: true, job: await projectMapService.startJob(request) };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : 'job-start-failed' };
-    }
-  }));
-  ipcMain.handle('project-map:cancel-job', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapJobRequest(request)) return { ok: false, error: 'invalid-request' };
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    const job = await projectMapService.cancelJob(request);
-    return job ? { ok: true, job } : { ok: false, error: 'job-not-found' };
-  }));
-  ipcMain.handle('project-map:select-export-directory', gateAbortableLocalMutation(desktopProjectMapMutationIngress, async (signal, event) => {
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
-    const options: OpenDialogOptions = { properties: ['openDirectory', 'createDirectory'] };
-    let result: Electron.OpenDialogReturnValue;
-    try {
-      result = await raceLocalOperationWithAbort(
-        owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options),
-        signal,
-      );
-    } catch (error) {
-      if (signal.aborted) return { ok: false, error: 'canceled' } as const;
-      throw error;
-    }
-    return result.canceled || !result.filePaths[0]
-      ? { ok: false as const, error: 'canceled' }
-      : { ok: true as const, directory: result.filePaths[0] };
-  }));
-  ipcMain.handle('project-map:export', gateLocalMutation(desktopProjectMapMutationIngress, async (_event, request: unknown) => {
-    if (!isProjectMapExportRequest(request) || !request.mapId) {
-      return { ok: false, error: 'invalid-request' };
-    }
-    await Promise.all([projectWorkspaceReady, projectMapReady]);
-    const document = await projectMapService.approvedDocument(request);
-    if (!document) return { ok: false, error: 'approved-map-not-found' };
-    return exportProjectMap(request, document, nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+    projectWorkspaceReady,
+    projectMapReady,
+    projectMapService,
+    get mainWindowRef() { return mainWindowRef; },
   }));
   ipcMain.handle('agents:followup', gateLocalMutation(desktopAgentMutationIngress, (_event, activityId: string, text: string) => {
     if (typeof activityId !== 'string' || typeof text !== 'string') {
@@ -3138,96 +2125,25 @@ app.on('ready', async () => {
   ipcMain.handle('pairing:revoke', () => { pairingCodeService.revoke(); });
   ipcMain.handle('git:status', (_event, directory: string) => gitStatusService.getStatus(directory));
   ipcMain.handle('git:diff', (_event, directory: string) => gitStatusService.getDiff(directory));
-  ipcMain.handle('agents:decide', gateLocalMutation(desktopAgentMutationIngress, (
-    _event,
-    activityId: unknown,
-    approvalId: unknown,
-    decision: unknown,
-  ): AgentDecisionResult => {
-    if (
-      typeof activityId !== 'string'
-      || activityId.length < 1
-      || activityId.length > 128
-      || typeof approvalId !== 'string'
-      || approvalId.length < 1
-      || approvalId.length > 128
-      || (decision !== 'allow' && decision !== 'deny')
-    ) {
-      return { ok: false, error: 'not-found' };
-    }
-    return agentActivityService?.decideApproval(activityId, approvalId, decision)
-      ?? { ok: false, error: 'not-found' };
+  featureIpcDisposers.push(installAgentActionsIpc({
+    ipc: ipcMain,
+    desktopAgentMutationIngress,
+    get agentActivityService() { return agentActivityService; },
+    agentInfrastructureReady,
+    agentHookInstaller,
+    get agentRelayReady() { return agentRelayReady; },
+    refreshAgentLauncherCapabilities,
+    agentSettingsStore,
   }));
-  ipcMain.handle('agents:list-integrations', async () => {
-    await agentInfrastructureReady;
-    return agentHookInstaller.list();
-  });
-  ipcMain.handle('agents:set-integration-enabled', gateLocalMutation(desktopAgentMutationIngress, async (_event, provider: unknown, enabled: unknown) => {
-    await agentInfrastructureReady;
-    if (!isAgentIntegrationProvider(provider) || typeof enabled !== 'boolean') {
-      throw new Error('invalid agent integration request');
-    }
-    if (enabled && !agentRelayReady) {
-      return {
-        ok: false,
-        error: 'io-error',
-        message: 'The local agent hook relay is unavailable; no hook configuration was changed.',
-        status: await agentHookInstaller.status(provider),
-      } as const;
-    }
-    const result = await agentHookInstaller.mutate(provider, enabled);
-    await refreshAgentLauncherCapabilities();
-    return result;
-  }));
-  ipcMain.handle('agents:get-settings', async () => {
-    await agentInfrastructureReady;
-    return agentSettingsStore.get();
-  });
-  ipcMain.handle('agents:set-settings', gateLocalMutation(desktopAgentMutationIngress, async (_event, settings: unknown) => {
-    await agentInfrastructureReady;
-    const saved = await agentSettingsStore.set(settings);
-    if (saved) agentActivityService?.applySettings(saved);
-    return saved;
-  }));
-
   // ── Custom themes + font/effects settings (theme-effects-font M3) ────────
   // theme-store.ts owns its own fs (the themes dir, independent of layoutStore's
   // userData files) so its handlers don't await `storeReady`; font/effect
   // toggles live in settings.json, so those do.
-  ipcMain.handle('theme:get-available', () => getAvailableThemes());
-  ipcMain.handle('theme:import', (_event, json: string) => importTheme(json));
-  ipcMain.handle('settings:get-font', async () => {
-    await storeReady;
-    return layoutStore.getFont();
-  });
-  ipcMain.handle('settings:set-font', async (_event, id: string) => {
-    await storeReady;
-    if (typeof id === 'string') await layoutStore.setFont(id);
-  });
-  ipcMain.handle('settings:get-effect-toggles', async () => {
-    await storeReady;
-    return layoutStore.getEffectToggles();
-  });
-  ipcMain.handle('settings:set-effect-toggles', async (_event, toggles: Record<string, boolean>) => {
-    await storeReady;
-    if (toggles && typeof toggles === 'object') await layoutStore.setEffectToggles(toggles);
-  });
-  ipcMain.handle('settings:get-rollbar', async () => {
-    await storeReady;
-    return layoutStore.getRollbar();
-  });
-  ipcMain.handle('settings:set-rollbar', async (_event, params: RollbarSettings) => {
-    await storeReady;
-    if (params && typeof params === 'object') await layoutStore.setRollbar(params);
-  });
-  ipcMain.handle('settings:get-effect-params', async () => {
-    await storeReady;
-    return layoutStore.getEffectParams();
-  });
-  ipcMain.handle('settings:set-effect-params', async (_event, params: EffectParamsSettings) => {
-    await storeReady;
-    if (params && typeof params === 'object') await layoutStore.setEffectParams(params);
-  });
+  featureIpcDisposers.push(installThemeIpc({
+    ipc: ipcMain,
+    storeReady,
+    layoutStore,
+  }));
   let terminatingInterpreterGroupId: string | null = null;
   daemonProcesses.register({
     id: 'terminal-runtime',
@@ -3572,7 +2488,7 @@ app.on('ready', async () => {
   let agentCreateRecoveryDialogOpen = false;
   function blockMainWindowCloseForAgentCreate(
     window: BrowserWindow,
-    event: { preventDefault(): void },
+    event: { preventDefault(): void; },
   ): boolean {
     if (
       !daemonRuntime
@@ -3608,117 +2524,12 @@ app.on('ready', async () => {
 
   app.on('before-quit', (event) => gracefulShutdown.handleBeforeQuit(event));
 
-  // Session surfaces are the only renderer-facing session lifecycle API. Main
-  // derives the principal from the exact WebContents + preload generation; a
-  // renderer can never present another client's host-issued binding capability.
-  ipcMain.handle(
-    'session-surface:open',
-    (
-      event,
-      clientInstanceId: unknown,
-      surfaceId: unknown,
-      intent: unknown,
-    ) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (!principalId || !isSessionSurfaceId(surfaceId) || !isSessionSurfaceIntent(intent)) {
-        return Promise.resolve({ ok: false as const, reason: 'unavailable' as const });
-      }
-      return sessionSurfaceAuthority!.openSessionSurface(principalId, surfaceId, intent);
-    },
-  );
-  ipcMain.handle(
-    'session-surface:prepare-close',
-    (event, clientInstanceId: unknown, entries: unknown) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (!principalId || !isSessionSurfaceCloseEntries(entries)) {
-        return { ok: false as const, reason: 'state-changed' as const };
-      }
-      return sessionSurfaceAuthority!.prepareSessionSurfaceClose(principalId, entries);
-    },
-  );
-  ipcMain.handle(
-    'session-surface:commit-close',
-    (
-      event,
-      clientInstanceId: unknown,
-      closeToken: unknown,
-      decisions: unknown,
-    ) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (
-        !principalId
-        || !isSessionSurfaceId(closeToken)
-        || !isSessionSurfaceCloseDecisions(decisions)
-      ) {
-        return Promise.resolve({ ok: false as const, reason: 'state-changed' as const });
-      }
-      return sessionSurfaceAuthority!.commitSessionSurfaceClose(
-        principalId,
-        closeToken,
-        decisions,
-      );
-    },
-  );
-  ipcMain.handle(
-    'session-surface:release',
-    (event, clientInstanceId: unknown, bindingId: unknown) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (!principalId || !isSessionSurfaceId(bindingId)) {
-        return { ok: false as const, reason: 'state-changed' as const };
-      }
-      return sessionSurfaceAuthority!.releaseSessionSurface(principalId, bindingId);
-    },
-  );
-  ipcMain.handle(
-    'session-surface:terminate',
-    (
-      event,
-      clientInstanceId: unknown,
-      sessionId: unknown,
-      expectedActiveRunIds: unknown,
-    ) => {
-      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
-      if (
-        !principalId
-        || !isSessionSurfaceId(sessionId)
-        || !Array.isArray(expectedActiveRunIds)
-        || expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
-        || expectedActiveRunIds.some((runId) => !isSessionSurfaceId(runId))
-      ) {
-        return Promise.resolve({ ok: false as const, reason: 'unavailable' as const });
-      }
-      return sessionSurfaceAuthority!.terminateSessionGuarded(
-        sessionId,
-        expectedActiveRunIds,
-      );
-    },
-  );
-
-  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
-  // list-sessions is a straight passthrough to the broker's directory;
-  // session-added/session-removed/run-started fan out to every desktop window
-  // via the broker subscriptions wired at broker construction. remote-bridge.ts
-  // subscribes to the SAME broker independently for its own WS fan-out (T2.1).
-  ipcMain.handle('list-sessions', () => broker?.listSessions() ?? []);
-  // list-runs (M1 mirror-active-runs): resolves `[]` immediately if there's no
-  // broker/interpreter (mirrors create-session's own guard) — there are no runs
-  // to report either way, so there is nothing to await.
-  ipcMain.handle('list-runs', (): Promise<readonly RunStartedInfo[]> =>
-    broker ? broker.listRuns() : Promise.resolve([]),
-  );
-
-  // attach-run (T2.2f): brokers a NON-INITIATING port onto an existing run's
-  // ExecutionSession — mirrors the run-command handler in createWindow()
-  // exactly (broker mints a fresh port pair, port2 to the interpreter, port1 to
-  // THIS event's sender), except it never starts a new run (canRun/session-
-  // registry are untouched — attach is view+input, not a second writer).
-  ipcMain.on('attach-run', (event, payload: { sessionId: string; runId: string }) => {
-    if (!broker) return;
-    const port1 = broker.attachRun(payload.sessionId, payload.runId);
-    if (!port1) return;
-    event.sender.postMessage('attach-port', { runId: payload.runId }, [port1 as unknown as MessagePortMain]);
-  });
-
+  featureIpcDisposers.push(installSessionSurfaceIpc({
+    ipc: ipcMain,
+    resolveDesktopSessionPrincipal,
+    get sessionSurfaceAuthority() { return sessionSurfaceAuthority; },
+    get broker() { return broker; },
+  }));
   // Enforce the CSP as a response header for the packaged renderer (defense-in-depth
   // alongside the build-injected <meta>, SEC-MED-3). Skipped under the Vite dev
   // server, whose HMR needs inline scripts / eval / a websocket the strict policy
@@ -5191,17 +4002,12 @@ app.on('ready', async () => {
   // FileService wiring above. The chat token/URL never cross to the renderer
   // (M3 owns the WebContentsView main-side) — only a boolean "is a token
   // available" is exposed via `openclaw:chat-available`.
-  ipcMain.handle('openclaw:get-status', (_event, force?: boolean) => openclaw.getStatus(force));
-  ipcMain.handle('openclaw:get-control', (_event, force?: boolean) => getOpenClawControl(force));
-  ipcMain.handle('openclaw:lifecycle', (_event, action: OpenClawLifecycleAction) => requestOpenClawLifecycle(action));
-  ipcMain.handle('openclaw:list-sessions', () => openclaw.listAgentSessions());
-  ipcMain.handle('openclaw:get-config', () => openclaw.getCoreConfig());
-  ipcMain.handle('openclaw:set-config', (_event, key: string, value: string) => openclaw.setCoreConfig(key, value));
-  ipcMain.handle('openclaw:chat-available', async () => (await openclaw.getChatToken()) !== null);
-  // autostart (openclaw-management #9) — `gateway install|uninstall`, serialized
-  // on the same CLI lane as start/stop/restart (see OpenClawService.runAutostart).
-  ipcMain.handle('openclaw:autostart', (_event, action: OpenClawAutostartAction) => openclaw.runAutostart(action));
-
+      featureIpcDisposers.push(installOpenClawManagementIpc({
+        ipc: ipcMain,
+        openclaw,
+        getOpenClawControl,
+        requestOpenClawLifecycle,
+      }));
   // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
   // Tri-state setting gating whether ANY OpenClaw UI shows on desktop at all.
   // Lives in settings.json (hence the `settings:*` channel naming, matching
@@ -5223,24 +4029,13 @@ app.on('ready', async () => {
     currentOpenClawVisible = visibility.visible;
     for (const listener of remoteOpenClawVisibilityListeners) listener(visibility.visible);
   };
-  ipcMain.handle('settings:get-openclaw-mode', async () => {
-    await storeReady;
-    return layoutStore.getOpenClawMode();
-  });
-  ipcMain.handle('settings:set-openclaw-mode', async (_event, mode: OpenClawMode) => {
-    if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return;
-    await storeReady;
-    await layoutStore.setOpenClawMode(mode);
-    applyOpenClawVisibility({
-      mode,
-      visible: await resolveOpenClawVisibility(mode, () => openclaw.isInstalled()),
-    });
-  });
-  ipcMain.handle('openclaw:get-visibility', async (): Promise<OpenClawVisibility> => {
-    await storeReady;
-    const mode = await layoutStore.getOpenClawMode();
-    return { mode, visible: await resolveOpenClawVisibility(mode, () => openclaw.isInstalled()) };
-  });
+      featureIpcDisposers.push(installOpenClawVisibilityIpc({
+        ipc: ipcMain,
+        storeReady,
+        layoutStore,
+        applyOpenClawVisibility,
+        openclaw,
+      }));
   // M5: nothing re-queries `openclaw.isInstalled()` on its own once boot/the
   // handler above have run, so in 'auto' mode installing/uninstalling the CLI
   // while the app is running never updates gating until a mode toggle or
@@ -5337,47 +4132,14 @@ app.on('ready', async () => {
   // doc). `chat-open` is sent only once the panel observes status==='running';
   // the revisioned surface message is the sole ownership/geometry/visibility
   // contract and `mounted:false` tears the native view down.
-  ipcMain.on('openclaw:chat-open', () => {
-    void openClawChatView?.ensureView();
-  });
-  const openClawChatSurfaceRevisions = new OpenClawChatSurfaceRevisionGate();
-  ipcMain.on('openclaw:chat-surface', (event, surface: unknown) => {
-    const mainWindow = mainWindowRef;
-    if (
-      !mainWindow
-      || mainWindow.isDestroyed()
-      || event.sender !== mainWindow.webContents
-      || !isOpenClawChatSurfaceSnapshot(surface)
-    ) return;
-    const host = surface.mounted
-      ? desktopWindowManager?.resolveWindowName(surface.windowName)
-      : null;
-    if (surface.mounted && !host) return;
-    if (!openClawChatSurfaceRevisions.accept(surface)) return;
-    if (!surface.mounted) {
-      openClawChatView?.destroy();
-      return;
-    }
-    if (!host) return;
-    openClawChatView?.updateSurface(host, surface);
-  });
-  ipcMain.on('openclaw:chat-reload', () => {
-    void openClawChatView?.reload();
-  });
-  // "브라우저로 열기" escape hatch (openclaw-stabilization M6) — resolves the
-  // SAME token'd chat URL the embedded view uses and hands it to the OS
-  // default browser instead, for when the WebContentsView embed misbehaves.
-  ipcMain.handle('openclaw:chat-open-external', async (): Promise<boolean> => {
-    const url = await openclaw.getChatUrl();
-    if (!url) return false;
-    try {
-      await openExternalForUser(url);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-
+      featureIpcDisposers.push(installOpenClawChatIpc({
+        ipc: ipcMain,
+        get openClawChatView() { return openClawChatView; },
+        get mainWindowRef() { return mainWindowRef; },
+        get desktopWindowManager() { return desktopWindowManager; },
+        openclaw,
+        openExternalForUser,
+      }));
   const daemonSettings = await daemonRuntimeReady;
   assertMainStartupActive();
   if (startedAsDaemon && !daemonSettings.keepRunning) {

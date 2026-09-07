@@ -1,3 +1,5 @@
+import { RemoteAgentHistoryClient } from './remote-agent-history-client';
+import { RemoteOpenClawClient } from './remote-openclaw-client';
 /**
  * WsEzTerminalTransport — implements the desktop's `EzTerminalApi` (see
  * `src/shared/ipc.ts`) over the WS bridge from `src/main/remote-bridge.ts`
@@ -52,45 +54,29 @@ import {
   MAX_GUARDED_DESTROY_RUN_IDS,
   type DestroySessionGuardResult,
   type EzTerminalApi,
-  type InterpreterFrame,
   type RemoteConnectionInfo,
   type RemoteRuntimeStatus,
-  type RendererControl,
   type RunStartedInfo,
   type RuntimeVersions,
   type SessionInfo,
   type SystemStatsSnapshot,
 } from '../../../src/shared/ipc';
 import {
-  DOWNLOAD_MAX_FILE_BYTES,
   FILE_CHUNK_BYTES,
-  TEXT_VIEW_MAX_BYTES,
   type FileListResult,
   type FileOpResult,
   type FileReadTextResult,
 } from '../../../src/shared/files';
-import {
-  IMAGE_PREVIEW_MAX_BYTES,
-  IMAGE_PREVIEW_MAX_DIMENSION,
-  IMAGE_PREVIEW_MAX_PIXELS,
-  type FilePreviewResult,
-  type FilePreviewStreamMetadata,
-} from '../../../src/shared/file-preview';
+import { type FilePreviewResult } from '../../../src/shared/file-preview';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
 import type {
   TerminalFileLocationRequest,
   TerminalFileLocationResult,
 } from '../../../src/shared/terminal-file-location';
-import type {
-  WorktreeAction,
-  WorktreeInfo,
-  WorktreeRequest,
-  WorktreeResult,
-} from '../../../src/shared/worktree';
+import type { WorktreeAction, WorktreeInfo, WorktreeRequest, WorktreeResult } from '../../../src/shared/worktree';
 import { isPairingCode, isRemoteBearerToken } from '../../../src/shared/pairing';
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
-  MAX_AGENT_PROVIDER_LABEL_LENGTH,
   type AgentActivitySnapshot,
   type AgentDecision,
   type AgentDecisionResult,
@@ -109,7 +95,6 @@ import {
   type ManagedMergeRequest,
 } from '../../../src/shared/agent-coordination';
 import {
-  AgentOrchestrationSnapshotSchema,
   CollaborationPolicySchema,
   CollaborationRunSchema,
   CollaborationTaskSchema,
@@ -124,43 +109,21 @@ import {
   type LegacyTeamMigrationStatus,
 } from '../../../src/shared/agent-orchestration';
 import {
-  DAEMON_PROTOCOL_VERSION,
   classifyDaemonEvent,
   type DaemonCommand,
   type DaemonCommandReceipt,
   type DaemonEvent,
-  type DaemonEventContinuity,
   type DaemonSnapshot,
   type DaemonTranscriptItem,
 } from '../../../src/shared/daemon-protocol';
-import type {
-  DaemonAuthorityAvailability,
-  RemoteDaemonAuthorityAvailability,
-} from '../../../src/shared/daemon-authority';
+import type { DaemonAuthorityAvailability } from '../../../src/shared/daemon-authority';
 import type {
   ClaudeProviderEnablement,
   DaemonProviderManagementResult,
   ProviderInspection,
   ProviderModel,
 } from '../../../src/shared/daemon-provider';
-import type {
-  AgentHistorySessionPage,
-  AgentLaunchPreparation,
-  AgentLaunchStartRequest,
-  AgentLaunchStartResult,
-  AgentLaunchTarget,
-  AgentProjectInput,
-  AgentProjectLaunchPreparation,
-  AgentProjectLauncherSummary,
-  AgentProjectLaunchStartRequest,
-  AgentProjectLaunchStartResult,
-  AgentProjectMutationResult,
-  AgentProjectPage,
-  AgentResumePreparation,
-  AgentResumeStartRequest,
-  AgentResumeStartResult,
-  AgentTranscriptPage,
-} from '../../../src/shared/agent-history';
+
 import {
   UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDiffResult,
@@ -172,10 +135,7 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
-  REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
-  REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
-  REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE,
   REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION,
@@ -189,7 +149,6 @@ import {
   type DesktopVideoViewport,
   type DesktopSessionSignal,
   type DesktopSignalMessage,
-  type OpenClawChatTicketFailureReason,
   type RemoteCapability,
   type RemoteClientIdentity,
   type RemotePacketFrame,
@@ -205,23 +164,8 @@ import type {
   SessionSurfacePrepareCloseResult,
   SessionSurfaceReleaseResult,
 } from '../../../src/shared/session-surface';
-import {
-  MAX_QUICK_COMMANDS,
-  QuickCommandSchema,
-  type QuickCommand,
-} from '../../../src/shared/quick-command';
-import {
-  OPENCLAW_CONFIG_ALLOWLIST,
-  OPENCLAW_CONFIG_UNSET,
-  type OpenClawAgentSession,
-  type OpenClawControlSnapshot,
-  type OpenClawCoreConfig,
-  type OpenClawLifecycleAction,
-  type OpenClawLifecycleReceipt,
-  type OpenClawLogLine,
-  type OpenClawSetConfigResult,
-  type OpenClawStatus,
-} from '../../../src/shared/openclaw';
+import { MAX_QUICK_COMMANDS, QuickCommandSchema } from '../../../src/shared/quick-command';
+
 import {
   classifyEndpoint,
   smoothRoundTrip,
@@ -230,935 +174,70 @@ import {
 } from './connection-health';
 import { MOBILE_BUILD_INFO } from '../build-info';
 import { e2eLog } from '../e2e-telemetry';
-
-export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
-
-export type DaemonRuntimeSyncStatus = 'loading' | 'ready' | 'recovering' | 'safe-mode' | 'error';
-
-/**
- * Mobile's read model for the daemon runtime. `snapshot` remains available
- * while a reconnect or event-gap recovery is in progress, but callers must
- * treat it as stale unless `status === 'ready'`.
- */
-export interface DaemonRuntimeViewState {
-  readonly status: DaemonRuntimeSyncStatus;
-  readonly snapshot: DaemonSnapshot | null;
-  readonly availability?: RemoteDaemonAuthorityAvailability;
-  readonly lastContinuity?: DaemonEventContinuity;
-  readonly error?: 'connection-lost' | 'invalid-snapshot' | 'event-gap';
-}
-
-export type DaemonEventListener = (
-  event: DaemonEvent,
-  continuity: DaemonEventContinuity,
-) => void;
-
-/** WebView-74-compatible RFC 4122 v4 request id. Android 10 may start with a
- * WebView that predates `crypto.randomUUID`, but it still provides the secure
- * `crypto.getRandomValues` primitive. */
-export function createSecureRequestId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-/** Generic result of one `file-read` round trip (M4) — `readTextFile`/
- * `downloadFile` each reshape this into their own public return type. */
-type FileReadResult =
-  | {
-      readonly ok: true;
-      readonly fileSize: number;
-      readonly isText: boolean;
-      readonly truncated: boolean;
-      readonly bytes: Uint8Array;
-      readonly preview?: FilePreviewStreamMetadata;
-    }
-  | { readonly ok: false; readonly error: string };
-
-type FileReadMode = 'text' | 'raw' | 'preview';
-
-/** Tracks one in-flight `file-read` request between `file-read-meta` and the
- * last `file-read-chunk` — `buffer` is allocated once `sendBytes` is known
- * (null beforehand, and stays null for a binary file in `'text'` mode, which
- * never streams any chunk). `onProgress` is only used by `downloadFile`. */
-interface FileReadAssembly {
-  buffer: Uint8Array | null;
-  metaReceived: boolean;
-  expectedOffset: number | null;
-  readonly mode: FileReadMode;
-  readonly maxSendBytes: number;
-  fileSize: number;
-  isText: boolean;
-  truncated: boolean;
-  preview: FilePreviewStreamMetadata | null;
-  readonly onProgress?: (received: number, total: number) => void;
-  readonly resolve: (result: FileReadResult) => void;
-}
-
-/** Local mirrors of the wire's `ok:true/false` reply shapes (M5), same
- * "small local result type, not imported from remote-protocol.ts" precedent
- * as `FileReadResult` above — `uploadFile` throws on `ok:false` at each
- * `await`, which is what actually rejects its outer promise. */
-type UploadBeginResult = { ok: true; uploadId: string; finalName: string } | { ok: false; error: string };
-type UploadAckResult = { ok: true; receivedBytes: number } | { ok: false; error: string };
-type UploadDoneResult = { ok: true; finalName: string } | { ok: false; error: string };
-
-/** Reply shape for `getOpenClawChatTicket()` (openclaw-management M4/M5) —
- * mirrors `OpenClawChatTicketReply` on the wire; `ticket`/`token` are `null`
- * when no ticket could be minted (see remote-protocol.ts's doc). */
-export type OpenClawChatFailureReason = OpenClawChatTicketFailureReason;
-
-export type OpenClawChatTicket =
-  | { readonly ok: true; readonly ticket: string; readonly proxyPort: number; readonly token: string }
-  | { readonly ok: false; readonly reason: OpenClawChatFailureReason };
-
-const OPENCLAW_TICKET_TIMEOUT_MS = 20_000;
-const OPENCLAW_CONFIG_TIMEOUT_MS = 25_000;
-const OPENCLAW_LIFECYCLE_TIMEOUT_MS = 40_000;
-
-function isOpenClawChatFailureReason(value: unknown): value is OpenClawChatFailureReason {
-  return value === 'gateway-stopped'
-    || value === 'gateway-unreachable'
-    || value === 'token-unavailable'
-    || value === 'proxy-unavailable'
-    || value === 'insecure-auth-required'
-    || value === 'timeout';
-}
-
-// ── DI seam over the browser `WebSocket` (real instances satisfy this
-//    structurally; tests inject a fake) ──────────────────────────────────────
-
-export interface WsLike {
-  /** Browser WebSocket readiness when exposed by the injected implementation. */
-  readonly readyState?: number;
-  send(data: string): void;
-  close(): void;
-  addEventListener(type: 'open', listener: () => void): void;
-  addEventListener(type: 'message', listener: (event: { data: string }) => void): void;
-  addEventListener(type: 'close', listener: () => void): void;
-  addEventListener(type: 'error', listener: (event: unknown) => void): void;
-}
-
-export type CreateSocket = (url: string) => WsLike;
-
-const DEFAULT_INITIAL_BACKOFF_MS = 500;
-const DEFAULT_MAX_BACKOFF_MS = 8000;
-const WS_OPEN = 1;
-/**
- * Post-auth liveness (silent-socket detection): the desktop's WS-protocol
- * pings are answered by the browser's network stack and are invisible here,
- * so an idle-but-healthy link and a silently dead one (radio loss, NAT/VPN
- * drop with no RST) look identical from JS — and reconnects are otherwise
- * scheduled only from a real 'close' event, leaving a dead socket frozen on
- * screen forever. After `LIVENESS_IDLE_MS` without any server message, probe
- * with the cheapest existing request/reply (`list-runs` — no protocol change,
- * works against every desktop version); no server message within
- * `LIVENESS_PROBE_TIMEOUT_MS` of the probe means the socket is dead and is
- * force-closed so the ordinary backoff → reconnect → resume-run path repairs
- * the session. Background timer throttling only delays the probe; on
- * foreground return the throttled timers fire and a dead socket is detected
- * immediately.
- */
-/** Often enough that the pill is current, rare enough to be free on a radio. */
-const RTT_PROBE_INTERVAL_MS = 5_000;
-/** Anything past this is a suspended tab or a clock jump, not a round trip. */
-const RTT_MAX_PLAUSIBLE_MS = 60_000;
-
-const LIVENESS_IDLE_MS = 45_000;
-const LIVENESS_PROBE_TIMEOUT_MS = 10_000;
-const LIVENESS_CHECK_INTERVAL_MS = 15_000;
-const RESUME_RETRY_INITIAL_MS = 250;
-const RESUME_RETRY_MAX_MS = 4000;
-const RESUME_RETRY_MAX_ATTEMPTS = 5;
-const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
-const MAX_REMOTE_AGENT_ITEMS = 2_048;
-const MAX_REMOTE_AGENT_ID_LENGTH = 256;
-const MAX_REMOTE_AGENT_CWD_LENGTH = 8_192;
-const MAX_REMOTE_AGENT_TOOL_LENGTH = 256;
-const MAX_REMOTE_AGENT_COMMAND_LENGTH = 64 * 1_024;
-const MAX_REMOTE_AGENT_FOLLOWUP_LENGTH = 8_192;
-const MAX_REMOTE_GIT_CHANGES = 2_000;
-const MAX_REMOTE_GIT_OMISSIONS = 2_000;
-const MAX_REMOTE_GIT_PATH_LENGTH = 8_192;
-const MAX_REMOTE_GIT_BRANCH_LENGTH = 1_024;
-const MAX_REMOTE_GIT_DIFF_LENGTH = 200_000;
-const MAX_FILE_CHUNK_BASE64_CHARS = Math.ceil(FILE_CHUNK_BYTES / 3) * 4 + 4;
-
-function maxFileReadBytes(mode: FileReadMode): number {
-  if (mode === 'text') return TEXT_VIEW_MAX_BYTES;
-  if (mode === 'preview') return IMAGE_PREVIEW_MAX_BYTES;
-  return DOWNLOAD_MAX_FILE_BYTES;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-const DAEMON_SNAPSHOT_ARRAY_KEYS = [
-  'projects',
-  'workspaces',
-  'sessions',
-  'agents',
-  'agentRelations',
-  'turns',
-  'transcriptHeads',
-  'approvals',
-  'providers',
-  'schedules',
-  'heartbeats',
-] as const;
-
-const DAEMON_EVENT_KINDS = new Set([
-  'entity.upserted',
-  'entity.archived',
-  'transcript.appended',
-  'command.changed',
-  'approval.changed',
-  'runtime.changed',
-  'runtime.recovery',
-]);
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
-
-function hasDaemonEntityIdentity(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const id = typeof value.id === 'string' ? value.id : value.sessionId;
-  return typeof id === 'string' && id.length > 0;
-}
-
-/** Reject malformed remote state before it can become the UI's authority. */
-function isDaemonSnapshot(value: unknown): value is DaemonSnapshot {
-  if (
-    !isRecord(value)
-    || value.protocolVersion !== DAEMON_PROTOCOL_VERSION
-    || !isNonNegativeSafeInteger(value.revision)
-    || !isNonNegativeSafeInteger(value.eventSequence)
-    || typeof value.generatedAt !== 'string'
-    || !isRecord(value.runtime)
-    || typeof value.runtime.keepRunning !== 'boolean'
-    || typeof value.runtime.startAtLogin !== 'boolean'
-    || typeof value.runtime.orchestrationToolsEnabled !== 'boolean'
-    || typeof value.runtime.browserEnabled !== 'boolean'
-  ) return false;
-  for (const key of DAEMON_SNAPSHOT_ARRAY_KEYS) {
-    const collection = value[key];
-    if (!Array.isArray(collection) || !collection.every(hasDaemonEntityIdentity)) return false;
-  }
-  return true;
-}
-
-function isDaemonEvent(value: unknown): value is DaemonEvent {
-  return isRecord(value)
-    && value.protocolVersion === DAEMON_PROTOCOL_VERSION
-    && typeof value.eventId === 'string'
-    && value.eventId.length > 0
-    && isNonNegativeSafeInteger(value.sequence)
-    && isNonNegativeSafeInteger(value.revision)
-    && typeof value.occurredAt === 'string'
-    && typeof value.kind === 'string'
-    && DAEMON_EVENT_KINDS.has(value.kind)
-    && isRecord(value.payload);
-}
-
-function isDaemonCommandReceipt(
-  value: unknown,
-  expectedCommandId: string,
-): value is DaemonCommandReceipt {
-  if (
-    !isRecord(value)
-    || value.commandId !== expectedCommandId
-    || typeof value.ok !== 'boolean'
-    || !isNonNegativeSafeInteger(value.revision)
-    || typeof value.status !== 'string'
-  ) return false;
-  if (value.ok) {
-    return (value.status === 'applied' || value.status === 'queued' || value.status === 'replayed')
-      && isNonNegativeSafeInteger(value.eventSequence);
-  }
-  return (value.status === 'rejected' || value.status === 'delivery-uncertain')
-    && isRecord(value.error)
-    && typeof value.error.code === 'string'
-    && typeof value.error.message === 'string'
-    && typeof value.error.retryable === 'boolean';
-}
-
-const DAEMON_TRANSCRIPT_KINDS = new Set([
-  'user-message',
-  'assistant-message',
-  'reasoning',
-  'tool-call',
-  'tool-result',
-  'approval',
-  'child-summary',
-  'notice',
-  'error',
-]);
-
-function isDaemonTranscriptItem(value: unknown, sessionId: string): value is DaemonTranscriptItem {
-  return isRecord(value)
-    && isBoundedString(value.id, 256)
-    && value.sessionId === sessionId
-    && isNonNegativeSafeInteger(value.sequence)
-    && typeof value.kind === 'string'
-    && DAEMON_TRANSCRIPT_KINDS.has(value.kind)
-    && typeof value.text === 'string'
-    && value.text.length <= 1_048_576
-    && typeof value.isDelta === 'boolean'
-    && typeof value.isSensitive === 'boolean'
-    && (value.turnId === undefined || isBoundedString(value.turnId, 256))
-    && (value.relatedSessionId === undefined || isBoundedString(value.relatedSessionId, 256))
-    && typeof value.createdAt === 'string';
-}
-
-function isFilePreviewStreamMetadata(value: unknown): value is FilePreviewStreamMetadata {
-  if (!isRecord(value) || typeof value.name !== 'string') return false;
-  switch (value.kind) {
-    case 'text':
-      return value.mime === 'text/plain' || value.mime === 'text/markdown';
-    case 'image':
-      return (
-        (
-          value.mime === 'image/png'
-          || value.mime === 'image/jpeg'
-          || value.mime === 'image/gif'
-          || value.mime === 'image/webp'
-        )
-        && Number.isSafeInteger(value.width)
-        && Number.isSafeInteger(value.height)
-        && (value.width as number) > 0
-        && (value.height as number) > 0
-        && (value.width as number) <= IMAGE_PREVIEW_MAX_DIMENSION
-        && (value.height as number) <= IMAGE_PREVIEW_MAX_DIMENSION
-        && (value.width as number) * (value.height as number) <= IMAGE_PREVIEW_MAX_PIXELS
-      );
-    case 'pdf':
-      return value.mime === 'application/pdf';
-    case 'unsupported':
-      return (
-        value.reason === 'binary'
-        || value.reason === 'image-too-large'
-        || value.reason === 'image-dimensions'
-        || value.reason === 'invalid-image'
-      );
-    default:
-      return false;
-  }
-}
-
-function isFileReadMetaConsistent(
-  assembly: FileReadAssembly,
-  fileSize: number,
-  sendBytes: number,
-  isText: boolean,
-  truncated: boolean,
-  preview: unknown,
-): boolean {
-  if (assembly.mode === 'raw') {
-    return (
-      preview === undefined
-      && isText
-      && !truncated
-      && sendBytes === fileSize
-      && fileSize <= DOWNLOAD_MAX_FILE_BYTES
-    );
-  }
-
-  const expectedTextBytes = Math.min(fileSize, TEXT_VIEW_MAX_BYTES);
-  if (assembly.mode === 'text') {
-    if (preview !== undefined) return false;
-    return isText
-      ? sendBytes === expectedTextBytes && truncated === (fileSize > TEXT_VIEW_MAX_BYTES)
-      : sendBytes === 0 && !truncated;
-  }
-
-  if (!isFilePreviewStreamMetadata(preview)) return false;
-  switch (preview.kind) {
-    case 'text':
-      return isText
-        && sendBytes === expectedTextBytes
-        && truncated === (fileSize > TEXT_VIEW_MAX_BYTES);
-    case 'image':
-      return !isText
-        && !truncated
-        && fileSize <= IMAGE_PREVIEW_MAX_BYTES
-        && sendBytes === fileSize;
-    case 'pdf':
-    case 'unsupported':
-      return !isText && !truncated && sendBytes === 0;
-  }
-}
-
-function isFiniteTimestamp(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function isBoundedString(value: unknown, maxLength: number, allowEmpty = false): value is string {
-  return (
-    typeof value === 'string'
-    && value.length <= maxLength
-    && (allowEmpty || value.length > 0)
-  );
-}
-
-function isRemoteDaemonAuthorityAvailability(
-  value: unknown,
-): value is RemoteDaemonAuthorityAvailability {
-  if (
-    !isRecord(value)
-    || !Number.isSafeInteger(value.supportedSchemaVersion)
-    || (value.supportedSchemaVersion as number) < 0
-    || 'recoveryPath' in value
-  ) return false;
-  if (value.state === 'ready') {
-    return Number.isSafeInteger(value.currentSchemaVersion)
-      && (value.currentSchemaVersion as number) >= 0;
-  }
-  return value.state === 'legacy-only-safe-mode'
-    && [
-      'backup-failed',
-      'database-corrupt',
-      'future-schema',
-      'initialization-failed',
-      'migration-failed',
-      'quarantine-failed',
-      'unsafe-path',
-    ].includes(value.initializationCode as string)
-    && ['preserved', 'quarantined', 'partial-quarantine'].includes(
-      value.databaseDisposition as string,
-    )
-    && (value.currentSchemaVersion === undefined
-      || (Number.isSafeInteger(value.currentSchemaVersion)
-        && (value.currentSchemaVersion as number) >= 0));
-}
-
-/**
- * `JSON.parse` does not make a wire payload trustworthy. Keep malformed or
- * unbounded desktop snapshots out of React state instead of relying on a
- * compile-time cast that disappears at runtime.
- */
-function isAgentActivitySnapshot(value: unknown): value is AgentActivitySnapshot {
-  if (
-    !isRecord(value)
-    || !Number.isSafeInteger(value.revision)
-    || (value.revision as number) < 0
-    || !Array.isArray(value.items)
-    || value.items.length > MAX_REMOTE_AGENT_ITEMS
-  ) return false;
-
-  return value.items.every((item) => {
-    if (
-      !isRecord(item)
-      || !isBoundedString(item.id, MAX_REMOTE_AGENT_ID_LENGTH)
-      || !isBoundedString(item.sessionId, MAX_REMOTE_AGENT_ID_LENGTH)
-      || (item.provider !== 'codex' && item.provider !== 'claude' && item.provider !== 'generic')
-      || (item.providerLabel !== undefined
-        && !isBoundedString(item.providerLabel, MAX_AGENT_PROVIDER_LABEL_LENGTH))
-      || !isBoundedString(item.cwd, MAX_REMOTE_AGENT_CWD_LENGTH, true)
-      || (
-        item.state !== 'starting'
-        && item.state !== 'working'
-        && item.state !== 'blocked'
-        && item.state !== 'done'
-        && item.state !== 'idle'
-        && item.state !== 'error'
-        && item.state !== 'unknown'
-      )
-      || item.status !== item.state
-      || !Number.isSafeInteger(item.stateSeq)
-      || (item.stateSeq as number) < 1
-      || typeof item.live !== 'boolean'
-      || typeof item.interactiveReady !== 'boolean'
-      || (
-        item.stateSource !== 'process'
-        && item.stateSource !== 'provider-hook'
-        && item.stateSource !== 'terminal'
-        && item.stateSource !== 'unknown'
-      )
-      || !isFiniteTimestamp(item.createdAt)
-      || !isFiniteTimestamp(item.updatedAt)
-    ) return false;
-    if (
-      (item.projectId !== undefined && !isBoundedString(item.projectId, MAX_REMOTE_AGENT_ID_LENGTH))
-      || (item.workspaceId !== undefined && !isBoundedString(item.workspaceId, MAX_REMOTE_AGENT_ID_LENGTH))
-    ) return false;
-    if (item.participant !== undefined) {
-      if (
-        !isRecord(item.participant)
-        || !isBoundedString(item.participant.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
-        || !isBoundedString(item.participant.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
-        || !isBoundedString(item.participant.workspaceId, MAX_REMOTE_AGENT_ID_LENGTH)
-        || (item.participant.worktreeId !== undefined
-          && !isBoundedString(item.participant.worktreeId, MAX_REMOTE_AGENT_ID_LENGTH))
-        || !isBoundedString(item.participant.alias, 48)
-        || !isBoundedString(item.participant.role, 120)
-        || !isBoundedString(item.participant.task, 1_000)
-      ) return false;
-    }
-    if (item.approval === undefined) return true;
-    if (
-      !isRecord(item.approval)
-      || !isBoundedString(item.approval.approvalId, MAX_REMOTE_AGENT_ID_LENGTH)
-      || !isBoundedString(item.approval.toolName, MAX_REMOTE_AGENT_TOOL_LENGTH, true)
-      || (
-        item.approval.command !== undefined
-        && !isBoundedString(item.approval.command, MAX_REMOTE_AGENT_COMMAND_LENGTH, true)
-      )
-      || (
-        item.approval.risk !== 'danger'
-        && item.approval.risk !== 'write'
-        && item.approval.risk !== 'read'
-      )
-      || typeof item.approval.pending !== 'boolean'
-      || !isFiniteTimestamp(item.approval.requestedAt)
-      || !isFiniteTimestamp(item.approval.expiresAt)
-      || item.approval.expiresAt < item.approval.requestedAt
-    ) return false;
-    return true;
-  });
-}
-
-function isManagedMergeRequest(value: unknown): value is ManagedMergeRequest {
-  if (!isRecord(value)) return false;
-  const states = new Set([
-    'preparing', 'validating', 'approval-required', 'override-required', 'merging',
-    'merged', 'denied', 'conflict', 'stale', 'failed', 'interrupted', 'already-integrated',
-  ]);
-  if (
-    !isBoundedString(value.requestId, MAX_REMOTE_AGENT_ID_LENGTH)
-    || !Number.isSafeInteger(value.revision)
-    || (value.revision as number) < 1
-    || !isBoundedString(value.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
-    || !isBoundedString(value.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
-    || !isBoundedString(value.activityId, MAX_REMOTE_AGENT_ID_LENGTH)
-    || !isBoundedString(value.sourceWorkspaceId, MAX_REMOTE_AGENT_ID_LENGTH)
-    || !isBoundedString(value.sourceBranch, 200)
-    || !isBoundedString(value.sourceHead, 128)
-    || !isBoundedString(value.targetBranch, 200)
-    || !isBoundedString(value.targetHead, 128, true)
-    || (value.candidateHead !== undefined && !isBoundedString(value.candidateHead, 128))
-    || typeof value.state !== 'string'
-    || !states.has(value.state)
-    || !Number.isSafeInteger(value.validationConfigRevision)
-    || !Array.isArray(value.validations)
-    || value.validations.length > 8
-    || (value.warning !== undefined && !isBoundedString(value.warning, 1_000, true))
-    || (value.error !== undefined && !isBoundedString(value.error, 1_000, true))
-    || !isFiniteTimestamp(value.createdAt)
-    || !isFiniteTimestamp(value.updatedAt)
-    || !isFiniteTimestamp(value.expiresAt)
-  ) return false;
-  return value.validations.every((validation) => (
-    isRecord(validation)
-    && isBoundedString(validation.id, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(validation.name, 120)
-    && typeof validation.status === 'string'
-    && ['pending', 'running', 'passed', 'failed', 'timed-out', 'cancelled'].includes(validation.status)
-    // Coordination wire messages carry status metadata, never validation
-    // output. The desktop keeps that bounded tail local to its review UI.
-    && validation.outputTail === undefined
-    && (validation.outputTruncated === undefined || typeof validation.outputTruncated === 'boolean')
-    && (validation.startedAt === undefined || isFiniteTimestamp(validation.startedAt))
-    && (validation.finishedAt === undefined || isFiniteTimestamp(validation.finishedAt))
-    && (validation.durationMs === undefined
-      || (typeof validation.durationMs === 'number' && Number.isFinite(validation.durationMs) && validation.durationMs >= 0))
-    && (validation.exitCode === undefined
-      || (typeof validation.exitCode === 'number' && Number.isSafeInteger(validation.exitCode)))
-  ));
-}
-
-function isAgentCoordinationSnapshot(value: unknown): value is AgentCoordinationSnapshot {
-  if (
-    !isRecord(value)
-    || !Number.isSafeInteger(value.revision)
-    || (value.revision as number) < 0
-    || !Number.isSafeInteger(value.activityRevision)
-    || !Array.isArray(value.activities)
-    || !Array.isArray(value.projects)
-    || value.projects.length > 256
-    || !Array.isArray(value.mergeRequests)
-    || value.mergeRequests.length > 256
-    || !isAgentActivitySnapshot({ revision: value.activityRevision, items: value.activities })
-  ) return false;
-  const projectsValid = value.projects.every((project) => (
-    isRecord(project)
-    && isBoundedString(project.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(project.goal, 2_000)
-    && isBoundedString(project.defaultTargetBranch, 200)
-    && Array.isArray(project.validationCommands)
-    && project.validationCommands.length <= 8
-    && project.validationCommands.every((command) => (
-      isRecord(command)
-      && isBoundedString(command.id, MAX_REMOTE_AGENT_ID_LENGTH)
-      && isBoundedString(command.name, 120)
-      && isBoundedString(command.command, 8_192)
-      && Number.isFinite(command.timeoutMs)
-      && (command.timeoutMs as number) >= 1_000
-      && (command.timeoutMs as number) <= 30 * 60_000
-    ))
-    && Number.isSafeInteger(project.configRevision)
-    && isAgentStateCounts(project.counts)
-    && Array.isArray(project.participants)
-    && project.participants.length <= 32
-    && project.participants.every(isAgentParticipantWire)
-    && Number.isSafeInteger(project.pendingMergeCount)
-  ));
-  return projectsValid && value.mergeRequests.every(isManagedMergeRequest);
-}
-
-function isManagedMergeMutationResult(
-  value: unknown,
-): value is AgentCoordinationMutationResult<ManagedMergeRequest> {
-  return isRecord(value) && (
-    (value.ok === true && isManagedMergeRequest(value.value))
-    || (
-      value.ok === false
-      && ['invalid', 'not-found', 'stale', 'conflict', 'unavailable'].includes(String(value.error))
-      && isBoundedString(value.message, 1_000, true)
-    )
-  );
-}
-
-function isAgentProjectCoordination(value: unknown): value is AgentProjectCoordination {
-  return isRecord(value)
-    && isBoundedString(value.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(value.goal, 2_000)
-    && isBoundedString(value.defaultTargetBranch, 200)
-    && Array.isArray(value.validationCommands)
-    && value.validationCommands.length <= 8
-    && value.validationCommands.every((command) => (
-      isRecord(command)
-      && isBoundedString(command.id, MAX_REMOTE_AGENT_ID_LENGTH)
-      && isBoundedString(command.name, 120)
-      && isBoundedString(command.command, 8_192)
-      && typeof command.timeoutMs === 'number'
-      && Number.isFinite(command.timeoutMs)
-      && command.timeoutMs >= 1_000
-      && command.timeoutMs <= 30 * 60_000
-    ))
-    && Number.isSafeInteger(value.configRevision)
-    && (value.configRevision as number) >= 1
-    && Array.isArray(value.participants)
-    && value.participants.length <= 32
-    && value.participants.every(isAgentParticipantWire)
-    && isFiniteTimestamp(value.updatedAt);
-}
-
-function isAgentProjectCoordinationMutationResult(
-  value: unknown,
-): value is AgentCoordinationMutationResult<AgentProjectCoordination> {
-  return isRecord(value) && (
-    (value.ok === true && isAgentProjectCoordination(value.value))
-    || (
-      value.ok === false
-      && ['invalid', 'not-found', 'stale', 'conflict', 'unavailable'].includes(String(value.error))
-      && isBoundedString(value.message, 1_000, true)
-    )
-  );
-}
-
-function parseAgentOrchestrationSnapshot(value: unknown): AgentOrchestrationSnapshot | null {
-  const parsed = AgentOrchestrationSnapshotSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
-
-interface OrchestrationValueSchema<T> {
-  safeParse(value: unknown): { success: true; data: T } | { success: false };
-}
-
-function parseAgentOrchestrationMutation<T>(
-  value: unknown,
-  schema: OrchestrationValueSchema<T>,
-): AgentOrchestrationMutationResult<T> | null {
-  if (!isRecord(value)) return null;
-  if (value.ok === true) {
-    const parsed = schema.safeParse(value.value);
-    return parsed.success ? { ok: true, value: parsed.data } : null;
-  }
-  if (
-    value.ok === false
-    && ['invalid', 'not-found', 'stale', 'conflict', 'unavailable', 'forbidden'].includes(String(value.error))
-    && isBoundedString(value.message, 1_000, true)
-  ) {
-    return value as AgentOrchestrationMutationResult<T>;
-  }
-  return null;
-}
-
-function isAgentParticipantWire(value: unknown): boolean {
-  return isRecord(value)
-    && isBoundedString(value.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(value.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(value.activityId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(value.sessionId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && isBoundedString(value.workspaceId, MAX_REMOTE_AGENT_ID_LENGTH)
-    && (value.worktreeId === undefined || isBoundedString(value.worktreeId, MAX_REMOTE_AGENT_ID_LENGTH))
-    && isBoundedString(value.alias, 48)
-    && isBoundedString(value.role, 120)
-    && isBoundedString(value.task, 1_000)
-    && (value.provider === 'codex' || value.provider === 'claude')
-    && value.joined === true
-    && isFiniteTimestamp(value.joinedAt)
-    && isFiniteTimestamp(value.updatedAt);
-}
-
-function isAgentStateCounts(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return ['starting', 'working', 'blocked', 'done', 'idle', 'error', 'unknown'].every((state) => (
-    Number.isSafeInteger(value[state]) && (value[state] as number) >= 0
-  ));
-}
-
-function isAgentFollowupResult(value: unknown): value is AgentFollowupResult {
-  return isRecord(value) && (
-    value.ok === true
-    || (
-      value.ok === false
-      && (
-        value.error === 'not-found'
-        || value.error === 'not-waiting'
-        || value.error === 'not-ready'
-        || value.error === 'invalid-text'
-        || value.error === 'session-ended'
-        || value.error === 'delivery-failed'
-      )
-    )
-  );
-}
-
-function isAgentDecisionResult(value: unknown): value is AgentDecisionResult {
-  return isRecord(value) && (
-    value.ok === true
-    || (
-      value.ok === false
-      && (
-        value.error === 'not-found'
-        || value.error === 'not-pending'
-        || value.error === 'expired'
-        || value.error === 'stale'
-        || value.error === 'conflict'
-        || value.error === 'delivery-failed'
-        || value.error === 'outcome-unknown'
-      )
-    )
-  );
-}
-
-function isOptionalNonNegativeInteger(value: unknown): boolean {
-  return value === undefined || (
-    Number.isSafeInteger(value)
-    && (value as number) >= 0
-  );
-}
-
-function isSafeRelativeGitPath(value: unknown): value is string {
-  if (
-    !isBoundedString(value, MAX_REMOTE_GIT_PATH_LENGTH)
-    || value.includes('\0')
-    || value.startsWith('/')
-    || value.startsWith('\\')
-    || /^[A-Za-z]:[\\/]/u.test(value)
-  ) return false;
-  return value.split(/[\\/]/u).every((segment) => segment !== '..');
-}
-
-function isGitDirectoryStatus(value: unknown): value is GitDirectoryStatus {
-  if (
-    !isRecord(value)
-    || !Array.isArray(value.changes)
-    || value.changes.length > MAX_REMOTE_GIT_CHANGES
-  ) return false;
-  if (value.availability === 'ready') {
-    if (
-      value.tracked !== true
-      || typeof value.truncated !== 'boolean'
-      || (
-        value.branch !== undefined
-        && !isBoundedString(value.branch, MAX_REMOTE_GIT_BRANCH_LENGTH)
-      )
-    ) return false;
-    return value.changes.every((change) => (
-      isRecord(change)
-      && isSafeRelativeGitPath(change.path)
-      && (
-        change.kind === 'added'
-        || change.kind === 'modified'
-        || change.kind === 'deleted'
-        || change.kind === 'renamed'
-        || change.kind === 'untracked'
-        || change.kind === 'conflicted'
-      )
-      && isOptionalNonNegativeInteger(change.added)
-      && isOptionalNonNegativeInteger(change.removed)
-    ));
-  }
-  return (
-    (value.availability === 'not-a-repository' || value.availability === 'unavailable')
-    && value.tracked === false
-    && value.branch === undefined
-    && value.changes.length === 0
-    && value.truncated === false
-  );
-}
-
-function isGitDiffResult(value: unknown): value is GitDiffResult {
-  if (!isRecord(value) || typeof value.ok !== 'boolean') return false;
-  if (!value.ok) {
-    return (
-      value.error === 'not-a-repository'
-      || value.error === 'invalid-path'
-      || value.error === 'git-failed'
-    );
-  }
-  if (
-    typeof value.text !== 'string'
-    || value.text.length > MAX_REMOTE_GIT_DIFF_LENGTH
-    || typeof value.truncated !== 'boolean'
-    || !Array.isArray(value.omissions)
-    || value.omissions.length > MAX_REMOTE_GIT_OMISSIONS
-  ) return false;
-  return value.omissions.every((omission) => (
-    isRecord(omission)
-    && isSafeRelativeGitPath(omission.path)
-    && (
-      omission.reason === 'binary'
-      || omission.reason === 'symlink'
-      || omission.reason === 'too-large'
-      || omission.reason === 'unsupported'
-      || omission.reason === 'read-failed'
-      || omission.reason === 'budget-exhausted'
-    )
-  ));
-}
-
-function isGuardedDestroyId(value: unknown): value is string {
-  return (
-    typeof value === 'string'
-    && value.length > 0
-    && value.length <= MAX_GUARDED_DESTROY_ID_LENGTH
-  );
-}
-
-/** Read-only desktop Quick Command snapshot. An older host is distinguished
- * from a temporary transport/store failure so the mobile affordance can stay
- * hidden instead of presenting a permanently failing action. */
-export type RemoteQuickCommandsResult =
-  | { readonly ok: true; readonly commands: readonly QuickCommand[] }
-  | { readonly ok: false; readonly error: 'unsupported' | 'offline' | 'unavailable' };
-/**
- * How long a single connection attempt may sit un-authenticated before it is
- * abandoned and retried. Covers BOTH "the socket never opened" (unreachable
- * host — the browser's own TCP timeout can be tens of seconds) AND the nastier
- * "socket opened but `auth-ok` never came and `close` never fired" half-open
- * case (e.g. a VPN link that is mid-handshake), which otherwise stalls the
- * reconnect loop forever because reconnects are only scheduled on `close`.
- */
-const DEFAULT_AUTH_TIMEOUT_MS = 6000;
-/** An approval may already have executed when its reply is lost. Keep the
- * exact idempotency key alive across a short reconnect window instead of
- * reporting a false failure. */
-const AGENT_DECISION_RETRY_WINDOW_MS = 60_000;
-
-interface PendingAgentDecision {
-  readonly activityId: string;
-  readonly approvalId: string;
-  readonly decision: AgentDecision;
-  readonly resolve: (result: AgentDecisionResult) => void;
-  timer: ReturnType<typeof setTimeout> | null;
-}
-
-/**
- * A duck-typed stand-in for a real `MessagePort` — see the module doc for why
- * a genuine `MessagePort` can't be used here. Implements only the surface
- * `BlockController` actually calls: `addEventListener('message', ...)` (native
- * `EventTarget` behavior), `postMessage`, `start`, `close`.
- *
- * Generic over the delivered frame type so the SAME class serves both the
- * per-run cmd port (`FakeMessagePort<InterpreterFrame>`, the default) and the
- * persistent packet port (`FakeMessagePort<RemotePacketFrame>`) — the class
- * itself is just an `EventTarget` wrapper; only the type of what flows over
- * `deliver()` differs.
- */
-export class FakeMessagePort<TFrame = InterpreterFrame> extends EventTarget {
-  private disposed = false;
-
-  constructor(private readonly onControl: (control: RendererControl) => void) {
-    super();
-  }
-
-  /** BlockController -> here: relay the control to the server as `{kind:'control', runId, control}`. */
-  postMessage(control: RendererControl): void {
-    if (this.disposed) return;
-    this.onControl(control);
-  }
-
-  /** No-op: unlike a real MessagePort, this port never queues — `deliver()` below
-   * dispatches directly, so there is nothing held back for `start()` to release. */
-  start(): void {
-    /* intentionally empty */
-  }
-
-  close(): void {
-    this.disposed = true;
-  }
-
-  /** Transport-internal: push a decoded frame in as a 'message' event. */
-  deliver(frame: TFrame): void {
-    if (this.disposed) return;
-    this.dispatchEvent(new MessageEvent('message', { data: frame }));
-  }
-
-  get isDisposed(): boolean {
-    return this.disposed;
-  }
-}
-
-export interface WsEzTerminalOptions {
-  readonly url: string;
-  readonly token: string;
-  readonly clientIdentity?: RemoteClientIdentity;
-  /** Test/release seam for the public handshake and copied diagnostics. */
-  readonly buildInfo?: BuildInfo;
-  /** Test seam: defaults to the real browser `WebSocket`. */
-  readonly createSocket?: CreateSocket;
-  /** Test seam: defaults to the secure WebView-compatible v4 generator. */
-  readonly newId?: () => string;
-  readonly initialBackoffMs?: number;
-  readonly maxBackoffMs?: number;
-  /** Test seam: how long an attempt may stay un-authed before retry. */
-  readonly authTimeoutMs?: number;
-  /** Test seams for bounded OpenClaw request/reply operations. */
-  readonly openClawTicketTimeoutMs?: number;
-  readonly openClawConfigTimeoutMs?: number;
-  readonly openClawLifecycleTimeoutMs?: number;
-  /** Test seams for the post-auth liveness monitor (silent-socket detection). */
-  readonly livenessIdleMs?: number;
-  readonly livenessProbeTimeoutMs?: number;
-  readonly livenessCheckMs?: number;
-}
-
-interface RunPortRecord {
-  readonly sessionId: string;
-  readonly runId: string;
-  readonly port: FakeMessagePort;
-  /** True only for this transport's initiating run, never an attach mirror. */
-  readonly initiatedHere: boolean;
-}
-
-interface ResumeRetryState {
-  readonly generation: number;
-  attempts: number;
-  timer: ReturnType<typeof setTimeout> | null;
-}
-
-function runKey(sessionId: string, runId: string): string {
-  return `${sessionId}\0${runId}`;
-}
+import {
+  type DaemonRuntimeViewState,
+  type DaemonEventListener,
+  createSecureRequestId,
+  type FileReadResult,
+  type FileReadMode,
+  type FileReadAssembly,
+  type UploadBeginResult,
+  type UploadAckResult,
+  type UploadDoneResult,
+  OPENCLAW_TICKET_TIMEOUT_MS,
+  OPENCLAW_CONFIG_TIMEOUT_MS,
+  OPENCLAW_LIFECYCLE_TIMEOUT_MS,
+  type WsLike,
+  type CreateSocket,
+  DEFAULT_INITIAL_BACKOFF_MS,
+  DEFAULT_MAX_BACKOFF_MS,
+  WS_OPEN,
+  RTT_PROBE_INTERVAL_MS,
+  RTT_MAX_PLAUSIBLE_MS,
+  LIVENESS_IDLE_MS,
+  LIVENESS_PROBE_TIMEOUT_MS,
+  LIVENESS_CHECK_INTERVAL_MS,
+  RESUME_RETRY_INITIAL_MS,
+  RESUME_RETRY_MAX_MS,
+  RESUME_RETRY_MAX_ATTEMPTS,
+  MAX_REMOTE_AGENT_ID_LENGTH,
+  MAX_REMOTE_AGENT_FOLLOWUP_LENGTH,
+  MAX_FILE_CHUNK_BASE64_CHARS,
+  maxFileReadBytes,
+  isNonNegativeSafeInteger,
+  isDaemonSnapshot,
+  isDaemonEvent,
+  isDaemonCommandReceipt,
+  isDaemonTranscriptItem,
+  isFileReadMetaConsistent,
+  isBoundedString,
+  isRemoteDaemonAuthorityAvailability,
+  isAgentActivitySnapshot,
+  isAgentCoordinationSnapshot,
+  isManagedMergeMutationResult,
+  isAgentProjectCoordinationMutationResult,
+  parseAgentOrchestrationSnapshot,
+  parseAgentOrchestrationMutation,
+  isAgentFollowupResult,
+  isAgentDecisionResult,
+  isGitDirectoryStatus,
+  isGitDiffResult,
+  isGuardedDestroyId,
+  type RemoteQuickCommandsResult,
+  DEFAULT_AUTH_TIMEOUT_MS,
+  AGENT_DECISION_RETRY_WINDOW_MS,
+  type PendingAgentDecision,
+  FakeMessagePort,
+  type WsEzTerminalOptions,
+  type RunPortRecord,
+  type ResumeRetryState,
+  runKey,
+} from './ws-transport-contract';
+export { type DaemonRuntimeSyncStatus, type DaemonRuntimeViewState, type DaemonEventListener, createSecureRequestId, type OpenClawChatFailureReason, type OpenClawChatTicket, type WsLike, type CreateSocket, type RemoteQuickCommandsResult, FakeMessagePort, type WsEzTerminalOptions } from './ws-transport-contract';
 
 export class WsEzTerminalTransport implements EzTerminalApi {
+  private readonly agentHistory: RemoteAgentHistoryClient;
+  private readonly openclaw: RemoteOpenClawClient;
   /** Not meaningful for a remote WS client — no local Electron/Chrome/Node process. */
   readonly versions: RuntimeVersions;
 
@@ -1241,7 +320,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * process restart. attachRun consumes the marker and performs an
    * authoritative resume instead of creating a viewing-only mirror. */
   private readonly restartResumableRuns = new Set<string>();
-  private readonly sessionDeadListeners = new Set<(info?: { logPath?: string | null }) => void>();
+  private readonly sessionDeadListeners = new Set<(info?: { logPath?: string | null; }) => void>();
   /** Mobile-only (M2 ConnectScreen): fires on every authed transition, including
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
   private readonly authListeners = new Set<(authed: boolean) => void>();
@@ -1364,39 +443,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   >();
   private readonly pendingAgentFollowups = new Map<string, (result: AgentFollowupResult) => void>();
   private readonly pendingAgentDecisions = new Map<string, PendingAgentDecision>();
-  private readonly pendingAgentProjects = new Map<string, (result: AgentProjectPage) => void>();
-  private readonly pendingAgentProjectSaves = new Map<string, (result: AgentProjectMutationResult) => void>();
-  private readonly pendingAgentProjectRemovals = new Map<string, (removed: boolean) => void>();
-  private readonly pendingAgentProjectLaunchers = new Map<
-    string,
-    (result: readonly AgentProjectLauncherSummary[]) => void
-  >();
-  private readonly pendingAgentProjectLaunchPreparation = new Map<
-    string,
-    (result: AgentProjectLaunchPreparation) => void
-  >();
-  private readonly pendingAgentProjectLaunchStarts = new Map<
-    string,
-    (result: AgentProjectLaunchStartResult) => void
-  >();
-  private readonly pendingAgentLaunchPreparation = new Map<
-    string,
-    (result: AgentLaunchPreparation) => void
-  >();
-  private readonly pendingAgentLaunchStarts = new Map<
-    string,
-    (result: AgentLaunchStartResult) => void
-  >();
-  private readonly pendingAgentHistorySessions = new Map<string, (result: AgentHistorySessionPage) => void>();
-  private readonly pendingAgentHistoryReads = new Map<string, (result: AgentTranscriptPage | null) => void>();
-  private readonly pendingAgentResumePreparation = new Map<
-    string,
-    (result: AgentResumePreparation | null) => void
-  >();
-  private readonly pendingAgentResumeStarts = new Map<
-    string,
-    (result: AgentResumeStartResult) => void
-  >();
 
   /** The desired stats-visible state, remembered across reconnects — see the
    * 'auth-ok' replay in `handleServerMessage`. */
@@ -1425,14 +471,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingTerminalFileLocations = new Map<string, (result: TerminalFileLocationResult) => void>();
   private readonly pendingWorktrees = new Map<
     string,
-    { readonly action: WorktreeAction; readonly resolve: (result: WorktreeResult) => void }
+    { readonly action: WorktreeAction; readonly resolve: (result: WorktreeResult) => void; }
   >();
   private roundTripMs: number | null = null;
   private roundTripTimer: ReturnType<typeof setInterval> | null = null;
   private roundTripProbeSequence = 0;
   private readonly pendingRoundTripProbes = new Map<
     string,
-    { readonly sentAt: number; readonly generation: number }
+    { readonly sentAt: number; readonly generation: number; }
   >();
   private readonly pendingGitStatus = new Map<string, (status: GitDirectoryStatus) => void>();
   private readonly pendingGitDiffs = new Map<string, (result: GitDiffResult) => void>();
@@ -1449,43 +495,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingUploadBegins = new Map<string, (result: UploadBeginResult) => void>();
   private readonly pendingUploadAcks = new Map<string, (result: UploadAckResult) => void>();
   private readonly pendingUploadDones = new Map<string, (result: UploadDoneResult) => void>();
-
-  // OpenClaw management (M4) — status/logs use the SAME two-method split as
-  // stats (`onStatsUpdate`/`setStatsPanelVisible`): a plain listener set, plus
-  // a separate desired-state flag that is remembered and REPLAYED on the
-  // 'auth-ok' handler below (same reconnect-safety precedent as
-  // `statsVisible`/`packetsSubscribed`). Lifecycle/sessions/config/chat-ticket
-  // are request/reply, correlated by a locally-minted `requestId` (same FIFO-
-  // map precedent as `pendingFileOps` above) — a dropped connection resolves
-  // every in-flight entry with a "connection lost" result, never left pending.
-  private readonly openclawStatusListeners = new Set<(status: OpenClawStatus) => void>();
-  private readonly openclawControlListeners = new Set<(snapshot: OpenClawControlSnapshot) => void>();
-  /** REFCOUNT, not a boolean (openclaw-stabilization M3): MobileWorkspace
-   * (for the entry-button status dot) and MobileOpenClawView (while it's
-   * open) both call `setOpenClawStatusSubscribed` independently on the SAME
-   * transport instance — a boolean would let the view's unmount-time
-   * `setOpenClawStatusSubscribed(false)` cancel the workspace's own still-
-   * wanted subscription. Clamped at 0, same "combine independent
-   * acquire/release callers" shape as `StatsVisibility` (src/main/stats-
-   * visibility.ts) on the desktop side, just inlined here rather than a
-   * separate class (only one subscription to combine, not N remote viewers). */
-  private openclawStatusRefcount = 0;
-  private readonly openclawLogListeners = new Set<(lines: readonly OpenClawLogLine[]) => void>();
-  private openclawLogsSubscribed = false;
-  private readonly pendingOpenClawLifecycle = new Map<string, (result: OpenClawLifecycleReceipt) => void>();
-  private readonly pendingOpenClawSessions = new Map<string, (sessions: readonly OpenClawAgentSession[]) => void>();
-  private readonly pendingOpenClawConfigGet = new Map<string, (config: OpenClawCoreConfig) => void>();
-  private readonly pendingOpenClawConfigSet = new Map<string, (result: OpenClawSetConfigResult) => void>();
-  private readonly pendingOpenClawChatTicket = new Map<string, (reply: OpenClawChatTicket) => void>();
-
-  // OpenClaw availability (M3) — pushed unconditionally (no subscribe
-  // message, unlike status/logs above) right after auth and on every desktop
-  // mode change. `openclawAvailable` is `undefined` until the first push
-  // arrives (or after a disconnect resets it — see `endConnection`); `onOpen
-  // ClawAvailability` folds that to `false` on replay, same "unknown reads as
-  // not-visible" contract MobileWorkspace's effective-visibility derivation uses.
-  private openclawAvailable: boolean | undefined;
-  private readonly openclawAvailabilityListeners = new Set<(visible: boolean) => void>();
 
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
@@ -1512,7 +521,55 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.livenessProbeTimeoutMs = options.livenessProbeTimeoutMs ?? LIVENESS_PROBE_TIMEOUT_MS;
     this.livenessCheckMs = options.livenessCheckMs ?? LIVENESS_CHECK_INTERVAL_MS;
     this.backoffMs = this.initialBackoffMs;
+    this.agentHistory = new RemoteAgentHistoryClient({
+      getProtocolVersion: () => this.negotiatedProtocolVersion,
+      newId: () => this.newId(),
+      tryStartMapRequest: (message, pending, key, resolve) => this.tryStartMapRequest(message, pending, key, resolve),
+      createRunPort: (runId) => this.createPrivateRunPort(runId),
+      publishRunPort: (sessionId, runId, port) => this.publishPrivateRunPort(sessionId, runId, port),
+    });
+    this.openclaw = new RemoteOpenClawClient({
+      isAuthenticated: () => this.authed,
+      openClawTicketTimeoutMs: this.openClawTicketTimeoutMs,
+      openClawConfigTimeoutMs: this.openClawConfigTimeoutMs,
+      openClawLifecycleTimeoutMs: this.openClawLifecycleTimeoutMs,
+      send: (message) => this.send(message),
+      newId: () => this.newId(),
+      tryStartTimedMapRequest: (message, pending, key, resolve, timeoutMs, timeoutResult) =>
+        this.tryStartTimedMapRequest(message, pending, key, resolve, timeoutMs, timeoutResult),
+    });
     this.connect();
+  }
+
+  private createPrivateRunPort(runId: string): FakeMessagePort {
+    return new FakeMessagePort((control) => {
+      this.send({ kind: 'control', runId: runId, control });
+      if (control.type === 'close' || control.type === 'detach') {
+        this.clearResumeRetry(runId);
+        this.ports.delete(runId);
+      }
+    });
+  }
+
+  private publishPrivateRunPort(sessionId: string, runId: string, port: FakeMessagePort): void {
+    this.clearResumeRetry(runId);
+    this.ports.get(runId)?.port.close();
+    this.ports.set(runId, {
+      sessionId: sessionId,
+      runId: runId,
+      port,
+      initiatedHere: true,
+    });
+    const event = new MessageEvent('message', {
+      data: { _ezPort: runId },
+      source: window,
+    });
+    Object.defineProperty(event, 'ports', {
+      value: [port],
+      enumerable: true,
+      configurable: true,
+    });
+    window.dispatchEvent(event);
   }
 
   /** Stop reconnecting, release live runs, and close all stable local ports. */
@@ -1568,10 +625,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.nextRetryAt = null;
     this.setAuthed(false);
     this.resolvePendingRequestsUnavailable(true);
-    if (this.openclawAvailable !== false) {
-      this.openclawAvailable = false;
-      for (const listener of this.openclawAvailabilityListeners) listener(false);
-    }
+    this.openclaw.disconnected();
     this.setConnectionState('suspended');
     return true;
   }
@@ -1714,7 +768,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return Promise.resolve();
   }
 
-  onSessionDead(listener: (info?: { logPath?: string | null }) => void): () => void {
+  onSessionDead(listener: (info?: { logPath?: string | null; }) => void): () => void {
     this.sessionDeadListeners.add(listener);
     return () => this.sessionDeadListeners.delete(listener);
   }
@@ -2174,7 +1228,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   joinAgentCollaboration(
     _input: AgentParticipantInput,
-  ): Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string }>> {
+  ): Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string; }>> {
     void _input;
     return Promise.resolve({ ok: false, error: 'unavailable', message: 'Join configuration is desktop-only.' });
   }
@@ -2260,7 +1314,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   grantNextManagedMerge(
     _input: ManagedMergeGrantInput,
-  ): Promise<AgentCoordinationMutationResult<{ readonly expiresAt: number }>> {
+  ): Promise<AgentCoordinationMutationResult<{ readonly expiresAt: number; }>> {
     void _input;
     return Promise.resolve({ ok: false, error: 'unavailable', message: 'One-shot grants are desktop-only.' });
   }
@@ -2338,340 +1392,56 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       }
     });
   }
-
-  listAgentProjects(
-    force?: boolean,
-    cursor?: string,
-    limit?: number,
-    query?: string,
-  ): Promise<AgentProjectPage> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) {
-      return Promise.resolve({ items: [], nextCursor: null });
-    }
-    if (query && (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
-      return Promise.resolve({ items: [], nextCursor: null });
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-projects-list', requestId, force, cursor, limit, query },
-        this.pendingAgentProjects,
-        requestId,
-        resolve,
-      )) resolve({ items: [], nextCursor: null });
-    });
+  listAgentProjects(...args: Parameters<RemoteAgentHistoryClient['listAgentProjects']>): ReturnType<RemoteAgentHistoryClient['listAgentProjects']> {
+    return this.agentHistory.listAgentProjects(...args);
   }
 
-  saveAgentProject(input: AgentProjectInput): Promise<AgentProjectMutationResult> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
-      return Promise.resolve({ ok: false, reason: 'invalid' });
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-project-save', requestId, input },
-        this.pendingAgentProjectSaves,
-        requestId,
-        resolve,
-      )) resolve({ ok: false, reason: 'invalid' });
-    });
+  saveAgentProject(...args: Parameters<RemoteAgentHistoryClient['saveAgentProject']>): ReturnType<RemoteAgentHistoryClient['saveAgentProject']> {
+    return this.agentHistory.saveAgentProject(...args);
   }
 
-  removeAgentProject(projectId: string): Promise<boolean> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
-      return Promise.resolve(false);
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-project-remove', requestId, projectId },
-        this.pendingAgentProjectRemovals,
-        requestId,
-        resolve,
-      )) resolve(false);
-    });
+  removeAgentProject(...args: Parameters<RemoteAgentHistoryClient['removeAgentProject']>): ReturnType<RemoteAgentHistoryClient['removeAgentProject']> {
+    return this.agentHistory.removeAgentProject(...args);
   }
 
-  listAgentProjectLaunchers(): Promise<readonly AgentProjectLauncherSummary[]> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
-      return Promise.resolve([]);
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-project-launchers', requestId },
-        this.pendingAgentProjectLaunchers,
-        requestId,
-        resolve,
-      )) resolve([]);
-    });
+  listAgentProjectLaunchers(...args: Parameters<RemoteAgentHistoryClient['listAgentProjectLaunchers']>): ReturnType<RemoteAgentHistoryClient['listAgentProjectLaunchers']> {
+    return this.agentHistory.listAgentProjectLaunchers(...args);
   }
 
-  async prepareAgentLaunch(
-    target: AgentLaunchTarget,
-    launcherId: string,
-    model?: string,
-  ): Promise<AgentLaunchPreparation> {
-    if ((this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) {
-      return new Promise((resolve) => {
-        const requestId = this.newId();
-        if (!this.tryStartMapRequest(
-          { kind: 'agent-launch-prepare', requestId, target, launcherId, ...(model ? { model } : {}) },
-          this.pendingAgentLaunchPreparation,
-          requestId,
-          resolve,
-        )) resolve({ ok: false, reason: 'unavailable' });
-      });
-    }
-    if (model || target.kind !== 'project') return { ok: false, reason: 'unavailable' };
-    const preparation = await this.prepareAgentProjectLaunch(target.projectId, launcherId);
-    return preparation.ok
-      ? {
-          ok: true,
-          target,
-          launcherId: preparation.launcherId,
-          provider: preparation.provider,
-          name: preparation.name,
-          cwd: preparation.cwd,
-          roots: preparation.roots,
-          ignoredAdditionalRootCount: 0,
-          revision: preparation.revision,
-        }
-      : preparation;
+  prepareAgentLaunch(...args: Parameters<RemoteAgentHistoryClient['prepareAgentLaunch']>): ReturnType<RemoteAgentHistoryClient['prepareAgentLaunch']> {
+    return this.agentHistory.prepareAgentLaunch(...args);
   }
 
-  startAgentLaunch(request: AgentLaunchStartRequest): Promise<AgentLaunchStartResult> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) {
-      return !request.model && request.target.kind === 'project'
-        ? this.startAgentProjectLaunch({
-            projectId: request.target.projectId,
-            launcherId: request.launcherId,
-            sessionId: request.sessionId,
-            runId: request.runId,
-            revision: request.revision,
-          })
-        : Promise.resolve({ ok: false, reason: 'unavailable' });
-    }
-    const port = new FakeMessagePort((control) => {
-      this.send({ kind: 'control', runId: request.runId, control });
-      if (control.type === 'close' || control.type === 'detach') {
-        this.clearResumeRetry(request.runId);
-        this.ports.delete(request.runId);
-      }
-    });
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      const settle = (result: AgentLaunchStartResult): void => {
-        if (!result.ok) {
-          port.close();
-          resolve(result);
-          return;
-        }
-        this.clearResumeRetry(request.runId);
-        this.ports.get(request.runId)?.port.close();
-        this.ports.set(request.runId, {
-          sessionId: request.sessionId,
-          runId: request.runId,
-          port,
-          initiatedHere: true,
-        });
-        const event = new MessageEvent('message', {
-          data: { _ezPort: request.runId },
-          source: window,
-        });
-        Object.defineProperty(event, 'ports', {
-          value: [port],
-          enumerable: true,
-          configurable: true,
-        });
-        window.dispatchEvent(event);
-        resolve(result);
-      };
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-launch-start', requestId, request },
-        this.pendingAgentLaunchStarts,
-        requestId,
-        settle,
-      )) settle({ ok: false, reason: 'unavailable' });
-    });
+  startAgentLaunch(...args: Parameters<RemoteAgentHistoryClient['startAgentLaunch']>): ReturnType<RemoteAgentHistoryClient['startAgentLaunch']> {
+    return this.agentHistory.startAgentLaunch(...args);
   }
 
-  prepareAgentProjectLaunch(
-    projectId: string,
-    launcherId: string,
-  ): Promise<AgentProjectLaunchPreparation> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
-      return Promise.resolve({ ok: false, reason: 'unavailable' });
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-project-prepare-launch', requestId, projectId, launcherId },
-        this.pendingAgentProjectLaunchPreparation,
-        requestId,
-        resolve,
-      )) resolve({ ok: false, reason: 'unavailable' });
-    });
+  prepareAgentProjectLaunch(...args: Parameters<RemoteAgentHistoryClient['prepareAgentProjectLaunch']>): ReturnType<RemoteAgentHistoryClient['prepareAgentProjectLaunch']> {
+    return this.agentHistory.prepareAgentProjectLaunch(...args);
   }
 
-  startAgentProjectLaunch(
-    request: AgentProjectLaunchStartRequest,
-  ): Promise<AgentProjectLaunchStartResult> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
-      return Promise.resolve({ ok: false, reason: 'unavailable' });
-    }
-    const port = new FakeMessagePort((control) => {
-      this.send({ kind: 'control', runId: request.runId, control });
-      if (control.type === 'close' || control.type === 'detach') {
-        this.clearResumeRetry(request.runId);
-        this.ports.delete(request.runId);
-      }
-    });
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      const settle = (result: AgentProjectLaunchStartResult): void => {
-        if (!result.ok) {
-          port.close();
-          resolve(result);
-          return;
-        }
-        this.clearResumeRetry(request.runId);
-        this.ports.get(request.runId)?.port.close();
-        this.ports.set(request.runId, {
-          sessionId: request.sessionId,
-          runId: request.runId,
-          port,
-          initiatedHere: true,
-        });
-        const event = new MessageEvent('message', {
-          data: { _ezPort: request.runId },
-          source: window,
-        });
-        Object.defineProperty(event, 'ports', {
-          value: [port],
-          enumerable: true,
-          configurable: true,
-        });
-        window.dispatchEvent(event);
-        resolve(result);
-      };
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-project-start-launch', requestId, request },
-        this.pendingAgentProjectLaunchStarts,
-        requestId,
-        settle,
-      )) settle({ ok: false, reason: 'unavailable' });
-    });
+  startAgentProjectLaunch(...args: Parameters<RemoteAgentHistoryClient['startAgentProjectLaunch']>): ReturnType<RemoteAgentHistoryClient['startAgentProjectLaunch']> {
+    return this.agentHistory.startAgentProjectLaunch(...args);
   }
 
-  get supportsAgentProjectManagement(): boolean {
-    return (this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS;
+  get supportsAgentProjectManagement(): boolean { return this.agentHistory.supportsAgentProjectManagement; }
+
+  get supportsAgentDirectLaunch(): boolean { return this.agentHistory.supportsAgentDirectLaunch; }
+
+  listAgentHistorySessions(...args: Parameters<RemoteAgentHistoryClient['listAgentHistorySessions']>): ReturnType<RemoteAgentHistoryClient['listAgentHistorySessions']> {
+    return this.agentHistory.listAgentHistorySessions(...args);
   }
 
-  get supportsAgentDirectLaunch(): boolean {
-    return (this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS;
+  readAgentHistory(...args: Parameters<RemoteAgentHistoryClient['readAgentHistory']>): ReturnType<RemoteAgentHistoryClient['readAgentHistory']> {
+    return this.agentHistory.readAgentHistory(...args);
   }
 
-  listAgentHistorySessions(
-    projectId: string,
-    cursor?: string,
-    limit?: number,
-    force?: boolean,
-  ): Promise<AgentHistorySessionPage> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) {
-      return Promise.resolve({ items: [], nextCursor: null });
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-history-sessions', requestId, projectId, cursor, limit, force },
-        this.pendingAgentHistorySessions,
-        requestId,
-        resolve,
-      )) resolve({ items: [], nextCursor: null });
-    });
+  prepareAgentResume(...args: Parameters<RemoteAgentHistoryClient['prepareAgentResume']>): ReturnType<RemoteAgentHistoryClient['prepareAgentResume']> {
+    return this.agentHistory.prepareAgentResume(...args);
   }
 
-  readAgentHistory(
-    historyId: string,
-    cursor?: string,
-    limit?: number,
-  ): Promise<AgentTranscriptPage | null> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) {
-      return Promise.resolve(null);
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-history-read', requestId, historyId, cursor, limit },
-        this.pendingAgentHistoryReads,
-        requestId,
-        resolve,
-      )) resolve(null);
-    });
-  }
-
-  prepareAgentResume(historyId: string): Promise<AgentResumePreparation | null> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) {
-      return Promise.resolve(null);
-    }
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-history-prepare-resume', requestId, historyId },
-        this.pendingAgentResumePreparation,
-        requestId,
-        resolve,
-      )) resolve(null);
-    });
-  }
-
-  startAgentResume(request: AgentResumeStartRequest): Promise<AgentResumeStartResult> {
-    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) {
-      return Promise.resolve({ ok: false, reason: 'unavailable' });
-    }
-    const port = new FakeMessagePort((control) => {
-      this.send({ kind: 'control', runId: request.runId, control });
-      if (control.type === 'close' || control.type === 'detach') {
-        this.clearResumeRetry(request.runId);
-        this.ports.delete(request.runId);
-      }
-    });
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      const settle = (result: AgentResumeStartResult): void => {
-        if (!result.ok) {
-          port.close();
-          resolve(result);
-          return;
-        }
-        this.clearResumeRetry(request.runId);
-        this.ports.get(request.runId)?.port.close();
-        this.ports.set(request.runId, {
-          sessionId: request.sessionId,
-          runId: request.runId,
-          port,
-          initiatedHere: true,
-        });
-        const event = new MessageEvent('message', {
-          data: { _ezPort: request.runId },
-          source: window,
-        });
-        Object.defineProperty(event, 'ports', {
-          value: [port],
-          enumerable: true,
-          configurable: true,
-        });
-        window.dispatchEvent(event);
-        resolve(result);
-      };
-      if (!this.tryStartMapRequest(
-        { kind: 'agent-history-start-resume', requestId, request },
-        this.pendingAgentResumeStarts,
-        requestId,
-        settle,
-      )) settle({ ok: false, reason: 'unavailable' });
-    });
+  startAgentResume(...args: Parameters<RemoteAgentHistoryClient['startAgentResume']>): ReturnType<RemoteAgentHistoryClient['startAgentResume']> {
+    return this.agentHistory.startAgentResume(...args);
   }
 
   /** Mobile-only: the host handed over a long-lived bearer after this link
@@ -2808,162 +1578,48 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.packetPort?.close();
     this.packetPort = null;
   }
-
-  // ── OpenClaw management (openclaw-management M4, mobile-only) ────────────
-  // Mirrors the desktop drawer's IPC surface (src/shared/openclaw.ts +
-  // openclaw-service.ts's method names) over the wire protocol added in
-  // remote-protocol.ts. Not part of `EzTerminalApi` — see the module doc.
-
-  /** Fires on every `openclaw-status` push while subscribed (see
-   * `setOpenClawStatusSubscribed`). */
-  onOpenClawStatus(listener: (status: OpenClawStatus) => void): () => void {
-    this.openclawStatusListeners.add(listener);
-    return () => this.openclawStatusListeners.delete(listener);
+  onOpenClawStatus(...args: Parameters<RemoteOpenClawClient['onOpenClawStatus']>): ReturnType<RemoteOpenClawClient['onOpenClawStatus']> {
+    return this.openclaw.onOpenClawStatus(...args);
   }
 
-  /** Desired state, recovery phase, and critical remediation paired with status. */
-  onOpenClawControl(listener: (snapshot: OpenClawControlSnapshot) => void): () => void {
-    this.openclawControlListeners.add(listener);
-    return () => this.openclawControlListeners.delete(listener);
+  onOpenClawControl(...args: Parameters<RemoteOpenClawClient['onOpenClawControl']>): ReturnType<RemoteOpenClawClient['onOpenClawControl']> {
+    return this.openclaw.onOpenClawControl(...args);
   }
 
-  /** Tell the bridge whether THIS caller wants the OpenClaw status push —
-   * REFCOUNTED (see `openclawStatusRefcount`'s doc): only the 0->1 and 1->0
-   * transitions actually send a wire message; an already-subscribed second
-   * caller (or a not-yet-zero release) is a no-op on the wire, same
-   * "transition only" discipline as `StatsVisibility.recompute`. */
-  setOpenClawStatusSubscribed(subscribed: boolean): void {
-    const wasSubscribed = this.openclawStatusRefcount > 0;
-    this.openclawStatusRefcount = Math.max(0, this.openclawStatusRefcount + (subscribed ? 1 : -1));
-    const isSubscribed = this.openclawStatusRefcount > 0;
-    if (wasSubscribed === isSubscribed) return;
-    if (this.authed) this.send({ kind: isSubscribed ? 'openclaw-status-subscribe' : 'openclaw-status-unsubscribe' });
+  setOpenClawStatusSubscribed(...args: Parameters<RemoteOpenClawClient['setOpenClawStatusSubscribed']>): ReturnType<RemoteOpenClawClient['setOpenClawStatusSubscribed']> {
+    return this.openclaw.setOpenClawStatusSubscribed(...args);
   }
 
-  /** Fires on every `openclaw-log-lines` push (coalesced batch of lines, see
-   * remote-protocol.ts) while subscribed. */
-  onOpenClawLogLines(listener: (lines: readonly OpenClawLogLine[]) => void): () => void {
-    this.openclawLogListeners.add(listener);
-    return () => this.openclawLogListeners.delete(listener);
+  onOpenClawLogLines(...args: Parameters<RemoteOpenClawClient['onOpenClawLogLines']>): ReturnType<RemoteOpenClawClient['onOpenClawLogLines']> {
+    return this.openclaw.onOpenClawLogLines(...args);
   }
 
-  /** Tell the bridge whether THIS connection wants the OpenClaw log tail —
-   * same replay-on-reconnect shape as `setOpenClawStatusSubscribed`. */
-  setOpenClawLogsSubscribed(subscribed: boolean): void {
-    this.openclawLogsSubscribed = subscribed;
-    if (this.authed) this.send({ kind: subscribed ? 'openclaw-logs-subscribe' : 'openclaw-logs-unsubscribe' });
+  setOpenClawLogsSubscribed(...args: Parameters<RemoteOpenClawClient['setOpenClawLogsSubscribed']>): ReturnType<RemoteOpenClawClient['setOpenClawLogsSubscribed']> {
+    return this.openclaw.setOpenClawLogsSubscribed(...args);
   }
 
-  runOpenClawLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleReceipt> {
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartTimedMapRequest(
-        { kind: 'openclaw-lifecycle', requestId, action },
-        this.pendingOpenClawLifecycle,
-        requestId,
-        resolve,
-        this.openClawLifecycleTimeoutMs,
-        {
-          accepted: false,
-          issue: {
-            code: 'supervisor-failed',
-            detail: 'OpenClaw lifecycle request timed out.',
-            remediation: 'Reconnect to EZTerminal and retry the action.',
-            diagnosticId: `mobile-timeout-${requestId}`,
-          },
-        },
-      )) resolve({
-        accepted: false,
-        issue: {
-          code: 'supervisor-failed',
-          detail: 'Not connected to EZTerminal.',
-          remediation: 'Reconnect to EZTerminal and retry the action.',
-          diagnosticId: `mobile-offline-${requestId}`,
-        },
-      });
-    });
+  runOpenClawLifecycle(...args: Parameters<RemoteOpenClawClient['runOpenClawLifecycle']>): ReturnType<RemoteOpenClawClient['runOpenClawLifecycle']> {
+    return this.openclaw.runOpenClawLifecycle(...args);
   }
 
-  getOpenClawSessions(): Promise<readonly OpenClawAgentSession[]> {
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartTimedMapRequest(
-        { kind: 'openclaw-sessions-get', requestId },
-        this.pendingOpenClawSessions,
-        requestId,
-        resolve,
-        this.openClawConfigTimeoutMs,
-        [],
-      )) resolve([]);
-    });
+  getOpenClawSessions(...args: Parameters<RemoteOpenClawClient['getOpenClawSessions']>): ReturnType<RemoteOpenClawClient['getOpenClawSessions']> {
+    return this.openclaw.getOpenClawSessions(...args);
   }
 
-  getOpenClawConfig(): Promise<OpenClawCoreConfig> {
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartTimedMapRequest(
-        { kind: 'openclaw-config-get', requestId },
-        this.pendingOpenClawConfigGet,
-        requestId,
-        resolve,
-        this.openClawConfigTimeoutMs,
-        Object.fromEntries(
-          OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET]),
-        ) as OpenClawCoreConfig,
-      )) {
-        resolve(Object.fromEntries(
-          OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET]),
-        ) as OpenClawCoreConfig);
-      }
-    });
+  getOpenClawConfig(...args: Parameters<RemoteOpenClawClient['getOpenClawConfig']>): ReturnType<RemoteOpenClawClient['getOpenClawConfig']> {
+    return this.openclaw.getOpenClawConfig(...args);
   }
 
-  setOpenClawConfig(key: string, value: string): Promise<OpenClawSetConfigResult> {
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartTimedMapRequest(
-        { kind: 'openclaw-config-set', requestId, key, value },
-        this.pendingOpenClawConfigSet,
-        requestId,
-        resolve,
-        this.openClawConfigTimeoutMs,
-        { ok: false, restartRequired: false, code: 'timeout', error: 'OpenClaw config request timed out' },
-      )) {
-        resolve({
-          ok: false,
-          restartRequired: false,
-          error: 'Not connected to EZTerminal',
-        });
-      }
-    });
+  setOpenClawConfig(...args: Parameters<RemoteOpenClawClient['setOpenClawConfig']>): ReturnType<RemoteOpenClawClient['setOpenClawConfig']> {
+    return this.openclaw.setOpenClawConfig(...args);
   }
 
-  /** Fires on every `openclaw-availability` push (openclaw-stabilization
-   * M3) — the desktop's effective OpenClaw visibility. REPLAYS the current
-   * cached value immediately to a new subscriber (same precedent as
-   * `onAuthChange` above), folding "haven't heard yet" to `false`. No
-   * subscribe/unsubscribe call needed (unlike `onOpenClawStatus`) — the
-   * bridge pushes this unconditionally to every authed connection. */
-  onOpenClawAvailability(listener: (visible: boolean) => void): () => void {
-    this.openclawAvailabilityListeners.add(listener);
-    listener(this.openclawAvailable ?? false);
-    return () => this.openclawAvailabilityListeners.delete(listener);
+  onOpenClawAvailability(...args: Parameters<RemoteOpenClawClient['onOpenClawAvailability']>): ReturnType<RemoteOpenClawClient['onOpenClawAvailability']> {
+    return this.openclaw.onOpenClawAvailability(...args);
   }
 
-  /** Mint a fresh chat ticket for the mobile chat embed (M5) — see
-   * openclaw-proxy.ts's module doc for the ticket+cookie auth flow this feeds. */
-  getOpenClawChatTicket(): Promise<OpenClawChatTicket> {
-    return new Promise((resolve) => {
-      const requestId = this.newId();
-      if (!this.tryStartTimedMapRequest(
-        { kind: 'openclaw-chat-ticket', requestId },
-        this.pendingOpenClawChatTicket,
-        requestId,
-        resolve,
-        this.openClawTicketTimeoutMs,
-        { ok: false, reason: 'timeout' },
-      )) resolve({ ok: false, reason: 'gateway-unreachable' });
-    });
+  getOpenClawChatTicket(...args: Parameters<RemoteOpenClawClient['getOpenClawChatTicket']>): ReturnType<RemoteOpenClawClient['getOpenClawChatTicket']> {
+    return this.openclaw.getOpenClawChatTicket(...args);
   }
 
   // ── Mobile remote-control pairing (M4, desktop-side pairing panel only) ───
@@ -2978,7 +1634,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   getRemoteToken(): Promise<string> {
     return Promise.resolve(this.token);
   }
-  getRemoteSecurityStatus(): Promise<{ readonly state: 'ready' | 'error'; readonly error: string | null }> {
+  getRemoteSecurityStatus(): Promise<{ readonly state: 'ready' | 'error'; readonly error: string | null; }> {
     return Promise.resolve({ state: 'ready', error: null });
   }
 
@@ -3316,7 +1972,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   downloadFile(
     path: string,
     onProgress: (received: number, total: number) => void,
-  ): Promise<{ name: string; bytes: Uint8Array }> {
+  ): Promise<{ name: string; bytes: Uint8Array; }> {
     return this.requestFileRead(path, 'raw', onProgress).then((result) => {
       if (!result.ok) throw new Error(result.error);
       const name = path.split(/[/\\]/).pop() || path;
@@ -3337,7 +1993,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     name: string,
     bytes: Uint8Array,
     onProgress: (sentBytes: number) => void,
-  ): Promise<{ finalName: string }> {
+  ): Promise<{ finalName: string; }> {
     const requestId = this.newId();
     const begin = await new Promise<UploadBeginResult>((resolve) => {
       if (!this.tryStartMapRequest(
@@ -3860,46 +2516,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'delivery-failed' });
     }
     this.pendingAgentFollowups.clear();
-    for (const resolve of this.pendingAgentProjects.values()) {
-      resolve({ items: [], nextCursor: null });
-    }
-    this.pendingAgentProjects.clear();
-    for (const resolve of this.pendingAgentProjectSaves.values()) {
-      resolve({ ok: false, reason: 'invalid' });
-    }
-    this.pendingAgentProjectSaves.clear();
-    for (const resolve of this.pendingAgentProjectRemovals.values()) resolve(false);
-    this.pendingAgentProjectRemovals.clear();
-    for (const resolve of this.pendingAgentProjectLaunchers.values()) resolve([]);
-    this.pendingAgentProjectLaunchers.clear();
-    for (const resolve of this.pendingAgentProjectLaunchPreparation.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentProjectLaunchPreparation.clear();
-    for (const resolve of this.pendingAgentProjectLaunchStarts.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentProjectLaunchStarts.clear();
-    for (const resolve of this.pendingAgentLaunchPreparation.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentLaunchPreparation.clear();
-    for (const resolve of this.pendingAgentLaunchStarts.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentLaunchStarts.clear();
-    for (const resolve of this.pendingAgentHistorySessions.values()) {
-      resolve({ items: [], nextCursor: null });
-    }
-    this.pendingAgentHistorySessions.clear();
-    for (const resolve of this.pendingAgentHistoryReads.values()) resolve(null);
-    this.pendingAgentHistoryReads.clear();
-    for (const resolve of this.pendingAgentResumePreparation.values()) resolve(null);
-    this.pendingAgentResumePreparation.clear();
-    for (const resolve of this.pendingAgentResumeStarts.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentResumeStarts.clear();
+    this.agentHistory.drain();
     if (!preserveAgentDecisions) {
       for (const [requestId, pending] of [...this.pendingAgentDecisions]) {
         this.settlePendingAgentDecision(
@@ -3945,32 +2562,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingUploadDones.clear();
-    for (const resolve of this.pendingOpenClawLifecycle.values()) {
-      resolve({
-        accepted: false,
-        issue: {
-          code: 'supervisor-failed',
-          detail: 'Connection to EZTerminal lost.',
-          remediation: 'Reconnect to observe or retry the OpenClaw action.',
-          diagnosticId: `mobile-disconnect-${Date.now().toString(36)}`,
-        },
-      });
-    }
-    this.pendingOpenClawLifecycle.clear();
-    for (const resolve of this.pendingOpenClawSessions.values()) resolve([]);
-    this.pendingOpenClawSessions.clear();
-    for (const resolve of this.pendingOpenClawConfigGet.values()) {
-      resolve(Object.fromEntries(OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET])) as OpenClawCoreConfig);
-    }
-    this.pendingOpenClawConfigGet.clear();
-    for (const resolve of this.pendingOpenClawConfigSet.values()) {
-      resolve({ ok: false, restartRequired: false, error: 'Connection to EZTerminal lost' });
-    }
-    this.pendingOpenClawConfigSet.clear();
-    for (const resolve of this.pendingOpenClawChatTicket.values()) {
-      resolve({ ok: false, reason: 'gateway-unreachable' });
-    }
-    this.pendingOpenClawChatTicket.clear();
+    this.openclaw.drain();
   }
 
   /**
@@ -3997,10 +2589,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     // doesn't keep an entry point visible while disconnected (mirrors
     // `setAuthed(false)` above, which every effective-visibility consumer
     // already reacts to alongside this).
-    if (this.openclawAvailable !== false) {
-      this.openclawAvailable = false;
-      for (const listener of this.openclawAvailabilityListeners) listener(false);
-    }
+    this.openclaw.disconnected();
     if (
       this.stopped
       || this.connectionState === 'auth-rejected'
@@ -4222,7 +2811,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       typeof parsed !== 'object'
       || parsed === null
       || Array.isArray(parsed)
-      || typeof (parsed as { kind?: unknown }).kind !== 'string'
+      || typeof (parsed as { kind?: unknown; }).kind !== 'string'
     ) return;
     const msg = parsed as ServerToClientMessage;
     // Any valid server message proves the socket is alive (liveness monitor).
@@ -4342,8 +2931,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // `PacketMirror` replays the current status on its own.
         if (this.packetsSubscribed) this.send({ kind: 'packets-subscribe' });
         // OpenClaw management (M4): same replay shape for status/logs.
-        if (this.openclawStatusRefcount > 0) this.send({ kind: 'openclaw-status-subscribe' });
-        if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
+        this.openclaw.reconnected();
         if (this.daemonEventsRefcount > 0) {
           this.updateDaemonRuntimeState({
             status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
@@ -4739,64 +3327,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         break;
       case 'agent-projects-list-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
-        this.pendingAgentProjects.get(msg.requestId)?.(msg.result);
-        this.pendingAgentProjects.delete(msg.requestId);
-        break;
       case 'agent-project-save-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
-        this.pendingAgentProjectSaves.get(msg.requestId)?.(msg.result);
-        this.pendingAgentProjectSaves.delete(msg.requestId);
-        break;
       case 'agent-project-remove-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
-        this.pendingAgentProjectRemovals.get(msg.requestId)?.(msg.removed);
-        this.pendingAgentProjectRemovals.delete(msg.requestId);
-        break;
       case 'agent-project-launchers-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
-        this.pendingAgentProjectLaunchers.get(msg.requestId)?.(msg.result);
-        this.pendingAgentProjectLaunchers.delete(msg.requestId);
-        break;
       case 'agent-project-prepare-launch-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
-        this.pendingAgentProjectLaunchPreparation.get(msg.requestId)?.(msg.result);
-        this.pendingAgentProjectLaunchPreparation.delete(msg.requestId);
-        break;
       case 'agent-project-start-launch-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
-        this.pendingAgentProjectLaunchStarts.get(msg.requestId)?.(msg.result);
-        this.pendingAgentProjectLaunchStarts.delete(msg.requestId);
-        break;
       case 'agent-launch-prepare-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
-        this.pendingAgentLaunchPreparation.get(msg.requestId)?.(msg.result);
-        this.pendingAgentLaunchPreparation.delete(msg.requestId);
-        break;
       case 'agent-launch-start-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
-        this.pendingAgentLaunchStarts.get(msg.requestId)?.(msg.result);
-        this.pendingAgentLaunchStarts.delete(msg.requestId);
-        break;
       case 'agent-history-sessions-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
-        this.pendingAgentHistorySessions.get(msg.requestId)?.(msg.result);
-        this.pendingAgentHistorySessions.delete(msg.requestId);
-        break;
       case 'agent-history-read-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
-        this.pendingAgentHistoryReads.get(msg.requestId)?.(msg.result);
-        this.pendingAgentHistoryReads.delete(msg.requestId);
-        break;
       case 'agent-history-prepare-resume-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
-        this.pendingAgentResumePreparation.get(msg.requestId)?.(msg.result);
-        this.pendingAgentResumePreparation.delete(msg.requestId);
-        break;
       case 'agent-history-start-resume-reply':
-        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
-        this.pendingAgentResumeStarts.get(msg.requestId)?.(msg.result);
-        this.pendingAgentResumeStarts.delete(msg.requestId);
+        this.agentHistory.handleMessage(msg);
         break;
       case 'pong': {
         if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
@@ -5015,64 +3557,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       }
 
       case 'openclaw-status':
-        for (const listener of this.openclawStatusListeners) listener(msg.status);
-        break;
-
       case 'openclaw-control':
-        for (const listener of this.openclawControlListeners) listener(msg.control);
-        break;
-
       case 'openclaw-availability':
-        this.openclawAvailable = msg.visible;
-        for (const listener of this.openclawAvailabilityListeners) listener(msg.visible);
-        break;
-
-      case 'openclaw-lifecycle-result': {
-        const resolve = this.pendingOpenClawLifecycle.get(msg.requestId);
-        this.pendingOpenClawLifecycle.delete(msg.requestId);
-        resolve?.(msg.result);
-        break;
-      }
-
+      case 'openclaw-lifecycle-result':
       case 'openclaw-log-lines':
-        for (const listener of this.openclawLogListeners) listener(msg.lines);
+      case 'openclaw-sessions-reply':
+      case 'openclaw-config-reply':
+      case 'openclaw-config-set-reply':
+      case 'openclaw-chat-ticket-reply':
+        this.openclaw.handleMessage(msg);
         break;
-
-      case 'openclaw-sessions-reply': {
-        const resolve = this.pendingOpenClawSessions.get(msg.requestId);
-        this.pendingOpenClawSessions.delete(msg.requestId);
-        resolve?.(msg.sessions);
-        break;
-      }
-
-      case 'openclaw-config-reply': {
-        const resolve = this.pendingOpenClawConfigGet.get(msg.requestId);
-        this.pendingOpenClawConfigGet.delete(msg.requestId);
-        resolve?.(msg.config);
-        break;
-      }
-
-      case 'openclaw-config-set-reply': {
-        const resolve = this.pendingOpenClawConfigSet.get(msg.requestId);
-        this.pendingOpenClawConfigSet.delete(msg.requestId);
-        resolve?.(msg.result);
-        break;
-      }
-
-      case 'openclaw-chat-ticket-reply': {
-        const resolve = this.pendingOpenClawChatTicket.get(msg.requestId);
-        this.pendingOpenClawChatTicket.delete(msg.requestId);
-        const reply = msg as typeof msg & { readonly reason?: unknown };
-        if (msg.ticket && msg.token && msg.proxyPort > 0) {
-          resolve?.({ ok: true, ticket: msg.ticket, proxyPort: msg.proxyPort, token: msg.token });
-        } else {
-          resolve?.({
-            ok: false,
-            reason: isOpenClawChatFailureReason(reply.reason) ? reply.reason : 'proxy-unavailable',
-          });
-        }
-        break;
-      }
     }
   }
 
@@ -5099,3 +3593,5 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
   }
 }
+
+export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';

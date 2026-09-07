@@ -80,6 +80,27 @@ flowchart LR
   실제 입력 주입은 일반 사용자 transport가 수행하며, 서비스와 session-agent는
   설치·신원·활성 세션·capability/liveness를 검증한다.
 
+### 프로세스 내부의 조립과 기능 소유권
+
+`main.ts`는 서비스 인스턴스와 초기화·종료 순서를 조립한다. 설정, 프로젝트, Agent,
+세션 표면, 파일 도구, OpenClaw와 업데이트의 IPC 등록은 기능별 `*-ipc.ts`가 소유한다.
+`IpcRegistration`은 해당 기능이 등록한 handler와 listener만 해제한다. 준비 Promise와
+지연 초기화되는 서비스는 명시적 의존성으로 전달하므로 기존 준비·권한 검증을 우회하지 않는다.
+
+`App.tsx`는 화면 구성, 사용자 행동의 coordinator 연결과 패널 component registry를
+소유한다. `useDesktopAppearance`, `useTerminalPreferences`, `useCommandCenterCatalog`,
+`useProjectDocumentNavigation`, `useRendererRecovery`는 각각 설정 초기화, 붙여넣기 확인,
+검색 요청, 문서 탐색과 복구 checkpoint의 상태·취소·정리를 소유한다. 훅 분리는 패널의
+key, component identity, coordinator 수명이나 optional feature의 lazy import 경계를 바꾸지 않는다.
+
+원격 연결의 인증·socket generation·실행 포트는 transport가 계속 소유한다.
+`remote-message-validation.ts`는 서버 dispatch 직전의 메시지 검증을,
+`remote-openclaw-session.ts`는 연결별 구독과 로그 버퍼를 소유한다. Android의
+`RemoteOpenClawClient`와 `RemoteAgentHistoryClient`는 각 기능의 요청 대기 상태와 응답을
+소유하고, 실행 성공 시 포트 설치는 transport에 위임한다. PTY 데이터 전달은 기능별
+요청 dispatcher를 통과하지 않는다. 이 내부 분리는 공개 API, wire version과 저장 schema의
+변경을 요구하지 않는다.
+
 ## 3. 세션, 실행과 표면
 
 `ShellSession`은 명령 사이에 cwd, 환경 오버라이드와 변수를 보존한다. 명령마다
@@ -263,20 +284,35 @@ startup, optional feature intent-to-ready, process working set과 renderer chunk
 ## 근거 소스
 
 - [`src/main/main.ts`](../src/main/main.ts)
+- [`src/main/ipc-registration.ts`](../src/main/ipc-registration.ts)
+- [`src/main/settings-ipc.ts`](../src/main/settings-ipc.ts)
+- [`src/main/daemon-authority-ipc.ts`](../src/main/daemon-authority-ipc.ts)
+- [`src/main/remote-message-validation.ts`](../src/main/remote-message-validation.ts)
+- [`src/main/remote-openclaw-session.ts`](../src/main/remote-openclaw-session.ts)
 - [`src/main/interpreter-broker.ts`](../src/main/interpreter-broker.ts)
 - [`src/interpreter/interpreter-process.ts`](../src/interpreter/interpreter-process.ts)
 - [`src/shared/ipc.ts`](../src/shared/ipc.ts)
 - [`src/shared/remote-protocol.ts`](../src/shared/remote-protocol.ts)
 - [`src/renderer/App.tsx`](../src/renderer/App.tsx)
+- [`src/renderer/useDesktopAppearance.ts`](../src/renderer/useDesktopAppearance.ts)
+- [`src/renderer/useTerminalPreferences.ts`](../src/renderer/useTerminalPreferences.ts)
+- [`src/renderer/useCommandCenterCatalog.ts`](../src/renderer/useCommandCenterCatalog.ts)
+- [`src/renderer/useProjectDocumentNavigation.ts`](../src/renderer/useProjectDocumentNavigation.ts)
+- [`src/renderer/useRendererRecovery.ts`](../src/renderer/useRendererRecovery.ts)
 - [`src/renderer/feature-loader.tsx`](../src/renderer/feature-loader.tsx)
 - [`src/renderer/async-poller.ts`](../src/renderer/async-poller.ts)
 - [`src/shared/resource-profile.ts`](../src/shared/resource-profile.ts)
 - [`mobile/src/App.tsx`](../mobile/src/App.tsx)
+- [`mobile/src/transport/remote-openclaw-client.ts`](../mobile/src/transport/remote-openclaw-client.ts)
+- [`mobile/src/transport/remote-agent-history-client.ts`](../mobile/src/transport/remote-agent-history-client.ts)
 - [`native/remote-host/src/main.rs`](../native/remote-host/src/main.rs)
 
 ## 검증
 
 - [`src/main/interpreter-broker.test.ts`](../src/main/interpreter-broker.test.ts)
+- [`src/main/ipc-registration.test.ts`](../src/main/ipc-registration.test.ts)
+- [`src/main/settings-ipc.test.ts`](../src/main/settings-ipc.test.ts)
+- [`src/renderer/desktop-preferences.test.tsx`](../src/renderer/desktop-preferences.test.tsx)
 - [`src/interpreter/interpreter-process.test.ts`](../src/interpreter/interpreter-process.test.ts)
 - [`src/renderer/workbench-coordinator.test.ts`](../src/renderer/workbench-coordinator.test.ts)
 - [`src/renderer/feature-loader.test.ts`](../src/renderer/feature-loader.test.ts)
