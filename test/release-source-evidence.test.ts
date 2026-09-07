@@ -152,6 +152,7 @@ function memorySample(
     collectedAt: timestamp(index),
     elapsedMs: index * 1_000,
     totalPssKb,
+    pssSource: 'dumpsys meminfo --local',
     nativeHeapKb: 500,
     javaHeapKb: 250,
     renderer: {
@@ -484,6 +485,23 @@ describe('release source-evidence verifier', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('renderer.heapSource must identify live CDP heap usage');
+  });
+
+  it.each([undefined, 'dumpsys meminfo'])('rejects app-callback or unidentified PSS evidence (%s)', (pssSource) => {
+    const fixture = fixtures('candidate');
+    const rawSoak = JSON.parse(readFileSync(fixture.soakPath, 'utf8')) as {
+      memorySamples: Array<{ pssSource?: string }>;
+    };
+    rawSoak.memorySamples[0].pssSource = pssSource;
+    writeJson(fixture.soakPath, rawSoak);
+    fixture.report.mobileSoak.reportSha256 = sha256(fixture.soakPath);
+    writeJson(fixture.reportPath, fixture.report);
+    const result = spawnSync(process.execPath, args(fixture, 'candidate'), {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('pssSource must identify process-local meminfo collection');
   });
 
   it('rejects a machine-local path serialized into mobile soak evidence', () => {

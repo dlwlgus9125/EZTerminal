@@ -15,7 +15,7 @@
  * outage is the deterministic network fault: it closes the real phone socket
  * without mutating emulator-wide networking or affecting unrelated processes.
  *
- * Memory is sampled from both `adb dumpsys meminfo` (app TOTAL PSS) and the
+ * Memory is sampled from both `adb dumpsys meminfo --local` (app TOTAL PSS) and the
  * Chromium WebView (current V8 heap via CDP `Runtime.getHeapUsage`, without
  * forcing GC; excludes external backing-store memory). Baseline and final
  * medians are taken after a configurable quiet period. The cap is 20% growth
@@ -38,6 +38,7 @@ import {
   closeWebViewDevtools,
   connectAndAuth,
   createTerminalSession,
+  getAndroidAppMemorySnapshot,
   getTestIdCount,
   getWebViewMemorySnapshot,
   launchDesktop,
@@ -50,6 +51,7 @@ import {
   waitForTestId,
   waitForTestIdHidden,
   type WebViewMemorySnapshot,
+  type AndroidAppMemorySnapshot,
 } from './lib.ts';
 
 const SESSION_COUNT = 8;
@@ -68,14 +70,11 @@ const APK_EVIDENCE_PATH = path.relative(ROOT, APK_PATH).split(path.sep).join('/'
 
 type SamplePhase = 'baseline' | 'soak' | 'final';
 
-interface MemorySample {
+interface MemorySample extends AndroidAppMemorySnapshot {
   readonly phase: SamplePhase;
   readonly cycle: number | null;
   readonly collectedAt: string;
   readonly elapsedMs: number;
-  readonly totalPssKb: number;
-  readonly nativeHeapKb: number | null;
-  readonly javaHeapKb: number | null;
   readonly renderer: WebViewMemorySnapshot;
 }
 
@@ -165,13 +164,6 @@ function readIntegerEnv(name: string, fallback: number, allowZero = false): numb
     throw new Error(`${name} must be ${allowZero ? 'a non-negative' : 'a positive'} integer (got ${JSON.stringify(raw)})`);
   }
   return value;
-}
-
-function parseMetric(text: string, pattern: RegExp): number | null {
-  const match = text.match(pattern);
-  if (!match) return null;
-  const value = Number(match[1].replaceAll(',', ''));
-  return Number.isFinite(value) ? value : null;
 }
 
 function parseTransportMarkers(): TransportMarker[] {
@@ -283,10 +275,7 @@ async function captureMemory(
   cycle: number | null,
   startedAtMs: number,
 ): Promise<MemorySample> {
-  const meminfo = runAdb(['shell', 'dumpsys', 'meminfo', APP_ID]);
-  const totalPssKb = parseMetric(meminfo, /TOTAL PSS:\s*([\d,]+)/i)
-    ?? parseMetric(meminfo, /^\s*TOTAL\s+([\d,]+)/m);
-  if (totalPssKb === null) throw new Error('adb meminfo did not expose app TOTAL PSS');
+  const appMemory = getAndroidAppMemorySnapshot();
   const renderer = await getWebViewMemorySnapshot();
   if (renderer.usedJsHeapBytes === null) {
     throw new Error('E2E WebView does not expose Runtime.getHeapUsage.usedSize');
@@ -296,9 +285,7 @@ async function captureMemory(
     cycle,
     collectedAt: new Date().toISOString(),
     elapsedMs: Date.now() - startedAtMs,
-    totalPssKb,
-    nativeHeapKb: parseMetric(meminfo, /Native Heap:\s*([\d,]+)/i),
-    javaHeapKb: parseMetric(meminfo, /Java Heap:\s*([\d,]+)/i),
+    ...appMemory,
     renderer,
   };
   report.memorySamples.push(sample);

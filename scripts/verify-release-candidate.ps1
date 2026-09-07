@@ -1047,8 +1047,9 @@ try {
         [Text.Encoding]::UTF8.GetString($soakReportBytes)
     ).TrimStart([char]0xFEFF) | ConvertFrom-Json
     $soakGrowthFailures = @($soak.growthChecks | Where-Object { $_.passed -ne $true })
-    $soakHeapSourceFailures = @($soak.memorySamples | Where-Object {
-        $_.renderer.heapSource -ne 'Runtime.getHeapUsage'
+    $soakMemorySourceFailures = @($soak.memorySamples | Where-Object {
+        $_.renderer.heapSource -ne 'Runtime.getHeapUsage' -or
+        $_.pssSource -ne 'dumpsys meminfo --local'
     })
     if (
         $soak.status -ne 'passed' -or
@@ -1060,7 +1061,7 @@ try {
         $soak.markerAudit.passed -ne $true -or
         $soakGrowthFailures.Count -ne 0 -or
         @($soak.memorySamples).Count -ne 26 -or
-        $soakHeapSourceFailures.Count -ne 0 -or
+        $soakMemorySourceFailures.Count -ne 0 -or
         @($soak.cleanupErrors).Count -ne 0
     ) {
         throw 'The API 35 emulator soak report does not satisfy the exact-SHA gate.'

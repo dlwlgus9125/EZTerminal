@@ -292,6 +292,10 @@ function validateMemorySample(sample, index) {
   assert(isIsoTimestamp(sample.collectedAt), `${label} has an invalid collectedAt timestamp`);
   assert(isNonNegativeInteger(sample.elapsedMs), `${label} has an invalid elapsedMs`);
   assert(isNonNegativeInteger(sample.totalPssKb), `${label} has an invalid TOTAL PSS sample`);
+  assert(
+    sample.pssSource === 'dumpsys meminfo --local',
+    `${label}.pssSource must identify process-local meminfo collection`,
+  );
   for (const field of ['nativeHeapKb', 'javaHeapKb']) {
     assert(
       sample[field] === null || isNonNegativeInteger(sample[field]),

@@ -993,6 +993,38 @@ export interface WebViewHistorySnapshot {
   readonly url: string;
 }
 
+export interface AndroidAppMemorySnapshot {
+  readonly pssSource: 'dumpsys meminfo --local';
+  readonly totalPssKb: number;
+  readonly nativeHeapKb: number | null;
+  readonly javaHeapKb: number | null;
+  readonly rawMeminfo: string;
+}
+
+/** Read system memory accounting without asking the app to dump its heap.
+ * Default meminfo calls ActivityThread.dumpMemInfo, which forces Java GC.
+ * --local avoids that callback and the allocations made while formatting
+ * app object statistics. The category values are PSS accounting, not live
+ * Java object sizes; preserve the raw table to diagnose sharing changes. */
+export function getAndroidAppMemorySnapshot(): AndroidAppMemorySnapshot {
+  const rawMeminfo = runAdb(['shell', 'dumpsys', 'meminfo', '--local', APP_ID]);
+  const metric = (pattern: RegExp): number | null => {
+    const match = rawMeminfo.match(pattern);
+    if (!match) return null;
+    const value = Number(match[1].replace(/,/g, ''));
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  };
+  const totalPssKb = metric(/TOTAL PSS:\s*([\d,]+)/i) ?? metric(/^\s*TOTAL\s+([\d,]+)/m);
+  if (totalPssKb === null) throw new Error('adb meminfo --local did not expose app TOTAL PSS');
+  return {
+    pssSource: 'dumpsys meminfo --local',
+    totalPssKb,
+    nativeHeapKb: metric(/Native Heap:\s*([\d,]+)/i),
+    javaHeapKb: metric(/Java Heap:\s*([\d,]+)/i),
+    rawMeminfo,
+  };
+}
+
 /** Current V8 heap usage from the Android WebView's CDP target, without
  * forcing GC. Unlike performance.memory, this is neither bucketized nor
  * cached for twenty minutes. It describes managed JS heap, not all renderer
