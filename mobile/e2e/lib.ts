@@ -898,8 +898,7 @@ async function resolveWebViewCdp(): Promise<WebSocket> {
     if (!pending) return;
     webViewCdpPending.delete(message.id);
     clearTimeout(pending.timer);
-    const protocolError = message.error?.message
-      ?? message.result?.exceptionDetails?.text;
+    const protocolError = message.error?.message;
     if (protocolError) pending.reject(new Error(protocolError));
     else pending.resolve(message.result);
   });
@@ -916,8 +915,8 @@ async function resolveWebViewCdp(): Promise<WebSocket> {
   return client;
 }
 
-async function sendWebViewCdp<T>(method: string, params: object = {}): Promise<T> {
-  const client = await resolveWebViewCdp();
+async function sendWebViewCdp<T>(method: string, params: object = {}, ownedClient?: WebSocket): Promise<T> {
+  const client = ownedClient ?? await resolveWebViewCdp();
   const id = webViewCdpRequestId + 1;
   webViewCdpRequestId = id;
   return new Promise<T>((resolve, reject) => {
@@ -930,7 +929,8 @@ async function sendWebViewCdp<T>(method: string, params: object = {}): Promise<T
       // longer be trusted. Drop the socket/adb forward so the caller's retry
       // discovers a fresh WebView target instead of spending its full
       // deadline retrying the same wedged connection.
-      resetWebViewCdp(timeoutError);
+      if (webViewCdp === client) resetWebViewCdp(timeoutError);
+      else client.terminate();
       pending.reject(timeoutError);
     }, 5_000);
     webViewCdpPending.set(id, {
@@ -954,9 +954,36 @@ async function sendWebViewCdp<T>(method: string, params: object = {}): Promise<T
 }
 
 export async function evaluateWebView<T>(expression: string): Promise<T> {
-  const response = await sendWebViewCdp<{ result?: { value?: T } }>('Runtime.evaluate', {
+  const client = await resolveWebViewCdp();
+  const response = await sendWebViewCdp<{
+    result?: { value?: T; objectId?: string };
+    exceptionDetails?: { text?: string; exception?: { objectId?: string } };
+  }>('Runtime.evaluate', {
     expression, returnByValue: true, awaitPromise: true,
-  });
+  }, client);
+  let failure = response?.exceptionDetails
+    ? new Error(response.exceptionDetails.text ?? 'Android WebView evaluation failed')
+    : undefined;
+  // A thrown evaluation can return two handles to the same exception, even
+  // with returnByValue. Both remain inspector-owned until explicitly released.
+  // Retire those handles before a polling retry or memory sample can run.
+  const objectIds = new Set([
+    response?.result?.objectId,
+    response?.exceptionDetails?.exception?.objectId,
+  ].filter((objectId): objectId is string => typeof objectId === 'string'));
+  try {
+    if (client.readyState === WebSocket.OPEN) {
+      for (const objectId of objectIds) {
+        await sendWebViewCdp('Runtime.releaseObject', { objectId }, client);
+      }
+    }
+  } catch (error) {
+    const cleanupError = error instanceof Error ? error : new Error(String(error));
+    if (webViewCdp === client) resetWebViewCdp(cleanupError);
+    else client.terminate();
+    failure ??= cleanupError;
+  }
+  if (failure) throw failure;
   return response?.result?.value as T;
 }
 
