@@ -42,9 +42,9 @@
         { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:86433b1011c3ce1d50bb9922bc700c5d40759ede06bda390d9de995649f8da80",
+        "inputDigest": "sha256:4c1bbbb5c8b169e559865cc8b717f55ae9cb1cf557b844dcbe352c8072049a96",
         "decision": "no-semantic-impact",
-        "reason": "The unified session picker changes entry navigation; first Send, exact-envelope recovery, child ownership, provider review, and authenticated Agent authority boundaries remain unchanged. Evidence anchors were relocated to identical source ranges."
+        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
       }
     },
     {
@@ -88,9 +88,9 @@
         { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:bd9b8166fdaa0fe9d8c53bd48740414f4e1b78e9ecc7200e23c7a6e4cf395fda",
+        "inputDigest": "sha256:588642601bdb601e982c7f079ee4a78ac9780ccad3541724771decfbef0682cf",
         "decision": "map-updated",
-        "reason": "Startup recovers Workspace consent before Project sync and providers. Ordinary main-window close now fails closed while an Agent-create recovery is pending; confirmed Quit still drains main-owned ingress and accepted work through the existing exact shutdown barriers."
+        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
       }
     },
     {
@@ -108,9 +108,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:839bcfddac099198a63833e9d2e18c15d9a80d1557a1f06d52b9276bd001f49b",
+        "inputDigest": "sha256:24ea2cbad3c6ce4ca0ebec3f12df890fc425a1383be2213bbb0612b334fa535f",
         "decision": "no-semantic-impact",
-        "reason": "PTY view detach is now a separate transport control. The mapped authenticated v12 structured-Agent command, transcript, event, availability, and target-aware history dataflow remains unchanged; its evidence ranges are identical at their new locations."
+        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
       }
     },
     {
@@ -133,9 +133,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:f4865aa6d42d90098ebf1e94b2ee4b0b48346c1aae5cbf05440f6ac9f704ef14",
+        "inputDigest": "sha256:e0be36b2714e6bb23df1a2368bc8051d70553addea127789d7ff0872f291066d",
         "decision": "no-semantic-impact",
-        "reason": "Closed views reuse session identity, but Project Map still registers a fresh bootstrap before opening its dedicated terminal. Scoped job delivery, validation, human approval, and export are unchanged; reviewed anchors now match the relocated implementation."
+        "reason": "Reviewed terminal-first entry, optional app chat, raw transcripts and mobile view restoration. Authority, ordering, ownership, consent and export boundaries are unchanged. Message identity is additive metadata; anchors match the reviewed source."
       }
     }
   ]

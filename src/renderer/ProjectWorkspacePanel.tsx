@@ -11,6 +11,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  SquareTerminal,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
@@ -45,6 +46,7 @@ interface ProjectWorkspacePanelProps {
     location?: ProjectCodeLocation,
   ) => void;
   readonly onNewSession: (target: ProjectSessionTarget, locationLabel: string) => void;
+  readonly onNewAgent?: (target: ProjectSessionTarget, locationLabel: string) => void;
   readonly newSessionDisabled?: boolean;
   readonly newSessionDisabledReason?: string;
   readonly onOpenProjectMap?: (target: {
@@ -610,6 +612,7 @@ export function ProjectWorkspacePanel({
   onBack,
   onOpenDocument,
   onNewSession,
+  onNewAgent,
   newSessionDisabled = false,
   newSessionDisabledReason,
   onOpenProjectMap,
@@ -726,8 +729,8 @@ export function ProjectWorkspacePanel({
           </small>
         </div>
         <IconButton
-          icon={MessageSquarePlus}
-          aria-label={t('agentHub.projects.newSession')}
+          icon={SquareTerminal}
+          aria-label={t('header.newTerminal')}
           disabled={newSessionDisabled || !workspace || workspace.access !== 'granted'}
           title={newSessionDisabled ? newSessionDisabledReason : undefined}
           onClick={() => {
@@ -740,6 +743,11 @@ export function ProjectWorkspacePanel({
           }}
           data-testid="project-workspace-new-session"
         />
+        {onNewAgent && <IconButton icon={MessageSquarePlus} aria-label={t('agentHub.newAgentRun')}
+          disabled={!workspace || workspace.access !== 'granted'}
+          onClick={() => {
+            if (workspace?.access === 'granted') onNewAgent({ projectId: project.projectId, rootId: workspace.rootId, workspaceId: workspace.workspaceId }, workspace.displayPath);
+          }} data-testid="project-workspace-new-agent" />}
         <IconButton
           icon={MapIcon}
           aria-label={t('projectMap.open', 'Open Project Map')}

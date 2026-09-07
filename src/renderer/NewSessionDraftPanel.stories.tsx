@@ -19,7 +19,7 @@ const meta = {
 } satisfies Meta<typeof NewSessionDraftPanel>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-export const Conversation: Story = {};
+export const Conversation: Story = { args: { initialIntent: { kind: 'agent', agentMode: 'conversation' } } };
 export const TerminalWithoutProvider: Story = {
   args: { agent: { ...meta.args.agent, providers: [] } },
   play: async ({ canvasElement, args }) => {
@@ -29,7 +29,7 @@ export const TerminalWithoutProvider: Story = {
     await expect(args.onTerminal).not.toHaveBeenCalled();
   },
 };
-export const Cli: Story = { play: async ({ canvasElement }) => {
+export const Cli: Story = { args: { initialIntent: { kind: 'agent', agentMode: 'cli' } }, play: async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await userEvent.click(canvas.getByTestId('new-session-cli'));
   await userEvent.selectOptions(canvas.getByTestId('session-cli-launcher'), 'codex-cli');

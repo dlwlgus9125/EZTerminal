@@ -166,6 +166,8 @@ export interface AgentProjectLauncherSummary {
   readonly provider: AgentProjectLauncherProvider;
   readonly name: string;
   readonly supportsAdditionalRoots: boolean;
+  /** Undefined on older hosts. Independent of app-chat provider readiness. */
+  readonly installed?: boolean;
 }
 
 export type AgentLaunchTarget =

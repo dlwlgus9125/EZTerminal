@@ -42,6 +42,7 @@ import {
   sanitizeProviderDiagnostic,
 } from './provider-process-security';
 import { compareSemanticVersions, semanticVersion } from './provider-version';
+import { providerTranscriptText } from './provider-transcript';
 
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 15_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 5_000;
@@ -1329,7 +1330,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       const type = asString(block.type);
       const source = `${asString(message.uuid) ?? this.createId()}:${String(index)}`;
       if (type === 'text') {
-        const text = safeText(block.text);
+        const text = providerTranscriptText(block.text);
         if (text.trim()) {
           this.appendTranscript(session, child ? 'child-summary' : 'assistant-message', text, {
             turnId: turn?.turnId,
@@ -1339,7 +1340,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         return;
       }
       if (type === 'thinking') {
-        const text = safeText(block.thinking, 4_000);
+        const text = providerTranscriptText(block.thinking);
         if (text.trim()) this.appendTranscript(session, 'reasoning', text, { turnId: turn?.turnId, source });
         return;
       }
@@ -1347,7 +1348,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         const name = safeToolName(block.name);
         const toolId = asString(block.id);
         if (toolId) session.toolNames.set(toolId, name);
-        this.appendTranscript(session, 'tool-call', `Claude requested ${name}.`, {
+        this.appendTranscript(session, 'tool-call', `${name}\n${providerTranscriptText(block.input)}`, {
           turnId: turn?.turnId,
           source,
         });
@@ -1370,7 +1371,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       const toolId = asString(block.tool_use_id);
       const name = toolId ? session.toolNames.get(toolId) ?? 'tool' : 'tool';
       const failed = block.is_error === true;
-      this.appendTranscript(session, 'tool-result', `${name} ${failed ? 'failed' : 'completed'}.`, {
+      this.appendTranscript(session, 'tool-result', providerTranscriptText(block.content) || `${name} ${failed ? 'failed' : 'completed'}.`, {
         turnId: turn?.turnId,
         source: `${asString(message.uuid) ?? this.createId()}:${String(index)}`,
       });
@@ -1563,8 +1564,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     text: string,
     options: { readonly turnId?: string; readonly source: string },
   ): void {
-    const sanitized = sanitizeProviderDiagnostic(text, { maxLength: MAX_SAFE_TEXT_LENGTH });
-    if (!sanitized.text.trim()) return;
+    const original = providerTranscriptText(text);
+    if (!original.trim()) return;
     session.sequence += 1;
     const item: DaemonTranscriptItem = {
       id: `claude_${createHash('sha256').update(`${session.handle.providerSessionId}:${options.source}`).digest('hex').slice(0, 24)}`,
@@ -1572,10 +1573,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ...(options.turnId ? { turnId: options.turnId } : {}),
       sequence: session.sequence,
       kind,
-      text: sanitized.text,
+      text: original,
       isDelta: false,
-      isSensitive: sanitized.redacted
-        || kind === 'user-message'
+      isSensitive: kind === 'user-message'
         || kind === 'assistant-message'
         || kind === 'reasoning',
       createdAt: this.now().toISOString(),
@@ -1589,18 +1589,17 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const items: DaemonTranscriptItem[] = [];
     let sequence = 0;
     const append = (kind: DaemonTranscriptItem['kind'], text: string, source: string): void => {
-      const sanitized = sanitizeProviderDiagnostic(text, { maxLength: MAX_SAFE_TEXT_LENGTH });
-      if (!sanitized.text.trim() || items.length >= MAX_RECONCILIATION_ITEMS) return;
+      const original = providerTranscriptText(text);
+      if (!original.trim() || items.length >= MAX_RECONCILIATION_ITEMS) return;
       sequence += 1;
       items.push({
         id: `claude_${createHash('sha256').update(`${sessionId}:${source}`).digest('hex').slice(0, 24)}`,
         sessionId,
         sequence,
         kind,
-        text: sanitized.text,
+        text: original,
         isDelta: false,
-        isSensitive: sanitized.redacted
-          || kind === 'user-message'
+        isSensitive: kind === 'user-message'
           || kind === 'assistant-message'
           || kind === 'reasoning',
         createdAt: this.now().toISOString(),
@@ -1623,9 +1622,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         } else if (message.type === 'assistant' && block.type === 'thinking') {
           append('reasoning', asString(block.thinking) ?? '', source);
         } else if (message.type === 'assistant' && (block.type === 'tool_use' || block.type === 'server_tool_use')) {
-          append('tool-call', `Claude requested ${safeToolName(block.name)}.`, source);
+          append('tool-call', `${safeToolName(block.name)}\n${providerTranscriptText(block.input)}`, source);
         } else if (message.type === 'user' && block.type === 'tool_result') {
-          append('tool-result', block.is_error === true ? 'Claude tool failed.' : 'Claude tool completed.', source);
+          append('tool-result', providerTranscriptText(block.content) || (block.is_error === true ? 'Claude tool failed.' : 'Claude tool completed.'), source);
         } else if (message.type === 'user' && block.type === 'text') {
           append('user-message', asString(block.text) ?? '', source);
         }

@@ -9,6 +9,7 @@ import {
   type DaemonSnapshot,
 } from '../src/shared/daemon-protocol';
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 const FAKE_CODEX_DIR = path.resolve(__dirname, 'fixtures', 'fake-codex');
 const FAKE_CODEX_VERSION_FILE = 'ezterminal-e2e-codex-version.txt';
@@ -35,6 +36,34 @@ function structuredAgentState(snapshot: DaemonSnapshot): {
   };
 }
 
+test('New Terminal opens immediately and an older Codex CLI starts without app-chat setup', async () => {
+  const userDataDir = createRegisteredE2eTempDir('ezterm-terminal-first-e2e-');
+  writeFileSync(path.join(userDataDir, FAKE_CODEX_VERSION_FILE), '0.1.0', 'utf8');
+  const app = await launchApp(userDataDir, fakeCodexEnvironment(userDataDir));
+  try {
+    const window = await app.firstWindow();
+    await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+    await expect(window.getByTestId('cmd-input')).toBeVisible();
+    const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
+    await window.getByTestId('btn-new-tab').click();
+    await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).length).toBe(before.length + 1);
+    await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
+    const launchers = await window.evaluate(() => globalThis.window.ezterminal.listAgentProjectLaunchers());
+    expect(launchers.find((entry) => entry.launcherId === 'codex')).toMatchObject({ installed: true });
+    const inspection = await window.evaluate(() => globalThis.window.ezterminal.inspectDaemonProvider('codex'));
+    expect(inspection.ok && inspection.value.probe.available).toBe(false);
+    await window.getByTestId('btn-new-session').click();
+    await expect(window.getByTestId('new-session-cli')).toHaveAttribute('aria-pressed', 'true');
+    await window.getByTestId('new-session-project').selectOption('direct');
+    await window.getByRole('textbox', { name: 'Host folder path' }).fill(userDataDir);
+    await window.getByTestId('session-cli-launcher').selectOption('codex');
+    await window.getByTestId('session-cli-start').click();
+    const terminal = window.locator('[data-testid="pane"]:visible').getByTestId('pty-block');
+    await expect(terminal).toBeVisible();
+    await expect.poll(() => readXtermBuffer(terminal), { timeout: 20000 }).toContain('FAKE-CODEX-READY');
+  } finally { await app.close(); }
+});
+
 test('New Agent opens a draft tab without creating structured daemon work', async () => {
   const app = await launchApp();
   try {
@@ -49,6 +78,8 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
     await window.getByTestId('btn-toggle-agents').click();
     await window.getByTestId('agent-new-run').click();
 
+    await expect(window.getByTestId('new-session-cli')).toHaveAttribute('aria-pressed', 'true');
+    await window.getByTestId('new-session-conversation').click();
     const draft = window.getByTestId('structured-agent-draft');
     await expect(draft).toBeVisible();
     await expect(draft.getByTestId('structured-agent-first-prompt')).toBeVisible();
@@ -151,6 +182,7 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     });
     await window.getByTestId('btn-toggle-settings').click();
     await window.getByTestId('settings-category-agents').click();
+    await window.getByTestId('agent-chat-settings').locator('summary').first().click();
     const codexCard = window.getByTestId('structured-provider-codex');
     await expect(codexCard).toContainText('Ready');
     await expect(codexCard).toContainText('0.153.4');
@@ -160,6 +192,8 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await window.getByTestId('btn-toggle-agents').click();
     await window.getByTestId('agent-new-run').click();
 
+    await expect(window.getByTestId('new-session-cli')).toHaveAttribute('aria-pressed', 'true');
+    await window.getByTestId('new-session-conversation').click();
     const draft = window.getByTestId('structured-agent-draft');
     await expect(draft).toBeVisible();
     const provider = draft.getByTestId('structured-agent-provider');
@@ -225,11 +259,6 @@ test('Project New Session opens a regular terminal and its closed view can be re
     expect(projectId, JSON.stringify(registered)).toBeTruthy();
     const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
     await window.getByTestId(`agent-project-new-chat-${projectId}`).click();
-    await expect(window.getByTestId('new-session-draft')).toBeVisible();
-    await window.getByTestId('new-session-terminal').click();
-    await expect(window.getByTestId('new-session-open-terminal')).toBeEnabled();
-    expect(await window.evaluate(() => globalThis.window.ezterminal.listSessions())).toHaveLength(before.length);
-    await window.getByTestId('new-session-open-terminal').click();
     await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
     const pane = window.locator('[data-testid="pane"]:visible');
     await expect(pane).toHaveCount(1);

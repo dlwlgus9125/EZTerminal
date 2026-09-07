@@ -138,6 +138,8 @@ export type TranscriptItemKind =
 
 export interface DaemonTranscriptItem {
   readonly id: string;
+  /** Stable opaque provider message identity shared by deltas and completion. */
+  readonly messageId?: string;
   readonly sessionId: string;
   readonly turnId?: string;
   readonly sequence: number;

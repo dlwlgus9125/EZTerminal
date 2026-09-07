@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ChevronLeft, ChevronsUpDown, Plus } from 'lucide-react';
+import { Home, ChevronsUpDown, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
@@ -42,6 +42,7 @@ import {
 } from './terminal-accessory-layout';
 import { applyTheme, loadTheme, saveTheme } from './theme';
 import { initialTabsState, mobileTerminalPanelId, tabsReducer } from './tabs';
+import { readWorkspaceRestore, writeWorkspaceRestore } from './workspace-restore';
 import type {
   DaemonRuntimeViewState,
   WsEzTerminalTransport,
@@ -178,8 +179,14 @@ export function MobileWorkspace({
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
   const tabsStateRef = useRef(tabsState);
   tabsStateRef.current = tabsState;
-  const [tab, setTab] = useState<MobileShellTab>('home');
-  const [newSessionRequest, setNewSessionRequest] = useState(0);
+  const [tab, setTab] = useState<MobileShellTab>('terminal');
+  const [restoreAuthority, setRestoreAuthority] = useState<string | null>(null);
+  const restoredAuthorityRef = useRef<string | null>(null);
+  const userNavigatedRef = useRef(false);
+  const lastWorkTabRef = useRef<'terminal' | 'agents'>('terminal');
+  const [activeAgentSessionId, setActiveAgentSessionId] = useState<string | null>(null);
+  const [terminalOpenError, setTerminalOpenError] = useState(false);
+  const terminalOpeningRef = useRef(false);
   const [subPage, setSubPage] = useState<MobileSubPage | null>(null);
   const [sheet, setSheet] = useState<MobileSheet | null>(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
@@ -365,16 +372,12 @@ export function MobileWorkspace({
   }, []);
 
   const selectTab = useCallback((next: MobileShellTab) => {
+    userNavigatedRef.current = true;
     if (next === 'agents') preloadOnIntent(MOBILE_FEATURE_LOADERS.agents);
     setSheet(null);
     setSubPage(null);
     setTab(next);
   }, []);
-
-  const openNewSession = useCallback(() => {
-    setNewSessionRequest((value) => value + 1);
-    selectTab('agents');
-  }, [selectTab]);
 
   useEffect(() => {
     if (subPage !== null || !restoreTabFocusRef.current) return;
@@ -616,6 +619,7 @@ export function MobileWorkspace({
   }, []);
 
   const revealTerminal = useCallback(() => {
+    userNavigatedRef.current = true;
     setSheet(null);
     setSubPage(null);
     setTab('terminal');
@@ -765,10 +769,58 @@ export function MobileWorkspace({
   }, [acceptSurfaceBinding, createOwnedSurface]);
 
   const quickNewTab = useCallback(() => {
-    void openOwnedTab().catch((error: unknown) => {
-      console.error('[mobile] terminal tab creation failed:', error);
-    });
+    if (terminalOpeningRef.current) return;
+    terminalOpeningRef.current = true;
+    setTerminalOpenError(false);
+    void openOwnedTab().catch(() => setTerminalOpenError(true))
+      .finally(() => { terminalOpeningRef.current = false; });
   }, [openOwnedTab]);
+
+  const openNewSession = quickNewTab;
+
+  useEffect(() => {
+    if (!connected || !transport.isAuthed) return;
+    let cancelled = false;
+    void (async () => {
+      const authority = await mobileAgentCreateAuthorityFingerprint(await transport.getRemoteToken());
+      if (cancelled || restoredAuthorityRef.current === authority) return;
+      const saved = readWorkspaceRestore(authority);
+      if (saved) {
+        for (const sessionId of saved.terminalSessionIds) {
+          if (cancelled) return;
+          if (tabsStateRef.current.tabs.some((entry) => entry.sessionId === sessionId)) continue;
+          const result = await transport.openSessionSurface(nextMobileSurfaceId(), { kind: 'adopt', sessionId }).catch(() => null);
+          if (cancelled) {
+            if (result?.ok) void transport.releaseSessionSurface(result.binding.bindingId).catch(() => undefined);
+            return;
+          }
+          if (result?.ok) dispatch({ type: 'open', binding: result.binding });
+        }
+        if (!userNavigatedRef.current && saved.activeTerminalSessionId) dispatch({ type: 'activate', sessionId: saved.activeTerminalSessionId });
+        const snapshot = saved.activeAgentSessionId ? await transport.getDaemonSnapshot().catch(() => null) : null;
+        if (cancelled) return;
+        const agentId = snapshot?.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)
+          ? saved.activeAgentSessionId : null;
+        setActiveAgentSessionId(agentId);
+        if (!userNavigatedRef.current && !agentCreateRecoveryStateRef.current.recovery) {
+          setTab(saved.destination === 'agents' && agentId ? 'agents' : 'terminal');
+        }
+      }
+      if (!cancelled) { restoredAuthorityRef.current = authority; setRestoreAuthority(authority); }
+    })().catch(() => { /* Terminal creation remains available when optional restoration fails. */ });
+    return () => { cancelled = true; };
+  }, [connected, transport]);
+
+  useEffect(() => {
+    if (tab === 'terminal' || tab === 'agents') lastWorkTabRef.current = tab;
+    if (!restoreAuthority || !connected) return;
+    writeWorkspaceRestore(restoreAuthority, {
+      terminalSessionIds: tabsState.tabs.map((entry) => entry.sessionId),
+      activeTerminalSessionId: tabsState.activeSessionId,
+      activeAgentSessionId,
+      destination: lastWorkTabRef.current,
+    });
+  }, [restoreAuthority, connected, tabsState, tab, activeAgentSessionId]);
 
   // File-explorer drawer's "open terminal here" (M4): a fresh tab whose
   // session starts in `dirPath` — mirrors `quickNewTab`, cwd threaded through.
@@ -1018,7 +1070,7 @@ export function MobileWorkspace({
           orchestrationSnapshot: agentOrchestrationSnapshot,
           daemonRuntimeState,
           disconnected: !connected,
-          onBack: () => selectTab('home'),
+          onBack: () => selectTab('terminal'),
           onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),
           onDecideApproval: (activityId, approvalId, decision) =>
             transport.decideAgentApproval(activityId, approvalId, decision),
@@ -1031,9 +1083,9 @@ export function MobileWorkspace({
             try { await openOwnedTab(); return { ok: true as const }; }
             catch { return { ok: false as const, message: t('sessionNavigation.openFailed') }; }
           },
-          newSessionRequest,
-          onNewSessionRequestConsumed: () => setNewSessionRequest(0),
           agentCreateRecovery,
+          initialSessionId: activeAgentSessionId,
+          onActiveSessionChange: setActiveAgentSessionId,
           transport,
           onFocusSession: (sessionId) => {
             const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
@@ -1049,7 +1101,7 @@ export function MobileWorkspace({
         errorMessage={t('common.featureLoadFailed')}
         retryLabel={t('common.retry')}
         closeLabel={t('common.close')}
-        onClose={() => selectTab('home')}
+        onClose={() => selectTab('terminal')}
       />
     );
   }
@@ -1061,9 +1113,9 @@ export function MobileWorkspace({
       <MobileWorkbenchCoordinator
         terminalActive={tab === 'terminal' && subPage === null}
         destinationActive={subPage !== null}
-        tabRootActive={tab !== 'home'}
+        tabRootActive={tab !== 'terminal'}
         onRequestRoot={closeSubPage}
-        onRequestTabRoot={() => setTab('home')}
+        onRequestTabRoot={() => setTab('terminal')}
         page={page}
         navigation={immersive ? undefined : (
           <MobileTabBar
@@ -1092,10 +1144,10 @@ export function MobileWorkspace({
                 type="button"
                 className="mob-icon-btn"
                 onClick={() => selectTab('home')}
-                aria-label={t('common.back')}
+                aria-label={t('mobile.tabs.home')}
                 data-testid="workspace-hub-btn"
               >
-                <ChevronLeft aria-hidden="true" />
+                <Home aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -1130,7 +1182,7 @@ export function MobileWorkspace({
                 <Plus aria-hidden="true" />
               </button>
             </header>
-
+            {terminalOpenError && <p role="alert">{t('sessionNavigation.openFailed')} <button type="button" className="mob-cta" onClick={quickNewTab}>{t('common.retry')}</button></p>}
             {tabsState.tabs.length === 0 && (
               <div className="mobile-terminal-empty" data-testid="mobile-terminal-empty">
                 <div>

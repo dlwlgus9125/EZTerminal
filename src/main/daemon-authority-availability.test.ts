@@ -1,3 +1,4 @@
+import { DAEMON_DATABASE_SCHEMA_VERSION } from '../shared/daemon-authority';
 import { describe, expect, it } from 'vitest';
 
 import { redactDaemonAuthorityAvailability } from '../shared/daemon-authority';
@@ -23,7 +24,7 @@ describe('daemon authority availability', () => {
       state: 'legacy-only-safe-mode',
       initializationCode: 'database-corrupt',
       databaseDisposition: 'quarantined',
-      supportedSchemaVersion: 3,
+      supportedSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
       currentSchemaVersion: 3,
       recoveryPath: 'C:\\Users\\test\\daemon-recovery\\set-1',
     });
@@ -39,13 +40,13 @@ describe('daemon authority availability', () => {
       state: 'legacy-only-safe-mode',
       initializationCode: 'future-schema',
       databaseDisposition: 'preserved',
-      supportedSchemaVersion: 3,
+      supportedSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
       currentSchemaVersion: 9,
     });
     expect(readyDaemonAuthorityAvailability()).toEqual({
       state: 'ready',
-      supportedSchemaVersion: 3,
-      currentSchemaVersion: 3,
+      supportedSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
+      currentSchemaVersion: DAEMON_DATABASE_SCHEMA_VERSION,
     });
   });
 });

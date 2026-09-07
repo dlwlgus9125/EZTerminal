@@ -1223,15 +1223,13 @@ export function AgentHub({
             onOpenDocument={onOpenProjectDocument}
             onOpenProjectMap={onOpenProjectMap}
             onNewSession={(target, locationLabel) => {
-              if (daemonSafeMode) return;
-              if (onOpenStructuredAgentDraft) {
-                onOpenStructuredAgentDraft(drillProject, target, locationLabel);
+              if (onOpenProjectTerminal) {
+                onOpenProjectTerminal({ ...target, projectName: drillProject.name, titleMode: 'generated' });
               } else {
                 openLaunchPicker(drillProject, target, locationLabel);
               }
             }}
-            newSessionDisabled={daemonSafeMode}
-            newSessionDisabledReason={t('agentHub.daemonSafeMode.newAgentUnavailable')}
+            onNewAgent={onOpenStructuredAgentDraft ? (target, locationLabel) => onOpenStructuredAgentDraft(drillProject, target, locationLabel) : undefined}
             onManage={() => openProjectEditor(drillProject)}
             explorerState={projectWorkspaceState}
             onExplorerStateChange={onProjectWorkspaceStateChange}
@@ -1449,17 +1447,13 @@ export function AgentHub({
                           variant="secondary"
                           size="sm"
                           leadingIcon={<MessageSquarePlus aria-hidden="true" />}
-                          disabled={daemonSafeMode && onOpenStructuredAgentDraft !== undefined}
-                          title={daemonSafeMode && onOpenStructuredAgentDraft
-                            ? t('agentHub.daemonSafeMode.newAgentUnavailable')
-                            : undefined}
                           onClick={() => {
-                            if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft(project);
+                            if (onOpenProjectTerminal) onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' });
                             else openLaunchPicker(project);
                           }}
                           data-testid={`agent-project-new-chat-${project.projectId}`}
                         >
-                          {t('agentHub.projects.newSession')}
+                          {t('header.newTerminal')}
                         </Button>
                       )}
                       <Menu
@@ -1472,6 +1466,7 @@ export function AgentHub({
                           />
                         )}
                       >
+                        {onOpenStructuredAgentDraft && <MenuItem icon={MessageSquarePlus} onSelect={() => onOpenStructuredAgentDraft(project)}>{t('agentHub.newAgentRun')}</MenuItem>}
                         <MenuItem
                           icon={History}
                           onSelect={() => openProjectHistory(project)}
@@ -1548,8 +1543,6 @@ export function AgentHub({
               variant="primary"
               size="sm"
               leadingIcon={<Plus aria-hidden="true" />}
-              disabled={daemonSafeMode}
-              title={daemonSafeMode ? t('agentHub.daemonSafeMode.newAgentUnavailable') : undefined}
               onClick={() => {
                 if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft();
                 else openLaunchPicker();
@@ -1558,11 +1551,6 @@ export function AgentHub({
             >
               {t('agentHub.newAgentRun')}
             </Button>
-          )}
-          {daemonSafeMode && (
-            <p className="agent-hub-footer__safe-mode" role="status">
-              {t('agentHub.daemonSafeMode.newAgentUnavailable')}
-            </p>
           )}
           {onOpenAgentSettings && (
             <Button

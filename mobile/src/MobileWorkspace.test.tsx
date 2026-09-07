@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileWorkspace } from './MobileWorkspace';
+import { readWorkspaceRestore, writeWorkspaceRestore } from './workspace-restore';
 import {
   MobileAgentCreateRecoveryStore,
   mobileAgentCreateAuthorityFingerprint,
@@ -245,12 +246,13 @@ afterEach(() => {
 });
 
 describe('MobileWorkspace — tab-bar shell root', () => {
-  it('lands on Home with every existing top-level capability reachable', () => {
+  it('lands on Terminal with every existing top-level capability reachable', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
 
-    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
     for (const testId of [
       'shell-tab-home',
       'shell-tab-terminal',
@@ -258,7 +260,6 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       'shell-tab-agents',
       'shell-tab-more',
       'shell-rail-settings',
-      'home-pc-control',
     ]) {
       expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
     }
@@ -276,6 +277,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
   it('keeps PC Control idle on arrival even when the host advertises support', () => {
     const { transport, socket } = makeAuthedTransport(['desktop-control-v1']);
     const el = renderWorkspace(transport);
+    tap(el, 'shell-tab-home');
 
     expect(el.querySelector<HTMLButtonElement>('[data-testid="home-pc-control"]')?.disabled).toBe(false);
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
@@ -284,6 +286,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
   it('lists live sessions on Home without opening Monitor', async () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
+    tap(el, 'shell-tab-home');
     expect(el.querySelectorAll('[data-testid="home-session-row"]')).toHaveLength(0);
     expect(el.querySelector('[data-testid="home-sessions-empty"]')).toBeTruthy();
 
@@ -304,6 +307,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
   it('replays session deltas that arrive while the initial snapshot is in flight', async () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
+    tap(el, 'shell-tab-home');
 
     act(() => {
       socket.triggerMessage({
@@ -331,7 +335,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
     for (const [testId, label] of [
-      ['workspace-hub-btn', 'Back'],
+      ['workspace-hub-btn', 'Home'],
       ['tab-add-btn', 'New tab'],
       ['menu-btn', 'Sessions'],
     ] as const) {
@@ -342,7 +346,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
   });
 
-  it('routes to the Agents tab and back to Home without unmounting the terminal', async () => {
+  it('routes to the Agents tab and back to Terminal without unmounting the terminal', async () => {
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
 
@@ -353,7 +357,8 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
 
     tap(el, 'mobile-agent-close');
-    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
   });
 
   it('replaces a stale agent snapshot with the authoritative seed after desktop restart', () => {
@@ -372,6 +377,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       });
       sockets[0].triggerMessage({ kind: 'auth-ok' });
       const el = renderWorkspace(transport);
+    tap(el, 'shell-tab-home');
 
       act(() => {
         sockets[0].triggerMessage({
@@ -472,6 +478,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
+    tap(el, 'shell-tab-home');
     expect(el.querySelector('[data-testid="home-openclaw"]')).toBeNull();
 
     act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
@@ -564,7 +571,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     let tokenReadCount = 0;
     vi.spyOn(transport, 'getRemoteToken').mockImplementation(async () => {
       tokenReadCount += 1;
-      if (tokenReadCount === 2) {
+      if (tokenReadCount === 3) {
         await retryTokenGate;
       }
       return 'tok';
@@ -802,10 +809,7 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
     await waitForTestId(el, 'mobile-daemon-navigator');
     tap(el, 'mobile-daemon-project');
     tap(el, 'mobile-daemon-workspace');
-    tap(el, 'mobile-daemon-create-session');
-    await waitForTestId(el, 'mobile-new-session-draft');
-    tap(el, 'mobile-new-session-terminal');
-    return waitForTestId(el, 'mobile-new-session-open-terminal') as Promise<HTMLButtonElement>;
+    return waitForTestId(el, 'mobile-daemon-create-session') as Promise<HTMLButtonElement>;
   }
 
   it('revalidates against a fresh daemon snapshot and owns the new Terminal surface', async () => {
@@ -867,10 +871,31 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
     });
 
     expect(open).not.toHaveBeenCalled();
-    expect(el.querySelector('[data-testid="mobile-new-session-draft"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="mobile-new-session-locked-workspace"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="mobile-new-session-terminal-panel"] [role="alert"]')?.textContent)
+    expect(el.querySelector('[data-testid="mobile-new-session-draft"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-daemon-create-session"]')).toBeTruthy();
+    expect(el.textContent)
       .toContain('This Workspace is no longer available.');
+  });
+});
+
+describe('MobileWorkspace - previous work', () => {
+  it('adopts saved terminal views, restores the active one, and does not recreate missing sessions', async () => {
+    const { transport } = makeAuthedTransport([], 'restore-host');
+    Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
+    const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');
+    writeWorkspaceRestore(authority, { terminalSessionIds: ['one', 'gone', 'two'], activeTerminalSessionId: 'one', activeAgentSessionId: null, destination: 'terminal' });
+    const open = vi.spyOn(transport, 'openSessionSurface').mockImplementation(async (surfaceId, intent) => {
+      if (intent.kind !== 'adopt' || intent.sessionId === 'gone') throw new Error('gone');
+      return { ok: true, binding: { surfaceId, bindingId: `binding-${intent.sessionId}`, session: { sessionId: intent.sessionId, cwd: `/${intent.sessionId}` }, role: 'adopted' } };
+    });
+    const el = renderWorkspace(transport);
+    await flushAsync();
+    expect(open.mock.calls.map((call) => call[1])).toEqual([
+      { kind: 'adopt', sessionId: 'one' }, { kind: 'adopt', sessionId: 'gone' }, { kind: 'adopt', sessionId: 'two' },
+    ]);
+    expect(el.querySelector('[data-testid="menu-btn"]')?.textContent).toContain('/one');
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
+    expect(readWorkspaceRestore(authority)).toMatchObject({ terminalSessionIds: ['one', 'two'], activeTerminalSessionId: 'one' });
   });
 });
 

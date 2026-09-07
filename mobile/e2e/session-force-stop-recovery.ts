@@ -25,7 +25,6 @@ import {
   createTerminalSession,
   getVisibleXtermBufferText,
   launchDesktop,
-  openShellDestination,
   runAdb,
   setTestIdTextValue,
   sleep,
@@ -114,9 +113,7 @@ async function main(): Promise<void> {
 
     await waitForTestId('connect-screen', 45_000);
     await submitConnectionOnce();
-    await openShellDestination('more-sessions', 'session-switcher');
-    await waitForTestId('session-open', 15_000);
-    await tapTestId('session-open');
+    // Reconnecting restores the last terminal directly, without session-picker navigation.
     await waitForTestId('mobile-session-view', 20_000);
     await waitForTestId('pty-block', 20_000);
 

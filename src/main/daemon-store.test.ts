@@ -216,7 +216,7 @@ describe('DaemonStore', () => {
       'turns',
       'workspaces',
     ]);
-    expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 });
+    expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: DAEMON_DATABASE_SCHEMA_VERSION });
     expect(database.prepare("SELECT name FROM pragma_table_info('providers') WHERE name = 'review_digest'").get())
       .toEqual({ name: 'review_digest' });
     expect(database.prepare("SELECT name FROM pragma_table_info('turns') WHERE name = 'enqueue_sequence'").get())
@@ -495,6 +495,27 @@ describe('DaemonStore', () => {
     await expect(store.appendTranscriptBatch([item('one', '1'), item('two', '2')])).resolves.toMatchObject({ revision: 2 });
     expect(store.getTranscript('terminal-1').map((entry) => entry.sequence)).toEqual([1, 2]);
     await store.close();
+  });
+
+  it('migrates v3 history without changing text and persists raw message identity across restart', async () => {
+    const directory = makeDirectory();
+    const old = new DaemonStore(directory);
+    await old.init();
+    await old.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation('terminal-1', 'terminal')] });
+    await old.appendTranscriptBatch([{ id: 'legacy', sessionId: 'terminal-1', kind: 'tool-result', text: 'TOKEN=old-secret', isDelta: false, isSensitive: true }]);
+    await old.close();
+    const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
+    database.exec('ALTER TABLE transcript_items DROP COLUMN message_id; PRAGMA user_version = 3;');
+    database.close();
+    const migrated = new DaemonStore(directory);
+    await migrated.init();
+    expect(migrated.getTranscript('terminal-1')[0]).toMatchObject({ text: 'TOKEN=old-secret', isSensitive: true });
+    await migrated.appendTranscriptBatch([{ id: 'raw', messageId: 'provider-message', sessionId: 'terminal-1', kind: 'tool-result', text: 'TOKEN=new-secret', isDelta: false, isSensitive: true }]);
+    await migrated.close();
+    const restarted = new DaemonStore(directory);
+    await restarted.init();
+    expect(restarted.getTranscript('terminal-1')[1]).toMatchObject({ messageId: 'provider-message', text: 'TOKEN=new-secret' });
+    await restarted.close();
   });
 
   it('makes stable transcript ids idempotent without consuming sequence numbers', async () => {
@@ -820,6 +841,7 @@ describe('DaemonStore', () => {
       DROP INDEX turns_fifo_queue;
       DROP INDEX transcript_items_turn_kind;
       ALTER TABLE turns DROP COLUMN enqueue_sequence;
+      ALTER TABLE transcript_items DROP COLUMN message_id;
       UPDATE providers SET review_digest = NULL;
       PRAGMA user_version = 1;
     `);
@@ -828,7 +850,7 @@ describe('DaemonStore', () => {
 
     const migrated = new DaemonStore(directory);
     await migrated.init();
-    expect(migrated.getDiagnostics().schemaVersion).toBe(3);
+    expect(migrated.getDiagnostics().schemaVersion).toBe(DAEMON_DATABASE_SCHEMA_VERSION);
     expect(migrated.getSnapshot().turns).toEqual([
       expect.objectContaining({ id: 'turn-v1', enqueueSequence: expect.any(Number) }),
     ]);

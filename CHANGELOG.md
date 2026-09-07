@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [1.0.50] - 2026-09-07
+
+### Changed
+
+- New Session opens a terminal immediately on desktop and Android. Explicit
+  Agent entry defaults to the installed terminal CLI; in-app chat stays optional.
+- CLI discovery no longer depends on app-chat protocol versions, SDK setup or
+  provider enablement. Existing CLI installations retain their normal launch path.
+- Settings put CLI status first and collapse optional chat, automation and
+  detailed diagnostics. Background and login settings live in General.
+- Agent transcripts display and persist original assistant and tool output,
+  including sensitive text, with stable streaming message identity and an additive
+  database migration. Historical redacted text cannot be recovered.
+
+### Fixed
+
+- Android restores existing terminal views and the active work destination after
+  reconnecting, without recreating sessions that no longer exist.
+- New work dismisses narrow overlay sidebars, and asynchronous lifecycle settings
+  no longer move the scale controls during a click.
+
 ## [1.0.49] - 2026-09-07
 
 ### Changed

@@ -975,6 +975,7 @@ export class DaemonStore {
       sequence: integer(row, 'sequence'), kind: requiredString(row, 'kind') as DaemonTranscriptItem['kind'],
       text: requiredString(row, 'text'), isDelta: bool(row, 'is_delta'), isSensitive: bool(row, 'is_sensitive'),
       ...(optionalString(row, 'related_session_id') === undefined ? {} : { relatedSessionId: optionalString(row, 'related_session_id') }),
+      ...(optionalString(row, 'message_id') === undefined ? {} : { messageId: optionalString(row, 'message_id') }),
       createdAt: requiredString(row, 'created_at'),
     }));
   }
@@ -1440,6 +1441,17 @@ export class DaemonStore {
         throw error;
       }
     }
+    if (version < 4) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.exec('ALTER TABLE transcript_items ADD COLUMN message_id TEXT');
+        database.exec('PRAGMA user_version = 4');
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
     const row = database.prepare('SELECT singleton FROM runtime_settings WHERE singleton = 1').get();
     if (!row) throw new Error('Daemon database is missing runtime metadata.');
   }
@@ -1783,8 +1795,8 @@ export class DaemonStore {
     const rangeBySession = new Map<string, { from: number; to: number }>();
     const insert = database.prepare(`
       INSERT INTO transcript_items (
-        id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at, message_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const findExisting = database.prepare('SELECT id FROM transcript_items WHERE id = ?');
     for (const item of items) {
@@ -1803,7 +1815,7 @@ export class DaemonStore {
       }
       insert.run(
         item.id, item.sessionId, item.turnId ?? null, sequence, item.kind, item.text,
-        item.isDelta ? 1 : 0, item.isSensitive ? 1 : 0, item.relatedSessionId ?? null, item.createdAt ?? now,
+        item.isDelta ? 1 : 0, item.isSensitive ? 1 : 0, item.relatedSessionId ?? null, item.createdAt ?? now, item.messageId ?? null,
       );
       nextSequenceBySession.set(item.sessionId, sequence);
       const range = rangeBySession.get(item.sessionId);

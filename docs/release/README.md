@@ -7,8 +7,8 @@ SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 
 ## 현재 계약
 
-- 앱 버전: `1.0.49`
-- Android versionCode: `70`
+- 앱 버전: `1.0.50`
+- Android versionCode: `71`
 - 원격 프로토콜: v12
 - Electron↔Rust native desktop protocol: v2
 - 검증 프로필: `functional-hotfix`
@@ -19,8 +19,8 @@ SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 
 관련 문서:
 
-- [1.0.49 릴리스 노트](release-notes-1.0.49.md)
-- [1.0.49 검증 정책](validation-policy-1.0.49.md)
+- [1.0.50 릴리스 노트](release-notes-1.0.50.md)
+- [1.0.50 검증 정책](validation-policy-1.0.50.md)
 - [서명 준비와 인증서 지문 확인](signing.md)
 - [SignPath Windows 설정](signpath-setup.md)
 - [Code signing policy](../../CODE_SIGNING_POLICY.md)

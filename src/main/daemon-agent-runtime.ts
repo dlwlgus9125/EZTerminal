@@ -232,6 +232,7 @@ function scheduleRunInput(
 function transcriptInput(item: DaemonTranscriptItem): DaemonTranscriptItemInput {
   return {
     id: item.id,
+    ...(item.messageId ? { messageId: item.messageId } : {}),
     sessionId: item.sessionId,
     ...(item.turnId ? { turnId: item.turnId } : {}),
     kind: item.kind,
@@ -2786,14 +2787,15 @@ export class DaemonAgentRuntime {
       for (const character of input.text) {
         const bytes = Buffer.byteLength(character, 'utf8');
         if (partBytes + bytes > MAX_TRANSCRIPT_BATCH_UTF8_BYTES && part) {
-          expanded.push({ ...input, id: stableId('transcript-part', input.id, String(index++)), text: part, isDelta: true });
+          expanded.push({ ...input, id: stableId('transcript-part', input.id, String(index)), text: part, isDelta: input.messageId && index === 0 ? input.isDelta : true });
+          index += 1;
           part = '';
           partBytes = 0;
         }
         part += character;
         partBytes += bytes;
       }
-      if (part) expanded.push({ ...input, id: stableId('transcript-part', input.id, String(index)), text: part, isDelta: true });
+      if (part) expanded.push({ ...input, id: stableId('transcript-part', input.id, String(index)), text: part, isDelta: input.messageId && index === 0 ? input.isDelta : true });
     }
     const batches: DaemonTranscriptItemInput[][] = [];
     let batch: DaemonTranscriptItemInput[] = [];

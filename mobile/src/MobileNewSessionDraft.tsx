@@ -66,7 +66,7 @@ const COPY: Readonly<Record<'en' | 'ko', MobileNewSessionCopy>> = {
     selectProject: 'Select a project',
     selectWorkspace: 'Select a workspace',
     location: 'Location',
-    locationHint: 'The host revalidates this workspace immediately before creating the session.',
+    locationHint: 'Sessions start in this folder.',
     terminalDescription: 'Open an interactive terminal at the selected workspace root.',
     openTerminal: 'Open Terminal',
     openingTerminal: 'Opening Terminal',
@@ -101,7 +101,7 @@ const COPY: Readonly<Record<'en' | 'ko', MobileNewSessionCopy>> = {
     selectProject: 'Project 선택',
     selectWorkspace: 'Workspace 선택',
     location: '실행 위치',
-    locationHint: '세션 생성 직전에 호스트가 이 Workspace를 다시 검증합니다.',
+    locationHint: '이 폴더에서 세션을 시작합니다.',
     terminalDescription: '선택한 Workspace 루트에서 대화형 Terminal을 엽니다.',
     openTerminal: 'Terminal 열기',
     openingTerminal: 'Terminal 여는 중',
@@ -131,6 +131,7 @@ export function MobileNewSessionDraft({
   state,
   disconnected = false,
   contextWorkspaceId,
+  initialIntent,
   initialAgentDraft,
   agentRecoveryStatus,
   onBack,
@@ -146,6 +147,7 @@ export function MobileNewSessionDraft({
   readonly state: DaemonRuntimeViewState;
   readonly disconnected?: boolean;
   readonly contextWorkspaceId?: string;
+  readonly initialIntent?: { readonly kind: MobileNewSessionKind; readonly agentMode: 'conversation' | 'cli' };
   /** Restores the exact logical draft while reconciling an uncertain delivery. */
   readonly initialAgentDraft?: StructuredAgentDraftInput;
   readonly agentRecoveryStatus: MobileAgentCreateRecoveryStatus;
@@ -183,13 +185,13 @@ export function MobileNewSessionDraft({
   const contextWorkspace = contextWorkspaceId
     ? activeWorkspaces.find((workspace) => workspace.id === contextWorkspaceId)
     : undefined;
-  const [kind, setKind] = useState<MobileNewSessionKind>('agent');
-  const [agentMode, setAgentMode] = useState<'conversation' | 'cli'>('conversation');
+  const [kind, setKind] = useState<MobileNewSessionKind>(initialAgentDraft ? 'agent' : initialIntent?.kind ?? 'terminal');
+  const [agentMode, setAgentMode] = useState<'conversation' | 'cli'>(initialAgentDraft ? 'conversation' : initialIntent?.agentMode ?? 'cli');
   const recoveredWorkspace = initialAgentDraft
     ? snapshot?.workspaces.find((workspace) => workspace.id === initialAgentDraft.workspaceId)
     : undefined;
   const [projectId, setProjectId] = useState(
-    contextWorkspace?.projectId ?? recoveredWorkspace?.projectId ?? '',
+    contextWorkspace?.projectId ?? recoveredWorkspace?.projectId ?? (initialIntent?.kind === 'agent' ? '' : 'local'),
   );
   const [workspaceId, setWorkspaceId] = useState(
     contextWorkspace?.id ?? recoveredWorkspace?.id ?? '',
@@ -292,7 +294,7 @@ export function MobileNewSessionDraft({
             <p>{copy.description}</p>
           </header>
 
-          <SessionStartOptions kind={kind} agentMode={agentMode} onKindChange={setKind} onModeChange={setAgentMode} locked={initialAgentDraft !== undefined || terminalBusy || agentBusy} prefix="mobile-new-session" />
+          <SessionStartOptions kind={kind} agentMode={agentMode} onKindChange={(next) => { setKind(next); if (next === 'agent' && projectId === 'local') setProjectId(''); }} onModeChange={setAgentMode} locked={initialAgentDraft !== undefined || terminalBusy || agentBusy} prefix="mobile-new-session" />
 
           {authorityMessage && (
             <div className="mob-new-session__notice" role={state.status === 'error' ? 'alert' : 'status'}>

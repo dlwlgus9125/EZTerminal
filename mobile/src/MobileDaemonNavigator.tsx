@@ -89,7 +89,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
     backToWorkspaces: 'Back to workspaces',
     backToCurrent: 'Back to current sessions',
     openSession: 'Open session',
-    newSession: 'New session',
+    newSession: 'New terminal',
   },
   ko: {
     title: '프로젝트',
@@ -117,7 +117,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
     backToWorkspaces: '워크스페이스로 돌아가기',
     backToCurrent: '현재 세션으로 돌아가기',
     openSession: '세션 열기',
-    newSession: '새 세션',
+    newSession: '새 터미널',
   },
 };
 
@@ -178,6 +178,7 @@ export function MobileDaemonNavigator({
   onRetry,
   onSelectSession,
   onCreateSession,
+  onCreateAgent,
   visibility,
   onVisibilityChange,
   initialLocation,
@@ -190,6 +191,7 @@ export function MobileDaemonNavigator({
   readonly onRetry: () => void;
   readonly onSelectSession: (sessionId: string) => void;
   readonly onCreateSession?: (workspaceId: string) => void;
+  readonly onCreateAgent?: (workspaceId: string) => void;
   readonly visibility?: MobileDaemonNavigatorVisibility;
   readonly onVisibilityChange?: (visibility: MobileDaemonNavigatorVisibility) => void;
   /** Restores the drill-down after a contextual New Session page closes. */
@@ -324,6 +326,9 @@ export function MobileDaemonNavigator({
                 <Plus aria-hidden="true" />
               </button>
             )}
+            {!showArchived && state.status === 'ready' && onCreateAgent && <button type="button"
+              className="mob-icon-btn" aria-label={`${t('agentHub.newAgentRun')}: ${workspace.name}`}
+              onClick={() => onCreateAgent(workspace.id)} data-testid="mobile-daemon-create-agent"><Bot aria-hidden="true" /></button>}
           </div>
         ) : project ? (
           <button

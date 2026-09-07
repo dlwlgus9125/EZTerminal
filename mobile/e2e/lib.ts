@@ -2103,10 +2103,10 @@ export async function connectAndAuth(token: string): Promise<void> {
 }
 
 /** The authenticated shell's root tab. */
-export const SHELL_ROOT_TEST_ID = 'mobile-home-view';
+export const SHELL_ROOT_TEST_ID = 'mobile-workspace';
 
 /** Submit a prepared ConnectScreen exactly once and require its first product
- * result to be the authenticated Home tab. Sharing this helper prevents individual RC
+ * result to be the authenticated workspace. Sharing this helper prevents individual RC
  * scenarios from quietly re-introducing connection retries. */
 export async function submitConnectionOnce(): Promise<void> {
   console.log('[e2e] connecting (single attempt)...');
@@ -2121,7 +2121,7 @@ export async function submitConnectionOnce(): Promise<void> {
   await assertColdConnectionUsedOneSocket();
 }
 
-/** Enters the Terminal tab from Home, creates a session through the
+/** Enters the Terminal tab, creates a session through the
  * locale-independent header action, and waits for command input. */
 export async function createTerminalSession(): Promise<void> {
   await waitForTestId(SHELL_ROOT_TEST_ID, 30_000);

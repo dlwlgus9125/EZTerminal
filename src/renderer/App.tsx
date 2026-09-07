@@ -1354,6 +1354,10 @@ export function App(): JSX.Element {
   // One adaptive sidebar owns every navigation destination. At >=1200px it
   // reflows the workspace; below that breakpoint the same shell overlays it.
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
+  const sidebarOverlayBelow = sidebarDestination === 'agents' && projectDrillActive ? 1024 : 1200;
+  const revealOpenedSession = useCallback((): void => {
+    if (window.innerWidth < sidebarOverlayBelow) setSidebarDestination(null);
+  }, [sidebarOverlayBelow]);
   const [settingsCategoryRequest, setSettingsCategoryRequest] = useState<{
     readonly category: SettingsCategory;
     readonly id: number;
@@ -1939,7 +1943,8 @@ export function App(): JSX.Element {
           : {}),
       },
     }, { kind: 'main-tab' });
-  }, [i18n, sessionMirroringCoordinator]);
+    revealOpenedSession();
+  }, [i18n, sessionMirroringCoordinator, revealOpenedSession]);
 
   const openStructuredAgentSession = useCallback((input: {
     readonly sessionId: string;
@@ -1960,6 +1965,7 @@ export function App(): JSX.Element {
       existing.api.setTitle(title);
       existing.api.setActive();
       dockWindows.focusPanelWindow(existing);
+      revealOpenedSession();
       return;
     }
     dockWindows.addPanel({
@@ -1969,7 +1975,8 @@ export function App(): JSX.Element {
       renderer: 'always',
       params: { historyId },
     }, { kind: 'main-tab' });
-  }, [sessionMirroringCoordinator]);
+    revealOpenedSession();
+  }, [sessionMirroringCoordinator, revealOpenedSession]);
 
   const structuredAgentNavigationValue = useMemo<StructuredAgentNavigationContextValue>(() => ({
     openSession: openStructuredAgentSession,
@@ -2330,7 +2337,8 @@ export function App(): JSX.Element {
       title: projectSession.projectName,
       projectSession,
     });
-  }, [workbenchCoordinator]);
+    revealOpenedSession();
+  }, [workbenchCoordinator, revealOpenedSession]);
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, instanceToken: object, close: () => void): void => {
@@ -3885,11 +3893,17 @@ export function App(): JSX.Element {
           onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
           onOpenStructuredAgentSession: openStructuredAgentSession,
-          onCreateWorkspaceSession: (projectId, workspaceId) => openStructuredAgentDraft({ projectId, name: '' }, { workspaceId }),
+          onCreateWorkspaceSession: (_projectId, workspaceId) => {
+            void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {
+              if (!result.ok) pushToast({ title: result.message, variant: 'danger' });
+              else revealOpenedSession();
+            }).catch(() => pushToast({ title: t('agentHub.projects.launchFailed'), variant: 'danger' }));
+          },
           onOpenProjectTerminal: openProjectTerminal,
           onCreateWorkspaceTerminal: (workspaceId) => {
             void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {
               if (!result.ok) pushToast({ title: result.message, variant: 'danger' });
+              else revealOpenedSession();
             }).catch(() => pushToast({ title: t('agentHub.projects.launchFailed'), variant: 'danger' }));
           },
           onOpenAgentSettings: () => {
@@ -3988,7 +4002,7 @@ export function App(): JSX.Element {
         attentionCount={Math.max(attentionCount, unreadUserFacingAgentCount)}
         commandCenterOpen={quickOpenMode !== null}
         effectIntensity={uiPreferences.effectIntensity}
-        onNewTerminal={addTab}
+        onNewTerminal={() => { addTab(); revealOpenedSession(); }}
         onNewSession={() => openStructuredAgentDraft()}
         onOpenAttention={() => setAgentsOpen((open) => !open)}
         onOpenCommandCenter={() => openQuickOpen('all')}
@@ -4073,7 +4087,7 @@ export function App(): JSX.Element {
             title={sidebarTitle[sidebarDestination]}
             description={sidebarDescription[sidebarDestination]}
             width={uiPreferences.sidebarWidth}
-            overlayBelow={sidebarDestination === 'agents' && projectDrillActive ? 1024 : 1200}
+            overlayBelow={sidebarOverlayBelow}
             onWidthChange={(sidebarWidth) => {
               void updatePreferences({ sidebarWidth }).catch(() => undefined);
             }}

@@ -10,6 +10,7 @@ import {
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { ScheduleSettings } from './ScheduleSettings';
+import type { AgentProjectLauncherSummary } from '../shared/agent-history';
 import { StructuredProviderSettings } from './StructuredProviderSettings';
 
 const DEFAULT_SETTINGS: AgentSettings = {
@@ -52,7 +53,10 @@ export function AgentIntegrationSettings({
   capabilities = rendererCapabilities,
 }: AgentIntegrationSettingsProps): JSX.Element {
   const { t } = useAppTranslation();
+  const [conversationOpen, setConversationOpen] = useState(false);
+  const [automationOpen, setAutomationOpen] = useState(false);
   const [integrations, setIntegrations] = useState<readonly AgentIntegrationStatus[]>([]);
+  const [launchers, setLaunchers] = useState<readonly AgentProjectLauncherSummary[]>([]);
   const [settings, setSettings] = useState<AgentSettings>(DEFAULT_SETTINGS);
   const [busyProvider, setBusyProvider] = useState<AgentIntegrationProvider | null>(null);
   const [message, setMessage] = useState<AgentSettingsMessage>(null);
@@ -62,6 +66,7 @@ export function AgentIntegrationSettings({
     if (!snapshot) return;
     setIntegrations(snapshot.integrations);
     setSettings(snapshot.settings);
+    setLaunchers(snapshot.launchers ?? []);
   }, [capabilities]);
 
   useEffect(() => {
@@ -132,10 +137,6 @@ export function AgentIntegrationSettings({
 
   return (
     <>
-      <StructuredProviderSettings capabilities={capabilities} />
-
-      <ScheduleSettings capabilities={capabilities} />
-
       <section className="terminal-activity-hook-settings" aria-labelledby="terminal-activity-hooks-title">
       <div className="agent-settings-heading">
         <div>
@@ -150,12 +151,21 @@ export function AgentIntegrationSettings({
           <div className="agent-integration-row" key={integration.provider}>
             <div className="agent-integration-copy">
               <strong>{providerLabel(integration.provider)}</strong>
+              {launchers.find((launcher) => launcher.provider === integration.provider)?.installed !== undefined && <span>
+                {t(launchers.find((launcher) => launcher.provider === integration.provider)?.installed
+                  ? 'agentSettings.cliInstalled' : 'agentSettings.cliMissing')}
+              </span>}
               <span title={integration.configPath}>
                 {integration.enabled ? t('agentSettings.exactLifecycle') : t('agentSettings.processLifecycle')}
               </span>
-              {integration.drift && <span className="settings-agent-warning">{t('agentSettings.hookModified')}</span>}
-              {integration.needsTrust && <span className="settings-agent-warning">{t('agentSettings.trustCodexHooks')}</span>}
-              {integration.blockers.map((blocker) => <span className="settings-agent-warning" key={blocker}>{blocker}</span>)}
+              {integration.enabled && integration.drift && <span className="settings-agent-warning">{t('agentSettings.hookModified')}</span>}
+              {integration.enabled && !integration.drift && integration.needsTrust && <span className="settings-agent-warning">{t('agentSettings.trustCodexHooks')}</span>}
+              {(integration.blockers.length > 0 || integration.drift || integration.needsTrust) && <details>
+                <summary>{t('agentSettings.providerReviewDetails')}</summary>
+                {integration.drift && <p>{t('agentSettings.hookModified')}</p>}
+                {integration.needsTrust && <p>{t('agentSettings.trustCodexHooks')}</p>}
+                {integration.blockers.map((blocker) => <p key={blocker}>{blocker}</p>)}
+              </details>}
             </div>
             <button
               type="button"
@@ -178,6 +188,8 @@ export function AgentIntegrationSettings({
         ))}
       </div>
 
+      <details className="status-section">
+      <summary>{t('agentSettings.cliOptions')}</summary>
       <h3 className="settings-agent-subtitle">{t('agentSettings.approvalGateTitle')}</h3>
       <label className="settings-radio-row">
         <input
@@ -256,8 +268,17 @@ export function AgentIntegrationSettings({
       <button type="button" className="btn btn-split" onClick={() => void persist(settings)}>
         {t('agentSettings.saveProfiles')}
       </button>
+      </details>
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
       </section>
+      <details className="status-section" data-testid="agent-chat-settings" onToggle={(event) => setConversationOpen(event.currentTarget.open)}>
+        <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
+        {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}
+      </details>
+      <details className="status-section" data-testid="agent-automation-settings" onToggle={(event) => setAutomationOpen(event.currentTarget.open)}>
+        <summary>{t('agentSettings.automationTitle')}</summary>
+        {automationOpen && <ScheduleSettings capabilities={capabilities} />}
+      </details>
     </>
   );
 }

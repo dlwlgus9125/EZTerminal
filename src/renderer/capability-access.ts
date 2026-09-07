@@ -5,6 +5,7 @@ import type {
   AgentSettings,
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
+import type { AgentProjectLauncherSummary } from '../shared/agent-history';
 import type { FileListResult, FileOpResult } from '../shared/files';
 import {
   UNAVAILABLE_GIT_DIRECTORY_STATUS,
@@ -98,6 +99,7 @@ export interface AgentIntegrationAccess {
   load: () => Promise<{
     readonly integrations: readonly AgentIntegrationStatus[];
     readonly settings: AgentSettings;
+    readonly launchers?: readonly AgentProjectLauncherSummary[];
   } | null>;
   setEnabled: (
     provider: AgentIntegrationProvider,
@@ -432,7 +434,10 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
         api.listAgentIntegrations(),
         api.getAgentSettings(),
       ]);
-      return { integrations, settings };
+      const core = resolveCore();
+      const launchers = core && typeof core.listAgentProjectLaunchers === 'function'
+        ? await core.listAgentProjectLaunchers().catch(() => undefined) : undefined;
+      return { integrations, settings, ...(launchers ? { launchers } : {}) };
     },
     async setEnabled(provider, enabled) {
       const api = desktopFor('setAgentIntegrationEnabled');

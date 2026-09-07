@@ -7,6 +7,7 @@ import { CliAgentLaunchPanel, SessionStartOptions, useSessionCopy, type SessionL
 import { Button, Field, Input, Select } from './ui';
 
 export interface NewSessionDraftPanelProps {
+  readonly initialIntent?: Pick<NewSessionDraftIntent, 'kind' | 'agentMode'>;
   readonly snapshot: DaemonSnapshot | null;
   readonly projectId?: string;
   readonly workspaceId?: string;
@@ -18,11 +19,11 @@ export interface NewSessionDraftPanelProps {
 }
 
 /** A draft is presentation only until Send/Open/Start explicitly commits it. */
-export function NewSessionDraftPanel({ snapshot, projectId, workspaceId, agent, access, onTerminal, onLaunchCli, onSettings }: NewSessionDraftPanelProps): JSX.Element {
+export function NewSessionDraftPanel({ initialIntent, snapshot, projectId, workspaceId, agent, access, onTerminal, onLaunchCli, onSettings }: NewSessionDraftPanelProps): JSX.Element {
   const copy = useSessionCopy();
-  const [kind, setKind] = useState<NewSessionDraftIntent['kind']>('agent');
-  const [mode, setMode] = useState<NewSessionDraftIntent['agentMode']>('conversation');
-  const [selectedProject, setProject] = useState(projectId ?? '');
+  const [kind, setKind] = useState<NewSessionDraftIntent['kind']>(initialIntent?.kind ?? 'terminal');
+  const [mode, setMode] = useState<NewSessionDraftIntent['agentMode']>(initialIntent?.agentMode ?? 'cli');
+  const [selectedProject, setProject] = useState(projectId ?? (initialIntent?.kind === 'agent' ? '' : 'local'));
   const [selectedWorkspace, setWorkspace] = useState(workspaceId ?? '');
   const [directory, setDirectory] = useState('');
   const [busy, setBusy] = useState(false);
@@ -64,7 +65,7 @@ export function NewSessionDraftPanel({ snapshot, projectId, workspaceId, agent, 
     || (selectedProject === 'direct' && directory.trim().length > 0 && (kind === 'terminal' || mode === 'cli'));
   return <section className="session-start-draft" data-testid="new-session-draft" aria-label={copy.title}>
     <header><h1>{copy.title}</h1></header>
-    <SessionStartOptions kind={kind} agentMode={mode} locked={locked || busy} onKindChange={setKind} onModeChange={setMode} />
+    <SessionStartOptions kind={kind} agentMode={mode} locked={locked || busy} onKindChange={(next) => { setKind(next); if (next === 'agent' && selectedProject === 'local') setProject(''); }} onModeChange={setMode} />
     <div className="session-start-location">
       <Field label={copy.project} required>
         <Select value={selectedProject} disabled={Boolean(projectId) || locked || busy} onChange={(event) => { setProject(event.currentTarget.value); setWorkspace(''); setError(null); }} data-testid="new-session-project">
@@ -85,7 +86,7 @@ export function NewSessionDraftPanel({ snapshot, projectId, workspaceId, agent, 
       {selected && <p title={selected.rootPath}>{selected.rootPath}</p>}
     </div>
     <div hidden={kind !== 'agent' || mode !== 'conversation'}>
-      {!agent.providers.some((entry) => !entry.disabled) && <p role="status">{copy.noProvider}</p>}
+      {!agent.providers.some((entry) => !entry.disabled) && <p role="status">{copy.noProvider} <Button variant="ghost" disabled={locked || busy} onClick={() => setMode('cli')}>{copy.cli}</Button></p>}
       {onSettings && <Button variant="ghost" disabled={locked || busy} onClick={onSettings}>{copy.setup}</Button>}
       <StructuredAgentDraftPanel {...agent} embedded hideWorkspaceField selectedWorkspaceId={selectedWorkspace} workspaces={agent.workspaces.filter((entry) => workspaces.some((workspace) => workspace.id === entry.id))} loading={agent.loading || busy} onBusyChange={setAgentBusy} />
     </div>

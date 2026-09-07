@@ -1,5 +1,5 @@
 import { Bot, Check, History, Plus } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentActivity,
@@ -290,6 +290,8 @@ export function MobileAgentView({
   onCreateWorkspaceTerminal,
   onCreateLocalTerminal,
   newSessionRequest = 0,
+  initialSessionId,
+  onActiveSessionChange,
   onNewSessionRequestConsumed,
   onLaunchAgent,
   onResumeHistory,
@@ -318,6 +320,8 @@ export function MobileAgentView({
   readonly onCreateWorkspaceTerminal?: (workspaceId: string) => Promise<MobileWorkspaceTerminalResult>;
   readonly onCreateLocalTerminal?: () => Promise<StructuredAgentUiResult>;
   readonly newSessionRequest?: number;
+  readonly initialSessionId?: string | null;
+  readonly onActiveSessionChange?: (sessionId: string | null) => void;
   readonly onNewSessionRequestConsumed?: () => void;
   readonly transport?: WsEzTerminalTransport;
   readonly daemonRuntimeState?: DaemonRuntimeViewState;
@@ -341,7 +345,8 @@ export function MobileAgentView({
   const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
-  const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(null);
+  const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(initialSessionId ?? null);
+  useEffect(() => { onActiveSessionChange?.(selectedDaemonSessionId); }, [onActiveSessionChange, selectedDaemonSessionId]);
   const [newSessionTarget, setNewSessionTarget] = useState<MobileNewSessionTarget | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingCreatedAgent, setPendingCreatedAgent] = useState<PendingCreatedAgent | null>(null);
@@ -989,6 +994,18 @@ export function MobileAgentView({
     }
   }, [language, locale, onCreateWorkspaceTerminal]);
 
+  const terminalCreationLock = useRef(false);
+  const [terminalCreationError, setTerminalCreationError] = useState<{ workspaceId: string; message: string } | null>(null);
+  const requestTerminalSession = async (workspaceId: string): Promise<void> => {
+    if (terminalCreationLock.current) return;
+    terminalCreationLock.current = true;
+    setTerminalCreationError(null);
+    try {
+      const result = await createTerminalSession(workspaceId);
+      if (!result.ok) setTerminalCreationError({ workspaceId, message: result.message });
+    } finally { terminalCreationLock.current = false; }
+  };
+
   const openNewSession = useCallback((workspaceId?: string): void => {
     setSelectedDaemonSessionId(null);
     setNewSessionTarget({
@@ -1127,6 +1144,7 @@ export function MobileAgentView({
   if (newSessionTarget) {
     return (
       <MobileNewSessionDraft
+        initialIntent={{ kind: 'agent', agentMode: 'cli' }}
         state={daemonRuntimeState}
         disconnected={disconnected}
         contextWorkspaceId={newSessionTarget.workspaceId}
@@ -1310,7 +1328,7 @@ export function MobileAgentView({
             icon={Plus}
             variant="primary"
             size="md"
-            aria-label={locale.startsWith('ko') ? '새 세션' : 'New session'}
+            aria-label={t('agentHub.newAgentRun')}
             onClick={() => openNewSession()}
             data-testid="mobile-agent-new-session"
           />
@@ -1419,8 +1437,9 @@ export function MobileAgentView({
           ].map((item) => {
             if (item === null) {
               return (
+                <Fragment key="daemon-projects">
+                {terminalCreationError && <p role="alert">{terminalCreationError.message} <button type="button" className="mob-cta" disabled={disconnected} onClick={() => void requestTerminalSession(terminalCreationError.workspaceId)}>{t('common.retry')}</button></p>}
                 <MobileDaemonNavigator
-                  key="daemon-projects"
                   state={{ ...daemonRuntimeState, snapshot: navigationSnapshot }}
                   visibility={daemonNavigatorVisibility}
                   onVisibilityChange={setDaemonNavigatorVisibility}
@@ -1431,10 +1450,12 @@ export function MobileAgentView({
                   }}
                   onSelectSession={selectSession}
                   terminalAccess={transport}
-                  onNewTerminal={(workspaceId) => { void createTerminalSession(workspaceId).then((result) => { if (!result.ok) showToast(result.message); }); }}
-                  onCreateSession={openNewSession}
+                  onNewTerminal={(workspaceId) => void requestTerminalSession(workspaceId)}
+                  onCreateSession={(workspaceId) => void requestTerminalSession(workspaceId)}
+                  onCreateAgent={openNewSession}
                   activities={snapshot.items}
                 />
+                </Fragment>
               );
             }
             const bucket = bucketOf(item.status);

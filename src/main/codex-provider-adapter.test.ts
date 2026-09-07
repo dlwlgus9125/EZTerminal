@@ -625,6 +625,44 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('preserves original assistant and command output with stable streaming message identity', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    connection.requestImpl = async () => ({ turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } });
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-turn-1',
+      commandId: 'raw-output-command', prompt: 'Show the output',
+    });
+    await connection.emitNotification('item/agentMessage/delta', {
+      threadId: 'thread-1', turnId: 'provider-turn-1', itemId: 'assistant-raw', delta: 'TOKEN=secret',
+    });
+    await connection.emitNotification('item/completed', {
+      threadId: 'thread-1', turnId: 'provider-turn-1',
+      item: { id: 'assistant-raw', type: 'agentMessage', text: 'TOKEN=secret\nOriginal output' },
+    });
+    await connection.emitNotification('item/started', {
+      threadId: 'thread-1', turnId: 'provider-turn-1',
+      item: { id: 'command-raw', type: 'commandExecution', command: 'echo TOKEN=secret', status: 'inProgress' },
+    });
+    await connection.emitNotification('item/completed', {
+      threadId: 'thread-1', turnId: 'provider-turn-1',
+      item: { id: 'command-raw', type: 'commandExecution', command: 'echo TOKEN=secret',
+        aggregatedOutput: 'TOKEN=secret\n', status: 'completed' },
+    });
+    const items = events.filter((event) => event.kind === 'transcript').map((event) => event.item);
+    expect(items).toMatchObject([
+      { kind: 'assistant-message', text: 'TOKEN=secret', isDelta: true },
+      { kind: 'assistant-message', text: 'TOKEN=secret\nOriginal output', isDelta: false },
+      { kind: 'tool-call', text: '$ echo TOKEN=secret' },
+      { kind: 'tool-result', text: 'TOKEN=secret\n' },
+    ]);
+    expect(items[0].messageId).toBeTruthy();
+    expect(items[1].messageId).toBe(items[0].messageId);
+    await adapter.dispose();
+  });
+
   it('round-trips modern, permission, and legacy approval server requests', async () => {
     const connection = new FakeCodexConnection();
     const adapter = await attachedAdapter(connection);

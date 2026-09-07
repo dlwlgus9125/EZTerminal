@@ -78,6 +78,7 @@ import { ManagedMergeService } from './managed-merge-service';
 import { AgentControlServer } from './agent-control-server';
 import { AgentCliShim } from './agent-cli-shim';
 import { AgentHistoryService } from './agent-history-service';
+import { terminalCliInstalled } from './terminal-cli-discovery';
 import { recordAgentProjectObservation } from './agent-project-observation';
 import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
@@ -1155,6 +1156,7 @@ app.on('ready', async () => {
     agentProjectStore,
     [codexHistoryAdapter, claudeHistoryAdapter],
     () => agentSettingsStore.current.genericProfiles,
+    terminalCliInstalled,
   );
   const agentHistoryAuthorityReady = daemonRecoveryBarrier
     .then(() => agentProjectStore.init());

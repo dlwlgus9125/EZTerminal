@@ -20,18 +20,22 @@ clean-room 구현이다. 이 릴리스 범위에는 relay, voice, 외부 Hub, We
 - 기존 독립 terminal은 접근 가능한 경로를 기준으로 Local workspace에 비파괴적으로 등록한다.
 - tab을 닫는 것은 layout 동작이며 실행, transcript 또는 provider history를 삭제하지 않는다.
 
-`새 에이전트`는 modal이 아닌 draft tab이다. provider/model, workspace, 첫 prompt와 다음 세
-permission preset을 한 화면에서 편집한다.
+`Agent 실행`은 Terminal CLI를 기본으로 하는 draft다. 앱에서 대화를 선택하면
+provider/model, workspace, 첫 prompt와 다음 세 permission preset을 한 화면에서 편집한다.
 
 - `Plan`: 탐색과 계획 중심, 변경 작업은 승인 필요
 - `Standard`: 필요할 때 승인을 요청하는 기본값
 - `Full access`: 명시적으로 선택한 session에 한해 넓은 권한
 
-provider session과 process는 첫 Send에서만 만든다. 새 Codex session은 Codex app-server,
-새 Claude session은 Claude Agent SDK의 streaming input으로 실행한다. 기존에 실행 중인 legacy
-PTY Agent는 자연스럽게 끝날 때까지 유지하고, 새 session과 history resume은 구조화된 경로를
-사용한다. Agent transcript는 terminal 색과 밀도를 공유하는 semantic renderer이며 raw CLI/TUI는
-Terminal session에만 남는다.
+앱 대화 provider session과 process는 첫 Send에서만 만든다. Codex 앱 대화는 app-server,
+Claude 앱 대화는 Agent SDK의 streaming input으로 실행한다. Terminal CLI의 새 실행과
+CLI history resume도 계속 지원하며 SDK 최소 버전·대화 활성화 여부와 분리한다. Terminal은
+제품의 기본 세션이며 문맥이 있는 실행은 해당 Workspace를 다시 검증한다.
+
+Agent transcript는 사용자·provider 원문을 표시하고 SQLite에 원문으로 저장한다. 민감 분류는
+metadata이며 자동 숨김 조건이 아니다. 진단 로그는 기존 sanitization 경계를 유지한다.
+스키마 v4는 optional message_id 열을 추가해 delta와 완료 event의 provider message identity를
+재시작 후에도 유지한다. 기존 기록은 그대로 보존하며 이미 삭제된 원문은 복원하지 않는다.
 
 ## DaemonRuntime과 권위
 
@@ -87,7 +91,8 @@ safe mode는 프로세스 수명 동안 latch되며 같은 프로세스에서 DB
 기존 terminal과 remote terminal은 계속 사용하되 구조화 Agent snapshot, transcript, event와 command는 fail-closed된다.
 Desktop은 초기화 원인, DB 보존/격리 상태, 스키마 버전, 다음 조치와 trusted recovery path를
 보여 준다. Android에는 같은 원인과 조치를 보이지만 host의 로컬 recovery path는 protocol type과
-직렬화 경계에서 제거한다. New Agent 진입점은 비활성화하고 UI retry loop를 만들지 않는다.
+직렬화 경계에서 제거한다. 앱 대화 생성은 비활성화하고 UI retry loop를 만들지 않는다.
+일반 Terminal과 CLI 실행 진입은 유지한다.
 
 ## Provider adapter
 

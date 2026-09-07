@@ -193,6 +193,7 @@ export class AgentHistoryService {
     private readonly projects: AgentProjectStore,
     adapters: readonly AgentHistoryProviderAdapter[],
     private readonly getGenericProfiles: () => readonly GenericAgentProfile[] = () => [],
+    private readonly isCliInstalled?: (command: string) => boolean,
   ) {
     this.adapters = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
   }
@@ -431,12 +432,14 @@ export class AgentHistoryService {
         launcherId: 'codex',
         provider: 'codex' as const,
         name: 'Codex',
+        ...(this.isCliInstalled ? { installed: this.isCliInstalled('codex') } : {}),
         supportsAdditionalRoots: true,
       }] : []),
       ...(this.adapters.has('claude') ? [{
         launcherId: 'claude',
         provider: 'claude' as const,
         name: 'Claude Code',
+        ...(this.isCliInstalled ? { installed: this.isCliInstalled('claude') } : {}),
         supportsAdditionalRoots: true,
       }] : []),
       ...this.getGenericProfiles()

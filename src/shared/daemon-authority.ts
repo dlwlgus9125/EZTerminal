@@ -1,5 +1,5 @@
 /** SQLite schema understood by this build's structured Agent authority. */
-export const DAEMON_DATABASE_SCHEMA_VERSION = 3;
+export const DAEMON_DATABASE_SCHEMA_VERSION = 4;
 
 /** Stable initialization outcomes suitable for IPC and remote serialization. */
 export type DaemonAuthorityInitializationFailureCode =

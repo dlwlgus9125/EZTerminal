@@ -154,8 +154,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/shared/daemon-protocol.ts",
-        "startLine": 215,
-        "endLine": 236,
+        "startLine": 217,
+        "endLine": 238,
         "lineDigest": "sha256:ed1c720fab5764b6ec13ee8dadc43f98a6bed62b70f2c562b5fc7c9cbcbefcff",
         "claim": "The v12 snapshot carries runtime settings and the revisioned Project, Workspace, Session, Agent, relation, turn, transcript, approval, and provider collections."
       }]
@@ -221,16 +221,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-history-service.ts",
-          "startLine": 238,
-          "endLine": 268,
+          "startLine": 239,
+          "endLine": 269,
           "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
           "claim": "Project targets and resume history ids only touch existing indexed Projects, while direct-directory launches return explicit deterministic Project registration intent."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1589,
-          "endLine": 1621,
+          "startLine": 1591,
+          "endLine": 1623,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -425,16 +425,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1589,
-          "endLine": 1621,
+          "startLine": 1591,
+          "endLine": 1623,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-history-service.ts",
-          "startLine": 238,
-          "endLine": 268,
+          "startLine": 239,
+          "endLine": 269,
           "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
           "claim": "Project-target and history-specific records return no changed descriptor after removal; direct-directory launches instead return their deterministic id as explicit intent."
         }

@@ -419,18 +419,6 @@ describe('AgentHub local history paging', () => {
     )!.click());
     await flush();
     expect(document.body.querySelector('[data-testid="agent-launch-project"]')).toBeNull();
-    const type = document.body.querySelector<HTMLSelectElement>(
-      '[data-testid="agent-launch-session-type"]',
-    )!;
-    act(() => {
-      type.value = 'terminal';
-      type.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(document.body.querySelector('[data-testid="agent-launch-agent"]')).toBeNull();
-    act(() => document.body.querySelector<HTMLButtonElement>(
-      '[data-testid="agent-launch-submit"]',
-    )!.click());
-
     expect(onOpenProjectTerminal).toHaveBeenCalledWith({
       projectId: 'project-1',
       projectName: 'Project',
@@ -530,7 +518,7 @@ describe('AgentHub structured daemon navigation', () => {
     });
   });
 
-  it('disables global and project Agent creation after safe mode is confirmed', async () => {
+  it('keeps terminal and CLI entry available after conversation safe mode is confirmed', async () => {
     Object.defineProperty(window, 'ezterminal', {
       configurable: true,
       value: {
@@ -551,7 +539,9 @@ describe('AgentHub structured daemon navigation', () => {
       },
     });
     const onOpenStructuredAgentDraft = vi.fn();
+    const onOpenProjectTerminal = vi.fn();
     await renderHub({ revision: 1, items: [] }, {
+      onOpenProjectTerminal,
       onOpenStructuredAgentDraft,
       daemonAgentSessionAccess: {
         getAvailability: async () => ({
@@ -570,12 +560,12 @@ describe('AgentHub structured daemon navigation', () => {
     const projectButton = container.querySelector<HTMLButtonElement>(
       '[data-testid="agent-project-new-chat-safe-project"]',
     );
-    expect(globalButton?.disabled).toBe(true);
-    expect(projectButton?.disabled).toBe(true);
-    expect(container.textContent).toContain('New Agent sessions are unavailable');
+    expect(globalButton?.disabled).toBe(false);
+    expect(projectButton?.disabled).toBe(false);
     act(() => globalButton?.click());
     act(() => projectButton?.click());
-    expect(onOpenStructuredAgentDraft).not.toHaveBeenCalled();
+    expect(onOpenStructuredAgentDraft).toHaveBeenCalledTimes(1);
+    expect(onOpenProjectTerminal).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'safe-project' }));
   });
 });
 

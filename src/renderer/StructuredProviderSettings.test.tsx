@@ -17,6 +17,7 @@ import type {
   DaemonSnapshot,
 } from '../shared/daemon-protocol';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { LifecycleSettings } from './LifecycleSettings';
 import { AppI18nProvider } from './i18n';
 import { daemonProviderMatchesProbe, StructuredProviderSettings } from './StructuredProviderSettings';
 
@@ -316,16 +317,16 @@ describe('StructuredProviderSettings', () => {
     renderSettings(capabilities({ inspect }));
     await flush();
 
-    const review = container.querySelector<HTMLInputElement>('[data-testid="provider-review-codex"]')!;
+    const review = container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!;
     act(() => review.click());
-    expect(review.checked).toBe(true);
+    expect(review.textContent).toBe('Confirm and enable');
     expect(container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!.disabled).toBe(false);
 
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="provider-check-codex"]')!.click());
     await flush();
 
-    expect(container.querySelector<HTMLInputElement>('[data-testid="provider-review-codex"]')!.checked).toBe(false);
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!.textContent).toBe('Set up');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!.disabled).toBe(false);
   });
 
   it('guards duplicate provider submissions before React can repaint the disabled button', async () => {
@@ -338,7 +339,7 @@ describe('StructuredProviderSettings', () => {
     renderSettings(capabilities({ sendCommand }));
     await flush();
 
-    act(() => container.querySelector<HTMLInputElement>('[data-testid="provider-review-codex"]')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!.click());
     const enable = container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-codex"]')!;
     act(() => {
       enable.click();
@@ -375,14 +376,13 @@ describe('StructuredProviderSettings', () => {
     act(() => container.querySelector<HTMLInputElement>('[data-testid="claude-auth-existing-claude-ai-login"]')!.click());
     act(() => container.querySelector<HTMLInputElement>('[data-testid="claude-terms-accepted"]')!.click());
     act(() => container.querySelector<HTMLInputElement>('[data-testid="claude-commercial-approved"]')!.click());
-    act(() => container.querySelector<HTMLInputElement>('[data-testid="provider-review-claude"]')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-claude"]')!.click());
 
     const action = container.querySelector<HTMLButtonElement>('[data-testid="provider-enable-claude"]')!;
     expect(container.querySelector('[data-testid="claude-third-party-approved"]')).not.toBeNull();
     expect(action.disabled).toBe(true);
 
     act(() => container.querySelector<HTMLInputElement>('[data-testid="claude-third-party-approved"]')!.click());
-    act(() => container.querySelector<HTMLInputElement>('[data-testid="provider-review-claude"]')!.click());
     expect(action.disabled).toBe(false);
     act(() => action.click());
     await flush();
@@ -407,7 +407,7 @@ describe('StructuredProviderSettings', () => {
       else if (patch.startAtLogin === true && lifecycle.keepRunning) lifecycle = { ...lifecycle, startAtLogin: true };
       return lifecycle;
     });
-    renderSettings(capabilities({ setLifecycle }));
+    act(() => root.render(<AppI18nProvider locale="en"><LifecycleSettings capabilities={capabilities({ setLifecycle })} /></AppI18nProvider>));
     await flush();
 
     const keepRunning = container.querySelector<HTMLInputElement>('[data-testid="agent-keep-running"]')!;

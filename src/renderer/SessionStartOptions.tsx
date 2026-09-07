@@ -15,8 +15,8 @@ export function useSessionCopy() {
     conversation: '앱에서 대화', cli: '터미널 CLI', project: '프로젝트', workspace: '작업 폴더',
     selectProject: '프로젝트 선택', selectWorkspace: '작업 폴더 선택', local: '일반 터미널 (기본 폴더)',
     openTerminal: '터미널 열기', launch: 'Agent 실행', launcher: 'CLI 에이전트', chooseLauncher: '실행할 CLI 선택',
-    noLaunchers: '사용 가능한 CLI가 없습니다. 데스크톱 설정 → Agents에서 설치와 실행기를 확인하세요.',
-    setup: 'Agent 설정 열기', noProvider: '사용 가능한 대화형 Agent가 없습니다. 데스크톱 설정 → Agents에서 설정을 완료하세요.',
+    notInstalled: '설치 필요', noLaunchers: '호스트에 CLI를 설치한 뒤 다시 확인하세요.',
+    setup: 'Agent 설정', noProvider: '앱에서 대화하려면 먼저 설정하세요.',
     failed: '세션을 열지 못했습니다. 실행 위치와 연결 상태를 확인하고 다시 시도하세요.',
     stale: '선택한 작업 폴더를 사용할 수 없습니다. 프로젝트와 접근 상태를 확인하세요.',
     retry: '다시 시도', cliHint: '선택한 작업 폴더의 새 터미널에서 실행합니다.',
@@ -27,8 +27,8 @@ export function useSessionCopy() {
     conversation: 'Chat in app', cli: 'Terminal CLI', project: 'Project', workspace: 'Workspace',
     selectProject: 'Select a project', selectWorkspace: 'Select a workspace', local: 'Local terminal (default folder)',
     openTerminal: 'Open terminal', launch: 'Start Agent', launcher: 'CLI Agent', chooseLauncher: 'Select a CLI',
-    noLaunchers: 'No CLI is available. Check installation and launchers in Desktop Settings → Agents.',
-    setup: 'Open Agent settings', noProvider: 'No conversational Agent is ready. Complete setup in Desktop Settings → Agents.',
+    notInstalled: 'Not installed', noLaunchers: 'Install a CLI on the host, then retry.',
+    setup: 'Agent settings', noProvider: 'Set up chat in app to continue.',
     failed: 'The session could not be opened. Check its location and connection, then retry.',
     stale: 'The selected workspace is unavailable. Check the project and its access.',
     retry: 'Retry', cliHint: 'Starts in a new terminal at the selected workspace.',
@@ -48,12 +48,12 @@ export function SessionStartOptions({ kind, agentMode, onKindChange, onModeChang
   const copy = useSessionCopy();
   return <div className="session-start-options">
     <div className="session-start-options__choices" role="group" aria-label={copy.kind}>
-      <Button leadingIcon={<Bot />} aria-pressed={kind === 'agent'} disabled={locked} onClick={() => onKindChange('agent')} data-testid={`${prefix}-agent`}>{copy.agent}</Button>
       <Button leadingIcon={<SquareTerminal />} aria-pressed={kind === 'terminal'} disabled={locked} onClick={() => onKindChange('terminal')} data-testid={`${prefix}-terminal`}>{copy.terminal}</Button>
+      <Button leadingIcon={<Bot />} aria-pressed={kind === 'agent'} disabled={locked} onClick={() => onKindChange('agent')} data-testid={`${prefix}-agent`}>{copy.agent}</Button>
     </div>
     {kind === 'agent' && <div className="session-start-options__choices" role="group" aria-label={copy.mode}>
-      <Button leadingIcon={<MessageSquare />} aria-pressed={agentMode === 'conversation'} disabled={locked} onClick={() => onModeChange('conversation')} data-testid={`${prefix}-conversation`}>{copy.conversation}</Button>
       <Button leadingIcon={<SquareTerminal />} aria-pressed={agentMode === 'cli'} disabled={locked} onClick={() => onModeChange('cli')} data-testid={`${prefix}-cli`}>{copy.cli}</Button>
+      <Button leadingIcon={<MessageSquare />} aria-pressed={agentMode === 'conversation'} disabled={locked} onClick={() => onModeChange('conversation')} data-testid={`${prefix}-conversation`}>{copy.conversation}</Button>
     </div>}
   </div>;
 }
@@ -76,6 +76,7 @@ export function CliAgentLaunchPanel({ access, workspaceId, directory, disabled, 
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const selectedLauncher = launchers.find((entry) => entry.launcherId === launcherId);
   const busyRef = useRef(false);
   useEffect(() => {
     let active = true;
@@ -86,7 +87,7 @@ export function CliAgentLaunchPanel({ access, workspaceId, directory, disabled, 
     return () => { active = false; };
   }, [access, retry, copy.failed]);
   const launch = async (): Promise<void> => {
-    if (busyRef.current || disabled || !launcherId || (!workspaceId && !directory)) return;
+    if (busyRef.current || disabled || !launcherId || selectedLauncher?.installed === false || (!workspaceId && !directory)) return;
     busyRef.current = true;
     setBusy(true);
     onBusyChange?.(true);
@@ -112,15 +113,15 @@ export function CliAgentLaunchPanel({ access, workspaceId, directory, disabled, 
     <Field label={copy.launcher} required>
       <Select value={launcherId} disabled={loading || busy || disabled} onChange={(event) => setLauncherId(event.currentTarget.value)} data-testid="session-cli-launcher">
         <option value="">{copy.chooseLauncher}</option>
-        {launchers.map((item) => <option value={item.launcherId} key={item.launcherId}>{item.name}</option>)}
+        {launchers.map((item) => <option value={item.launcherId} key={item.launcherId} disabled={item.installed === false}>{item.name}{item.installed === false ? ` · ${copy.notInstalled}` : ''}</option>)}
       </Select>
     </Field>
     {loading && <p role="status">{copy.loading}</p>}
-    {!loading && launchers.length === 0 && <p role="status">{copy.noLaunchers}</p>}
+    {!loading && !launchers.some((item) => item.installed !== false) && <p role="status">{copy.noLaunchers}</p>}
     {error && <p role="alert">{error}</p>}
     <div className="session-start-options__choices">
-      <Button variant="primary" loading={busy} disabled={disabled || loading || !launcherId || (!workspaceId && !directory)} onClick={() => void launch()} data-testid="session-cli-start">{copy.launch}</Button>
-      {!loading && (error || launchers.length === 0) && <Button onClick={() => setRetry((value) => value + 1)}>{copy.retry}</Button>}
+      <Button variant="primary" loading={busy} disabled={disabled || loading || !launcherId || selectedLauncher?.installed === false || (!workspaceId && !directory)} onClick={() => void launch()} data-testid="session-cli-start">{copy.launch}</Button>
+      {!loading && (error || !launchers.some((item) => item.installed !== false)) && <Button onClick={() => setRetry((value) => value + 1)}>{copy.retry}</Button>}
       {onSettings && <Button variant="ghost" disabled={busy} onClick={onSettings}>{copy.setup}</Button>}
     </div>
   </section>;

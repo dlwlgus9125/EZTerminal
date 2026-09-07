@@ -2411,6 +2411,7 @@ describe('DaemonAgentRuntime', () => {
         kind: 'transcript',
         item: {
           id: 'provider-message-1',
+          messageId: 'provider-message',
           sessionId: input.sessionId,
           turnId: input.turnId,
           sequence: 1,
@@ -2462,6 +2463,8 @@ describe('DaemonAgentRuntime', () => {
     expect(h.router.readTranscript('agent-1').filter((item) => item.text === 'Immediate summary')).toHaveLength(1);
     const providerDeltas = h.router.readTranscript('agent-1').filter((item) => item.kind === 'assistant-message');
     expect(providerDeltas.map((item) => item.text).join('')).toBe(largeProviderDelta);
+    expect(providerDeltas.map((item) => item.messageId)).toEqual(['provider-message', 'provider-message']);
+    expect(providerDeltas.map((item) => item.isDelta)).toEqual([false, true]);
     expect(providerDeltas.every((item) => (
       Buffer.byteLength(item.text, 'utf8') <= MAX_TRANSCRIPT_BATCH_UTF8_BYTES
     ))).toBe(true);

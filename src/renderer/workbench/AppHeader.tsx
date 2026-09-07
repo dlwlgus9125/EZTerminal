@@ -1,4 +1,4 @@
-import { BellRing, ChevronDown, PanelsTopLeft, Plus, ScanLine, Search, SquareTerminal } from 'lucide-react';
+import { BellRing, Bot, ChevronDown, PanelsTopLeft, Plus, ScanLine, Search } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import { useAppTranslation } from '../i18n';
@@ -94,13 +94,13 @@ export function AppHeader({
           variant="primary"
           className="workbench-new-terminal"
           leadingIcon={<Plus />}
-          onClick={onNewSession ?? onNewTerminal}
-          data-testid={onNewSession ? 'btn-new-session' : 'btn-new-tab'}
-          title={onNewSession ? t('agentHub.projects.newSession') : t('header.newTerminal')}
+          onClick={onNewTerminal}
+          data-testid="btn-new-tab"
+          title={t('header.newTerminal')}
         >
-          {onNewSession ? t('agentHub.projects.newSession') : t('header.newTerminal')}
+          {t('header.newTerminal')}
         </Button>
-        {onNewSession && <Button variant="ghost" onClick={onNewTerminal} data-testid="btn-new-tab" title={t('header.newTerminal')} aria-label={t('header.newTerminal')}><SquareTerminal aria-hidden="true" /></Button>}
+        {onNewSession && <Button variant="ghost" onClick={onNewSession} data-testid="btn-new-session" title={t('agentHub.newAgentRun')} aria-label={t('agentHub.newAgentRun')}><Bot aria-hidden="true" /></Button>}
       </div>
       <div className="workbench-header-zone workbench-header-zone--search">
         {/* Still the Command Center zone, just widened into its search anchor.

@@ -642,10 +642,24 @@ export function coalesceStructuredAgentTranscript(
 ): readonly DisplayTranscriptItem[] {
   const ordered = items.slice().sort((left, right) => left.sequence - right.sequence);
   const result: DisplayTranscriptItem[] = [];
+  const messageIndexes = new Map<string, number>();
   for (const item of ordered) {
+    const messageKey = item.messageId ? `${item.sessionId}:${item.turnId ?? ''}:${item.kind}:${item.messageId}` : undefined;
+    const messageIndex = messageKey === undefined ? undefined : messageIndexes.get(messageKey);
+    if (messageIndex !== undefined) {
+      const current = result[messageIndex];
+      result[messageIndex] = {
+        ...item,
+        text: item.isDelta ? `${current.text}${item.text}` : item.text,
+        sourceIds: [...current.sourceIds, item.id],
+      };
+      continue;
+    }
+    if (messageKey) messageIndexes.set(messageKey, result.length);
     const previous = result.at(-1);
     const sameLogicalItem = previous && previous.id === item.id;
     const adjacentDelta = previous
+      && !item.messageId && !previous.messageId
       && item.isDelta
       && previous.isDelta
       && previous.kind === item.kind
@@ -793,7 +807,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {displayItems.length > 0 && (
         <ol className="structured-agent-transcript__list" aria-label={copy.transcript}>
           {displayItems.map((item, index) => {
-            const content = item.isSensitive ? copy.sensitive : item.text;
+            const content = item.text;
             const isAssistant = item.kind === 'assistant-message';
             const approval = item.kind === 'approval' ? approvalById.get(item.id) : undefined;
             const ApprovalIcon = approval ? APPROVAL_STATE_ICON[approval.state] : ShieldAlert;
@@ -844,7 +858,10 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                       <p>{content}</p>
                     </details>
                   ) : item.kind === 'tool-call' || item.kind === 'tool-result' ? (
-                    <pre className="structured-agent-message__tool"><code>{content}</code></pre>
+                    content.length > 1200 ? <details className="structured-agent-message__reasoning">
+                      <summary>{label}</summary>
+                      <pre className="structured-agent-message__tool"><code>{content}</code></pre>
+                    </details> : <pre className="structured-agent-message__tool"><code>{content}</code></pre>
                   ) : item.kind === 'approval' ? (
                     <div className="structured-agent-approval" data-risk={approval?.risk ?? 'write'}>
                       <strong>{approval?.title ?? content}</strong>

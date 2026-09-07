@@ -14,7 +14,6 @@ import {
   type DaemonProvider,
   type DaemonSnapshot,
 } from '../shared/daemon-protocol';
-import type { DaemonLifecycleSettings } from '../shared/ipc';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { Badge, Button, Status, Switch } from './ui';
@@ -128,10 +127,11 @@ function ProviderStatus({
   actionError,
 }: ProviderStatusProps): JSX.Element {
   const { t } = useAppTranslation();
+  if (!provider?.enabled && !busy && !actionError) return <Status variant="neutral">{t('agentSettings.providerOff')}</Status>;
   if (busy === 'disable') return <Status variant="loading" live="polite">{t('agentSettings.providerDisabling')}</Status>;
   if (busy === 'enable') return <Status variant="loading" live="polite">{t('agentSettings.providerEnabling')}</Status>;
   if (busy === 'prepare') return <Status variant="loading" live="polite">{t('agentSettings.providerPreparing')}</Status>;
-  if (actionError) return <Status variant="danger" live="assertive">{actionError}</Status>;
+  if (actionError) return <Status variant="danger" live="polite">{t('agentSettings.providerActionFailed')}</Status>;
   if (state.checking && !state.inspection) {
     return <Status variant="loading" live="polite">{t('agentSettings.providerChecking')}</Status>;
   }
@@ -144,7 +144,7 @@ function ProviderStatus({
   }
   if (provider?.enabled) {
     if (provider.health !== 'ready') {
-      return <Status variant="danger">{provider.healthDetail ?? t('agentSettings.providerError')}</Status>;
+      return <Status variant="danger">{t('agentSettings.providerError')}</Status>;
     }
     if (!daemonProviderMatchesProbe(provider, probe, state.inspection.reviewDigest)) {
       return <Status variant="warning">{t('agentSettings.providerStale')}</Status>;
@@ -165,6 +165,7 @@ export function StructuredProviderSettings({
   capabilities = rendererCapabilities,
 }: StructuredProviderSettingsProps): JSX.Element {
   const { t } = useAppTranslation();
+  const [openReviews, setOpenReviews] = useState<Partial<Record<BuiltInProviderId, boolean>>>({});
   const [snapshot, setSnapshot] = useState<DaemonSnapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [inspections, setInspections] = useState<InspectionMap>(EMPTY_INSPECTIONS);
@@ -180,7 +181,6 @@ export function StructuredProviderSettings({
   const [claudeStored, setClaudeStored] = useState<ClaudeProviderEnablement | null>(null);
   const [claudeDraft, setClaudeDraft] = useState<ClaudeProviderEnablement>(DEFAULT_CLAUDE_PROVIDER_ENABLEMENT);
   const [claudeLoadError, setClaudeLoadError] = useState<string | null>(null);
-  const [lifecycle, setLifecycle] = useState<DaemonLifecycleSettings | null>(null);
   const [hostError, setHostError] = useState<string | null>(null);
   const [hostBusy, setHostBusy] = useState<'orchestration' | 'lifecycle' | null>(null);
   const providerBusyRef = useRef(new Set<BuiltInProviderId>());
@@ -248,13 +248,6 @@ export function StructuredProviderSettings({
     let alive = true;
     void Promise.all([
       refreshSnapshot(),
-      Promise.resolve().then(() => capabilities.daemon.getLifecycleSettings()).then((value) => {
-        if (!alive) return;
-        if (value) setLifecycle(value);
-        else setHostError(t('agentSettings.lifecycleUnavailable'));
-      }).catch(() => {
-        if (alive) setHostError(t('agentSettings.lifecycleUnavailable'));
-      }),
       Promise.resolve().then(() => capabilities.structuredProviders.getClaudeEnablement()).then((result) => {
         if (!alive) return;
         if (!result.ok) {
@@ -272,37 +265,9 @@ export function StructuredProviderSettings({
     return () => { alive = false; };
   }, [capabilities, inspectProvider, refreshSnapshot, t]);
 
-  useEffect(() => {
-    if (!lifecycle && snapshot) {
-      setLifecycle({
-        keepRunning: snapshot.runtime.keepRunning,
-        startAtLogin: snapshot.runtime.startAtLogin,
-      });
-    }
-  }, [lifecycle, snapshot]);
-
   const setClaudeDraftValue = (patch: Partial<ClaudeProviderEnablement>): void => {
     setClaudeDraft((current) => enablementWith(current, patch));
-    setReviewedDigests((current) => ({ ...current, claude: null }));
     setProviderMessages((current) => ({ ...current, claude: null }));
-  };
-
-  const updateLifecycle = async (patch: Partial<DaemonLifecycleSettings>): Promise<void> => {
-    if (hostBusyRef.current) return;
-    hostBusyRef.current = true;
-    setHostBusy('lifecycle');
-    setHostError(null);
-    try {
-      const next = await capabilities.daemon.setLifecycleSettings(patch);
-      if (!next) throw new Error('unavailable');
-      setLifecycle(next);
-      await refreshSnapshot();
-    } catch {
-      setHostError(t('agentSettings.lifecycleSaveFailed'));
-    } finally {
-      hostBusyRef.current = false;
-      setHostBusy(null);
-    }
   };
 
   const updateOrchestration = async (enabled: boolean): Promise<void> => {
@@ -340,12 +305,12 @@ export function StructuredProviderSettings({
     }
   };
 
-  const prepareClaude = async (): Promise<void> => {
+  const prepareClaude = async (): Promise<ProviderInspection | null> => {
     const desired = { ...claudeDraft, enabled: true };
     const result = await capabilities.structuredProviders.setClaudeEnablement(desired);
     if (!result.ok) {
       setProviderMessages((current) => ({ ...current, claude: result.message }));
-      return;
+      return null;
     }
     setClaudeStored(result.value);
     setClaudeDraft(result.value);
@@ -354,12 +319,13 @@ export function StructuredProviderSettings({
       ...current,
       claude: inspection ? null : t('agentSettings.providerCheckFailed'),
     }));
+    return inspection;
   };
 
   const enableProvider = async (providerId: BuiltInProviderId): Promise<void> => {
     if (providerBusyRef.current.has(providerId)) return;
     const state = inspections[providerId];
-    const inspection = state.inspection;
+    let inspection = state.inspection;
     if (!inspection || reviewedDigests[providerId] !== inspection.reviewDigest) return;
     if (providerId === 'claude' && !claudeGateComplete(claudeDraft)) return;
     providerBusyRef.current.add(providerId);
@@ -373,8 +339,19 @@ export function StructuredProviderSettings({
     }));
     try {
       if (requiresClaudePreparation) {
-        await prepareClaude();
-        return;
+        const prepared = await prepareClaude();
+        if (!prepared) return;
+        if (prepared.probe.executablePath !== inspection.probe.executablePath
+          || prepared.probe.executableVersion !== inspection.probe.executableVersion
+          || prepared.probe.protocol !== inspection.probe.protocol
+          || JSON.stringify(prepared.probe.argv) !== JSON.stringify(inspection.probe.argv)
+          || JSON.stringify(prepared.probe.environmentVariableNames) !== JSON.stringify(inspection.probe.environmentVariableNames)
+          || JSON.stringify(prepared.probe.capabilities) !== JSON.stringify(inspection.probe.capabilities)
+          || JSON.stringify(prepared.probe.reviewNotices) !== JSON.stringify(inspection.probe.reviewNotices)) {
+          setProviderMessages((current) => ({ ...current, claude: t('agentSettings.providerStale') }));
+          return;
+        }
+        inspection = prepared;
       }
       if (!inspection.probe.available) return;
       const authority = await capabilities.daemon.getSnapshot();
@@ -500,7 +477,7 @@ export function StructuredProviderSettings({
           </div>
           {hostBusy && <Status variant="loading" live="polite">{t('agentSettings.runtimeSaving')}</Status>}
         </div>
-        {lifecycle && snapshot ? (
+        {snapshot ? (
           <div className="agent-host-settings__controls">
             <Switch
               checked={snapshot.runtime.orchestrationToolsEnabled}
@@ -509,24 +486,6 @@ export function StructuredProviderSettings({
               label={t('agentSettings.orchestrationTools')}
               description={t('agentSettings.orchestrationToolsHint')}
               data-testid="agent-orchestration-tools"
-            />
-            <Switch
-              checked={lifecycle.keepRunning}
-              disabled={hostBusy !== null}
-              onChange={(event) => void updateLifecycle({ keepRunning: event.target.checked })}
-              label={t('agentSettings.keepRunning')}
-              description={t('agentSettings.keepRunningHint')}
-              data-testid="agent-keep-running"
-            />
-            <Switch
-              checked={lifecycle.startAtLogin}
-              disabled={hostBusy !== null || !lifecycle.keepRunning}
-              onChange={(event) => void updateLifecycle({ startAtLogin: event.target.checked })}
-              label={t('agentSettings.startAtLogin')}
-              description={lifecycle.keepRunning
-                ? t('agentSettings.startAtLoginHint')
-                : t('agentSettings.startAtLoginRequiresKeepRunning')}
-              data-testid="agent-start-at-login"
             />
           </div>
         ) : (
@@ -573,8 +532,8 @@ export function StructuredProviderSettings({
               && (probe?.available === true || claudeNeedsPreparation);
             const canDisable = active || (providerId === 'claude' && claudeStored?.enabled === true);
             const providerLabel = providerId === 'codex' ? 'Codex' : 'Claude Agent';
-            const actionLabel = providerId === 'claude' && claudeNeedsPreparation
-              ? t('agentSettings.claudeApplyAndRecheck')
+            const actionLabel = !reviewed
+              ? t('agentSettings.providerSetup')
               : active
                 ? t('agentSettings.providerUpdate')
                 : t('agentSettings.providerEnable');
@@ -602,15 +561,16 @@ export function StructuredProviderSettings({
                   />
                 </header>
 
-                {state.error && <p className="structured-provider-card__error" role="alert">{state.error}</p>}
-                {probe?.unavailableReason && !isClaudeConsentRequired(probe) && (
-                  <p className="structured-provider-card__error" role="alert">{probe.unavailableReason}</p>
-                )}
-
+                {!inspection && state.error && <details className="structured-provider-review">
+                  <summary>{t('agentSettings.providerReviewDetails')}</summary>
+                  <p>{state.error}</p>
+                </details>}
                 {inspection && (
-                  <details className="structured-provider-review" open={!active || stale ? true : undefined}>
+                  <details className="structured-provider-review" open={openReviews[providerId] ?? false}
+                    onToggle={(event) => { const open = event.currentTarget.open; setOpenReviews((current) => ({ ...current, [providerId]: open })); }}>
                     <summary>{t('agentSettings.providerReviewDetails')}</summary>
                     <div className="structured-provider-review__body">
+                      {(providerMessages[providerId] || state.error || probe?.unavailableReason) && <p>{providerMessages[providerId] || state.error || probe?.unavailableReason}</p>}
                       <h3>{t('agentSettings.providerIdentityHeading')}</h3>
                       <dl className="structured-provider-metadata">
                         <div><dt>{t('agentSettings.providerProtocol')}</dt><dd><code>{probe?.protocol}</code></dd></div>
@@ -712,21 +672,6 @@ export function StructuredProviderSettings({
                         </div>
                       )}
 
-                      {reviewable && (
-                        <label className="structured-provider-review__confirmation">
-                          <input
-                            type="checkbox"
-                            checked={reviewed}
-                            disabled={state.checking || busyProviders[providerId] !== null}
-                            onChange={(event) => setReviewedDigests((current) => ({
-                              ...current,
-                              [providerId]: event.target.checked ? inspection.reviewDigest : null,
-                            }))}
-                            data-testid={`provider-review-${providerId}`}
-                          />
-                          <span>{t('agentSettings.providerReviewConfirmation')}</span>
-                        </label>
-                      )}
                     </div>
                   </details>
                 )}
@@ -747,10 +692,15 @@ export function StructuredProviderSettings({
                     <Button
                       variant="primary"
                       size="sm"
-                      disabled={!canEnable || busyProviders[providerId] !== null}
+                      disabled={state.checking || (reviewed && !canEnable) || busyProviders[providerId] !== null}
                       loading={busyProviders[providerId] === 'enable' || busyProviders[providerId] === 'prepare'}
                       loadingLabel={t('agentSettings.providerEnabling')}
-                      onClick={() => void enableProvider(providerId)}
+                      onClick={() => {
+                        if (!reviewed && inspection) {
+                          setOpenReviews((current) => ({ ...current, [providerId]: true }));
+                          setReviewedDigests((current) => ({ ...current, [providerId]: inspection.reviewDigest }));
+                        } else void enableProvider(providerId);
+                      }}
                       data-testid={`provider-enable-${providerId}`}
                     >
                       {actionLabel}

@@ -135,9 +135,13 @@ describe('MobileNewSessionDraft', () => {
     act(() => { open.click(); open.click(); }); await flush();
     expect(onCreateLocalTerminal).toHaveBeenCalledOnce();
   });
-  it('starts in Agent mode and creates only after an explicit location and first prompt', async () => {
+  it('starts in Terminal mode and requires an explicit choice of app chat before Send', async () => {
     const onCreateAgent = vi.fn(async () => ({ ok: true as const }));
     renderDraft({ onCreateAgent });
+    expect(container.querySelector('[data-testid="mobile-new-session-terminal"]')?.getAttribute('aria-pressed')).toBe('true');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-agent"]')!.click());
+    expect(container.querySelector('[data-testid="mobile-new-session-cli"]')?.getAttribute('aria-pressed')).toBe('true');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-conversation"]')!.click());
 
     expect(container.querySelector('[data-testid="mobile-new-session-agent"]')?.getAttribute('aria-pressed'))
       .toBe('true');

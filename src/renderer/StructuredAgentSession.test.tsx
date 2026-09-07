@@ -41,6 +41,18 @@ function transcriptItem(
   };
 }
 
+it('uses the completed provider message as authority without duplicating streamed text', () => {
+  const items = [
+    transcriptItem('a1', 1, 'assistant-message', 'Hello ', { messageId: 'a', isDelta: true }),
+    transcriptItem('b1', 2, 'tool-result', 'TOKEN=', { messageId: 'b', isDelta: true, isSensitive: true }),
+    transcriptItem('a2', 3, 'assistant-message', 'world', { messageId: 'a', isDelta: true }),
+    transcriptItem('b2', 4, 'tool-result', 'secret', { messageId: 'b', isDelta: true, isSensitive: true }),
+    transcriptItem('a3', 5, 'assistant-message', 'Hello world!', { messageId: 'a' }),
+    transcriptItem('b3', 6, 'tool-result', 'TOKEN=secret', { messageId: 'b', isSensitive: true }),
+  ];
+  expect(coalesceStructuredAgentTranscript(items).map((item) => item.text)).toEqual(['Hello world!', 'TOKEN=secret']);
+});
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -170,7 +182,14 @@ describe('StructuredAgentDraftPanel', () => {
 });
 
 describe('StructuredAgentTranscript', () => {
-  it('coalesces adjacent deltas and preserves kind semantics and sensitive redaction', () => {
+  it('shows a sensitive-marked provider reply verbatim', () => {
+    render(<StructuredAgentTranscript providerLabel="Codex" items={[
+      transcriptItem('reply', 1, 'assistant-message', 'Original reply TOKEN=secret', { isSensitive: true }),
+    ]} />);
+    expect(container.querySelector('[data-kind="assistant-message"]')?.textContent).toContain('Original reply TOKEN=secret');
+  });
+
+  it('coalesces adjacent deltas and preserves original output and kind semantics', () => {
     const items = [
       transcriptItem('delta-a', 1, 'assistant-message', 'Structured ', { isDelta: true }),
       transcriptItem('delta-b', 2, 'assistant-message', 'reply', { isDelta: true }),
@@ -183,8 +202,8 @@ describe('StructuredAgentTranscript', () => {
     const assistant = container.querySelector('[data-kind="assistant-message"]');
     expect(assistant?.textContent).toContain('Structured reply');
     expect(assistant?.querySelector('[role="status"]')?.textContent).toContain('Streaming');
-    expect(container.querySelector('[data-kind="tool-result"]')?.textContent).toContain('Sensitive output hidden');
-    expect(container.textContent).not.toContain('TOKEN=secret');
+    expect(container.querySelector('[data-kind="tool-result"]')?.textContent).toContain('TOKEN=secret');
+    expect(container.textContent).not.toContain('Sensitive output hidden');
     expect(container.querySelector('[data-kind="reasoning"] details')).not.toBeNull();
     expect(container.querySelector('ol')?.getAttribute('aria-label')).toBe('Agent transcript');
   });

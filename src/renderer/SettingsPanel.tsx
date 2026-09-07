@@ -9,6 +9,7 @@ import {
   MIN_EFFECT_INTENSITY,
 } from '../shared/ui-preferences';
 import { AgentIntegrationSettings } from './AgentIntegrationSettings';
+import { LifecycleSettings } from './LifecycleSettings';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
@@ -287,7 +288,7 @@ export function SettingsPanel({
           </button>
         ))}
       </nav>
-      <div className="settings-category-content" data-active-category={category}>
+        <div className="settings-category-content" data-active-category={category}>
       <section className="status-section" hidden={category !== 'general'}>
         <Field
           className="settings-field-row"
@@ -373,6 +374,7 @@ export function SettingsPanel({
         </div>
       </section>
 
+      {category === 'general' && <LifecycleSettings capabilities={capabilities} />}
       <section className="status-section" hidden={category !== 'terminal'}>
         <Field label={t('settings.scrollbackLines')}>
           <Input

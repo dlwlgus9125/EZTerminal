@@ -199,7 +199,7 @@ describe('MobileDaemonNavigator', () => {
     );
     expect(createSession?.classList.contains('mob-icon-btn')).toBe(true);
     expect(createSession?.classList.contains('mob-icon-btn--accent')).toBe(true);
-    expect(createSession?.getAttribute('aria-label')).toBe('New session: Main checkout');
+    expect(createSession?.getAttribute('aria-label')).toBe('New terminal: Main checkout');
     expect(createSession?.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     expect(container.querySelector('[aria-label="Back to workspaces"]')).not.toBeNull();
     act(() => createSession?.click());
@@ -295,7 +295,7 @@ describe('MobileDaemonNavigator', () => {
     act(() => buttonContaining('EZTerminal').click());
     act(() => buttonContaining('Main checkout').click());
     expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')?.getAttribute('aria-label'))
-      .toBe('새 세션: Main checkout');
+      .toBe('새 터미널: Main checkout');
 
     renderNavigator(
       { status: 'error', snapshot: model, error: 'connection-lost' },

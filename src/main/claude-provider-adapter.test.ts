@@ -681,9 +681,10 @@ describe('ClaudeProviderAdapter sessions', () => {
       'tool-call',
       'tool-result',
     ]);
-    expect(JSON.stringify(transcript)).not.toContain('sk-ant-this-must-not-persist');
-    expect(JSON.stringify(transcript)).not.toContain('ANTHROPIC_API_KEY=secret');
-    expect(transcript.find((item) => item.kind === 'tool-result')?.text).toBe('Read completed.');
+    expect(JSON.stringify(transcript)).toContain('sk-ant-this-must-not-persist');
+    expect(JSON.stringify(transcript)).toContain('ANTHROPIC_API_KEY=secret');
+    expect(transcript.find((item) => item.kind === 'tool-result')?.text).toBe('ANTHROPIC_API_KEY=secret');
+    expect(transcript.find((item) => item.kind === 'tool-call')?.text).toContain('src/main.ts');
     await fixture.adapter.dispose();
   });
 

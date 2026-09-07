@@ -38,6 +38,7 @@ import {
   sanitizeProviderDiagnostic,
 } from './provider-process-security';
 import { compareSemanticVersions, semanticVersion } from './provider-version';
+import { providerTranscriptText } from './provider-transcript';
 
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 const MAX_MODELS = 2_000;
@@ -1489,7 +1490,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     params: JsonObject,
     kind: 'assistant-message' | 'reasoning',
   ): void {
-    const delta = boundedText(params.delta);
+    const delta = providerTranscriptText(params.delta);
     const providerTurnId = asString(params.turnId);
     const providerItemId = asString(params.itemId);
     if (!delta || !providerTurnId || !providerItemId) return;
@@ -1498,6 +1499,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       kind: 'transcript',
       item: {
         id: opaqueId('codex_delta', state.providerSessionId, providerTurnId, providerItemId, String(state.nextTranscriptSequence)),
+        messageId: opaqueId('codex_message', state.sessionId, providerTurnId, providerItemId),
         sessionId: state.sessionId,
         ...(this.localTurnId(state.sessionId, providerTurnId) ? { turnId: this.localTurnId(state.sessionId, providerTurnId) } : {}),
         sequence: state.nextTranscriptSequence,
@@ -1528,29 +1530,29 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'userMessage':
         if (started) return undefined;
         kind = 'user-message';
-        text = boundedText(item.content);
+        text = providerTranscriptText(item.content);
         break;
       case 'agentMessage':
         if (started) return undefined;
         kind = 'assistant-message';
-        text = boundedText(item.text);
+        text = providerTranscriptText(item.text);
         break;
       case 'reasoning':
         if (started) return undefined;
         kind = 'reasoning';
         text = [...asArray(item.summary), ...asArray(item.content)]
-          .filter((value): value is string => typeof value === 'string').join('\n').slice(0, MAX_SEMANTIC_TEXT);
+          .filter((value): value is string => typeof value === 'string').join('\n');
         break;
       case 'plan':
         if (started) return undefined;
         kind = 'reasoning';
-        text = boundedText(item.text);
+        text = providerTranscriptText(item.text);
         break;
       case 'commandExecution':
         kind = started ? 'tool-call' : 'tool-result';
         text = started
-          ? `$ ${boundedText(item.command, 16_000)}`
-          : boundedText(item.aggregatedOutput) || `Command ${asString(item.status) ?? 'completed'}.`;
+          ? `$ ${providerTranscriptText(item.command)}`
+          : providerTranscriptText(item.aggregatedOutput) || `Command ${asString(item.status) ?? 'completed'}.`;
         isSensitive = true;
         break;
       case 'fileChange':
@@ -1561,11 +1563,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'dynamicToolCall':
         kind = started ? 'tool-call' : 'tool-result';
         text = `${asString(item.server) ? `${asString(item.server)}/` : ''}${asString(item.tool) ?? 'tool'}: ${asString(item.status) ?? (started ? 'started' : 'completed')}`;
+        text += `\n${providerTranscriptText(started ? item.arguments : item.result ?? item.output ?? item.error)}`;
         break;
       case 'functionCallOutput':
         if (started) return undefined;
         kind = 'tool-result';
-        text = `${asString(item.name) ?? 'function'} completed.`;
+        text = providerTranscriptText(item.output) || `${asString(item.name) ?? 'function'} completed.`;
         break;
       case 'collabAgentToolCall':
         kind = 'notice';
@@ -1577,12 +1580,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         break;
       case 'webSearch':
         kind = started ? 'tool-call' : 'tool-result';
-        text = `Web search ${started ? 'started' : 'completed'}.`;
+        text = providerTranscriptText(item);
         break;
       case 'imageView':
       case 'imageGeneration':
         kind = started ? 'tool-call' : 'tool-result';
-        text = `${type === 'imageView' ? 'Image view' : 'Image generation'} ${started ? 'started' : 'completed'}.`;
+        text = providerTranscriptText(item);
         break;
       case 'enteredReviewMode':
       case 'exitedReviewMode':
@@ -1605,15 +1608,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return undefined;
     }
     if (!text) return undefined;
-    const sanitized = sanitizeProviderDiagnostic(text, { maxLength: MAX_SEMANTIC_TEXT });
-    text = sanitized.text;
-    isSensitive ||= sanitized.redacted
-      || kind === 'user-message'
+    isSensitive ||= kind === 'user-message'
       || kind === 'assistant-message'
       || kind === 'reasoning';
     const localTurnId = this.localTurnId(sessionId, providerTurnId);
     return {
       id: opaqueId('codex_item', sessionId, providerTurnId, providerItemId, started ? 'started' : 'completed'),
+      messageId: opaqueId('codex_message', sessionId, providerTurnId, providerItemId),
       sessionId,
       ...(localTurnId ? { turnId: localTurnId } : {}),
       sequence,
@@ -1670,12 +1671,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private fileChangeText(item: JsonObject): string {
-    const changes = asArray(item.changes).flatMap((value): string[] => {
-      const change = asObject(value);
-      const changePath = asString(change?.path);
-      return changePath ? [changePath] : [];
-    });
-    return changes.length > 0 ? `Changed ${changes.join(', ')}`.slice(0, MAX_SEMANTIC_TEXT) : 'File changes updated.';
+    return providerTranscriptText(item.changes) || 'File changes updated.';
   }
 
   private commandIdFromTurn(turn: JsonObject): string | undefined {

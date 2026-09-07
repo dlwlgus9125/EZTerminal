@@ -715,6 +715,7 @@ export function StructuredAgentDockPanel(
   if (!sessionId) {
     if (props.onOpenTerminal && props.onLaunchCli) {
       return <NewSessionDraftPanel
+          initialIntent={{ kind: 'agent', agentMode: 'cli' }}
         snapshot={snapshot}
         projectId={projectId}
         workspaceId={initialWorkspaceId ?? (preferredWorkspaceId ? `${projectId && rootId ? `${projectId}.${rootId}.` : ''}${preferredWorkspaceId}` : undefined)}

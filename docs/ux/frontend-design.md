@@ -56,7 +56,7 @@ status/feedback 영역을 사용한다. Sidebar는 280–440px, 기본 320px이�
 
 Header는 제품 기능 기준으로 정확히 네 zone을 가진다.
 
-1. **New Session** — signal mark와 전체 wordmark, 새 세션 draft와 빠른 Terminal 생성 action
+1. **New Session** — signal mark와 전체 wordmark, 즉시 Terminal 생성과 명시적 Agent 시작 action
 2. **Command Center** — 실제 shortcut을 표시하는 넓은 anchor field
 3. **Workspace** — Split, Layout과 Presets
 4. **Agent Attention** — attention count와 focus/open action
@@ -98,6 +98,8 @@ name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 
 
 각 destination은 loading, empty/unavailable, error/offline과 success 상태를 정의한다.
 Overlay를 닫으면 rail item 또는 Command Center result로 focus를 돌린다.
+세션을 열거나 생성하여 작업 영역으로 이동하면 좁은 화면의 overlay를 닫아 새 작업을
+가리지 않는다.
 Optional destination은 첫 사용 전까지 별도 module로 유지할 수 있다. rail focus,
 pointer enter/down은 사용자 intent이므로 preload할 수 있지만 click 동작과 accessible
 name은 바꾸지 않는다. 로드 중에는 동일한 SidebarShell 안에 status를 보여 주고 실패하면
@@ -240,6 +242,15 @@ contenteditable은 원래 key 의미를 유지한다. `Ctrl/Cmd+Shift+P`는 glob
 PC는 capture를 자동 시작하는 tab이 아니라 명시적 Start action이다. 600dp부터 같은
 순서의 72px left rail로 바뀌며 Settings를 아래에 둔다.
 
+인증 후 마지막 작업을 복원하고, 복원할 작업이 없으면 Terminal에서 시작한다. Android의 빈
+Terminal은 한 번 누르는 `새 터미널` 동작을 제공한다. Desktop은 기존 startup layout/preset
+설정을 존중하고 빈 layout에서는 기본 shell을 연다. Android는 인증 host별로 열린 terminal ID,
+활성 terminal/Agent ID와 마지막 작업 화면만 device-local에 저장하고 host에 재접속한다.
+원문·prompt·credential·draft를 이 view 기록에 넣지 않는다. 사라진 세션은 다시 만들지 않으며
+저장이 실패해도 새 Terminal은 사용할 수 있다. 사용자가 이미 이동했으면 늦은 복원이 화면을
+빼앗지 않는다. Back은 하위 화면을 닫은 뒤 Terminal root로 돌아가며 Home은 명시적인 목적지다.
+
+
 Home은 PC Control availability/start, connection, 최근 세션, 첫 Agent attention과
 조건부 OpenClaw shortcut을 보여 준다. Home 자체는 capture/input이나 live stats를
 시작하지 않는다.
@@ -360,15 +371,30 @@ locale은 결함이다.
 
 ## 10. Agent UI 계약
 
-Project content 순서는 Attention 다음 Project → Workspace → Session이다. Global launch는
-location이 비어 있는 공통 새 세션 draft다. Desktop project의 `새 세션`은 project
-목록의 main 또는 Explorer에서 선택한 checkout/worktree를 고정하고 기본 Agent와 optional
-Terminal을 제공한다. Android Agents header의 전역 `+`와 활성 Workspace header의 문맥
-`+`는 모두 전체 화면 `새 세션` draft를 연다. 전역 진입은 Project와 Workspace를 비워 두고,
-문맥 진입은 정확한 Workspace를 잠근다. draft는 Agent를 기본으로 하고 Terminal을 같은
-위치 선택 안의 대안으로 제공한다. Agent는 앱 대화와 CLI를 구분하며, 일반 Terminal은
-provider 없이도 열 수 있다. 기본 폴더의 독립 Terminal도 선택할 수 있다. 각 surface는
-같은 host-side Agent validation과 Launch/Cancel 의미를 사용한다.
+제품의 기본 작업은 Terminal이며 Agent는 선택 기능이다. Desktop header의 주 버튼과 일반
+`새 세션` 동작은 기본 폴더의 Terminal을 바로 연다. Project 행에서는 main checkout,
+Explorer와 Android Workspace에서는 선택한 정확한 작업 폴더로 바로 연다. 별도의 종류
+선택을 요구하지 않는다. 명시적인 `Agent 실행`은 draft를 열며 기본 방식은 `터미널 CLI`다.
+`앱에서 대화`는 사용자가 별도로 선택한다. 공통 draft 자체의 기본 종류도 Terminal이다.
+전역 Agent draft는 실행 위치를 비워 두고, 문맥 Agent draft는 선택한 위치를 유지한다.
+선택·취소만으로 entity나 process를 만들지 않으며 실행 버튼에서만 생성한다.
+
+CLI 설치 탐색은 앱 대화 SDK 버전·인증·hook 준비와 분리한다. 이전 Codex/Claude CLI도
+설치되어 있으면 Terminal에서 실행할 수 있다. 앱 대화가 준비되지 않았으면 짧은 안내와
+`Agent 설정`, `터미널 CLI` 전환을 제공한다. 실제 실행 권한과 위험 작업 승인은 유지한다.
+
+Settings → Agents는 Terminal CLI 설치 및 선택적 상태 연동을 먼저 보여 주고, `앱에서 대화`와
+`자동화`는 접힌 별도 영역으로 제공한다. 알림·승인·사용자 CLI는 상세 옵션에 둔다.
+사용하지 않는 provider는 중립적인 `사용 안 함` 상태이며 준비 오류를 반복 경고하지 않는다.
+각 기능은 상태 한 줄과 다음 동작을 제공하고 원인·버전·경로·프로토콜은 상세에서 확인한다.
+대화 설정은 `설정`으로 검토를 펼친 뒤 `확인 후 사용`으로 활성화한다. 별도 검토 완료
+체크박스를 요구하지 않으며 Claude의 필요한 동의는 같은 화면에서 받고 한 번 제출한다.
+검토 도중 실행 identity가 바뀌면 새 identity를 다시 확인한다. 수명 설정은 General이 소유한다.
+
+Agent의 사용자 메시지, 답변, 명령 인자와 도구 결과는 원문을 표시하고 host session history에도
+원문을 보관한다. 민감 표시가 있다는 이유로 내용을 숨기지 않는다. 긴 도구 출력은 펼칠 수
+있고, 같은 provider message의 delta와 완료 event는 한 메시지로 표시한다. 진단 로그의
+sanitization은 별도 경계다. 이전에 내용이 삭제·요약되어 저장된 기록은 복구를 가장하지 않는다.
 
 Location은 saved/observed project와 직접 host folder를 제공한다. 선택 또는 취소만으로
 project를 쓰지 않으며 성공한 direct-directory launch만 unpinned observed project가
@@ -453,7 +479,7 @@ Desktop host에서만 가능한 action은 이유와 복구 위치를 설명하�
 Mobile merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
 revision 의미를 유지한다.
 
-Android `새 세션`은 선택만으로 어떤 entity나 terminal surface도 만들지 않는다. Agent는
+Android Agent draft는 선택만으로 어떤 entity나 terminal surface도 만들지 않는다. 앱 대화는
 첫 Send에서 최신 daemon snapshot으로 active Project·Workspace와 ready provider를 다시
 검증한 뒤 하나의 `agent.create`로 session과 첫 prompt를 함께 제출한다. 성공 receipt 뒤에는
 로컬 첫 메시지와 starting/queued session을 즉시 보여 주고 authoritative snapshot과 transcript가

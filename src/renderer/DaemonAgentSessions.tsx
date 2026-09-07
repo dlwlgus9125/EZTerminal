@@ -638,7 +638,7 @@ export function DaemonAgentSessions({
                     <div className="daemon-agent-workspace__heading">
                       <h5>{workspace.label}</h5>
                       <span>{t(`agentHub.structuredSessions.workspace.${workspace.kind}`)}</span>
-                      {visibility === 'active' && onNewSession && <Button variant="ghost" size="sm" onClick={() => onNewSession(project.id, workspace.id)} aria-label={`${t('agentHub.newAgentRun')}: ${workspace.label}`}>{t('agentHub.newAgentRun')}</Button>}
+                      {visibility === 'active' && onNewSession && <Button variant="ghost" size="sm" onClick={() => onNewSession(project.id, workspace.id)} aria-label={`${t('header.newTerminal')}: ${workspace.label}`}>{t('header.newTerminal')}</Button>}
                     </div>
                     {workspace.path && <small title={workspace.path}>{workspace.path}</small>}
                     <ol className="daemon-agent-session-list">

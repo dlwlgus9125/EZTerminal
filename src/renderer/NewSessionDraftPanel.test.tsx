@@ -63,7 +63,8 @@ describe('New session routing', () => {
 
   it('revalidates the exact worktree and launches one CLI only after Start', async () => {
     const props = setup(); await flush();
-    click('new-session-cli'); select('session-cli-launcher', 'codex-cli');
+    click('new-session-agent');
+    expect(button('new-session-cli').getAttribute('aria-pressed')).toBe('true'); select('session-cli-launcher', 'codex-cli');
     expect(props.access.prepareAgentLaunch).not.toHaveBeenCalled();
     act(() => { button('session-cli-start').click(); button('session-cli-start').click(); });
     expect(button('new-session-terminal').disabled).toBe(true);
@@ -76,7 +77,8 @@ describe('New session routing', () => {
   it('rejects a workspace removed between selection and CLI Start', async () => {
     const props = setup(); await flush();
     vi.mocked(props.access.getDaemonSnapshot).mockResolvedValue({ ...sessionStartSnapshot, workspaces: [] });
-    click('new-session-cli'); select('session-cli-launcher', 'codex-cli'); click('session-cli-start'); await flush();
+    click('new-session-agent');
+    expect(button('new-session-cli').getAttribute('aria-pressed')).toBe('true'); select('session-cli-launcher', 'codex-cli'); click('session-cli-start'); await flush();
     expect(props.onLaunchCli).not.toHaveBeenCalled();
     expect(props.access.prepareAgentLaunch).not.toHaveBeenCalled();
     expect(host.textContent).toContain('selected workspace is unavailable');

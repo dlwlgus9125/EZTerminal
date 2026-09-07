@@ -477,32 +477,34 @@ describe('MobileAgentView', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(expected);
   });
 
-  it('returns from a contextual draft to the exact invoking Workspace', () => {
+  it('opens a contextual Terminal directly and keeps the exact invoking Workspace on failure', async () => {
     const authority = daemonSnapshotOf();
     const transport = {
       getDaemonSnapshot: vi.fn(async () => authority),
       sendDaemonCommand: vi.fn(),
     } as unknown as WsEzTerminalTransport;
+    const onCreateWorkspaceTerminal = vi.fn(async () => ({ ok: false as const, reason: 'workspace-unavailable' as const }));
     render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: authority }}
         transport={transport}
         {...noop}
+        onCreateWorkspaceTerminal={onCreateWorkspaceTerminal}
       />,
     );
 
     clickButtonText(container, 'EZTerminal');
     clickButtonText(container, 'Main checkout');
     act(() => testIds('mobile-daemon-create-session')[0]!.click());
-    expect(testIds('mobile-new-session-draft')).toHaveLength(1);
-
-    act(() => testIds('mobile-new-session-back')[0]!.click());
+    await flush();
+    expect(onCreateWorkspaceTerminal).toHaveBeenCalledWith('workspace-1');
+    expect(testIds('mobile-new-session-draft')).toHaveLength(0);
 
     expect(testIds('mobile-daemon-navigator')).toHaveLength(1);
     expect(container.querySelector('[aria-current="page"]')?.textContent).toBe('Main checkout');
     expect(container.querySelector('[data-testid="mobile-daemon-create-session"]')?.getAttribute('aria-label'))
-      .toBe('New session: Main checkout');
+      .toBe('New terminal: Main checkout');
   });
 
   it('reconciles an uncertain first Send before replaying the exact same create command', async () => {
