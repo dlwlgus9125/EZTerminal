@@ -16,7 +16,8 @@
  * without mutating emulator-wide networking or affecting unrelated processes.
  *
  * Memory is sampled from both `adb dumpsys meminfo` (app TOTAL PSS) and the
- * Chromium WebView (`performance.memory.usedJSHeapSize`). Baseline and final
+ * Chromium WebView (current V8 heap via CDP `Runtime.getHeapUsage`, without
+ * forcing GC; excludes external backing-store memory). Baseline and final
  * medians are taken after a configurable quiet period. The cap is 20% growth
  * after subtracting documented measurement noise: 16 MiB PSS and 4 MiB JS
  * heap. In equivalent threshold form: final <= baseline * 1.20 + slack.
@@ -288,7 +289,7 @@ async function captureMemory(
   if (totalPssKb === null) throw new Error('adb meminfo did not expose app TOTAL PSS');
   const renderer = await getWebViewMemorySnapshot();
   if (renderer.usedJsHeapBytes === null) {
-    throw new Error('E2E WebView does not expose performance.memory.usedJSHeapSize');
+    throw new Error('E2E WebView does not expose Runtime.getHeapUsage.usedSize');
   }
   const sample: MemorySample = {
     phase,

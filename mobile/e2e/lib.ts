@@ -901,7 +901,7 @@ async function resolveWebViewCdp(): Promise<WebSocket> {
     const protocolError = message.error?.message
       ?? message.result?.exceptionDetails?.text;
     if (protocolError) pending.reject(new Error(protocolError));
-    else pending.resolve(message.result?.result?.value);
+    else pending.resolve(message.result);
   });
   // A deliberately retired socket can report `close` after its replacement
   // is already connected. Only the currently-owned client may reset global
@@ -916,7 +916,7 @@ async function resolveWebViewCdp(): Promise<WebSocket> {
   return client;
 }
 
-export async function evaluateWebView<T>(expression: string): Promise<T> {
+async function sendWebViewCdp<T>(method: string, params: object = {}): Promise<T> {
   const client = await resolveWebViewCdp();
   const id = webViewCdpRequestId + 1;
   webViewCdpRequestId = id;
@@ -924,9 +924,9 @@ export async function evaluateWebView<T>(expression: string): Promise<T> {
     const timer = setTimeout(() => {
       const pending = webViewCdpPending.get(id);
       if (!pending) return;
-      const timeoutError = new Error('Android WebView DevTools evaluation timed out');
+      const timeoutError = new Error(`Android WebView DevTools ${method} timed out`);
       webViewCdpPending.delete(id);
-      // A timed-out Runtime.evaluate means this DevTools transport can no
+      // A timed-out request means this DevTools transport can no
       // longer be trusted. Drop the socket/adb forward so the caller's retry
       // discovers a fresh WebView target instead of spending its full
       // deadline retrying the same wedged connection.
@@ -940,8 +940,8 @@ export async function evaluateWebView<T>(expression: string): Promise<T> {
     });
     client.send(JSON.stringify({
       id,
-      method: 'Runtime.evaluate',
-      params: { expression, returnByValue: true, awaitPromise: true },
+      method,
+      params,
     }), (error) => {
       if (!error) return;
       const pending = webViewCdpPending.get(id);
@@ -953,18 +953,26 @@ export async function evaluateWebView<T>(expression: string): Promise<T> {
   });
 }
 
+export async function evaluateWebView<T>(expression: string): Promise<T> {
+  const response = await sendWebViewCdp<{ result?: { value?: T } }>('Runtime.evaluate', {
+    expression, returnByValue: true, awaitPromise: true,
+  });
+  return response?.result?.value as T;
+}
+
 export interface WebViewHistorySnapshot {
   readonly length: number;
   readonly state: unknown;
   readonly url: string;
 }
 
-/** A renderer-process memory sample read from the Android WebView itself.
- * `performance.memory` is a Chromium diagnostic API and is expected to be
- * present in the debug/E2E APK used by the release soak. Keeping the nullable
- * shape lets the soak fail with a precise "metric unavailable" error instead
- * of silently substituting an unrelated process-wide number. */
+/** Current V8 heap usage from the Android WebView's CDP target, without
+ * forcing GC. Unlike performance.memory, this is neither bucketized nor
+ * cached for twenty minutes. It describes managed JS heap, not all renderer
+ * or external backing-store memory. CDP does not expose a heap size limit.
+ * Nullable values let the soak reject unavailable metrics explicitly. */
 export interface WebViewMemorySnapshot {
+  readonly heapSource: 'Runtime.getHeapUsage';
   readonly usedJsHeapBytes: number | null;
   readonly totalJsHeapBytes: number | null;
   readonly jsHeapLimitBytes: number | null;
@@ -978,18 +986,20 @@ export function getWebViewHistorySnapshot(): Promise<WebViewHistorySnapshot> {
   );
 }
 
-export function getWebViewMemorySnapshot(): Promise<WebViewMemorySnapshot> {
-  return evaluateWebView<WebViewMemorySnapshot>(`(() => {
-    const memory = performance.memory;
-    const finite = (value) => typeof value === 'number' && Number.isFinite(value) ? value : null;
-    return {
-      usedJsHeapBytes: finite(memory && memory.usedJSHeapSize),
-      totalJsHeapBytes: finite(memory && memory.totalJSHeapSize),
-      jsHeapLimitBytes: finite(memory && memory.jsHeapSizeLimit),
-      domNodeCount: document.getElementsByTagName('*').length,
-      collectedAt: new Date().toISOString(),
-    };
-  })()`);
+export async function getWebViewMemorySnapshot(): Promise<WebViewMemorySnapshot> {
+  const domNodeCount = await evaluateWebView<number>("document.getElementsByTagName('*').length");
+  const heap = await sendWebViewCdp<{ usedSize?: number; totalSize?: number }>('Runtime.getHeapUsage');
+  const finite = (value: number | undefined): number | null => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+  );
+  return {
+    heapSource: 'Runtime.getHeapUsage',
+    usedJsHeapBytes: finite(heap?.usedSize),
+    totalJsHeapBytes: finite(heap?.totalSize),
+    jsHeapLimitBytes: null,
+    domNodeCount,
+    collectedAt: new Date().toISOString(),
+  };
 }
 
 /** Counts every DOM node with the exact test id, including nodes in hidden

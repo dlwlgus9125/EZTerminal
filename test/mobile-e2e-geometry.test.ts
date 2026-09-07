@@ -427,7 +427,7 @@ describe('Android WebView physical geometry', () => {
       path.resolve(import.meta.dirname, '../mobile/e2e/lib.ts'),
       'utf8',
     );
-    const start = source.indexOf('async function evaluateWebView');
+    const start = source.indexOf('async function sendWebViewCdp');
     const end = source.indexOf('export interface WebViewHistorySnapshot', start);
     const evaluationSection = source.slice(start, end);
 

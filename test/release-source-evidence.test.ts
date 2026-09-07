@@ -155,9 +155,10 @@ function memorySample(
     nativeHeapKb: 500,
     javaHeapKb: 250,
     renderer: {
+      heapSource: 'Runtime.getHeapUsage',
       usedJsHeapBytes,
       totalJsHeapBytes: usedJsHeapBytes * 2,
-      jsHeapLimitBytes: usedJsHeapBytes * 10,
+      jsHeapLimitBytes: null,
       domNodeCount: 100,
       collectedAt: timestamp(index),
     },
@@ -466,6 +467,23 @@ describe('release source-evidence verifier', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('mobileSoak summary does not equal the raw soak evidence');
+  });
+
+  it.each([undefined, 'performance.memory'])('rejects cached or unidentified heap evidence (%s)', (heapSource) => {
+    const fixture = fixtures('candidate');
+    const rawSoak = JSON.parse(readFileSync(fixture.soakPath, 'utf8')) as {
+      memorySamples: Array<{ renderer: { heapSource?: string } }>;
+    };
+    rawSoak.memorySamples[0].renderer.heapSource = heapSource;
+    writeJson(fixture.soakPath, rawSoak);
+    fixture.report.mobileSoak.reportSha256 = sha256(fixture.soakPath);
+    writeJson(fixture.reportPath, fixture.report);
+    const result = spawnSync(process.execPath, args(fixture, 'candidate'), {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('renderer.heapSource must identify live CDP heap usage');
   });
 
   it('rejects a machine-local path serialized into mobile soak evidence', () => {

@@ -300,6 +300,10 @@ function validateMemorySample(sample, index) {
   }
   assert(isObject(sample.renderer), `${label}.renderer must be an object`);
   assert(
+    sample.renderer.heapSource === 'Runtime.getHeapUsage',
+    `${label}.renderer.heapSource must identify live CDP heap usage`,
+  );
+  assert(
     isNonNegativeInteger(sample.renderer.usedJsHeapBytes),
     `${label}.renderer.usedJsHeapBytes must be a non-negative integer`,
   );
