@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.52] - 2026-09-08
+
+### Changed
+
+- Group desktop feature IPC handlers with explicit service dependencies and
+  owned registration cleanup.
+- Separate remote message validation and OpenClaw socket state, and move mobile
+  Agent History/OpenClaw request lifecycles into feature clients.
+- Extract desktop preferences, appearance, Command Center, project navigation
+  and recovery state while preserving the existing UI and session ownership.
+- Align Android validation with the current startup flow and collect live
+  WebView heap/PSS without retaining evaluation handles or forcing app GC.
+
 ## [1.0.51] - 2026-09-07
 
 ### Changed
