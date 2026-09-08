@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.0.53] - 2026-09-08
+
+### Fixed
+
+- Allow registered projects to be deleted after an app restart when terminal
+  records from the previous process were still marked as active. Startup now
+  marks those ended legacy terminals as interrupted before restoring projects.
+- Preserve deletion protection for live sessions and provider-owned work.
+
 ## [1.0.52] - 2026-09-08
 
 ### Changed

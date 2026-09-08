@@ -138,8 +138,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 335,
-        "endLine": 421,
+        "startLine": 352,
+        "endLine": 438,
         "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
         "claim": "The exclusive router authorizes the bound principal, deduplicates by idempotency key, records provider dispatch, commits or rejects, and publishes durable events."
       }]
@@ -171,8 +171,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 593,
-          "endLine": 609,
+          "startLine": 610,
+          "endLine": 626,
           "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
           "claim": "After a commit, the router reads ordered events from the store and treats observers as non-authoritative projections."
         },
@@ -409,8 +409,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 368,
-        "endLine": 420,
+        "startLine": 385,
+        "endLine": 437,
         "lineDigest": "sha256:524d17f1511b3f90f92e97de397a97fa3edce1c3f611e01958bf614f437980b5",
         "claim": "Outbox state and command effects settle durably before the router returns a receipt or publishes events."
       }]
@@ -449,8 +449,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 593,
-        "endLine": 609,
+        "startLine": 610,
+        "endLine": 626,
         "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
         "claim": "Published events are read back from the durable sequence after commit rather than synthesized by a transport."
       }]

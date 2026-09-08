@@ -57,9 +57,9 @@
         { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:aaf4c2a8261034c392ef665b07e74f9496a561c2fbbafeb41bfeafdf7856efe1",
+        "inputDigest": "sha256:64af7e8560eb8b3c0860a1e3bf506b0215415d787a8d9ed0c9bebecc92601968",
         "decision": "map-updated",
-        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
+        "reason": "Reviewed startup recovery of prior-process legacy terminals before Project consent and authority preflight; refreshed source anchors. Active-session deletion protection, provider recovery, and transport authority are preserved."
       }
     },
     {
@@ -116,9 +116,9 @@
         { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:b0f993624c3cf7269b3c88ccfbe63cf7cc42778ec88330bc3f5caff46242e008",
+        "inputDigest": "sha256:7eb1bcfef0e9032b6d103f125f485acd76d49be904ed47612b7213d0e9a94c70",
         "decision": "map-updated",
-        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
+        "reason": "Reviewed startup recovery of prior-process legacy terminals before Project consent and authority preflight; refreshed source anchors. Active-session deletion protection, provider recovery, and transport authority are preserved."
       }
     },
     {
@@ -154,9 +154,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-transport-contract.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:ef50764982a6132760e24116c9d87d8cc8a7acaa114577799cf68502c8686320",
+        "inputDigest": "sha256:dd265f7842678f98790c1c0c237d0121df036c526529e7938852fba9c4d6c03d",
         "decision": "map-updated",
-        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
+        "reason": "Reviewed startup recovery of prior-process legacy terminals before Project consent and authority preflight; refreshed source anchors. Active-session deletion protection, provider recovery, and transport authority are preserved."
       }
     },
     {
@@ -186,7 +186,7 @@
       "review": {
         "inputDigest": "sha256:a7b357e75370ac5cce6459da82a4f33b84c3bc40f60418f8ba3797cb369bed1d",
         "decision": "map-updated",
-        "reason": "Reviewed feature IPC ownership, transport validation/request owners and renderer hooks. Relocated source evidence; broker, daemon authority, command identity, initialization and shutdown contracts remain unchanged."
+        "reason": "Reviewed startup recovery of prior-process legacy terminals before Project consent and authority preflight; refreshed source anchors. Active-session deletion protection, provider recovery, and transport authority are preserved."
       }
     }
   ]

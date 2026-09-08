@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDaemonCommand, type DaemonCommandType } from '../shared/daemon-protocol';
 import { DaemonCommandRouter } from './daemon-command-router';
-import { daemonProjectRevocationCommit } from './daemon-project-sync';
+import { daemonProjectRemovalTransition, daemonProjectRevocationCommit } from './daemon-project-sync';
 import { DaemonStore } from './daemon-store';
 
 const temporaryDirectories: string[] = [];
@@ -179,6 +179,49 @@ describe('DaemonCommandRouter', () => {
     expect(snapshot.sessions).toEqual([expect.objectContaining({
       id: 'legacy-terminal', kind: 'terminal', source: 'legacy-pty', state: 'running',
     })]);
+    await store.close();
+  });
+
+  it('recovers interrupted legacy terminals before Project removal without changing other session owners', async () => {
+    const { store, router } = await runtime();
+    await router.applySystemCommit({ mutations: [
+      { kind: 'project.upsert', value: { id: 'project-1', name: 'Pinball', source: 'native' } },
+      { kind: 'workspace.upsert', value: {
+        id: 'workspace-1', projectId: 'project-1', name: 'Local', kind: 'local', rootPath: 'C:\\Pinball',
+      } },
+      ...(['running', 'starting', 'idle', 'needs-attention', 'stopping', 'delivery-uncertain',
+        'completed', 'interrupted', 'failed', 'archived'] as const).map((state) => ({
+        kind: 'session.upsert' as const,
+        value: {
+          id: `legacy-${state}`, projectId: 'project-1', workspaceId: 'workspace-1',
+          kind: 'terminal' as const, title: state, state, source: 'legacy-pty' as const,
+        },
+      })),
+      { kind: 'session.upsert', value: {
+        id: 'structured', projectId: 'project-1', workspaceId: 'workspace-1',
+        kind: 'agent', title: 'Owned by provider recovery', state: 'running', source: 'structured',
+      } },
+    ] });
+    const events: string[] = [];
+    router.onEvent((event) => events.push(event.kind));
+    const before = router.getSnapshot();
+    await router.recoverLegacyTerminalsAfterRestart();
+    const recovered = router.getSnapshot();
+    for (const previous of before.sessions) {
+      const current = recovered.sessions.find((session) => session.id === previous.id)!;
+      if (previous.source === 'legacy-pty'
+        && !['completed', 'interrupted', 'failed', 'archived'].includes(previous.state)) {
+        expect(current).toMatchObject({ ...previous, state: 'interrupted', revision: before.revision + 1,
+          updatedAt: expect.any(String) });
+      } else {
+        expect(current).toEqual(previous);
+      }
+    }
+    expect(events.filter((kind) => kind === 'entity.upserted')).toHaveLength(6);
+    await expect(router.recoverLegacyTerminalsAfterRestart()).resolves.toMatchObject({ revision: recovered.revision });
+    // A provider-owned active session still blocks deletion after PTY recovery.
+    await expect(router.applySystemTransition(daemonProjectRemovalTransition('project-1', recovered.generatedAt)))
+      .resolves.toMatchObject({ value: { ok: false, reason: 'active-sessions', sessionIds: ['structured'] } });
     await store.close();
   });
 

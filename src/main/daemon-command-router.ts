@@ -270,6 +270,23 @@ export class DaemonCommandRouter {
     return this.store.getScheduleRuns(states);
   }
 
+  /**
+   * Legacy PTYs belong to one main/interpreter process and cannot survive its
+   * restart. Call once during startup, before admitting new terminal sessions
+   * or restoring Project authority; a shutdown/crash may leave their rows live.
+   */
+  recoverLegacyTerminalsAfterRestart(): Promise<{ readonly revision: number; readonly eventSequence: number }> {
+    return this.applySystemCommit((snapshot) => {
+      const mutations = snapshot.sessions
+        .filter((session) => session.source === 'legacy-pty' && isActiveSession(session.state))
+        .map((session): DaemonStoreMutation => ({
+          kind: 'session.upsert',
+          value: { ...session, state: 'interrupted' },
+        }));
+      return mutations.length > 0 ? { mutations } : undefined;
+    });
+  }
+
   async registerLegacyTerminals(
     sessions: readonly SessionInfo[],
     options: LegacyTerminalRegistrationOptions = {},

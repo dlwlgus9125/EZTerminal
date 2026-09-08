@@ -193,6 +193,71 @@ async function flushLayout(window: Page): Promise<void> {
   });
 }
 
+test('registered project can be deleted from the Projects menu', async () => {
+  const { userDataDir } = createProjectFixture();
+  const app = await launchApp(userDataDir);
+  const window = await app.firstWindow();
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  const project = (await window.evaluate(async () =>
+    globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
+  await window.getByTestId('btn-toggle-agents').click();
+  await window.getByRole('button', { name: `Manage ${project.name}`, exact: true }).click();
+  await window.getByRole('menuitem', { name: 'Delete project', exact: true }).click();
+  const confirmation = window.getByTestId('agent-project-delete');
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', { name: 'Delete project', exact: true }).click();
+  await expect(confirmation).not.toBeVisible();
+  await expect(window.getByTestId(`agent-project-open-${project.projectId}`)).toHaveCount(0);
+  await expect(window.getByTestId('agent-projects')).not.toContainText(project.name);
+  await expect.poll(async () => window.evaluate(async (projectId) =>
+    (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))
+      .items.some((item) => item.projectId === projectId), project.projectId)).toBe(false);
+  await app.close();
+});
+
+test('registered project can be deleted after its detached terminal exits with the app', async () => {
+  const { userDataDir } = createProjectFixture();
+  const app = await launchApp(userDataDir);
+  const window = await app.firstWindow();
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  const project = (await window.evaluate(async () =>
+    globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
+  await window.getByTestId('btn-toggle-agents').click();
+  await window.getByTestId(`agent-project-new-chat-${project.projectId}`).click();
+  const tab = window.locator('.project-session-tab');
+  await expect(tab).toHaveCount(1);
+  const pane = window.locator('[data-testid="pane"]:visible');
+  await expect(pane).toHaveAttribute('data-session-id', /.+/);
+  const sessionId = (await pane.getAttribute('data-session-id'))!;
+  await expect.poll(async () => window.evaluate(async (id) =>
+    (await globalThis.window.ezterminal.getDaemonSnapshot())?.sessions
+      .find((session) => session.id === id)?.state, sessionId)).toBe('running');
+  await tab.hover();
+  await tab.locator('.project-session-tab__close').click();
+  await expect(tab).toHaveCount(0);
+  await flushLayout(window);
+  await app.close();
+
+  const restartedApp = await launchApp(userDataDir);
+  const restarted = await restartedApp.firstWindow();
+  await restarted.setViewportSize({ width: 1440, height: 900 });
+  await expect(restarted.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  expect(await restarted.evaluate(async (id) =>
+    (await globalThis.window.ezterminal.listSessions()).some((session) => session.sessionId === id),
+  sessionId)).toBe(false);
+  const manage = restarted.getByRole('button', { name: `Manage ${project.name}`, exact: true });
+  if (!await manage.isVisible()) await restarted.getByTestId('btn-toggle-agents').click();
+  await manage.click();
+  await restarted.getByRole('menuitem', { name: 'Delete project', exact: true }).click();
+  const confirmation = restarted.getByTestId('agent-project-delete');
+  await confirmation.getByRole('button', { name: 'Delete project', exact: true }).click();
+  await expect(confirmation).not.toBeVisible();
+  await expect(restarted.getByTestId('agent-projects')).not.toContainText(project.name);
+  await restartedApp.close();
+});
+
 test('project root terminal preserves fixed-root identity across rename and restart', async () => {
   const { projectRoot, userDataDir } = createProjectFixture();
   const explorerProjectRoot = path.resolve(projectRoot);

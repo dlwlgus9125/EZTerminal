@@ -179,8 +179,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1887,
-          "endLine": 1936,
+          "startLine": 1889,
+          "endLine": 1938,
           "lineDigest": "sha256:6d1e43fe7176736977a5bcd58d409d25d26377a5eba237fb282c450f74b11a2f",
           "claim": "Only after Project preflight and ordered MCP, Agent, and automation startup does main publish ready availability; any failure is cleaned up and latched as terminal-only safe mode."
         },
@@ -214,8 +214,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 335,
-          "endLine": 421,
+          "startLine": 352,
+          "endLine": 438,
           "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
           "claim": "Authorization, idempotency, outbox delivery state, durable commit, and event publication remain inside one exclusive command transaction."
         },
@@ -572,8 +572,8 @@
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
           "startLine": 1729,
-          "endLine": 1882,
-        "lineDigest": "sha256:4ac6add5222b9ed6995f1b5e2cec33c55311834d78a51011ef20981b9825f6a9",
+          "endLine": 1884,
+        "lineDigest": "sha256:aec722e17dc73aaec4827ac9482ffae3d2cc86e067a25fb7d978d0dbf168b54f",
         "claim": "The Project FIFO persists approval or revocation intent before changing daemon authority, finalizes consent afterward, compensates failed approval, and recovers pending work before provider startup."
       }]
     },
@@ -602,8 +602,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 350,
-          "endLine": 420,
+          "startLine": 367,
+          "endLine": 437,
           "lineDigest": "sha256:d16089a5ac01092a0791a46c15e041b93e1217385289b7c630c4ae779b03ce6c",
           "claim": "The router binds idempotency, persists provider-dispatch intent, atomically commits or rejects the command, then publishes resulting events."
         },
@@ -707,8 +707,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 458,
-        "endLine": 540,
+        "startLine": 475,
+        "endLine": 557,
         "lineDigest": "sha256:880318b4a5b8a3fea1ea03e2c5bf988b8e31689ebd68ab6079d6fda532e0722c",
         "claim": "Project archive atomically archives child Workspaces, while Session creation admits only a Workspace under the requested active Project."
       }]

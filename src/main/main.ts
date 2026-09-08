@@ -1877,6 +1877,8 @@ app.on('ready', async () => {
     daemonProjectOperationSignal.throwIfAborted();
     await Promise.all([daemonCoreReady, projectWorkspaceAuthorityReady]);
     daemonProjectOperationSignal.throwIfAborted();
+    await daemonCommandRouter.recoverLegacyTerminalsAfterRestart();
+    daemonProjectOperationSignal.throwIfAborted();
     await recoverPendingProjectWorkspaceAccess();
     await syncAgentProjectsToDaemon();
   });

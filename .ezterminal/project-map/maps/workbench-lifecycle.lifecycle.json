@@ -123,9 +123,9 @@
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
           "startLine": 1828,
-          "endLine": 1936,
-          "lineDigest": "sha256:03f1aba48b3bf268a0b11e39ea3881a618078ecd4621a2b6fa0210a9201d5ee7",
-          "claim": "Main recovers pending consent and synchronizes Projects before the ordered MCP, Agent, and automation startup publishes ready availability and binds the exact shutdown barrier."
+          "endLine": 1938,
+          "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
+          "claim": "Main marks prior-process legacy terminals interrupted, recovers pending consent, and synchronizes Projects before the ordered MCP, Agent, and automation startup publishes ready availability and binds the exact shutdown barrier."
         },
         {
           "rootAlias": "app",
@@ -172,8 +172,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1927,
-          "endLine": 1935,
+          "startLine": 1929,
+          "endLine": 1937,
           "lineDigest": "sha256:3af45fffdc9e0a0cb7de49d6d5a9d989d64a1e1bd62f11f4f154a16dc7c4e3e9",
           "claim": "Main reports structured authority failure as a terminal-preserving safe mode rather than failing the entire desktop runtime."
         }
@@ -248,8 +248,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2195,
-          "endLine": 2345,
+          "startLine": 2197,
+          "endLine": 2347,
           "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier."
         },
@@ -292,9 +292,9 @@
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
         "startLine": 1828,
-        "endLine": 1936,
-        "lineDigest": "sha256:03f1aba48b3bf268a0b11e39ea3881a618078ecd4621a2b6fa0210a9201d5ee7",
-        "claim": "Successful database, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
+        "endLine": 1938,
+        "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
+        "claim": "Successful database, prior-process legacy terminal recovery, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
       }]
     },
     {
@@ -307,8 +307,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1920,
-        "endLine": 1935,
+        "startLine": 1922,
+        "endLine": 1937,
         "lineDigest": "sha256:3d781ac239406fc6562df5790dbc60b6ad32f0d3c342c06d302931b722aa1e08",
         "claim": "Any rejected structured-authority preflight or startup becomes one process-lifetime safe-mode availability record and is logged while legacy terminals remain enabled."
       }]
@@ -355,8 +355,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 2205,
-        "endLine": 2245,
+        "startLine": 2207,
+        "endLine": 2247,
         "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
         "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
       }]
@@ -420,8 +420,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2195,
-          "endLine": 2345,
+          "startLine": 2197,
+          "endLine": 2347,
           "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
           "claim": "Main closes ingress first, drains main startup and local mutations, and orders OpenClaw and desktop cleanup while DaemonStore awaits the exact authority and concurrent writer barrier."
         }
