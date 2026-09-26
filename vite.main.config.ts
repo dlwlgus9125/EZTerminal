@@ -31,6 +31,11 @@ import { defineConfig } from 'vite';
 // https://vitejs.dev/config
 export default defineConfig({
   define: {
+    // Diagnostic installers collect window evidence without a custom launch
+    // command. Runtime EZTERMINAL_RENDER_DIAGNOSTICS=0 still opts out.
+    'process.env.EZTERMINAL_RENDER_DIAGNOSTICS_DEFAULT': JSON.stringify(
+      process.env.EZTERMINAL_RENDER_DIAGNOSTICS_DEFAULT ?? '0',
+    ),
     // Bake the source identity into the packaged app. Reading process.env only
     // at runtime would show "dev" when an end user launches the installed app.
     'process.env.EZTERMINAL_BUILD_SHA': JSON.stringify(

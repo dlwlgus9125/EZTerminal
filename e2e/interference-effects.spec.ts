@@ -27,7 +27,31 @@ test('Matrix UI composes flicker with micro-jitter and keeps the rollbar inside 
   )).toContain('fx-micro-jitter');
   expect(await window.evaluate(
     () => getComputedStyle(document.getElementById('root')!).animationName,
-  )).toContain('fx-flicker');
+  )).not.toContain('fx-flicker');
+  expect(await window.evaluate(
+    () => getComputedStyle(document.getElementById('root')!).opacity,
+  )).toBe('1');
+  expect(await window.evaluate(() => {
+    const overlay = document.getElementById('ez-fx-flicker')!;
+    const style = getComputedStyle(overlay);
+    return {
+      sibling: overlay.parentElement === document.body,
+      animation: style.animationName,
+      pointerEvents: style.pointerEvents,
+    };
+  })).toEqual({ sibling: true, animation: 'fx-flicker', pointerEvents: 'none' });
+
+  // A stuck animation, or an out-of-range CSS parameter, cannot paint an
+  // opaque black rectangle. This asserts the browser's computed paint alpha.
+  const boundedColor = await window.evaluate(() => {
+    const root = document.documentElement;
+    const previous = root.style.getPropertyValue('--fx-flicker-min');
+    root.style.setProperty('--fx-flicker-min', '-10');
+    const color = getComputedStyle(document.getElementById('ez-fx-flicker')!).backgroundColor;
+    root.style.setProperty('--fx-flicker-min', previous);
+    return color;
+  });
+  expect(boundedColor).toBe('rgba(0, 0, 0, 0.4)');
 
   await window.evaluate(() => {
     const style = document.createElement('style');
@@ -48,5 +72,7 @@ test('Matrix UI composes flicker with micro-jitter and keeps the rollbar inside 
     return { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
   });
   expect(extent.scrollHeight).toBeLessThanOrEqual(extent.clientHeight);
+  await window.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(window.locator('#ez-fx-flicker')).toHaveCount(0);
   await app.close();
 });

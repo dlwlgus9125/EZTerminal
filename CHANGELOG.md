@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.54] - 2026-09-26
+
+### Fixed
+
+- Isolate CRT flicker from the application's opacity so tabs, navigation and
+  terminal content no longer share the same animated opacity layer.
+- Preserve the terminal graphics renderer across focus changes and release it
+  only after a hidden surface enters the parked state.
+- Apply native window animation state before React commits, and avoid
+  reapplying unchanged background throttling settings to Chromium.
+
 ## [1.0.53] - 2026-09-08
 
 ### Fixed

@@ -1,3 +1,5 @@
+import { syncFlickerOverlay } from './effects';
+
 const auxiliaryWindows = new Set<Window>();
 const listeners = new Set<(windows: readonly Window[]) => void>();
 const MIRRORED_STYLE_IDS = ['ez-theme-vars', 'ez-fx-keyframes'] as const;
@@ -57,6 +59,7 @@ function syncWindow(targetWindow: Window): void {
     targetRoot.setAttribute(attribute.name, attribute.value);
   }
   for (const [name, value] of localAttributes) targetRoot.setAttribute(name, value);
+  syncFlickerOverlay(targetWindow.document);
   for (const id of MIRRORED_STYLE_IDS) syncStyleElement(targetWindow.document, id);
 }
 

@@ -232,7 +232,7 @@ function PtyXtermView({
       el,
       {
         platform: runtimeOptions.platform,
-        rendererPreference: runtimeLifecycleTierRef.current === 'active'
+        rendererPreference: runtimeLifecycleTierRef.current !== 'parked'
           ? rendererPreferenceRef.current
           : 'dom',
         openExternalHttpUrl: linkHandlingEnabled
@@ -657,19 +657,21 @@ function PtyXtermView({
     terminalFileLinksEnabled,
   ]);
 
-  // Switching renderer policy never remounts xterm or loses its scrollback.
+  // Mere focus changes keep the renderer alive. Only a parked surface releases
+  // WebGL; otherwise every blur/focus disposes and recreates its graphics state.
   useEffect(() => {
     const term = termRef.current;
     const runtime = runtimeRef.current;
-    writeSchedulerRef.current?.setTier(runtimeLifecycleTier);
     if (!term || !runtime) return;
     term.options.cursorBlink = runtimeLifecycleTier === 'active';
     term.options.scrollback = runtimeLifecycleTier === 'parked'
       ? Math.min(getActiveScrollback(), RUNTIME_PARKED_SCROLLBACK_LINES)
       : getActiveScrollback();
     runtime.setRendererPreference(
-      runtimeLifecycleTier === 'active' ? runtimeOptions.rendererPreference : 'dom',
+      runtimeLifecycleTier !== 'parked' ? runtimeOptions.rendererPreference : 'dom',
     );
+    // Restore the renderer before resuming the queued output batch.
+    writeSchedulerRef.current?.setTier(runtimeLifecycleTier);
   }, [runtimeLifecycleTier, runtimeOptions.rendererPreference]);
 
   useEffect(() => {

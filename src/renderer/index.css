@@ -207,31 +207,25 @@ html[data-effect-scanlines='on']::after {
   );
   opacity: var(--ui-effect-intensity, 0.7);
 }
-/* == FLICKER (upgraded, crt-interference) == brightness-only CRT flicker on
-   the CONTENT (#root opacity) — decoupled from scanlines (the old stub
-   animated the scanline overlay and silently required scanlines on) and
-   parameterized: frequency/depth come from flicker params (--fx-flicker-*,
-   effect-params.ts; fallbacks = defaults 15Hz / 7% -> 0.067s / 0.93, a
-   faster-but-shallower shimmer). Opacity, not filter:brightness — compositor-cheap, and
-   against the near-black body bg an opacity dip reads as a brightness dip.
-   COMPOSITION: micro-jitter also animates #root (transform); `animation` is
-   a per-element shorthand, so the both-on case needs the explicit combined
-   rule below (two separate rules would drop whichever loses the cascade). */
-html[data-effect-flicker='on'] #root {
+/* Flicker animates a decoration sibling, never the opacity of the workbench.
+   Bound the paint alpha as well as the configured depth: even an animation
+   paused at full opacity cannot turn this layer into an opaque black cover. */
+#ez-fx-flicker {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ui-z-decoration);
+  pointer-events: none;
+  background: rgb(0 0 0 / clamp(0, calc(1 - var(--fx-flicker-min, 0.93)), 0.4));
+  opacity: 0;
   animation: fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none) infinite;
-}
-html[data-effect-micro-jitter='on'][data-effect-flicker='on'] #root {
-  animation:
-    fx-micro-jitter var(--fx-micro-duration, 4s) step-end infinite,
-    fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none) infinite;
 }
 @keyframes fx-flicker {
   0%,
   100% {
-    opacity: 1;
+    opacity: 0;
   }
   50% {
-    opacity: var(--fx-flicker-min, 0.93);
+    opacity: 1;
   }
 }
 
@@ -339,7 +333,7 @@ html[data-effect-scanline-scroll='on'] body::before {
        bump WITH the content — beam artifacts move on sync loss; the html-
        level scanline mask + vignette stay put — they're the physical glass)
      - micro-jitter  -> transform on `#root`
-     - flicker       -> opacity on `#root` (combined rule above when both on)
+     - flicker       -> opacity on a separate decoration sibling
      - noise overlays -> #root::before (burst flash) / #root::after (static)
    Every element has exactly one animation-owning selector chain.
 

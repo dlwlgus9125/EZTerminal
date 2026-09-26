@@ -147,6 +147,7 @@ import { DaemonStore } from './daemon-store';
 import type { DesktopRuntime } from './desktop-runtime';
 import { DesktopWindowManager } from './desktop-window-manager';
 import { LogFile, pruneCrashDumps } from './diagnostics';
+import { installWindowRenderDiagnostics } from './window-render-diagnostics';
 import { createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
 import { buildExplicitQuitDialogOptions } from './explicit-quit-dialog';
 import { FileService } from './file-service';
@@ -597,6 +598,11 @@ const createWindow = (): BrowserWindow => {
     },
   });
   mainWindowRef = mainWindow;
+  const renderDiagnosticsLog = new LogFile(
+    path.join(app.getPath('userData'), 'logs', 'render-diagnostics.log'),
+    2 * 1024 * 1024,
+  );
+  installWindowRenderDiagnostics(mainWindow, (message) => renderDiagnosticsLog.line(message));
   desktopWindowManager?.configureMainWindow(mainWindow);
   openClawChatView?.attach(mainWindow);
 

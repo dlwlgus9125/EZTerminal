@@ -376,6 +376,11 @@ export class DesktopWindowManager {
       && candidate.isVisible()
       && !candidate.isMinimized()
     ));
-    mainWindow.webContents.setBackgroundThrottling(!(mainHidden && auxiliaryVisible));
+    const allowed = !(mainHidden && auxiliaryVisible);
+    // This setter also updates Chromium's render-widget visibility. Focus,
+    // resize and display changes must not reapply an unchanged native policy.
+    if (mainWindow.webContents.getBackgroundThrottling() !== allowed) {
+      mainWindow.webContents.setBackgroundThrottling(allowed);
+    }
   }
 }

@@ -3,7 +3,6 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -34,10 +33,11 @@ function applyDocumentTier(candidate: Window, state: DesktopWindowState | undefi
   if (candidate.closed) return;
   const root = candidate.document.documentElement;
   const name = logicalWindowName(candidate);
-  root.dataset.runtimeWindowName = name;
-  root.dataset.runtimeTier = state?.focused && state.visible && !state.minimized
+  if (root.dataset.runtimeWindowName !== name) root.dataset.runtimeWindowName = name;
+  const tier = state?.focused && state.visible && !state.minimized
     ? 'active'
     : 'passive';
+  if (root.dataset.runtimeTier !== tier) root.dataset.runtimeTier = tier;
 }
 
 function snapshotMap(snapshot: DesktopWindowStatesSnapshot): ReadonlyMap<string, DesktopWindowState> {
@@ -46,40 +46,40 @@ function snapshotMap(snapshot: DesktopWindowStatesSnapshot): ReadonlyMap<string,
 
 export function DesktopRuntimeLifecycleProvider({ children }: { readonly children: ReactNode }): JSX.Element {
   const [states, setStates] = useState<ReadonlyMap<string, DesktopWindowState>>(new Map());
-  const sequenceRef = useRef(-1);
-
   useEffect(() => {
     const desktop = window.ezterminalDesktop;
     if (!desktop?.getWindowStates || !desktop.onWindowStatesChanged) return;
     let alive = true;
-    const accept = (snapshot: DesktopWindowStatesSnapshot): void => {
-      if (!alive || snapshot.sequence < sequenceRef.current) return;
-      sequenceRef.current = snapshot.sequence;
-      setStates(snapshotMap(snapshot));
+    let sequence = -1;
+    let latest: ReadonlyMap<string, DesktopWindowState> = new Map();
+    const syncDocuments = (): void => {
+      for (const candidate of getAppWindows()) {
+        applyDocumentTier(candidate, latest.get(logicalWindowName(candidate)));
+      }
     };
+    const accept = (snapshot: DesktopWindowStatesSnapshot): void => {
+      if (!alive || snapshot.sequence <= sequence) return;
+      sequence = snapshot.sequence;
+      latest = snapshotMap(snapshot);
+      // Document animations follow accepted native state immediately. Waiting
+      // for a React commit/effect can leave a busy, focused window paused.
+      syncDocuments();
+      setStates(latest);
+    };
+    const unsubscribe = desktop.onWindowStatesChanged(accept);
+    const unsubscribeWindows = subscribeAuxiliaryWindows(syncDocuments);
     void desktop.getWindowStates().then((snapshot) => {
       if (snapshot) accept(snapshot);
     }).catch(() => undefined);
-    const unsubscribe = desktop.onWindowStatesChanged(accept);
     return () => {
       alive = false;
       unsubscribe();
+      unsubscribeWindows();
     };
   }, []);
 
-  useEffect(() => {
-    const sync = (): void => {
-      for (const candidate of getAppWindows()) {
-        applyDocumentTier(candidate, states.get(logicalWindowName(candidate)));
-      }
-    };
-    sync();
-    return subscribeAuxiliaryWindows(sync);
-  }, [states]);
-
-  const value = useMemo(() => states, [states]);
   return (
-    <DesktopWindowLifecycleContext.Provider value={value}>
+    <DesktopWindowLifecycleContext.Provider value={states}>
       {children}
     </DesktopWindowLifecycleContext.Provider>
   );

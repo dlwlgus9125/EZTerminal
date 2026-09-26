@@ -101,6 +101,9 @@ Main과 모든 Dockview popout은 main process가 발행하는 하나의 native-
 
 - 보이는 unfocused 창은 시간이 지나도 `parked`로 내려가지 않는다. 사용자가 여러 창을
   나란히 관찰할 때 출력 surface가 사라져서는 안 된다.
+- 포커스만 바뀌는 `active` ↔ `passive` 전환에서는 기존 WebGL renderer를 유지한다.
+  Document 효과의 pause/resume은 native snapshot 수신 즉시 적용하여 React commit을
+  기다리지 않는다. 같은 background throttling 값을 native widget에 반복 적용하지 않는다.
 - 숨김·최소화가 [`RUNTIME_PARK_GRACE_MS`](../../src/shared/runtime-lifecycle.ts)를 넘으면
   xterm identity와 viewport·selection을 그대로 유지하면서 WebGL, cursor, animation을 끄고
   scrollback을 1,000줄로 줄이며 write를 4Hz로 합친다. 반복 dispose/recreate는 Chromium

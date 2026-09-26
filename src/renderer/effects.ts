@@ -103,6 +103,22 @@ function writeEffectAttributes(active: ReadonlySet<EffectId>): void {
       document.documentElement.removeAttribute(attr);
     }
   }
+  syncFlickerOverlay(document);
+}
+
+/** A decoration sibling keeps flicker out of the app's compositing subtree.
+ * Also called when the main document's effect attributes reach a popout. */
+export function syncFlickerOverlay(target: Document): void {
+  const existing = target.getElementById('ez-fx-flicker');
+  if (target.documentElement.dataset.effectFlicker !== 'on') {
+    existing?.remove();
+    return;
+  }
+  if (existing || !target.body) return;
+  const overlay = target.createElement('div');
+  overlay.id = 'ez-fx-flicker';
+  overlay.setAttribute('aria-hidden', 'true');
+  target.body.appendChild(overlay);
 }
 
 function effectiveEffectsForMotionPreference(active: ReadonlySet<EffectId>): Set<EffectId> {

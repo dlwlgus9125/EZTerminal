@@ -109,6 +109,20 @@ describe('resolveActiveEffects — gating truth table', () => {
 });
 
 describe('applyEffects', () => {
+  it('owns one non-interactive flicker sibling and removes it when motion is disabled', () => {
+    applyEffects(new Set(['flicker']));
+    const overlay = document.getElementById('ez-fx-flicker');
+    expect(overlay?.parentElement).toBe(document.body);
+    expect(overlay?.getAttribute('aria-hidden')).toBe('true');
+    applyEffects(new Set(['flicker', 'scanlines']));
+    expect(document.getElementById('ez-fx-flicker')).toBe(overlay);
+    applyEffectIntensity(0);
+    expect(document.getElementById('ez-fx-flicker')).toBeNull();
+    applyEffectIntensity(7);
+    expect(document.getElementById('ez-fx-flicker')).not.toBeNull();
+    applyEffects(new Set());
+    expect(document.getElementById('ez-fx-flicker')).toBeNull();
+  });
   it('sets data-effect-<id>=on for active effects and removes it for inactive ones', () => {
     applyEffects(new Set(['scanlines', 'flicker']));
     expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
@@ -182,6 +196,7 @@ describe('applyEffects', () => {
     for (const id of MOVING_EFFECT_IDS) {
       expect(document.documentElement.getAttribute(`data-effect-${id}`), id).toBeNull();
     }
+    expect(document.getElementById('ez-fx-flicker')).toBeNull();
 
     Object.defineProperty(mediaQuery, 'matches', { configurable: true, value: false });
     changeListener?.();

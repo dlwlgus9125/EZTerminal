@@ -139,6 +139,7 @@
   --ui-z-base: 0;
   --ui-z-sticky: 100;
   --ui-z-sidebar-scrim: 200;
+  --ui-z-decoration: 202;
   --ui-z-sidebar: 300;
   --ui-z-dropdown: 400;
   --ui-z-popover: 500;
