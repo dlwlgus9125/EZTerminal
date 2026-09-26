@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -78,11 +78,11 @@ function renderDraft(options: {
   readonly contextWorkspaceId?: string;
   readonly agentRecoveryStatus?: MobileAgentCreateRecoveryStatus;
   readonly locale?: 'en' | 'ko';
-  readonly onCreateAgent?: ReturnType<typeof vi.fn>;
-  readonly onCreateTerminal?: ReturnType<typeof vi.fn>;
-  readonly onCreateLocalTerminal?: ReturnType<typeof vi.fn>;
-  readonly onRetryAgentRecovery?: ReturnType<typeof vi.fn>;
-  readonly onDiscardAgentRecovery?: ReturnType<typeof vi.fn>;
+  readonly onCreateAgent?: ComponentProps<typeof MobileNewSessionDraft>['onCreateAgent'];
+  readonly onCreateTerminal?: ComponentProps<typeof MobileNewSessionDraft>['onCreateTerminal'];
+  readonly onCreateLocalTerminal?: ComponentProps<typeof MobileNewSessionDraft>['onCreateLocalTerminal'];
+  readonly onRetryAgentRecovery?: ComponentProps<typeof MobileNewSessionDraft>['onRetryAgentRecovery'];
+  readonly onDiscardAgentRecovery?: ComponentProps<typeof MobileNewSessionDraft>['onDiscardAgentRecovery'];
 } = {}): void {
   const locale = options.locale ?? 'en';
   act(() => root.render(
