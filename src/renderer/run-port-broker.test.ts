@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
   RunPortBroker,
@@ -9,7 +9,7 @@ import {
 } from './run-port-broker';
 
 interface TestPort extends MessagePort {
-  readonly close: ReturnType<typeof vi.fn>;
+  readonly close: Mock<MessagePort['close']>;
 }
 
 function testPort(): TestPort {

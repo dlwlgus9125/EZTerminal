@@ -5,7 +5,7 @@
  * serialized within a session (B4), and sessions are isolated (own cwd/env/vars/history).
  */
 
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi, type Mock } from 'vitest';
 
 import { evaluate, parse } from './core';
 import type { EvalContext } from './core';
@@ -25,8 +25,8 @@ function ctxOf(shell: ShellSession): EvalContext {
 }
 
 /** A fake execution the registry can track + tear down without real ports. */
-function fakeExecution(): Execution & { abort: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> } {
-  return { abort: vi.fn(), dispose: vi.fn() };
+function fakeExecution(): { abort: Mock<Execution['abort']>; dispose: Mock<Execution['dispose']> } {
+  return { abort: vi.fn<Execution['abort']>(), dispose: vi.fn<Execution['dispose']>() };
 }
 
 describe('SessionRegistry — create / get', () => {

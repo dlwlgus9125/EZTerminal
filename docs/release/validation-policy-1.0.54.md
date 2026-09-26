@@ -20,6 +20,22 @@ desktop/mobile type checks and lint, repeated unit tests, dependency audits,
 Rust quality checks, Android API 29/35 instrumentation, Storybook interaction,
 accessibility and visual tests, desktop E2E and packaged-app smoke.
 
+The first publication attempt stopped at the Rust dependency audit. The locked
+TLS dependencies are updated to rustls 0.23.45 / rustls-webpki 0.103.15 for
+RUSTSEC-2026-0285. The accompanying JavaScript audit also required js-yaml 4.3.2
+(GHSA-2883-xcg3-v3hh) and Vitest 4.1.11 (GHSA-82fw-gwwq-j7x9). The Storybook browser
+provider and mock function types follow Vitest's supported API; the complete
+functional gates must pass with these dependencies before public promotion.
+
+The refreshed desktop tests reproduced a Windows node-pty startup/exit race:
+a resize queued before native readiness could throw later while processing
+first output, outside the adapter's synchronous exception guard. The adapter
+now retains only the latest pending size, applies it after native readiness,
+and drops it when termination begins. Three adapter regressions were observed
+failing before the fix; the original interpreter-process suite exercises the
+real ConPTY path. This exception is not evidence of the full-window blackout's
+root cause.
+
 Android assembly uses production assets and the existing protected long-term
 signing key. Staging verifies package identity, certificate, embedded source SHA,
 Windows signing policy, SBOM and checksums. The tag workflow creates a draft only

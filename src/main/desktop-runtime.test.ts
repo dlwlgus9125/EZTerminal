@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import type {
   RemoteDesktopHostStatus,
@@ -108,12 +108,12 @@ function tokenStore(): DesktopRuntimeTokenStore {
 }
 
 function presentation(): DesktopStatusPresentation & {
-  update: ReturnType<typeof vi.fn>;
-  destroy: ReturnType<typeof vi.fn>;
+  update: Mock<DesktopStatusPresentation['update']>;
+  destroy: Mock<DesktopStatusPresentation['destroy']>;
 } {
   return {
-    update: vi.fn(),
-    destroy: vi.fn(),
+    update: vi.fn<DesktopStatusPresentation['update']>(),
+    destroy: vi.fn<DesktopStatusPresentation['destroy']>(),
   };
 }
 

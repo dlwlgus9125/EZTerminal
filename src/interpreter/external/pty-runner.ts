@@ -137,6 +137,7 @@ export function runPty(
   // `IPty` omits EventEmitter methods from its declaration, but every node-pty
   // Terminal implementation exposes `on` at runtime (Terminal.prototype.on).
   const errorAwareProc = proc as IPty & {
+    _isReady?: boolean;
     on?: (eventName: string, listener: (error: NodeJS.ErrnoException) => void) => void;
     _agent?: {
       inSocket?: {
@@ -158,12 +159,14 @@ export function runPty(
   // Tracks whether the child has already exited, so killOnce's taskkill
   // fallback timer (below) knows not to fire a redundant proc.kill().
   let exited = false;
+  let pendingResize: { cols: number; rows: number } | null = null;
   let resolveExited!: () => void;
   const exitedPromise = new Promise<void>((resolve) => {
     resolveExited = resolve;
   });
   proc.onExit(() => {
     exited = true;
+    pendingResize = null;
     resolveExited();
   });
 
@@ -179,6 +182,7 @@ export function runPty(
   const killOnce = (): Promise<void> => {
     if (exited) return Promise.resolve();
     if (killPromise) return killPromise;
+    pendingResize = null;
     killPromise = (async () => {
       try {
         // Resume before kill so final buffered output can reach the exit path.
@@ -214,6 +218,33 @@ export function runPty(
     return killPromise;
   };
 
+  const resizeReadyPty = (cols: number, rows: number): void => {
+    if (exited || killPromise) return;
+    try {
+      proc.resize(cols, rows);
+    } catch (error) {
+      // Native exit can precede the public onExit callback.
+      if (error instanceof Error
+        && error.message === 'Cannot resize a pty that has already exited') return;
+      throw error;
+    }
+  };
+  let resizeFlushQueued = false;
+  proc.onData(() => {
+    if (!pendingResize || resizeFlushQueued) return;
+    resizeFlushQueued = true;
+    // WindowsTerminal marks readiness after forwarding its first data event.
+    // Own the pending size until that callback finishes: its internal deferred
+    // queue otherwise resizes after native exit, outside our try/catch.
+    queueMicrotask(() => {
+      resizeFlushQueued = false;
+      if (!pendingResize || errorAwareProc._isReady === false) return;
+      const { cols, rows } = pendingResize;
+      pendingResize = null;
+      resizeReadyPty(cols, rows);
+    });
+  });
+
   if (options.signal.aborted) void killOnce();
   else options.signal.addEventListener('abort', () => { void killOnce(); }, { once: true });
 
@@ -229,22 +260,13 @@ export function runPty(
       proc.write(data);
     },
     resize(cols, rows) {
-      try {
-        proc.resize(cols, rows);
-      } catch (error) {
-        // Bundled ConPTY can mark the native agent exited just before its
-        // public onExit event reaches us. A late xterm fit/ResizeObserver call
-        // in that window is a harmless stale resize, not an interpreter-fatal
-        // programming error.
-        if (
-          exited
-          || (error instanceof Error
-            && error.message === 'Cannot resize a pty that has already exited')
-        ) {
-          return;
-        }
-        throw error;
+      if (exited || killPromise) return;
+      if (errorAwareProc._isReady === false) {
+        pendingResize = { cols, rows };
+        return;
       }
+      pendingResize = null;
+      resizeReadyPty(cols, rows);
     },
     pause() {
       proc.pause();

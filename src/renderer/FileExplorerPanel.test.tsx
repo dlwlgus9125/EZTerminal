@@ -2,7 +2,7 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { EzTerminalApi } from '../shared/ipc';
 import type { FileEntry, FileListResult } from '../shared/files';
@@ -23,7 +23,7 @@ let readFilePreview: ReturnType<typeof vi.fn>;
 let openFileInApp: ReturnType<typeof vi.fn>;
 let revealFileInExplorer: ReturnType<typeof vi.fn>;
 let clipboardWrite: ReturnType<typeof vi.fn>;
-let onOpenTerminalAt: ReturnType<typeof vi.fn>;
+let onOpenTerminalAt: Mock<(dirPath: string) => void>;
 let gitStatus: ReturnType<typeof vi.fn>;
 let capabilities: CapabilityAccess;
 
@@ -114,7 +114,7 @@ beforeEach(() => {
   readFilePreview = vi.fn();
   openFileInApp = vi.fn(async () => undefined);
   revealFileInExplorer = vi.fn(async () => undefined);
-  onOpenTerminalAt = vi.fn();
+  onOpenTerminalAt = vi.fn<(dirPath: string) => void>();
   gitStatus = vi.fn(async () => EMPTY_GIT_DIRECTORY_STATUS);
   const core = {
     getGitStatus: gitStatus,

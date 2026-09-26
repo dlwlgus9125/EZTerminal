@@ -1,6 +1,6 @@
 import http from 'node:http';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { AgentActivity } from '../shared/agent';
 import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
@@ -112,7 +112,7 @@ function nativeServer(control: AgentControlServer): http.Server {
 function fixture(): {
   readonly server: AgentControlServer;
   readonly coordination: {
-    getSnapshot: ReturnType<typeof vi.fn>;
+    getSnapshot: Mock<() => AgentCoordinationSnapshot>;
     resolveActivity: ReturnType<typeof vi.fn>;
     read: ReturnType<typeof vi.fn>;
     prompt: ReturnType<typeof vi.fn>;
@@ -133,7 +133,7 @@ function fixture(): {
     readonly reportWorker: ReturnType<typeof vi.fn>;
   };
   readonly daemon: {
-    readonly getSnapshot: ReturnType<typeof vi.fn>;
+    readonly getSnapshot: Mock<() => DaemonSnapshot>;
     readonly execute: ReturnType<typeof vi.fn>;
   };
   readonly setSnapshot: (snapshot: AgentCoordinationSnapshot) => void;

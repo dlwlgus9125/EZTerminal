@@ -15,12 +15,13 @@ function makeFakeKillTree() {
 }
 
 /** A fake node-pty IPty that records calls and lets the test drive data/exit. */
-function makeFakeIPty() {
+function makeFakeIPty(deferResizeUntilData = false) {
   const dataListeners: Array<(d: unknown) => void> = [];
   const exitListeners: Array<(e: { exitCode: number }) => void> = [];
   const errorListeners: Array<(e: NodeJS.ErrnoException) => void> = [];
   const inputSocketErrorListeners: Array<(e: NodeJS.ErrnoException) => void> = [];
   let resizeError: Error | null = null;
+  const deferredResizes: Array<() => void> = [];
   // Mirrors node-pty's WindowsTerminal listener: recoverable output-socket
   // errors are re-thrown unless the consumer installed its own error listener.
   errorListeners.push((error) => {
@@ -35,6 +36,7 @@ function makeFakeIPty() {
     killed: 0,
   };
   const ipty = {
+    _isReady: deferResizeUntilData ? false : undefined,
     pid: 1,
     cols: 80,
     rows: 24,
@@ -62,6 +64,10 @@ function makeFakeIPty() {
       calls.writes.push(d);
     },
     resize: (c: number, r: number) => {
+      if (ipty._isReady === false) {
+        deferredResizes.push(() => ipty.resize(c, r));
+        return;
+      }
       if (resizeError) throw resizeError;
       calls.resizes.push([c, r]);
     },
@@ -83,7 +89,13 @@ function makeFakeIPty() {
     spawn,
     calls,
     ipty,
-    emitData: (d: unknown) => dataListeners.forEach((l) => l(d)),
+    emitData: (d: unknown) => {
+      dataListeners.forEach((l) => l(d));
+      if (ipty._isReady === false) {
+        ipty._isReady = true;
+        for (const resize of deferredResizes.splice(0)) resize();
+      }
+    },
     emitExit: (code: number) => exitListeners.forEach((l) => l({ exitCode: code })),
     emitError: (error: NodeJS.ErrnoException) => errorListeners.forEach((l) => l(error)),
     emitInputSocketError: (error: NodeJS.ErrnoException) => {
@@ -146,6 +158,47 @@ describe('runPty (node-pty adapter)', () => {
     fake.failResizeWith(new Error('Cannot resize a pty that has already exited'));
 
     expect(() => handle.resize(120, 40)).not.toThrow();
+  });
+
+  it('keeps startup resize out of the native deferred queue when exit precedes first output', async () => {
+    const fake = makeFakeIPty(true);
+    const handle = runPty('node', ptyArgv([]), emptyOpts(), fake.spawn);
+    handle.resize(120, 40);
+    fake.failResizeWith(new Error('Cannot resize a pty that has already exited'));
+
+    // WindowsTerminal drains its deferred queue after forwarding first data;
+    // a surrounding try/catch at the original resize call cannot catch this.
+    expect(() => fake.emitData('last output')).not.toThrow();
+    await Promise.resolve();
+    expect(fake.calls.resizes).toEqual([]);
+    fake.emitExit(0);
+  });
+
+  it('applies only the latest startup size after native readiness', async () => {
+    const fake = makeFakeIPty(true);
+    const handle = runPty('node', ptyArgv([]), emptyOpts(), fake.spawn);
+    handle.resize(100, 30);
+    handle.resize(120, 40);
+    fake.emitData('ready');
+    await Promise.resolve();
+
+    expect(fake.calls.resizes).toEqual([[120, 40]]);
+    handle.resize(140, 50);
+    expect(fake.calls.resizes).toEqual([[120, 40], [140, 50]]);
+    fake.emitExit(0);
+  });
+
+  it('drops startup resize when termination starts before first output', async () => {
+    const fake = makeFakeIPty(true);
+    const fakeKill = makeFakeKillTree();
+    const handle = runPty('node', ptyArgv([]), emptyOpts(), fake.spawn, fakeKill.killTree);
+    handle.resize(120, 40);
+    const killed = handle.kill();
+    fake.emitData('last output');
+    fake.emitExit(0);
+    await killed;
+
+    expect(fake.calls.resizes).toEqual([]);
   });
 
   it('write/resize delegate to the IPty; kill terminates via killTree, not proc.kill() directly (Windows crash workaround)', () => {

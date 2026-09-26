@@ -12,6 +12,13 @@
   only after a hidden surface enters the parked state.
 - Apply native window animation state before React commits, and avoid
   reapplying unchanged background throttling settings to Chromium.
+- Prevent a pending Windows terminal resize from escaping the exit guard when
+  the process terminates before its first output.
+
+### Security
+
+- Update rustls, js-yaml and Vitest to patched versions required by the release
+  dependency audits; migrate the Storybook browser provider to Vitest 4.
 
 ## [1.0.53] - 2026-09-08
 
