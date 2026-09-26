@@ -14,6 +14,8 @@
   reapplying unchanged background throttling settings to Chromium.
 - Prevent a pending Windows terminal resize from escaping the exit guard when
   the process terminates before its first output.
+- Prevent a pending mobile Agent snapshot read from overwriting the new desktop
+  state after reconnection.
 
 ### Security
 

@@ -140,14 +140,14 @@ function daemonSnapshot(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapshot
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-function renderWorkspace(
+async function renderWorkspace(
   transport: WsEzTerminalTransport,
   agentCreateRecoveryStore?: MobileAgentCreateRecoveryStoreLike,
-): HTMLDivElement {
+): Promise<HTMLDivElement> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => {
+  await act(async () => {
     root!.render(
       <MobileWorkspace
         transport={transport}
@@ -159,17 +159,17 @@ function renderWorkspace(
   return container;
 }
 
-function tap(el: HTMLElement, testId: string): void {
+async function tap(el: HTMLElement, testId: string): Promise<void> {
   const target = el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
   if (!target) throw new Error(`missing [data-testid="${testId}"]`);
-  act(() => target.click());
+  await act(async () => target.click());
 }
 
-function changeSelect(el: HTMLElement, testId: string, value: string): void {
+async function changeSelect(el: HTMLElement, testId: string, value: string): Promise<void> {
   const select = el.querySelector<HTMLSelectElement>(`[data-testid="${testId}"]`);
   if (!select) throw new Error(`missing select [data-testid="${testId}"]`);
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
-  act(() => {
+  await act(async () => {
     setter.call(select, value);
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
@@ -218,16 +218,16 @@ async function waitForTestIdToDisappear(
 
 /** The More sheet renders in the overlay host, outside `container`'s page
  * shell but inside the same React tree — query the document for it. */
-function openMoreSheet(el: HTMLElement): void {
-  tap(el, 'shell-tab-more');
+async function openMoreSheet(el: HTMLElement): Promise<void> {
+  await tap(el, 'shell-tab-more');
 }
 
 beforeEach(() => {
   localStorage.clear();
 });
 
-afterEach(() => {
-  if (root) act(() => root!.unmount());
+afterEach(async () => {
+  if (root) await act(async () => root!.unmount());
   root = null;
   container?.remove();
   container = null;
@@ -236,10 +236,10 @@ afterEach(() => {
 });
 
 describe('MobileWorkspace — tab-bar shell root', () => {
-  it('lands on Terminal with every existing top-level capability reachable', () => {
+  it('lands on Terminal with every existing top-level capability reachable', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
+    const el = await renderWorkspace(transport);
 
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
@@ -254,7 +254,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
     }
 
-    openMoreSheet(el);
+    await openMoreSheet(el);
     for (const testId of ['more-sessions', 'more-files', 'more-stats', 'more-theme', 'more-settings']) {
       expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
     }
@@ -264,10 +264,10 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
   });
 
-  it('keeps PC Control idle on arrival even when the host advertises support', () => {
+  it('keeps PC Control idle on arrival even when the host advertises support', async () => {
     const { transport, socket } = makeAuthedTransport(['desktop-control-v1']);
-    const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-home');
+    const el = await renderWorkspace(transport);
+    await tap(el, 'shell-tab-home');
 
     expect(el.querySelector<HTMLButtonElement>('[data-testid="home-pc-control"]')?.disabled).toBe(false);
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
@@ -275,8 +275,8 @@ describe('MobileWorkspace — tab-bar shell root', () => {
 
   it('lists live sessions on Home without opening Monitor', async () => {
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-home');
+    const el = await renderWorkspace(transport);
+    await tap(el, 'shell-tab-home');
     expect(el.querySelectorAll('[data-testid="home-session-row"]')).toHaveLength(0);
     expect(el.querySelector('[data-testid="home-sessions-empty"]')).toBeTruthy();
 
@@ -296,10 +296,10 @@ describe('MobileWorkspace — tab-bar shell root', () => {
 
   it('replays session deltas that arrive while the initial snapshot is in flight', async () => {
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-home');
+    const el = await renderWorkspace(transport);
+    await tap(el, 'shell-tab-home');
 
-    act(() => {
+    await act(async () => {
       socket.triggerMessage({
         kind: 'session-added',
         session: { sessionId: 'session-new', cwd: '/new' },
@@ -317,10 +317,10 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(el.textContent).toContain('/new');
   });
 
-  it('opens the preserved terminal with a compact semantic header and returns Home', () => {
+  it('opens the preserved terminal with a compact semantic header and returns Home', async () => {
     const { transport } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-terminal');
+    const el = await renderWorkspace(transport);
+    await tap(el, 'shell-tab-terminal');
 
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
@@ -332,26 +332,26 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       expect(el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)?.getAttribute('aria-label')).toBe(label);
     }
 
-    tap(el, 'workspace-hub-btn');
+    await tap(el, 'workspace-hub-btn');
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
   });
 
   it('routes to the Agents tab and back to Terminal without unmounting the terminal', async () => {
     const { transport } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
+    const el = await renderWorkspace(transport);
 
-    tap(el, 'shell-tab-agents');
+    await tap(el, 'shell-tab-agents');
     await waitForTestId(el, 'mobile-agent-view');
     expect(el.querySelector('[data-testid="mobile-agent-view"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
 
-    tap(el, 'mobile-agent-close');
+    await tap(el, 'mobile-agent-close');
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
   });
 
-  it('replaces a stale agent snapshot with the authoritative seed after desktop restart', () => {
+  it('replaces a stale agent snapshot with the authoritative seed after desktop restart', async () => {
     vi.useFakeTimers();
     try {
       const sockets: FakeSocket[] = [];
@@ -366,10 +366,10 @@ describe('MobileWorkspace — tab-bar shell root', () => {
         initialBackoffMs: 100,
       });
       sockets[0].triggerMessage({ kind: 'auth-ok' });
-      const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-home');
+      const el = await renderWorkspace(transport);
+      await tap(el, 'shell-tab-home');
 
-      act(() => {
+      await act(async () => {
         sockets[0].triggerMessage({
           kind: 'agent-snapshot',
           snapshot: {
@@ -393,7 +393,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       });
       expect(el.querySelector('[data-testid="home-agent-attention"]')).toBeTruthy();
 
-      act(() => {
+      await act(async () => {
         sockets[0].triggerClose();
         vi.advanceTimersByTime(100);
         sockets[1].triggerMessage({ kind: 'auth-ok' });
@@ -404,75 +404,75 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       });
 
       expect(el.querySelector('[data-testid="home-agent-attention"]')).toBeNull();
-      transport.disconnect();
+      await act(async () => transport.disconnect());
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('opens the session sheet from the terminal header', () => {
+  it('opens the session sheet from the terminal header', async () => {
     const { transport } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-terminal');
-    tap(el, 'menu-btn');
+    const el = await renderWorkspace(transport);
+    await tap(el, 'shell-tab-terminal');
+    await tap(el, 'menu-btn');
     expect(el.querySelector('[data-testid="mobile-session-sheet"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="session-sheet-create"]')).toBeTruthy();
   });
 
-  it('mode "on" shows OpenClaw in the More sheet regardless of availability', () => {
+  it('mode "on" shows OpenClaw in the More sheet regardless of availability', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    openMoreSheet(el);
+    const el = await renderWorkspace(transport);
+    await openMoreSheet(el);
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
   });
 
-  it('mode "off" hides OpenClaw even if availability is pushed true', () => {
+  it('mode "off" hides OpenClaw even if availability is pushed true', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
-    openMoreSheet(el);
+    const el = await renderWorkspace(transport);
+    await act(async () => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
+    await openMoreSheet(el);
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
   });
 
-  it('mode "auto" follows the availability push', () => {
+  it('mode "auto" follows the availability push', async () => {
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    openMoreSheet(el);
+    const el = await renderWorkspace(transport);
+    await openMoreSheet(el);
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
 
-    act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
+    await act(async () => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
 
-    act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: false }));
+    await act(async () => socket.triggerMessage({ kind: 'openclaw-availability', visible: false }));
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
   });
 
-  it('reflects the pushed OpenClaw status without opening its detailed page', () => {
+  it('reflects the pushed OpenClaw status without opening its detailed page', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    openMoreSheet(el);
+    const el = await renderWorkspace(transport);
+    await openMoreSheet(el);
     const state = (): string | null => (
       el.querySelector('[data-testid="more-openclaw-state"]')?.textContent ?? null
     );
     expect(state()).toBe('Checking');
-    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
+    await act(async () => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
     expect(state()).toBe('Running');
-    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } }));
+    await act(async () => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } }));
     expect(state()).toBe('Stopped');
   });
 
   it('surfaces the running gateway as a Home shortcut and opens the lazy page from it', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-    tap(el, 'shell-tab-home');
+    const el = await renderWorkspace(transport);
+    await tap(el, 'shell-tab-home');
     expect(el.querySelector('[data-testid="home-openclaw"]')).toBeNull();
 
-    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
-    tap(el, 'home-openclaw');
+    await act(async () => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
+    await tap(el, 'home-openclaw');
     expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
     await waitForTestId(el, 'mobile-openclaw-view');
     expect(el.querySelector('[data-testid="mobile-openclaw-view"]')).toBeTruthy();
@@ -483,25 +483,25 @@ describe('MobileWorkspace — background pause (openclaw-stabilization M6)', () 
   // jsdom's `document.visibilityState` is a read-only getter — shadow it
   // with an own property (per-test, reset in afterEach) to simulate the
   // Capacitor WebView backgrounding/foregrounding the app.
-  function setPageVisible(visible: boolean): void {
+  async function setPageVisible(visible: boolean): Promise<void> {
     Object.defineProperty(document, 'visibilityState', { value: visible ? 'visible' : 'hidden', configurable: true });
-    act(() => {
+    await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
   }
 
   afterEach(() => setPageVisible(true));
 
-  it('releases the entry-button status subscription while backgrounded and re-acquires it when foregrounded', () => {
+  it('releases the entry-button status subscription while backgrounded and re-acquires it when foregrounded', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
-    renderWorkspace(transport);
+    await renderWorkspace(transport);
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(1);
 
-    setPageVisible(false);
+    await setPageVisible(false);
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-unsubscribe')).toHaveLength(1);
 
-    setPageVisible(true);
+    await setPageVisible(true);
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
   });
 });
@@ -514,13 +514,13 @@ describe('MobileWorkspace — dead status subscription self-heals on availabilit
   // status effect's deps a desktop hidden->visible flip would never re-send
   // the subscribe — the entry dot would stay stuck forever. This asserts the
   // fix: a false->true availability push re-sends the subscribe.
-  it('mode "on": a false->true availability push re-sends openclaw-status-subscribe', () => {
+  it('mode "on": a false->true availability push re-sends openclaw-status-subscribe', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
-    renderWorkspace(transport);
+    await renderWorkspace(transport);
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(1);
 
-    act(() => {
+    await act(async () => {
       socket.triggerMessage({ kind: 'openclaw-availability', visible: true });
     });
 
@@ -541,7 +541,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
       clear: vi.fn(async () => undefined),
     };
 
-    renderWorkspace(transport, store);
+    await renderWorkspace(transport, store);
     await flushAsync();
 
     const issuedFingerprint = await mobileAgentCreateAuthorityFingerprint(issuedBearer);
@@ -578,15 +578,15 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
       clear: vi.fn(async () => undefined),
     };
 
-    const el = renderWorkspace(transport, store);
-    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    const el = await renderWorkspace(transport, store);
+    await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
-    tap(el, 'shell-tab-agents');
+    await tap(el, 'shell-tab-agents');
     await waitForTestId(el, 'mobile-agent-new-session');
-    tap(el, 'mobile-agent-new-session');
+    await tap(el, 'mobile-agent-new-session');
     await waitForTestId(el, 'mobile-new-session-recovery-retry');
 
-    tap(el, 'mobile-new-session-recovery-retry');
+    await tap(el, 'mobile-new-session-recovery-retry');
     await flushAsync();
     expect(store.load).toHaveBeenCalledTimes(1);
     expect(el.querySelector('[data-testid="mobile-new-session-recovery-status"]')).not.toBeNull();
@@ -611,16 +611,16 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
       clear,
     };
 
-    const el = renderWorkspace(transport, store);
-    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    const el = await renderWorkspace(transport, store);
+    await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
-    tap(el, 'shell-tab-agents');
+    await tap(el, 'shell-tab-agents');
     await waitForTestId(el, 'mobile-agent-new-session');
-    tap(el, 'mobile-agent-new-session');
+    await tap(el, 'mobile-agent-new-session');
     await waitForTestId(el, 'mobile-new-session-recovery-discard');
-    tap(el, 'mobile-new-session-recovery-discard');
+    await tap(el, 'mobile-new-session-recovery-discard');
     const confirm = await waitForTestId(document.body, 'mobile-new-session-recovery-discard-confirm');
-    act(() => confirm.click());
+    await act(async () => confirm.click());
     await flushAsync();
 
     const expectedFingerprint = await mobileAgentCreateAuthorityFingerprint('desktop-corrupt-token');
@@ -691,16 +691,16 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
       };
     });
 
-    let el = renderWorkspace(transport, new MobileAgentCreateRecoveryStore(secure));
-    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
-    tap(el, 'shell-tab-agents');
+    let el = await renderWorkspace(transport, new MobileAgentCreateRecoveryStore(secure));
+    await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    await tap(el, 'shell-tab-agents');
     await waitForTestId(el, 'mobile-agent-new-session');
-    tap(el, 'mobile-agent-new-session');
+    await tap(el, 'mobile-agent-new-session');
     await waitForTestId(el, 'mobile-new-session-draft');
-    changeSelect(el, 'mobile-new-session-project', 'project-agent');
-    changeSelect(el, 'mobile-new-session-workspace', 'workspace-agent');
+    await changeSelect(el, 'mobile-new-session-project', 'project-agent');
+    await changeSelect(el, 'mobile-new-session-workspace', 'workspace-agent');
     expect(el.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
-    tap(el, 'structured-agent-create');
+    await tap(el, 'structured-agent-create');
     await flushAsync();
 
     expect(send).toHaveBeenCalledOnce();
@@ -710,7 +710,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     expect(secure.values.size).toBe(1);
     await waitForTestId(el, 'mobile-new-session-delivery-recovery');
 
-    act(() => root!.unmount());
+    await act(async () => root!.unmount());
     root = null;
     container!.remove();
     container = null;
@@ -718,15 +718,15 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     const { transport: otherTransport, socket: otherSocket } = makeAuthedTransport([], 'desktop-b-token');
     vi.spyOn(otherTransport, 'getDaemonSnapshot').mockResolvedValue(authority);
     const otherSend = vi.spyOn(otherTransport, 'sendDaemonCommand');
-    el = renderWorkspace(otherTransport, new MobileAgentCreateRecoveryStore(secure));
-    act(() => otherSocket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    el = await renderWorkspace(otherTransport, new MobileAgentCreateRecoveryStore(secure));
+    await act(async () => otherSocket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
 
     expect(el.querySelector('[data-testid="mobile-new-session-draft"]')).toBeNull();
     expect(otherSend).not.toHaveBeenCalled();
     expect(secure.values.size).toBe(1);
 
-    act(() => root!.unmount());
+    await act(async () => root!.unmount());
     root = null;
     container!.remove();
     container = null;
@@ -739,8 +739,8 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
       loadedCommand = result.recovery?.outcome.command;
       return result;
     });
-    el = renderWorkspace(transport, remountedStore);
-    act(() => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    el = await renderWorkspace(transport, remountedStore);
+    await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await waitForTestId(el, 'mobile-new-session-draft');
 
     expect(el.querySelector('[data-testid="mobile-new-session-locked-workspace"]')?.textContent)
@@ -748,7 +748,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     expect(el.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
     expect(el.querySelector('[data-testid="structured-agent-recovery-prompt"]')).toBeNull();
 
-    tap(el, 'structured-agent-create');
+    await tap(el, 'structured-agent-create');
     await flushAsync();
 
     expect(send).toHaveBeenCalledTimes(2);
@@ -790,16 +790,16 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
     el: HTMLDivElement,
     socket: FakeSocket,
   ): Promise<HTMLButtonElement> {
-    act(() => {
+    await act(async () => {
       socket.triggerMessage({
         kind: 'daemon-snapshot',
         snapshot: daemonSnapshot({ projects: [project], workspaces: [staleWorkspace] }),
       });
     });
-    tap(el, 'shell-tab-agents');
+    await tap(el, 'shell-tab-agents');
     await waitForTestId(el, 'mobile-daemon-navigator');
-    tap(el, 'mobile-daemon-project');
-    tap(el, 'mobile-daemon-workspace');
+    await tap(el, 'mobile-daemon-project');
+    await tap(el, 'mobile-daemon-workspace');
     return waitForTestId(el, 'mobile-daemon-create-session') as Promise<HTMLButtonElement>;
   }
 
@@ -827,7 +827,7 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
         role: 'owner',
       },
     }));
-    const el = renderWorkspace(transport);
+    const el = await renderWorkspace(transport);
     const openTerminal = await openWorkspaceTerminalAction(el, socket);
 
     await act(async () => {
@@ -853,7 +853,7 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
       workspaces: [staleWorkspace],
     }));
     const open = vi.spyOn(transport, 'openSessionSurface');
-    const el = renderWorkspace(transport);
+    const el = await renderWorkspace(transport);
     const openTerminal = await openWorkspaceTerminalAction(el, socket);
 
     await act(async () => {
@@ -879,7 +879,7 @@ describe('MobileWorkspace - previous work', () => {
       if (intent.kind !== 'adopt' || intent.sessionId === 'gone') throw new Error('gone');
       return { ok: true, binding: { surfaceId, bindingId: `binding-${intent.sessionId}`, session: { sessionId: intent.sessionId, cwd: `/${intent.sessionId}` }, role: 'adopted' } };
     });
-    const el = renderWorkspace(transport);
+    const el = await renderWorkspace(transport);
     await flushAsync();
     expect(open.mock.calls.map((call) => call[1])).toEqual([
       { kind: 'adopt', sessionId: 'one' }, { kind: 'adopt', sessionId: 'gone' }, { kind: 'adopt', sessionId: 'two' },
@@ -894,7 +894,7 @@ describe('MobileWorkspace - worktree open', () => {
   it('creates and selects a normal terminal tab rooted at the validated path', async () => {
     const { transport, socket } = makeAuthedTransport();
     Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
-    const el = renderWorkspace(transport);
+    const el = await renderWorkspace(transport);
     const worktree = {
       worktreeId: 'wt-1',
       repoId: 'repo-1',
@@ -908,7 +908,7 @@ describe('MobileWorkspace - worktree open', () => {
     } as const;
 
     let openPromise!: ReturnType<WsEzTerminalTransport['executeWorktree']>;
-    act(() => {
+    await act(async () => {
       openPromise = transport.executeWorktree({ action: 'open', cwd: '/repo', worktreeId: 'wt-1' });
     });
     const openRequest = socket.sent
@@ -966,9 +966,9 @@ describe('MobileWorkspace - worktree open', () => {
     expect(el.querySelector('[data-testid="workspace-more-btn"]')).toBeNull();
 
     Object.defineProperty(window, 'innerWidth', { value: 360, configurable: true });
-    act(() => window.dispatchEvent(new Event('resize')));
-    tap(el, 'workspace-hub-btn');
-    openMoreSheet(el);
+    await act(async () => window.dispatchEvent(new Event('resize')));
+    await tap(el, 'workspace-hub-btn');
+    await openMoreSheet(el);
     expect(el.querySelector('[data-testid="more-sessions"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="more-files"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="more-stats"]')).toBeTruthy();

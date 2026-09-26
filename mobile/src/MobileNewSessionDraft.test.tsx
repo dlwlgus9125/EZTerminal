@@ -55,10 +55,10 @@ function snapshot(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapshot {
 let container: HTMLDivElement;
 let root: Root;
 
-function changeSelect(testId: string, value: string): void {
+async function changeSelect(testId: string, value: string): Promise<void> {
   const select = container.querySelector<HTMLSelectElement>(`[data-testid="${testId}"]`)!;
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
-  act(() => {
+  await act(async () => {
     setter.call(select, value);
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
@@ -73,7 +73,7 @@ async function flush(): Promise<void> {
   });
 }
 
-function renderDraft(options: {
+async function renderDraft(options: {
   readonly state?: DaemonRuntimeViewState;
   readonly contextWorkspaceId?: string;
   readonly agentRecoveryStatus?: MobileAgentCreateRecoveryStatus;
@@ -83,9 +83,9 @@ function renderDraft(options: {
   readonly onCreateLocalTerminal?: ComponentProps<typeof MobileNewSessionDraft>['onCreateLocalTerminal'];
   readonly onRetryAgentRecovery?: ComponentProps<typeof MobileNewSessionDraft>['onRetryAgentRecovery'];
   readonly onDiscardAgentRecovery?: ComponentProps<typeof MobileNewSessionDraft>['onDiscardAgentRecovery'];
-} = {}): void {
+} = {}): Promise<void> {
   const locale = options.locale ?? 'en';
-  act(() => root.render(
+  await act(async () => root.render(
     <AppI18nProvider locale={locale} languages={[locale]}>
       <MobileNewSessionDraft
         state={options.state ?? { status: 'ready', snapshot: snapshot() }}
@@ -109,28 +109,28 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
-afterEach(() => {
-  act(() => root.unmount());
+afterEach(async () => {
+  await act(async () => root.unmount());
   container.remove();
 });
 
 describe('MobileNewSessionDraft', () => {
   it('offers a standalone terminal while structured daemon authority is unavailable', async () => {
     const onCreateLocalTerminal = vi.fn(async () => ({ ok: true as const }));
-    renderDraft({ state: { status: 'error', snapshot: null, error: 'invalid-snapshot' }, onCreateLocalTerminal });
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
-    changeSelect('mobile-new-session-project', 'local');
+    await renderDraft({ state: { status: 'error', snapshot: null, error: 'invalid-snapshot' }, onCreateLocalTerminal });
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
+    await changeSelect('mobile-new-session-project', 'local');
     const open = container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-open-terminal"]')!;
     expect(open.disabled).toBe(false);
     expect(onCreateLocalTerminal).not.toHaveBeenCalled();
-    act(() => { open.click(); open.click(); }); await flush();
+    await act(async () => { open.click(); open.click(); }); await flush();
     expect(onCreateLocalTerminal).toHaveBeenCalledOnce();
   });
   it('starts in Terminal mode and requires an explicit choice of app chat before Send', async () => {
     const onCreateAgent = vi.fn(async () => ({ ok: true as const }));
-    renderDraft({ onCreateAgent });
+    await renderDraft({ onCreateAgent });
     expect(container.querySelector('[data-testid="mobile-new-session-terminal"]')?.getAttribute('aria-pressed')).toBe('true');
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-agent"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-agent"]')!.click());
     expect(container.querySelector('[data-testid="mobile-new-session-conversation"]')).toBeNull();
 
     expect(container.querySelector('[data-testid="mobile-new-session-agent"]')?.getAttribute('aria-pressed'))
@@ -139,9 +139,9 @@ describe('MobileNewSessionDraft', () => {
     expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')?.disabled)
       .toBe(true);
 
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-main');
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-main');
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
     await flush();
 
     expect(onCreateAgent).toHaveBeenCalledWith({
@@ -153,7 +153,7 @@ describe('MobileNewSessionDraft', () => {
 
   it('opens Terminal at the selected Workspace without requiring a provider', async () => {
     const onCreateTerminal = vi.fn(async () => ({ ok: true as const }));
-    renderDraft({
+    await renderDraft({
       state: {
         status: 'ready',
         snapshot: snapshot({ providers: [] }),
@@ -161,12 +161,12 @@ describe('MobileNewSessionDraft', () => {
       onCreateTerminal,
     });
 
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-main');
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-main');
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
     const open = container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-open-terminal"]')!;
     expect(open.disabled).toBe(false);
-    act(() => open.click());
+    await act(async () => open.click());
     await flush();
 
     expect(onCreateTerminal).toHaveBeenCalledWith('workspace-main');
@@ -180,65 +180,65 @@ describe('MobileNewSessionDraft', () => {
   ])('disables only Agent creation while recovery is %s', async (status, message, role) => {
     const onCreateAgent = vi.fn(async () => ({ ok: true as const }));
     const onCreateTerminal = vi.fn(async () => ({ ok: true as const }));
-    renderDraft({ agentRecoveryStatus: status, onCreateAgent, onCreateTerminal });
+    await renderDraft({ agentRecoveryStatus: status, onCreateAgent, onCreateTerminal });
 
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-main');
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-main');
     expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')?.disabled)
       .toBe(true);
     const notice = container.querySelector('[data-testid="mobile-new-session-recovery-status"]');
     expect(notice?.getAttribute('role')).toBe(role);
     expect(notice?.textContent).toContain(message);
 
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
     const open = container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-open-terminal"]')!;
     expect(open.disabled).toBe(false);
-    act(() => open.click());
+    await act(async () => open.click());
     await flush();
 
     expect(onCreateAgent).not.toHaveBeenCalled();
     expect(onCreateTerminal).toHaveBeenCalledWith('workspace-main');
   });
 
-  it('localizes unavailable secure recovery without disabling Terminal', () => {
-    renderDraft({ agentRecoveryStatus: 'unavailable', locale: 'ko' });
+  it('localizes unavailable secure recovery without disabling Terminal', async () => {
+    await renderDraft({ agentRecoveryStatus: 'unavailable', locale: 'ko' });
 
     expect(container.querySelector('[data-testid="mobile-new-session-recovery-status"]')?.textContent)
       .toContain('안전한 Agent 복구 저장소를 사용할 수 없습니다');
     expect(container.textContent).toContain('Terminal 생성은 계속 사용할 수 있습니다');
   });
 
-  it('offers an explicit secure recovery retry only when storage is unavailable', () => {
+  it('offers an explicit secure recovery retry only when storage is unavailable', async () => {
     const onRetryAgentRecovery = vi.fn();
-    renderDraft({ agentRecoveryStatus: 'unavailable', onRetryAgentRecovery });
+    await renderDraft({ agentRecoveryStatus: 'unavailable', onRetryAgentRecovery });
 
     const retry = container.querySelector<HTMLButtonElement>(
       '[data-testid="mobile-new-session-recovery-retry"]',
     );
     expect(retry).toBeTruthy();
-    act(() => retry!.click());
+    await act(async () => retry!.click());
     expect(onRetryAgentRecovery).toHaveBeenCalledOnce();
 
-    renderDraft({ agentRecoveryStatus: 'loading', onRetryAgentRecovery });
+    await renderDraft({ agentRecoveryStatus: 'loading', onRetryAgentRecovery });
     expect(container.querySelector('[data-testid="mobile-new-session-recovery-retry"]')).toBeNull();
   });
 
-  it('requires confirmation before discarding an irrecoverable record', () => {
+  it('requires confirmation before discarding an irrecoverable record', async () => {
     const onDiscardAgentRecovery = vi.fn();
-    renderDraft({
+    await renderDraft({
       agentRecoveryStatus: 'invalid',
       onRetryAgentRecovery: vi.fn(),
       onDiscardAgentRecovery,
     });
 
-    act(() => container.querySelector<HTMLButtonElement>(
+    await act(async () => container.querySelector<HTMLButtonElement>(
       '[data-testid="mobile-new-session-recovery-discard"]',
     )!.click());
     const dialog = document.body.querySelector('[role="alertdialog"]');
     expect(dialog?.textContent).toContain('creating another Agent later could duplicate the work');
     expect(onDiscardAgentRecovery).not.toHaveBeenCalled();
 
-    act(() => document.body.querySelector<HTMLButtonElement>(
+    await act(async () => document.body.querySelector<HTMLButtonElement>(
       '[data-testid="mobile-new-session-recovery-discard-confirm"]',
     )!.click());
     expect(onDiscardAgentRecovery).toHaveBeenCalledOnce();
@@ -247,20 +247,20 @@ describe('MobileNewSessionDraft', () => {
 
   it('locks a contextual Workspace and keeps it across type changes', async () => {
     const onCreateTerminal = vi.fn(async () => ({ ok: true as const }));
-    renderDraft({ contextWorkspaceId: 'workspace-main', onCreateTerminal });
+    await renderDraft({ contextWorkspaceId: 'workspace-main', onCreateTerminal });
 
     expect(container.querySelector('[data-testid="mobile-new-session-project"]')).toBeNull();
     expect(container.querySelector('[data-testid="mobile-new-session-locked-workspace"]')?.textContent)
       .toContain('EZTerminal · Main checkout');
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-open-terminal"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-terminal"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mobile-new-session-open-terminal"]')!.click());
     await flush();
 
     expect(onCreateTerminal).toHaveBeenCalledWith('workspace-main');
   });
 
-  it('keeps creation disabled and explains terminal-only safe mode', () => {
-    renderDraft({
+  it('keeps creation disabled and explains terminal-only safe mode', async () => {
+    await renderDraft({
       state: {
         status: 'safe-mode',
         snapshot: null,

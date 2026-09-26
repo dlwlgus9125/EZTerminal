@@ -102,12 +102,12 @@ function daemonSnapshotOf(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapsh
   };
 }
 
-function clickButtonText(rootElement: ParentNode, text: string): void {
+async function clickButtonText(rootElement: ParentNode, text: string): Promise<void> {
   const button = Array.from(rootElement.querySelectorAll<HTMLButtonElement>('button')).find((candidate) => (
     candidate.textContent?.includes(text)
   ));
   if (!button) throw new Error(`Missing button: ${text}`);
-  act(() => button.click());
+  await act(async () => button.click());
 }
 
 function orchestrationWithWorker(activityId: string): AgentOrchestrationSnapshot {
@@ -139,8 +139,8 @@ function orchestrationWithWorker(activityId: string): AgentOrchestrationSnapshot
 let container: HTMLDivElement;
 let root: Root;
 
-function render(node: JSX.Element, locale: 'en' | 'ko' = 'en'): void {
-  act(() => root.render(
+async function render(node: JSX.Element, locale: 'en' | 'ko' = 'en'): Promise<void> {
+  await act(async () => root.render(
     <AppI18nProvider locale={locale} languages={[locale]}>
       <MobileNavigationHistoryProvider>
         {node}
@@ -153,10 +153,10 @@ function testIds(id: string): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`));
 }
 
-function changeSelect(testId: string, value: string): void {
+async function changeSelect(testId: string, value: string): Promise<void> {
   const select = testIds(testId)[0] as HTMLSelectElement;
   const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
-  act(() => {
+  await act(async () => {
     setValue.call(select, value);
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
@@ -193,8 +193,8 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
-afterEach(() => {
-  act(() => root.unmount());
+afterEach(async () => {
+  await act(async () => root.unmount());
   container.remove();
   vi.restoreAllMocks();
 });
@@ -207,8 +207,8 @@ describe('MobileAgentView', () => {
     agentCreateRecovery: readyRecoveryController(),
   };
 
-  it('keeps orchestration workers out of cards, counts, and direct composers', () => {
-    render(
+  it('keeps orchestration workers out of cards, counts, and direct composers', async () => {
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(
           activity('lead', 'idle', { interactiveReady: true }),
@@ -225,8 +225,8 @@ describe('MobileAgentView', () => {
     expect(container.textContent).not.toContain('C:/Workspace/worker');
   });
 
-  it('buckets every agent status into the four filters with counts', () => {
-    render(
+  it('buckets every agent status into the four filters with counts', async () => {
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(
           activity('a', 'blocked'),
@@ -248,8 +248,8 @@ describe('MobileAgentView', () => {
     expect(testIds('agent-attention-summary')[0]?.textContent).toContain('3');
   });
 
-  it('narrows the list to the selected bucket and back', () => {
-    render(
+  it('narrows the list to the selected bucket and back', async () => {
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('a', 'blocked'), activity('b', 'working'), activity('c', 'done'))}
         {...noop}
@@ -257,17 +257,17 @@ describe('MobileAgentView', () => {
     );
     expect(testIds('agent-card')).toHaveLength(3);
 
-    act(() => testIds('agent-filter-running')[0]!.click());
+    await act(async () => testIds('agent-filter-running')[0]!.click());
     const running = testIds('agent-card');
     expect(running).toHaveLength(1);
     expect(running[0]?.getAttribute('data-status')).toBe('working');
 
-    act(() => testIds('agent-filter-all')[0]!.click());
+    await act(async () => testIds('agent-filter-all')[0]!.click());
     expect(testIds('agent-card')).toHaveLength(3);
   });
 
-  it('orders attention ahead of running and history, blocked first within attention', () => {
-    render(
+  it('orders attention ahead of running and history, blocked first within attention', async () => {
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(
           activity('idle', 'idle'),
@@ -288,7 +288,7 @@ describe('MobileAgentView', () => {
       supportsAgentDirectLaunch: true,
       listAgentProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
     } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(
           activity('idle', 'idle'),
@@ -326,7 +326,7 @@ describe('MobileAgentView', () => {
     }));
     const transport = { sendDaemonCommand } as unknown as WsEzTerminalTransport;
     const onFocusSession = vi.fn();
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
@@ -336,15 +336,15 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    clickButtonText(container, 'EZTerminal');
-    clickButtonText(container, 'Main checkout');
-    clickButtonText(container, 'Structured mobile task');
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
     expect(onFocusSession).toHaveBeenCalledWith('structured-session-1');
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
 
     const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
+    await act(async () => {
       setValue.call(input, 'Continue directly');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
@@ -376,7 +376,7 @@ describe('MobileAgentView', () => {
     const prepare = vi.fn(async () => true);
     const clear = vi.fn(async () => true);
     const transport = { getDaemonSnapshot, sendDaemonCommand } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshotOf() }}
@@ -387,17 +387,17 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
     expect(testIds('mobile-new-session-draft')).toHaveLength(1);
     expect(testIds('mobile-new-session-agent')[0]?.getAttribute('aria-pressed')).toBe('true');
 
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
 
     expect(sendDaemonCommand).not.toHaveBeenCalled();
     expect(onCreateWorkspaceTerminal).not.toHaveBeenCalled();
 
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(sendDaemonCommand).toHaveBeenCalledOnce();
@@ -445,7 +445,7 @@ describe('MobileAgentView', () => {
       getDaemonSnapshot: vi.fn(async () => authority),
       sendDaemonCommand,
     } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: authority }}
@@ -456,10 +456,10 @@ describe('MobileAgentView', () => {
       locale,
     );
 
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(prepare).toHaveBeenCalledOnce();
@@ -474,7 +474,7 @@ describe('MobileAgentView', () => {
       sendDaemonCommand: vi.fn(),
     } as unknown as WsEzTerminalTransport;
     const onCreateWorkspaceTerminal = vi.fn(async () => ({ ok: false as const, reason: 'workspace-unavailable' as const }));
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: authority }}
@@ -484,9 +484,9 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    clickButtonText(container, 'EZTerminal');
-    clickButtonText(container, 'Main checkout');
-    act(() => testIds('mobile-daemon-create-session')[0]!.click());
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await act(async () => testIds('mobile-daemon-create-session')[0]!.click());
     await flush();
     expect(onCreateWorkspaceTerminal).toHaveBeenCalledWith('workspace-1');
     expect(testIds('mobile-new-session-draft')).toHaveLength(0);
@@ -529,7 +529,7 @@ describe('MobileAgentView', () => {
     const prepare = vi.fn(async () => true);
     const clear = vi.fn(async () => true);
     const transport = { getDaemonSnapshot, sendDaemonCommand } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshotOf() }}
@@ -539,11 +539,11 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
 
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(sendDaemonCommand).toHaveBeenCalledOnce();
@@ -553,7 +553,7 @@ describe('MobileAgentView', () => {
     expect(container.querySelector('[role="alert"]')?.textContent)
       .toContain('Delivery could not be confirmed');
 
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(sendDaemonCommand).toHaveBeenCalledTimes(2);
@@ -600,7 +600,7 @@ describe('MobileAgentView', () => {
       },
     }));
     const transport = { getDaemonSnapshot, sendDaemonCommand } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: freshSnapshot }}
@@ -609,14 +609,14 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
     const originalCommand = sendDaemonCommand.mock.calls[0]![0];
 
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(getDaemonSnapshot).toHaveBeenCalledTimes(2);
@@ -687,21 +687,21 @@ describe('MobileAgentView', () => {
       );
     }
 
-    render(<RecoveryHost />);
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await render(<RecoveryHost />);
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     const originalCommand = sendDaemonCommand.mock.calls[0]![0];
-    act(() => testIds('hide-agent-view')[0]!.click());
+    await act(async () => testIds('hide-agent-view')[0]!.click());
     expect(testIds('mobile-agent-view')).toHaveLength(0);
-    act(() => testIds('show-agent-view')[0]!.click());
+    await act(async () => testIds('show-agent-view')[0]!.click());
 
     expect(testIds('mobile-new-session-draft')).toHaveLength(1);
     expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(sendDaemonCommand).toHaveBeenCalledTimes(2);
@@ -772,12 +772,12 @@ describe('MobileAgentView', () => {
       );
     }
 
-    render(<LateRecoveryHost />);
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
+    await render(<LateRecoveryHost />);
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
     expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
     expect(testIds('structured-agent-first-prompt')).toHaveLength(0);
 
-    act(() => testIds('load-agent-recovery')[0]!.click());
+    await act(async () => testIds('load-agent-recovery')[0]!.click());
     await flush();
 
     expect((testIds('structured-agent-recovery-prompt')[0] as HTMLTextAreaElement).value)
@@ -789,7 +789,7 @@ describe('MobileAgentView', () => {
     expect(testIds('mobile-new-session-locked-workspace')[0]?.textContent)
       .toContain('EZTerminal · Main checkout');
 
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(sendDaemonCommand).toHaveBeenCalledOnce();
@@ -804,7 +804,7 @@ describe('MobileAgentView', () => {
       getDaemonSnapshot: vi.fn(async () => authority),
       sendDaemonCommand: vi.fn(),
     } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: authority }}
@@ -818,11 +818,11 @@ describe('MobileAgentView', () => {
       'ko',
     );
 
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
-    act(() => testIds('mobile-new-session-terminal')[0]!.click());
-    act(() => testIds('mobile-new-session-open-terminal')[0]!.click());
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await act(async () => testIds('mobile-new-session-terminal')[0]!.click());
+    await act(async () => testIds('mobile-new-session-open-terminal')[0]!.click());
     await flush();
 
     const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
@@ -868,7 +868,7 @@ describe('MobileAgentView', () => {
     const prepare = vi.fn(async () => true);
     const clear = vi.fn(async () => true);
     const transport = { getDaemonSnapshot, sendDaemonCommand } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: initialSnapshot }}
@@ -878,10 +878,10 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    act(() => testIds('mobile-agent-new-session')[0]!.click());
-    changeSelect('mobile-new-session-project', 'project-1');
-    changeSelect('mobile-new-session-workspace', 'workspace-1');
-    act(() => testIds('structured-agent-create')[0]!.click());
+    await act(async () => testIds('mobile-agent-new-session')[0]!.click());
+    await changeSelect('mobile-new-session-project', 'project-1');
+    await changeSelect('mobile-new-session-workspace', 'workspace-1');
+    await act(async () => testIds('structured-agent-create')[0]!.click());
     await flush();
 
     expect(sendDaemonCommand).toHaveBeenCalledTimes(2);
@@ -908,7 +908,7 @@ describe('MobileAgentView', () => {
       .toBe(staleCommand!.payload.sessionId);
   });
 
-  it('enters daemon-only archived history without exposing impossible mobile controls', () => {
+  it('enters daemon-only archived history without exposing impossible mobile controls', async () => {
     const base = daemonSnapshotOf();
     const archivedSession: DaemonSnapshot['sessions'][number] = {
       id: 'archived-pre-provider',
@@ -935,7 +935,7 @@ describe('MobileAgentView', () => {
       updatedAt: DAEMON_TIMESTAMP,
     };
     const onFocusSession = vi.fn();
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{
@@ -963,10 +963,10 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    clickButtonText(container, 'Archived');
-    clickButtonText(container, 'EZTerminal');
-    clickButtonText(container, 'Main checkout');
-    clickButtonText(container, 'Archived pre-provider failure');
+    await clickButtonText(container, 'Archived');
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Archived pre-provider failure');
 
     expect(onFocusSession).toHaveBeenCalledWith(archivedSession.id);
     expect(container.querySelector('[data-history-only="true"]')).not.toBeNull();
@@ -1020,7 +1020,7 @@ describe('MobileAgentView', () => {
     const daemonSnapshot = daemonSnapshotOf({
       transcriptHeads: [{ sessionId: 'structured-session-1', lastSequence: 3, itemCount: 3 }],
     });
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
@@ -1028,9 +1028,9 @@ describe('MobileAgentView', () => {
         {...noop}
       />,
     );
-    clickButtonText(container, 'EZTerminal');
-    clickButtonText(container, 'Main checkout');
-    clickButtonText(container, 'Structured mobile task');
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -1047,7 +1047,7 @@ describe('MobileAgentView', () => {
       kind: 'tool-result', text: 'Incremental mobile result', isDelta: false,
       isSensitive: false, createdAt: DAEMON_TIMESTAMP,
     });
-    act(() => daemonEventListener({
+    await act(async () => daemonEventListener({
       protocolVersion: 12,
       eventId: 'event-13',
       sequence: 13,
@@ -1064,7 +1064,7 @@ describe('MobileAgentView', () => {
     expect(getDaemonTranscript).toHaveBeenCalledWith('structured-session-1', 3, 500);
     expect(container.textContent).toContain('Incremental mobile result');
 
-    act(() => root.unmount());
+    await act(async () => root.unmount());
     expect(stopDaemonEvents).toHaveBeenCalledOnce();
     expect(setDaemonEventsSubscribed).toHaveBeenLastCalledWith(false);
     root = createRoot(container);
@@ -1163,10 +1163,10 @@ describe('MobileAgentView', () => {
         onFocusSession={onFocusSession}
       />
     );
-    render(view(firstSnapshot));
-    clickButtonText(container, 'EZTerminal');
-    clickButtonText(container, 'Main checkout');
-    clickButtonText(container, 'Structured mobile task');
+    await render(view(firstSnapshot));
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
 
     const childButtons = testIds('structured-agent-child');
     expect(childButtons).toHaveLength(2);
@@ -1178,7 +1178,7 @@ describe('MobileAgentView', () => {
     expect(container.textContent).not.toContain('Detached child');
     expect(container.textContent).not.toContain('Grandchild');
 
-    act(() => childButtons[0]!.click());
+    await act(async () => childButtons[0]!.click());
     expect(onFocusSession).toHaveBeenLastCalledWith('managed-child');
     expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(false);
     expect(testIds('structured-agent-cancel')).toHaveLength(1);
@@ -1200,7 +1200,7 @@ describe('MobileAgentView', () => {
     const stoppedSessions = sessions.map((session) => session.id === 'managed-child'
       ? { ...session, state: 'interrupted' as const }
       : session);
-    render(view(daemonSnapshotOf({
+    await render(view(daemonSnapshotOf({
       revision: 9,
       sessions: stoppedSessions,
       agents: stoppedAgents,
@@ -1223,7 +1223,7 @@ describe('MobileAgentView', () => {
     const detachedRelations = relations.map((relation) => relation.id === 'relation-managed'
       ? { ...relation, detachedAt: DAEMON_TIMESTAMP }
       : relation);
-    render(view(daemonSnapshotOf({
+    await render(view(daemonSnapshotOf({
       revision: 10,
       sessions: stoppedSessions,
       agents: stoppedAgents,
@@ -1247,7 +1247,7 @@ describe('MobileAgentView', () => {
     const archivedSessions = stoppedSessions.map((session) => session.id === 'managed-child'
       ? { ...session, state: 'archived' as const, archivedAt: DAEMON_TIMESTAMP }
       : session);
-    render(view(daemonSnapshotOf({
+    await render(view(daemonSnapshotOf({
       revision: 11,
       sessions: archivedSessions,
       agents: archivedAgents,
@@ -1258,7 +1258,7 @@ describe('MobileAgentView', () => {
     expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
   });
 
-  it('opens transcript-related provider-owned children through the same read-only session route', () => {
+  it('opens transcript-related provider-owned children through the same read-only session route', async () => {
     const base = daemonSnapshotOf();
     const childSession: DaemonSnapshot['sessions'][number] = {
       id: 'native-child', projectId: 'project-1', workspaceId: 'workspace-1',
@@ -1283,7 +1283,7 @@ describe('MobileAgentView', () => {
     });
     const transport = { sendDaemonCommand: vi.fn() } as unknown as WsEzTerminalTransport;
     const onFocusSession = vi.fn();
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
@@ -1305,10 +1305,10 @@ describe('MobileAgentView', () => {
         onFocusSession={onFocusSession}
       />,
     );
-    clickButtonText(container, 'EZTerminal');
-    clickButtonText(container, 'Main checkout');
-    clickButtonText(container, 'Structured mobile task');
-    clickButtonText(container, 'Open related session');
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
+    await clickButtonText(container, 'Open related session');
 
     expect(onFocusSession).toHaveBeenLastCalledWith('native-child');
     expect(container.querySelector('h1')?.textContent).toContain('Provider-owned child');
@@ -1317,7 +1317,7 @@ describe('MobileAgentView', () => {
     expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
   });
 
-  it('orders parked approvals first by risk, expiry, then recency', () => {
+  it('orders parked approvals first by risk, expiry, then recency', async () => {
     const approval = (
       approvalId: string,
       risk: 'danger' | 'write' | 'read',
@@ -1331,7 +1331,7 @@ describe('MobileAgentView', () => {
       requestedAt: NOW - 1_000,
       expiresAt,
     });
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(
           activity('none', 'blocked', { updatedAt: NOW }),
@@ -1356,21 +1356,21 @@ describe('MobileAgentView', () => {
       .toEqual(['danger', 'write', 'read-soon', 'read-late', 'none']);
   });
 
-  it('offers the follow-up composer only for a live, interactive done agent', () => {
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'blocked'))} {...noop} />);
+  it('offers the follow-up composer only for a live, interactive done agent', async () => {
+    await render(<MobileAgentView snapshot={snapshotOf(activity('a', 'blocked'))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(0);
 
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done'))} {...noop} />);
+    await render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done'))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(0);
 
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done', {
+    await render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done', {
       interactiveReady: true,
     }))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(1);
   });
 
-  it('uses host pending truth instead of the mobile wall clock', () => {
-    render(
+  it('uses host pending truth instead of the mobile wall clock', async () => {
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('pending', 'blocked', {
           approval: {
@@ -1388,7 +1388,7 @@ describe('MobileAgentView', () => {
     );
     expect(testIds('agent-approve')).toHaveLength(1);
 
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('released', 'blocked', {
           approval: {
@@ -1409,7 +1409,7 @@ describe('MobileAgentView', () => {
 
   it('sends a follow-up and clears the draft on success', async () => {
     const onSendFollowup = vi.fn(async () => ({ ok: true }) as const);
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('a', 'done', { interactiveReady: true }))}
         {...noop}
@@ -1419,7 +1419,7 @@ describe('MobileAgentView', () => {
 
     const input = testIds('agent-followup-input')[0] as HTMLInputElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
+    await act(async () => {
       setValue.call(input, 'continue please');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
@@ -1434,7 +1434,7 @@ describe('MobileAgentView', () => {
   });
 
   it('surfaces a delivery failure without clearing the draft', async () => {
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('a', 'done', { interactiveReady: true }))}
         {...noop}
@@ -1444,7 +1444,7 @@ describe('MobileAgentView', () => {
 
     const input = testIds('agent-followup-input')[0] as HTMLInputElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
+    await act(async () => {
       setValue.call(input, 'hello');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
@@ -1458,21 +1458,21 @@ describe('MobileAgentView', () => {
     expect((testIds('agent-followup-input')[0] as HTMLInputElement).value).toBe('hello');
   });
 
-  it('focuses the terminal session behind an attention card', () => {
+  it('focuses the terminal session behind an attention card', async () => {
     const onFocusSession = vi.fn();
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('a', 'blocked'))}
         {...noop}
         onFocusSession={onFocusSession}
       />,
     );
-    act(() => testIds('agent-focus')[0]!.click());
+    await act(async () => testIds('agent-focus')[0]!.click());
     expect(onFocusSession).toHaveBeenCalledWith('session-a');
   });
 
   it('shows diff truncation and omission reasons even when no text remains', async () => {
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('a', 'blocked', {
           approval: {
@@ -1521,7 +1521,7 @@ describe('MobileAgentView', () => {
         expiresAt: NOW + 30_000,
       },
     });
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(approval('first'), approval('second'))}
         {...noop}
@@ -1530,7 +1530,7 @@ describe('MobileAgentView', () => {
     );
 
     const buttons = testIds('agent-view-diff') as HTMLButtonElement[];
-    act(() => {
+    await act(async () => {
       buttons[0]!.click();
       buttons[1]!.click();
     });
@@ -1552,7 +1552,7 @@ describe('MobileAgentView', () => {
   it('does not reopen a closed diff after its request resolves', async () => {
     let resolveDiff!: (result: GitDiffResult) => void;
     const pending = new Promise<GitDiffResult>((resolve) => { resolveDiff = resolve; });
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf(activity('a', 'blocked', {
           approval: {
@@ -1569,9 +1569,9 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    act(() => testIds('agent-view-diff')[0]!.click());
+    await act(async () => testIds('agent-view-diff')[0]!.click());
     const sheet = testIds('mobile-agent-diff')[0]!;
-    act(() => {
+    await act(async () => {
       const buttons = sheet.querySelectorAll<HTMLButtonElement>('button');
       buttons[buttons.length - 1]!.click();
     });
@@ -1584,17 +1584,17 @@ describe('MobileAgentView', () => {
     expect(testIds('mobile-agent-diff')).toHaveLength(0);
   });
 
-  it('distinguishes an empty snapshot from an empty filter', () => {
-    render(<MobileAgentView snapshot={snapshotOf()} {...noop} />);
+  it('distinguishes an empty snapshot from an empty filter', async () => {
+    await render(<MobileAgentView snapshot={snapshotOf()} {...noop} />);
     expect(testIds('agent-empty')[0]?.textContent).toContain('No agent activity yet');
 
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'idle'))} {...noop} />);
-    act(() => testIds('agent-filter-attention')[0]!.click());
+    await render(<MobileAgentView snapshot={snapshotOf(activity('a', 'idle'))} {...noop} />);
+    await act(async () => testIds('agent-filter-attention')[0]!.click());
     expect(testIds('agent-empty')[0]?.textContent).toBe('No agents match this filter.');
   });
 
-  it('blocks follow-up while disconnected and says so', () => {
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done', {
+  it('blocks follow-up while disconnected and says so', async () => {
+    await render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done', {
       interactiveReady: true,
     }))} {...noop} disconnected />);
     expect((testIds('agent-followup-input')[0] as HTMLInputElement).disabled).toBe(true);
@@ -1633,7 +1633,7 @@ describe('MobileAgentView', () => {
       value: { ...request, state: 'merged' as const },
     }));
     const transport = { decideManagedMerge } as unknown as WsEzTerminalTransport;
-    render(
+    await render(
       <MobileAgentView
         snapshot={snapshotOf()}
         coordinationSnapshot={coordinationSnapshot}
@@ -1642,11 +1642,11 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    act(() => testIds('managed-merge-override')[0]!.click());
+    await act(async () => testIds('managed-merge-override')[0]!.click());
     expect(testIds('mobile-managed-merge-override')).toHaveLength(1);
     const reason = testIds('mobile-managed-merge-override-reason')[0] as HTMLTextAreaElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
-    act(() => {
+    await act(async () => {
       setValue.call(reason, 'Reviewed failing tests and accepted the risk.');
       reason.dispatchEvent(new Event('input', { bubbles: true }));
     });

@@ -24,8 +24,10 @@ The first publication attempt stopped at the Rust dependency audit. The locked
 TLS dependencies are updated to rustls 0.23.45 / rustls-webpki 0.103.15 for
 RUSTSEC-2026-0285. The accompanying JavaScript audit also required js-yaml 4.3.2
 (GHSA-2883-xcg3-v3hh) and Vitest 4.1.11 (GHSA-82fw-gwwq-j7x9). The Storybook browser
-provider and mock function types follow Vitest's supported API; the complete
-functional gates must pass with these dependencies before public promotion.
+provider and mock function types follow Vitest's supported API. Mobile React
+tests await rendering, interactions and cleanup so asynchronous state updates
+finish inside act; stderr remains a failing gate. The complete functional gates
+must pass with these dependencies before public promotion.
 
 The refreshed desktop tests reproduced a Windows node-pty startup/exit race:
 a resize queued before native readiness could throw later while processing
@@ -35,6 +37,13 @@ and drops it when termination begins. Three adapter regressions were observed
 failing before the fix; the original interpreter-process suite exercises the
 real ConPTY path. This exception is not evidence of the full-window blackout's
 root cause.
+
+Awaiting the mobile reconnect regression exposed a second race: disconnect
+resolved a pending Agent snapshot read with the old cache, whose Promise
+callback could overwrite a newer desktop seed. Workspace snapshot state now
+comes only from the transport subscription, which emits both cached state and
+accepted responses. Explicit refresh requests remain, without applying their
+results twice. The reconnect regression failed before this fix.
 
 Android assembly uses production assets and the existing protected long-term
 signing key. Staging verifies package identity, certificate, embedded source SHA,

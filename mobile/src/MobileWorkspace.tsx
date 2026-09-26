@@ -508,7 +508,11 @@ export function MobileWorkspace({
       if (alive) setAgentSnapshot(snapshot);
     };
     const unsubscribe = transport.onAgentActivitySnapshot(apply);
-    void transport.getAgentActivitySnapshot().then(apply).catch(() => undefined);
+    // The subscription emits the cached state and every accepted response.
+    // A pending read can resolve with the old cache during disconnect, then
+    // run its Promise callback after a new desktop seed has already arrived.
+    // Refresh through the transport without applying that result a second time.
+    void transport.getAgentActivitySnapshot().catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe();
@@ -534,7 +538,7 @@ export function MobileWorkspace({
       if (alive) setAgentOrchestrationSnapshot(snapshot);
     };
     const unsubscribe = transport.onAgentOrchestrationSnapshot(apply);
-    void transport.getAgentOrchestrationSnapshot().then(apply).catch(() => undefined);
+    void transport.getAgentOrchestrationSnapshot().catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe();
@@ -547,7 +551,7 @@ export function MobileWorkspace({
       if (alive) setAgentCoordinationSnapshot(snapshot);
     };
     const unsubscribe = transport.onAgentCoordinationSnapshot(apply);
-    void transport.getAgentCoordinationSnapshot().then(apply).catch(() => undefined);
+    void transport.getAgentCoordinationSnapshot().catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe();
