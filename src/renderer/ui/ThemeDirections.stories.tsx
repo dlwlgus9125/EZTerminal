@@ -8,6 +8,7 @@ import { AppI18nProvider } from '../i18n';
 import { ProjectConversationTree } from '../ProjectConversationTree';
 import { projectConversationTree } from '../project-conversation-tree-model';
 import { StructuredAgentSessionPanel } from '../StructuredAgentSession';
+import { applyEffects, type EffectId } from '../effects';
 import { deriveUiTokens, uiThemeColorsToCssVars } from '../theme-contrast';
 import { ActivityRail } from '../workbench/ActivityRail';
 import { AppHeader } from '../workbench/AppHeader';
@@ -41,7 +42,7 @@ const GRAPHITE_DARK: Candidate = {
   glow: false,
   ui: {
     canvas: '#09090b', surface: '#111113', surfaceRaised: '#18181b', surfaceInset: '#060607',
-    textPrimary: '#ededef', textSecondary: '#a1a1aa', textMuted: '#85858d', textInverse: '#09090b',
+    textPrimary: '#ededef', textSecondary: '#ababb3', textMuted: '#85858d', textInverse: '#09090b',
     borderSubtle: '#232327', borderStrong: '#67676f', accent: '#ededef', onAccent: '#09090b',
     focus: '#5b8cff', info: '#5b8cff', success: '#3fbf7f', warning: '#e5b34b', danger: '#f0595e',
   },
@@ -128,6 +129,10 @@ const CANDIDATES = {
 
 type DirectionId = keyof typeof CANDIDATES | 'current-dark' | 'current-light' | 'current-matrix';
 
+/** The CRT effects the user keeps on in their own profile, so the Matrix pair
+ * is judged as it is actually used (scanlines, glow, scroll, rollbar, flicker). */
+const DAILY_MATRIX_EFFECTS: readonly EffectId[] = ['scanlines', 'phosphor-glow', 'scanline-scroll', 'crt-rollbar', 'flicker'];
+
 function overrideCss(candidate: Candidate): string {
   const vars = {
     ...uiThemeColorsToCssVars(candidate.ui),
@@ -148,8 +153,10 @@ function useDirection(direction: DirectionId): void {
     style.id = 'theme-direction-preview';
     style.textContent = candidate ? overrideCss(candidate) : '';
     document.head.appendChild(style);
+    applyEffects(new Set(html.dataset.theme === 'matrix' ? DAILY_MATRIX_EFFECTS : []));
     return () => {
       style.remove();
+      applyEffects(new Set());
       if (previous) html.dataset.theme = previous;
     };
   }, [direction]);
