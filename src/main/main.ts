@@ -156,6 +156,7 @@ import {
 } from './daemon-authority-shutdown';
 import { DaemonAutomationRuntime } from './daemon-automation-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
+import { StructuredAgentNoticeTracker } from './structured-agent-notices';
 import {
   DaemonLifecycleSettingsController
 } from './daemon-lifecycle-settings';
@@ -3667,6 +3668,30 @@ app.on('ready', async () => {
       win.webContents.send('agents:reveal-session', activity.sessionId);
     });
     notification.show();
+  }));
+  // Structured (daemon) Agent conversations: approvals waiting, turns finished or failed.
+  const structuredAgentNotices = new StructuredAgentNoticeTracker();
+  structuredAgentNotices.observe(daemonCommandRouter.getSnapshot());
+  trackLocalAgentStackSubscription(daemonCommandRouter.onEvent((event) => {
+    if (event.kind === 'entity.upserted' ? event.payload.entityType !== 'turn' && event.payload.entityType !== 'approval' : event.kind !== 'approval.changed') return;
+    const notices = structuredAgentNotices.observe(daemonCommandRouter.getSnapshot());
+    const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
+    if (windows.some((win) => win.isFocused()) || !Notification.isSupported()) return;
+    for (const notice of notices) {
+      if (!agentSettingsStore.current.notifications[notice.setting]) continue;
+      const notification = new Notification({ title: notice.title, body: notice.body, silent: false });
+      liveAgentNotifications.add(notification);
+      notification.on('close', () => liveAgentNotifications.delete(notification));
+      notification.on('click', () => {
+        const win = mainWindowRef ?? windows[0];
+        if (!win || win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+        win.webContents.send('daemon-agents:reveal-session', notice.sessionId);
+      });
+      notification.show();
+    }
   }));
 
   // ── Session/run fan-out to every desktop window (M2 mirroring) ────────────

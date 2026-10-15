@@ -2448,6 +2448,45 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('leaves plan mode for the mode chosen when a plan is approved', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'agent-1',
+      workspaceId: 'workspace-1',
+      title: 'Agent',
+      providerId: 'codex',
+      permissionPreset: 'plan',
+      initialPrompt: 'Plan a change.',
+    });
+    const turn = h.router.getSnapshot().turns[0]!;
+    h.codex.emit({
+      kind: 'approval-requested',
+      sessionId: 'agent-1',
+      turnId: turn.id,
+      providerRequestId: 'provider-plan-1',
+      risk: 'write',
+      title: 'Approve plan',
+      request: { v: 1, kind: 'plan', callId: 'call-plan', markdown: '- step' },
+    });
+    await h.runtime.whenIdle();
+    const approval = h.router.getSnapshot().approvals[0]!;
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ permissionPreset: 'plan' });
+
+    await h.execute('permission.resolve', {
+      approvalId: approval.id, decision: 'allow', response: { kind: 'plan', mode: 'full-access' },
+    });
+    expect(h.codex.resolveApproval).toHaveBeenCalledWith(expect.objectContaining({
+      providerRequestId: 'provider-plan-1',
+      decision: 'allow',
+      response: { kind: 'plan', mode: 'full-access' },
+    }));
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ permissionPreset: 'full-access', state: 'working' });
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
   it('absorbs synchronous and duplicate provider lifecycle events without resurrecting a terminal turn', async () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');

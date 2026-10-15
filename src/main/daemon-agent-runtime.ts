@@ -1307,6 +1307,10 @@ export class DaemonAgentRuntime {
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const resolvedAt = this.isoNow();
+    // Approving a plan leaves plan mode for the mode the user chose; the provider switches with it.
+    const planMode = command.payload.decision === 'allow' && command.payload.response?.kind === 'plan'
+      ? command.payload.response.mode
+      : undefined;
     return { ok: true, commit: { mutations: [
       { kind: 'approval.upsert', value: this.resolvedApprovalInput(
         approval,
@@ -1317,7 +1321,7 @@ export class DaemonAgentRuntime {
         kind: 'turn.upsert' as const,
         value: turnInput(turn, { state: 'working' }),
       }] : []),
-      { kind: 'agent.upsert', value: agentInput(agent, { state: 'working' }) },
+      { kind: 'agent.upsert', value: agentInput(agent, { state: 'working', ...(planMode ? { permissionPreset: planMode } : {}) }) },
       { kind: 'session.upsert', value: sessionInput(session, 'running') },
     ] }, afterCommit: () => this.runBackground(
       `resolve approval ${approval.id}`,

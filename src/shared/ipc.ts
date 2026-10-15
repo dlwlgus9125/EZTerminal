@@ -1694,6 +1694,8 @@ export interface EzTerminalDesktopApi {
   setAgentSettings: (settings: AgentSettings) => Promise<AgentSettings | null>;
   /** OS notification click asks the owning renderer to reveal this session. */
   onAgentSessionReveal: (listener: (sessionId: string) => void) => () => void;
+  /** A structured (daemon) Agent notification was clicked: open that conversation. */
+  onStructuredAgentReveal: (listener: (sessionId: string) => void) => () => void;
   /** Project presentation metadata is the only Agent history data EZTerminal persists. */
   saveAgentProject: (input: AgentProjectInput) => Promise<AgentProjectMutationResult>;
   removeAgentProject: (projectId: string) => Promise<boolean>;

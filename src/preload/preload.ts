@@ -706,6 +706,11 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('agents:reveal-session', handler);
     return () => ipcRenderer.removeListener('agents:reveal-session', handler);
   },
+  onStructuredAgentReveal: (listener: (sessionId: string) => void): (() => void) => {
+    const handler = (_event: unknown, sessionId: string): void => listener(sessionId);
+    ipcRenderer.on('daemon-agents:reveal-session', handler);
+    return () => ipcRenderer.removeListener('daemon-agents:reveal-session', handler);
+  },
   saveAgentProject: (input: import('../shared/agent-history').AgentProjectInput) =>
     ipcRenderer.invoke('agent-projects:save', input),
   removeAgentProject: (projectId: string): Promise<boolean> =>
