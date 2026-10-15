@@ -40,13 +40,14 @@ export function WorkspaceBar({
       )}
 
       <span className="workspace-bar__chips">
-        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} title={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
+        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} title={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} aria-label={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
         <button
           type="button"
           className="workspace-bar__chip"
           onClick={onApplyTwoByOne}
           disabled={paneCount < 2}
           title={t('workspace.layoutTwoByOneDescription')}
+          aria-label={t('workspace.layoutTwoByOne')}
           data-testid="workspace-bar-layout-two-by-one"
         >
           <Columns2 aria-hidden="true" />
@@ -58,6 +59,7 @@ export function WorkspaceBar({
           onClick={onApplyOnePlusTwo}
           disabled={paneCount < 2}
           title={t('workspace.layoutOnePlusTwoDescription')}
+          aria-label={t('workspace.layoutOnePlusTwo')}
           data-testid="workspace-bar-layout-one-plus-two"
         >
           <Rows2 aria-hidden="true" />
@@ -69,6 +71,7 @@ export function WorkspaceBar({
           onClick={onApplySingle}
           disabled={paneCount < 2}
           title={t('workspace.layoutSingleDescription')}
+          aria-label={t('workspace.layoutSingle')}
           data-testid="workspace-bar-layout-single"
         >
           <Square aria-hidden="true" />

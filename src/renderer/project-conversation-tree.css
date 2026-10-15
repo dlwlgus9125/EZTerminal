@@ -54,16 +54,20 @@
 @media (prefers-reduced-motion: reduce) {
   .project-conversation-tree__status { animation: none !important; }
 }
-/* Desktop: a project's actions appear on hover or focus, so its name keeps the row. */
+/* Desktop: a project row shows only its "⋯" at rest, so the name keeps the row;
+   new chat and terminal join it on hover or focus. */
 @media (hover: hover) {
   .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] { position: relative; }
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__label { padding-right: 2.25rem; }
   .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__actions {
     /* No transform: it would trap the Manage menu below the following rows. */
     position: absolute; top: 0; bottom: 0; right: var(--ui-space-1); z-index: 3;
-    padding-left: var(--ui-space-4); background: var(--ui-surface); opacity: 0; transition: opacity var(--ui-motion-fast) var(--ui-ease-standard);
+  }
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:not(:hover):not(:focus-within) > .project-conversation-tree__actions > :not(:last-child) {
+    display: none;
   }
   .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:hover > .project-conversation-tree__actions,
   .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:focus-within > .project-conversation-tree__actions {
-    opacity: 1;
+    padding-left: var(--ui-space-4); background: var(--ui-surface);
   }
 }
