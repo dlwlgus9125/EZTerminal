@@ -232,4 +232,23 @@ export const FindInConversation: Story = {
   },
 };
 /** The one-row header with every action present: changes, extensions, a running heartbeat and the session menu. */
-export const HeaderActions: Story = { args: { golden: editGolden, skin: 'bubble', heartbeatActive: true } };
+export const HeaderActions: Story = {
+  args: { golden: editGolden, skin: 'bubble', heartbeatActive: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const details = await waitFor(() => {
+      const found = canvasElement.querySelector<HTMLDetailsElement>('.agent-capabilities--compact');
+      if (!found) throw new Error('extensions not rendered');
+      return found;
+    });
+    const summary = details.querySelector('summary')!;
+    // The extensions dropdown closes like a menu: Esc, or a click elsewhere.
+    await userEvent.click(summary);
+    await expect(details.open).toBe(true);
+    await userEvent.keyboard('{Escape}');
+    await expect(details.open).toBe(false);
+    await userEvent.click(summary);
+    await userEvent.click(canvas.getByTestId('structured-agent-composer-input'));
+    await expect(details.open).toBe(false);
+  },
+};

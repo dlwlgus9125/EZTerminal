@@ -1387,6 +1387,20 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
               {copy.interruptSend}
             </Button>
           )}
+          {/* With a draft the round button sends; stopping stays one click away. */}
+          {!showStop && onStop !== undefined && (
+            <button
+              type="button"
+              className="chat-icon-action chat-composer__stop"
+              disabled={disabled || stopping}
+              aria-label={ko ? '중단' : 'Stop'}
+              title={ko ? '중단 (Esc)' : 'Stop (Esc)'}
+              onClick={() => onStop()}
+              data-testid="structured-agent-stop"
+            >
+              {stopping ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+            </button>
+          )}
           {showStop ? (
             <button
               type="button"

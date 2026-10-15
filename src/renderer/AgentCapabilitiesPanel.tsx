@@ -50,6 +50,27 @@ export function AgentCapabilitiesPanel({ client, providerId, workspaceId, sessio
   const [mcpArgs, setMcpArgs] = useState('[]');
   const [managing, setManaging] = useState(false);
   const managementDetails = useRef<HTMLDetailsElement>(null);
+  const rootDetails = useRef<HTMLDetailsElement>(null);
+  // As a header dropdown it closes like a menu: outside pointer-down or Esc.
+  useEffect(() => {
+    const details = rootDetails.current;
+    if (!compact || !details) return undefined;
+    const ownerDocument = details.ownerDocument;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (details.open && event.target instanceof Node && !details.contains(event.target)) details.open = false;
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || !details.open) return;
+      details.open = false;
+      details.querySelector<HTMLElement>('summary')?.focus();
+    };
+    ownerDocument.addEventListener('pointerdown', onPointerDown);
+    ownerDocument.addEventListener('keydown', onKeyDown);
+    return () => {
+      ownerDocument.removeEventListener('pointerdown', onPointerDown);
+      ownerDocument.removeEventListener('keydown', onKeyDown);
+    };
+  }, [compact]);
   const scopeKey = `${providerId}:${workspaceId}:${sessionId ?? ''}`;
   const activeScope = useRef({ client, scopeKey });
   activeScope.current = { client, scopeKey };
@@ -126,7 +147,7 @@ export function AgentCapabilitiesPanel({ client, providerId, workspaceId, sessio
     } catch { if (activeScope.current.client === client && activeScope.current.scopeKey === scopeKey) setError(ko ? '연결이 끊어져 결과를 확인할 수 없습니다. 같은 요청 결과를 확인해 주세요.' : 'The connection was lost. Check the result of this same request.'); }
     finally { if (activeScope.current.client === client && activeScope.current.scopeKey === scopeKey) setManaging(false); }
   };
-  return <details className={compact ? 'agent-capabilities agent-capabilities--compact' : 'agent-capabilities'} data-testid="agent-capabilities">
+  return <details ref={rootDetails} className={compact ? 'agent-capabilities agent-capabilities--compact' : 'agent-capabilities'} data-testid="agent-capabilities">
     <summary title={ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP'}><Sparkles size={14} aria-hidden="true" />{compact ? (ko ? '확장' : 'Extensions') : (ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP')} <span>{loading ? (ko ? '조회 중' : 'Loading') : catalog ? `${catalog.items.length}` : (ko ? '조회 필요' : 'Unavailable')}</span></summary>
     <div className="agent-capabilities__body">
       <div className="agent-capabilities__heading"><p>{ko ? '첫 메시지 없이 조회합니다.' : 'Discovery does not send a message.'} {catalog && <>{remote ? (ko ? '연결된 PC' : 'Connected PC') : 'PC'}: {catalog.hostId} · {catalog.workspaceRoot}</>}</p><Button size="sm" onClick={() => void refresh()} disabled={loading || managing}><RefreshCw size={14} aria-hidden="true" />{ko ? '새로고침' : 'Refresh'}</Button></div>

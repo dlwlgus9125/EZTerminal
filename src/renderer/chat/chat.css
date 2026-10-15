@@ -1326,6 +1326,17 @@
 }
 
 /* ── composer ─────────────────────────────────────────────────────────── */
+.chat-composer__stop {
+  width: 2rem;
+  height: 2rem;
+  color: var(--ui-danger);
+}
+
+.chat-composer__stop > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
 .chat-composer__box {
   position: relative;
   padding: var(--ui-space-1) var(--ui-space-2) var(--ui-space-2);
