@@ -25,6 +25,7 @@ import {
 import type { DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
 import { promptWithChatContext } from '../shared/chat-message';
 import {
+  CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   DEFAULT_CLAUDE_PROVIDER_ENABLEMENT,
   getClaudeEnablementGateFailure,
   type ClaudeAuthenticationPath,
@@ -158,7 +159,7 @@ const ERROR_MESSAGES: Readonly<Record<ClaudeProviderErrorCode, string>> = {
     'Using a claude.ai login or its subscription rate limits in a third-party product requires prior Anthropic approval. EZTerminal does not start or provide that login flow.',
   CLAUDE_EXECUTABLE_NOT_FOUND: 'An installed Claude executable could not be found.',
   CLAUDE_EXECUTABLE_INVALID:
-    'The Claude executable path or version no longer matches the pinned Agent SDK review.',
+    'The Claude executable is no longer at the reviewed path or is outside the supported version range.',
   CLAUDE_AUTHENTICATION_FAILED:
     'Claude authentication failed. Configure the installed Claude CLI or an API-key environment outside EZTerminal.',
   CLAUDE_ACCOUNT_UNAVAILABLE: 'The Claude account is currently unavailable.',
@@ -1078,7 +1079,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       authenticationState: unavailable ? 'unavailable' : 'first-launch',
       authenticationDetail: unavailable
         ? 'Claude authentication cannot be verified until provider setup and executable review are complete.'
-        : 'Claude authentication is verified from SDK initialization metadata when the first Agent session starts.',
+        : CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
       reviewNotices: [
         {
           id: 'anthropic-commercial-terms',
@@ -2464,11 +2465,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       this.executableVersion(canonical, buildProviderProcessEnvironment([]), signal),
       signal,
     );
-    if (
-      !samePath
-      || version !== descriptor.executableVersion
-      || !compatibleClaudeExecutableVersion(version)
-    ) {
+    // The review binds the executable path, not one build: Claude Code auto-updates in
+    // place, so any supported version at the reviewed path may launch (as with Codex).
+    if (!samePath || !compatibleClaudeExecutableVersion(version)) {
       throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
     }
     return {

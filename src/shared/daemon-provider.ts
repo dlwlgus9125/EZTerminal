@@ -5,6 +5,8 @@ import type { ProviderProtocol } from './daemon-protocol';
 export const MAX_DAEMON_PROVIDER_ID_LENGTH = 64;
 export const CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL =
   'Codex authentication is verified by app-server when the first Agent session starts.';
+export const CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL =
+  'Claude authentication is verified from SDK initialization metadata when the first Agent session starts.';
 
 export interface ProviderModel {
   readonly id: string;

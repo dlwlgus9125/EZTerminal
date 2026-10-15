@@ -13,10 +13,10 @@
  *   2. The executable version gate must stay a supported *range*. Pinning it to
  *      one exact build made every auto-updated Claude Code install unenablable,
  *      because the user's CLI is never the exact version the pin names.
- *
- * Launch-time drift protection is deliberately NOT relaxed and is not checked
- * here: `assertReady` still requires the on-disk version to equal the reviewed
- * descriptor's version.
+ *   3. The same holds at launch. `assertReady` once required the on-disk version
+ *      to equal the reviewed one, so every in-place CLI update stopped Claude
+ *      until the user reviewed it again. A review binds the executable path;
+ *      any supported version at that path may launch, as with Codex.
  *
  * Run: node scripts/guard-claude-provider.mjs
  */
@@ -77,11 +77,19 @@ if (!/compareSemanticVersions\(candidate, minimum\) >= 0/u.test(adapter)) {
   );
 }
 
+if (/version\s*!==\s*descriptor\.executableVersion/u.test(adapter)) {
+  failures.push(
+    'src/main/claude-provider-adapter.ts requires the launched Claude Code version to equal '
+      + 'the reviewed one. The CLI updates in place, so that stops Claude after every update; '
+      + 'check the reviewed path and the supported range instead.',
+  );
+}
+
 if (failures.length > 0) {
   process.stderr.write(`${failures.map((line) => `- ${line}`).join('\n')}\n`);
   process.exit(1);
 }
 
 process.stdout.write(
-  'Claude provider guard: no unshipped runtime resolution, version gate is a supported range.\n',
+  'Claude provider guard: no unshipped runtime resolution, version gates are a supported range.\n',
 );

@@ -383,7 +383,36 @@ describe('Claude provider review and enablement', () => {
     })).toBeNull();
   });
 
-  it('fails before SDK process creation when the reviewed CLI version drifts', async () => {
+  it('launches a CLI that auto-updated after review within the supported range', async () => {
+    const reviewedExecutable = await realpath(process.execPath);
+    const queryFactory = vi.fn(() => {
+      throw new Error('query reached');
+    });
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      queryFactory,
+      readExecutableVersion: async () => '2.1.289',
+    });
+    adapter.setLaunchDescriptor({
+      providerId: 'claude',
+      protocol: 'claude-agent-sdk',
+      executablePath: reviewedExecutable,
+      executableVersion: CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION,
+      argv: [
+        '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json',
+        '--permission-prompt-tool', 'stdio',
+      ],
+      environmentVariableNames: [
+        'PATH', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'ANTHROPIC_API_KEY',
+      ],
+      reviewDigest: 'a'.repeat(64),
+    });
+
+    await adapter.createSession(context).catch(() => undefined);
+    expect(queryFactory).toHaveBeenCalled();
+  });
+
+  it('fails before SDK process creation when the CLI updates outside the supported range', async () => {
     const reviewedExecutable = await realpath(process.execPath);
     const queryFactory = vi.fn(() => {
       throw new Error('query must not start');
@@ -391,7 +420,7 @@ describe('Claude provider review and enablement', () => {
     const adapter = new ClaudeProviderAdapter({
       enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
       queryFactory,
-      readExecutableVersion: async () => '2.1.261',
+      readExecutableVersion: async () => '3.0.0',
     });
     adapter.setLaunchDescriptor({
       providerId: 'claude',
