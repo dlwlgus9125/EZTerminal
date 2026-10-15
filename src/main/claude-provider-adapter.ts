@@ -1,6 +1,6 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
 import { clipApprovalBody, parseApprovalRequest, type ApprovalRequest } from '../shared/approval-request';
-import { claudeFileChange, encodeFileChanges, type RecordedFileChange } from '../shared/conversation-changes';
+import { claudeFileChange, encodeFileChanges, replacementLines, type RecordedFileChange } from '../shared/conversation-changes';
 import { toolCategory, toolTarget } from '../shared/tool-catalog';
 import type { TodoItem, ToolPayload, ToolStatus, TranscriptPayload } from '../shared/transcript-payload';
 import { execFile } from 'node:child_process';
@@ -572,6 +572,19 @@ function lineCount(value: unknown): number {
 }
 
 /** Files touched by a successful Edit/MultiEdit/Write, counted from the call input the change record came from. */
+/** Lines an edit adds and removes, counted from its line diff rather than its whole old and new text. */
+function editCounts(edits: readonly (JsonObject | null)[]): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const edit of edits) {
+    for (const line of replacementLines(asString(edit?.old_string) ?? '', asString(edit?.new_string) ?? '')) {
+      if (line.startsWith('+')) added += 1;
+      else if (line.startsWith('-')) removed += 1;
+    }
+  }
+  return { added, removed };
+}
+
 function toolResultFiles(
   name: string,
   input: unknown,
@@ -582,17 +595,11 @@ function toolResultFiles(
   if (name === 'MultiEdit') {
     const filePath = asString(record?.file_path);
     if (!filePath) return undefined;
-    const edits = asArray(record?.edits).map(asObject);
-    return [{
-      path: shortText(filePath),
-      kind: 'update',
-      added: edits.reduce((total, edit) => total + lineCount(edit?.new_string), 0),
-      removed: edits.reduce((total, edit) => total + lineCount(edit?.old_string), 0),
-    }];
+    return [{ path: shortText(filePath), kind: 'update', ...editCounts(asArray(record?.edits).map(asObject)) }];
   }
   if (!change) return undefined;
   if (name === 'Edit') {
-    return [{ path: shortText(change.path), kind: 'update', added: lineCount(record?.new_string), removed: lineCount(record?.old_string) }];
+    return [{ path: shortText(change.path), kind: 'update', ...editCounts([record]) }];
   }
   if (name === 'Write') {
     // An overwrite reports only the new content, so its removed lines are unknown.
@@ -623,7 +630,7 @@ function approvalDiff(toolName: string, input: Record<string, unknown>): string 
   const hunks = toolName === 'Write'
     ? [prefixedLines('+', input.content)]
     : (toolName === 'MultiEdit' ? asArray(input.edits).map(asObject) : [input])
-      .map((edit) => [...prefixedLines('-', edit?.old_string), ...prefixedLines('+', edit?.new_string)]);
+      .map((edit) => replacementLines(asString(edit?.old_string) ?? '', asString(edit?.new_string) ?? ''));
   return hunks.map((lines) => ['@@', ...lines].join('\n')).join('\n');
 }
 

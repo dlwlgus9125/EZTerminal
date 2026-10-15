@@ -1,6 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { claudeFileChange, conversationFileChanges, decodeFileChanges, encodeFileChanges, reviewLines } from './conversation-changes';
+import { claudeFileChange, conversationFileChanges, decodeFileChanges, encodeFileChanges, replacementLines, reviewLines } from './conversation-changes';
 import type { DaemonTranscriptItem } from './daemon-protocol';
+
+
+describe('replacementLines', () => {
+  it('keeps unchanged lines as context and shows only what an edit adds', () => {
+    expect(replacementLines('  return a;\n}', '  return a;\n}\n\nexport function b() {}\n')).toEqual([
+      '   return a;', ' }', '+', '+export function b() {}',
+    ]);
+  });
+
+  it('shows a changed middle line as one removal and one addition', () => {
+    expect(replacementLines('a\nb\nc', 'a\nB\nc')).toEqual([' a', '-b', '+B', ' c']);
+  });
+
+  it('groups each changed run as removals, then additions', () => {
+    expect(replacementLines('a\nb\nc\nd', 'a\nx\ny\nd')).toEqual([' a', '-b', '-c', '+x', '+y', ' d']);
+  });
+
+  it('falls back to remove-all/add-all for very large replacements', () => {
+    const before = Array.from({ length: 900 }, (_, index) => `old ${index}`).join('\n');
+    const after = Array.from({ length: 900 }, (_, index) => `new ${index}`).join('\n');
+    const lines = replacementLines(before, after);
+    expect(lines.filter((line) => line.startsWith('-'))).toHaveLength(900);
+    expect(lines.filter((line) => line.startsWith('+'))).toHaveLength(900);
+  });
+
+  it('feeds Claude Edit records, so the change view shows context instead of a full rewrite', () => {
+    expect(claudeFileChange('Edit', { file_path: 'src/app.ts', old_string: 'a\nb', new_string: 'a\nb\nc' })?.patch)
+      .toBe(' a\n b\n+c');
+  });
+});
 
 describe('recorded conversation changes', () => {
   it('keeps patch identity and filters other sessions, sensitive data, calls and incomplete deltas', () => {

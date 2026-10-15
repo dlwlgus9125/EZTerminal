@@ -40,20 +40,74 @@ function bodyLines(text: string): string[] {
   return text.replace(/\r?\n$/u, '').split('\n');
 }
 
+/** Above this many line pairs a replacement is shown whole rather than diffed. */
+const MAX_DIFF_CELLS = 160_000;
+
+/**
+ * Display lines for replacing `before` with `after`: unchanged lines as context (" "),
+ * each changed run as its removals ("-") then additions ("+"). Edit inputs carry
+ * surrounding context, so showing it as context keeps a one-line change one line.
+ */
+export function replacementLines(before: string, after: string): string[] {
+  const a = before ? bodyLines(before) : [];
+  const b = after ? bodyLines(after) : [];
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA -= 1; endB -= 1; }
+  const middleA = a.slice(start, endA);
+  const middleB = b.slice(start, endB);
+  const middle = middleA.length * middleB.length > MAX_DIFF_CELLS
+    ? [...middleA.map((line) => `-${line}`), ...middleB.map((line) => `+${line}`)]
+    : diffRuns(middleA, middleB);
+  return [...a.slice(0, start).map((line) => ` ${line}`), ...middle, ...a.slice(endA).map((line) => ` ${line}`)];
+}
+
+/** Longest-common-subsequence line diff. */
+function diffRuns(a: readonly string[], b: readonly string[]): string[] {
+  const width = b.length + 1;
+  const common = new Uint32Array((a.length + 1) * width);
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      common[i * width + j] = a[i] === b[j]
+        ? common[(i + 1) * width + j + 1] + 1
+        : Math.max(common[(i + 1) * width + j], common[i * width + j + 1]);
+    }
+  }
+  const lines: string[] = [];
+  let removed: string[] = [];
+  let added: string[] = [];
+  const flush = (): void => { lines.push(...removed, ...added); removed = []; added = []; };
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      flush();
+      lines.push(` ${a[i]}`);
+      i += 1; j += 1;
+    } else if (j >= b.length || (i < a.length && common[(i + 1) * width + j] >= common[i * width + j + 1])) {
+      removed.push(`-${a[i]}`); i += 1;
+    } else {
+      added.push(`+${b[j]}`); j += 1;
+    }
+  }
+  flush();
+  return lines;
+}
+
 export function claudeFileChange(name: string, input: unknown): RecordedFileChange | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const data = input as Record<string, unknown>;
   if (typeof data.file_path !== 'string') return undefined;
   if (name === 'Edit' && typeof data.old_string === 'string' && typeof data.new_string === 'string') {
-    return { path: data.file_path, coverage: 'fragment', patch: [
-      ...bodyLines(data.old_string).map(line => `-${line}`), ...bodyLines(data.new_string).map(line => `+${line}`),
-    ].join('\n') };
+    return { path: data.file_path, coverage: 'fragment', patch: replacementLines(data.old_string, data.new_string).join('\n') };
   }
   if (name === 'MultiEdit' && Array.isArray(data.edits)) {
     const hunks = data.edits.flatMap((edit: unknown) => {
       const entry = edit && typeof edit === 'object' ? edit as Record<string, unknown> : undefined;
       return typeof entry?.old_string === 'string' && typeof entry.new_string === 'string'
-        ? [[...bodyLines(entry.old_string).map(line => `-${line}`), ...bodyLines(entry.new_string).map(line => `+${line}`)].join('\n')]
+        ? [replacementLines(entry.old_string, entry.new_string).join('\n')]
         : [];
     });
     return hunks.length ? { path: data.file_path, coverage: 'fragment', patch: hunks.join('\n') } : undefined;

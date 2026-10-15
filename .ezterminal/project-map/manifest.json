@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f2a4f6e09d319892e79ba0cdab5257c8327c77a7b688cfd21b65c38b8581ed7c",
+        "inputDigest": "sha256:017852ba14595107a99864ece81114bd0b5147e693ca0cd4f619cceb143ac11d",
         "decision": "map-updated",
-        "reason": "Reviewed the chat overhaul: transcript payloads, approval requests and responses, agent effort (schema v7 behind capability flags, no protocol bump), Claude streaming, fail-fast provider start and version-range launch. Relocated anchors; rechecked changed blocks."
+        "reason": "Reviewed the chat overhaul: transcript payloads, approval requests/responses, agent effort (schema v7, capability flags, no protocol bump), Claude streaming, fail-fast start, version-range launch, edit line diffs. Relocated anchors; rechecked changed blocks."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:597c3f63207f0d6aaa3abb90682cfd0c9c39a9f3f4f8c118cd732c0a55221b64",
+        "inputDigest": "sha256:e255b0fa71182ba76a5003fa4d2f4bea35ca18b304df2a5e7e7ea1e6f9271fe4",
         "decision": "map-updated",
-        "reason": "Reviewed the one-row desktop chat header (skin and history in the session menu, header review button) and the review open request. Claims hold; relocated anchors to the changed blocks."
+        "reason": "Reviewed the one-row desktop chat header (skin and history in the session menu, header review button), the review open request and Claude edits shown as line diffs. Claims hold; relocated anchors to the changed blocks."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0349b859cb9a705fdc58bae03bb645e70f4be7fcef6ad9b850d2bb28823b4fc8",
+        "inputDigest": "sha256:12ee46873bfa50f1ffa55ba65f49f80dece9706400d9ea3c37e1db0bc6c846ff",
         "decision": "map-updated",
-        "reason": "Reviewed composer @ workspace-file mentions and the compact extensions summary. Updated the completion claim; relocated anchors and rechecked changed discovery and completion blocks against current code."
+        "reason": "Reviewed composer @ workspace-file mentions, the compact extensions summary and Claude edit line diffs. Updated the completion claim; relocated anchors and rechecked changed discovery and completion blocks."
       }
     }
   ]
