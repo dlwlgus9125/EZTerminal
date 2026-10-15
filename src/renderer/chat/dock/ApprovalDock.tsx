@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 
 import type { ApprovalQuestion, ApprovalResponse } from '../../../shared/approval-request';
 import { Button } from '../../ui';
-import { useChatCopy } from '../copy';
+import { useChatCopy, type ChatCopy } from '../copy';
 import { useChatContext } from '../ChatContext';
 import type { PendingInteraction } from '../model/types';
 import { DiffView } from '../parts/DiffView';
@@ -24,6 +24,21 @@ export interface ApprovalDockProps {
   readonly onResolve: (approvalId: string, decision: 'allow' | 'deny', response?: ApprovalResponse) => Promise<ApprovalResult>;
   readonly collapsed: boolean;
   readonly onCollapsedChange: (collapsed: boolean) => void;
+}
+
+/** Localized title from the structured request; hosts without one keep the provider's title. */
+function dockTitle(pending: PendingInteraction, copy: ChatCopy): string {
+  const { approval, request } = pending;
+  switch (request?.kind) {
+    case 'command': return copy.approval.commandTitle;
+    case 'file-change': return request.files.length === 1
+      ? copy.approval.editTitle(request.files[0]!.path.replace(/^.*[\\/]/u, ''))
+      : copy.approval.editFilesTitle(request.files.length);
+    case 'question': return copy.approval.questionTitle;
+    case 'plan': return copy.approval.planTitle;
+    case 'tool': return copy.approval.toolTitle(request.toolName);
+    default: return approval.title;
+  }
 }
 
 function riskIcon(kind: string | undefined): typeof ShieldAlert {
@@ -144,6 +159,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   const [error, setError] = useState<string>();
   const [feedback, setFeedback] = useState(false);
   const Icon = riskIcon(request?.kind);
+  const title = dockTitle(pending, copy);
   const resolve = async (decision: 'allow' | 'deny', response?: ApprovalResponse): Promise<void> => {
     if (busy || disabled) return;
     setBusy(true);
@@ -162,7 +178,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
     return (
       <div className="chat-dock chat-dock--collapsed" data-risk={approval.risk}>
         <Icon aria-hidden="true" />
-        <span className="chat-dock__title">{approval.title}</span>
+        <span className="chat-dock__title">{title}</span>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-link-button" onClick={() => onCollapsedChange(false)}>
           <ChevronUp aria-hidden="true" />{copy.approval.expand}
@@ -199,12 +215,13 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   const plan = request?.kind === 'plan';
   const question = request?.kind === 'question';
   return (
-    <section className="chat-dock" data-risk={approval.risk} aria-label={approval.title} role="region">
+    <section className="chat-dock" data-risk={approval.risk} aria-label={title} role="region">
       <header className="chat-dock__header">
         <Icon aria-hidden="true" />
         <div className="chat-dock__heading">
-          <p className="chat-dock__title">{plan ? copy.approval.planTitle : approval.title}</p>
-          <p className="chat-dock__risk">{copy.approval.risk[approval.risk]}</p>
+          <p className="chat-dock__title">{title}</p>
+          {/* A question or a plan is not an access request; its risk label would mislead. */}
+          {!plan && !question && <p className="chat-dock__risk">{copy.approval.risk[approval.risk]}</p>}
         </div>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-icon-action" aria-label={copy.approval.collapse} title={copy.approval.collapse} onClick={() => onCollapsedChange(true)}>

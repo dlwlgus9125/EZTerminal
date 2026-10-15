@@ -147,7 +147,12 @@ describe('buildChatModel over recorded provider sessions', () => {
     const names = model.rows.flatMap((row) => (row.kind === 'activity' ? row.entries : []))
       .flatMap((entry) => (entry.kind === 'tool' ? [entry.tool.name] : []));
     expect(names).not.toContain('ToolSearch');
-    expect(model.rows.filter((row) => row.kind === 'todo').length).toBeGreaterThan(1);
+    // The todo rows stand for the task tools, and back-to-back updates merge.
+    expect(names.filter((name) => name.startsWith('Task'))).toEqual([]);
+    const todos = model.rows.filter((row): row is Extract<ChatRow, { kind: 'todo' }> => row.kind === 'todo');
+    expect(todos.length).toBeGreaterThan(1);
+    expect(model.rows.some((row, index) => row.kind === 'todo' && model.rows[index + 1]?.kind === 'todo')).toBe(false);
+    expect(todos.at(-1)!.change.completed).toContain('Answer what greet returns');
   });
 
   it('shows the Codex web search query instead of the item type', () => {

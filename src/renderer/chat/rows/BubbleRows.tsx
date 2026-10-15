@@ -232,7 +232,7 @@ export function BubbleTodo({ row }: { readonly row: RowOf<'todo'> }): JSX.Elemen
     <section className="chat-todo-update">
       <button type="button" className="chat-tool__line" aria-expanded={open} onClick={() => context.setExpanded(key, !open)}>
         <ListChecks className="chat-tool-icon" aria-hidden="true" />
-        <span className="chat-tool__verb">{changes[0] ?? copy.tasks}</span>
+        <span className="chat-tool__verb">{changes.length ? changes.join(' · ') : copy.tasks}</span>
         <span className="chat-tool__meta"><span>{copy.tasksProgress(done, row.items.length)}</span><ChevronRight className="chat-chevron" aria-hidden="true" /></span>
       </button>
       {open && <TodoList items={row.items} />}

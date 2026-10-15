@@ -129,6 +129,17 @@ function todoChange(previous: readonly TodoItem[] | undefined, next: readonly To
   };
 }
 
+/** Two consecutive list updates as one: what got added, started and finished across both. */
+function mergeTodoChange(first: TodoChange, second: TodoChange): TodoChange {
+  const unique = (values: readonly string[]): string[] => [...new Set(values)];
+  const completed = unique([...first.completed, ...second.completed]);
+  return {
+    added: unique([...first.added, ...second.added]),
+    started: unique([...first.started, ...second.started]).filter((text) => !completed.includes(text)),
+    completed,
+  };
+}
+
 function legacyTodos(tool: ChatTool): TodoItem[] | undefined {
   const todos = tool.name === 'TodoWrite' ? tool.inputValue?.todos : undefined;
   if (!Array.isArray(todos)) return undefined;
@@ -253,6 +264,12 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
   const recordTodo = (item: CoalescedItem, next: TodoItem[]): void => {
     const change = todoChange(todo, next);
     todo = next;
+    // Back-to-back updates (finish one task, start the next) read as one row.
+    const last = rows[rows.length - 1];
+    if (last?.kind === 'todo' && last.turnId === item.turnId) {
+      rows[rows.length - 1] = { ...last, items: next, change: mergeTodoChange(last.change, change) };
+      return;
+    }
     push({ kind: 'todo', id: `todo:${item.id}`, ...(item.turnId ? { turnId: item.turnId } : {}), createdAt: item.createdAt, items: next, change });
   };
 
@@ -336,7 +353,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
             break;
           }
         }
-        if (!HIDDEN_TOOLS.has(tool.name)) activityFor(item).push({ kind: 'tool', tool });
+        // Task-list tools show as the todo rows they produce, not as tool lines.
+        if (!HIDDEN_TOOLS.has(tool.name) && tool.category !== 'todo') activityFor(item).push({ kind: 'tool', tool });
         const open = openCallsByTurn.get(turnId ?? '') ?? [];
         open.push(tool);
         openCallsByTurn.set(turnId ?? '', open);
