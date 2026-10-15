@@ -202,7 +202,7 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
           const status = node.target.kind === 'project' ? projectStatus?.[node.target.projectId] : undefined;
           return <div key={node.id} role="none" className="project-conversation-tree__entry">
             <div role="treeitem" aria-level={row.depth + 1} aria-expanded={branch ? row.expanded : undefined} aria-selected={activeId === node.id}
-              aria-label={`${node.title} · ${kindLabel(node)}${node.providerLabel ? ` · ${node.providerLabel}` : ''}${node.archived ? ` · ${text('보관됨', 'Archived')}` : ''}`}
+              aria-label={`${node.title} · ${kindLabel(node)}${node.providerLabel ? ` · ${node.providerLabel}` : ''}${node.archived ? ` · ${text('보관됨', 'Archived')}` : ''}${statusLabel(node.status) && node.status !== 'completed' ? ` · ${statusLabel(node.status)}` : ''}`}
               tabIndex={focused === node.id ? 0 : -1} onFocus={() => setFocusedId(node.id)} onKeyDown={event => onKey(event, index)}
               data-testid={node.target.kind === 'project' ? mobile ? 'mobile-planning-project' : `agent-project-open-${node.target.projectId}` : undefined}
               data-session-id={node.target.kind === 'terminal' || node.target.kind === 'conversation' ? node.target.sessionId : undefined}
@@ -220,6 +220,8 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
                   {node.target.kind === 'stage' && node.children?.length ? ` · ${text('대화', 'Chats')} ${node.children.length}` : ''}
                   {statusLabel(node.status) ? ` · ${statusLabel(node.status)}` : ''}</small>
               </span>
+              {/* What needs you shows at a glance: working, waiting for you, failed or queued. */}
+              {statusLabel(node.status) && node.status !== 'completed' && <span className="project-conversation-tree__status" data-status={node.status} aria-hidden="true" />}
               {node.target.kind === 'project' && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderProjectActions?.(node.target.projectId)}</span>}
               {node.target.kind === 'terminal' && !node.archived && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderTerminalActions?.(node.target.sessionId, node.title)}</span>}
             {node.target.kind === 'project' && (row.expanded || flat) && <div className="project-conversation-tree__project-status" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>

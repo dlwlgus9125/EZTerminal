@@ -40,7 +40,7 @@ export function WorkspaceBar({
       )}
 
       <span className="workspace-bar__chips">
-        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
+        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} title={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
         <button
           type="button"
           className="workspace-bar__chip"

@@ -42,3 +42,28 @@
 .project-navigation-story__content > small, .project-navigation-story__content > p { color: var(--ui-text-secondary); }
 .project-navigation-story[data-mobile] { display: block; width: min(100vw, 390px); }
 @media (max-width: 700px) { .project-navigation-story { grid-template-columns: minmax(0, 1fr); } }
+/* Status glyph: a dot whose colour says what the conversation needs. */
+.project-conversation-tree__status { flex: 0 0 auto; width: 0.5rem; height: 0.5rem; margin-left: var(--ui-space-2); border-radius: 50%; background: var(--ui-text-muted); }
+.project-conversation-tree__status[data-status='working'],
+.project-conversation-tree__status[data-status='running'],
+.project-conversation-tree__status[data-status='starting'] { background: var(--ui-accent); animation: project-tree-status-pulse 1.6s ease-in-out infinite; }
+.project-conversation-tree__status[data-status='blocked'],
+.project-conversation-tree__status[data-status='delivery-uncertain'] { background: var(--ui-warning); }
+.project-conversation-tree__status[data-status='error'] { background: var(--ui-danger); }
+@keyframes project-tree-status-pulse { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+  .project-conversation-tree__status { animation: none !important; }
+}
+/* Desktop: a project's actions appear on hover or focus, so its name keeps the row. */
+@media (hover: hover) {
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] { position: relative; }
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__actions {
+    /* No transform: it would trap the Manage menu below the following rows. */
+    position: absolute; top: 0; bottom: 0; right: var(--ui-space-1); z-index: 3;
+    padding-left: var(--ui-space-4); background: var(--ui-surface); opacity: 0; transition: opacity var(--ui-motion-fast) var(--ui-ease-standard);
+  }
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:hover > .project-conversation-tree__actions,
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:focus-within > .project-conversation-tree__actions {
+    opacity: 1;
+  }
+}
