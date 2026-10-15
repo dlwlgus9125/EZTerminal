@@ -1313,6 +1313,8 @@
 }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-controls > * + * { margin-left: var(--ui-space-1); }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header > .structured-agent__form-error { flex-basis: 100%; }
+/* Narrow panels keep the one row too: the title shrinks, actions stay whole. */
+.structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-controls { flex-basis: auto; }
 
 .chat-header-more {
   width: 2rem;
