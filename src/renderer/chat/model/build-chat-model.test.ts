@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { buildChatModel } from './build-chat-model';
 import { unwrapShellCommand } from './legacy-decode';
-import { summarizeActivity } from './summary';
+import { summarizeActivity, toolVerb } from './summary';
 import type { ChatRow } from './types';
 
 const FIXTURES = path.resolve(process.cwd(), 'src/renderer/chat/fixtures');
@@ -51,12 +51,31 @@ describe('buildChatModel over recorded provider sessions', () => {
       for (const row of model.rows) {
         if (row.kind !== 'activity') continue;
         expect(row.live).toBe(false);
+        // Codex reports reasoning start and end back to back (~0 ms): no blank "Thought" lines.
+        for (const entry of row.entries) {
+          if (entry.kind === 'thought' && !entry.text.trim()) expect(entry.durationMs ?? 0, `${name} thought`).toBeGreaterThanOrEqual(1_000);
+        }
         for (const entry of row.entries) {
           if (entry.kind === 'tool') expect(entry.tool.status, `${name} ${entry.tool.name}`).not.toBe('running');
         }
       }
     });
   }
+
+  it('marks the tool call a pending approval is about as awaiting approval', () => {
+    const { items, approvals } = golden('claude-edit-create');
+    const approval = approvals[0]!;
+    const callId = approval.request!.callId!;
+    const cut = items.findIndex((item) => item.kind === 'tool-result' && (item.payload as { callId?: string } | undefined)?.callId === callId);
+    const shown = items.slice(0, cut);
+    const model = buildChatModel({ items: shown, approvals: [{ ...approval, state: 'pending' }], turns: finishedTurns(shown, 'blocked') });
+    const tools = model.rows.flatMap((row) => (row.kind === 'activity' ? row.entries : []))
+      .flatMap((entry) => (entry.kind === 'tool' ? [entry.tool] : []));
+    expect(tools.filter((tool) => tool.awaitingApproval).map((tool) => tool.callId)).toEqual([callId]);
+    const waiting = tools.find((tool) => tool.awaitingApproval)!;
+    expect(toolVerb(waiting, 'ko')).toBe('수정 승인 대기');
+    expect(model.pending?.tool?.callId).toBe(callId);
+  });
 
   it('puts a live turn status after the turn rows and a finished one before them', () => {
     const { items } = golden('claude-read-search');

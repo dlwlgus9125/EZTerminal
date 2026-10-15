@@ -34,10 +34,12 @@ export function ChatTranscript({
   const rootRef = useRef<HTMLDivElement>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const [find, setFind] = useState<{ readonly query: string; readonly index: number; readonly seq: number }>();
-  const matches = useMemo(() => (find ? findRows(model.rows, find.query) : []), [find?.query, model.rows]);
+  const query = find?.query;
+  const seq = find?.seq;
+  const matches = useMemo(() => (query === undefined ? [] : findRows(model.rows, query)), [query, model.rows]);
   const index = find && matches.length ? Math.min(find.index, matches.length - 1) : 0;
   const current = find ? matches[index] : undefined;
-  const focusRow = useMemo(() => (current && find ? { id: current, seq: find.seq } : undefined), [current, find?.seq]);
+  const focusRow = useMemo(() => (current && seq !== undefined ? { id: current, seq } : undefined), [current, seq]);
 
   // Ctrl+F anywhere in this conversation panel (transcript or composer) opens find.
   useEffect(() => {

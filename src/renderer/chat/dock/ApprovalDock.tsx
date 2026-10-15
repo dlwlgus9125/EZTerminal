@@ -26,14 +26,25 @@ export interface ApprovalDockProps {
   readonly onCollapsedChange: (collapsed: boolean) => void;
 }
 
+/** Codex sends a new file's content and a deleted file's old content raw, not as a patch. */
+function approvalPatch(kind: string | undefined, diff: string): string {
+  // Real patches from either adapter start with a hunk header; raw content may itself begin with "- ".
+  if ((kind !== 'add' && kind !== 'delete') || diff.startsWith('@@')) return diff;
+  const prefix = kind === 'add' ? '+' : '-';
+  return diff.replace(/\r?\n$/u, '').split(/\r?\n/u).map((line) => `${prefix}${line}`).join('\n');
+}
+
 /** Localized title from the structured request; hosts without one keep the provider's title. */
 function dockTitle(pending: PendingInteraction, copy: ChatCopy): string {
   const { approval, request } = pending;
   switch (request?.kind) {
     case 'command': return copy.approval.commandTitle;
-    case 'file-change': return request.files.length === 1
-      ? copy.approval.editTitle(request.files[0]!.path.replace(/^.*[\\/]/u, ''))
-      : copy.approval.editFilesTitle(request.files.length);
+    case 'file-change': {
+      const [file] = request.files;
+      if (request.files.length !== 1 || !file) return copy.approval.editFilesTitle(request.files.length);
+      const name = file.path.replace(/^.*[\\/]/u, '');
+      return file.kind === 'add' ? copy.approval.createTitle(name) : file.kind === 'delete' ? copy.approval.deleteTitle(name) : copy.approval.editTitle(name);
+    }
     case 'question': return copy.approval.questionTitle;
     case 'plan': return copy.approval.planTitle;
     case 'tool': return copy.approval.toolTitle(request.toolName);
@@ -171,7 +182,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   };
   const command = request?.kind === 'command' ? request.command : tool?.category === 'command' ? tool.command : undefined;
   const changes = useMemo(() => (request?.kind === 'file-change'
-    ? request.files.filter((file) => file.diff).map((file) => ({ path: file.path, patch: file.diff!, coverage: 'fragment' as const }))
+    ? request.files.filter((file) => file.diff).map((file) => ({ path: file.path, patch: approvalPatch(file.kind, file.diff!), coverage: 'fragment' as const }))
     : tool?.changes ?? []), [request, tool]);
 
   if (collapsed) {

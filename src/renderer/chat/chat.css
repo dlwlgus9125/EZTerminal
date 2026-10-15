@@ -220,6 +220,7 @@
 
 .chat-status-icon[data-tone='success'] { color: var(--ui-success); }
 .chat-status-icon[data-tone='danger'] { color: var(--ui-danger); }
+.chat-status-icon[data-tone='warning'] { color: var(--ui-warning); }
 .chat-status-icon[data-tone='muted'] { color: var(--ui-text-muted); }
 
 .chat-link-button {
@@ -558,6 +559,14 @@
 .chat-output__pre {
   max-height: 16rem;
   overflow: auto;
+}
+
+/* The UA's `code { font-family: monospace }` resolves to a Korean face under
+   lang=ko, which draws "\" as "₩"; keep the pre/cell's mono stack. */
+.chat-output__command code,
+.chat-output__pre code,
+.chat-diff__code code {
+  font: inherit;
 }
 
 .chat-output[data-tone='error'] .chat-output__pre {

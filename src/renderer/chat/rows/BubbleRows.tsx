@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronRight, CircleSlash, FileDiff, ListChecks, LoaderCircle, MessageCircleQuestion, NotebookPen, Paperclip, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, CircleSlash, FileDiff, ListChecks, LoaderCircle, MessageCircleQuestion, NotebookPen, Paperclip, ShieldQuestion, X } from 'lucide-react';
 
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
@@ -53,6 +53,7 @@ export function BubbleAssistant({ row, providerLabel }: { readonly row: RowOf<'a
 }
 
 function StatusGlyph({ tool }: { readonly tool: ChatTool }): JSX.Element | null {
+  if (tool.awaitingApproval) return <ShieldQuestion className="chat-status-icon" data-tone="warning" aria-hidden="true" />;
   switch (tool.status) {
     case 'running':
       return <LoaderCircle className="chat-spin" aria-hidden="true" />;

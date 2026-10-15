@@ -113,6 +113,6 @@ export function toolMeta(tool: ChatTool, locale: 'ko' | 'en', copy: ReturnType<t
   const files = tool.files ?? [];
   const added = files.reduce((total, file) => total + (file.added ?? 0), 0);
   const removed = files.reduce((total, file) => total + (file.removed ?? 0), 0);
-  if (added || removed) meta.push(`+${added} −${removed}`);
+  if (added || removed) meta.push([added ? `+${added}` : '', removed ? `−${removed}` : ''].filter(Boolean).join(' '));
   return meta;
 }

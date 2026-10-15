@@ -39,9 +39,9 @@ export function OutputBlock({ text, label, tone }: {
 
 function prettyInput(tool: ChatTool): string | undefined {
   if (tool.inputValue) {
-    const { content: _content, old_string: _old, new_string: _new, ...rest } = tool.inputValue as Record<string, unknown>;
-    const keys = Object.keys(rest);
-    if (!keys.length) return undefined;
+    // Bodies the diff view already shows are left out of the input listing.
+    const rest = Object.fromEntries(Object.entries(tool.inputValue).filter(([key]) => !['content', 'old_string', 'new_string'].includes(key)));
+    if (!Object.keys(rest).length) return undefined;
     return JSON.stringify(rest, null, 2);
   }
   return tool.input?.trim() || undefined;

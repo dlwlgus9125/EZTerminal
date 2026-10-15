@@ -442,11 +442,18 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
   // (where the work is happening); a finished turn's status heads them.
   const finalRows: ChatRow[] = [];
   const liveStatus = new Map<string, ChatRow>();
+  const awaitingCallIds = new Set(approvals.flatMap((approval) => (approval.state === 'pending' && approval.request?.callId ? [approval.request.callId] : [])));
   for (let index = 0; index < rows.length; index += 1) {
     let row = rows[index];
     if (row.kind === 'activity') {
       const live = turnActive(row.turnId) && row.entries.some((entry) => (entry.kind === 'tool' ? entry.tool.status === 'running' : entry.streaming));
-      row = { ...row, entries: row.entries.map((entry) => (entry.kind === 'tool' ? { kind: 'tool', tool: { ...entry.tool } } : entry)), live };
+      row = {
+        ...row,
+        entries: row.entries.map((entry) => (entry.kind === 'tool'
+          ? { kind: 'tool', tool: { ...entry.tool, ...(entry.tool.status === 'running' && awaitingCallIds.has(entry.tool.callId) ? { awaitingApproval: true } : {}) } }
+          : entry)),
+        live,
+      };
     }
     if (row.kind === 'turn-status' && ACTIVE_TURN_STATES.has(row.state)) liveStatus.set(row.turnId, row);
     else finalRows.push(row);

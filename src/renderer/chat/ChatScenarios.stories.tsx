@@ -1,22 +1,27 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
-import type { ApprovalRequest } from '../../shared/approval-request';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../shared/daemon-protocol';
 import { AppI18nProvider } from '../i18n';
 import { StructuredAgentSessionPanel } from '../StructuredAgentSession';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import claudeApprovalDeny from './fixtures/claude-approval-deny.json';
+import claudeInterrupt from './fixtures/claude-interrupt.json';
 import claudeAskQuestion from './fixtures/claude-ask-question.json';
 import claudeEditCreate from './fixtures/claude-edit-create.json';
 import claudeMarkdown from './fixtures/claude-markdown.json';
 import claudePlanMode from './fixtures/claude-plan-mode.json';
 import claudeReadSearch from './fixtures/claude-read-search.json';
 import claudeTodoEnabled from './fixtures/claude-todo-enabled.json';
+import codexApprovalDeny from './fixtures/codex-approval-deny.json';
 import codexCommandOkFail from './fixtures/codex-command-ok-fail.json';
 import codexEditCreate from './fixtures/codex-edit-create.json';
+import codexFileApproval from './fixtures/codex-file-approval.json';
+import codexInterrupt from './fixtures/codex-interrupt.json';
 import codexMarkdown from './fixtures/codex-markdown.json';
 import codexWeb from './fixtures/codex-web.json';
+import legacyClaudeEditCreate from './fixtures/legacy/claude-edit-create.json';
+import legacyCodexCommandOkFail from './fixtures/legacy/codex-command-ok-fail.json';
 import '../index.css';
 import '../structured-agent.css';
 
@@ -53,19 +58,18 @@ function cutBefore(items: readonly DaemonTranscriptItem[], predicate: (item: Dae
   return index < 0 ? [...items] : items.slice(0, index);
 }
 
-function toolInput(items: readonly DaemonTranscriptItem[], name: string): Record<string, unknown> | undefined {
-  const call = items.find((item) => item.kind === 'tool-call' && item.text.startsWith(`${name}\n`));
-  if (!call) return undefined;
-  try { return JSON.parse(call.text.slice(name.length + 1)) as Record<string, unknown>; } catch { return undefined; }
+/** The recorded approval, still pending, with the transcript cut where it was asked. */
+function pendingScenario(golden: Golden, index = 0): { readonly items: DaemonTranscriptItem[]; readonly approvals: DaemonApproval[] } {
+  const recorded = golden.approvals[index]!;
+  const callId = recorded.request?.callId;
+  const items = cutBefore(golden.items, (item) => item.kind === 'approval'
+    || (item.kind === 'tool-result' && callId !== undefined && (item.payload as { callId?: string } | undefined)?.callId === callId));
+  return { items, approvals: [{ ...recorded, state: 'pending' }] };
 }
 
-function pendingApproval(golden: Golden, request: ApprovalRequest, title: string, risk: DaemonApproval['risk']): DaemonApproval {
-  const base = golden.approvals[0];
-  return {
-    id: base?.id ?? 'approval-story', sessionId: golden.items[0]!.sessionId, ...(base?.turnId ? { turnId: base.turnId } : {}),
-    providerRequestId: base?.providerRequestId ?? 'request-story', risk, title, state: 'pending', request,
-    revision: 1, createdAt: STARTED, updatedAt: STARTED,
-  };
+/** An old host: no payloads and no structured approval requests, only text. */
+function legacyHost(golden: Golden): Golden {
+  return { ...golden, approvals: golden.approvals.map((approval) => Object.fromEntries(Object.entries(approval).filter(([key]) => key !== 'request')) as unknown as DaemonApproval) };
 }
 
 interface ScenarioArgs {
@@ -127,37 +131,17 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const askGolden = claudeAskQuestion as unknown as Golden;
-const askInput = toolInput(askGolden.items, 'AskUserQuestion');
-const askItems = cutBefore(askGolden.items, (item) => item.kind === 'approval' || item.kind === 'tool-result');
-const askApproval = pendingApproval(askGolden, {
-  v: 1, kind: 'question', callId: 'ask',
-  questions: ((askInput?.questions as { question: string; header?: string; multiSelect?: boolean; options: { label: string; description?: string }[] }[] | undefined) ?? [])
-    .map((question) => ({ question: question.question, ...(question.header ? { header: question.header } : {}), multiSelect: Boolean(question.multiSelect), options: question.options })),
-}, 'Answer a question', 'read');
-
+const ask = pendingScenario(askGolden);
 const planGolden = claudePlanMode as unknown as Golden;
-const planInput = toolInput(planGolden.items, 'ExitPlanMode');
-const planItems = cutBefore(planGolden.items, (item) => item.kind === 'approval');
-const planApproval = pendingApproval(planGolden, {
-  v: 1, kind: 'plan', markdown: String(planInput?.plan ?? ''), ...(typeof planInput?.planFilePath === 'string' ? { filePath: planInput.planFilePath } : {}),
-}, 'Approve plan', 'write');
-
+const plan = pendingScenario(planGolden);
 const denyGolden = claudeApprovalDeny as unknown as Golden;
-const denyInput = toolInput(denyGolden.items, 'PowerShell');
-const denyItems = cutBefore(denyGolden.items, (item) => item.kind === 'approval');
-const denyApproval = pendingApproval(denyGolden, {
-  v: 1, kind: 'command', command: String(denyInput?.command ?? ''), cwd: '<WORKSPACE>',
-}, 'Run command', 'danger');
-
+const deny = pendingScenario(denyGolden);
 const editGolden = claudeEditCreate as unknown as Golden;
-const editInput = toolInput(editGolden.items, 'Edit');
-const editItems = cutBefore(editGolden.items, (item) => item.kind === 'approval');
-const editApproval = pendingApproval(editGolden, {
-  v: 1, kind: 'file-change', files: [{
-    path: String(editInput?.file_path ?? 'src/app.ts'), kind: 'update',
-    diff: `${String(editInput?.old_string ?? '').split('\n').map((line) => `-${line}`).join('\n')}\n${String(editInput?.new_string ?? '').split('\n').map((line) => `+${line}`).join('\n')}`,
-  }],
-}, 'Edit app.ts', 'write');
+const edit = pendingScenario(editGolden);
+const codexFileGolden = codexFileApproval as unknown as Golden;
+const codexFile = pendingScenario(codexFileGolden);
+const codexDenyGolden = codexApprovalDeny as unknown as Golden;
+const codexDeny = pendingScenario(codexDenyGolden);
 
 const streamingGolden = codexMarkdown as unknown as Golden;
 const streamingItems = (() => {
@@ -180,12 +164,24 @@ export const MarkdownBubble: Story = { args: { golden: claudeMarkdown as unknown
 export const MarkdownCli: Story = { args: { golden: claudeMarkdown as unknown as Golden, skin: 'cli' } };
 export const StreamingBubble: Story = { args: { golden: streamingGolden, items: streamingItems, turnState: 'working', state: 'working', skin: 'bubble' } };
 export const StreamingCli: Story = { args: { golden: streamingGolden, items: streamingItems, turnState: 'working', state: 'working', skin: 'cli' } };
-export const QuestionPendingBubble: Story = { args: { golden: askGolden, items: askItems, approvals: [askApproval], turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
-export const QuestionPendingCli: Story = { args: { golden: askGolden, items: askItems, approvals: [askApproval], turnState: 'blocked', state: 'blocked', skin: 'cli' } };
-export const PlanPendingBubble: Story = { args: { golden: planGolden, items: planItems, approvals: [planApproval], turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
-export const CommandPendingBubble: Story = { args: { golden: denyGolden, items: denyItems, approvals: [denyApproval], turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
-export const CommandPendingCli: Story = { args: { golden: denyGolden, items: denyItems, approvals: [denyApproval], turnState: 'blocked', state: 'blocked', skin: 'cli' } };
-export const EditPendingBubble: Story = { args: { golden: editGolden, items: editItems, approvals: [editApproval], turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const QuestionPendingBubble: Story = { args: { golden: askGolden, ...ask, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const QuestionPendingCli: Story = { args: { golden: askGolden, ...ask, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
+export const PlanPendingBubble: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const PlanPendingCli: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
+export const CommandPendingBubble: Story = { args: { golden: denyGolden, ...deny, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const CommandPendingCli: Story = { args: { golden: denyGolden, ...deny, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
+export const EditPendingBubble: Story = { args: { golden: editGolden, ...edit, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const EditPendingCli: Story = { args: { golden: editGolden, ...edit, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
+export const CodexFilePendingBubble: Story = { args: { golden: codexFileGolden, ...codexFile, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const CodexCommandPendingBubble: Story = { args: { golden: codexDenyGolden, ...codexDeny, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
+export const CodexCommandPendingCli: Story = { args: { golden: codexDenyGolden, ...codexDeny, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
+export const CodexDeniedBubble: Story = { args: { golden: codexDenyGolden, skin: 'bubble' } };
+export const InterruptBubble: Story = { args: { golden: claudeInterrupt as unknown as Golden, turnState: 'interrupted', skin: 'bubble' } };
+export const InterruptCli: Story = { args: { golden: claudeInterrupt as unknown as Golden, turnState: 'interrupted', skin: 'cli' } };
+export const CodexInterruptBubble: Story = { args: { golden: codexInterrupt as unknown as Golden, turnState: 'interrupted', skin: 'bubble' } };
+/** Conversations stored before payloads, or served by an old host, decode from text alone. */
+export const LegacyHostBubble: Story = { args: { golden: legacyHost(legacyClaudeEditCreate as unknown as Golden), skin: 'bubble' } };
+export const LegacyHostCli: Story = { args: { golden: legacyHost(legacyCodexCommandOkFail as unknown as Golden), skin: 'cli' } };
 export const DeniedBubble: Story = { args: { golden: denyGolden, skin: 'bubble' } };
 export const EnglishCommandsBubble: Story = { args: { golden: codexCommandOkFail as unknown as Golden, skin: 'bubble', locale: 'en' } };
 export const FindInConversation: Story = {

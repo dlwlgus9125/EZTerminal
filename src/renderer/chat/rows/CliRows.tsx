@@ -51,6 +51,7 @@ export function CliAssistant({ row, providerLabel }: { readonly row: RowOf<'assi
 }
 
 function resultSummary(tool: ChatTool, copy: ReturnType<typeof useChatCopy>, locale: 'ko' | 'en'): { readonly lines: readonly string[]; readonly hidden: number; readonly tone?: 'danger' | 'muted' } {
+  if (tool.awaitingApproval) return { lines: [locale === 'ko' ? '승인 대기 중…' : 'Waiting for approval…'], hidden: 0, tone: 'muted' };
   if (tool.status === 'running') return { lines: [locale === 'ko' ? '실행 중…' : 'Running…'], hidden: 0, tone: 'muted' };
   if (tool.status === 'denied') return { lines: [locale === 'ko' ? '사용자가 거부함' : 'User rejected'], hidden: 0, tone: 'danger' };
   if (tool.status === 'interrupted') return { lines: [locale === 'ko' ? '중단됨' : 'Interrupted'], hidden: 0, tone: 'muted' };
@@ -230,7 +231,7 @@ export function CliChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.Ele
       <div className="chat-cli-line__body">
         <button type="button" className="chat-cli-tool__call" aria-expanded={open} onClick={() => context.setExpanded(key, !open)}>
           <span className="chat-cli-tool__name">{copy.changedFiles(row.files.length)}</span>
-          <span className="chat-diff__added"> +{added}</span><span className="chat-diff__removed"> −{removed}</span>
+          {added > 0 && <span className="chat-diff__added"> +{added}</span>}{removed > 0 && <span className="chat-diff__removed"> −{removed}</span>}
         </button>
         {context.onReviewChanges && <button type="button" className="chat-link-button" onClick={context.onReviewChanges}>{copy.review}</button>}
         {open && row.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} variant="cli" />)}

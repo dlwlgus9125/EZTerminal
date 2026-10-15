@@ -39,6 +39,8 @@ export interface ChatTool {
   readonly query?: string;
   readonly server?: string;
   readonly createdAt: string;
+  /** The pending approval in the dock is about this call; it has not started. */
+  readonly awaitingApproval?: boolean;
 }
 
 /** A line inside an activity run: a tool use or a stretch of reasoning. */

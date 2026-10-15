@@ -141,6 +141,7 @@ export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
       fetch: '가져오기', mcp: '도구', agent: '하위 에이전트', todo: '작업 목록', question: '질문', plan: '계획', other: '도구',
     };
     const verb = map[tool.category] ?? '도구';
+    if (tool.awaitingApproval) return `${verb} 승인 대기`;
     return tool.status === 'running' ? `${verb} 중` : failed ? `${verb} 실패` : verb;
   }
   const done: Readonly<Record<string, string>> = {
@@ -153,6 +154,7 @@ export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
     web: tool.name === 'WebFetch' ? 'Fetching' : 'Searching the web', mcp: 'Calling', agent: 'Subagent', todo: 'Updating tasks',
     question: 'Asking', plan: 'Proposing plan', other: 'Using',
   };
+  if (tool.awaitingApproval) return 'Awaiting approval';
   if (tool.status === 'running') return running[tool.category] ?? 'Using';
   const verb = done[tool.category] ?? 'Used';
   return failed ? `Tried to ${verb.charAt(0).toLowerCase()}${verb.slice(1)}` : verb;
