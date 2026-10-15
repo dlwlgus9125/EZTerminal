@@ -33,10 +33,11 @@ export function WorkspaceBar({
 
   return (
     <div className="workspace-bar" data-testid="workspace-bar">
-      <span className="workspace-bar__label">{t('workspace.currentLabel')}</span>
-      <span className="workspace-bar__name" data-testid="workspace-bar-name">
-        {presetName ?? t('workspace.unsavedLayout')}
-      </span>
+      {presetName !== null && (
+        <span className="workspace-bar__name" data-testid="workspace-bar-name" title={t('workspace.currentLabel')}>
+          {presetName}
+        </span>
+      )}
 
       <span className="workspace-bar__chips">
         {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}

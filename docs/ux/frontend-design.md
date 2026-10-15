@@ -70,7 +70,9 @@ Header는 제품 기능 기준으로 정확히 네 zone을 가진다.
 아니다. `n`은 0–10, 기본 7이고 동일한 Appearance setting을 연다. Theme, Files,
 Stats, Pairing, Settings와 OpenClaw를 독립 header button으로 되돌리지 않는다.
 
-Header는 60px, activity rail은 62px이며 rail action은 44px target을 유지한다. Pane
+Header는 44px(2026-10-15 크롬 축소), activity rail은 62px이며 rail action은 44px target을 유지한다.
+Header 아래의 작업 공간 탭과 배치 preset은 한 줄로 합치고, 적용한 preset 이름은 있을 때만 보인다.
+하단 status bar는 24px이다. Pane
 card는 12px radius와 인접 pane이 합쳐 만드는 14px gutter를 사용한다.
 
 ### 3.3 Activity Rail

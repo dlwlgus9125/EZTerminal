@@ -3115,15 +3115,17 @@ export function App(): JSX.Element {
         >
           {/* Names the layout and puts splitting one click away. The other
               entry points stay; this is the one that is always visible. */}
-          <WorkspaceBar
-            presetName={appliedPreset}
-            paneCount={paneCount}
-            onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
-            onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
-            onApplySingle={() => applyLayoutPreset('single')}
-            onApplyRows={() => applyLayoutPreset('rows')}
-          />
-          {workbenchViews && <WorkbenchViewsBar controller={workbenchViews} />}
+          <div className="workbench-bar">
+            {workbenchViews && <WorkbenchViewsBar controller={workbenchViews} />}
+            <WorkspaceBar
+              presetName={appliedPreset}
+              paneCount={paneCount}
+              onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
+              onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
+              onApplySingle={() => applyLayoutPreset('single')}
+              onApplyRows={() => applyLayoutPreset('rows')}
+            />
+          </div>
           <SessionBindingContext.Provider value={sessionBindingValue}>
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
