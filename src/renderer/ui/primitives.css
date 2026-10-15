@@ -610,9 +610,8 @@
   background: var(--ui-surface-raised);
   border: 1px solid var(--ui-border-focus-soft);
   border-radius: var(--ui-radius-xl);
-  box-shadow:
-    var(--ui-glow-box),
-    var(--ui-shadow-overlay);
+  /* Elevation, not bloom: glow is reserved for live signals (DESIGN.md). */
+  box-shadow: var(--ui-shadow-overlay);
   color: var(--ui-text-primary);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;

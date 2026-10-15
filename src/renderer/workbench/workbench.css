@@ -183,7 +183,6 @@
 
 .workbench-command-field:hover {
   border-color: var(--ui-border-strong);
-  box-shadow: var(--ui-glow-box);
 }
 
 .workbench-command-field:focus-visible {
@@ -236,7 +235,7 @@
   margin: 0;
   color: var(--ui-text-primary);
   font: 400 var(--ui-font-size-26)/1 var(--ui-font-display);
-  letter-spacing: var(--ui-letter-spacing-heading);
+  letter-spacing: var(--ui-letter-spacing-display);
   white-space: nowrap;
 }
 

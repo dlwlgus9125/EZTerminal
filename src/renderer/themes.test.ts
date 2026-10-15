@@ -50,10 +50,10 @@ describe('themes — built-ins', () => {
   });
 
   it('each built-in has a swatch matching the mobile ThemeMenu pairs', () => {
-    expect(THEMES.dark.swatch).toEqual({ bg: '#0c0c0c', accent: '#29d398' });
-    expect(THEMES.light.swatch).toEqual({ bg: '#f5f5f5', accent: '#0e8a4b' });
+    expect(THEMES.dark.swatch).toEqual({ bg: '#1b1a18', accent: '#7aa7ff' });
+    expect(THEMES.light.swatch).toEqual({ bg: '#faf9f6', accent: '#2f5fd0' });
     expect(THEMES['high-contrast'].swatch).toEqual({ bg: '#000000', accent: '#00ff66' });
-    expect(THEMES.matrix.swatch).toEqual({ bg: '#010301', accent: '#35e58f' });
+    expect(THEMES.matrix.swatch).toEqual({ bg: '#020604', accent: '#35e58f' });
   });
 
   it('all built-ins satisfy the functional contrast contract without runtime correction', () => {

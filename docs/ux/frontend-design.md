@@ -326,6 +326,13 @@ output과 기존 custom theme compatibility로 제한한다. Custom theme의 per
 유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Feature는
 theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
 
+파생 role(hover·selected·status tint·glow·chat surface)은 built-in theme마다
+`ui-tokens.css`의 생성 영역에 고정되고 custom theme은 runtime이 같은 함수
+(`deriveUiTokens`)로 계산한다. 공유 foundation, primitive와 채팅 CSS는 Android WebView 74
+하한 때문에 `color-mix()`와 `:has()`를 쓰지 않으며 `ui-tokens.test.ts`가 이를 검사한다.
+Font token은 body, display(wordmark·Matrix heading), heading(기본은 body), terminal,
+mono(chat code, terminal font를 따름)로 나뉜다.
+
 ## 7. Component와 overlay 계약
 
 Button, IconButton, Dialog, ActionSheet, Menu, Popover, Tabs, Toast, Tooltip, FormControls와

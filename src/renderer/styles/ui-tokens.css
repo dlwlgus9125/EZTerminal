@@ -48,28 +48,28 @@
 :root {
   /* Semantic colour fallbacks: the product default (Dark). Theme runtime may
      override these per theme; built-in [data-theme] blocks below declare all. */
-  --ui-canvas: #101113;
-  --ui-surface: #17191c;
-  --ui-surface-raised: #22252a;
-  --ui-surface-inset: #0c0d0f;
-  --ui-text-primary: #edf0f4;
-  --ui-text-secondary: #bdc3cc;
-  --ui-text-muted: #949da9;
-  --ui-text-inverse: #07100c;
-  --ui-border-subtle: #30353b;
-  --ui-border-strong: #69737f;
-  --ui-accent: #2fe0a0;
-  --ui-accent-rgb: 47, 224, 160;
-  --ui-on-accent: #04110c;
-  --ui-focus: #65f4c0;
-  --ui-info: #56c8ff;
-  --ui-info-rgb: 86, 200, 255;
-  --ui-success: #2fe0a0;
-  --ui-success-rgb: 47, 224, 160;
-  --ui-warning: #f4c45e;
-  --ui-warning-rgb: 244, 196, 94;
-  --ui-danger: #ff6b7a;
-  --ui-danger-rgb: 255, 107, 122;
+  --ui-canvas: #1b1a18;
+  --ui-surface: #22211f;
+  --ui-surface-raised: #2b2a27;
+  --ui-surface-inset: #161513;
+  --ui-text-primary: #ecebe6;
+  --ui-text-secondary: #bdbab1;
+  --ui-text-muted: #9e9b92;
+  --ui-text-inverse: #1b1a18;
+  --ui-border-subtle: #363430;
+  --ui-border-strong: #78756d;
+  --ui-accent: #7aa7ff;
+  --ui-accent-rgb: 122, 167, 255;
+  --ui-on-accent: #0a1730;
+  --ui-focus: #9dbdff;
+  --ui-info: #7aa7ff;
+  --ui-info-rgb: 122, 167, 255;
+  --ui-success: #62c08f;
+  --ui-success-rgb: 98, 192, 143;
+  --ui-warning: #e2ae58;
+  --ui-warning-rgb: 226, 174, 88;
+  --ui-danger: #f47a74;
+  --ui-danger-rgb: 244, 122, 116;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
   --ui-agent-codex-rgb: 72, 215, 200;
@@ -138,7 +138,9 @@
   --ui-line-height-tight: 1.2;
   --ui-line-height-normal: 1.45;
   --ui-line-height-relaxed: 1.6;
-  --ui-letter-spacing-heading: 0.055em;
+  /* Wide tracking belongs to the display face; body-face headings sit at 0. */
+  --ui-letter-spacing-display: 0.055em;
+  --ui-letter-spacing-heading: 0;
 
   /* Four-point spacing rhythm. */
   --ui-space-0: 0;
@@ -208,69 +210,71 @@
 
 [data-theme='dark'] {
   --ui-font-heading: var(--ui-font-body);
-  --ui-canvas: #101113;
-  --ui-surface: #17191c;
-  --ui-surface-raised: #22252a;
-  --ui-surface-inset: #0c0d0f;
-  --ui-text-primary: #edf0f4;
-  --ui-text-secondary: #bdc3cc;
-  --ui-text-muted: #949da9;
-  --ui-text-inverse: #07100c;
-  --ui-border-subtle: #30353b;
-  --ui-border-strong: #69737f;
-  --ui-text-dim: #949da9;
-  --ui-border-mid: #30353b;
+  --ui-letter-spacing-heading: 0;
+  --ui-canvas: #1b1a18;
+  --ui-surface: #22211f;
+  --ui-surface-raised: #2b2a27;
+  --ui-surface-inset: #161513;
+  --ui-text-primary: #ecebe6;
+  --ui-text-secondary: #bdbab1;
+  --ui-text-muted: #9e9b92;
+  --ui-text-inverse: #1b1a18;
+  --ui-border-subtle: #363430;
+  --ui-border-strong: #78756d;
+  --ui-text-dim: #9e9b92;
+  --ui-border-mid: #2e2c29;
   /* Carries modal and pane boundaries, so it holds 3:1 against the surfaces it
      separates even though no automated gate covers this role. */
-  --ui-border-focus-soft: #69737f;
-  --ui-accent: #2fe0a0;
-  --ui-accent-rgb: 47, 224, 160;
-  --ui-on-accent: #04110c;
-  --ui-focus: #65f4c0;
-  --ui-info: #56c8ff;
-  --ui-info-rgb: 86, 200, 255;
-  --ui-success: #2fe0a0;
-  --ui-success-rgb: 47, 224, 160;
-  --ui-warning: #f4c45e;
-  --ui-warning-rgb: 244, 196, 94;
-  --ui-danger: #ff6b7a;
-  --ui-danger-rgb: 255, 107, 122;
+  --ui-border-focus-soft: #78756d;
+  --ui-accent: #7aa7ff;
+  --ui-accent-rgb: 122, 167, 255;
+  --ui-on-accent: #0a1730;
+  --ui-focus: #9dbdff;
+  --ui-info: #7aa7ff;
+  --ui-info-rgb: 122, 167, 255;
+  --ui-success: #62c08f;
+  --ui-success-rgb: 98, 192, 143;
+  --ui-warning: #e2ae58;
+  --ui-warning-rgb: 226, 174, 88;
+  --ui-danger: #f47a74;
+  --ui-danger-rgb: 244, 122, 116;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
   --ui-agent-codex-rgb: 72, 215, 200;
   --ui-agent-claude-rgb: 229, 138, 107;
-  --ui-glow-color: var(--ui-accent);
+  --ui-glow-color: transparent;
 }
 
 [data-theme='light'] {
   --ui-font-heading: var(--ui-font-body);
-  --ui-canvas: #f2f5f3;
+  --ui-letter-spacing-heading: 0;
+  --ui-canvas: #faf9f6;
   --ui-surface: #ffffff;
   --ui-surface-raised: #ffffff;
-  --ui-surface-inset: #e8eeeb;
-  --ui-text-primary: #14201a;
-  --ui-text-secondary: #3f5047;
-  --ui-text-muted: #5c6d64;
+  --ui-surface-inset: #f2f0eb;
+  --ui-text-primary: #1c1b19;
+  --ui-text-secondary: #4a4843;
+  --ui-text-muted: #6b6861;
   --ui-text-inverse: #ffffff;
-  --ui-border-subtle: #c9d2cd;
-  --ui-border-strong: #66776e;
+  --ui-border-subtle: #e4e1da;
+  --ui-border-strong: #7d7a72;
   /* Dark enough to clear 4.5:1 against the inset surface, which is the darkest
      background this role sits on in the light theme. */
-  --ui-text-dim: #5d6c64;
-  --ui-border-mid: #dde3e0;
-  --ui-border-focus-soft: #7d938a;
-  --ui-accent: #087847;
-  --ui-accent-rgb: 8, 120, 71;
+  --ui-text-dim: #6b6861;
+  --ui-border-mid: #ece9e3;
+  --ui-border-focus-soft: #8c897f;
+  --ui-accent: #2f5fd0;
+  --ui-accent-rgb: 47, 95, 208;
   --ui-on-accent: #ffffff;
-  --ui-focus: #075fca;
-  --ui-info: #075fca;
-  --ui-info-rgb: 7, 95, 202;
-  --ui-success: #087847;
-  --ui-success-rgb: 8, 120, 71;
+  --ui-focus: #2f5fd0;
+  --ui-info: #2f5fd0;
+  --ui-info-rgb: 47, 95, 208;
+  --ui-success: #1a7a4f;
+  --ui-success-rgb: 26, 122, 79;
   --ui-warning: #8a5a00;
   --ui-warning-rgb: 138, 90, 0;
-  --ui-danger: #b4233c;
-  --ui-danger-rgb: 180, 35, 60;
+  --ui-danger: #b42d38;
+  --ui-danger-rgb: 180, 45, 56;
   --ui-agent-codex: #006b64;
   --ui-agent-claude: #9a3f28;
   --ui-agent-codex-rgb: 0, 107, 100;
@@ -281,6 +285,7 @@
 
 [data-theme='high-contrast'] {
   --ui-font-heading: var(--ui-font-body);
+  --ui-letter-spacing-heading: 0;
   --ui-canvas: #000000;
   --ui-surface: #000000;
   --ui-surface-raised: #000000;
@@ -321,23 +326,24 @@
 
 [data-theme='matrix'] {
   --ui-font-heading: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  --ui-canvas: #010301;
-  --ui-surface: #040a06;
-  --ui-surface-raised: #051009;
-  --ui-surface-inset: #020704;
-  --ui-text-primary: #b7fbd4;
-  --ui-text-secondary: #78dba5;
-  --ui-text-muted: #5cbd87;
+  --ui-letter-spacing-heading: 0.055em;
+  --ui-canvas: #020604;
+  --ui-surface: #07110b;
+  --ui-surface-raised: #0c1b12;
+  --ui-surface-inset: #010402;
+  --ui-text-primary: #c6fde0;
+  --ui-text-secondary: #8fe6b6;
+  --ui-text-muted: #66c592;
   --ui-text-inverse: #00150a;
-  --ui-border-subtle: #17301f;
+  --ui-border-subtle: #1d3d29;
   /* borderStrong carries the 3:1 non-text contrast gate in theme-contrast.ts,
      so the handoff's dimmer strong value lives on --ui-border-mid instead. */
   --ui-border-strong: #4bbd7a;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
-  --ui-text-dim: #3f8f63;
-  --ui-border-mid: #143523;
-  --ui-border-focus-soft: #2c6a47;
+  --ui-text-dim: #52ad7c;
+  --ui-border-mid: #163322;
+  --ui-border-focus-soft: #2f7350;
   --ui-accent: #35e58f;
   --ui-accent-rgb: 53, 229, 143;
   --ui-on-accent: #001c0d;
@@ -358,70 +364,70 @@
 /* derived-ui-tokens:start — generated from themes.ts; rewrite with
    UPDATE_DERIVED_UI_TOKENS=1 pnpm vitest run src/renderer/styles/ui-tokens.test.ts */
 :root {
-  --ui-surface-hover: #192927;
-  --ui-surface-active: #1a352e;
-  --ui-surface-selected: #1b3d34;
-  --ui-accent-muted: #1b3931;
-  --ui-accent-hover: #46e2aa;
-  --ui-info-muted: #20323c;
-  --ui-success-muted: #1a352e;
-  --ui-warning-muted: #363125;
-  --ui-danger-muted: #372429;
-  --ui-danger-soft: #4a2b31;
-  --ui-warning-border: #9c844e;
-  --ui-danger-border: #a2535e;
-  --ui-warning-ring: rgba(244, 196, 94, 0.35);
-  --ui-danger-ring: rgba(255, 107, 122, 0.35);
-  --ui-glow-text: 0 0 12px rgba(47, 224, 160, 0.5);
-  --ui-glow-box: 0 0 0 1px rgba(47, 224, 160, 0.25), 0 0 28px rgba(47, 224, 160, 0.18);
-  --ui-chat-user-bubble: #242629;
-  --ui-chat-inline-code: #2a2c2f;
-  --ui-chat-diff-add: #112b23;
-  --ui-chat-diff-remove: #2e1a1e;
-}
-[data-theme='dark'] {
-  --ui-surface-hover: #192927;
-  --ui-surface-active: #1a352e;
-  --ui-surface-selected: #1b3d34;
-  --ui-accent-muted: #1b3931;
-  --ui-accent-hover: #46e2aa;
-  --ui-info-muted: #20323c;
-  --ui-success-muted: #1a352e;
-  --ui-warning-muted: #363125;
-  --ui-danger-muted: #372429;
-  --ui-danger-soft: #4a2b31;
-  --ui-warning-border: #9c844e;
-  --ui-danger-border: #a2535e;
-  --ui-warning-ring: rgba(244, 196, 94, 0.35);
-  --ui-danger-ring: rgba(255, 107, 122, 0.35);
-  --ui-glow-text: 0 0 12px rgba(47, 224, 160, 0.5);
-  --ui-glow-box: 0 0 0 1px rgba(47, 224, 160, 0.25), 0 0 28px rgba(47, 224, 160, 0.18);
-  --ui-chat-user-bubble: #242629;
-  --ui-chat-inline-code: #2a2c2f;
-  --ui-chat-diff-add: #112b23;
-  --ui-chat-diff-remove: #2e1a1e;
-}
-[data-theme='light'] {
-  --ui-surface-hover: #ebf4f0;
-  --ui-surface-active: #dcece5;
-  --ui-surface-selected: #d3e7de;
-  --ui-accent-muted: #d7e9e2;
-  --ui-accent-hover: #096d42;
-  --ui-info-muted: #dce9f8;
-  --ui-success-muted: #dcece5;
-  --ui-warning-muted: #efe8db;
-  --ui-danger-muted: #f5e0e4;
-  --ui-danger-soft: #efcfd4;
-  --ui-warning-border: #af9865;
-  --ui-danger-border: #c67986;
-  --ui-warning-ring: rgba(138, 90, 0, 0.35);
-  --ui-danger-ring: rgba(180, 35, 60, 0.35);
+  --ui-surface-hover: #292c31;
+  --ui-surface-active: #2e343e;
+  --ui-surface-selected: #323947;
+  --ui-accent-muted: #303643;
+  --ui-accent-hover: #88affc;
+  --ui-info-muted: #2e343e;
+  --ui-success-muted: #2b372f;
+  --ui-warning-muted: #3d3527;
+  --ui-danger-muted: #3f2d2b;
+  --ui-danger-soft: #503532;
+  --ui-warning-border: #917443;
+  --ui-danger-border: #9b5752;
+  --ui-warning-ring: rgba(226, 174, 88, 0.35);
+  --ui-danger-ring: rgba(244, 122, 116, 0.35);
   --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
   --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
-  --ui-chat-user-bubble: #f1f2f1;
-  --ui-chat-inline-code: #eaebea;
-  --ui-chat-diff-add: #c9ddd4;
-  --ui-chat-diff-remove: #e1d2d3;
+  --ui-chat-user-bubble: #2e2d2b;
+  --ui-chat-inline-code: #343331;
+  --ui-chat-diff-add: #212d24;
+  --ui-chat-diff-remove: #352321;
+}
+[data-theme='dark'] {
+  --ui-surface-hover: #292c31;
+  --ui-surface-active: #2e343e;
+  --ui-surface-selected: #323947;
+  --ui-accent-muted: #303643;
+  --ui-accent-hover: #88affc;
+  --ui-info-muted: #2e343e;
+  --ui-success-muted: #2b372f;
+  --ui-warning-muted: #3d3527;
+  --ui-danger-muted: #3f2d2b;
+  --ui-danger-soft: #503532;
+  --ui-warning-border: #917443;
+  --ui-danger-border: #9b5752;
+  --ui-warning-ring: rgba(226, 174, 88, 0.35);
+  --ui-danger-ring: rgba(244, 122, 116, 0.35);
+  --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
+  --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
+  --ui-chat-user-bubble: #2e2d2b;
+  --ui-chat-inline-code: #343331;
+  --ui-chat-diff-add: #212d24;
+  --ui-chat-diff-remove: #352321;
+}
+[data-theme='light'] {
+  --ui-surface-hover: #eef2fb;
+  --ui-surface-active: #e2e9f8;
+  --ui-surface-selected: #dae2f7;
+  --ui-accent-muted: #dee5f7;
+  --ui-accent-hover: #2d57ba;
+  --ui-info-muted: #e2e9f8;
+  --ui-success-muted: #dfece6;
+  --ui-warning-muted: #efe8db;
+  --ui-danger-muted: #f5e2e3;
+  --ui-danger-soft: #efd1d3;
+  --ui-warning-border: #b69a66;
+  --ui-danger-border: #cd8285;
+  --ui-warning-ring: rgba(138, 90, 0, 0.35);
+  --ui-danger-ring: rgba(180, 45, 56, 0.35);
+  --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
+  --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
+  --ui-chat-user-bubble: #f1f1f1;
+  --ui-chat-inline-code: #ebeaea;
+  --ui-chat-diff-add: #d4dfd5;
+  --ui-chat-diff-remove: #e9d5d2;
 }
 [data-theme='high-contrast'] {
   --ui-surface-hover: #001408;
@@ -446,26 +452,26 @@
   --ui-chat-diff-remove: #240d0d;
 }
 [data-theme='matrix'] {
-  --ui-surface-hover: #081c11;
-  --ui-surface-active: #0b2919;
-  --ui-surface-selected: #0d311f;
-  --ui-accent-muted: #0c2d1c;
-  --ui-accent-hover: #45e897;
-  --ui-info-muted: #112729;
-  --ui-success-muted: #0b2919;
-  --ui-warning-muted: #272613;
-  --ui-danger-muted: #271816;
-  --ui-danger-soft: #3b1f20;
-  --ui-warning-border: #958b48;
-  --ui-danger-border: #955353;
+  --ui-surface-hover: #0b2216;
+  --ui-surface-active: #0d2f1d;
+  --ui-surface-selected: #0f3723;
+  --ui-accent-muted: #0e3320;
+  --ui-accent-hover: #46e899;
+  --ui-info-muted: #142d2d;
+  --ui-success-muted: #0d2f1d;
+  --ui-warning-muted: #2a2c18;
+  --ui-danger-muted: #2a1e1b;
+  --ui-danger-soft: #3e2523;
+  --ui-warning-border: #968a47;
+  --ui-danger-border: #965252;
   --ui-warning-ring: rgba(255, 209, 102, 0.35);
   --ui-danger-ring: rgba(255, 107, 122, 0.35);
   --ui-glow-text: 0 0 12px rgba(53, 229, 143, 0.5);
   --ui-glow-box: 0 0 0 1px rgba(53, 229, 143, 0.25), 0 0 28px rgba(53, 229, 143, 0.18);
-  --ui-chat-user-bubble: #0f1812;
-  --ui-chat-inline-code: #142019;
-  --ui-chat-diff-add: #092617;
-  --ui-chat-diff-remove: #251515;
+  --ui-chat-user-bubble: #121f18;
+  --ui-chat-inline-code: #18261e;
+  --ui-chat-diff-add: #082416;
+  --ui-chat-diff-remove: #251213;
 }
 /* derived-ui-tokens:end */
 

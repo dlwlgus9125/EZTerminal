@@ -17,7 +17,12 @@ EZTerminal의 기준 이미지는 **대화·기획·실행을 연결하는 차�
 
 2026-10-13 승인한 [v2 r6 기준](docs/ux/reference/v2/APPROVAL.md)을 반영한다. 신규 기본값은
 Dark와 말풍선 스킨이며 기존 사용자의 theme·skin 설정은 보존한다. Matrix/CRT는 선택 가능한
-시각 표현으로 유지한다. 승인된 의도와 현재 구현의 일치 여부는
+시각 표현으로 유지한다.
+
+2026-10-15 UX 개편에서 Dark/Light 기본 팔레트를 **Ink 방향**으로 확정했다. 따뜻한 차콜
+canvas와 그 위로 한 단계씩 밝아지는 surface, 파란 signal accent를 쓰며 terminal pane도 같은
+canvas 위에 놓인다. Matrix는 같은 정체성을 유지하되 surface 단계와 경계를 더 또렷하게 한
+**Refined** palette를 쓴다. 두 결정 모두 새 채팅 렌더러 위에서 한 번 더 확인한다. 승인된 의도와 현재 구현의 일치 여부는
 [구현 진행 기록](docs/ezterminal-v2-implementation.md)에서 따로 검증한다.
 
 Matrix 정체성은 신호처럼 선명한 accent, 어두운 계층형 surface, 절제된 scanline과
@@ -52,8 +57,12 @@ runtime theme registry만 정의한다.
   만든다. 단순히 서로 다른 검정을 늘어놓지 않는다.
 - Success, warning, danger와 info는 실제 상태 의미가 있을 때만 쓴다. 의미는 label,
   icon 또는 구조로도 전달한다.
-- Glow와 scanline은 Matrix theme의 제한된 atmosphere다. Light와 High Contrast에서는
-  형태와 경계가 먼저이며, custom theme에도 Matrix 색을 강제로 섞지 않는다.
+- Glow와 scanline은 Matrix theme의 제한된 atmosphere다. Dark, Light와 High Contrast에서는
+  형태와 경계가 먼저이며, custom theme에도 Matrix 색을 강제로 섞지 않는다. Matrix 안에서도
+  glow는 focus, 활성 pane, 실행 중 상태처럼 살아 있는 signal에만 쓰고 dialog나 hover 같은
+  일반 elevation에는 쓰지 않는다.
+- Hover, selected, status tint 같은 파생 role은 theme별로 미리 계산된 값이다. Android
+  WebView 하한에서 평가되지 않는 런타임 색 혼합을 feature CSS에서 쓰지 않는다.
 - Remote video처럼 content 자체가 색을 소유하는 media plane은 chrome과 분리한다.
   그 위의 control은 전용 media semantic token으로 읽을 수 있어야 한다.
 
@@ -65,6 +74,8 @@ terminal content처럼 고정 폭이 의미를 돕는 곳에만 사용한다.
 
 한국어 문장 전체를 display 또는 terminal font로 만들지 않는다. Heading은 짧고 기능을
 명명하며, metadata는 작아질 수 있지만 핵심 상태나 action보다 먼저 희미해져야 한다.
+Heading은 본문과 같은 UI face를 쓰고, display face는 wordmark와 Matrix heading에만 쓴다.
+채팅과 chrome 안의 code는 사용자가 고른 terminal font를 따른다.
 정확한 family, type scale와 line height는 token foundation이 소유한다.
 
 ## Layout

@@ -64,7 +64,7 @@ function mediaBlocks(source: string, condition: string): string[] {
 
 const DERIVED_START = '/* derived-ui-tokens:start';
 const DERIVED_END = '/* derived-ui-tokens:end */';
-const GLOWING_THEMES = new Set(['dark', 'matrix']);
+const GLOWING_THEMES = new Set(['matrix']);
 
 /** The generated region: :root (product default) plus every built-in theme. */
 function expectedDerivedRegion(source: string): string {
@@ -312,10 +312,11 @@ describe('UI token contract', () => {
     // Light and High Contrast opt out of phosphor bloom through the glow
     // colour, not the shadows: `[data-theme]` and `[data-theme='light']` have
     // equal specificity, so the recompute block would win on source order.
-    for (const theme of ['light', 'high-contrast']) {
+    // Phosphor bloom is Matrix atmosphere only (DESIGN.md Colors).
+    for (const theme of ['dark', 'light', 'high-contrast']) {
       expect(scopedDeclaration(`[data-theme='${theme}']`, '--ui-glow-color')).toBe('transparent');
     }
-    for (const theme of ['dark', 'matrix']) {
+    for (const theme of ['matrix']) {
       expect(scopedDeclaration(`[data-theme='${theme}']`, '--ui-glow-color')).toBe(
         'var(--ui-accent)',
       );

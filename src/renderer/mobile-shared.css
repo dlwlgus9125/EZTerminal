@@ -50,19 +50,19 @@
     "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
 
   /* Console surfaces, near-black with subtly layered depth. */
-  --term-bg: #0c0c0c; /* the console background */
-  --term-bg-raised: #151515; /* command line / input strip */
-  --term-bg-inset: #0a0a0a; /* table body, deepest plane */
+  --term-bg: #1b1a18; /* the console background */
+  --term-bg-raised: #22211f; /* command line / input strip */
+  --term-bg-inset: #161513; /* table body, deepest plane */
   --term-bg-hover: rgba(255, 255, 255, 0.04);
 
   /* Hairline separators — block chrome stays thin, never card-like. */
-  --term-border: #242424;
-  --term-border-faint: #1a1a1a;
+  --term-border: #363430;
+  --term-border-faint: #2b2a27;
 
   /* Foreground ramp. */
   --term-fg: #cccccc; /* default text */
   --term-fg-bright: #f2f2f2; /* command text, emphasis */
-  --term-fg-dim: #7f7f7f; /* metadata, counts */
+  --term-fg-dim: #8c8c8c; /* metadata, counts */
   --term-fg-faint: #565656; /* chrome glyphs, loading */
 
   /* Classic terminal accents. */
@@ -72,7 +72,7 @@
   --term-cyan: #56b6c2; /* table headers, paths */
   --term-blue: #4d9fff; /* running / focus */
 
-  --term-selection: rgba(45, 211, 152, 0.22);
+  --term-selection: rgba(122, 167, 255, 0.28);
 
   font-family: var(--term-font);
   /* Keep rem-based product tokens on the canonical 16px scale. The persisted
@@ -89,12 +89,12 @@
    CSS can't import that file, so keep the two in sync by hand. */
 [data-theme="light"] {
   color-scheme: light;
-  --term-bg: #f5f5f5;
+  --term-bg: #faf9f6;
   --term-bg-raised: #ffffff;
-  --term-bg-inset: #ececec;
+  --term-bg-inset: #f2f0eb;
   --term-bg-hover: rgba(0, 0, 0, 0.05);
-  --term-border: #d0d0d0;
-  --term-border-faint: #e2e2e2;
+  --term-border: #e4e1da;
+  --term-border-faint: #eeebe5;
   --term-fg: #1c1c1c;
   --term-fg-bright: #000000;
   --term-fg-dim: #5f5f5f;
@@ -104,7 +104,7 @@
   --term-amber: #9a6a00;
   --term-cyan: #0f7c8c;
   --term-blue: #1857c4;
-  --term-selection: rgba(14, 138, 75, 0.18);
+  --term-selection: rgba(47, 95, 208, 0.18);
 }
 
 [data-theme="high-contrast"] {
@@ -134,13 +134,13 @@
   --term-font:
     "Share Tech Mono", "Cascadia Code", Consolas, "Courier New", monospace;
 
-  --term-bg: #010301;
-  --term-bg-raised: #071109;
-  --term-bg-inset: #020402;
+  --term-bg: #020604;
+  --term-bg-raised: #07110b;
+  --term-bg-inset: #010402;
   --term-bg-hover: rgba(41, 211, 152, 0.08);
 
-  --term-border: #3c8d61;
-  --term-border-faint: #1d5035;
+  --term-border: #2c6a47;
+  --term-border-faint: #163322;
 
   --term-fg: #8af7bd;
   --term-fg-bright: #d5ffe7;
