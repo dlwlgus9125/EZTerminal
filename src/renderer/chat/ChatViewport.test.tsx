@@ -43,6 +43,67 @@ afterEach(() => {
   clearSessionViewStates();
 });
 
+describe('ChatViewport tail', () => {
+  it('stays pinned to the end when the panel itself gets shorter (a dock or child track opens below)', () => {
+    const observed: { target: Element; callback: (entries: unknown[]) => void }[] = [];
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(private readonly callback: (entries: unknown[]) => void) {}
+      observe(target: Element): void { observed.push({ target, callback: this.callback }); }
+      disconnect(): void { /* nothing to release */ }
+      unobserve(): void { /* nothing to release */ }
+    } as unknown as typeof ResizeObserver;
+    try {
+      clearSessionViewStates();
+      render([notice('a'), notice('b')]);
+      const scroller = container.querySelector<HTMLElement>('.chat-viewport__scroll')!;
+      Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 900 });
+      scroller.scrollTop = 0;
+      const panel = observed.filter((entry) => entry.target === scroller);
+      expect(panel.length, 'the scroll container itself is observed').toBeGreaterThan(0);
+      const box = { inlineSize: 400, blockSize: 300 };
+      act(() => { for (const entry of panel) entry.callback([{ target: scroller, contentRect: { width: 400, height: 300 }, borderBoxSize: [box], contentBoxSize: [box] }]); });
+      expect(scroller.scrollTop).toBe(900);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
+  });
+});
+
+describe('ChatViewport follow', () => {
+  const metrics = (element: HTMLElement, scrollHeight: number, clientHeight = 400): void => {
+    Object.defineProperty(element, 'scrollHeight', { configurable: true, value: scrollHeight });
+    Object.defineProperty(element, 'clientHeight', { configurable: true, value: clientHeight });
+  };
+  const scrollTo = (element: HTMLElement, top: number): void => {
+    act(() => { element.scrollTop = top; element.dispatchEvent(new Event('scroll')); });
+  };
+  const pill = (): boolean => container.querySelector('.chat-jump') !== null;
+
+  it('keeps following when rows below grow (row measurement, highlighting) without the reader moving', () => {
+    clearSessionViewStates();
+    render([notice('a'), notice('b')]);
+    const scroller = container.querySelector<HTMLElement>('.chat-viewport__scroll')!;
+    metrics(scroller, 1000);
+    scrollTo(scroller, 600);
+    expect(pill()).toBe(false);
+    // Measured rows made the list taller; the browser reports a scroll at the same offset.
+    metrics(scroller, 1760);
+    scrollTo(scroller, 600);
+    expect(pill(), 'growth below is not the reader leaving the tail').toBe(false);
+  });
+
+  it('stops following once the reader scrolls up', () => {
+    clearSessionViewStates();
+    render([notice('a'), notice('b')]);
+    const scroller = container.querySelector<HTMLElement>('.chat-viewport__scroll')!;
+    metrics(scroller, 1000);
+    scrollTo(scroller, 600);
+    scrollTo(scroller, 300);
+    expect(pill()).toBe(true);
+  });
+});
+
 describe('ChatViewport "New" divider', () => {
   it('does not mark the initial load, later pages of it, or earlier pages loaded above', () => {
     render([]);

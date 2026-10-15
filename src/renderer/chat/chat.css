@@ -1013,6 +1013,10 @@
   font-size: var(--ui-font-size-xs);
 }
 
+.chat-cli-changes .chat-link-button {
+  margin-left: var(--ui-space-2);
+}
+
 .chat-cli-line .chat-tool-detail {
   margin-left: 1.5rem;
 }

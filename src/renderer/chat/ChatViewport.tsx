@@ -165,13 +165,15 @@ export function ChatViewport({
     if (firstSeen >= 0 && unseen) setNewFrom(unseen.id);
   }, [rows, newFrom, scrollToEnd]);
 
-  // Content that grows after layout (highlighting, expansion, streaming) keeps the tail pinned.
+  // Content that grows after layout (highlighting, expansion, streaming) keeps the tail pinned,
+  // and so does a panel that gets shorter (an approval dock or child track opening below).
   useEffect(() => {
     const element = scrollRef.current;
     const content = element?.firstElementChild;
     if (!element || !content || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver(() => { if (following.current) element.scrollTop = element.scrollHeight; });
     observer.observe(content);
+    observer.observe(element);
     return () => observer.disconnect();
   }, [virtual]);
 
@@ -236,10 +238,14 @@ export function ChatViewport({
   const onScroll = (): void => {
     const element = scrollRef.current;
     if (!element) return;
+    const movedUp = element.scrollTop < previous.current.top - 1;
     previous.current = { ...previous.current, height: element.scrollHeight, top: element.scrollTop };
     const bottom = element.scrollHeight - element.scrollTop - element.clientHeight < FOLLOW_THRESHOLD_PX;
-    following.current = bottom;
-    setAtBottom(bottom);
+    // Only the reader moving up leaves the tail; rows growing below (measurement,
+    // highlighting) also fire scroll events and must not stop following.
+    if (bottom) following.current = true;
+    else if (movedUp) following.current = false;
+    setAtBottom(following.current);
     if (bottom) {
       for (const row of rows) seenIds.current.add(row.id);
       if (newFrom) setNewFrom(undefined);

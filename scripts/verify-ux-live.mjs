@@ -106,14 +106,23 @@ async function command(page, type, payload) {
   });
 }
 
+/** The desktop header keeps the skin in its session menu; a missing switch fails the run. */
+async function selectSkin(page, value) {
+  const session = page.locator('[data-testid="structured-agent-session"]:visible').first();
+  if (await session.getAttribute('data-skin') === value) return;
+  await session.getByTestId('structured-agent-menu').click();
+  await page.getByTestId(`structured-agent-skin-${value}`).click();
+  for (let attempt = 0; await session.getAttribute('data-skin') !== value; attempt += 1) {
+    if (attempt >= 25) throw new Error(`The chat skin did not switch to ${value}.`);
+    await wait(200);
+  }
+}
+
 async function shoot(page, name, report) {
-  const skin = page.locator('[data-testid="structured-agent-skin"]').first();
   const shots = [];
   for (const value of ['cli', 'bubble']) {
-    if (await skin.count()) {
-      await skin.selectOption(value).catch(() => undefined);
-      await wait(400);
-    }
+    await selectSkin(page, value);
+    await wait(400);
     const file = `${name}-${value}.png`;
     await page.screenshot({ path: path.join(output, file) });
     shots.push(file);
