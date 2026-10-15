@@ -10,7 +10,7 @@ import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { ConversationStartController, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
-import { captureTranscriptAnchor, restoreTranscriptAnchor } from './chat-view-state';
+import { historyTranscriptItems } from './chat/model/history-items';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select } from './ui';
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
@@ -117,24 +117,19 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
     return () => { alive = false; };
   }, [access, originalId, disconnected, revision, text]);
 
-  const items = useMemo<DaemonTranscriptItem[]>(() => {
-    const seen = new Set<string>();
-    return (page?.turns ?? []).flatMap(turn => turn.entries).filter(item => { if (seen.has(item.id)) return false; seen.add(item.id); return true; }).map((item, index) => ({
-      id: item.id, messageId: item.id, sessionId: identity, sequence: index + 1,
-      kind: item.type === 'message' ? item.role === 'user' ? 'user-message' : 'assistant-message' : item.kind === 'reasoning' ? 'reasoning' : 'tool-result',
-      text: item.type === 'message' ? item.markdown : item.summary, isDelta: false, isSensitive: false, createdAt: new Date(entry?.createdAt ?? 0).toISOString(),
-    }));
-  }, [page, identity, entry?.createdAt]);
+  // Tool activity keeps its name and target so the chat can show it like a live session.
+  const items = useMemo<DaemonTranscriptItem[]>(
+    () => historyTranscriptItems(page, identity, new Date(entry?.createdAt ?? 0).toISOString()),
+    [page, identity, entry?.createdAt],
+  );
   const loadEarlier = async (): Promise<void> => {
     if (!entry || !page?.nextCursor || earlier) return;
-    const viewport = host.current?.querySelector<HTMLElement>('.structured-agent-transcript');
-    const anchor = viewport && captureTranscriptAnchor(viewport);
     setEarlier(true);
     try {
       const result = await access.history.readConversation(entry.conversationId, page.nextCursor);
       if (result.ok) {
+        // The chat viewport keeps the reader's place when rows are prepended.
         setPage(current => ({ ...result.transcript, turns: [...result.transcript.turns, ...(current?.turns ?? [])] }));
-        requestAnimationFrame(() => { if (viewport && anchor) restoreTranscriptAnchor(viewport, anchor); });
       } else setError(result.message);
     } catch { setError(text('이전 메시지를 불러오지 못했습니다. 다시 시도하세요.', 'Could not load earlier messages. Retry.')); }
     finally { setEarlier(false); }
@@ -208,8 +203,8 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       onSend={send} supportsMessageContext capabilityClient={capabilityClient} capabilitySessionId={null} variant={variant} onOpenHistory={onOpenHistory}
       onChangeSettings={async next => recovery.saveComposition({ settings: { ...settings, ...next } })}
       workflowContext={settingsControls} recoveryControl={<ChatRecoveryNotice controller={recovery} view={view} />}
+      hasEarlier={!!page?.nextCursor && !disconnected} loadingEarlier={earlier} onLoadEarlier={() => void loadEarlier()}
       beforeMessages={<>
-        {page?.nextCursor && <Button variant="ghost" size="sm" disabled={earlier || disconnected} onClick={() => void loadEarlier()}>{text('이전 메시지 불러오기', 'Load earlier messages')}</Button>}
         {entry?.historyId && onReviewChange && page?.turns.some(turn => turn.entries.some(item => item.type === 'activity' && item.changedPaths?.length)) &&
           <details className="conversation-history__changes"><summary>{text('기록의 변경 파일 검토', 'Review recorded file changes')}</summary>
             {page.turns.flatMap(turn => turn.entries.flatMap(item => item.type === 'activity' ? (item.changedPaths ?? []).map(path =>

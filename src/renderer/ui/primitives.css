@@ -282,8 +282,10 @@
   position: relative;
 }
 
-.ez-ui-select {
+.ez-ui-select,
+.ez-ui-select-shell[data-size] .ez-ui-select {
   appearance: none;
+  /* The sized padding-inline above would otherwise put the text under the chevron. */
   padding-inline-end: calc(var(--ui-space-6) + var(--ui-space-2));
 }
 

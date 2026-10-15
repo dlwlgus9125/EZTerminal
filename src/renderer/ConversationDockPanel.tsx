@@ -51,8 +51,9 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
       setReady(true);
     })().catch(reason => { if (alive) setError(String(reason)); });
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsubscribe = rendererCapabilities.daemon.observeEvents(() => {
-      if (timer) return;
+    const unsubscribe = rendererCapabilities.daemon.observeEvents((event) => {
+      // Streamed transcript appends do not change session state; only entity/approval events do.
+      if (event.kind === 'transcript.appended' || timer) return;
       timer = setTimeout(() => { timer = undefined; void access.getSnapshot().then(next => { if (alive) setSnapshot(next); }).catch(() => undefined); }, 200);
     });
     return () => { alive = false; if (timer) clearTimeout(timer); unsubscribe(); };

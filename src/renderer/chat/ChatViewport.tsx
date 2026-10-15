@@ -108,7 +108,9 @@ export function ChatViewport({
   const following = useRef(saved.current?.follow ?? true);
   const [atBottom, setAtBottom] = useState(true);
   const [newFrom, setNewFrom] = useState<string | undefined>();
-  const seenCount = useRef(rows.length);
+  /** Rows the reader has had at the bottom of the view; anything else that arrives later is "new". */
+  const seenIds = useRef(new Set(rows.map((row) => row.id)));
+  const mountedAt = useRef(new Date().toISOString());
   const virtual = rows.length > VIRTUALIZE_ABOVE;
   const listRef = useRef<HTMLOListElement>(null);
   const [listOffset, setListOffset] = useState(0);
@@ -148,13 +150,19 @@ export function ChatViewport({
     }
   }, [rows, virtual, virtualizer]);
 
-  // New rows: follow, or mark where unseen content starts.
+  // New rows: follow, or mark where unseen content starts. Rows of the initial
+  // load, earlier pages loaded above, and rows that only moved are not "new".
   useEffect(() => {
-    if (rows.length > seenCount.current && !following.current && !newFrom) setNewFrom(rows[seenCount.current]?.id);
-    if (following.current) {
-      seenCount.current = rows.length;
-      scrollToEnd();
+    const seen = seenIds.current;
+    if (following.current || seen.size === 0) {
+      for (const row of rows) seen.add(row.id);
+      if (following.current) scrollToEnd();
+      return;
     }
+    if (newFrom) return;
+    const firstSeen = rows.findIndex((row) => seen.has(row.id));
+    const unseen = rows.find((row, index) => index > firstSeen && !seen.has(row.id) && row.createdAt >= mountedAt.current);
+    if (firstSeen >= 0 && unseen) setNewFrom(unseen.id);
   }, [rows, newFrom, scrollToEnd]);
 
   // Content that grows after layout (highlighting, expansion, streaming) keeps the tail pinned.
@@ -233,7 +241,7 @@ export function ChatViewport({
     following.current = bottom;
     setAtBottom(bottom);
     if (bottom) {
-      seenCount.current = rows.length;
+      for (const row of rows) seenIds.current.add(row.id);
       if (newFrom) setNewFrom(undefined);
     }
     if (element.scrollTop < 200) onReachTop?.();
