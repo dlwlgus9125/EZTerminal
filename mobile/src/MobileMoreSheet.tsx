@@ -1,4 +1,4 @@
-﻿import { Activity, ChevronRight, Files, List, Palette, Settings, Wrench } from 'lucide-react';
+import { Monitor, Activity, ChevronRight, Files, List, Palette, Settings, Wrench } from 'lucide-react';
 import { flushSync } from 'react-dom';
 import type { RefObject } from 'react';
 
@@ -27,6 +27,7 @@ export function MobileMoreSheet({
   onOpenClaw,
   onOpenTheme,
   onOpenSettings,
+  onOpenPcControl,
 }: {
   readonly currentTheme: ThemeName;
   readonly openclawVisible: boolean;
@@ -40,6 +41,7 @@ export function MobileMoreSheet({
   readonly onOpenClaw: () => void;
   readonly onOpenTheme: (trigger: HTMLElement) => void;
   readonly onOpenSettings: () => void;
+  readonly onOpenPcControl?: () => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const navigation = useMobileNavigationHistory();
@@ -65,6 +67,9 @@ export function MobileMoreSheet({
       returnFocusRef={returnFocusRef}
       testId="mobile-more-sheet"
     >
+      {onOpenPcControl && <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenPcControl)} data-testid="more-pc-control">
+        <Monitor aria-hidden="true" /><span className="mobile-action-sheet-row-label">{t('mobile.tabs.pc')}</span>
+      </button>}
       <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenSessions)} data-testid="more-sessions">
         <List aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('mobile.sessions')}</span>

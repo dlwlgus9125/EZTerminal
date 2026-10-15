@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-14",
+  "status": "reviewable-proposal",
+  "scope": "New responsive browser prototype only; existing product files, approved references and visual baselines were not modified.",
+  "captures": {
+    "installed_window": "evidence/installed-ezterminal.png",
+    "installed_window_context": "Installed EZTerminal 2.0, active Codex CLI tab. This capture is not represented as app-chat behavior and is not uploaded to the Site.",
+    "production_storybook": "evidence/current-capture.json",
+    "production_storybook_context": "Current production chat/navigation components rendered with deterministic Storybook fixtures. No provider process was run.",
+    "proposal_screens": "evidence/proposal-*.png"
+  },
+  "observations": [
+    "Desktop compose fixture: session header 123.98px and composer with quote+attachment 228.19px.",
+    "Mobile compose fixture at 390x844: header 191.98px, composer with quote+attachment 297.58px, transcript 354.44px.",
+    "Each tool result has its own message card; completion summary and file review are not integrated in the examined fixture.",
+    "The proposed responsive layout uses one conversation list and a separate inspector; no nested conversation sidebar."
+  ],
+  "selected_direction": "Conversation-first workspace: compact header, grouped execution history, composer-local settings and optional change review.",
+  "validation": {
+    "command": "pnpm e2e --config docs/ux/reference/v2-conversation-r6/playwright.config.cjs",
+    "tests": {"passed":5,"failed":0},
+    "responsive_combinations": 50,
+    "viewports": [[320,640],[390,844],[1024,768],[1440,900],[1920,1080]],
+    "states": ["completed","working","approval","error","offline","empty","loading","uncertain","conflict","stopped"],
+    "accessibility": "axe WCAG 2 A/AA and 2.1 A/AA: no violations for desktop dark, mobile approval dark and desktop light.",
+    "behavior": "Draft reload and per-conversation preservation; queue editing/deletion/interrupt; approval/denial receipts; offline recovery without send; keyboard completion; synthetic IME guard; line reference; dialog focus; mobile Enter and panel navigation.",
+    "visual_review": "Current and proposal captures were opened and compared. Approval auto-scroll was corrected after review so allow/deny is visible. No existing snapshots updated.",
+    "performance_benchmark": "Not run."
+  },
+  "contract_checks": {
+    "profile": "google-alpha-0.4.0-ezpowers-1",
+    "design_md_lint": "PASS, 0 errors, 6 warnings: existing DESIGN.md keeps runtime tokens in themes.ts/ui-tokens.css and has no machine-readable token frontmatter.",
+    "check_project": "ERROR: existing frontend-design.md lacks a managed design-system JSON block.",
+    "visual_readiness": "Existing project-level checker reports missing declared visual baseline/review-loop coverage. This is not a prototype browser-test failure.",
+    "disposition": "Preserved the existing repository ownership contract and approved documents. No managed-document adoption or product-release certification is claimed. Design context and mappings are recorded in design-context.json."
+  },
+  "limits": [
+    "All conversations, tool progress, code diffs and success counts in the prototype are fixture data.",
+    "Draft/attachment metadata persist in localStorage; attachments are not uploaded and file bytes are not stored.",
+    "No real provider/daemon integration, actual code changes, native Android keyboard or real network recovery validation.",
+    "The proposed diff and detailed tool progress require provider capability and event mapping before product implementation."
+  ]
+}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LayoutEnvelope } from '../shared/layout-schema';
+import { restoreConversationLayout } from './conversation-layout';
 import { clearSessionViewStates, saveSessionViewState } from './session-view-state';
 import {
   WorkbenchCoordinator,
@@ -508,7 +509,7 @@ describe('WorkbenchCoordinator pane and recent-panel contract', () => {
     )).resolves.toBe(false);
 
     expect(quarantineLayout).toHaveBeenCalledOnce();
-    expect(dock.restores).toEqual([layoutEnvelope(['tab-9']).layout, backup]);
+    expect(dock.restores).toEqual([restoreConversationLayout(layoutEnvelope(['tab-9']).layout), backup]);
     expect(dock.panelIds()).toEqual(['tab-5']);
     expect(dock.added).toEqual([]);
   });

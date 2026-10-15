@@ -298,6 +298,35 @@
   transform: translateY(-50%);
 }
 
+/* Android's older WebViews lack logical inset and padding shorthands. */
+@supports not (inset-inline-end: 0) {
+  .ez-ui-select-shell__icon {
+    top: 50%;
+    right: var(--ui-space-3);
+  }
+}
+
+@supports not (padding-inline: 1px) {
+  .ez-ui-input,
+  .ez-ui-select {
+    padding: 0 var(--ui-control-inline-padding-md);
+  }
+
+  .ez-ui-input[data-size='sm'],
+  .ez-ui-select-shell[data-size='sm'] .ez-ui-select {
+    padding: 0 var(--ui-control-inline-padding-sm);
+  }
+
+  .ez-ui-input[data-size='lg'],
+  .ez-ui-select-shell[data-size='lg'] .ez-ui-select {
+    padding: 0 var(--ui-control-inline-padding-lg);
+  }
+
+  .ez-ui-select-shell[data-size] .ez-ui-select {
+    padding-right: calc(var(--ui-space-6) + var(--ui-space-2));
+  }
+}
+
 .ez-ui-switch {
   align-items: flex-start;
   cursor: pointer;

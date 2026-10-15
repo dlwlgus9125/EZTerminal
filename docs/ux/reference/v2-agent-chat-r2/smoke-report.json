@@ -1,0 +1,26 @@
+{
+  "kind": "design-reference-only",
+  "smoke": true,
+  "generatedAt": "2026-10-13T10:25:32.780Z",
+  "productValidation": false,
+  "physicalAndroidIME": false,
+  "performanceMeasurement": false,
+  "approved": false,
+  "passed": true,
+  "checks": [
+    {
+      "name": "cold conversation is usable with zero simulated turns",
+      "passed": true
+    },
+    {
+      "name": "no runtime errors or external requests",
+      "passed": true
+    }
+  ],
+  "captures": [
+    "desktop-welcome.png",
+    "mobile-welcome.png"
+  ],
+  "errors": [],
+  "externalRequests": []
+}

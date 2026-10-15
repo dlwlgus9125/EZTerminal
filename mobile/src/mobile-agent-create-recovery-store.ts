@@ -6,6 +6,8 @@ import {
 } from '../../src/shared/daemon-protocol';
 import type { StructuredAgentDraftInput } from '../../src/renderer/StructuredAgentSession';
 import type { StructuredAgentCreateOutcome } from '../../src/renderer/structured-agent-create';
+import { ChatComposerDraftSchema } from '../../src/shared/chat-state';
+import type { ChatComposerDraft } from '../../src/shared/chat-message';
 
 const SECURE_KEY_PREFIX = 'ezterminal-mobile-agent-create-recovery-v2:';
 const SCHEMA_VERSION = 2 as const;
@@ -47,7 +49,7 @@ export interface MobileAgentCreateRecoveryController {
   readonly status: MobileAgentCreateRecoveryStatus;
   readonly recovery: UncertainAgentCreate | null;
   /** Durably replaces the pending envelope before the caller may send it. */
-  readonly prepare: (command: DaemonCommandEnvelope<'agent.create'>) => Promise<boolean>;
+  readonly prepare: (command: DaemonCommandEnvelope<'agent.create'>, draft?: Pick<StructuredAgentDraftInput, 'draftText' | 'draftSkills'>) => Promise<boolean>;
   /** Clears a definitively settled envelope; false means future creates must fail closed. */
   readonly clear: () => Promise<boolean>;
   /** Re-checks the authenticated authority and secure store after a transient failure. */
@@ -66,6 +68,7 @@ interface SecureRecoveryRecord {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly authorityFingerprint: string;
   readonly command: DaemonCommandEnvelope<'agent.create'>;
+  readonly composerDraft?: ChatComposerDraft;
 }
 
 function sameJsonValue(left: unknown, right: unknown): boolean {
@@ -115,15 +118,20 @@ function validatedMobileCreateCommand(
 
 export function mobileAgentCreateRecoveryFromCommand(
   command: DaemonCommandEnvelope<'agent.create'>,
+  draft?: Pick<StructuredAgentDraftInput, 'draftText' | 'draftSkills'>,
 ): UncertainAgentCreate {
   const validated = validatedMobileCreateCommand(command);
   if (!validated) throw new Error('Invalid mobile Agent create recovery command.');
+  const composer = draft?.draftText === undefined && draft?.draftSkills === undefined ? undefined
+    : ChatComposerDraftSchema.parse({ text: draft.draftText ?? '', ...(draft.draftSkills ? { skills: draft.draftSkills } : {}) });
+  if (composer?.skills?.some(skill => skill.providerId !== command.payload.providerId)) throw new Error('Draft skills belong to another provider.');
   const input: StructuredAgentDraftInput = Object.freeze({
     providerId: validated.payload.providerId,
     ...(validated.payload.model ? { model: validated.payload.model } : {}),
     workspaceId: validated.payload.workspaceId,
     permissionPreset: validated.payload.permissionPreset,
     initialPrompt: validated.payload.initialPrompt,
+    ...(composer ? { draftText: composer.text, ...(composer.skills ? { draftSkills: composer.skills } : {}) } : {}),
   });
   return Object.freeze({
     input,
@@ -178,7 +186,7 @@ function recoveryRecordFromText(
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
+  const keys = Object.keys(record).filter(key => key !== 'composerDraft').sort();
   if (
     keys.length !== 3
     || keys[0] !== 'authorityFingerprint'
@@ -188,7 +196,9 @@ function recoveryRecordFromText(
     || validatedAuthorityFingerprint(record.authorityFingerprint) !== expectedAuthorityFingerprint
   ) return null;
   const command = validatedMobileCreateCommand(record.command);
-  return command ? mobileAgentCreateRecoveryFromCommand(command) : null;
+  const composer = record.composerDraft === undefined ? undefined : ChatComposerDraftSchema.safeParse(record.composerDraft);
+  if (!command || (composer && (!composer.success || composer.data.skills?.some(skill => skill.providerId !== command.payload.providerId)))) return null;
+  return mobileAgentCreateRecoveryFromCommand(command, composer?.success ? { draftText: composer.data.text, draftSkills: composer.data.skills } : undefined);
 }
 
 function validatedRecoveryCommand(
@@ -257,7 +267,9 @@ export class MobileAgentCreateRecoveryStore implements MobileAgentCreateRecovery
   async save(recovery: UncertainAgentCreate, authorityFingerprint: string): Promise<void> {
     const command = validatedRecoveryCommand(recovery);
     const key = secureRecoveryKey(authorityFingerprint);
-    const record: SecureRecoveryRecord = { schemaVersion: SCHEMA_VERSION, authorityFingerprint, command };
+    const validatedInput = mobileAgentCreateRecoveryFromCommand(command, recovery.input).input;
+    const record: SecureRecoveryRecord = { schemaVersion: SCHEMA_VERSION, authorityFingerprint, command,
+      ...(validatedInput.draftText === undefined ? {} : { composerDraft: { text: validatedInput.draftText, ...(validatedInput.draftSkills ? { skills: validatedInput.draftSkills } : {}) } }) };
     let serialized: string;
     try {
       serialized = JSON.stringify(record);

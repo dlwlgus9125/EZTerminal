@@ -104,12 +104,12 @@ describe('themes — registry', () => {
     expect(getActiveTheme()).toBe(THEMES.dark);
   });
 
-  it('preserves an unknown requested id while using Matrix as the effective fallback', () => {
+  it('preserves an unknown requested id while using Dark as the effective fallback', () => {
     document.documentElement.dataset.theme = 'never-registered';
-    expect(getActiveTheme()).toBe(THEMES.matrix);
+    expect(getActiveTheme()).toBe(THEMES.dark);
     expect(getResolvedTheme()).toMatchObject({
       requestedId: 'never-registered',
-      effectiveId: 'matrix',
+      effectiveId: 'dark',
       fallbackReason: 'missing-custom-theme',
     });
     expect(getActiveThemeName()).toBe('never-registered');

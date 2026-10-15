@@ -370,6 +370,9 @@
   background: var(--mob-chrome);
 }
 
+/* A modal owns the screen and Back action; isolated tabs must not cover its controls. */
+.mobile-shell-nav[inert], .mobile-shell-nav[aria-hidden='true'] { visibility: hidden; }
+
 /* Rail-only affordances. The compound selector is deliberate: `.mobile-shell-tab`
    below also sets `display`, and a single-class rule would lose the cascade. */
 .mobile-shell-nav__brand,

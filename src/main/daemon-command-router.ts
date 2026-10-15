@@ -116,6 +116,7 @@ function providerNativeMutationTarget(
     case 'agent.submit':
     case 'agent.interrupt-and-submit':
     case 'agent.interrupt':
+    case 'agent.queue':
     case 'agent.set-settings':
     case 'agent.cancel':
     case 'agent.archive':
@@ -198,6 +199,12 @@ export class DaemonCommandRouter {
   onEvent(listener: (event: DaemonEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Host-owned maintenance uses the same stored event stream as command commits. */
+  publishStoredEventsAfter(sequence: number): void {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error('Invalid stored event cursor.');
+    this.publishEventsAfter(sequence);
   }
 
   async execute(value: unknown): Promise<DaemonCommandReceipt> {

@@ -1,0 +1,32 @@
+{
+  "date":"2026-10-14",
+  "version":"R7.1",
+  "status":"reviewable-prototype-extension",
+  "request":"Open a new terminal beside New conversation in the project context.",
+  "scope":"Existing hosted prototype only. No production code, frozen handoff source or product snapshots changed.",
+  "changes":[
+    "Adjacent New conversation and New terminal buttons in the project sidebar, including the mobile drawer.",
+    "New terminal in each pane and a terminal split action in the pane menu.",
+    "Typed terminal session metadata: project, workspace, root path, shell and unique session ID. Existing chats receive the single example project's metadata.",
+    "Distinct terminal icon, PowerShell surface, working directory and honest demo label. Chat model, skin and approval controls do not apply to terminal tabs.",
+    "Terminal input, output, command history, caret and scroll participate in stable iframe moves and fixture-state window transfer.",
+    "Focus enters a newly created session after its frame is ready; mobile project drawer closes after creation.",
+    "Narrow chat skill control now has an explicit accessible name."
+  ],
+  "validation":{
+    "command":"pnpm e2e --config docs/ux/reference/v2-conversation-r7/terminal.playwright.config.cjs",
+    "passed":11,
+    "failed":0,
+    "coverage":"8 existing R7 tests including 150 viewport/layout/state combinations; 3 added terminal tests covering creation, project ownership, mixed tab/layout persistence, draft restoration, command history, drag, real popup split/return, mobile drawer and local pane menu.",
+    "accessibility":"Zero axe WCAG 2 A/AA and 2.1 AA violations in tested dark/light mixed panes and 320, 390, 800px terminal layouts; existing R7 coverage retained.",
+    "visual_review":"Desktop conversation plus terminal, three columns in light, phone terminal and auxiliary window captures inspected.",
+    "evidence":"evidence/terminal/",
+    "hosted":"R7.1 published with existing owner-only access. HTTP 200; new terminal, project root, mixed split and real popup return verified on the live Site with no page errors. See evidence/terminal/hosted-smoke.json.",
+    "performance_benchmark":"Not run."
+  },
+  "limits":[
+    "This prototype still has one example project. Multi-project selection/isolation is not represented as validated.",
+    "No real shell or PTY. Commands are escaped and displayed as text; a few commands show explicitly labeled fixture output. No filesystem, process, provider or network command execution.",
+    "Real Electron terminal controller and process continuity remain product integration work."
+  ]
+}

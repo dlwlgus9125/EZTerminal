@@ -1,6 +1,6 @@
 {
   "name": "ezterminal-mobile",
-  "version": "1.0.54",
+  "version": "2.0.0",
   "private": true,
   "description": "EZTerminal mobile remote control — reuses the desktop renderer's BlockController/Block components over a WS transport (mobile remote-control plan, M1+).",
   "type": "module",
@@ -21,6 +21,8 @@
     "e2e:parity": "node --experimental-strip-types e2e/parity.ts",
     "e2e:stabilization": "node --experimental-strip-types e2e/apk-stabilization.ts",
     "e2e:session-restart": "node --experimental-strip-types e2e/session-force-stop-recovery.ts",
+    "e2e:planning-workflow": "node --experimental-strip-types e2e/planning-workflow.ts",
+    "e2e:conversation-journey": "node --experimental-strip-types e2e/conversation-journey.ts",
     "e2e:session-restart-expired": "node --experimental-strip-types e2e/session-force-stop-recovery.ts --offline-ms=330000",
     "e2e:session-heavy-resume": "node --experimental-strip-types e2e/session-heavy-output-resume.ts",
     "e2e:release-soak": "node --experimental-strip-types e2e/release-soak.ts",

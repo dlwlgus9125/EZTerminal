@@ -1,5 +1,6 @@
 import type { ProjectSessionPanelMetadata } from '../shared/project-workspace';
 import type { RendererRecoveryPane } from '../shared/renderer-recovery';
+import type { TranscriptAnchor } from './chat-view-state';
 
 export interface TerminalSessionViewState extends RendererRecoveryPane {
   readonly title?: string;
@@ -8,6 +9,23 @@ export interface TerminalSessionViewState extends RendererRecoveryPane {
 
 /** Device/process-local presentation state, never serialized into a layout. */
 const states = new Map<string, unknown>();
+const anchorPrefix = 'ezterminal:conversation-anchor:v2:';
+
+/** Only opaque message position metadata is persisted here, never drafts or transcript text. */
+export function readTranscriptViewState(key: string): TranscriptAnchor | undefined {
+  const memory = readSessionViewState<TranscriptAnchor>(key);
+  if (memory) return memory;
+  try {
+    const value = JSON.parse(localStorage.getItem(`${anchorPrefix}${key}`) ?? 'null') as TranscriptAnchor | null;
+    if (value && Number.isFinite(value.top) && typeof value.follow === 'boolean' && (value.messageId === undefined || typeof value.messageId === 'string')
+      && (value.offset === undefined || Number.isFinite(value.offset))) return value;
+  } catch { /* Position storage must never prevent reading a conversation. */ }
+  return undefined;
+}
+export function saveTranscriptViewState(key: string, value: TranscriptAnchor): void {
+  saveSessionViewState(key, value);
+  try { localStorage.setItem(`${anchorPrefix}${key}`, JSON.stringify(value)); } catch { /* Retain in-memory position. */ }
+}
 const scopes = new WeakMap<object, number>();
 let scopeSequence = 0;
 

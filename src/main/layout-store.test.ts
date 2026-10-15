@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { LayoutStore } from './layout-store';
-import { LAYOUT_SCHEMA_VERSION } from '../shared/layout-schema';
+import { CONVERSATION_LAYOUT_SCHEMA_VERSION } from '../shared/layout-schema';
 
 function makeDir(): string {
   return mkdtempSync(path.join(tmpdir(), 'ezterm-layout-store-'));
@@ -31,7 +31,7 @@ describe('LayoutStore — layout save/load (A-M2)', () => {
     store.saveLayout(makeLayout(['tab-1', 'tab-2']));
     await store.flush();
     const env = await store.loadLayout();
-    expect(env?.schemaVersion).toBe(LAYOUT_SCHEMA_VERSION);
+    expect(env?.schemaVersion).toBe(CONVERSATION_LAYOUT_SCHEMA_VERSION);
     expect(Object.keys(env?.layout.panels ?? {})).toEqual(['tab-1', 'tab-2']);
   });
 
@@ -251,10 +251,10 @@ describe('LayoutStore — presets & startup (A-M2)', () => {
 });
 
 describe('LayoutStore — theme (E1)', () => {
-  it('defaults to matrix and round-trips a theme choice', async () => {
+  it('defaults to dark and round-trips a theme choice', async () => {
     const store = new LayoutStore(makeDir());
     await store.init();
-    expect(await store.getTheme()).toBe('matrix');
+    expect(await store.getTheme()).toBe('dark');
     await store.setTheme('light');
     expect(await store.getTheme()).toBe('light');
   });

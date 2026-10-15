@@ -74,12 +74,13 @@ function killTree(child: ChildProcess): void {
 
 /** Launches the production binary with an isolated profile and attaches only
  * through Chromium's debugging protocol. No source checkout renderer is used. */
-export async function launchPackagedRenderer(profilePrefix: string): Promise<PackagedRendererSession> {
-  const profileDir = mkdtempSync(path.join(tmpdir(), profilePrefix));
+export async function launchPackagedRenderer(profilePrefix: string, environment: NodeJS.ProcessEnv = {}, profileDirectory?: string): Promise<PackagedRendererSession> {
+  const profileDir = profileDirectory ?? mkdtempSync(path.join(tmpdir(), profilePrefix));
   const port = await reservePort();
   const child = spawn(packagedExePath(), [`--remote-debugging-port=${port}`], {
     env: {
       ...process.env,
+      ...environment,
       EZTERMINAL_USER_DATA_DIR: profileDir,
       EZTERMINAL_ALLOW_MULTIPLE_INSTANCES: '1',
       EZTERMINAL_DISABLE_UPDATE_CHECK: '1',

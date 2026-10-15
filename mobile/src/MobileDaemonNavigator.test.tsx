@@ -53,12 +53,14 @@ function renderNavigator(
     readonly initialLocation?: MobileDaemonNavigatorLocation;
     readonly onLocationChange?: (location: MobileDaemonNavigatorLocation) => void;
     readonly locale?: 'en' | 'ko';
+    readonly flatConversations?: boolean;
   } = {},
 ): void {
   act(() => root.render(
     <AppI18nProvider locale={options.locale ?? 'en'} languages={[options.locale ?? 'en']}>
       <MobileDaemonNavigator
         state={state}
+        flatConversations={options.flatConversations}
         onRetry={options.onRetry ?? (() => undefined)}
         onSelectSession={options.onSelectSession ?? (() => undefined)}
         initialLocation={options.initialLocation}
@@ -89,6 +91,18 @@ afterEach(() => {
 });
 
 describe('MobileDaemonNavigator', () => {
+  it('opens a structured conversation directly without Project or Workspace drill-down', () => {
+    const selected = vi.fn();
+    renderNavigator({ status: 'recovering', snapshot: snapshot({
+      projects: [{ id: 'p', name: 'Project', source: 'native', revision: 1, createdAt: NOW, updatedAt: NOW }],
+      workspaces: [{ id: 'w', projectId: 'p', name: 'Main', rootPath: '/project', kind: 'local', revision: 1, createdAt: NOW, updatedAt: NOW }],
+      sessions: [{ id: 's', projectId: 'p', workspaceId: 'w', title: 'Direct conversation', source: 'structured', kind: 'agent', state: 'idle', revision: 1, createdAt: NOW, updatedAt: NOW }],
+    }) }, { flatConversations: true, onSelectSession: selected });
+    expect(container.querySelector('[data-testid="mobile-daemon-project"]')).toBeNull();
+    act(() => buttonContaining('Direct conversation').click());
+    expect(selected).toHaveBeenCalledWith('s');
+    expect(container.textContent).toContain('Project · Main');
+  });
   it('renders loading, empty, and retryable error states truthfully', () => {
     const retry = vi.fn();
     renderNavigator({ status: 'loading', snapshot: null }, { onRetry: retry });

@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-13
+
+Development candidate; publication and Android device validation are pending.
+
+### Added
+
+- Connected project planning, versioned screen scenes and reusable components,
+  explicit AI proposals, and immutable design baselines.
+- Bubble and CLI skins for the same structured conversation, with legacy
+  terminal sessions preserved.
+- Frozen role/model assignments, durable execution and recovery, independent
+  exact-result review, and integration in isolated Git worktrees.
+- Portable project record archives, binary scene assets, and encrypted local
+  drafts with explicit Android reconnection reconciliation.
+
 ## [1.0.54] - 2026-09-26
 
 ### Fixed

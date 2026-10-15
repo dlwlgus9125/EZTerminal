@@ -1,3 +1,4 @@
+import { toggleWorkbenchTool } from './workbench-navigation';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -155,14 +156,18 @@ async function paneAtCwd(panes: Locator, cwd: string): Promise<Locator> {
 }
 
 async function openRegisteredProject(window: Page, projectId: string): Promise<void> {
-  await window.getByTestId('btn-toggle-agents').click();
+  await window.getByTestId('rail-agents').click();
   const panel = window.getByTestId('project-workspace-panel');
   const projectButton = window.getByTestId(`agent-project-open-${projectId}`);
   await expect.poll(async () => await panel.isVisible() || await projectButton.isVisible(), {
     timeout: 15_000,
     message: 'Agent sidebar should restore the active project or show its project entry',
   }).toBe(true);
-  if (!await panel.isVisible()) await projectButton.click();
+  if (!await panel.isVisible()) {
+    await projectButton.click();
+    await window.getByTestId('workflow-workspace').getByRole('button', { name: 'Quick tasks and existing work', exact: true }).click();
+    await window.getByTestId('planning-workspace').getByRole('button', { name: 'Files', exact: true }).click();
+  }
   await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
   await expect(window.locator('.project-path-tree')).toBeVisible({ timeout: 15_000 });
 }
@@ -201,7 +206,7 @@ test('registered project can be deleted from the Projects menu', async () => {
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   const project = (await window.evaluate(async () =>
     globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
-  await window.getByTestId('btn-toggle-agents').click();
+  await window.getByTestId('rail-agents').click();
   await window.getByRole('button', { name: `Manage ${project.name}`, exact: true }).click();
   await window.getByRole('menuitem', { name: 'Delete project', exact: true }).click();
   const confirmation = window.getByTestId('agent-project-delete');
@@ -224,8 +229,9 @@ test('registered project can be deleted after its detached terminal exits with t
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   const project = (await window.evaluate(async () =>
     globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
-  await window.getByTestId('btn-toggle-agents').click();
-  await window.getByTestId(`agent-project-new-chat-${project.projectId}`).click();
+  await window.getByTestId('rail-agents').click();
+  await window.getByRole('button', { name: `Manage ${project.name}`, exact: true }).click();
+  await window.getByRole('menuitem', { name: 'New Terminal', exact: true }).click();
   const tab = window.locator('.project-session-tab');
   await expect(tab).toHaveCount(1);
   const pane = window.locator('[data-testid="pane"]:visible');
@@ -248,7 +254,7 @@ test('registered project can be deleted after its detached terminal exits with t
     (await globalThis.window.ezterminal.listSessions()).some((session) => session.sessionId === id),
   sessionId)).toBe(false);
   const manage = restarted.getByRole('button', { name: `Manage ${project.name}`, exact: true });
-  if (!await manage.isVisible()) await restarted.getByTestId('btn-toggle-agents').click();
+  if (!await manage.isVisible()) await restarted.getByTestId('rail-agents').click();
   await manage.click();
   await restarted.getByRole('menuitem', { name: 'Delete project', exact: true }).click();
   const confirmation = restarted.getByTestId('agent-project-delete');
@@ -272,7 +278,7 @@ test('project root terminal preserves fixed-root identity across rename and rest
   expect(publicProjectId).toBeTruthy();
 
   await openRegisteredProject(window, publicProjectId!);
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   const pathInput = window.getByTestId('file-path-input');
   await expect(pathInput).not.toHaveValue('', { timeout: 10_000 });
   await pathInput.fill(projectRoot);
@@ -423,7 +429,7 @@ test('newly approved worktree terminal keeps its project daemon identity', async
   });
   expect(approved).toMatchObject({ ok: true });
 
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   const pathInput = window.getByTestId('file-path-input');
   await pathInput.fill(externalRoot);
   await pathInput.press('Enter');
@@ -594,10 +600,10 @@ test('Agent Project opens changed files in one VS Code-style read-only editor', 
     globalThis.window.ezterminalDesktop?.describeProjectWorkspace(projectId!), publicProjectId);
   expect(descriptor).toMatchObject({ ok: true });
 
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   await expect(window.locator('.explorer-workbench__modes')).toHaveCount(0);
   await expect(window.getByTestId('file-list')).toBeVisible();
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
 
   await openRegisteredProject(window, publicProjectId!);
   await expect(window.locator('#project-workspace-select')).toHaveCount(0);
@@ -702,7 +708,7 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
   const window = await app.firstWindow();
   await window.setViewportSize({ width: 1440, height: 900 });
 
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   const pathInput = window.getByTestId('file-path-input');
   await expect(pathInput).not.toHaveValue('');
   await pathInput.fill(projectRoot);
@@ -715,7 +721,7 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
   const panes = window.getByTestId('pane');
   await expect(panes).toHaveCount(2);
   const projectPane = await paneAtCwd(panes, projectRoot);
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
 
   await projectPane.getByTestId('cmd-input').fill('!node review-link.js');
   await projectPane.getByTestId('btn-run').click();
@@ -771,7 +777,7 @@ test('narrow project workspace reuses one editor and preserves live PTY state th
     (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
   expect(publicProjectId).toBeTruthy();
 
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   const pathInput = window.getByTestId('file-path-input');
   await expect(pathInput).not.toHaveValue('', { timeout: 10_000 });
   await pathInput.fill(projectRoot);
@@ -791,7 +797,7 @@ test('narrow project workspace reuses one editor and preserves live PTY state th
       .find((sessionId) => sessionId && sessionId !== excludedSessionId) ?? null
   ), projectSessionId);
   expect(draftSessionId).toBeTruthy();
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
 
   await projectPane.getByTestId('cmd-input').fill('!node source-link.js');
   await projectPane.getByTestId('btn-run').click();

@@ -1,0 +1,24 @@
+{
+  "deployment": {
+    "id": "appgdep_6acf4d23ff00819187b4f44439890097",
+    "project_id": "appgprj_6acf401ec5948191bc51f318157fa772",
+    "title": "EZTerminal 2.0 · Conversation r6",
+    "version_id": "appgprj_6acf401ec5948191bc51f318157fa772~appgver_71e3fac1439c81918376353f373f488d",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://ezterminal-conversation-r6.brawnycake257.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6acf401ec5948191bc51f318157fa772",
+    "failure_message": null,
+    "env_set_revision": 0,
+    "updated_at": "2026-10-14T09:36:50.264404+00:00"
+  },
+  "source": {
+    "project_id": "appgprj_6acf401ec5948191bc51f318157fa772",
+    "checkout_path": "C:\\Working\\EZTerminal\\docs\\ux\\reference\\v2-conversation-r6\\site",
+    "commit_sha": "2119d58e756d9c14c85061beb506d978f95e1396",
+    "archive": "C:/Working/EZTerminal/docs/ux/reference/v2-conversation-r7/site-artifact.tar.gz"
+  },
+  "access": "Existing owner-private audience preserved."
+}

@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Check,
   FolderPlus,
+  FolderOpen,
   GitCompareArrows,
   GitMerge,
   History,
@@ -11,6 +12,7 @@ import {
   Plus,
   Search,
   Settings,
+  Terminal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -47,6 +49,7 @@ import type {
   AgentProjectSummary,
 } from '../shared/agent-history';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
+import type { ConversationEntry } from '../shared/conversation-history';
 import type {
   ProjectSessionPanelMetadata,
   ProjectSessionTarget,
@@ -73,6 +76,8 @@ import { DeferredSearchInput } from './DeferredSearchInput';
 import { rendererCapabilities } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import { useLatestRequestGate } from './latest-request';
+import { ProjectConversationNavigator } from './ProjectConversationNavigator';
+import type { ProjectConversationNavigationAccess } from './use-project-conversation-navigation';
 import {
   Button,
   Dialog,
@@ -86,6 +91,10 @@ import {
 
 /** Used when no Git reader is supplied; every row then shows its directory. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
+const projectNavigationAccess: ProjectConversationNavigationAccess = {
+  listConversations: query => window.ezterminal.listConversations?.(query) ?? Promise.resolve({ ok: false, reason: 'unsupported', message: 'Update the host to view combined conversation history.' }),
+  getWorkflowNavigation: projectId => window.ezterminal.getWorkflowNavigation?.(projectId) ?? Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the host to view subprojects.' }),
+};
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
@@ -123,6 +132,14 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
 }
 
 export interface AgentHubProps {
+  readonly view?: 'all' | 'projects' | 'inbox';
+  /** Opens the project planning surface without adding a nested sidebar. */
+  readonly onOpenPlanningProject?: (project: AgentProjectSummary) => void;
+  readonly onOpenWorkflowProject?: (project: AgentProjectSummary, subprojectId: string, nodeId?: string) => void;
+  readonly onOpenConversationHistory?: (entry: ConversationEntry) => void;
+  readonly onOpenHistory?: (projectId?: string) => void;
+  readonly activeConversationSessionId?: string;
+  readonly activeConversationId?: string;
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
   readonly orchestrationSnapshot?: AgentOrchestrationSnapshot;
@@ -212,6 +229,13 @@ type DiffView =
   | { readonly state: 'error'; readonly message: string };
 
 export function AgentHub({
+  view = 'all',
+  onOpenPlanningProject,
+  onOpenWorkflowProject,
+  onOpenConversationHistory,
+  onOpenHistory,
+  activeConversationSessionId,
+  activeConversationId,
   snapshot,
   coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
   orchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
@@ -297,6 +321,7 @@ export function AgentHub({
   const [overrideReason, setOverrideReason] = useState('');
   const daemonAccess = daemonAgentSessionAccess ?? rendererCapabilities.daemon;
   const daemonSafeMode = daemonAvailability?.state === 'legacy-only-safe-mode';
+  const showProjectConversationTree = Boolean(onOpenWorkflowProject || onOpenConversationHistory) && !daemonSafeMode;
 
   useEffect(() => {
     let cancelled = false;
@@ -1236,7 +1261,7 @@ export function AgentHub({
           />
         ) : (
           <>
-          {pendingMergeRequests.length > 0 && (
+          {view !== 'projects' && pendingMergeRequests.length > 0 && (
             <section className="agent-group agent-managed-merges" data-testid="managed-merge-requests">
               <h2 className="status-section-title agent-group-title agent-group-title--attention">
                 {t('agentHub.managedMerge.queue', {
@@ -1350,12 +1375,14 @@ export function AgentHub({
               {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
             </section>
           )}
-          {renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
-          <section className="agent-group agent-projects" data-testid="agent-projects">
+          {view !== 'projects' && renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
+          {view === 'inbox' && pendingMergeRequests.length === 0 && groups.attention.length === 0 && <p className="agent-empty">{i18n.language.startsWith('ko') ? '확인이 필요한 요청이 없습니다.' : 'No requests need your attention.'}</p>}
+          {view !== 'inbox' && <section className="agent-group agent-projects" data-testid="agent-projects">
             <div className="agent-projects-heading">
               <h2 className="status-section-title agent-group-title">
                 {t('agentHub.projects.title')}
               </h2>
+              {onOpenHistory && <Button size="sm" variant="ghost" leadingIcon={<History aria-hidden="true" />} onClick={() => onOpenHistory()}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
               {window.ezterminalDesktop && (
                 <IconButton
                   icon={FolderPlus}
@@ -1365,7 +1392,7 @@ export function AgentHub({
                 />
               )}
             </div>
-            <Field
+            {!showProjectConversationTree && <Field
               className="agent-project-search"
               label={t('agentHub.projects.searchLabel')}
               labelHidden
@@ -1380,7 +1407,7 @@ export function AgentHub({
                   testId="agent-project-search"
                 />
               </span>
-            </Field>
+            </Field>}
             {projectActionError && (
               <p className="agent-project-error" role="alert">{projectActionError}</p>
             )}
@@ -1395,14 +1422,37 @@ export function AgentHub({
                 </Button>
               </div>
             )}
-            {!projectsLoading && !projectsError && projects.length === 0 && (
+            {!showProjectConversationTree && !projectsLoading && !projectsError && projects.length === 0 && (
               <p className="agent-project-note">
                 {debouncedProjectQuery.trim()
                   ? t('agentHub.projects.noMatches')
                   : t('agentHub.projects.empty')}
               </p>
             )}
-            <DaemonAgentSessions
+            {showProjectConversationTree ? <ProjectConversationNavigator
+              projects={projects} access={projectNavigationAccess} daemonAccess={daemonAccess} disconnected={disconnected} selectedSessionId={activeConversationSessionId} selectedConversationId={activeConversationId}
+              onOpenProject={project => onOpenPlanningProject?.(project)} onOpenWorkflow={onOpenWorkflowProject}
+              onOpenSession={onOpenStructuredAgentSession ?? (() => undefined)} onOpenTerminal={onFocusSession}
+              onOpenHistory={onOpenConversationHistory}
+              renderProjectActions={projectId => {
+                const project = projects.find(item => item.projectId === projectId);
+                if (!project) return null;
+                return <>
+                  {onOpenStructuredAgentDraft && <IconButton icon={MessageSquarePlus} aria-label={`${t('agentHub.projects.newChat')}: ${project.name}`} onClick={() => onOpenStructuredAgentDraft(project)} />}
+                  {onOpenProjectTerminal && <IconButton icon={Terminal} aria-label={`${t('header.newTerminal')}: ${project.name}`} onClick={() => onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' })} />}
+                  <Menu label={t('agentHub.projects.manage', { name: project.name })} placement="bottom-end" trigger={<IconButton icon={MoreHorizontal} aria-label={t('agentHub.projects.manage', { name: project.name })} />}>
+                    {onOpenHistory && <MenuItem icon={History} onSelect={() => onOpenHistory(project.projectId)}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</MenuItem>}
+                    <MenuItem icon={History} onSelect={() => openProjectHistory(project)}>{i18n.language.startsWith('ko') ? 'CLI 기록' : 'CLI history'}</MenuItem>
+                    {onOpenPlanningProject && <MenuItem icon={Plus} onSelect={() => onOpenPlanningProject(project)}>{i18n.language.startsWith('ko') ? '소프로젝트 만들기·관리' : 'Create and manage subprojects'}</MenuItem>}
+                    {onOpenProjectTerminal && <MenuItem icon={MessageSquarePlus} onSelect={() => onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' })}>{t('header.newTerminal')}</MenuItem>}
+                    {onOpenProjectDocument && <MenuItem icon={FolderOpen} onSelect={() => selectDrillProject(project)}>{i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files'}</MenuItem>}
+                    <MenuItem icon={Pin} onSelect={() => void saveProject(project, { pinned: !project.pinned })}>{project.pinned ? t('agentHub.projects.unpin') : t('agentHub.projects.pin')}</MenuItem>
+                    {window.ezterminalDesktop && <MenuItem icon={Settings} onSelect={() => openProjectEditor(project)}>{t('agentHub.projects.edit')}</MenuItem>}
+                    <MenuItem icon={Trash2} destructive onSelect={() => { setProjectActionError(null); setProjectToDelete(project); }}>{t('agentHub.projects.delete')}</MenuItem>
+                  </Menu>
+                </>;
+              }}
+            /> : <DaemonAgentSessions
               access={daemonAccess}
               onOpenSession={onOpenStructuredAgentSession ?? (() => undefined)}
               onOpenTerminal={onOpenStructuredAgentSession ? onFocusSession : undefined}
@@ -1420,7 +1470,8 @@ export function AgentHub({
                         type="button"
                         className="agent-project-open"
                         onClick={() => {
-                          if (onOpenProjectDocument) selectDrillProject(project);
+                          if (onOpenPlanningProject) onOpenPlanningProject(project);
+                          else if (onOpenProjectDocument) selectDrillProject(project);
                         }}
                         data-testid={`agent-project-open-${project.projectId}`}
                       >
@@ -1467,6 +1518,7 @@ export function AgentHub({
                         )}
                       >
                         {onOpenStructuredAgentDraft && <MenuItem icon={MessageSquarePlus} onSelect={() => onOpenStructuredAgentDraft(project)}>{t('agentHub.newAgentRun')}</MenuItem>}
+                        {onOpenProjectDocument && <MenuItem icon={FolderOpen} onSelect={() => selectDrillProject(project)}>{i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files'}</MenuItem>}
                         <MenuItem
                           icon={History}
                           onSelect={() => openProjectHistory(project)}
@@ -1513,7 +1565,7 @@ export function AgentHub({
                   </div>
                 ) };
               })}
-            />
+            />}
             {projectCursor && (
               <Button
                 className="agent-projects-more"
@@ -1527,7 +1579,7 @@ export function AgentHub({
                   : t('agentHub.projects.loadMore')}
               </Button>
             )}
-          </section>
+          </section>}
           {!onOpenStructuredAgentSession && coordinatedActivities.length === 0 && (
             <div className="agent-empty">{t('agentHub.empty')}</div>
           )}
@@ -1536,7 +1588,7 @@ export function AgentHub({
           </>
         )}
       </div>
-      {!drillProject && !historyProject && (onOpenStructuredAgentDraft || onLaunchAgent || onOpenAgentSettings) && (
+      {view !== 'inbox' && !drillProject && !historyProject && (onOpenStructuredAgentDraft || onLaunchAgent || onOpenAgentSettings) && (
         <footer className="agent-hub-footer">
           {(onOpenStructuredAgentDraft || onLaunchAgent) && (
             <Button
@@ -1549,7 +1601,7 @@ export function AgentHub({
               }}
               data-testid="agent-new-run"
             >
-              {t('agentHub.newAgentRun')}
+              {onOpenStructuredAgentDraft ? (i18n.language.startsWith('ko') ? '새 대화' : 'New conversation') : t('agentHub.newAgentRun')}
             </Button>
           )}
           {onOpenAgentSettings && (

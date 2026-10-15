@@ -263,8 +263,9 @@ assert(
   'mobile/android/scripts/verify-apk.ps1 default versionCode differs from release/version.json.',
 );
 assert(
-  readme.includes(`release-v${contract.version}-brightgreen`),
-  'README.md release badge differs from release/version.json.',
+  readme.includes(`release-v${contract.version}-brightgreen`)
+    || readme.includes(`development%20candidate-v${contract.version}-orange`),
+  'README.md release or development-candidate badge differs from release/version.json.',
 );
 assert(
   readme.includes(

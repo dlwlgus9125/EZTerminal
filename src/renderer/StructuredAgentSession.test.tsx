@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +15,7 @@ import {
 } from './StructuredAgentSession';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
+import { encodeFileChanges } from '../shared/conversation-changes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -87,6 +88,7 @@ function setValue(control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectEl
 
 beforeEach(() => {
   clearSessionViewStates();
+  localStorage.removeItem('ezterminal.chat.skin');
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -99,6 +101,24 @@ afterEach(() => {
 });
 
 describe('StructuredAgentDraftPanel', () => {
+  it('saves the remaining draft when /resume immediately leaves the stage form', async () => {
+    const save = vi.fn();
+    const create = vi.fn(async () => ({ ok: true as const }));
+    function StageForm(): JSX.Element {
+      const [history, setHistory] = useState(false);
+      return history ? <p>History</p> : <StructuredAgentDraftPanel
+        providers={[{ id: 'codex', label: 'Codex', models: [] }]}
+        workspaces={[{ id: 'workspace-1', label: 'Workspace', kind: 'local' }]}
+        initialDraftText="/resume keep my question" onFormStateChange={save}
+        onOpenHistory={() => setHistory(true)} onCreate={create} />;
+    }
+    render(<StageForm />);
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    await flush();
+    expect(container.textContent).toBe('History');
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ draft: expect.objectContaining({ text: 'keep my question' }) }));
+    expect(create).not.toHaveBeenCalled();
+  });
   it('creates an empty Agent only on Create and preserves selection after a failure', async () => {
     const onCreate = vi.fn(async () => ({ ok: false as const, message: 'Provider unavailable' }));
     render(
@@ -473,4 +493,162 @@ it('uses Enter to send once on desktop, preserves IME/newlines, and requires Sen
   expect(onSend).toHaveBeenCalledOnce();
   act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
   await flush(); expect(onSend).toHaveBeenLastCalledWith('Mobile message');
+});
+
+describe('message-based chat skins', () => {
+  const workspace = { id: 'workspace-1', label: 'Main', kind: 'local' } as const;
+  const panel = (props: Partial<Parameters<typeof StructuredAgentSessionPanel>[0]> = {}) => <StructuredAgentSessionPanel
+    sessionId="skin-session" title="Same conversation" providerId="codex" providerLabel="Codex"
+    workspace={workspace} permissionPreset="standard" state="idle" items={[]}
+    onSend={async () => ({ ok: true })} {...props}
+  />;
+  const input = () => container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
+
+  it('takes a queued request only after acknowledgement, blocks concurrent sends and restores the parked attachment draft', async () => {
+    let acknowledge!: (value: { ok: true }) => void;
+    const onQueueAction = vi.fn(() => new Promise<{ ok: true }>(resolve => { acknowledge = resolve; }));
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const attachment = { id: 'a', name: 'notes.txt', mimeType: 'text/plain', kind: 'text' as const, data: 'Saved notes' };
+    render(panel({ state: 'working', queuedCount: 1, queueItems: [{ turnId: 'queued', revision: 4, text: 'Queued question' }], onQueueAction, onSend,
+      supportsMessageContext: true, draftState: { text: 'Original draft', attachments: [attachment], selectionStart: 3, selectionEnd: 3 } }));
+    act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent === 'Edit')!.click());
+    expect(input().value).toBe('Original draft');
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => acknowledge({ ok: true }));
+    expect(input().value).toBe('Queued question');
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    await flush();
+    expect(onSend).toHaveBeenCalledWith('Queued question');
+    expect(input().value).toBe('Original draft');
+    expect(input().selectionStart).toBe(3);
+    expect(container.textContent).toContain('notes.txt');
+  });
+
+  it('quotes actual patch lines into the existing draft without sending and keeps review state across skins', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const items = [transcriptItem('patch', 2, 'tool-result', encodeFileChanges([{ path: 'src/a.ts', patch: '@@ -8 +8 @@\n-old\n+new', coverage: 'patch' }])!, { sessionId: 'skin-session' })];
+    render(panel({ items, onSend, skin: 'bubble' }));
+    setValue(input(), 'My question\n');
+    act(() => container.querySelector<HTMLButtonElement>('.conversation-review__trigger')!.click());
+    await flush();
+    const patch = document.querySelector('[data-testid="conversation-change-review"]')!;
+    act(() => patch.querySelector<HTMLButtonElement>('[data-kind="add"]')!.click());
+    render(panel({ items, onSend, skin: 'cli' }));
+    expect(document.querySelector('[data-kind="add"][aria-pressed="true"]')).not.toBeNull();
+    act(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Quote selected lines')!.click());
+    await flush();
+    expect(input().value).toContain('My question'); expect(input().value).toContain('src/a.ts'); expect(input().value).toContain('+new');
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('changes only the presentation and preserves message, input, selection, tool and approval elements', () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onResolve = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ onSend, onResolveApproval: onResolve, items: [
+      transcriptItem('message-1', 1, 'user-message', 'Keep this conversation'),
+      transcriptItem('tool', 2, 'tool-result', 'Long output '.repeat(150)),
+      transcriptItem('approval', 3, 'approval', 'Write the file?'),
+    ] }));
+    const originalMessage = container.querySelector('[data-message-id="message-1"]');
+    const originalInput = input();
+    const tool = container.querySelector<HTMLDetailsElement>('details')!;
+    act(() => { tool.open = true; });
+    setValue(input(), 'Unsent draft');
+    act(() => input().setSelectionRange(2, 6));
+    const skin = container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-skin"]')!;
+    setValue(skin, 'cli');
+    expect(container.querySelector('[data-testid="structured-agent-session"]')?.getAttribute('data-skin')).toBe('cli');
+    expect(input()).toBe(originalInput);
+    expect(input().value).toBe('Unsent draft');
+    expect([input().selectionStart, input().selectionEnd]).toEqual([2, 6]);
+    expect(container.querySelector('[data-message-id="message-1"]')).toBe(originalMessage);
+    expect(tool.open).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(localStorage.getItem('ezterminal.chat.skin')).toBe('cli');
+    setValue(skin, 'bubble');
+    expect(input()).toBe(originalInput);
+  });
+
+  it('retains logical message elements across final streaming chunks and replies with the first daemon item ID', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const items = [transcriptItem('first-chunk', 1, 'assistant-message', 'Hello ', { messageId: 'provider-message', isDelta: true })];
+    render(panel({ items, onSend, supportsMessageContext: true }));
+    const article = container.querySelector('[data-message-id="provider-message"]');
+    render(panel({ items: [...items, transcriptItem('last-chunk', 2, 'assistant-message', 'Hello world', { messageId: 'provider-message' })], onSend, supportsMessageContext: true }));
+    expect(container.querySelector('[data-message-id="provider-message"]')).toBe(article);
+    const reply = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reply')!;
+    act(() => reply.click());
+    setValue(input(), 'Explain this');
+    setValue(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-skin"]')!, 'cli');
+    expect(container.querySelector('.structured-agent-composer__reply')?.textContent).toContain('Hello world');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    await flush();
+    expect(onSend).toHaveBeenCalledWith('Explain this', { replyTo: { messageId: 'first-chunk', text: 'Hello world' } });
+  });
+
+  it('preserves a newer draft typed while the previous send is awaiting its receipt', async () => {
+    let resolve!: (result: { ok: true }) => void;
+    const onSend = vi.fn(() => new Promise<{ ok: true }>((done) => { resolve = done; }));
+    render(panel({ onSend }));
+    setValue(input(), 'First message');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    setValue(input(), 'Next unsent message');
+    await act(async () => resolve({ ok: true }));
+    expect(input().value).toBe('Next unsent message');
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('First message');
+  });
+
+  it('keeps attachments through skin changes and sends them in the same message context', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const attachment = { id: 'attachment-1', name: 'requirements.md', kind: 'text' as const, mimeType: 'text/markdown', data: 'Keep the existing terminal.' };
+    render(panel({ onSend, supportsMessageContext: true, draftState: { text: 'Read this', attachments: [attachment] } }));
+    setValue(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-skin"]')!, 'cli');
+    expect(container.querySelector('.structured-agent-composer__attachments')?.textContent).toContain(attachment.name);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    await flush();
+    expect(onSend).toHaveBeenCalledWith('Read this', { attachments: [attachment] });
+    expect(input().value).toBe('');
+    expect(container.querySelector('.structured-agent-composer__attachments')).toBeNull();
+  });
+
+  it('supports an offline draft while locking host settings, approval and transmission', () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onDraftChange = vi.fn();
+    const onResolve = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ disabled: true, allowDraftWhenDisabled: true, variant: 'mobile', sendDisabled: true,
+      sendDisabledReason: 'Offline — reconnect and send explicitly', onSend, onDraftChange,
+      onChangeSettings: async () => ({ ok: true }), onResolveApproval: onResolve,
+      items: [transcriptItem('approval', 1, 'approval', 'Write the file?')] }));
+    expect(input().disabled).toBe(false);
+    setValue(input(), 'Offline draft');
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'Offline draft' }));
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-live-permission"]')?.disabled).toBe(true);
+    const allow = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Allow')!;
+    expect(allow.disabled).toBe(true);
+    act(() => { allow.click(); container.querySelector<HTMLFormElement>('form')!.requestSubmit(); });
+    expect(onSend).not.toHaveBeenCalled(); expect(onResolve).not.toHaveBeenCalled();
+    render(panel({ disabled: true, allowDraftWhenDisabled: true, state: 'archived' }));
+    expect(input().disabled).toBe(true);
+  });
+
+  it('blocks repeated transmission of an uncertain send until explicit receipt reconciliation', async () => {
+    const onSend = vi.fn(async () => ({ ok: false as const, message: 'Receipt lost', deliveryUncertain: true }));
+    const onReconcileDelivery = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ onSend, onReconcileDelivery }));
+    setValue(input(), 'Keep exact request');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    await flush();
+    expect(input().value).toBe('Keep exact request');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')?.disabled).toBe(true);
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    expect(onSend).toHaveBeenCalledOnce();
+    const check = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Check delivery')!;
+    act(() => check.click());
+    await flush();
+    expect(onReconcileDelivery).toHaveBeenCalledOnce();
+    expect(input().value).toBe('');
+  });
 });

@@ -148,6 +148,18 @@ function storedRecord(recovery: UncertainAgentCreate): string {
 }
 
 describe('MobileAgentCreateRecoveryStore', () => {
+  it('restores first-message text and native skill selection from the same host secure escrow', async () => {
+    const secure = new FakeSecureStorage(); const store = new MobileAgentCreateRecoveryStore(secure);
+    const pending = recoveryFrom();
+    const input = { ...pending.input, draftText: '$review verify', draftSkills: [{ providerId: 'codex' as const, id: '/review/SKILL.md', name: 'review', invocation: '$review' }] };
+    await store.save({ ...pending, input }, AUTHORITY);
+    const restored = await new MobileAgentCreateRecoveryStore(secure).load(AUTHORITY);
+    expect(restored.available && restored.recovery?.input).toEqual(input);
+    expect(restored.available && restored.recovery?.outcome.command).toEqual(pending.outcome.command);
+    expect(await store.load(OTHER_AUTHORITY)).toEqual({ available: true, recovery: null });
+    await expect(store.save({ ...pending, input: { ...input, draftSkills: [{ ...input.draftSkills[0]!, providerId: 'claude' }] } }, AUTHORITY)).rejects.toThrow('another provider');
+  });
+
   let secure: FakeSecureStorage;
   let store: MobileAgentCreateRecoveryStore;
 

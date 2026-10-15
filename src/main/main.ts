@@ -16,6 +16,7 @@ import {
   net,
   Notification,
   protocol,
+  safeStorage,
   session,
   shell,
   utilityProcess,
@@ -32,6 +33,32 @@ import { installFileToolsIpc } from './file-tools-ipc';
 import { installOpenClawChatIpc, installOpenClawManagementIpc, installOpenClawVisibilityIpc } from './openclaw-ipc';
 import { installProjectMapIpc } from './project-map-ipc';
 import { installProjectWorkspaceIpc } from './project-workspace-ipc';
+import { PlanningService } from './planning-service';
+import { PlanningAuthority } from './planning-authority';
+import { WorkflowService, loadWorkflowHostId } from './workflow-service';
+import { WorkflowAuthority } from './workflow-authority';
+import { WorkflowDraftStore } from './workflow-draft-store';
+import { AgentCapabilityService } from './agent-capability-service';
+import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient } from '../shared/agent-capabilities';
+import { installPlanningIpc } from './planning-ipc';
+import { PlanningExecutionStore } from './planning-execution-store';
+import { PlanningRunService } from './planning-run-service';
+import { PlanningRunAuthority } from './planning-run-authority';
+import { installPlanningRunIpc } from './planning-run-ipc';
+import { PlanningResultService } from './planning-result-service';
+import { PlanningEnvironmentService } from './planning-environment-service';
+import { PlanningAiService } from './planning-ai-service';
+import { PlanningAssetService } from './planning-asset-service';
+import { readPlanningFileReference } from './planning-file-reference';
+import { PlanningExtensionAuthority, installPlanningExtensionIpc } from './planning-extension-authority';
+import { ProjectArchiveService } from './project-archive-service';
+import { installProjectArchiveIpc } from './project-archive-ipc';
+import { ProjectArchiveRemoteAuthority } from './project-archive-remote-authority';
+import { ChatStateStore } from './chat-state-store';
+import { createDesktopRecoveryProtector } from './desktop-recovery-protector';
+import { installChatStateIpc } from './chat-state-ipc';
+import { PlanningDraftStore } from './planning-draft-store';
+import { installPlanningDraftIpc } from './planning-draft-ipc';
 import { installSessionSurfaceIpc } from './session-surface-ipc';
 import { installLayoutIpc, installPreferencesIpc, installThemeIpc } from './settings-ipc';
 import { installTerminalToolsIpc } from './terminal-tools-ipc';
@@ -88,6 +115,8 @@ import { AgentControlServer } from './agent-control-server';
 import { AgentCoordinationService } from './agent-coordination-service';
 import { AgentCoordinationStore } from './agent-coordination-store';
 import { AgentHistoryService } from './agent-history-service';
+import { ConversationHistoryService } from './conversation-history-service';
+import { installConversationHistoryIpc } from './conversation-history-ipc';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
@@ -872,6 +901,11 @@ app.on('ready', async () => {
     claudeProviderAdapter,
   ]);
   const daemonRouterRef: { current?: DaemonCommandRouter; } = {};
+  const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService; ai?: PlanningAiService } = {};
+  const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
+  const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
+    && !planningRuntimeRef.current?.preparedSessionSettings(sessionId) && !planningRuntimeRef.results?.preparedSessionSettings(sessionId)
+    && !planningRuntimeRef.ai?.preparedSessionSettings(sessionId));
   const uninstallDaemonProviderIpc = installDaemonProviderIpc({
     ipc: ipcMain,
     registry: providerRegistry,
@@ -886,6 +920,8 @@ app.on('ready', async () => {
     },
   });
   const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
+    workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
+    workflowAllowed: workflowSessionAllowed,
     authority: {
       getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
       execute: (command) => daemonRouterRef.current!.execute(command),
@@ -904,9 +940,20 @@ app.on('ready', async () => {
       daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
     findCommand: (commandId) => daemonStore.findCommand(commandId)?.command,
+    canDispatchTurn: (turn) => (planningRuntimeRef.current?.canDispatchTurn(turn)
+      ?? !/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId))
+      && (planningRuntimeRef.ai?.canDispatchTurn(turn) ?? !turn.sessionId.startsWith('planning-ai-')),
+    beforeProviderDispatch: (turn) => planningRuntimeRef.current?.beforeProviderDispatch(turn)
+      ?? Promise.resolve(!/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId)),
+    preparedSessionSettings: (sessionId) => planningRuntimeRef.current?.preparedSessionSettings(sessionId)
+      ?? planningRuntimeRef.results?.preparedSessionSettings(sessionId)
+      ?? planningRuntimeRef.ai?.preparedSessionSettings(sessionId),
     orchestrationForSession: (sessionId) => (
       agentOrchestrationMcpServer.descriptorForSession(sessionId)
     ),
+    workflowToolsForSession: workflowSessionAllowed,
+    conversationWritable: (projectId, sessionId) => workflowRef.service?.conversationWritable(projectId, sessionId) ?? Promise.resolve(true),
+    conversationContext: (projectId, sessionId) => workflowRef.service?.conversationContext(projectId, sessionId) ?? Promise.resolve(undefined),
     revokeOrchestrationForSession: (sessionId) => {
       agentOrchestrationMcpServer.revokeSession(sessionId);
     },
@@ -991,7 +1038,15 @@ app.on('ready', async () => {
     },
     closeProviderIngress: uninstallDaemonProviderIpc,
     beginAgentShutdown: () => daemonAgentRuntime.beginShutdown(),
-    stopAutomation: () => daemonAutomationRuntime.dispose(),
+    stopAutomation: async () => {
+      const resultsStopped = planningRuntimeRef.results?.dispose();
+        const aiStopped = planningRuntimeRef.ai?.dispose();
+      await planningRuntimeRef.current?.dispose();
+      await resultsStopped;
+        await aiStopped;
+      await planningRuntimeRef.environments?.dispose();
+      await daemonAutomationRuntime.dispose();
+    },
     stopAgents: () => disposeAgentsForAuthorityAvailability(
       daemonAvailabilityReady,
       (mode) => daemonAgentRuntime.dispose(mode),
@@ -1409,6 +1464,53 @@ app.on('ready', async () => {
   // Desktop IPC and authenticated RemoteBridge calls share one shutdown
   // prefix: every admitted Agent operation drains before its services close.
   const desktopAgentMutationIngress = localAgentOperationIngress;
+  const planningService = new PlanningService({
+    resolveProjectRoot: async (projectId) => {
+      await projectWorkspaceAuthorityReady;
+      const snapshot = daemonCommandRouter.getSnapshot();
+      const project = snapshot.projects.find((entry) => entry.id === projectId);
+      if (project?.archivedAt) return null;
+      if (project?.rootPath) return project.rootPath;
+      const legacy = agentProjectStore.list().find((entry) => entry.projectId === projectId);
+      return legacy?.primaryRoot ?? null;
+    },
+  });
+  const workflowHostId = await loadWorkflowHostId(app.getPath('userData'));
+  const workflowService = new WorkflowService({
+    hostId: workflowHostId, planning: planningService,
+    continuationSource: sessionId => daemonStore.pendingConversationSource(sessionId),
+    resolveNavigationRoot: async projectId => {
+      await projectWorkspaceAuthorityReady;
+      return daemonCommandRouter.getSnapshot().projects.find(entry => entry.id === projectId)?.rootPath ?? null;
+    },
+    resolveProjectRoot: async projectId => {
+      await projectWorkspaceAuthorityReady;
+      const project = daemonCommandRouter.getSnapshot().projects.find(entry => entry.id === projectId && !entry.archivedAt);
+      return project?.rootPath ?? null;
+    },
+    runs: projectId => planningRuntimeRef.current?.read(projectId).ok ? (() => { const result = planningRuntimeRef.current!.read(projectId); return result.ok ? result.snapshot.runs : []; })() : [],
+    managedSessions: projectId => daemonCommandRouter.getSnapshot().sessions.filter(session => session.projectId === projectId && !workflowSessionAllowed(session.id)).map(session => session.id),
+    session: sessionId => {
+      const session = daemonCommandRouter.getSnapshot().sessions.find(entry => entry.id === sessionId && entry.kind === 'agent' && entry.source === 'structured' && !entry.archivedAt);
+      return session ? { projectId: session.projectId, managed: !workflowSessionAllowed(sessionId) || /^planning-/u.test(sessionId) } : undefined;
+    },
+    executeRun: (command, subproject, principal) => planningRuntimeRef.current?.executeWorkflow(command, subproject, principal)
+      ?? Promise.resolve({ ok: false, error: 'unavailable', message: 'The execution authority is unavailable.' }),
+  });
+  workflowRef.service = workflowService;
+  agentHistoryService.setCliResumeGuard((provider, providerSessionId) => {
+    const snapshot = daemonCommandRouter.getSnapshot();
+    return !snapshot.agents.some(agent => agent.providerId === provider && agent.providerSessionId === providerSessionId
+      && !['done', 'interrupted', 'error', 'archived'].includes(agent.state)
+      && snapshot.sessions.some(session => session.id === agent.sessionId && !['completed', 'interrupted', 'failed', 'archived'].includes(session.state)));
+  });
+  const conversationHistoryService = new ConversationHistoryService({ history: agentHistoryService, daemon: daemonCommandRouter,
+    terminalHistory: async sessionId => {
+      const binding = agentActivityService?.conversationBinding(sessionId);
+      return binding ? agentHistoryService.findProviderHistory(binding.provider, binding.providerSessionId) : null;
+    },
+    store: daemonStore, runtime: daemonAgentRuntime, workflow: projectId => workflowService.navigation(projectId),
+    continueWorkflow: (projectId, sourceSessionId, sessionId) => workflowService.continueConversation(projectId, sourceSessionId, sessionId) });
   const desktopProjectMapMutationIngress = new LocalMutationIngress('Desktop Project Map IPC');
   let daemonProjectOperationIngressClosed = false;
   let daemonProjectOperationsShutdownDrain: Promise<void> | undefined;
@@ -1943,6 +2045,103 @@ app.on('ready', async () => {
   });
   daemonAuthorityShutdown.bindStartup(daemonAuthorityReady);
   void daemonAuthorityReady.catch(() => undefined);
+  const planningAuthority = new PlanningAuthority({
+    service: planningService,
+    ready: Promise.all([projectWorkspaceAuthorityReady, daemonAvailabilityReady]),
+    ingress: localAgentOperationIngress,
+    available: () => daemonAvailability?.state === 'ready',
+    onChanged: async (projectId) => { await planningRuntimeRef.current?.planningChanged(projectId); },
+    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing),
+  });
+  const workflowAuthority = new WorkflowAuthority({ service: workflowService, ready: Promise.all([projectWorkspaceAuthorityReady, daemonAvailabilityReady]),
+    ingress: localAgentOperationIngress, available: () => daemonAvailability?.state === 'ready' });
+  workflowRef.authority = workflowAuthority;
+  const capabilityService = new AgentCapabilityService({ registry: providerRegistry, getSnapshot: () => daemonCommandRouter.getSnapshot(),
+    hostId: workflowHostId, receiptDirectory: path.join(app.getPath('userData'), 'capability-receipts') });
+  const capabilityScope = async (value: unknown) => {
+    await projectWorkspaceAuthorityReady; await daemonAvailabilityReady;
+    if (daemonAvailability?.state !== 'ready') return undefined;
+    const parsed = AgentCapabilitiesRequestSchema.safeParse(value);
+    if (!parsed.success) return undefined;
+    const snapshot = daemonCommandRouter.getSnapshot();
+    const workspace = snapshot.workspaces.find(entry => entry.id === parsed.data.workspaceId && !entry.archivedAt);
+    const project = workspace && snapshot.projects.find(entry => entry.id === workspace.projectId && !entry.archivedAt);
+    const sessionId = parsed.data.sessionId;
+    if (sessionId && (!snapshot.sessions.some(session => session.id === sessionId && session.workspaceId === workspace?.id && !session.archivedAt)
+      || !snapshot.agents.some(agent => agent.sessionId === sessionId && agent.providerId === parsed.data.providerId))) return undefined;
+    return project && workspace?.rootPath ? { workspaceRoot: workspace.rootPath, canManage: true, workflowToolsAvailable: sessionId ? workflowSessionAllowed(sessionId) : true } : undefined;
+  };
+  const agentCapabilities: AgentCapabilitiesClient = {
+    list: async request => {
+      const scope = await capabilityScope(request);
+      return scope ? capabilityService.list(request, scope) : { ok: false, code: 'forbidden', message: 'Select an authorized workspace on this PC.' };
+    },
+    manage: async command => localAgentOperationIngress.run(async signal => {
+      const parsed = AgentExtensionCommandSchema.safeParse(command);
+      const scope = parsed.success ? await capabilityScope({ providerId: parsed.data.providerId, workspaceId: parsed.data.workspaceId, sessionId: parsed.data.sessionId }) : undefined;
+      signal.throwIfAborted();
+      return scope ? capabilityService.manage(command, scope, signal) : { ok: false, code: 'forbidden', message: 'Select an authorized workspace on this PC.' };
+    }),
+  };
+  ipcMain.handle('workflow:read', (event, clientId, projectId) => resolveDesktopSessionPrincipal(event, clientId) ? workflowAuthority.read(projectId) : { ok: false, error: 'forbidden', message: 'An authenticated application surface is required.' });
+  ipcMain.handle('workflow:execute', (event, clientId, command) => {
+    const principal = resolveDesktopSessionPrincipal(event, clientId);
+    return principal ? workflowAuthority.execute(command, { kind: 'desktop', id: principal }) : { ok: false, error: 'forbidden', message: 'An authenticated application surface is required.' };
+  });
+  ipcMain.handle('workflow:preview', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? workflowAuthority.preview(request) : { ok: false, message: 'An authenticated application surface is required.' });
+  ipcMain.handle('agent-capabilities:list', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? agentCapabilities.list(request) : { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' });
+  ipcMain.handle('agent-capabilities:manage', (event, clientId, command) => resolveDesktopSessionPrincipal(event, clientId) ? agentCapabilities.manage(command) : { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' });
+  const chatStateReady = Promise.all([projectWorkspaceAuthorityReady, daemonAvailabilityReady]);
+  const isChatEncryptionAvailable = (): boolean => safeStorage.isEncryptionAvailable()
+    && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text');
+  const desktopRecoveryProtector = createDesktopRecoveryProtector(path.join(app.getPath('userData'), 'recovery-keys'), {
+      available: isChatEncryptionAvailable,
+      encrypt: (plaintext: string) => {
+        if (!isChatEncryptionAvailable()) throw new Error('Secure chat encryption is unavailable.');
+        return safeStorage.encryptString(plaintext);
+      },
+      decrypt: (ciphertext: Buffer) => {
+        if (!isChatEncryptionAvailable()) throw new Error('Secure chat encryption is unavailable.');
+        return safeStorage.decryptString(ciphertext);
+      },
+  });
+  const chatStateStore = new ChatStateStore({
+    directory: path.join(app.getPath('userData'), 'chat-state'),
+    protector: desktopRecoveryProtector,
+    resolveScope: async (scope) => {
+      await chatStateReady;
+      if (daemonAvailability?.state !== 'ready') return false;
+      const snapshot = daemonCommandRouter.getSnapshot();
+      const project = snapshot.projects.find((candidate) => candidate.id === scope.projectId);
+      if (scope.kind === 'draft') return scope.projectId === 'drafts' || !!project;
+      if (scope.kind === 'conversation') {
+        const result = await conversationHistoryService.resolveConversation({ kind: 'conversation', id: scope.sessionId });
+        return result.ok && result.entry.projectId === scope.projectId;
+      }
+      const conversation = snapshot.sessions.find((candidate) => candidate.id === scope.sessionId);
+      return !!project && !project.archivedAt && !!conversation
+        && conversation.projectId === scope.projectId
+        && conversation.kind === 'agent' && conversation.source === 'structured';
+    },
+  });
+  const planningDraftStore = new PlanningDraftStore({
+    directory: path.join(app.getPath('userData'), 'planning-drafts'),
+    protector: desktopRecoveryProtector,
+    resolveSubproject: (projectId, subprojectId) => workflowService.owns(projectId, subprojectId),
+    resolveProject: async (projectId) => {
+      await chatStateReady;
+      if (daemonAvailability?.state !== 'ready') return false;
+      const project = daemonCommandRouter.getSnapshot().projects.find((candidate) => candidate.id === projectId);
+      return !!project && !project.archivedAt;
+    },
+  });
+  const workflowDraftStore = new WorkflowDraftStore({ directory: path.join(app.getPath('userData'), 'workflow-drafts'), hostId: workflowHostId,
+    protector: desktopRecoveryProtector, resolveProject: async projectId => { await chatStateReady; return daemonAvailability?.state === 'ready'
+      && daemonCommandRouter.getSnapshot().projects.some(project => project.id === projectId && !project.archivedAt); } });
+  ipcMain.handle('workflow-draft:read', (event, clientId, projectId) => resolveDesktopSessionPrincipal(event, clientId) ? workflowDraftStore.read(projectId) : { ok: false, error: 'forbidden', message: 'An authenticated application surface is required.' });
+  ipcMain.handle('workflow-draft:write', (event, clientId, projectId, request) => resolveDesktopSessionPrincipal(event, clientId)
+    ? localAgentOperationIngress.run(async signal => { await chatStateReady; signal.throwIfAborted(); return workflowDraftStore.write(projectId, request); })
+    : { ok: false, error: 'forbidden', message: 'An authenticated application surface is required.' });
   agentHistoryService.setProjectSessionTargetResolver(async (target) => {
     await projectWorkspaceReady;
     return projectWorkspaceService.resolveSessionTarget(target);
@@ -2079,6 +2278,9 @@ app.on('ready', async () => {
     isBoundedAgentString,
     isAgentLaunchStartRequest,
   }));
+  featureIpcDisposers.push(installConversationHistoryIpc({ ipc: ipcMain, service: conversationHistoryService,
+    navigation: projectId => workflowService.navigation(projectId),
+    ready: daemonAuthorityReady, ingress: desktopAgentMutationIngress, resolvePrincipal: resolveDesktopSessionPrincipal }));
   featureIpcDisposers.push(installAgentProjectsIpc({
     ipc: ipcMain,
     desktopAgentMutationIngress,
@@ -2106,6 +2308,25 @@ app.on('ready', async () => {
     projectWorkspaceSearches,
     requestProjectWorkspaceApproval,
     requestDaemonWorkspaceRevocation,
+  }));
+  featureIpcDisposers.push(installPlanningIpc({
+    ipc: ipcMain,
+    authority: planningAuthority,
+    resolvePrincipal: resolveDesktopSessionPrincipal,
+  }));
+  featureIpcDisposers.push(installChatStateIpc({
+    ipc: ipcMain,
+    store: chatStateStore,
+    resolvePrincipal: resolveDesktopSessionPrincipal,
+    ready: chatStateReady,
+    ingress: localAgentOperationIngress,
+  }));
+  featureIpcDisposers.push(installPlanningDraftIpc({
+    ipc: ipcMain,
+    store: planningDraftStore,
+    resolvePrincipal: resolveDesktopSessionPrincipal,
+    ready: chatStateReady,
+    ingress: localAgentOperationIngress,
   }));
   featureIpcDisposers.push(installProjectMapIpc({
     ipc: ipcMain,
@@ -2822,6 +3043,123 @@ app.on('ready', async () => {
     forceStop: () => acpWorkerRuntime?.dispose(),
   });
   const validationRunner = new AgentValidationRunner(broker);
+  const planningExecutionStore = new PlanningExecutionStore(daemonStore);
+  const planningEnvironments = new PlanningEnvironmentService(app.getPath('userData'), () => {
+    daemonAgentRuntime.wakeQueuedTurns();
+    planningRuntimeRef.current?.requestTick();
+  });
+  const planningEnvironmentsReady = planningEnvironments.init();
+  const planningResultService = new PlanningResultService({
+    userDataDir: app.getPath('userData'), ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
+    git: agentCollaborationGitRunner, worktrees: worktreeService,
+    validationRunner: { run: (...args) => planningEnvironments.runValidation(() => validationRunner.run(...args), args[3]) },
+    wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
+    wakeExecution: () => planningRuntimeRef.current?.requestTick(),
+    reportError: (error) => mainLog?.line(`planning result: ${String(error)}`),
+  });
+  const planningRunService = new PlanningRunService({
+    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing),
+    planning: planningService, ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
+    providers: providerRegistry, worktrees: worktreeService, git: agentCollaborationGitRunner,
+    environments: planningEnvironments,
+    wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
+    captureResult: (...args) => planningResultService.captureResult(...args),
+    capturePartialResult: (...args) => planningResultService.capturePartialResult(...args),
+    prepareWorkspace: (...args) => planningResultService.prepareWorkspace(...args),
+    workflowResultContext: (...args) => planningResultService.workflowResultContext(...args),
+    processReview: (...args) => planningResultService.processReview(...args),
+    processIntegration: (run) => planningResultService.processIntegration(run),
+    cancelReviews: (run) => planningResultService.cancelReviews(run),
+    decideReview: (...args) => planningResultService.decideReview(...args),
+    retryReview: (...args) => planningResultService.retryReview(...args),
+    recordDeviceEvidence: (...args) => planningResultService.recordDeviceEvidence(...args),
+    reportError: (error) => mainLog?.line(`planning execution: ${String(error)}`),
+  });
+  planningRuntimeRef.current = planningRunService;
+  planningRuntimeRef.results = planningResultService;
+  planningRuntimeRef.environments = planningEnvironments;
+  const planningExecutionReady = Promise.all([daemonAuthorityReady, planningEnvironmentsReady]).then(async () => {
+    if (daemonAuthorityShutdown.isStopping()) return;
+    await planningRunService.start();
+    if (daemonAuthorityShutdown.isStopping()) await planningRunService.dispose();
+    else daemonAgentRuntime.wakeQueuedTurns();
+  });
+  ownMainStartup(planningExecutionReady);
+  const planningRunAuthority = new PlanningRunAuthority({
+    service: planningRunService, results: planningResultService, ready: planningExecutionReady, ingress: localAgentOperationIngress,
+    ownsSubproject: (projectId, subprojectId) => workflowService.owns(projectId, subprojectId),
+    available: () => daemonAvailability?.state === 'ready' && !daemonAuthorityShutdown.isStopping(),
+  });
+  featureIpcDisposers.push(installPlanningRunIpc({
+    ipc: ipcMain, authority: planningRunAuthority, resolvePrincipal: resolveDesktopSessionPrincipal,
+  }));
+  const resolvePlanningRoot = (projectId: string): string | null => {
+    const project = daemonCommandRouter.getSnapshot().projects.find(entry => entry.id === projectId);
+    return project && !project.archivedAt ? project.rootPath ?? null : null;
+  };
+  const planningAiService = new PlanningAiService({
+    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing),
+    directory: path.join(app.getPath('userData'), 'planning-ai-v1'), protector: desktopRecoveryProtector,
+    planning: planningService, daemon: daemonCommandRouter, store: daemonStore, providers: providerRegistry,
+    resolveProjectRoot: resolvePlanningRoot, wakeQueuedTurns: () => daemonAgentRuntime.wakeQueuedTurns(),
+    readFileReference: async (projectId, reference) => {
+      const root = resolvePlanningRoot(projectId);
+      if (!root) throw new Error('The referenced project is unavailable.');
+      return readPlanningFileReference(root, reference);
+    },
+    onChanged: projectId => planningRunService.planningChanged(projectId),
+  });
+  planningRuntimeRef.ai = planningAiService;
+  const planningAiReady = planningExecutionReady.then(() => planningAiService.init());
+  ownMainStartup(planningAiReady);
+  const planningAiAuthority = new PlanningExtensionAuthority({ ready: planningAiReady, ingress: localAgentOperationIngress,
+    available: () => daemonAvailability?.state === 'ready' && !daemonAuthorityShutdown.isStopping(),
+    request: (value, principalId) => planningAiService.request(value, principalId),
+  });
+  const planningAssetService = new PlanningAssetService({ planning: planningService, resolveProjectRoot: resolvePlanningRoot,
+    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing) });
+  const planningAssetAuthority = new PlanningExtensionAuthority({ ready: planningExecutionReady, ingress: localAgentOperationIngress,
+    available: () => daemonAvailability?.state === 'ready' && !daemonAuthorityShutdown.isStopping(),
+    request: value => planningAssetService.request(value),
+  });
+  featureIpcDisposers.push(installPlanningExtensionIpc({ ipc: ipcMain, ai: planningAiAuthority, assets: planningAssetAuthority, resolvePrincipal: resolveDesktopSessionPrincipal }));
+  const projectArchiveService = new ProjectArchiveService({
+    workflows: workflowService,
+    userDataDir: app.getPath('userData'), store: daemonStore, planning: planningService, ledger: planningExecutionStore,
+    knownCredentialValues: () => Object.entries(process.env)
+      .filter(([name, value]) => /(?:API_?KEY|ACCESS_?TOKEN|AUTH_?TOKEN|REFRESH_?TOKEN|SECRET|PASSWORD)/iu.test(name) && !!value)
+      .map(([, value]) => value!),
+    environmentMetadata: () => planningEnvironments.list().map(lease => ({ ...lease })),
+    onHistoryChanged: sequence => daemonCommandRouter.publishStoredEventsAfter(sequence),
+    registerRestoredProject: async project => {
+      const saved = await requestAgentProjectSave({ name: project.name, primaryRoot: project.rootPath, additionalRoots: [], pinned: false });
+      if (!saved.ok || saved.project.projectId !== project.projectId) throw new Error('The restored project could not be registered. Retry the same restore command.');
+    },
+  });
+  const projectArchiveAuthority = new ProjectArchiveRemoteAuthority({ service: projectArchiveService, ready: planningExecutionReady,
+    ingress: localAgentOperationIngress, available: () => daemonAvailability?.state === 'ready' && !daemonAuthorityShutdown.isStopping(),
+    userDataDir: app.getPath('userData'),
+  });
+  featureIpcDisposers.push(installProjectArchiveIpc({
+    ipc: ipcMain, service: projectArchiveService, ready: planningExecutionReady, ingress: localAgentOperationIngress,
+    resolvePrincipal: resolveDesktopSessionPrincipal,
+    chooseExportPath: async () => {
+      const result = await dialog.showSaveDialog({ title: '프로젝트 백업', defaultPath: 'project.ezarchive.json', filters: [{ name: 'EZTerminal archive', extensions: ['json'] }] });
+      return result.canceled ? null : result.filePath ?? null;
+    },
+    chooseArchivePath: async () => {
+      const result = await dialog.showOpenDialog({ title: '프로젝트 백업 열기', properties: ['openFile'], filters: [{ name: 'EZTerminal archive', extensions: ['json'] }] });
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+    chooseRestoreParent: async () => {
+      const result = await dialog.showOpenDialog({ title: '새 복원 프로젝트를 저장할 폴더', properties: ['openDirectory', 'createDirectory'] });
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+    confirmCleanup: async (_event, _inventory, sessionIds) => {
+      const result = await dialog.showMessageBox({ type: 'warning', title: '선택한 대화 기록 삭제', message: `보관된 대화 ${sessionIds.length}개의 기록을 삭제합니다.`, detail: '이 작업은 되돌릴 수 없습니다. 필요한 기록은 먼저 백업하세요.', buttons: ['취소', '기록 삭제'], defaultId: 0, cancelId: 0 });
+      return result.response === 1;
+    },
+  }));
   managedMergeService = new ManagedMergeService({
     userDataDir: app.getPath('userData'),
     coordination: agentCoordinationService,
@@ -3965,6 +4303,22 @@ app.on('ready', async () => {
         onEvent: (listener) => daemonCommandRouter.onEvent(listener),
       },
       agentHistorySource: remoteAgentHistorySource,
+      conversationHistorySource: {
+        resolveConversation: ref => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return conversationHistoryService.resolveConversation(ref); }),
+        listConversations: query => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return conversationHistoryService.listConversations(query); }),
+        readConversation: (id, cursor, limit) => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return conversationHistoryService.readConversation(id, cursor, limit); }),
+        prepareHistoryResume: request => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return conversationHistoryService.prepareHistoryResume(request); }),
+        resumeHistory: (request, principal) => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return conversationHistoryService.resumeHistory(request, principal); }),
+      },
+      planningSource: planningAuthority,
+      workflowSource: workflowAuthority,
+      workflowNavigationSource: { getWorkflowNavigation: projectId => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return workflowService.navigation(projectId); }) },
+      workflowPreviewSource: workflowAuthority,
+      agentCapabilitiesSource: agentCapabilities,
+      planningRunSource: planningRunAuthority,
+        planningAiSource: planningAiAuthority,
+        planningAssetSource: planningAssetAuthority,
+        projectArchiveSource: { request: (value, principalId) => projectArchiveAuthority.execute(value, principalId) },
       gitSource: gitStatusService,
       pairingSource: {
         match: (code) => pairingCodeService.match(code),

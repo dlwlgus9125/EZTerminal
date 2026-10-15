@@ -1,8 +1,12 @@
+import { encodeFileChanges } from '../shared/conversation-changes';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import crossSpawn from 'cross-spawn';
+import { promptWithChatContext } from '../shared/chat-message';
+import type { AgentCapabilityItem, AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import { codexMcpArguments, runNativeExtensionCommand } from './agent-native-extensions';
 
 import type {
   DaemonTranscriptItem,
@@ -106,7 +110,7 @@ interface SessionState {
   readonly nativeStateByChild: Map<string, string>;
 }
 
-type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'legacy-command' | 'legacy-file-change';
+type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change';
 
 interface PendingApproval {
   readonly providerRequestId: string;
@@ -553,6 +557,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
           displayName: asString(model?.displayName) ?? id,
           ...(asString(model?.description) ? { description: asString(model?.description) } : {}),
           supportsReasoning: asArray(model?.supportedReasoningEfforts).length > 0,
+          ...(asArray(model?.supportedReasoningEfforts).length ? {
+            reasoningEfforts: asArray(model?.supportedReasoningEfforts).flatMap((entry) => {
+              const effort = asString(asObject(entry)?.reasoningEffort);
+              return effort ? [effort] : [];
+            }),
+          } : {}),
           isDefault: model?.isDefault === true,
         });
       }
@@ -566,6 +576,134 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return models;
   }
 
+  async listCapabilities(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog> {
+    if (!path.isAbsolute(workspaceRoot)) throw new Error('An absolute workspace is required.');
+    await this.ensureConnection(signal);
+    const rpc = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal });
+    const [models, skills, plugins, mcp, configuration] = await Promise.allSettled([
+      this.listModels(signal), rpc('skills/list', { cwds: [workspaceRoot], forceReload: true }),
+      rpc('plugin/installed', { cwds: [workspaceRoot] }), rpc('mcpServerStatus/list', { limit: 100 }),
+      rpc('config/read', { cwd: workspaceRoot, includeLayers: false }),
+    ]);
+    const items: AgentCapabilityItem[] = [];
+    const issues: { section: 'models' | 'skills' | 'plugins' | 'mcp'; message: string }[] = [];
+    for (const [section, result] of [['models', models], ['skills', skills], ['plugins', plugins], ['mcp', mcp]] as const) {
+      if (result.status === 'rejected') issues.push({ section, message: `The installed Codex provider could not list ${section}. Refresh or update the provider.` });
+    }
+    const nativeConfigResult = configuration.status === 'fulfilled' ? asObject(configuration.value) : undefined;
+    const nativeConfig = asObject(nativeConfigResult?.config);
+    const configuredMcp = asObject(nativeConfig?.mcp_servers);
+    const origins = asObject(nativeConfigResult?.origins);
+    if (!nativeConfig) issues.push({ section: 'mcp', message: 'Workspace MCP settings could not be verified. Runtime status alone does not establish workspace enablement.' });
+    const nativeMcpItems = new Map<string, AgentCapabilityItem>();
+    for (const [name, raw] of Object.entries(configuredMcp ?? {})) {
+      const config = asObject(raw);
+      if (!config) continue;
+      const originKey = Object.keys(origins ?? {}).filter((key) => key === `mcp_servers.${name}` || key.startsWith(`mcp_servers.${name}.`) || key === 'mcp_servers').sort((a, b) => b.length - a.length)[0];
+      const configScope = asString(asObject(asObject(originKey ? origins?.[originKey] : undefined)?.name)?.type) ?? 'unknown';
+      const enabled = config.enabled !== false;
+      nativeMcpItems.set(name, { id: name, kind: 'mcp', name, enabled, status: enabled ? 'configured' : 'disabled', scope: configScope, actions: configScope === 'user' ? ['mcp-remove'] : [] });
+    }
+    if (skills.status === 'fulfilled') for (const entry of asArray(asObject(skills.value)?.data)) {
+      const group = asObject(entry);
+      if (asArray(group?.errors).length) issues.push({ section: 'skills', message: 'Some installed skills could not be read by Codex.' });
+      for (const raw of asArray(group?.skills)) {
+        const skill = asObject(raw);
+        const name = asString(skill?.name);
+        const source = asString(skill?.path);
+        if (!name || !source) continue;
+        items.push({ id: source, kind: 'skill', name, source, scope: asString(skill?.scope),
+          description: asString(skill?.description), enabled: skill?.enabled === true,
+          invocation: `$${name}`, actions: ['skill-enable', 'skill-disable'] });
+      }
+    }
+    if (plugins.status === 'fulfilled') {
+      const result = asObject(plugins.value);
+      if (asArray(result?.marketplaceLoadErrors).length) issues.push({ section: 'plugins', message: 'Some configured marketplaces could not be read.' });
+      for (const rawMarketplace of asArray(result?.marketplaces)) {
+        const marketplace = asObject(rawMarketplace);
+        for (const raw of asArray(marketplace?.plugins)) {
+          const plugin = asObject(raw);
+          const id = asString(plugin?.id);
+          if (!id || plugin?.installed !== true) continue;
+          items.push({ id, kind: 'plugin', name: asString(plugin?.name) ?? id,
+            description: asString(asObject(plugin?.interface)?.shortDescription),
+            source: asString(marketplace?.name), version: asString(plugin?.localVersion) ?? asString(plugin?.version),
+            enabled: plugin?.enabled === true, scope: 'user', actions: ['plugin-remove', 'plugin-enable', 'plugin-disable'] });
+        }
+      }
+    }
+    if (mcp.status === 'fulfilled') {
+      let result = asObject(mcp.value);
+      const cursors = new Set<string>();
+      for (let page = 0; page < 40; page += 1) {
+        for (const raw of asArray(result?.data)) {
+          const server = asObject(raw);
+          const name = asString(server?.name);
+          if (!name) continue;
+          const configured = nativeMcpItems.get(name);
+          if (configured) nativeMcpItems.set(name, { ...configured, status: configured.enabled ? asString(server?.runtimeStatus) ?? asString(server?.authStatus) ?? 'configured' : 'disabled' });
+          // Runtime-only entries belong to the app-server context, not necessarily this workspace.
+          else if (server?.pluginId) nativeMcpItems.set(name, { id: name, kind: 'mcp', name, enabled: server?.runtimeStatus !== 'disabled', status: asString(server?.runtimeStatus) ?? asString(server?.authStatus) ?? 'configured', source: asString(server?.pluginId), scope: 'plugin', actions: [] });
+        }
+        const cursor = asString(result?.nextCursor);
+        if (!cursor) break;
+        if (cursors.has(cursor) || page === 39) { issues.push({ section: 'mcp', message: 'The MCP catalog exceeds the discovery bound.' }); break; }
+        cursors.add(cursor);
+        try { result = asObject(await rpc('mcpServerStatus/list', { limit: 100, cursor })); }
+        catch { issues.push({ section: 'mcp', message: 'The remaining MCP servers could not be loaded.' }); break; }
+      }
+    }
+    items.push(...nativeMcpItems.values());
+    const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : value;
+    return { models: models.status === 'fulfilled' ? models.value : [], items, issues,
+      ...(nativeConfig ? { configurationRevision: createHash('sha256').update(JSON.stringify(canonical({ mcp: configuredMcp, plugins: nativeConfig.plugins, skills: nativeConfig.skills }))).digest('hex') } : {}),
+      actions: [
+        ...(plugins.status === 'fulfilled' ? ['plugin-install', 'plugin-remove', 'plugin-enable', 'plugin-disable', 'marketplace-add', 'marketplace-remove', 'marketplace-update'] as const : []),
+        ...(skills.status === 'fulfilled' ? ['skill-enable', 'skill-disable'] as const : []),
+        ...(nativeConfig ? ['mcp-add', 'mcp-remove'] as const : []),
+      ] };
+  }
+
+  async manageExtension(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void> {
+    if (command.scope !== 'user') throw new Error('Codex extension changes use the native user settings.');
+    await this.ensureConnection(signal);
+    const request = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal });
+    const target = command.target;
+    switch (command.action) {
+      case 'skill-enable': case 'skill-disable':
+        await request('skills/config/write', { path: target, enabled: command.action === 'skill-enable' }); break;
+      case 'plugin-install': {
+        const split = target.lastIndexOf('@');
+        if (split < 1) throw new Error('Use plugin@marketplace.');
+        const marketplaceName = target.slice(split + 1);
+        const catalog = asObject(await request('plugin/list', { cwds: [workspaceRoot] }));
+        const marketplace = asArray(catalog?.marketplaces).map(asObject).find((entry) => entry?.name === marketplaceName);
+        const marketplacePath = asString(marketplace?.path);
+        await request('plugin/install', { pluginName: target.slice(0, split), ...(marketplacePath ? { marketplacePath } : { remoteMarketplaceName: marketplaceName }), installAttemptId: command.commandId }); break;
+      }
+      case 'plugin-remove': await request('plugin/uninstall', { pluginId: target }); break;
+      case 'plugin-enable': case 'plugin-disable':
+        if (!/^[A-Za-z0-9_:@/-]+$/u.test(target)) throw new Error('Invalid plugin identifier.');
+        await request('config/value/write', { keyPath: `plugins.${JSON.stringify(target)}.enabled`, value: command.action === 'plugin-enable', mergeStrategy: 'replace' }); break;
+      case 'marketplace-add': await request('marketplace/add', { source: command.source ?? target }); break;
+      case 'marketplace-remove': await request('marketplace/remove', { marketplaceName: target }); break;
+      case 'marketplace-update': {
+        const result = asObject(await request('marketplace/upgrade', { marketplaceName: target }));
+        if (asArray(result?.errors).length) throw new Error('The native marketplace refresh did not complete. Check provider settings.');
+        break;
+      }
+      case 'mcp-add': case 'mcp-remove': {
+        const descriptor = this.launchDescriptor;
+        if (!descriptor) throw new Error('Review the native executable before management.');
+        await this.verifyLaunchDescriptor(descriptor, signal);
+        await runNativeExtensionCommand(descriptor.executablePath, codexMcpArguments(command), workspaceRoot, buildProviderProcessEnvironment(descriptor.environmentVariableNames), signal);
+        break;
+      }
+      default: throw new Error('This operation is not supported by Codex.');
+    }
+  }
+
   async createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle> {
     this.assertSessionContext(context);
     this.assertActive();
@@ -573,7 +711,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      const config = orchestrationConfig(context);
+      const config = { ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
+        ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
+        ...(context.managedExecution ? { 'features.multi_agent': false } : {}) };
       const result = asObject(await this.requireConnection().request('thread/start', {
         cwd: context.workspaceRoot,
         runtimeWorkspaceRoots: [context.workspaceRoot],
@@ -612,7 +752,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      const config = orchestrationConfig(context);
+      const config = { ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
+        ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
+        ...(context.managedExecution ? { 'features.multi_agent': false } : {}) };
       const result = asObject(await this.requireConnection().request('thread/resume', {
         threadId: context.providerSessionId,
         cwd: context.workspaceRoot,
@@ -648,6 +790,16 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (!input.turnId.trim() || !input.commandId.trim()) throw new Error('Codex turn identity is incomplete.');
     const state = this.requireSession(input.sessionId, input.providerSessionId);
     if (state.activeTurn) throw new Error(`Codex session ${input.sessionId} already has an active turn.`);
+    const selectedSkills = input.context?.skills ?? [];
+    if (selectedSkills.length) {
+      const result = asObject(await this.requireConnection().request('skills/list', { cwds: [state.workspaceRoot], forceReload: true }, { signal }));
+      const available = asArray(result?.data).flatMap((group) => asArray(asObject(group)?.skills));
+      if (selectedSkills.some((selected) => selected.providerId !== 'codex' || !available.some((raw) => {
+        const skill = asObject(raw);
+        return skill?.enabled === true && skill.name === selected.name && skill.path === selected.id;
+      }))) throw new Error('A selected Codex skill is unavailable. Refresh the extension list and preserve the draft.');
+      if (state.activeTurn) throw new Error(`Codex session ${input.sessionId} already has an active turn.`);
+    }
     state.activeTurn = {
       localTurnId: input.turnId,
       commandId: input.commandId,
@@ -658,7 +810,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
-        input: [{ type: 'text', text: input.prompt, text_elements: [] }],
+        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+        input: [
+          { type: 'text', text: promptWithChatContext(input.prompt, input.context), text_elements: [] },
+          ...selectedSkills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.id })),
+          ...(input.context?.attachments ?? []).filter((attachment) => attachment.kind === 'image').map((attachment) => ({
+            type: 'image', url: `data:${attachment.mimeType};base64,${attachment.data}`,
+          })),
+        ],
       }, { signal }));
       const turn = asObject(result?.turn);
       const providerTurnId = asString(turn?.id);
@@ -1051,6 +1210,19 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         (params, context) => this.handleApproval(kind, params, context),
       ));
     }
+    this.unregister.push(connection.onServerRequest('mcpServer/elicitation/request', async (value, context) => {
+      const params = asObject(value);
+      const schema = asObject(params?.requestedSchema);
+      const properties = asObject(schema?.properties);
+      // Codex uses an empty form for a single MCP tool approval. Data collection,
+      // URL authentication and native verification require a different UI contract.
+      if (params?.mode !== 'form' || asObject(params._meta)?.codex_approval_kind !== 'mcp_tool_call'
+        || schema?.type !== 'object' || !properties || Object.keys(properties).length !== 0
+        || (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.length !== 0))) {
+        throw new Error('This MCP form requires input that EZTerminal does not support yet.');
+      }
+      return this.handleApproval('mcp-tool', params, context);
+    }));
   }
 
   private handleApproval(kind: ApprovalKind, value: unknown, context: CodexServerRequestContext): Promise<unknown> {
@@ -1089,6 +1261,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private approvalResponse(pending: PendingApproval, decision: 'allow' | 'deny'): unknown {
+    if (pending.kind === 'mcp-tool') {
+      // Omit persistent grant metadata: the user's choice applies only to this call.
+      return { action: decision === 'allow' ? 'accept' : 'decline', content: decision === 'allow' ? {} : null, _meta: null };
+    }
     if (pending.kind === 'legacy-command' || pending.kind === 'legacy-file-change') {
       return {
         decision: decision === 'allow'
@@ -1119,10 +1295,17 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return 'Apply file changes';
       case 'permissions':
         return 'Grant additional permissions';
+      case 'mcp-tool':
+        return 'Run MCP tool';
     }
   }
 
   private approvalDetail(kind: ApprovalKind, params: JsonObject): string {
+    if (kind === 'mcp-tool') {
+      const argumentsText = JSON.stringify(asObject(params._meta)?.tool_params ?? {});
+      const detail = [boundedText(params.message, 2_000), `Server: ${boundedText(params.serverName, 200)}`, argumentsText].join('\n');
+      return detail.length > 6_000 ? `${detail.slice(0, 6_000)}\n[Additional tool arguments omitted]` : detail;
+    }
     if (kind === 'command') return boundedText(params.command, 4_000) || boundedText(params.reason, 4_000);
     if (kind === 'legacy-command') return asArray(params.command).filter((value): value is string => typeof value === 'string').join(' ').slice(0, 4_000);
     return boundedText(params.reason, 4_000) || boundedText(params.grantRoot, 4_000);
@@ -1557,7 +1740,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         break;
       case 'fileChange':
         kind = started ? 'tool-call' : 'tool-result';
-        text = this.fileChangeText(item);
+        text = !started && item.status === 'completed'
+          ? this.fileChangeRecord(item) ?? this.fileChangeText(item) : this.fileChangeText(item);
         break;
       case 'mcpToolCall':
       case 'dynamicToolCall':
@@ -1670,6 +1854,15 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     });
   }
 
+  private fileChangeRecord(item: JsonObject): string | undefined {
+    const changes = asArray(item.changes).flatMap(value => {
+      const change = asObject(value);
+      return change && typeof change.path === 'string' && typeof change.diff === 'string'
+        ? [{ path: change.path, patch: change.diff, coverage: 'patch' as const }] : [];
+    });
+    return encodeFileChanges(changes);
+  }
+
   private fileChangeText(item: JsonObject): string {
     return providerTranscriptText(item.changes) || 'File changes updated.';
   }
@@ -1760,6 +1953,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private assertSessionContext(context: ProviderSessionContext): void {
+    if (context.toolsDisabled) throw new Error('This Codex app-server does not expose a verified tool-free mode. Choose a provider that supports tool-free planning proposals.');
     if (!context.sessionId.trim() || !context.workspaceId.trim()) throw new Error('Codex session identity is incomplete.');
     if (!path.isAbsolute(context.workspaceRoot)) throw new Error('Codex workspace root must be absolute.');
   }

@@ -198,6 +198,9 @@ export class AgentHistoryService {
     this.adapters = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
   }
 
+  private cliResumeAllowed?: (provider: AgentHistoryProvider, providerSessionId: string) => boolean;
+  setCliResumeGuard(guard: (provider: AgentHistoryProvider, providerSessionId: string) => boolean): void { this.cliResumeAllowed = guard; }
+
   setProjectSessionTargetResolver(
     resolver: NonNullable<AgentHistoryService['resolveProjectSessionTarget']>,
   ): void {
@@ -359,6 +362,68 @@ export class AgentHistoryService {
     return { ...result, historyId, provider: indexed.adapter.provider };
   }
 
+  async findProviderHistory(provider: 'codex' | 'claude', providerSessionId: string): Promise<string | null> {
+    const find = (): string | null => {
+      for (const indexed of this.index.values()) {
+        if (indexed.adapter.provider !== provider || indexed.privateSession.parentPrivateId) continue;
+        const id = indexed.adapter.resolveProviderSessionId?.(indexed.privateSession.privateId)
+          ?? (provider === 'codex' ? indexed.privateSession.privateId : null);
+        if (id === providerSessionId) return indexed.publicSession.historyId;
+      }
+      return null;
+    };
+    const known = find(); if (known) return known;
+    let cursor: string | undefined;
+    do {
+      const projects = await this.listProjects(false, cursor, 100);
+      for (const project of projects.items) {
+        if (!project.providers.includes(provider)) continue;
+        let sessions: string | undefined;
+        do { const page = await this.listSessions(project.projectId, sessions, 100); const match = find(); if (match) return match; sessions = page.nextCursor ?? undefined; } while (sessions);
+      }
+      cursor = projects.nextCursor ?? undefined;
+    } while (cursor);
+    return null;
+  }
+
+  /** Host-only adoption seam. Never serialize this provider identity to a renderer. */
+  async resolveHistorySource(historyId: string, refresh = false): Promise<{
+    readonly summary: AgentHistorySessionSummary;
+    readonly providerSessionId: string;
+    readonly parentProviderSessionId: string | null;
+  } | null> {
+    let indexed = await this.findSession(historyId);
+    if (!indexed) return null;
+    if (refresh) {
+      const original = indexed;
+      indexed = null;
+      let cursor: string | undefined;
+      const seen = new Set<string>();
+      for (;;) {
+        const result = await original.adapter.listSessions({ roots: original.publicSession.roots, cursor, limit: 100 });
+        const source = result.items.find(item => item.privateId === original.privateSession.privateId);
+        if (source) {
+          this.indexSession(original.adapter, source, original.publicSession.projectId);
+          indexed = this.index.get(historyId) ?? null;
+          break;
+        }
+        if (!result.nextCursor || seen.has(result.nextCursor)) break;
+        seen.add(result.nextCursor); cursor = result.nextCursor;
+      }
+    }
+    const providerSessionId = indexed?.adapter.resolveProviderSessionId?.(indexed.privateSession.privateId)
+      ?? (indexed?.adapter.provider === 'codex' ? indexed.privateSession.privateId : null);
+    return indexed && providerSessionId ? { summary: indexed.publicSession, providerSessionId,
+      parentProviderSessionId: indexed.privateSession.parentPrivateId } : null;
+  }
+
+  async readTranscriptForAdoption(historyId: string, cursor?: string, limit = 20): Promise<AgentTranscriptPage | null> {
+    const source = await this.findSession(historyId);
+    if (!source?.adapter.readTranscriptForAdoption) return null;
+    const page = await source.adapter.readTranscriptForAdoption(source.privateSession.privateId, cursor, limit);
+    return { ...page, historyId, provider: source.adapter.provider };
+  }
+
   /** Resolve opaque session/turn ids to a provider-owned structured change set. */
   async readFileChanges(historyId: string, turnId?: string): Promise<ProviderFileChangeSet | null> {
     const indexed = await this.findSession(historyId);
@@ -379,6 +444,8 @@ export class AgentHistoryService {
       missingDirectories(currentRoots),
     ]);
     const revision = this.resumeRevision(indexed, recordedRoots, currentRoots);
+    const providerSessionId = indexed.adapter.resolveProviderSessionId?.(indexed.privateSession.privateId);
+    const allowed = !this.cliResumeAllowed || !!providerSessionId && this.cliResumeAllowed(indexed.publicSession.provider, providerSessionId);
     return {
       historyId,
       provider: indexed.publicSession.provider,
@@ -387,8 +454,8 @@ export class AgentHistoryService {
       rootsMatch: rootsEqual(recordedRoots, currentRoots),
       missingRecordedRoots,
       missingCurrentRoots,
-      canResume: (recordedRoots.length > 0 && missingRecordedRoots.length === 0)
-        || (currentRoots.length > 0 && missingCurrentRoots.length === 0),
+      canResume: allowed && ((recordedRoots.length > 0 && missingRecordedRoots.length === 0)
+        || (currentRoots.length > 0 && missingCurrentRoots.length === 0)),
       revision,
     };
   }
@@ -421,6 +488,7 @@ export class AgentHistoryService {
       ? preparation.missingRecordedRoots
       : preparation.missingCurrentRoots;
     if (roots.length === 0 || missing.length > 0) return { ok: false, reason: 'missing-root' };
+    if (!preparation.canResume) return { ok: false, reason: 'unavailable' };
     const command = indexed.adapter.buildResumeCommand(indexed.privateSession.privateId, roots);
     if (!command) return { ok: false, reason: 'unavailable' };
     return { ok: true, provider: indexed.adapter.provider, roots, ...command };

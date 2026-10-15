@@ -1,4 +1,5 @@
 import type { DockviewApi } from 'dockview-react';
+import { serializeWorkbench, restoreWorkbench } from './workbench-views';
 
 import { maxTabSuffix, type LayoutEnvelope } from '../shared/layout-schema';
 import { readSessionViewState, type TerminalSessionViewState } from './session-view-state';
@@ -9,12 +10,14 @@ import {
   startRecentPanelSwitch,
   type RecentPanelSwitchSession,
 } from './recent-panel-switching';
-import type { AgentLaunchBootstrap } from '../shared/agent-history';
+import type { AgentTerminalBootstrap } from '../shared/agent-history';
 import {
   clearAgentTerminalBootstrap,
   registerAgentTerminalBootstrap,
+  peekAgentTerminalBootstrap,
 } from './agent-terminal-bootstrap';
 import { prepareLayoutForDockviewRestore } from './popout-layout';
+import { restoreConversationLayout } from './conversation-layout';
 import type { ProjectSessionPanelMetadata } from '../shared/project-workspace';
 import {
   type DockPanelPlacementIntent,
@@ -34,7 +37,7 @@ export interface TerminalPaneOpenRequest {
   /** Safe project association persisted with the terminal panel. */
   readonly projectSession?: ProjectSessionPanelMetadata;
   /** Runtime-only; deliberately excluded from Dockview params/serialization. */
-  readonly agentBootstrap?: AgentLaunchBootstrap;
+  readonly agentBootstrap?: AgentTerminalBootstrap;
 }
 
 export interface OpenedWorkbenchPane {
@@ -382,7 +385,7 @@ export class WorkbenchCoordinator {
         if (options.beforeApply && !options.beforeApply()) return false;
         try {
           this.panelCounter = Math.max(this.panelCounter, maxTabSuffix(envelope.layout));
-          adapter.restore(envelope.layout);
+          adapter.restore(options.quarantineOnCorrupt ? restoreConversationLayout(envelope.layout) : envelope.layout);
           if (adapter.panelIds().length === 0) throw new Error('layout restored zero panels');
           this.options.onPanelSetChange?.();
           applied = true;
@@ -540,6 +543,7 @@ export function createDockviewWorkbenchAdapter(
     getPanel: pane,
     addTerminalPane: (options) => {
       const params = {
+        lastSurface: peekAgentTerminalBootstrap(options.id) ? 'agent-cli' : 'terminal',
         ...(options.projectSession ? { projectSession: options.projectSession } : {}),
         ...(options.cwd && !options.projectSession ? { cwd: options.cwd } : {}),
         ...(options.adoptSessionId ? { adoptSessionId: options.adoptSessionId } : {}),
@@ -561,8 +565,8 @@ export function createDockviewWorkbenchAdapter(
         close: () => panel.api.close(),
       };
     },
-    serialize: () => api.toJSON(),
-    restore: (layout) => api.fromJSON(prepareLayoutForDockviewRestore(layout)),
+    serialize: () => serializeWorkbench(api),
+    restore: (layout) => restoreWorkbench(api, prepareLayoutForDockviewRestore(layout)),
     focus: () => api.focus(),
     onActivePanelChange: (listener) =>
       api.onDidActivePanelChange((event) => listener(event.panel?.id ?? null)),

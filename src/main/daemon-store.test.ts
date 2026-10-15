@@ -205,6 +205,10 @@ describe('DaemonStore', () => {
       'command_outbox',
       'heartbeats',
       'migration_receipts',
+      'planning_execution_attempt_refs',
+      'planning_execution_projects',
+      'planning_execution_receipts',
+      'planning_execution_runs',
       'projects',
       'providers',
       'revisioned_events',
@@ -505,7 +509,7 @@ describe('DaemonStore', () => {
     await old.appendTranscriptBatch([{ id: 'legacy', sessionId: 'terminal-1', kind: 'tool-result', text: 'TOKEN=old-secret', isDelta: false, isSensitive: true }]);
     await old.close();
     const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
-    database.exec('ALTER TABLE transcript_items DROP COLUMN message_id; PRAGMA user_version = 3;');
+    database.exec('ALTER TABLE transcript_items DROP COLUMN context_json; ALTER TABLE transcript_items DROP COLUMN message_id; PRAGMA user_version = 3;');
     database.close();
     const migrated = new DaemonStore(directory);
     await migrated.init();
@@ -842,6 +846,7 @@ describe('DaemonStore', () => {
       DROP INDEX transcript_items_turn_kind;
       ALTER TABLE turns DROP COLUMN enqueue_sequence;
       ALTER TABLE transcript_items DROP COLUMN message_id;
+      ALTER TABLE transcript_items DROP COLUMN context_json;
       UPDATE providers SET review_digest = NULL;
       PRAGMA user_version = 1;
     `);

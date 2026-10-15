@@ -62,8 +62,10 @@ test('Project Map create opens a fresh Agent tab and binds the job to that sessi
   });
   expect(project).not.toBeNull();
 
-  await window.getByTestId('btn-toggle-agents').click();
+  await window.getByTestId('rail-agents').click();
   await window.getByTestId(`agent-project-open-${project!.projectId}`).click();
+  await window.getByTestId('workflow-workspace').getByRole('button', { name: 'Quick tasks and existing work', exact: true }).click();
+  await window.getByTestId('planning-workspace').getByRole('button', { name: 'Files', exact: true }).click();
   await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
   await window.getByTestId('project-workspace-open-map').click();
   await expect(window.getByTestId('project-map-create')).toBeVisible({ timeout: 15_000 });

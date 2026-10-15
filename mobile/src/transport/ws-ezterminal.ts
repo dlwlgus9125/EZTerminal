@@ -1,5 +1,24 @@
 import { RemoteAgentHistoryClient } from './remote-agent-history-client';
+import { LegacyConversationHistory } from './legacy-conversation-history';
+import { ConversationResolveResultSchema, type ConversationRef, type ConversationResolveResult, ConversationPageSchema, ConversationReadResultSchema, HistoryResumePreparationSchema, HistoryResumeResultSchema,
+  type ConversationQuery, type ConversationPage, type ConversationReadResult, type HistoryResumePreparationRequest,
+  type HistoryResumePreparation, type HistoryResumeRequest, type HistoryResumeResult, type ConversationHistoryFailure } from '../../../src/shared/conversation-history';
+import { AgentCapabilityListResultSchema, AgentExtensionResultSchema, type AgentCapabilitiesClient, type AgentCapabilitiesRequest, type AgentExtensionCommand } from '../../../src/shared/agent-capabilities';
 import { RemoteOpenClawClient } from './remote-openclaw-client';
+import { mobileWorkflowDraftAccess } from '../mobile-workflow-draft-store';
+import type { WorkflowDraftResult, WorkflowDraftWrite } from '../../../src/shared/workflow-draft';
+import type { ChatStateResult } from '../../../src/shared/chat-state';
+import type { PlanningDraftResult } from '../../../src/shared/planning-draft';
+import { PlanningRunResultSchema, type PlanningRunRequest, type PlanningRunResult } from '../../../src/shared/planning-run';
+import { PlanningAiResultSchema, type PlanningAiRequest, type PlanningAiResult } from '../../../src/shared/planning-ai';
+import { PlanningAssetResultSchema, type PlanningAssetRequest, type PlanningAssetResult } from '../../../src/shared/planning-asset';
+import { ProjectArchiveResultSchema, type ProjectArchiveRequest, type ProjectArchiveResult } from '../../../src/shared/project-archive';
+import { WorkflowResultSchema, WorkflowPreviewResultSchema, WorkflowNavigationResultSchema, type WorkflowNavigationResult, type WorkflowCommand, type WorkflowResult, type WorkflowPreviewRequest, type WorkflowPreviewResult } from '../../../src/shared/workflow';
+import { PlanningResultQueryResultSchema, type PlanningResultQuery, type PlanningResultQueryResult } from '../../../src/shared/planning-result';
+import {
+  PlanningReadResultSchema, PlanningMutationResultSchema,
+  type PlanningCommand, type PlanningReadResult, type PlanningMutationResult,
+} from '../../../src/shared/planning';
 /**
  * WsEzTerminalTransport — implements the desktop's `EzTerminalApi` (see
  * `src/shared/ipc.ts`) over the WS bridge from `src/main/remote-bridge.ts`
@@ -134,9 +153,19 @@ import {
   decodeFrame,
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
-  REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
+  REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
+  REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY,
+  REMOTE_PROTOCOL_AUTH_BASELINE,
+  SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
+  isRemoteProtocolVersion,
+  REMOTE_PROTOCOL_VERSION_WORKFLOW,
+  REMOTE_PROTOCOL_VERSION_PLANNING,
+  type AgentCapabilitiesWireRequest,
+  type ConversationHistoryRequest,
+  type PlanningExtensionRequest,
+  type WorkflowRequest,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE,
   REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION,
   uint8ArrayToBase64,
@@ -281,6 +310,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private hostVersion = 'unknown';
   private hostBuildSha = 'unknown';
   private negotiatedProtocolVersion: RemoteProtocolVersion | null = null;
+  get negotiatedRemoteProtocolVersion(): number { return this.negotiatedProtocolVersion ?? 0; }
+  /** Android owns drafts in its device-bound secure store; desktop draft IPC is not remote. */
+  chatStateRead(): Promise<ChatStateResult> {
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure chat state store.' });
+  }
+  chatStateWrite(): Promise<ChatStateResult> {
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure chat state store.' });
+  }
+  planningDraftRead(): Promise<PlanningDraftResult> {
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure planning draft store.' });
+  }
+  planningDraftWrite(): Promise<PlanningDraftResult> {
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Use the Android secure planning draft store.' });
+  }
   private reattachPrioritySessionId: string | null = null;
 
   /** Stable renderer-side ports. They deliberately survive transient sockets;
@@ -391,6 +434,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
   >();
 
+  private readonly pendingPlanningReads = new Map<string, { projectId: string; resolve: (result: PlanningReadResult) => void }>();
+  private readonly pendingPlanningRuns = new Map<string, { projectId: string; commandId?: string; resolve: (result: PlanningRunResult) => void }>();
+  private readonly pendingPlanningExtensions = new Map<string, { replyKind: string; resolve: (value: unknown) => void }>();
+  private readonly legacyConversations = new LegacyConversationHistory(this);
+  private readonly pendingPlanningResults = new Map<string, { query: PlanningResultQuery; resolve: (result: PlanningResultQueryResult) => void }>();
+  private readonly pendingPlanningCommands = new Map<string, { command: PlanningCommand; resolve: (result: PlanningMutationResult) => void }>();
   private agentSnapshot: AgentActivitySnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
   private agentCoordinationSnapshot: AgentCoordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
   private agentOrchestrationSnapshot: AgentOrchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT;
@@ -1068,6 +1117,218 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           command.commandId,
           'Not connected to EZTerminal.',
         ));
+      }
+    });
+  }
+
+  getPlanningSnapshot(projectId: string, subprojectId?: string): Promise<PlanningReadResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) {
+      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated PC to load planning.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest({ kind: 'planning-read', requestId, projectId, ...(subprojectId ? { subprojectId } : {}) }, this.pendingPlanningReads, requestId, { projectId, resolve })) {
+        resolve({ ok: false, error: 'unavailable', message: 'PC connection is unavailable.' });
+      }
+    });
+  }
+
+  getPlanningExecutionSnapshot(projectId: string, subprojectId?: string): Promise<PlanningRunResult> {
+    return this.requestPlanningRun(projectId, undefined, subprojectId);
+  }
+
+  private requestPlanningExtension<T>(message: PlanningExtensionRequest | WorkflowRequest | AgentCapabilitiesWireRequest | ConversationHistoryRequest, replyKind: string, validate: (value: unknown) => T): Promise<T> {
+    const unavailable = { ok: false, error: 'unavailable', message: 'No confirmed receipt. Reconnect and reconcile the saved request before sending again.' };
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) return Promise.resolve(validate(unavailable));
+    return new Promise(resolve => {
+      const pending = { replyKind, resolve: (value: unknown) => resolve(validate(value)) };
+      if (!this.tryStartMapRequest(message, this.pendingPlanningExtensions, message.requestId, pending)) pending.resolve(unavailable);
+    });
+  }
+
+  getWorkflowSnapshot(projectId: string): Promise<WorkflowResult> {
+    return this.requestWorkflow({ kind: 'workflow-read', requestId: this.newId(), projectId }, projectId);
+  }
+  async getWorkflowNavigation(projectId: string): Promise<WorkflowNavigationResult> {
+    if (!this.authed || this.negotiatedProtocolVersion === null) return { ok: false, error: 'unavailable', message: 'PC connection is unavailable.' };
+    if (this.negotiatedProtocolVersion < REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY) {
+      const result = await this.getWorkflowSnapshot(projectId);
+      return result.ok ? { ok: true, snapshot: { projectId, registryRevision: result.snapshot.registryRevision,
+        subprojects: result.snapshot.subprojects.map(owner => ({ id: owner.id, title: owner.title, status: owner.status, updatedAt: owner.updatedAt,
+          stages: [...owner.graph.nodes.map(node => ({ id: node.id, title: node.title, archived: false })), ...owner.archivedNodes.map(node => ({ id: node.id, title: node.title, archived: true }))] })),
+        sessionLinks: [...new Map([...(result.snapshot.historicalSessionLinks ?? []), ...result.snapshot.sessionLinks].map(link => [link.sessionId, link])).values()].map(link => ({ sessionId: link.sessionId, subprojectId: link.subprojectId, scope: link.scope, ...(link.nodeId ? { nodeId: link.nodeId } : {}) })),
+      } } : result;
+    }
+    return this.requestPlanningExtension({ kind: 'workflow-navigation', requestId: this.newId(), projectId }, 'workflow-navigation-reply', value => {
+      const parsed = WorkflowNavigationResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === projectId) ? parsed.data
+        : { ok: false, error: 'unavailable', message: 'The project navigation reply could not be verified.' };
+    });
+  }
+
+  private historyUnavailable(): ConversationHistoryFailure | undefined {
+    return this.connectionState === 'protocol-incompatible' ? { ok: false, reason: 'unsupported', message: 'Update the PC and mobile app to compatible versions.' }
+      : !this.authed || this.negotiatedProtocolVersion === null ? { ok: false, reason: 'unavailable', message: 'PC connection is unavailable. Reconnect to read history.' } : undefined;
+  }
+  resolveConversation(ref: ConversationRef): Promise<ConversationResolveResult> {
+    const blocked = this.historyUnavailable(); if (blocked) return Promise.resolve(blocked);
+    if ((this.negotiatedProtocolVersion ?? 0) < 16) return Promise.resolve({ ok: false, reason: 'unsupported', message: 'Update the PC to open and restore conversations directly.' });
+    return this.requestPlanningExtension({ kind: 'conversation-history-resolve', requestId: this.newId(), ref }, 'conversation-history-resolve-reply', value => {
+      const parsed = ConversationResolveResultSchema.safeParse(value);
+      return parsed.success ? parsed.data : { ok: false, reason: 'unavailable', message: 'The conversation identity could not be verified.' };
+    });
+  }
+  listConversations(query: ConversationQuery = {}): Promise<ConversationPage> {
+    const blocked = this.historyUnavailable(); if (blocked) return Promise.resolve(blocked);
+    if (this.negotiatedProtocolVersion! < REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY) return this.legacyConversations.listConversations(query);
+    return this.requestPlanningExtension({ kind: 'conversation-history-list', requestId: this.newId(), query }, 'conversation-history-list-reply', value => {
+      const parsed = ConversationPageSchema.safeParse(value);
+      return parsed.success ? parsed.data : { ok: false, reason: 'unavailable', message: 'The conversation list reply could not be verified.' };
+    });
+  }
+  readConversation(conversationId: string, cursor?: string, limit?: number): Promise<ConversationReadResult> {
+    const blocked = this.historyUnavailable(); if (blocked) return Promise.resolve(blocked);
+    if (this.negotiatedProtocolVersion! < REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY) return this.legacyConversations.readConversation(conversationId, cursor, limit);
+    return this.requestPlanningExtension({ kind: 'conversation-history-read', requestId: this.newId(), conversationId, ...(cursor ? { cursor } : {}), ...(limit ? { limit } : {}) }, 'conversation-history-read-reply', value => {
+      const parsed = ConversationReadResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || (parsed.data.entry.conversationId === conversationId || parsed.data.entry.aliases?.includes(conversationId)) && parsed.data.transcript.historyId === conversationId) ? parsed.data
+        : { ok: false, reason: 'transcript-unavailable', message: 'The conversation transcript reply could not be verified.' };
+    });
+  }
+  prepareHistoryResume(request: HistoryResumePreparationRequest): Promise<HistoryResumePreparation> {
+    const blocked = this.historyUnavailable(); if (blocked) return Promise.resolve(blocked);
+    if (this.negotiatedProtocolVersion! < REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY) return this.legacyConversations.prepareHistoryResume(request);
+    return this.requestPlanningExtension({ kind: 'conversation-history-prepare', requestId: this.newId(), request }, 'conversation-history-prepare-reply', value => {
+      const parsed = HistoryResumePreparationSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.entry.conversationId === request.conversationId || parsed.data.entry.aliases?.includes(request.conversationId)) ? parsed.data
+        : { ok: false, reason: 'unavailable', message: 'The resume preparation could not be verified.' };
+    });
+  }
+  resumeHistory(request: HistoryResumeRequest): Promise<HistoryResumeResult> {
+    const blocked = this.historyUnavailable(); if (blocked) return Promise.resolve(blocked);
+    if (this.negotiatedProtocolVersion! < REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY) return this.legacyConversations.resumeHistory();
+    return this.requestPlanningExtension({ kind: 'conversation-history-resume', requestId: this.newId(), request }, 'conversation-history-resume-reply', value => {
+      const parsed = HistoryResumeResultSchema.safeParse(value);
+      return parsed.success ? parsed.data : { ok: false, reason: 'unavailable', message: 'No verified resume receipt. Reconcile this same request after reconnecting.' };
+    });
+  }
+  workflowDraftRead(projectId: string): Promise<WorkflowDraftResult> {
+    return mobileWorkflowDraftAccess(() => this.getRemoteToken()).workflowDraftRead(projectId);
+  }
+  workflowDraftWrite(projectId: string, request: WorkflowDraftWrite): Promise<WorkflowDraftResult> {
+    return mobileWorkflowDraftAccess(() => this.getRemoteToken()).workflowDraftWrite(projectId, request);
+  }
+  workflowPreview(request: WorkflowPreviewRequest): Promise<WorkflowPreviewResult> {
+    if (this.connectionState === 'protocol-incompatible') return Promise.resolve({ ok: false, message: 'Update the PC and mobile app to compatible versions to use conversational workflow setup.' });
+    if (!this.authed || this.negotiatedProtocolVersion === null) return Promise.resolve({ ok: false, message: 'PC connection is unavailable. Reconnect to continue.' });
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_WORKFLOW) return Promise.resolve({ ok: false, message: 'Update the PC to use conversational workflow setup.' });
+    return this.requestPlanningExtension({ kind: 'workflow-preview', requestId: this.newId(), request }, 'workflow-preview-reply', value => {
+      const result = WorkflowPreviewResultSchema.safeParse(value);
+      return result.success && (!result.data.ok || !result.data.preview || result.data.preview.id === request.previewId && result.data.preview.projectId === request.projectId)
+        ? result.data : { ok: false, message: 'The workflow preview reply could not be verified.' };
+    });
+  }
+
+  agentCapabilitiesList(request: AgentCapabilitiesRequest): ReturnType<AgentCapabilitiesClient['list']> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES) return Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the connected PC to discover Agent extensions.' });
+    return this.requestPlanningExtension({ kind: 'agent-capabilities-list', requestId: this.newId(), request }, 'agent-capabilities-list-reply', (value) => {
+      const parsed = AgentCapabilityListResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.value.providerId === request.providerId && parsed.data.value.workspaceId === request.workspaceId)
+        ? parsed.data : { ok: false as const, code: 'unavailable' as const, message: 'The connected PC extension catalog could not be verified.' };
+    });
+  }
+
+  agentCapabilitiesManage(command: AgentExtensionCommand): ReturnType<AgentCapabilitiesClient['manage']> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES) return Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the connected PC to manage Agent extensions.' });
+    return this.requestPlanningExtension({ kind: 'agent-capabilities-manage', requestId: this.newId(), command }, 'agent-capabilities-manage-reply', (value) => {
+      const parsed = AgentExtensionResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.value.commandId === command.commandId && parsed.data.value.action === command.action)
+        ? parsed.data : { ok: false as const, code: 'uncertain' as const, message: 'No verified extension receipt. Check the same request after reconnecting.' };
+    });
+  }
+
+  executeWorkflowCommand(command: WorkflowCommand): Promise<WorkflowResult> {
+    return this.requestWorkflow({ kind: 'workflow-execute', requestId: this.newId(), command }, command.projectId, command.commandId, command.hostId);
+  }
+
+  private requestWorkflow(message: Exclude<WorkflowRequest, { kind: 'workflow-preview' | 'workflow-navigation' }>, projectId: string, commandId?: string, hostId?: string): Promise<WorkflowResult> {
+    if (this.connectionState === 'protocol-incompatible') return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC and mobile app to compatible versions to use subprojects.' });
+    if (!this.authed || this.negotiatedProtocolVersion === null) return Promise.resolve({ ok: false, error: 'unavailable', message: 'PC connection is unavailable. Reconnect to continue.' });
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_WORKFLOW) return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC to use subprojects and workflow editing.' });
+    return this.requestPlanningExtension(message, `${message.kind}-reply`, value => {
+      const parsed = WorkflowResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === projectId && (!commandId || parsed.data.commandId === commandId) && (!hostId || parsed.data.snapshot.hostId === hostId))
+        ? parsed.data : { ok: false, error: 'unavailable', message: 'The workflow receipt could not be verified. Reconcile the same command after reconnecting.' };
+    });
+  }
+
+  planningAiRequest(request: PlanningAiRequest): Promise<PlanningAiResult> {
+    const projectId = request.type === 'start' ? request.request.projectId : request.projectId;
+    const requestId = request.type === 'start' ? request.request.requestId : request.requestId;
+    return this.requestPlanningExtension({ kind: 'planning-ai-request', requestId: this.newId(), request }, 'planning-ai-reply', value => {
+      const parsed = PlanningAiResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || parsed.data.jobs.every(job => job.request.projectId === projectId && (!requestId || job.request.requestId === requestId)))
+        ? parsed.data : { ok: false, message: 'The proposal reply could not be confirmed. Read the saved request after reconnecting.' };
+    });
+  }
+
+  executePlanningAsset(request: PlanningAssetRequest): Promise<PlanningAssetResult> {
+    return this.requestPlanningExtension({ kind: 'planning-asset-request', requestId: this.newId(), request }, 'planning-asset-reply', value => {
+      const parsed = PlanningAssetResultSchema.safeParse(value);
+      return parsed.success && (!parsed.data.ok || (parsed.data.asset.id === request.assetId && (request.type !== 'read' || parsed.data.dataBase64 !== undefined)))
+        ? parsed.data : { ok: false, message: 'The asset reply could not be verified.' };
+    });
+  }
+
+  executeProjectArchive(request: ProjectArchiveRequest): Promise<ProjectArchiveResult> {
+    return this.requestPlanningExtension({ kind: 'project-archive-request', requestId: this.newId(), request }, 'project-archive-reply', value => {
+      const parsed = ProjectArchiveResultSchema.safeParse(value);
+      const result = parsed.success ? parsed.data : undefined;
+      const matches = result && (!result.ok || (result.kind === request.type
+        && (result.kind !== 'inventory' || request.type === 'inventory' && result.inventory.projectId === request.projectId)
+        && (result.kind !== 'export' || request.type === 'export' && result.manifest.projectId === request.projectId)));
+      return matches ? result : { ok: false, error: 'unavailable', message: 'The archive receipt could not be confirmed. Reconcile the saved command after reconnecting.' };
+    });
+  }
+
+  readPlanningResult(query: PlanningResultQuery): Promise<PlanningResultQueryResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) {
+      return Promise.resolve({ ok: false, message: 'Connect to an updated PC to read results.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest({ kind: 'planning-result-read', requestId, query }, this.pendingPlanningResults, requestId, { query, resolve })) {
+        resolve({ ok: false, message: 'PC connection is unavailable.' });
+      }
+    });
+  }
+
+  executePlanningRun(command: PlanningRunRequest): Promise<PlanningRunResult> {
+    return this.requestPlanningRun(command.projectId, command);
+  }
+
+  private requestPlanningRun(projectId: string, command?: PlanningRunRequest, subprojectId?: string): Promise<PlanningRunResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) {
+      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated PC to manage execution.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      const message = command ? { kind: 'planning-run-execute' as const, requestId, command }
+        : { kind: 'planning-run-read' as const, requestId, projectId, ...(subprojectId ? { subprojectId } : {}) };
+      if (!this.tryStartMapRequest(message, this.pendingPlanningRuns, requestId, { projectId, commandId: command?.commandId, resolve })) {
+        resolve({ ok: false, error: 'unavailable', message: 'No execution receipt. Reconcile this command after reconnecting.' });
+      }
+    });
+  }
+
+  executePlanningCommand(command: PlanningCommand): Promise<PlanningMutationResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) {
+      return Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated PC before applying changes.' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest({ kind: 'planning-execute', requestId, command }, this.pendingPlanningCommands, requestId, { command, resolve })) {
+        resolve({ ok: false, error: 'unavailable', message: 'No receipt. Reload and reconcile this command before sending another change.' });
       }
     });
   }
@@ -2220,7 +2481,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       socket.send(JSON.stringify({
         kind: 'auth',
         token: this.token,
-        protocolVersion: REMOTE_PROTOCOL_VERSION,
+        protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
+        supportedProtocolVersions: SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
         clientVersion: this.buildInfo.appVersion,
         buildSha: this.buildInfo.buildSha,
         ...(this.clientIdentity ? { clientIdentity: this.clientIdentity } : {}),
@@ -2469,6 +2731,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       ));
     }
     this.pendingDaemonCommands.clear();
+    for (const { resolve } of this.pendingPlanningReads.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'PC connection was lost.' });
+    }
+    this.pendingPlanningReads.clear();
+    for (const { resolve } of this.pendingPlanningCommands.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Receipt was not received. Reconcile the same command after reconnecting.' });
+    }
+    this.pendingPlanningCommands.clear();
+    for (const { resolve } of this.pendingPlanningRuns.values()) resolve({ ok: false, error: 'unavailable', message: 'Connection lost. Reconcile the same execution command after reconnecting.' });
+    this.pendingPlanningRuns.clear();
+    for (const pending of this.pendingPlanningExtensions.values()) pending.resolve({ ok: false, error: 'unavailable', message: 'Connection lost. Reconcile the saved request before sending again.' });
+    this.pendingPlanningExtensions.clear();
+    for (const { resolve } of this.pendingPlanningResults.values()) resolve({ ok: false, message: 'PC connection was lost.' });
+    this.pendingPlanningResults.clear();
     if (this.daemonEventsRefcount > 0) {
       this.updateDaemonRuntimeState({
         status: this.daemonRuntimeState.snapshot ? 'recovering' : 'error',
@@ -2825,7 +3101,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // correlated requests are in flight.
         if (this.authed) break;
         if (
-          msg.protocolVersion !== REMOTE_PROTOCOL_VERSION
+          !isRemoteProtocolVersion(msg.protocolVersion)
           || typeof msg.hostVersion !== 'string'
           || msg.hostVersion.trim().length === 0
         ) {
@@ -3138,6 +3414,68 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         const accepted = this.applyDaemonSnapshot(msg.snapshot);
         pending?.(accepted ? msg.snapshot : this.daemonRuntimeState.snapshot);
+        break;
+      }
+      case 'planning-read-reply': {
+        const pending = this.pendingPlanningReads.get(msg.requestId);
+        this.pendingPlanningReads.delete(msg.requestId);
+        if (!pending) break;
+        const parsed = PlanningReadResultSchema.safeParse(msg.result);
+        pending.resolve(parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === pending.projectId)
+          ? parsed.data : { ok: false, error: 'invalid', message: 'The host returned an invalid planning snapshot.' });
+        break;
+      }
+      case 'planning-ai-reply':
+      case 'agent-capabilities-list-reply':
+      case 'agent-capabilities-manage-reply':
+      case 'workflow-read-reply':
+      case 'workflow-navigation-reply':
+      case 'conversation-history-resolve-reply':
+      case 'conversation-history-list-reply':
+      case 'conversation-history-read-reply':
+      case 'conversation-history-prepare-reply':
+      case 'conversation-history-resume-reply':
+      case 'workflow-preview-reply':
+      case 'workflow-execute-reply':
+      case 'planning-asset-reply':
+      case 'project-archive-reply': {
+        const pending = this.pendingPlanningExtensions.get(msg.requestId);
+        this.pendingPlanningExtensions.delete(msg.requestId);
+        if (pending) pending.resolve(pending.replyKind === msg.kind ? msg.result : undefined);
+        break;
+      }
+      case 'planning-run-reply': {
+        const pending = this.pendingPlanningRuns.get(msg.requestId);
+        this.pendingPlanningRuns.delete(msg.requestId);
+        if (!pending) break;
+        const parsed = PlanningRunResultSchema.safeParse(msg.result);
+        if (!parsed.success || (parsed.data.ok && (parsed.data.snapshot.projectId !== pending.projectId
+          || (pending.commandId && parsed.data.commandId !== pending.commandId)))) {
+          pending.resolve({ ok: false, error: 'invalid-reply', message: 'Execution reply does not match this project and command.' });
+        } else pending.resolve(parsed.data);
+        break;
+      }
+      case 'planning-result-reply': {
+        const pending = this.pendingPlanningResults.get(msg.requestId);
+        this.pendingPlanningResults.delete(msg.requestId);
+        if (!pending) break;
+        const parsed = PlanningResultQueryResultSchema.safeParse(msg.result);
+        const value = parsed.success ? parsed.data : undefined;
+        const matches = value && (!value.ok || (value.kind === pending.query.kind
+          && (value.kind !== 'attempt' || !value.result || (value.result.projectId === pending.query.projectId
+            && pending.query.kind === 'attempt' && value.result.attemptId === pending.query.attemptId))
+          && (value.kind !== 'integration' || !value.integration || (value.integration.projectId === pending.query.projectId
+            && pending.query.kind === 'integration' && value.integration.runId === pending.query.runId))));
+        pending.resolve(matches ? value : { ok: false, message: 'Invalid result response. Refresh before continuing.' });
+        break;
+      }
+      case 'planning-execute-reply': {
+        const pending = this.pendingPlanningCommands.get(msg.requestId);
+        this.pendingPlanningCommands.delete(msg.requestId);
+        if (!pending) break;
+        const parsed = PlanningMutationResultSchema.safeParse(msg.result);
+        pending.resolve(parsed.success && (!parsed.data.ok || (parsed.data.commandId === pending.command.commandId && parsed.data.snapshot.projectId === pending.command.projectId))
+          ? parsed.data : { ok: false, error: 'unavailable', message: 'Invalid receipt. Reconcile this command before retrying.' });
         break;
       }
       case 'daemon-command-reply': {

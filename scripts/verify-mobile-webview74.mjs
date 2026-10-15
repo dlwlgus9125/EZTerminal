@@ -12,6 +12,7 @@ const requiredCompatibilityFeatures = [
   'Element.replaceChildren',
   'WeakRef',
   'AggregateError',
+  'Promise.allSettled',
   'Blob.text',
   'Blob.arrayBuffer',
   'File.text',
@@ -32,6 +33,7 @@ const requiredFallbackImplementationMarkers = [
   'Blob read failed',
   'Array.prototype.at called on null or undefined',
   'ezterminal-webview74-inert',
+  'Promise.allSettled requires an iterable',
 ];
 
 // These rules are diagnostic, not a regex-based ban. A member named `at` can
@@ -44,6 +46,7 @@ const managedRuntimeApiRules = [
   { feature: 'Element.replaceChildren', pattern: /\.replaceChildren\s*\(/u },
   { feature: 'WeakRef', pattern: /\bnew\s+WeakRef\s*\(/u },
   { feature: 'AggregateError', pattern: /\bnew\s+AggregateError\s*\(/u },
+  { feature: 'Promise.allSettled', pattern: /\bPromise\.allSettled\s*\(/u },
   { feature: 'Blob.text', pattern: /\.text\s*\(/u },
   { feature: 'Blob.arrayBuffer', pattern: /\.arrayBuffer\s*\(/u },
   { feature: 'Array.prototype.at', pattern: /\.at\s*\(/u },

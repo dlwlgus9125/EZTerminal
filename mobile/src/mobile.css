@@ -702,6 +702,10 @@ body,
  * Android's system Back dismiss it before the underlying workspace. */
 .mobile-action-sheet-backdrop {
   position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   inset: 0;
   z-index: var(--ui-z-dialog);
   display: flex;
@@ -716,9 +720,13 @@ body,
 }
 
 .mobile-action-sheet {
+  width: 100%;
+  max-width: 720px;
   width: min(100%, 720px);
+  max-height: 82vh;
   max-height: min(82vh, 720px);
   overflow-y: auto;
+  padding: var(--ui-space-4) var(--ui-space-3);
   padding: var(--ui-space-4) max(var(--ui-space-3), env(safe-area-inset-right))
     max(var(--ui-space-4), env(safe-area-inset-bottom))
     max(var(--ui-space-3), env(safe-area-inset-left));
@@ -738,6 +746,13 @@ body,
   padding: 0;
   border: 0;
   border-radius: 0;
+}
+
+@supports not (padding: max(1px, 2px)) {
+  .mobile-action-sheet {
+    padding: var(--ui-space-4) var(--ui-space-3);
+  }
+  .mobile-action-sheet--fullscreen { padding: 0; }
 }
 
 .mobile-action-sheet-title {
@@ -1754,4 +1769,13 @@ body,
   gap: 8px;
   padding: 10px 0 max(4px, env(safe-area-inset-bottom));
   background: var(--ui-surface);
+}
+
+.mobile-openclaw-view .openclaw-control-details summary {
+  cursor: pointer;
+}
+.mobile-openclaw-view .openclaw-control-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }

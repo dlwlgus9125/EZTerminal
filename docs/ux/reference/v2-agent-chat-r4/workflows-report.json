@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "checkedAt": "2026-10-13T12:21:18.629Z",
+  "scope": "prototype only",
+  "passed": true,
+  "checks": [
+    {
+      "name": "desktop: subprojects and general conversations are project siblings",
+      "passed": true
+    },
+    {
+      "name": "desktop: cancel creates nothing; preset creation and stage opening submit zero turns",
+      "passed": true
+    },
+    {
+      "name": "desktop: conversational creation previews a parallel preset without creating early",
+      "passed": true
+    },
+    {
+      "name": "desktop: same-stage multiple chats, other subproject and general draft stay independent",
+      "passed": true
+    },
+    {
+      "name": "desktop: link an existing general session without copying, sending or overwriting",
+      "passed": true
+    },
+    {
+      "name": "desktop: AI directly edits draft with undo and retains the frozen running graph",
+      "passed": true
+    },
+    {
+      "name": "desktop: approval waits, pause prevents advancement, and completion follows explicit approval",
+      "passed": true
+    },
+    {
+      "name": "mobile: subprojects and general conversations are project siblings",
+      "passed": true
+    },
+    {
+      "name": "mobile: cancel creates nothing; preset creation and stage opening submit zero turns",
+      "passed": true
+    },
+    {
+      "name": "mobile: conversational creation previews a parallel preset without creating early",
+      "passed": true
+    },
+    {
+      "name": "mobile: same-stage multiple chats, other subproject and general draft stay independent",
+      "passed": true
+    },
+    {
+      "name": "mobile: link an existing general session without copying, sending or overwriting",
+      "passed": true
+    },
+    {
+      "name": "mobile: AI directly edits draft with undo and retains the frozen running graph",
+      "passed": true
+    },
+    {
+      "name": "mobile: approval waits, pause prevents advancement, and completion follows explicit approval",
+      "passed": true
+    },
+    {
+      "name": "renaming a node retains its chat identity and unsent input",
+      "passed": true
+    },
+    {
+      "name": "deleting a node keeps its conversations accessible and undo restores the node",
+      "passed": true
+    },
+    {
+      "name": "connection deletion blocks execution; adding it back repairs the graph",
+      "passed": true
+    },
+    {
+      "name": "start confirmation freezes the graph and does not start a provider turn",
+      "passed": true
+    },
+    {
+      "name": "parallel branches activate together and join waits for both",
+      "passed": true
+    },
+    {
+      "name": "failure follows the retry edge and stops at the retry limit",
+      "passed": true
+    },
+    {
+      "name": "new subproject from a general chat and cancel preserve the same session",
+      "passed": true
+    },
+    {
+      "name": "archiving preserves data, restoration and search work, active runs cannot be archived",
+      "passed": true
+    },
+    {
+      "name": "user-authored names and instructions render as text",
+      "passed": true
+    },
+    {
+      "name": "first-turn app skill does not select a subproject implicitly",
+      "passed": true
+    },
+    {
+      "name": "run conversation retains frozen settings even through command search",
+      "passed": true
+    },
+    {
+      "name": "denying an approval preserves the run and prevents continuation",
+      "passed": true
+    },
+    {
+      "name": "archived conversations remain readable and Enter cannot submit a preserved draft",
+      "passed": true
+    },
+    {
+      "name": "desktop/home: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/new: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/compose: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/graph: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/parallel: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/stage: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/chat: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/general: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/assistant: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/running: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/approval: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "desktop/invalid: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/home: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/new: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/compose: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/graph: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/parallel: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/stage: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/chat: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/general: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/assistant: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/running: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/approval: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "mobile/invalid: accessibility, overflow and capture",
+      "passed": true
+    },
+    {
+      "name": "light: English, CLI, and small-width workflow",
+      "passed": true
+    },
+    {
+      "name": "high-contrast: English, CLI, and small-width workflow",
+      "passed": true
+    },
+    {
+      "name": "matrix: English, CLI, and small-width workflow",
+      "passed": true
+    },
+    {
+      "name": "keyboard reaches primary actions and dialog Escape preserves the draft",
+      "passed": true
+    },
+    {
+      "name": "no JavaScript errors or external requests",
+      "passed": true
+    }
+  ],
+  "captures": [
+    "r4-desktop-home.png",
+    "r4-desktop-new.png",
+    "r4-desktop-compose.png",
+    "r4-desktop-graph.png",
+    "r4-desktop-parallel.png",
+    "r4-desktop-stage.png",
+    "r4-desktop-chat.png",
+    "r4-desktop-general.png",
+    "r4-desktop-assistant.png",
+    "r4-desktop-running.png",
+    "r4-desktop-approval.png",
+    "r4-desktop-invalid.png",
+    "r4-mobile-home.png",
+    "r4-mobile-new.png",
+    "r4-mobile-compose.png",
+    "r4-mobile-graph.png",
+    "r4-mobile-parallel.png",
+    "r4-mobile-stage.png",
+    "r4-mobile-chat.png",
+    "r4-mobile-general.png",
+    "r4-mobile-assistant.png",
+    "r4-mobile-running.png",
+    "r4-mobile-approval.png",
+    "r4-mobile-invalid.png",
+    "r4-light-mobile-en-cli.png",
+    "r4-high-contrast-mobile-en-cli.png",
+    "r4-matrix-mobile-en-cli.png"
+  ],
+  "errors": [],
+  "requests": []
+}

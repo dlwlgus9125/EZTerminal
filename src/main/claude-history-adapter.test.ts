@@ -165,6 +165,20 @@ function turn(cwd: string, id: string, index: number, text: string): Record<stri
 }
 
 describe('encodeClaudeProjectDirName', () => {
+  it('imports full user and assistant text while resolving the provider UUID from the private file identity', async () => {
+    const fixture = makeFixture('adoption'); const id = sessionId(901);
+    const text = `  ${'한글 previous conversation '.repeat(2_000)}  `;
+    const source = writeSession(fixture, 901, turn(fixture.root, id, 0, text));
+    const adapter = new ClaudeHistoryAdapter({ homeDir: fixture.home });
+    await adapter.listSessions({ roots: [fixture.root], limit: 20 });
+    const imported = await adapter.readTranscriptForAdoption(source);
+    const messages = imported.turns.flatMap(turn => turn.entries).filter(item => item.type === 'message');
+    expect(messages.map(item => item.markdown)).toEqual([text, `reply to ${text}`]);
+    expect(adapter.resolveProviderSessionId(source)).toBe(id);
+    expect(adapter.resolveProviderSessionId(path.join(fixture.root, 'not-a-session.jsonl'))).toBeNull();
+    const preview = await adapter.readTranscript(source);
+    expect(preview.turns[0].entries[0].id).toBe(imported.turns[0].entries[0].id);
+  });
   it('replaces every non-alphanumeric character one for one and keeps case', () => {
     expect(encodeClaudeProjectDirName('C:\\Working\\EZTerminal')).toBe('C--Working-EZTerminal');
     expect(encodeClaudeProjectDirName('C:\\Program Files\\EZTerminal'))

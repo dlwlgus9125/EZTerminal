@@ -1,4 +1,5 @@
 import { RefreshCw, SquareTerminal, Trash2 } from 'lucide-react';
+import type { AgentCapabilitiesClient } from '../../src/shared/agent-capabilities';
 import type { AgentLaunchBootstrap } from '../../src/shared/agent-history';
 import { TerminalLaunchPanel, SessionStartOptions, type SessionLaunchAccess } from '../../src/renderer/SessionStartOptions';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -128,6 +129,8 @@ const COPY: Readonly<Record<'en' | 'ko', MobileNewSessionCopy>> = {
 };
 
 export function MobileNewSessionDraft({
+  capabilityClient,
+  onOpenHistory,
   state,
   disconnected = false,
   contextWorkspaceId,
@@ -144,6 +147,8 @@ export function MobileNewSessionDraft({
   launchAccess,
   onLaunchCli,
 }: {
+  readonly capabilityClient?: AgentCapabilitiesClient;
+  readonly onOpenHistory?: () => void;
   readonly state: DaemonRuntimeViewState;
   readonly disconnected?: boolean;
   readonly contextWorkspaceId?: string;
@@ -400,6 +405,8 @@ export function MobileNewSessionDraft({
               </p>
             )}
             <StructuredAgentDraftPanel
+              capabilityClient={capabilityClient}
+              onOpenHistory={onOpenHistory}
               embedded
               hideWorkspaceField
               variant="mobile"
@@ -410,6 +417,8 @@ export function MobileNewSessionDraft({
               initialModel={initialAgentDraft?.model}
               initialPermissionPreset={initialAgentDraft?.permissionPreset}
               initialPrompt={initialAgentDraft?.initialPrompt}
+              initialDraftText={initialAgentDraft?.draftText}
+              initialDraftSkills={initialAgentDraft?.draftSkills}
               deliveryRecovery={initialAgentDraft !== undefined}
               loading={busyAuthority || agentRecoveryStatus !== 'ready'}
               onRetry={onRetry}

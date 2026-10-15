@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ChatMessageContextSchema, type ChatMessageContext } from './chat-message';
 
 export const DAEMON_PROTOCOL_VERSION = 12 as const;
 
@@ -137,6 +138,7 @@ export type TranscriptItemKind =
   | 'error';
 
 export interface DaemonTranscriptItem {
+  readonly context?: ChatMessageContext;
   readonly id: string;
   /** Stable opaque provider message identity shared by deltas and completion. */
   readonly messageId?: string;
@@ -222,6 +224,8 @@ export interface DaemonRuntimeSettings {
 }
 
 export interface DaemonSnapshot {
+  /** Additive feature negotiation; absent on older hosts. */
+  readonly capabilities?: readonly string[];
   readonly protocolVersion: typeof DAEMON_PROTOCOL_VERSION;
   readonly revision: number;
   readonly eventSequence: number;
@@ -255,6 +259,7 @@ export const DAEMON_COMMAND_TYPES = [
   'agent.submit',
   'agent.interrupt-and-submit',
   'agent.interrupt',
+  'agent.queue',
   'agent.set-settings',
   'agent.cancel',
   'agent.archive',
@@ -336,9 +341,15 @@ export interface DaemonCommandPayloads {
     readonly permissionPreset: PermissionPreset;
     readonly parentSessionId?: string;
   };
-  readonly 'agent.submit': { readonly sessionId: string; readonly prompt: string };
-  readonly 'agent.interrupt-and-submit': { readonly sessionId: string; readonly prompt: string };
+  readonly 'agent.submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
+  readonly 'agent.interrupt-and-submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
   readonly 'agent.interrupt': { readonly sessionId: string };
+  readonly 'agent.queue': {
+    readonly sessionId: string;
+    readonly turnId: string;
+    readonly turnRevision: number;
+    readonly action: 'remove' | 'take' | 'run-next';
+  };
   readonly 'agent.set-settings': {
     readonly sessionId: string;
     readonly model?: string;
@@ -522,6 +533,12 @@ export function classifyDaemonEvent(
 const NonEmptyStringSchema = z.string().trim().min(1);
 const IdentifierSchema = NonEmptyStringSchema.max(256);
 const NonNegativeIntegerSchema = z.number().int().nonnegative();
+const AgentMessagePayloadSchema = z.object({
+  sessionId: IdentifierSchema,
+  prompt: NonEmptyStringSchema.max(100_000),
+  context: ChatMessageContextSchema.optional(),
+}).strict().refine((value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 900 * 1024,
+  'The complete message must fit within 900 KiB.');
 const PositiveIntegerSchema = z.number().int().positive();
 const StringArraySchema = z.array(z.string());
 const PermissionPresetSchema = z.enum(['plan', 'standard', 'full-access']);
@@ -596,9 +613,10 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     permissionPreset: PermissionPresetSchema,
     parentSessionId: IdentifierSchema.optional(),
   }).strict(),
-  'agent.submit': z.object({ sessionId: IdentifierSchema, prompt: NonEmptyStringSchema }).strict(),
-  'agent.interrupt-and-submit': z.object({ sessionId: IdentifierSchema, prompt: NonEmptyStringSchema }).strict(),
+  'agent.submit': AgentMessagePayloadSchema,
+  'agent.interrupt-and-submit': AgentMessagePayloadSchema,
   'agent.interrupt': SessionIdSchema,
+  'agent.queue': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema, turnRevision: z.number().int().nonnegative(), action: z.enum(['remove', 'take', 'run-next']) }).strict(),
   'agent.set-settings': z.object({ sessionId: IdentifierSchema, model: NonEmptyStringSchema.optional(), permissionPreset: PermissionPresetSchema.optional() }).strict(),
   'agent.cancel': SessionIdSchema,
   'agent.archive': SessionIdSchema,

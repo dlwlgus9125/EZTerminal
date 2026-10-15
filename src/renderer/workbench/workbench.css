@@ -661,6 +661,13 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   background: var(--ui-canvas);
 }
 
+/* A rail menu belongs above the adjacent sidebar. Its own dropdown z-index
+   cannot escape the rail's sticky stacking context, so lift that context only
+   while the menu is open; dialogs retain their higher shared layer. */
+.activity-rail:has([aria-haspopup='menu'][aria-expanded='true']) {
+  z-index: var(--ui-z-dropdown);
+}
+
 /* The rail is the one place the 44px touch tier applies on desktop regardless
    of density: it is the primary navigation surface and its icons carry no
    label to widen the target. */
@@ -1209,3 +1216,17 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     background: Canvas;
   }
 }
+.workbench-views { display: flex; flex: 0 0 auto; align-items: center; gap: var(--ui-space-1); min-width: 0; padding: var(--ui-space-1) var(--ui-space-2); border-bottom: 1px solid var(--ui-border-subtle); background: var(--ui-surface); }
+.workbench-views__tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; gap: var(--ui-space-1); }
+.workbench-views__tab { display: flex; flex: 0 0 auto; border-radius: var(--ui-radius-md); border: 1px solid transparent; }
+.workbench-views__tab[data-active='true'] { background: var(--ui-surface-raised); border-color: var(--ui-border-strong); }
+.workbench-views button, .workbench-views select, .workbench-views input { min-height: var(--ui-control-height-sm); padding: var(--ui-space-1) var(--ui-space-2); border: 0; border-radius: var(--ui-radius-md); background: transparent; color: var(--ui-text-secondary); font: inherit; font-size: var(--ui-font-size-xs); }
+.workbench-views select { max-width: 12rem; background: var(--ui-surface); }
+.workbench-views input { max-width: 10rem; background: var(--ui-surface-inset); }
+.workbench-views button { cursor: pointer; white-space: nowrap; }
+.workbench-views button[aria-selected='true'] { color: var(--ui-text-primary); font-weight: 600; }
+.workbench-views button:hover { background: var(--ui-surface-hover); }
+.workbench-views button:focus-visible, .workbench-views select:focus-visible, .workbench-views input:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.workbench-views svg { width: 1rem; height: 1rem; vertical-align: middle; }
+.ez-dock .dv-groupview.dv-active-group { box-shadow: inset 0 0 0 1px var(--ui-pane-active-border); }
+@media (max-width: 599px) { .workbench-views { flex-wrap: wrap; } .workbench-views__tabs { flex-basis: calc(100% - 3rem); } }

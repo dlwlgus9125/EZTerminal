@@ -1,3 +1,5 @@
+import { ConversationChangeReview } from './ConversationChangeReview';
+import { decodeFileChanges } from '../shared/conversation-changes';
 import {
   AlertTriangle,
   Archive,
@@ -7,18 +9,24 @@ import {
   Circle,
   Clock3,
   Code2,
+  Copy,
   FileCheck2,
   LoaderCircle,
+  Paperclip,
+  Reply,
+  RotateCcw,
   Send,
   ShieldAlert,
   Square,
   Unlink2,
   Wrench,
+  X,
 } from 'lucide-react';
 import {
   memo,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,6 +34,8 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { insertCompletion } from './agent-completion';
+import { useAgentCompletion, type CapabilityDiscoveryState } from './use-agent-completion';
 
 import type {
   DaemonApproval,
@@ -34,14 +44,29 @@ import type {
   PermissionPreset,
   WorkspaceKind,
 } from '../shared/daemon-protocol';
+import {
+  CHAT_ATTACHMENT_ACCEPT, CHAT_IMAGE_MIME_TYPES, MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES,
+  MAX_CHAT_REPLY_LENGTH, validateChatMessageContext,
+  type ChatAttachment, type ChatMessageContext, type ChatReplyReference, type ChatSkillReference,
+} from '../shared/chat-message';
+import {
+  captureTranscriptAnchor, restoreTranscriptAnchor, readChatSkin, writeChatSkin, subscribeChatSkin,
+  type ChatComposerDraft, type ChatSkin, type TranscriptAnchor,
+} from './chat-view-state';
 import { ProgressiveSafeMarkdown } from './ProgressiveSafeMarkdown';
 import { useAppTranslation } from './i18n';
-import { readSessionViewState, saveSessionViewState } from './session-view-state';
+import { readSessionViewState, saveSessionViewState, readTranscriptViewState, saveTranscriptViewState } from './session-view-state';
 import { Button, Field, Select } from './ui';
+import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
+import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
+import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
+import { conversationTranscriptGroups } from './conversation-transcript-groups';
 
 export type StructuredAgentUiResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly message: string };
+  | { readonly ok: false; readonly message: string; readonly deliveryUncertain?: boolean };
+
+export type { ChatComposerDraft, ChatSkin } from './chat-view-state';
 
 export interface StructuredAgentModelOption {
   readonly id: string;
@@ -64,11 +89,22 @@ export interface StructuredAgentWorkspaceOption {
 }
 
 export interface StructuredAgentDraftInput {
+  /** Composer text carried into the empty conversation; must not submit a turn. */
+  readonly draftText?: string;
+  readonly draftSkills?: readonly ChatSkillReference[];
   readonly providerId: string;
   readonly model?: string;
   readonly workspaceId: string;
   readonly permissionPreset: PermissionPreset;
   readonly initialPrompt?: string;
+}
+
+export interface StructuredAgentDraftFormState {
+  readonly draft: ChatComposerDraft;
+  readonly providerId: string;
+  readonly model?: string;
+  readonly workspaceId: string;
+  readonly permissionPreset: PermissionPreset;
 }
 
 interface StructuredAgentCopy {
@@ -144,10 +180,32 @@ interface StructuredAgentCopy {
   readonly providerOwnedReadOnly: string;
   readonly archivedReadOnly: string;
   readonly endedReadOnly: string;
+  readonly skin: string;
+  readonly bubbleSkin: string;
+  readonly cliSkin: string;
+  readonly copyMessage: string;
+  readonly copied: string;
+  readonly copyFailed: string;
+  readonly replyMessage: string;
+  readonly reuseMessage: string;
+  readonly removeReply: string;
+  readonly attach: string;
+  readonly attachmentUnsupported: string;
+  readonly removeAttachment: string;
+  readonly attachmentError: string;
+  readonly addReference: string;
+  readonly uncertain: string;
+  readonly reconcile: string;
 }
 
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   en: {
+    skin: 'Conversation skin', bubbleSkin: 'Bubbles', cliSkin: 'CLI',
+    copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
+    replyMessage: 'Reply', reuseMessage: 'Use as draft', removeReply: 'Remove reply',
+    attach: 'Attach image or text', attachmentUnsupported: 'Attachments and replies require a compatible connected host.',
+    removeAttachment: 'Remove attachment', attachmentError: 'This file could not be attached. Choose a supported image or a small text file.',
+    addReference: 'Insert reference', uncertain: 'Delivery is unconfirmed. Check the host receipt before sending again.', reconcile: 'Check delivery',
     desktopSendHint: 'Enter to send · Shift+Enter for a new line',
     mobileSendHint: 'Use Send to send a message',
     newSession: 'New Agent session',
@@ -222,6 +280,12 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     endedReadOnly: 'This session has ended. Its transcript remains available, but new messages are disabled.',
   },
   ko: {
+    skin: '대화 스킨', bubbleSkin: '말풍선', cliSkin: 'CLI',
+    copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
+    replyMessage: '답장', reuseMessage: '입력에 가져오기', removeReply: '답장 취소',
+    attach: '이미지·텍스트 첨부', attachmentUnsupported: '첨부와 답장은 지원하는 호스트에 연결해야 사용할 수 있습니다.',
+    removeAttachment: '첨부 제거', attachmentError: '파일을 첨부하지 못했습니다. 지원하는 이미지나 작은 텍스트 파일을 선택하세요.',
+    addReference: '참조 입력', uncertain: '전송 결과를 확인 중입니다. 호스트 기록을 대조한 뒤 다시 보내세요.', reconcile: '전송 결과 확인',
     desktopSendHint: 'Enter 전송 · Shift+Enter 줄바꿈',
     mobileSendHint: '전송 버튼으로 보내기',
     newSession: '새 Agent 세션',
@@ -321,6 +385,12 @@ function permissionCopy(copy: StructuredAgentCopy, preset: PermissionPreset): {
 }
 
 export interface StructuredAgentDraftPanelProps {
+  readonly initialFormState?: StructuredAgentDraftFormState;
+  readonly onFormStateChange?: (state: StructuredAgentDraftFormState) => void;
+  readonly onOpenHistory?: () => void;
+  readonly capabilityClient?: AgentCapabilitiesClient;
+  readonly initialDraftText?: string;
+  readonly initialDraftSkills?: readonly ChatSkillReference[];
   readonly providers: readonly StructuredAgentProviderOption[];
   readonly workspaces: readonly StructuredAgentWorkspaceOption[];
   readonly initialProviderId?: string;
@@ -346,6 +416,12 @@ export interface StructuredAgentDraftPanelProps {
 }
 
 export function StructuredAgentDraftPanel({
+  initialFormState,
+  onFormStateChange,
+  capabilityClient,
+  onOpenHistory,
+  initialDraftText = '',
+  initialDraftSkills,
   providers,
   workspaces,
   initialProviderId,
@@ -367,23 +443,53 @@ export function StructuredAgentDraftPanel({
 }: StructuredAgentDraftPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const promptId = useId();
+  const { i18n } = useAppTranslation();
   const draftTitleId = useId();
   const permissionName = useId();
   const firstProvider = providers.find((provider) => !provider.disabled)?.id ?? '';
   const hasReadyProvider = firstProvider.length > 0;
-  const [providerId, setProviderId] = useState(initialProviderId ?? firstProvider);
-  const [model, setModel] = useState(initialModel);
+  const restoredForm = deliveryRecovery ? undefined : initialFormState;
+  const [providerId, setProviderId] = useState(restoredForm?.providerId ?? initialProviderId ?? firstProvider);
+  const [model, setModel] = useState(restoredForm ? restoredForm.model ?? '' : initialModel);
   const [internalWorkspaceId, setInternalWorkspaceId] = useState(
-    initialWorkspaceId ?? workspaces[0]?.id ?? '',
+    restoredForm?.workspaceId ?? initialWorkspaceId ?? workspaces[0]?.id ?? '',
   );
   const workspaceId = selectedWorkspaceId ?? internalWorkspaceId;
-  const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(initialPermissionPreset);
+  const [catalog, setCatalog] = useState<AgentCapabilityCatalog>();
+  const [discovery, setDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
+  const [draftText, setDraftText] = useState(restoredForm?.draft.text ?? initialDraftText);
+  const [draftSkills, setDraftSkills] = useState<readonly ChatSkillReference[]>(restoredForm?.draft.skills ?? initialDraftSkills ?? []);
+  const draftInputRef = useRef<HTMLTextAreaElement>(null);
+  const [draftSelection, setDraftSelection] = useState<[number, number]>([
+    restoredForm?.draft.selectionStart ?? draftText.length,
+    restoredForm?.draft.selectionEnd ?? draftText.length,
+  ]);
+  const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(restoredForm?.permissionPreset ?? initialPermissionPreset);
+  const formStateCallback = useRef(onFormStateChange);
+  formStateCallback.current = onFormStateChange;
+  useEffect(() => {
+    formStateCallback.current?.({ providerId, model: model || undefined, workspaceId, permissionPreset,
+      draft: { text: draftText, skills: draftSkills, selectionStart: draftSelection[0], selectionEnd: draftSelection[1] } });
+  }, [providerId, model, workspaceId, permissionPreset, draftText, draftSkills, draftSelection]);
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const selectedProvider = providers.find((provider) => provider.id === providerId);
-  const models = selectedProvider?.models ?? [];
+  const updateDraftInput = (next: ChatComposerDraft): void => {
+    setDraftText(next.text); setDraftSkills(next.skills ?? []);
+    setDraftSelection([next.selectionStart ?? next.text.length, next.selectionEnd ?? next.text.length]);
+    // An app action may unmount this form in the same event. Preserve its draft
+    // before navigation instead of waiting for the next committed render.
+    formStateCallback.current?.({ providerId, model: model || undefined, workspaceId, permissionPreset, draft: next });
+  };
+  useLayoutEffect(() => { draftInputRef.current?.setSelectionRange(...draftSelection); }, [draftSelection]);
+  const draftValue = { text: draftText, skills: draftSkills, selectionStart: draftSelection[0], selectionEnd: draftSelection[1] };
+  const completion = useAgentCompletion({ value: draftValue, onChange: updateDraftInput, inputRef: draftInputRef,
+    catalog: catalog?.providerId === providerId && catalog.workspaceId === workspaceId ? catalog : undefined,
+    discovery, onOpenHistory, disabled: loading || submitting || deliveryRecovery, mobile: variant === 'mobile' });
+  const models = catalog?.providerId === providerId && catalog.workspaceId === workspaceId && catalog.models.length
+    ? catalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : selectedProvider?.models ?? [];
   const hasUsableProvider = deliveryRecovery ? providerId.length > 0 : hasReadyProvider;
   const hasUsableWorkspace = deliveryRecovery
     ? workspaceId.length > 0
@@ -417,11 +523,15 @@ export function StructuredAgentDraftPanel({
     setModel(initialModel);
     if (selectedWorkspaceId === undefined) setInternalWorkspaceId(initialWorkspaceId ?? '');
     setPermissionPreset(initialPermissionPreset);
+    setDraftText(initialDraftText);
+    setDraftSkills(initialDraftSkills ?? []);
   }, [
     deliveryRecovery,
     initialModel,
     initialPermissionPreset,
     initialPrompt,
+    initialDraftText,
+    initialDraftSkills,
     initialProviderId,
     initialWorkspaceId,
     selectedWorkspaceId,
@@ -443,6 +553,7 @@ export function StructuredAgentDraftPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+    if (completion.composing.current || completion.runAppCommand()) return;
     setAttempted(true);
     setSubmitError(null);
     if (!providerId || !hasUsableProvider || !hasUsableWorkspace || submittingRef.current || loading) return;
@@ -454,6 +565,8 @@ export function StructuredAgentDraftPanel({
       ...(model ? { model } : {}),
       workspaceId,
       permissionPreset,
+      ...(draftText ? { draftText } : {}),
+      ...(draftSkills.length ? { draftSkills: draftSkills.filter((skill) => draftText.includes(skill.invocation)) } : {}),
       ...(deliveryRecovery && initialPrompt ? { initialPrompt } : {}),
     }).catch((): StructuredAgentUiResult => ({
       ok: false,
@@ -492,6 +605,7 @@ export function StructuredAgentDraftPanel({
       )}
 
       <form className="structured-agent-draft-form" onSubmit={(event) => void submit(event)} noValidate>
+        {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
         <div className="structured-agent-draft-form__grid">
           <Field
             label={copy.provider}
@@ -603,6 +717,14 @@ export function StructuredAgentDraftPanel({
         </fieldset>
         </details>
 
+        <div className="structured-agent-draft-input">
+          {completion.menu}
+          <Field label={copy.message} id={`${promptId}-draft`}><textarea {...completion.inputProps} ref={draftInputRef} id={`${promptId}-draft`} className="structured-agent-textarea" rows={2}
+            value={draftText} readOnly={deliveryRecovery} maxLength={65_536} onKeyDown={event => { completion.keyDown(event); }}
+            onChange={event => updateDraftInput({ ...draftValue, text: event.target.value, selectionStart: event.target.selectionStart, selectionEnd: event.target.selectionEnd })}
+            onSelect={event => { const input = event.currentTarget; if (draftSelection[0] !== input.selectionStart || draftSelection[1] !== input.selectionEnd) setDraftSelection([input.selectionStart, input.selectionEnd]); }} /></Field>
+          <div>{completion.buttons}</div>
+        </div>
         {deliveryRecovery && initialPrompt && <Field id={promptId} label={copy.firstPrompt}>
           <textarea id={promptId} className="structured-agent-textarea" rows={3} value={initialPrompt} readOnly data-testid="structured-agent-recovery-prompt" />
         </Field>}
@@ -624,12 +746,22 @@ export function StructuredAgentDraftPanel({
           </Button>
         </div>
       </form>
+      {capabilityClient && !selectedProvider?.disabled && workspaceId && (providerId === 'codex' || providerId === 'claude') && <AgentCapabilitiesPanel
+        client={capabilityClient} providerId={providerId} workspaceId={workspaceId} remote={variant === 'mobile'}
+        disabled={loading || submitting || deliveryRecovery} onCatalog={setCatalog} onDiscoveryState={setDiscovery}
+        onInsert={(item) => { updateDraftInput(insertCompletion(draftValue, item.invocation ?? '', undefined,
+          item.kind === 'skill' && item.invocation ? { providerId, id: item.id, name: item.name, invocation: item.invocation } : undefined)); draftInputRef.current?.focus(); }}
+      />}
     </section>
   );
 }
 
 interface DisplayTranscriptItem extends DaemonTranscriptItem {
   readonly sourceIds: readonly string[];
+}
+
+function transcriptMessageId(item: DisplayTranscriptItem): string {
+  return item.messageId ?? item.sourceIds[0] ?? item.id;
 }
 
 /** Coalesces adjacent streaming chunks without changing authoritative ordering. */
@@ -692,7 +824,24 @@ const APPROVAL_STATE_ICON = {
   expired: Circle,
 } as const;
 
+function ConversationExecutionGroup({ id, stateKey, count, children }: { id: string; stateKey?: string; count: number; children: ReactNode }): JSX.Element {
+  const { i18n } = useAppTranslation();
+  const key = stateKey ? `${stateKey}:execution:${id}` : undefined;
+  const [expanded, setExpanded] = useState(() => key ? readSessionViewState<boolean>(key) ?? false : false);
+  return <li className="conversation-execution" data-message-id={id}>
+    <details open={expanded} onToggle={event => {
+      const open = event.currentTarget.open;
+      setExpanded(open);
+      if (key) saveSessionViewState(key, open);
+    }}>
+      <summary><Wrench aria-hidden="true" /><span>{i18n.language.startsWith('ko') ? '실행 기록' : 'Execution details'}</span><span>{count}</span><ChevronRight aria-hidden="true" /></summary>
+      <ol>{children}</ol>
+    </details>
+  </li>;
+}
+
 export interface StructuredAgentTranscriptProps {
+  readonly beforeMessages?: ReactNode;
   readonly stateKey?: string;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
@@ -705,9 +854,13 @@ export interface StructuredAgentTranscriptProps {
     decision: 'allow' | 'deny',
   ) => Promise<StructuredAgentUiResult>;
   readonly onOpenRelatedSession?: (sessionId: string) => void;
+  readonly controlsDisabled?: boolean;
+  readonly onReply?: (reply: ChatReplyReference) => void;
+  readonly onReuse?: (text: string) => void;
 }
 
 export const StructuredAgentTranscript = memo(function StructuredAgentTranscript({
+  beforeMessages,
   stateKey,
   items,
   approvals = [],
@@ -717,10 +870,13 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   onRetry,
   onResolveApproval,
   onOpenRelatedSession,
+  controlsDisabled = false,
+  onReply,
+  onReuse,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const viewportRef = useRef<HTMLDivElement>(null);
-  const savedScroll = useRef(stateKey ? readSessionViewState<{ top: number; follow: boolean }>(stateKey) : undefined);
+  const savedScroll = useRef(stateKey ? readTranscriptViewState(stateKey) : undefined);
   const followTailRef = useRef(savedScroll.current?.follow ?? true);
   const displayItems = useMemo(() => {
     const representedApprovals = new Set(
@@ -748,18 +904,21 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   );
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [showLatest, setShowLatest] = useState(false);
+  const { i18n: transcriptI18n } = useAppTranslation();
 
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || displayItems.length === 0) return;
     if (savedScroll.current) {
-      viewport.scrollTop = savedScroll.current.follow ? viewport.scrollHeight : savedScroll.current.top;
+      restoreTranscriptAnchor(viewport, savedScroll.current);
       savedScroll.current = undefined;
     } else if (followTailRef.current) viewport.scrollTop = viewport.scrollHeight;
   }, [displayItems]);
 
   const resolveApproval = async (approvalId: string, decision: 'allow' | 'deny'): Promise<void> => {
-    if (!onResolveApproval || resolvingId) return;
+    if (!onResolveApproval || resolvingId || controlsDisabled) return;
     setResolvingId(approvalId);
     setApprovalError(null);
     const result = await onResolveApproval(approvalId, decision).catch((): StructuredAgentUiResult => ({
@@ -770,41 +929,12 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
     if (!result.ok) setApprovalError(result.message);
   };
 
-  return (
-    <div
-      ref={viewportRef}
-      className="structured-agent-transcript"
-      data-testid="structured-agent-transcript"
-      onScroll={(event) => {
-        const target = event.currentTarget;
-        followTailRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-        if (stateKey) saveSessionViewState(stateKey, { top: target.scrollTop, follow: followTailRef.current });
-      }}
-    >
-      {error && (
-        <div className="structured-agent__banner structured-agent__banner--error" role="alert">
-          <AlertTriangle aria-hidden="true" />
-          <span>{error}</span>
-          {onRetry && <Button variant="ghost" size="sm" onClick={onRetry}>{copy.retry}</Button>}
-        </div>
-      )}
-      {loading && displayItems.length === 0 && (
-        <p className="structured-agent-transcript__state" role="status">
-          <LoaderCircle className="structured-agent__spinner" aria-hidden="true" />
-          {copy.transcriptLoading}
-        </p>
-      )}
-      {!loading && !error && displayItems.length === 0 && (
-        <p className="structured-agent-transcript__state" data-testid="structured-agent-empty">
-          <Bot aria-hidden="true" />
-          {copy.transcriptEmpty}
-        </p>
-      )}
-      {displayItems.length > 0 && (
-        <ol className="structured-agent-transcript__list" aria-label={copy.transcript}>
-          {displayItems.map((item, index) => {
-            const content = item.text;
+  const renderItem = (item: DisplayTranscriptItem, index: number): JSX.Element => {
+            const recordedChanges = decodeFileChanges(item.text);
+            const content = recordedChanges.length ? recordedChanges.map(change => `${change.path}\n${change.patch}`).join('\n\n') : item.text;
             const isAssistant = item.kind === 'assistant-message';
+            const messageId = transcriptMessageId(item);
+            const context = item.context ?? {};
             const approval = item.kind === 'approval' ? approvalById.get(item.id) : undefined;
             const ApprovalIcon = approval ? APPROVAL_STATE_ICON[approval.state] : ShieldAlert;
             const label = item.kind === 'user-message'
@@ -825,18 +955,18 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                             ? copy.error
                             : copy.notice;
             return (
-              <li key={`${item.id}-${item.sequence}`} className="structured-agent-transcript__item">
+              <li key={`${item.sessionId}:${item.turnId ?? ''}:${item.kind}:${messageId}`} className="structured-agent-transcript__item">
                 <article
                   className="structured-agent-message"
                   data-kind={item.kind}
+                  data-message-id={messageId}
                   data-streaming={item.isDelta || undefined}
                   aria-label={label}
-                  aria-live={item.isDelta ? 'polite' : undefined}
-                  aria-atomic={item.isDelta ? 'false' : undefined}
                   {...(item.kind === 'error' ? { role: 'alert' } : {})}
                 >
                   <header className="structured-agent-message__header">
                     <span className="structured-agent-message__kind">
+                      <span className="structured-agent-message__prompt" aria-hidden="true">{item.kind === 'user-message' ? '›' : '●'}</span>
                       {item.kind === 'tool-call' ? <Wrench aria-hidden="true" />
                         : item.kind === 'tool-result' ? <FileCheck2 aria-hidden="true" />
                           : item.kind === 'reasoning' ? <Code2 aria-hidden="true" />
@@ -848,16 +978,26 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                     <time dateTime={item.createdAt}>{item.createdAt.slice(11, 16)}</time>
                   </header>
 
+                  {context.replyTo && <blockquote className="structured-agent-message__reply">{context.replyTo.text}</blockquote>}
+                  {context.attachments && context.attachments.length > 0 && <ul className="structured-agent-message__attachments">
+                    {context.attachments.map((attachment) => <li key={attachment.id}>
+                      {attachment.kind === 'image'
+                        ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
+                        : <Paperclip aria-hidden="true" />}
+                      <span>{attachment.name}</span>
+                    </li>)}
+                  </ul>}
+
                   {item.kind === 'reasoning' ? (
-                    <details className="structured-agent-message__reasoning" open={item.isDelta}>
+                    <details className="structured-agent-message__reasoning">
                       <summary>{copy.reasoning}</summary>
                       <p>{content}</p>
                     </details>
                   ) : item.kind === 'tool-call' || item.kind === 'tool-result' ? (
-                    content.length > 1200 ? <details className="structured-agent-message__reasoning">
+                    <details className="structured-agent-message__reasoning">
                       <summary>{label}</summary>
                       <pre className="structured-agent-message__tool"><code>{content}</code></pre>
-                    </details> : <pre className="structured-agent-message__tool"><code>{content}</code></pre>
+                    </details>
                   ) : item.kind === 'approval' ? (
                     <div className="structured-agent-approval" data-risk={approval?.risk ?? 'write'}>
                       <strong>{approval?.title ?? content}</strong>
@@ -873,7 +1013,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={resolvingId !== null}
+                            disabled={controlsDisabled || resolvingId !== null}
                             onClick={() => void resolveApproval(approval?.id ?? item.id, 'deny')}
                           >
                             {copy.deny}
@@ -881,7 +1021,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                           <Button
                             variant="primary"
                             size="sm"
-                            disabled={resolvingId !== null && resolvingId !== (approval?.id ?? item.id)}
+                            disabled={controlsDisabled || (resolvingId !== null && resolvingId !== (approval?.id ?? item.id))}
                             loading={resolvingId === (approval?.id ?? item.id)}
                             onClick={() => void resolveApproval(approval?.id ?? item.id, 'allow')}
                           >
@@ -914,13 +1054,68 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                       <span aria-hidden="true" />{copy.streaming}
                     </span>
                   )}
+                  {(item.kind === 'user-message' || isAssistant) && <div className="structured-agent-message__actions">
+                    <Button variant="ghost" size="sm" leadingIcon={<Copy />} onClick={() => {
+                      void navigator.clipboard?.writeText(content).then(() => setCopyStatus(copy.copied), () => setCopyStatus(copy.copyFailed));
+                      if (!navigator.clipboard) setCopyStatus(copy.copyFailed);
+                    }}>{copy.copyMessage}</Button>
+                    {onReply && !item.isSensitive && content.length > 0 && <Button variant="ghost" size="sm" leadingIcon={<Reply />}
+                      onClick={() => onReply({ messageId: item.sourceIds[0] ?? item.id, text: content.slice(0, MAX_CHAT_REPLY_LENGTH) })}>{copy.replyMessage}</Button>}
+                    {item.kind === 'user-message' && onReuse && <Button variant="ghost" size="sm" leadingIcon={<RotateCcw />}
+                      onClick={() => onReuse(content)}>{copy.reuseMessage}</Button>}
+                  </div>}
                 </article>
               </li>
             );
-          })}
+  };
+
+  return (
+    <div
+      ref={viewportRef}
+      className="structured-agent-transcript"
+      data-testid="structured-agent-transcript"
+      onScroll={(event) => {
+        const target = event.currentTarget;
+        followTailRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
+        setShowLatest(!followTailRef.current);
+        if (stateKey) saveTranscriptViewState(stateKey, captureTranscriptAnchor(target));
+      }}
+    >
+      {beforeMessages}
+      {error && (
+        <div className="structured-agent__banner structured-agent__banner--error" role="alert">
+          <AlertTriangle aria-hidden="true" />
+          <span>{error}</span>
+          {onRetry && <Button variant="ghost" size="sm" onClick={onRetry}>{copy.retry}</Button>}
+        </div>
+      )}
+      {loading && displayItems.length === 0 && (
+        <p className="structured-agent-transcript__state" role="status">
+          <LoaderCircle className="structured-agent__spinner" aria-hidden="true" />
+          {copy.transcriptLoading}
+        </p>
+      )}
+      {!loading && !error && displayItems.length === 0 && (
+        <p className="structured-agent-transcript__state" data-testid="structured-agent-empty">
+          <Bot aria-hidden="true" />
+          {copy.transcriptEmpty}
+        </p>
+      )}
+      {displayItems.length > 0 && (
+        <ol className="structured-agent-transcript__list" aria-label={copy.transcript}>
+          {conversationTranscriptGroups(displayItems).map(group => group.execution
+            ? <ConversationExecutionGroup key={group.id} id={group.id} stateKey={stateKey} count={group.items.length}>
+                {group.items.map(item => renderItem(item, displayItems.indexOf(item)))}
+              </ConversationExecutionGroup>
+            : renderItem(group.items[0], displayItems.indexOf(group.items[0])))}
         </ol>
       )}
+      {showLatest && <Button className="conversation-latest" variant="secondary" size="sm" onClick={() => {
+        if (viewportRef.current) viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
+        followTailRef.current = true; setShowLatest(false);
+      }}>{transcriptI18n.language.startsWith('ko') ? '최신 메시지로' : 'Jump to latest'}</Button>}
       {approvalError && <p className="structured-agent__form-error" role="alert">{approvalError}</p>}
+      {copyStatus && <p className="structured-agent-message__copy-status" role="status">{copyStatus}</p>}
     </div>
   );
 });
@@ -988,6 +1183,12 @@ export function StructuredAgentChildTrack({
 }
 
 export interface StructuredAgentComposerProps {
+  readonly toolbar?: ReactNode;
+  readonly queueItems?: readonly ConversationQueueItem[];
+  readonly onQueueAction?: (item: ConversationQueueItem, action: ConversationQueueAction) => Promise<StructuredAgentUiResult>;
+  readonly capabilityCatalog?: AgentCapabilityCatalog;
+  readonly capabilityDiscovery?: CapabilityDiscoveryState;
+  readonly onOpenHistory?: () => void;
   readonly stateKey?: string;
   readonly busy: boolean;
   readonly queuedCount?: number;
@@ -995,13 +1196,27 @@ export interface StructuredAgentComposerProps {
   readonly disabledReason?: string;
   readonly initialDraft?: string;
   readonly autoFocus?: boolean;
-  readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
-  readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
+  readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  readonly onInterruptAndSend?: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  readonly draftState?: ChatComposerDraft;
+  readonly onDraftChange?: (draft: ChatComposerDraft) => void;
+  readonly sendDisabled?: boolean;
+  readonly sendDisabledReason?: string;
+  readonly supportsMessageContext?: boolean;
+  readonly deliveryUncertain?: boolean;
+  readonly onReconcileDelivery?: () => Promise<StructuredAgentUiResult>;
+  readonly draftAction?: { readonly id: number; readonly text?: string; readonly insert?: string; readonly skill?: ChatSkillReference; readonly replyTo?: ChatReplyReference };
   readonly variant?: 'desktop' | 'mobile';
 }
 
 /** Owns the draft below the transcript so streamed items never disturb typing. */
 export const StructuredAgentComposer = memo(function StructuredAgentComposer({
+  toolbar,
+  queueItems = [],
+  onQueueAction,
+  capabilityCatalog,
+  capabilityDiscovery,
+  onOpenHistory,
   stateKey,
   busy,
   queuedCount = 0,
@@ -1011,42 +1226,147 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   autoFocus = false,
   onSend,
   onInterruptAndSend,
+  draftState,
+  onDraftChange,
+  sendDisabled = false,
+  sendDisabledReason,
+  supportsMessageContext = false,
+  deliveryUncertain = false,
+  onReconcileDelivery,
+  draftAction,
   variant = 'desktop',
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
+  const { i18n } = useAppTranslation();
+  const ko = i18n.language.startsWith('ko');
+  const [queueBusy, setQueueBusy] = useState(false);
+  const queueBusyRef = useRef(false);
   const composerId = useId();
   const disabledReasonId = `${composerId}-disabled-reason`;
-  const [draft, setDraft] = useState(() => stateKey ? readSessionViewState<string>(stateKey) ?? initialDraft : initialDraft);
-  useEffect(() => { if (stateKey) saveSessionViewState(stateKey, draft); }, [draft, stateKey]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState<ChatComposerDraft>(() => {
+    const saved = stateKey ? readSessionViewState<ChatComposerDraft | string>(stateKey) : undefined;
+    return draftState ?? (typeof saved === 'string' ? { text: saved } : saved) ?? { text: initialDraft };
+  });
+  const valueRef = useRef(value);
+  const draft = value.text;
+  const attachments = value.attachments ?? [];
+  const updateDraft = (next: ChatComposerDraft): void => {
+    valueRef.current = next;
+    setValue(next);
+    if (stateKey) saveSessionViewState(stateKey, next);
+    onDraftChange?.(next);
+  };
+  const completion = useAgentCompletion({ value, onChange: updateDraft, inputRef, catalog: capabilityCatalog,
+    discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile' });
+  useEffect(() => {
+    if (draftState && JSON.stringify(draftState) !== JSON.stringify(valueRef.current)) {
+      valueRef.current = draftState;
+      setValue(draftState);
+      if (stateKey) saveSessionViewState(stateKey, draftState);
+    }
+  }, [draftState, stateKey]);
+  useLayoutEffect(() => {
+    if (value.selectionStart !== undefined && inputRef.current) {
+      inputRef.current.setSelectionRange(value.selectionStart, value.selectionEnd ?? value.selectionStart);
+    }
+  }, [value.selectionStart, value.selectionEnd]);
+  useEffect(() => {
+    if (!draftAction || disabled) return;
+    const next = { ...valueRef.current, ...(draftAction.text !== undefined ? { text: draftAction.text } : {}),
+      ...(draftAction.insert ? insertCompletion(valueRef.current, draftAction.insert, undefined, draftAction.skill) : {}),
+      ...(draftAction.skill ? { skills: [...(valueRef.current.skills ?? []).filter((skill) => skill.id !== draftAction.skill!.id), draftAction.skill] } : {}),
+      ...(draftAction.replyTo ? { replyTo: draftAction.replyTo } : {}) };
+    updateDraft(draftAction.insert ? next : { ...next, selectionStart: next.text.length, selectionEnd: next.text.length });
+    inputRef.current?.focus();
+    // The action ID is issued only by an explicit transcript action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftAction?.id]);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uncertain, setUncertain] = useState(deliveryUncertain);
+  const [readingFiles, setReadingFiles] = useState(false);
+  const sentDraft = useRef<ChatComposerDraft | null>(null);
+  useEffect(() => setUncertain(deliveryUncertain), [deliveryUncertain]);
+
+  const confirmDelivery = (): void => {
+    const sent = sentDraft.current;
+    if (sent && valueRef.current.text === sent.text
+      && JSON.stringify(valueRef.current.attachments) === JSON.stringify(sent.attachments)
+      && JSON.stringify(valueRef.current.skills) === JSON.stringify(sent.skills)
+      && JSON.stringify(valueRef.current.replyTo) === JSON.stringify(sent.replyTo)) {
+      updateDraft(valueRef.current.parkedDraft ?? { text: '', selectionStart: 0, selectionEnd: 0 });
+    }
+    sentDraft.current = null;
+    setAttempted(false);
+    setUncertain(false);
+  };
 
   const deliver = async (mode: 'send' | 'interrupt'): Promise<void> => {
+    if (disabled || completion.composing.current) return;
+    if (completion.runAppCommand()) return;
     setAttempted(true);
     setError(null);
     const prompt = draft.trim();
-    if (!prompt || disabled || submittingRef.current) return;
+    if ((!prompt && attachments.length === 0) || disabled || sendDisabled || queueBusy || uncertain || readingFiles || queueBusyRef.current || submittingRef.current) return;
+    if ((attachments.length > 0 || value.replyTo) && !supportsMessageContext) { setError(copy.attachmentUnsupported); return; }
     const action = mode === 'interrupt' ? onInterruptAndSend : onSend;
     if (!action) return;
     submittingRef.current = true;
+    sentDraft.current = valueRef.current;
     setSubmitting(mode);
-    const result = await action(prompt).catch((): StructuredAgentUiResult => ({
+    const skills = value.skills?.filter((skill) => prompt.includes(skill.invocation));
+    const context: ChatMessageContext | undefined = attachments.length > 0 || value.replyTo || skills?.length
+      ? { ...(attachments.length > 0 ? { attachments: [...attachments] } : {}), ...(value.replyTo ? { replyTo: value.replyTo } : {}), ...(skills?.length ? { skills } : {}) }
+      : undefined;
+    const result = await (context ? action(prompt, context) : action(prompt)).catch((): StructuredAgentUiResult => ({
       ok: false,
-      message: 'The message could not be delivered.',
+      message: copy.uncertain,
+      deliveryUncertain: true,
     }));
     submittingRef.current = false;
     setSubmitting(null);
     if (result.ok) {
-      setDraft('');
-      setAttempted(false);
+      confirmDelivery();
     } else {
       setError(result.message);
+      setUncertain(result.deliveryUncertain === true);
     }
   };
 
+  const attachFiles = async (files: FileList | null): Promise<void> => {
+    if (!files || disabled || !supportsMessageContext) return;
+    setReadingFiles(true);
+    setError(null);
+    try {
+      if (files.length + (valueRef.current.attachments?.length ?? 0) > MAX_CHAT_ATTACHMENTS) throw new Error('Too many files');
+      const additions: ChatAttachment[] = [];
+      for (const file of Array.from(files)) {
+        const image = (CHAT_IMAGE_MIME_TYPES as readonly string[]).includes(file.type);
+        if (file.size > MAX_CHAT_ATTACHMENT_BYTES
+          || (!image && !file.type.startsWith('text/') && !/\.(?:txt|md|json|csv|log|ts|tsx|js|jsx|css|html|py|yaml|yml|toml|xml)$/iu.test(file.name))) throw new Error('Unsupported file');
+        const data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result ?? ''));
+          reader.onerror = () => reject(reader.error);
+          if (image) reader.readAsDataURL(file); else reader.readAsText(file);
+        });
+        additions.push({ id: crypto.randomUUID(), name: file.name, mimeType: image ? file.type : (file.type || 'text/plain'),
+          kind: image ? 'image' : 'text', data: image ? data.slice(data.indexOf(',') + 1) : data });
+      }
+      const combined = [...(valueRef.current.attachments ?? []), ...additions];
+      if (validateChatMessageContext({ attachments: combined, ...(valueRef.current.replyTo ? { replyTo: valueRef.current.replyTo } : {}) })) throw new Error('Invalid attachment context');
+      updateDraft({ ...valueRef.current, attachments: combined });
+    } catch { setError(copy.attachmentError); }
+    finally { setReadingFiles(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
+  };
+
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (completion.keyDown(event)) return;
+    if (completion.composing.current) return;
     if (variant === 'mobile' || event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     void deliver('send');
@@ -1062,14 +1382,62 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         void deliver('send');
       }}
     >
+      {queuedCount > 0 && <details className="conversation-queue" open>
+        <summary><Clock3 aria-hidden="true" />{ko ? '대기 중인 요청' : 'Queued requests'} <span>{queuedCount}</span></summary>
+        {queueItems.length === 0 && <p>{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
+        <ol>{queueItems.map(item => <li key={item.turnId}>
+          <p>{item.text}</p>
+          {!!item.context?.attachments?.length && <small>{ko ? '첨부' : 'Attachments'} {item.context.attachments.length}</small>}
+          {onQueueAction && <div className="conversation-queue__actions">{(['take', 'remove', 'run-next'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
+            disabled={disabled || sendDisabled || queueBusy || submitting !== null || uncertain || (action === 'take' && !!value.parkedDraft)} onClick={() => {
+              if (queueBusyRef.current || submittingRef.current) return;
+              queueBusyRef.current = true; setQueueBusy(true); setError(null);
+              void onQueueAction(item, action).then(result => {
+                if (!result.ok) { setError(result.message); return; }
+                if (action === 'take') {
+                  const current = valueRef.current;
+                  updateDraft({ text: item.text, attachments: item.context?.attachments, replyTo: item.context?.replyTo, skills: item.context?.skills,
+                    selectionStart: item.text.length, selectionEnd: item.text.length,
+                    ...(current.text || current.attachments?.length || current.replyTo ? { parkedDraft: current } : {}) });
+                  inputRef.current?.focus();
+                }
+              }).catch(() => setError(ko ? '결과를 확인하지 못했습니다. 대기열 상태를 새로 확인하세요.' : 'The result is unknown. Refresh the queue before trying again.')).finally(() => { queueBusyRef.current = false; setQueueBusy(false); });
+            }}>{action === 'take' ? (ko ? '편집' : 'Edit') : action === 'remove' ? (ko ? '삭제' : 'Remove') : (ko ? '중단 후 실행' : 'Interrupt and run')}</Button>)}</div>}
+        </li>)}</ol>
+      </details>}
+      {value.parkedDraft && <div className="structured-agent-composer__parked" role="status">
+        <span>{ko ? '기존 초안을 보관했습니다. 이 요청을 보내면 복원합니다.' : 'Previous draft saved. It will return after you send this request.'}</span>
+        <Button type="button" variant="ghost" size="sm" disabled={queueBusy || submitting !== null || uncertain} onClick={() => {
+          const { parkedDraft, ...current } = valueRef.current;
+          if (parkedDraft) updateDraft({ ...parkedDraft, parkedDraft: current });
+        }}>{ko ? '초안 전환' : 'Switch draft'}</Button>
+      </div>}
+      {completion.menu}
+      {value.replyTo && <div className="structured-agent-composer__reply">
+        <Reply aria-hidden="true" /><blockquote>{value.replyTo.text}</blockquote>
+        <Button variant="ghost" size="sm" disabled={disabled} aria-label={copy.removeReply}
+          onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><X /></Button>
+      </div>}
+      {attachments.length > 0 && <ul className="structured-agent-composer__attachments">
+        {attachments.map((attachment) => <li key={attachment.id}>
+          <details><summary><Paperclip aria-hidden="true" /><span>{attachment.name}</span></summary>
+            {attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} /> : <pre>{attachment.data}</pre>}
+          </details>
+          <Button variant="ghost" size="sm" disabled={disabled} aria-label={`${copy.removeAttachment}: ${attachment.name}`}
+            onClick={() => updateDraft({ ...valueRef.current, attachments: (valueRef.current.attachments ?? []).filter((entry) => entry.id !== attachment.id) })}><X /></Button>
+        </li>)}
+      </ul>}
+      <div className="structured-agent-composer__input-row"><span className="structured-agent-composer__prompt" aria-hidden="true">›</span>
       <Field
         id={composerId}
         label={copy.message}
         labelHidden
-        error={attempted && !draft.trim() ? copy.required : undefined}
+        error={attempted && !draft.trim() && attachments.length === 0 ? copy.required : undefined}
       >
         <textarea
+          {...completion.inputProps}
           id={composerId}
+          ref={inputRef}
           autoFocus={autoFocus}
           className="structured-agent-textarea structured-agent-textarea--composer"
           rows={2}
@@ -1080,12 +1448,19 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           aria-describedby={disabledReason ? disabledReasonId : undefined}
           onKeyDown={keyDown}
           onChange={(event) => {
-            setDraft(event.currentTarget.value);
+            updateDraft({ ...valueRef.current, text: event.currentTarget.value, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd });
             setError(null);
+          }}
+          onSelect={(event) => {
+            const input = event.currentTarget;
+            if (valueRef.current.selectionStart !== input.selectionStart || valueRef.current.selectionEnd !== input.selectionEnd) {
+              updateDraft({ ...valueRef.current, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
+            }
           }}
           data-testid="structured-agent-composer-input"
         />
       </Field>
+      </div>
       {disabledReason && (
         <p
           id={disabledReasonId}
@@ -1096,17 +1471,29 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           {disabledReason}
         </p>
       )}
+      {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
       <div className="structured-agent-composer__meta">
+        {toolbar && <div className="conversation-composer-toolbar">{toolbar}</div>}
         <span aria-live="polite">
           {queuedCount > 0 ? formatTemplate(copy.queued, { count: queuedCount }) : busy ? copy.busyHint : variant === 'mobile' ? copy.mobileSendHint : copy.desktopSendHint}
         </span>
         <div className="structured-agent-composer__actions">
+          {completion.buttons}
+          <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
+            hidden onChange={(event) => void attachFiles(event.currentTarget.files)} />
+          <Button variant="ghost" size="sm" type="button" disabled={disabled || !supportsMessageContext || readingFiles}
+            className="structured-agent-composer__attach"
+            title={supportsMessageContext ? copy.attach : copy.attachmentUnsupported} aria-label={copy.attach}
+            leadingIcon={<Paperclip />} onClick={() => fileInputRef.current?.click()}>{copy.attach}</Button>
+          <Button variant="ghost" size="sm" type="button" disabled={disabled} aria-label={copy.addReference}
+            onClick={() => { const text = valueRef.current.text; const position = inputRef.current?.selectionStart ?? text.length;
+              updateDraft({ ...valueRef.current, text: `${text.slice(0, position)}@${text.slice(position)}`, selectionStart: position + 1, selectionEnd: position + 1 }); inputRef.current?.focus(); }}>@</Button>
           {busy && onInterruptAndSend && (
             <Button
               type="button"
               variant="danger"
               size="sm"
-              disabled={disabled || !draft.trim() || submitting !== null}
+              disabled={disabled || sendDisabled || queueBusy || uncertain || readingFiles || (!draft.trim() && attachments.length === 0) || submitting !== null}
               loading={submitting === 'interrupt'}
               loadingLabel={copy.sending}
               onClick={() => void deliver('interrupt')}
@@ -1119,7 +1506,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             type="submit"
             variant="primary"
             size="sm"
-            disabled={disabled || !draft.trim() || submitting !== null}
+            disabled={disabled || sendDisabled || queueBusy || uncertain || readingFiles || (!draft.trim() && attachments.length === 0) || submitting !== null}
             loading={submitting === 'send'}
             loadingLabel={copy.sending}
             leadingIcon={<Send />}
@@ -1129,12 +1516,29 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           </Button>
         </div>
       </div>
+      {uncertain && <div className="structured-agent__banner" role="status"><span>{copy.uncertain}</span>
+        {onReconcileDelivery && <Button type="button" variant="ghost" size="sm" disabled={disabled || sendDisabled || submitting !== null}
+          onClick={() => { setSubmitting('send'); void onReconcileDelivery().then((result) => {
+            if (result.ok) confirmDelivery(); else { setError(result.message); setUncertain(result.deliveryUncertain !== false); }
+          }, () => setError(copy.uncertain)).finally(() => setSubmitting(null)); }}>{copy.reconcile}</Button>}
+      </div>}
       {error && <p className="structured-agent__form-error" role="alert">{error}</p>}
     </form>
   );
 });
 
 export interface StructuredAgentSessionPanelProps {
+  readonly onOpenProjectFiles?: () => void;
+  readonly queueItems?: readonly ConversationQueueItem[];
+  readonly onQueueAction?: StructuredAgentComposerProps['onQueueAction'];
+  /** null discovers workspace capabilities before a runtime session exists. */
+  readonly capabilitySessionId?: string | null;
+  readonly beforeMessages?: ReactNode;
+  readonly headerActions?: ReactNode;
+  readonly statusLabel?: string;
+  readonly onOpenHistory?: () => void;
+  readonly capabilityClient?: AgentCapabilitiesClient;
+  readonly workflowContext?: ReactNode;
   readonly viewStateKey?: string;
   readonly sessionId: string;
   readonly title: string;
@@ -1152,15 +1556,26 @@ export interface StructuredAgentSessionPanelProps {
   readonly transcriptLoading?: boolean;
   readonly transcriptError?: string | null;
   readonly disabled?: boolean;
+  readonly allowDraftWhenDisabled?: boolean;
+  readonly skin?: ChatSkin;
+  readonly onSkinChange?: (skin: ChatSkin) => void;
+  readonly draftState?: ChatComposerDraft;
+  readonly onDraftChange?: (draft: ChatComposerDraft) => void;
+  readonly sendDisabled?: boolean;
+  readonly sendDisabledReason?: string;
+  readonly supportsMessageContext?: boolean;
+  readonly deliveryUncertain?: boolean;
+  readonly onReconcileDelivery?: () => Promise<StructuredAgentUiResult>;
   /** Transcript-only history surface; unavailable mutation controls are omitted. */
   readonly historyOnly?: boolean;
   /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
   readonly heartbeatControl?: ReactNode;
+  readonly recoveryControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
-  readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
-  readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
+  readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  readonly onInterruptAndSend?: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
   readonly onChangeSettings?: (settings: {
     readonly model?: string;
     readonly permissionPreset: PermissionPreset;
@@ -1200,6 +1615,16 @@ const TERMINAL_AGENT_STATES = new Set<ManagedAgentState>([
 type StructuredAgentLifecycleAction = 'cancel' | 'archive' | 'detach';
 
 export function StructuredAgentSessionPanel({
+  onOpenProjectFiles,
+  queueItems,
+  onQueueAction,
+  capabilitySessionId,
+  beforeMessages,
+  headerActions,
+  statusLabel,
+  capabilityClient,
+  onOpenHistory,
+  workflowContext,
   sessionId,
   viewStateKey,
   title,
@@ -1217,10 +1642,21 @@ export function StructuredAgentSessionPanel({
   transcriptLoading = false,
   transcriptError = null,
   disabled = false,
+  allowDraftWhenDisabled = false,
+  skin,
+  onSkinChange,
+  draftState,
+  onDraftChange,
+  sendDisabled = false,
+  sendDisabledReason,
+  supportsMessageContext = false,
+  deliveryUncertain,
+  onReconcileDelivery,
   historyOnly = false,
   owner = 'managed',
   childTrack,
   heartbeatControl,
+  recoveryControl,
   onRetryTranscript,
   onSend,
   onInterruptAndSend,
@@ -1233,7 +1669,70 @@ export function StructuredAgentSessionPanel({
   variant = 'desktop',
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
+  const { i18n } = useAppTranslation();
+  const [capabilityCatalog, setCapabilityCatalog] = useState<AgentCapabilityCatalog>();
+  const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
+  const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
+  useEffect(() => { setCapabilityCatalog(undefined); setSelectedCapabilities([]); }, [sessionId, providerId, workspace.id]);
+  const availableModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
+    ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : modelOptions;
+  const sendWithCapabilities = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
+    if (context?.skills?.some((skill) => skill.providerId !== providerId)) return { ok: false, message: 'The selected skills belong to another provider. Remove or select them again.' };
+    const selected = [...selectedCapabilities.filter((item) => item.invocation && prompt.includes(item.invocation)),
+      ...(context?.skills ?? []).map((skill) => ({ ...skill, kind: 'skill' as const, enabled: true, actions: [] }))];
+    if (capabilityClient && selected.length && (providerId === 'codex' || providerId === 'claude')) {
+      try {
+        const result = await capabilityClient.list({ providerId, workspaceId: workspace.id, sessionId: capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId });
+        if (!result.ok) return { ok: false, message: result.message };
+        setCapabilityCatalog(result.value);
+        const missing = selected.filter((item) => !result.value.items.some((current) => current.id === item.id && current.kind === item.kind && current.enabled));
+        if (missing.length) return { ok: false, message: `Selected extensions are no longer available: ${missing.map((item) => item.name).join(', ')}. Remove or select them again.` };
+      } catch { return { ok: false, message: 'Selected extensions could not be verified. Your draft is preserved; reconnect and retry.' }; }
+    }
+    return context ? send(prompt, context) : send(prompt);
+  };
   const titleId = useId();
+  const panelRef = useRef<HTMLElement>(null);
+  const [wideReview, setWideReview] = useState(false);
+  useLayoutEffect(() => {
+    const element = panelRef.current;
+    if (!element) return;
+    const measure = (): void => {
+      const { width, height } = element.getBoundingClientRect();
+      element.dataset.compact = width < 600 ? 'true' : 'false';
+      element.dataset.short = height < 480 ? 'true' : 'false';
+      setWideReview(width >= 1280);
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
+  const [preferredSkin, setPreferredSkin] = useState<ChatSkin>(readChatSkin);
+  const activeSkin = skin ?? preferredSkin;
+  const skinTransition = useRef<{ anchor?: TranscriptAnchor; selection?: [number, number]; focused: boolean } | null>(null);
+  const [draftAction, setDraftAction] = useState<(NonNullable<StructuredAgentComposerProps['draftAction']> & { sessionId: string }) | undefined>();
+  const actionSequence = useRef(0);
+  const captureSkinView = (): void => {
+    const viewport = panelRef.current?.querySelector<HTMLElement>('[data-testid="structured-agent-transcript"]');
+    const input = panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]');
+    skinTransition.current = {
+      ...(viewport ? { anchor: captureTranscriptAnchor(viewport) } : {}),
+      ...(input ? { selection: [input.selectionStart, input.selectionEnd] } : {}),
+      focused: document.activeElement === input,
+    };
+  };
+  useEffect(() => subscribeChatSkin((next) => { captureSkinView(); setPreferredSkin(next); }), []);
+  useLayoutEffect(() => {
+    const saved = skinTransition.current;
+    if (!saved) return;
+    const viewport = panelRef.current?.querySelector<HTMLElement>('[data-testid="structured-agent-transcript"]');
+    const input = panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]');
+    if (viewport && saved.anchor) restoreTranscriptAnchor(viewport, saved.anchor);
+    if (input && saved.selection) { input.setSelectionRange(...saved.selection); if (saved.focused) input.focus({ preventScroll: true }); }
+    skinTransition.current = null;
+  }, [activeSkin]);
   const [selectedModel, setSelectedModel] = useState(model ?? '');
   const [selectedPermission, setSelectedPermission] = useState(permissionPreset);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -1262,7 +1761,7 @@ export function StructuredAgentSessionPanel({
       : lifecycleBusy === 'detach'
         ? copy.detachingSession
         : undefined;
-  const composerDisabled = disabled || composerDisabledReason !== undefined;
+  const composerDisabled = (disabled && !allowDraftWhenDisabled) || composerDisabledReason !== undefined;
 
   useEffect(() => setSelectedModel(model ?? ''), [model]);
   useEffect(() => setSelectedPermission(permissionPreset), [permissionPreset]);
@@ -1320,36 +1819,8 @@ export function StructuredAgentSessionPanel({
     }
   };
 
-  return (
-    <section
-      className="structured-agent structured-agent--live"
-      data-variant={variant}
-      data-session-id={sessionId}
-      data-provider={providerId}
-      data-state={state}
-      data-history-only={historyOnly || undefined}
-      data-testid="structured-agent-session"
-      aria-labelledby={titleId}
-    >
-      <header className="structured-agent-session-header">
-        <div className="structured-agent-session-header__identity">
-          <span className="structured-agent__eyebrow">{providerLabel}</span>
-          <h1 id={titleId}>{title}</h1>
-          <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
-        </div>
-        <div className="structured-agent-session-header__status">
-          <span className="structured-agent-state" data-state={state}>
-            <span aria-hidden="true" />
-            <span className="ez-ui-visually-hidden">{copy.status}: </span>{awaitingFirstMessage ? copy.notStarted : state}
-          </span>
-          {owner === 'provider-native' && (
-            <span className="structured-agent-session-header__owner">
-              {copy.providerOwned} · {copy.readOnly}
-            </span>
-          )}
-        </div>
-        <div className="structured-agent-session-controls">
-          <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
+  const settingsControls = (
+<div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
             {settingsReadOnly ? (
               <>
                 <span className="structured-agent-session-setting" data-testid="structured-agent-live-model-value">
@@ -1373,7 +1844,7 @@ export function StructuredAgentSessionPanel({
                     data-testid="structured-agent-live-model"
                   >
                     {!model && <option value="">{copy.providerDefault}</option>}
-                    {modelOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                    {availableModels.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                   </Select>
                 </Field>
                 <Field label={copy.permission} labelHidden>
@@ -1396,6 +1867,49 @@ export function StructuredAgentSessionPanel({
               </>
             )}
           </div>
+  );
+
+  return (
+    <section
+      ref={panelRef}
+      className="structured-agent structured-agent--live"
+      data-variant={variant}
+      data-session-id={sessionId}
+      data-provider={providerId}
+      data-state={state}
+      data-skin={activeSkin}
+      data-history-only={historyOnly || undefined}
+      data-testid="structured-agent-session"
+      aria-labelledby={titleId}
+    >
+      <header className="structured-agent-session-header">
+        <div className="structured-agent-session-header__identity">
+          <span className="structured-agent__eyebrow">{providerLabel}</span>
+          <h1 id={titleId}>{title}</h1>
+          <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
+        </div>
+        <div className="structured-agent-session-header__status">
+          <span className="structured-agent-state" data-state={state}>
+            <span aria-hidden="true" />
+            <span className="ez-ui-visually-hidden">{copy.status}: </span>{statusLabel ?? (awaitingFirstMessage ? copy.notStarted : state)}
+          </span>
+          {owner === 'provider-native' && (
+            <span className="structured-agent-session-header__owner">
+              {copy.providerOwned} · {copy.readOnly}
+            </span>
+          )}
+        </div>
+        <div className="structured-agent-session-controls">
+          {headerActions}
+          {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
+          <Field label={copy.skin} labelHidden>
+            <Select uiSize="sm" value={activeSkin} aria-label={copy.skin} data-testid="structured-agent-skin"
+              onPointerDown={captureSkinView}
+              onChange={(event) => { captureSkinView(); const next = event.currentTarget.value as ChatSkin; setPreferredSkin(next); writeChatSkin(next); onSkinChange?.(next); }}>
+              <option value="bubble">{copy.bubbleSkin}</option><option value="cli">{copy.cliSkin}</option>
+            </Select>
+          </Field>
+          {historyOnly && settingsControls}
           {hasLifecycleActions && (
             <div
               className="structured-agent-session-lifecycle"
@@ -1453,7 +1967,18 @@ export function StructuredAgentSessionPanel({
         {lifecycleError && <p className="structured-agent__form-error" role="alert">{lifecycleError}</p>}
       </header>
 
+      <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
+        onOpenProjectFiles={onOpenProjectFiles}
+        onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />
+      {workflowContext}
+      {!historyOnly && !providerOwned && capabilityClient && (providerId === 'codex' || providerId === 'claude') && <AgentCapabilitiesPanel
+        client={capabilityClient} providerId={providerId} workspaceId={workspace.id} sessionId={capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId} remote={variant === 'mobile'}
+        onCatalog={setCapabilityCatalog} onDiscoveryState={setCapabilityDiscovery} disabled={composerDisabled}
+        onInsert={(item) => { setSelectedCapabilities((current) => [...current.filter((entry) => entry.id !== item.id), item]); setDraftAction({ id: ++actionSequence.current, sessionId, insert: item.invocation, ...(item.kind === 'skill' && item.invocation ? { skill: { providerId, id: item.id, name: item.name, invocation: item.invocation } } : {}) }); }}
+      />}
+
       <StructuredAgentTranscript
+        beforeMessages={beforeMessages}
         key={`transcript:${viewStateKey ?? sessionId}`}
         stateKey={viewStateKey ? `${viewStateKey}:transcript` : variant === 'desktop' ? `desktop-agent-transcript:${sessionId}` : undefined}
         items={items}
@@ -1463,6 +1988,9 @@ export function StructuredAgentSessionPanel({
         error={transcriptError}
         onRetry={onRetryTranscript}
         onResolveApproval={historyOnly ? undefined : onResolveApproval}
+        controlsDisabled={disabled}
+        onReply={!historyOnly && !composerDisabled && supportsMessageContext ? (replyTo) => setDraftAction({ id: ++actionSequence.current, sessionId, replyTo }) : undefined}
+        onReuse={!historyOnly && !composerDisabled ? (text) => setDraftAction({ id: ++actionSequence.current, sessionId, text }) : undefined}
         onOpenRelatedSession={onOpenRelatedSession}
       />
       {childTrack !== undefined && (
@@ -1471,8 +1999,15 @@ export function StructuredAgentSessionPanel({
         </section>
       )}
       {heartbeatControl}
+      {recoveryControl}
       {!historyOnly && (
         <StructuredAgentComposer
+          toolbar={settingsControls}
+          queueItems={queueItems}
+          onQueueAction={onQueueAction}
+          capabilityCatalog={capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id ? capabilityCatalog : undefined}
+          capabilityDiscovery={capabilityDiscovery}
+          onOpenHistory={onOpenHistory}
           key={`composer:${viewStateKey ?? sessionId}`}
           stateKey={viewStateKey ? `${viewStateKey}:composer` : variant === 'desktop' ? `desktop-agent-composer:${sessionId}` : undefined}
           busy={busy}
@@ -1480,8 +2015,16 @@ export function StructuredAgentSessionPanel({
           queuedCount={queuedCount}
           disabled={composerDisabled || lifecycleBusy !== null}
           disabledReason={composerDisabledReason ?? lifecycleDisabledReason}
-          onSend={onSend}
-          onInterruptAndSend={onInterruptAndSend}
+          sendDisabled={disabled || sendDisabled}
+          sendDisabledReason={sendDisabledReason}
+          supportsMessageContext={supportsMessageContext}
+          draftState={draftState}
+          onDraftChange={onDraftChange}
+          deliveryUncertain={deliveryUncertain}
+          onReconcileDelivery={onReconcileDelivery}
+          draftAction={draftAction?.sessionId === sessionId ? draftAction : undefined}
+          onSend={(prompt, context) => sendWithCapabilities(prompt, context, onSend)}
+          onInterruptAndSend={onInterruptAndSend ? (prompt, context) => sendWithCapabilities(prompt, context, onInterruptAndSend) : undefined}
           variant={variant}
         />
       )}

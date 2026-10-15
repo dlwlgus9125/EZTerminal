@@ -11,6 +11,7 @@ import {
   type AgentOrchestrationSnapshot,
 } from '../../src/shared/agent-orchestration';
 import type { GitDiffResult } from '../../src/shared/git-status';
+import type { ConversationEntry } from '../../src/shared/conversation-history';
 import type {
   DaemonEvent,
   DaemonSnapshot,
@@ -206,6 +207,97 @@ describe('MobileAgentView', () => {
     onSendFollowup: async () => ({ ok: true }) as const,
     agentCreateRecovery: readyRecoveryController(),
   };
+
+  it('opens unified history above the current chat and preserves its unsent draft when closed', async () => {
+    const authority = daemonSnapshotOf();
+    const listConversations = vi.fn(async () => ({ ok: true as const, items: [], nextCursor: null }));
+    const sendDaemonCommand = vi.fn();
+    const transport = { listConversations, readConversation: vi.fn(), prepareHistoryResume: vi.fn(), resumeHistory: vi.fn(), sendDaemonCommand } as unknown as WsEzTerminalTransport;
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport} initialSessionId="structured-session-1" {...noop} />);
+    const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Keep my unsent draft');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButtonText(container, 'Previous conversations'); await flush();
+    expect(testIds('mobile-conversation-history')).toHaveLength(1);
+    expect(testIds('structured-agent-composer-input')[0]).toBe(input);
+    expect(input.value).toBe('Keep my unsent draft');
+    expect(listConversations).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1' }));
+    await act(async () => (testIds('mobile-conversation-history')[0].querySelector('.mobile-action-sheet-cancel') as HTMLButtonElement).click());
+    await flush();
+    expect(testIds('mobile-conversation-history')).toHaveLength(0);
+    expect(testIds('structured-agent-composer-input')[0]).toBe(input);
+    expect(input.value).toBe('Keep my unsent draft');
+    expect(sendDaemonCommand).not.toHaveBeenCalled();
+  });
+
+  it('previews a project native-history request without resuming or routing its identity to a terminal', async () => {
+    const entry: ConversationEntry = { conversationId: 'opaque-native', source: 'native', providerId: 'codex', projectId: 'project-1', projectTitle: 'EZTerminal', title: 'CLI investigation', preview: 'Original request', roots: ['C:\\Working\\EZTerminal'], createdAt: NOW - 1000, updatedAt: NOW, archived: false, state: 'history', action: 'resume' };
+    const resumeHistory = vi.fn(async () => ({ ok: true as const, sessionId: 'new-agent-history-session', alreadyLinked: false }));
+    const onFocusSession = vi.fn();
+    const onActiveSessionChange = vi.fn();
+    const refreshed = daemonSnapshotOf({ revision: 9 });
+    const continuedSnapshot: DaemonSnapshot = { ...refreshed,
+      sessions: [...refreshed.sessions, { ...refreshed.sessions[0], id: 'new-agent-history-session' }],
+      agents: [...refreshed.agents, { ...refreshed.agents[0], sessionId: 'new-agent-history-session' }],
+    };
+    const transport = {
+      listConversations: vi.fn(async () => ({ ok: true as const, items: [entry], nextCursor: null })),
+      readConversation: vi.fn(async () => ({ ok: true as const, entry, transcript: { historyId: entry.conversationId, provider: 'codex', nextCursor: null, turns: [] } })),
+      prepareHistoryResume: vi.fn(async () => ({ ok: true as const, entry, revision: 'native-revision', workspaceId: 'workspace-1', action: 'resume', canResume: true, permissionPreset: 'standard' })),
+      resumeHistory,
+      getDaemonSnapshot: vi.fn(async () => continuedSnapshot),
+    } as unknown as WsEzTerminalTransport;
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshotOf() }} transport={transport} historyRequest={{ conversationId: entry.conversationId, projectId: entry.projectId, key: 'history-open' }} {...noop} onFocusSession={onFocusSession} onActiveSessionChange={onActiveSessionChange} />);
+    await flush();
+    expect(testIds('mobile-conversation-history')).toHaveLength(1);
+    expect(container.textContent).toContain('CLI investigation');
+    expect(resumeHistory).not.toHaveBeenCalled();
+    await clickButtonText(container, 'Continue in Agent'); await flush();
+    expect(resumeHistory).toHaveBeenCalledOnce();
+    expect(onActiveSessionChange).toHaveBeenLastCalledWith('new-agent-history-session');
+    expect(onFocusSession).not.toHaveBeenCalled();
+    expect(testIds('mobile-conversation-history')).toHaveLength(0);
+  });
+
+  it('closes a project-scoped history request back to its originating workspace without creating a session', async () => {
+    const onHistoryRequestClosed = vi.fn();
+    const listConversations = vi.fn(async () => ({ ok: true as const, items: [], nextCursor: null }));
+    const resumeHistory = vi.fn();
+    const transport = { listConversations, readConversation: vi.fn(), prepareHistoryResume: vi.fn(), resumeHistory } as unknown as WsEzTerminalTransport;
+    await render(<MobileAgentView snapshot={snapshotOf()} transport={transport} historyRequest={{ projectId: 'stage-project', key: 'stage-history' }} onHistoryRequestClosed={onHistoryRequestClosed} {...noop} />);
+    await flush();
+    expect(listConversations).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'stage-project' }));
+    await act(async () => (testIds('mobile-conversation-history')[0].querySelector('.mobile-action-sheet-cancel') as HTMLButtonElement).click());
+    expect(onHistoryRequestClosed).toHaveBeenCalledOnce();
+    expect(resumeHistory).not.toHaveBeenCalled();
+  });
+
+  it('keeps readable history and the explicit CLI continuation available when the PC needs an update', async () => {
+    const entry: ConversationEntry = { conversationId: 'legacy-native', source: 'native', providerId: 'codex', projectId: 'project-1', projectTitle: 'EZTerminal', title: 'Older PC CLI history', preview: 'Original CLI transcript', roots: ['C:/Project'], historyId: 'legacy-record', createdAt: NOW, updatedAt: NOW, archived: false, state: 'history', action: 'unavailable' };
+    const transcript = { historyId: entry.conversationId, provider: 'codex', turns: [], nextCursor: null };
+    const readAgentHistory = vi.fn(async () => transcript);
+    const resumeHistory = vi.fn();
+    const transport = {
+      listConversations: vi.fn(async () => ({ ok: true as const, items: [entry], nextCursor: null })),
+      readConversation: vi.fn(async () => ({ ok: true as const, entry, transcript })),
+      prepareHistoryResume: vi.fn(async () => ({ ok: false as const, reason: 'unsupported', message: 'Update required.' })),
+      resumeHistory,
+    } as unknown as WsEzTerminalTransport;
+    vi.stubGlobal('ezterminal', { readAgentHistory });
+    try {
+      await render(<MobileAgentView snapshot={snapshotOf()} transport={transport} historyRequest={{ conversationId: entry.conversationId, key: 'older-pc' }} onResumeHistory={async () => undefined} {...noop} />);
+      await flush();
+      expect(container.textContent).toContain('Update EZTerminal on the connected PC');
+      const action = [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Continue in Agent')!;
+      expect(action.disabled).toBe(true);
+      await clickButtonText(container, 'Continue in CLI'); await flush();
+      expect(testIds('mobile-agent-history')).toHaveLength(1);
+      expect(readAgentHistory).toHaveBeenCalledWith('legacy-record', undefined, 20);
+      expect(resumeHistory).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
 
   it('keeps orchestration workers out of cards, counts, and direct composers', async () => {
     await render(

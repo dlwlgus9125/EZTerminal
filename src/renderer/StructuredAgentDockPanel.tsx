@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { PlanningNavigationContext } from './PlanningWorkspaceDockPanel';
+import { WorkflowConversationContext, WorkflowConversationUnavailable, useWorkflowConversationScope } from './workflow/WorkflowConversationContext';
 import type { IDockviewPanelProps } from 'dockview-react';
 import type { AgentLaunchBootstrap } from '../shared/agent-history';
+import type { ChatComposerDraft, ChatMessageContext } from '../shared/chat-message';
+import type { ChatStateAccess } from './chat-recovery';
+import { useChatRecovery } from './use-chat-recovery';
+import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { NewSessionDraftPanel } from './NewSessionDraftPanel';
 
+import { conversationQueue } from './conversation-queue';
 import {
   createDaemonCommand,
   type DaemonCommand,
@@ -85,7 +92,7 @@ function opaqueId(prefix: string): string {
 }
 
 function resultOf(receipt: DaemonCommandReceipt): StructuredAgentUiResult {
-  return receipt.ok ? { ok: true } : { ok: false, message: receipt.error.message };
+  return receipt.ok ? { ok: true } : { ok: false, message: receipt.error.message, deliveryUncertain: false };
 }
 
 function localUserItem(
@@ -93,6 +100,7 @@ function localUserItem(
   commandId: string,
   sequence: number,
   text: string,
+  context?: ChatMessageContext,
 ): DaemonTranscriptItem {
   return {
     id: `local-${commandId}`,
@@ -103,6 +111,7 @@ function localUserItem(
     isDelta: false,
     isSensitive: false,
     createdAt: new Date().toISOString(),
+    ...(context ? { context } : {}),
   };
 }
 
@@ -162,6 +171,7 @@ function recoveryDraftState(
       workspaceId: payload.workspaceId,
       permissionPreset: payload.permissionPreset,
       initialPrompt: payload.initialPrompt,
+      ...(recovery.composerDraft ? { draftText: recovery.composerDraft.text, draftSkills: recovery.composerDraft.skills } : {}),
     },
     outcome: {
       kind: 'delivery-uncertain',
@@ -179,6 +189,7 @@ function recoveryRecord(
   panelId: string,
   historyId: string,
   command: StructuredAgentCreateCommand,
+  input: StructuredAgentDraftInput,
 ): RendererRecoveryStructuredAgentCreate {
   return Object.freeze({
     panelId,
@@ -186,6 +197,7 @@ function recoveryRecord(
     sessionId: command.payload.sessionId,
     phase: 'sending',
     command,
+    ...(input.draftText ? { composerDraft: { text: input.draftText, ...(input.draftSkills?.length ? { skills: input.draftSkills } : {}) } } : {}),
   });
 }
 
@@ -197,12 +209,14 @@ function recoveryRecord(
 export function StructuredAgentDockPanel(
   props: IDockviewPanelProps & {
     readonly capabilities?: CapabilityAccess;
+    readonly chatStateAccess?: ChatStateAccess;
     readonly createRecoveryRegistry?: StructuredAgentCreateRecoveryRegistry;
     /** Resolves true only after main has accepted the current memory-only checkpoint. */
     readonly persistCreateRecovery?: () => Promise<boolean>;
     readonly onOpenTerminal?: (workspaceId?: string, directory?: string) => Promise<StructuredAgentUiResult>;
     readonly onLaunchCli?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
     readonly onOpenSettings?: () => void;
+    readonly onOpenHistory?: (projectId?: string) => void;
     readonly onOpenSession?: (input: {
       readonly sessionId: string;
       readonly title?: string;
@@ -211,6 +225,10 @@ export function StructuredAgentDockPanel(
   },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
+  const capabilityClient = useMemo(() => typeof window.ezterminal?.agentCapabilitiesList === 'function' ? {
+    list: window.ezterminal.agentCapabilitiesList,
+    manage: window.ezterminal.agentCapabilitiesManage,
+  } : undefined, []);
   const createRecoveryRegistry = props.createRecoveryRegistry;
   const persistCreateRecovery = props.persistCreateRecovery;
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
@@ -239,6 +257,19 @@ export function StructuredAgentDockPanel(
     return recovery ? recoveryDraftState(recovery) : null;
   });
   const [localItems, setLocalItems] = useState<readonly DaemonTranscriptItem[]>([]);
+  const earlyDraft = useRef<{ sessionId: string; draft: ChatComposerDraft } | null>(null);
+  const authorizedProjectId = snapshot?.sessions.find((candidate) => candidate.id === sessionId)?.projectId;
+  const workflowNavigation = useContext(PlanningNavigationContext);
+  const workflowAccess = useMemo(() => typeof window.ezterminal?.getWorkflowSnapshot === 'function' ? { getWorkflowSnapshot: (id: string) => window.ezterminal.getWorkflowSnapshot(id), executeWorkflowCommand: window.ezterminal.executeWorkflowCommand.bind(window.ezterminal) } : undefined, []);
+  const workflowContext = useWorkflowConversationScope(workflowAccess, authorizedProjectId, sessionId);
+  const chatRecovery = useChatRecovery(authorizedProjectId, sessionId, props.chatStateAccess);
+  const pendingSubmit = chatRecovery.view.pendingSubmit?.command ?? null;
+  useEffect(() => {
+    if (chatRecovery.controller && earlyDraft.current?.sessionId === sessionId) {
+      chatRecovery.controller.updateDraft(earlyDraft.current.draft);
+      earlyDraft.current = null;
+    }
+  }, [chatRecovery.controller, sessionId]);
   const [authoritativeItems, setAuthoritativeItems] = useState<readonly DaemonTranscriptItem[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(restoredSessionId !== null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
@@ -523,9 +554,12 @@ export function StructuredAgentDockPanel(
 
   const finishCreatedDraft = useCallback((
     outcome: Extract<StructuredAgentCreateOutcome, { readonly kind: 'created' | 'delivery-uncertain' }>,
+    draftText?: string,
+    draftSkills?: ChatComposerDraft['skills'],
   ): StructuredAgentUiResult => {
     const createdInput = outcome.command.payload;
     const nextHistoryId = structuredAgentSessionHistoryId(outcome.sessionId);
+    if (draftText) earlyDraft.current = { sessionId: outcome.sessionId, draft: { text: draftText, ...(draftSkills?.length ? { skills: draftSkills } : {}) } };
     setCreatedDraft({
       providerId: createdInput.providerId,
       ...(createdInput.model ? { model: createdInput.model } : {}),
@@ -564,7 +598,7 @@ export function StructuredAgentDockPanel(
         throw new Error('Desktop Agent recovery escrow is unavailable.');
       }
       registeredCommandId = command.commandId;
-      if (!createRecoveryRegistry.register(recoveryRecord(props.api.id, historyId, command))) {
+      if (!createRecoveryRegistry.register(recoveryRecord(props.api.id, historyId, command, input))) {
         throw new Error('Desktop Agent recovery escrow is at capacity.');
       }
       if (!(await persistCreateRecovery())) {
@@ -593,7 +627,7 @@ export function StructuredAgentDockPanel(
         && candidate.kind === 'agent'
         && candidate.source === 'structured'
       ));
-      if (alreadyCreated) return finishCreatedDraft(uncertainDraft.outcome);
+      if (alreadyCreated) return finishCreatedDraft(uncertainDraft.outcome, uncertainDraft.input.draftText, uncertainDraft.input.draftSkills);
 
       const replay = await sendCommand(uncertainDraft.outcome.command);
       if (!replay || (!replay.ok && replay.status === 'delivery-uncertain')) {
@@ -639,7 +673,7 @@ export function StructuredAgentDockPanel(
           && candidate.kind === 'agent'
           && candidate.source === 'structured'
         ));
-        if (createdDespiteReceipt) return finishCreatedDraft(uncertainDraft.outcome);
+        if (createdDespiteReceipt) return finishCreatedDraft(uncertainDraft.outcome, uncertainDraft.input.draftText, uncertainDraft.input.draftSkills);
         setUncertainDraft(null);
         createRecoveryRegistry?.clear(props.api.id, uncertainDraft.outcome.command.commandId);
         return { ok: false, message: replay.error.message };
@@ -652,7 +686,7 @@ export function StructuredAgentDockPanel(
         onCommandPrepared: registerPreparedCommand,
       });
     }
-    if (outcome.kind === 'created') return finishCreatedDraft(outcome);
+    if (outcome.kind === 'created') return finishCreatedDraft(outcome, input.draftText, input.draftSkills);
     if (outcome.kind === 'delivery-uncertain') {
       createRecoveryRegistry?.markDeliveryUncertain(props.api.id, outcome.command.commandId);
       setUncertainDraft({ input, outcome });
@@ -724,12 +758,16 @@ export function StructuredAgentDockPanel(
         onLaunchCli={props.onLaunchCli}
         onSettings={props.onOpenSettings}
         agent={{
+          capabilityClient,
+          onOpenHistory: props.onOpenHistory ? () => props.onOpenHistory?.(projectId) : undefined,
           providers, workspaces,
           initialProviderId: uncertainDraft?.input.providerId,
           initialModel: uncertainDraft?.input.model,
           initialWorkspaceId: uncertainDraft?.input.workspaceId ?? initialWorkspaceId,
           initialPermissionPreset: uncertainDraft?.input.permissionPreset,
           initialPrompt: uncertainDraft?.input.initialPrompt,
+          initialDraftText: uncertainDraft?.input.draftText,
+          initialDraftSkills: uncertainDraft?.input.draftSkills,
           deliveryRecovery: uncertainDraft !== null,
           loading: loading || availability?.state === 'legacy-only-safe-mode',
           loadError, onRetry: () => void refresh(), onCreate: create,
@@ -738,6 +776,8 @@ export function StructuredAgentDockPanel(
     }
     return (
       <StructuredAgentDraftPanel
+        capabilityClient={capabilityClient}
+        onOpenHistory={props.onOpenHistory ? () => props.onOpenHistory?.(projectId) : undefined}
         providers={providers}
         workspaces={workspaces}
         initialProviderId={uncertainDraft?.input.providerId}
@@ -745,6 +785,8 @@ export function StructuredAgentDockPanel(
         initialWorkspaceId={uncertainDraft?.input.workspaceId ?? initialWorkspaceId}
         initialPermissionPreset={uncertainDraft?.input.permissionPreset}
         initialPrompt={uncertainDraft?.input.initialPrompt}
+        initialDraftText={uncertainDraft?.input.draftText}
+        initialDraftSkills={uncertainDraft?.input.draftSkills}
         deliveryRecovery={uncertainDraft !== null}
         loading={loading}
         loadError={loadError}
@@ -768,7 +810,11 @@ export function StructuredAgentDockPanel(
   const runSessionCommand = async (
     type: 'agent.submit' | 'agent.interrupt-and-submit',
     prompt: string,
+    context?: ChatMessageContext,
   ): Promise<StructuredAgentUiResult> => {
+    const recovery = chatRecovery.controller;
+    if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
+    if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
     const authority = await latestSnapshot();
     if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
     const commandId = opaqueId('command');
@@ -780,7 +826,7 @@ export function StructuredAgentDockPanel(
           issuedAt: new Date().toISOString(),
           principal: { kind: 'desktop', id: 'renderer-agent-ui' },
           type,
-          payload: { sessionId, prompt },
+          payload: { sessionId, prompt, ...(context ? { context } : {}) },
         })
       : createDaemonCommand({
           commandId,
@@ -789,18 +835,42 @@ export function StructuredAgentDockPanel(
           issuedAt: new Date().toISOString(),
           principal: { kind: 'desktop', id: 'renderer-agent-ui' },
           type,
-          payload: { sessionId, prompt },
+          payload: { sessionId, prompt, ...(context ? { context } : {}) },
         });
+    const prepared = await recovery.prepare(command);
+    if (!prepared.ok) return prepared;
     const receipt = await sendCommand(command);
-    if (!receipt) return { ok: false, message: 'The Agent daemon is unavailable.' };
+    if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
+      return { ok: false, message: 'Message delivery could not be confirmed. Check delivery before sending again.', deliveryUncertain: true };
+    }
+    const stored = await recovery.complete(command.commandId, receipt.ok);
     const result = resultOf(receipt);
     if (result.ok) {
       setLocalItems((current) => current.some((item) => item.id === `local-${commandId}`)
         ? current
-        : [...current, localUserItem(sessionId, commandId, current.length + 1, prompt)]);
+        : [...current, localUserItem(sessionId, commandId, current.length + 1, prompt, context)]);
       void syncTranscript(sessionId);
     }
-    return result;
+    return stored.ok ? result : stored;
+  };
+
+  const reconcileSubmit = async (): Promise<StructuredAgentUiResult> => {
+    const recovery = chatRecovery.controller;
+    const pending = recovery?.getSnapshot().pendingSubmit?.command;
+    if (!pending) return { ok: true };
+    if (recovery?.getSnapshot().status !== 'ready') return { ok: false, message: 'Check stored recovery data before confirming delivery.', deliveryUncertain: true };
+    const receipt = await sendCommand(pending);
+    if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
+      return { ok: false, message: 'Message delivery is still unconfirmed.', deliveryUncertain: true };
+    }
+    if (receipt.ok) {
+      const { commandId, payload } = pending;
+      setLocalItems((current) => current.some((item) => item.id === `local-${commandId}`) ? current
+        : [...current, localUserItem(sessionId, commandId, current.length + 1, payload.prompt, payload.context)]);
+      void syncTranscript(sessionId);
+    }
+    const stored = await recovery.complete(pending.commandId, receipt.ok);
+    return stored.ok ? resultOf(receipt) : stored;
   };
 
   const changeSettings = async (settings: {
@@ -968,7 +1038,7 @@ export function StructuredAgentDockPanel(
 
   const heartbeat = snapshot?.heartbeats.find((candidate) => candidate.sessionId === sessionId);
   const automationReady = snapshot?.runtime.keepRunning === true && snapshot.runtime.startAtLogin === true;
-  const historyOnly = session !== undefined && isDaemonSessionArchived(session, agent);
+  const historyOnly = session !== undefined && isDaemonSessionArchived(session, agent) || workflowContext.scope?.readOnly === true;
   const heartbeatAvailable = owner === 'managed'
     && !historyOnly
     && session !== undefined
@@ -977,6 +1047,10 @@ export function StructuredAgentDockPanel(
 
   return (
     <StructuredAgentSessionPanel
+      onOpenProjectFiles={session && workflowNavigation ? () => workflowNavigation.openFiles(session.projectId) : undefined}
+      viewStateKey={props.params?.conversationId ? `desktop:conversation:${props.params.conversationId}` : undefined}
+      onOpenHistory={props.onOpenHistory ? () => props.onOpenHistory?.(session?.projectId ?? projectId) : undefined}
+      capabilityClient={capabilityClient}
       sessionId={sessionId}
       title={session?.title ?? createdDraft?.title ?? 'Agent session'}
       providerId={providerId}
@@ -992,6 +1066,16 @@ export function StructuredAgentDockPanel(
       awaitingFirstMessage={!historyOnly && (agent ? agent.state === 'idle' && !agent.providerSessionId && !snapshot?.turns.some((turn) => turn.sessionId === sessionId) : Boolean(createdDraft && !createdDraft.initialPrompt))}
       state={historyOnly ? 'archived' : agent?.state ?? (createdDraft ? createdDraft.initialPrompt ? 'starting' : 'idle' : loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
+      queueItems={conversationQueue(sessionId, snapshot?.turns ?? [], transcriptItems)}
+      onQueueAction={!historyOnly && owner === 'managed' && snapshot?.capabilities?.includes('agent-queue') ? async (item, action) => {
+        const authority = await latestSnapshot();
+        if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
+        const commandId = opaqueId('command');
+        const receipt = await sendCommand(createDaemonCommand({ commandId, idempotencyKey: commandId,
+          expectedRevision: authority.revision, issuedAt: new Date().toISOString(), principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+          type: 'agent.queue', payload: { sessionId, turnId: item.turnId, turnRevision: item.revision, action } }));
+        return receipt ? resultOf(receipt) : { ok: false, message: 'Queue result unknown. Refresh before trying again.' };
+      } : undefined}
       items={transcriptItems}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}
       transcriptLoading={transcriptLoading && transcriptItems.length === 0}
@@ -1000,6 +1084,7 @@ export function StructuredAgentDockPanel(
         : null)}
       disabled={!snapshot && !loading}
       historyOnly={historyOnly}
+      workflowContext={workflowContext.scope ? <WorkflowConversationContext scope={workflowContext.scope} onRefresh={workflowContext.refreshReferences} busy={workflowContext.loading} error={workflowContext.error} onReturn={workflowNavigation?.openWorkflow ? () => { const scope = workflowContext.scope!; workflowNavigation.openWorkflow!(scope.projectId, snapshot?.projects.find(project => project.id === scope.projectId)?.name ?? scope.projectId, scope.subprojectId, scope.nodeId); } : undefined} /> : workflowContext.error ? <WorkflowConversationUnavailable message={workflowContext.error} onRetry={workflowContext.retry} /> : undefined}
       owner={owner}
       childTrack={directChildren.length > 0 && props.onOpenSession ? (
         <StructuredAgentChildTrack items={directChildren} onSelectSession={openRelatedSession} />
@@ -1019,8 +1104,19 @@ export function StructuredAgentDockPanel(
         void refresh();
         if (sessionId) void syncTranscript(sessionId, transcriptTargetRef.current);
       }}
-      onSend={(prompt) => runSessionCommand('agent.submit', prompt)}
-      onInterruptAndSend={historyOnly ? undefined : (prompt) => runSessionCommand('agent.interrupt-and-submit', prompt)}
+      supportsMessageContext={provider?.protocol === 'codex-app-server' || provider?.protocol === 'claude-agent-sdk'}
+      draftState={chatRecovery.controller ? chatRecovery.view.draft : undefined}
+      onDraftChange={(draft) => {
+        if (chatRecovery.controller) chatRecovery.controller.updateDraft(draft);
+        else earlyDraft.current = { sessionId, draft };
+      }}
+      sendDisabled={chatRecovery.view.status !== 'ready' || workflowContext.loading}
+      sendDisabledReason={chatRecovery.view.status === 'loading' ? 'Restoring secure draft…' : chatRecovery.view.message}
+      recoveryControl={<ChatRecoveryNotice controller={chatRecovery.controller} view={chatRecovery.view} />}
+      deliveryUncertain={pendingSubmit !== null}
+      onReconcileDelivery={reconcileSubmit}
+      onSend={(prompt, context) => runSessionCommand('agent.submit', prompt, context)}
+      onInterruptAndSend={historyOnly ? undefined : (prompt, context) => runSessionCommand('agent.interrupt-and-submit', prompt, context)}
       onChangeSettings={historyOnly ? undefined : changeSettings}
       onResolveApproval={historyOnly ? undefined : resolveApproval}
       onOpenRelatedSession={props.onOpenSession ? openRelatedSession : undefined}

@@ -1,0 +1,13 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { fn } from 'storybook/test';
+import { ProjectArchivePanel } from './ProjectArchivePanel';
+import { AppI18nProvider } from './i18n';
+import type { ProjectArchiveManifest } from '../shared/project-archive';
+import './index.css';
+import './planning-workspace.css';
+const manifest: ProjectArchiveManifest = {version:1,createdAt:'2026-10-13T06:00:00.000Z',projectId:'project-story',projectName:'EZTerminal 2.0',source:{planningRevision:8,daemonRevision:42,executionRevision:12},entries:[{id:'planning',kind:'planning',hash:'a'.repeat(64),byteLength:12500},{id:'transcript',kind:'transcript',hash:'b'.repeat(64),byteLength:48100},{id:'results',kind:'result',hash:'c'.repeat(64),byteLength:18400}],exclusions:[{item:'OS 자격 증명 · API 토큰',reason:'연결할 기기에서 직접 설정합니다.'},{item:'기기 페어링 키',reason:'복원한 PC에서 새로 연결합니다.'}],portable:true,notes:['현재 작업 디렉터리의 파일은 결과 패치와 기준 파일로 기록합니다.'],integrity:'d'.repeat(64)};
+const meta: Meta<typeof ProjectArchivePanel> = {title:'Production/Planning/Project archive',component:ProjectArchivePanel,parameters:{layout:'fullscreen'},args:{projectId:'project-story',disabled:false,onOpenProject:fn(),access:{executeProjectArchive:async(request)=>request.type==='inspect'?{ok:true,kind:'inspect',archiveId:'archive-story',manifest}:request.type==='history'?{ok:true,kind:'history',history:null}:{ok:true,kind:'inventory',inventory:{projectId:'project-story',token:'e'.repeat(64),revision:42,groups:[{kind:'기획·설계',items:21,bytes:12500},{kind:'대화',items:112,bytes:48100},{kind:'실행 결과',items:6,bytes:18400}],conversations:[{sessionId:'session-done',title:'기획 검토 · 보관된 대화',items:24,bytes:14100,deletable:true},{sessionId:'session-linked',title:'대화 스킨 검증 근거',items:40,bytes:22000,deletable:false,protection:'실행 결과에서 참조 중'}]}}}},decorators:[(Story)=><AppI18nProvider locale="ko" languages={['ko']}><div className="planning-workspace" style={{minHeight:'100vh',height:'auto',padding:24}}><Story /></div></AppI18nProvider>]};
+export default meta;
+type Story = StoryObj<typeof meta>;
+export const Inventory: Story = {};
+export const Offline: Story = {args:{disabled:true}};

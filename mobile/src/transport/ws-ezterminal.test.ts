@@ -7,6 +7,8 @@ import type { RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../../../
 import { FILE_CHUNK_BYTES } from '../../../src/shared/files';
 import {
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_AUTH_BASELINE,
+  SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   base64ToUint8Array,
   encodeFrame,
   uint8ArrayToBase64,
@@ -163,6 +165,89 @@ function captureEzPacketPort(): { readonly port: MessagePort | undefined; stop: 
   };
 }
 
+describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
+  it('uses v15 history replies, verifies preview identity, and does not replay a disconnected resume', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    expect(await transport.listConversations()).toMatchObject({ ok: false, reason: 'unavailable' });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 15 });
+    const list = transport.listConversations({ projectId: 'project', archived: 'include' });
+    const listed = sockets[0].lastSent() as { kind: string; requestId: string; query: unknown };
+    expect(listed).toMatchObject({ kind: 'conversation-history-list', query: { projectId: 'project', archived: 'include' } });
+    sockets[0].triggerMessage({ kind: 'conversation-history-list-reply', requestId: listed.requestId, result: { ok: true, items: [], nextCursor: null } });
+    expect(await list).toEqual({ ok: true, items: [], nextCursor: null });
+    const read = transport.readConversation('conversation_requested'); const reading = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'conversation-history-read-reply', requestId: reading.requestId, result: { ok: true,
+      entry: { conversationId: 'conversation_wrong', source: 'native', providerId: 'codex', projectId: 'project', projectTitle: 'Project', title: 'Wrong', preview: '', createdAt: 1, updatedAt: 1, roots: ['/work'], archived: false, state: 'recorded', action: 'resume' },
+      transcript: { historyId: 'conversation_wrong', provider: 'codex', turns: [], nextCursor: null } } });
+    expect(await read).toMatchObject({ ok: false, reason: 'transcript-unavailable' });
+    const resume = transport.resumeHistory({ conversationId: 'conversation_requested', revision: 'reviewed', commandId: 'exact-request' });
+    expect(sockets[0].lastSent()).toMatchObject({ kind: 'conversation-history-resume', request: { commandId: 'exact-request' } });
+    transport.disconnect(); expect(await resume).toMatchObject({ ok: false, reason: 'unavailable' });
+    expect(sockets[0].sent.map(item => JSON.parse(item)).filter(item => item.kind === 'conversation-history-resume')).toHaveLength(1);
+  });
+
+  it.each([12, 13, 14])('retains native CLI read alternatives on v%s without sending unsupported adoption', async protocolVersion => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion });
+    const before = sockets[0].sent.length;
+    expect(await transport.resumeHistory({ conversationId: 'conversation_legacy_native_history', revision: 'reviewed', commandId: 'exact-request' })).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(sockets[0].sent).toHaveLength(before);
+    const reading = transport.readAgentHistory('opaque-history', undefined, 20); const request = sockets[0].lastSent() as { kind: string; requestId: string };
+    expect(request.kind).toBe('agent-history-read');
+    sockets[0].triggerMessage({ kind: 'agent-history-read-reply', requestId: request.requestId, result: null });
+    transport.disconnect(); await reading;
+  });
+
+  it('reads compact workflow navigation and rejects a reply for another project', async () => {
+    const { createSocket, sockets } = makeCreateSocket(); const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const pending = transport.getWorkflowNavigation('project'); const request = sockets[0].lastSent() as { kind: string; requestId: string };
+    expect(request.kind).toBe('workflow-navigation');
+    sockets[0].triggerMessage({ kind: 'workflow-navigation-reply', requestId: request.requestId, result: { ok: true, snapshot: { projectId: 'other', registryRevision: 0, subprojects: [], sessionLinks: [] } } });
+    expect(await pending).toMatchObject({ ok: false, error: 'unavailable' }); transport.disconnect();
+  });
+  it('reports offline workflow reads as unavailable and only an explicitly incompatible host as unsupported', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    expect(await transport.getWorkflowSnapshot('project')).toMatchObject({ ok: false, error: 'unavailable' });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok' });
+    transport.disconnect();
+    expect(await transport.getWorkflowSnapshot('project')).toMatchObject({ ok: false, error: 'unavailable' });
+    expect(await transport.workflowPreview({ action: 'read', projectId: 'project', previewId: 'preview' })).toMatchObject({ ok: false, message: 'PC connection is unavailable. Reconnect to continue.' });
+    const old = makeCreateSocket();
+    const oldTransport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket: old.createSocket });
+    old.sockets[0].triggerOpen(); old.sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 13 });
+    expect(await oldTransport.getWorkflowSnapshot('project')).toMatchObject({ ok: false, error: 'unsupported' });
+    oldTransport.disconnect();
+  });
+  it('gates discovery at v14 and sends no legacy mutation', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 13 });
+    const before = sockets[0].sent.length;
+    expect(await transport.agentCapabilitiesList({ providerId: 'codex', workspaceId: 'ws' })).toMatchObject({ ok: false, code: 'unsupported' });
+    expect(sockets[0].sent).toHaveLength(before);
+    transport.disconnect();
+  });
+  it('rejects a correlated catalog for another workspace and mismatched command receipts', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const pending = transport.agentCapabilitiesList({ providerId: 'codex', workspaceId: 'ws', sessionId: 'chat' });
+    const request = sockets[0].lastSent() as { requestId: string; request: unknown };
+    expect(request.request).toEqual({ providerId: 'codex', workspaceId: 'ws', sessionId: 'chat' });
+    sockets[0].triggerMessage({ kind: 'agent-capabilities-list-reply', requestId: request.requestId, result: { ok: true, value: { providerId: 'codex', workspaceId: 'other', workspaceRoot: '/work/other', hostId: 'PC', observedAt: 'now', revision: 'a'.repeat(64), canManage: true, application: 'new-session', models: [], items: [], actions: [], issues: [] } } });
+    expect(await pending).toMatchObject({ ok: false, code: 'unavailable' });
+    const mutation = transport.agentCapabilitiesManage({ providerId: 'codex', workspaceId: 'ws', commandId: 'exact-id', expectedRevision: 'a'.repeat(64), action: 'plugin-install', target: 'test@local', scope: 'user' });
+    const sent = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'agent-capabilities-manage-reply', requestId: sent.requestId, result: { ok: true, value: { commandId: 'wrong-id', action: 'plugin-install', state: 'applied', application: 'new-session' } } });
+    expect(await mutation).toMatchObject({ ok: false, code: 'uncertain' });
+    transport.disconnect();
+  });
+});
+
 describe('WsEzTerminalTransport — auth handshake', () => {
   it('sends an auth envelope with the configured token once the socket opens', () => {
     const { createSocket, sockets } = makeCreateSocket();
@@ -176,7 +261,8 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     expect(sockets[0].lastSent()).toEqual({
       kind: 'auth',
       token: 'tok-123',
-      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
+      supportedProtocolVersions: SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
       clientVersion: '1.0.0-test',
       buildSha: 'abc123',
     });
@@ -197,6 +283,10 @@ describe('WsEzTerminalTransport — auth handshake', () => {
 
   it.each([
     ['missing auth-ok version', { kind: 'auth-ok' }],
+    ['obsolete auth-ok version', { kind: 'auth-ok', protocolVersion: 1, hostVersion: '2.0.0' }],
+    ['previous unsupported auth-ok version', { kind: 'auth-ok', protocolVersion: 11, hostVersion: '2.0.0' }],
+    ['future auth-ok version', { kind: 'auth-ok', protocolVersion: REMOTE_PROTOCOL_VERSION + 1, hostVersion: '2.0.0' }],
+    ['malformed legacy host identity', { kind: 'auth-ok', protocolVersion: 14, hostVersion: '' }],
     ['unsupported auth-ok version', { kind: 'auth-ok', protocolVersion: 99, hostVersion: '2.0.0' }],
     ['explicit auth failure', {
       kind: 'auth-fail',
@@ -228,7 +318,7 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     sockets[0].triggerOpen();
     expect(sockets[0].lastSent()).toMatchObject({
       kind: 'auth',
-      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
     });
 
     sockets[0].triggerRawMessage({
@@ -1188,7 +1278,7 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
 
     sockets[1].triggerOpen();
     expect(sockets[1].lastSent()).toMatchObject({
-      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
     });
     sockets[1].triggerMessage({ kind: 'auth-ok' });
   });
@@ -1223,7 +1313,7 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
 
     sockets[1].triggerOpen();
     expect(sockets[1].lastSent()).toMatchObject({
-      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
     });
     const sentBeforeAuth = sockets[1].sent.length;
     await expect(transport.listSessions()).resolves.toEqual([]);
@@ -1756,7 +1846,7 @@ describe('WsEzTerminalTransport — connection health and explicit retry', () =>
     expect(sockets).toHaveLength(2);
     sockets[1].triggerOpen();
     expect(sockets[1].lastSent()).toMatchObject({
-      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
     });
   });
 
@@ -1810,7 +1900,7 @@ describe('WsEzTerminalTransport — auth watchdog (self-heals a stuck attempt)',
     });
     sockets[0].triggerOpen();
     expect(sockets[0].lastSent()).toMatchObject({
-      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
     });
     // No auth-ok, no close — the exact stall that used to hang "Connecting…" forever.
     vi.advanceTimersByTime(1000 + 100);
@@ -1818,7 +1908,7 @@ describe('WsEzTerminalTransport — auth watchdog (self-heals a stuck attempt)',
     expect(sockets).toHaveLength(2);
     sockets[1].triggerOpen();
     expect(sockets[1].lastSent()).toMatchObject({
-      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_AUTH_BASELINE,
     });
     sockets[1].triggerMessage({ kind: 'auth-ok' }); // the retry authenticates cleanly
   });

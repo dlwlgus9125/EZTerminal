@@ -224,6 +224,7 @@ describe('OpenClawService — getStatus', () => {
       readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
     });
     const promise = service.getStatus();
+    await expect(promise).resolves.toMatchObject({ state: 'running', connectionState: 'checking' });
     await flush();
     const ws = sockets[0];
     await completeHandshake(ws);
@@ -231,8 +232,9 @@ describe('OpenClawService — getStatus', () => {
     const statusReq = ws.sent.find((m) => m.method === 'status');
     expect(statusReq).toBeTruthy();
     ws.serverSend({ type: 'res', id: statusReq!.id, ok: true, payload: { runtimeVersion: '2026.6.11' } });
-    const status = await promise;
-    expect(status).toEqual({ state: 'running', port: 18789, version: '2026.6.11' });
+    await flush();
+    expect(await service.getStatus()).toEqual({ state: 'running', port: 18789, version: '2026.6.11', connectionState: 'connected' });
+    service.dispose();
   });
 
   it('force=true re-probes installed status rather than trusting the cache', async () => {
@@ -450,7 +452,21 @@ describe('OpenClawService — runLifecycle', () => {
     expect(calls[0]?.args).toEqual(['gateway', 'start']);
   });
 
-  it('does not report start success when the CLI exits 0 but the gateway is not RPC-ready', async () => {
+  it('accepts an HTTP-live start without requiring management RPC', async () => {
+    const { spawn } = makeExitSpawn(0);
+    const service = new OpenClawService({
+      env: cliEnv, spawn, httpGet: async () => ({ ok: true }), readFile: async () => '{}',
+      wsFactory: () => { throw new Error('management RPC unavailable'); },
+      verifyLifecycleReadiness: true, lifecycleReadinessAttempts: 1, lifecycleStableMs: 0,
+    });
+    try {
+      await expect(service.runLifecycle('start')).resolves.toEqual({ ok: true });
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it('does not report start success when the CLI exits 0 but HTTP is unavailable', async () => {
     const { spawn } = makeExitSpawn(0);
     const service = new OpenClawService({
       env: cliEnv,
@@ -781,7 +797,7 @@ describe('OpenClawService — chat token', () => {
     });
 
     await expect(service.getStatus()).resolves.toEqual({ state: 'stopped', port: 19099 });
-    expect(httpGet).toHaveBeenCalledWith('http://127.0.0.1:19099/');
+    expect(httpGet).toHaveBeenCalledWith('http://127.0.0.1:19099/healthz');
     await expect(service.getChatUrl()).resolves.toBe(`http://127.0.0.1:19099/#token=${FAKE_TOKEN}`);
     expect(spawn).not.toHaveBeenCalled();
   });

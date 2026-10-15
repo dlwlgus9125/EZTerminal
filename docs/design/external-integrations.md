@@ -30,23 +30,21 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 - 시작·중지·재시작 요청은 먼저 generation이 있는 durable intent로 원자 저장하고 즉시
   접수 결과를 반환한다. 같은 활성 intent는 합치고 충돌 intent는 더 높은 generation으로
   대체하여 마지막 요청이 이긴다. 앱 종료는 intent나 supervisor를 취소하지 않는다.
-- Windows supervisor는 사용자 로그인 때 등록되고 15초 quick check와 5분 authenticated
-  RPC check로 `running`/`stopped` 기대 상태를 유지한다. 외부에서 중지된 running 상태는
-  복구하고, stopped 상태에서 외부로 시작된 gateway는 다시 중지한다.
-- 실행 성공은 CLI exit code가 아니라 `/startupz`와 인증된 `status` RPC가 5초 동안
-  안정적으로 통과했을 때만 기록한다. 재시작은 active work를 최대 60초 기다린 뒤 bounded
-  force 경로를 사용한다.
-- 자동 복구는 진단 → 대상 파일 SHA-256 검증 백업 → 지원되는 비대화형 session SQLite
-  import와 approval import → `doctor --fix --non-interactive` 순서의 비파괴 경로만 사용한다.
-  approval import는 제한된 staging 파일과 표준 입력을 사용하고 실패하면 원본을 복구한다.
-- Start·Restart는 gateway HTTP/RPC 정상 판정 전에 OpenClaw가 반환한 agent workspace와
-  상태 루트의 폐기된 setup/attestation 원본·Doctor claim을 확인한다. 해당
-  파일이 있을 때만 제한 ACL·SHA-256 검증 백업을 만들고 gateway를 관리형으로
-  일시 중지한 다음 공식 Doctor로 SQLite 이전한다. 원본과 중단 claim이 모두
-  제거된 것을 확인해야만 gateway 시작을 재개한다.
-  package 설치·업데이트, 데이터 삭제/reset, token 생성, 인증 약화와 aggressive doctor는
-  자동 실행하지 않는다. 세 번 실패하거나 CLI 호환성, 백업, 권한, unrelated port/task
-  충돌을 만나면 새 명시적 요청 전까지 blocked로 남긴다.
+- Windows supervisor는 로그인 때 저장된 켜짐/꺼짐 의도를 복원하고 15초마다 실행 상태를
+  관찰한다. Start는 해당 OpenClaw 작업을 등록·활성화한 뒤 `gateway start --json`,
+  Stop은 자동 시작을 비활성화한 뒤 `gateway stop --force --json`을 사용한다.
+  명시적 Restart는 중지→시작이며 완료된 Restart를 재로그인 때 반복하지 않는다.
+- `/healthz`는 실행 상태, `/startupz`는 준비 상태를 나타낸다. 관리 RPC는 세션·로그·버전의
+  별도 연결 상태이며 실행 성공이나 자동 재시작 조건이 아니다. 살아 있는 프로세스는 최대
+  120초 동안 시작을 기다리고, 종료가 확인된 경우에만 재실행한다. 실패는 최대 3회까지
+  재시도한 뒤 실제 명령 오류와 다음 행동을 표시한다.
+- 일반 실행은 Doctor, session/approval/workspace 이전, 복구 백업 또는 강제 재설치를
+  수행하지 않는다. 데이터·설정 복구는 사용자가 먼저 Stop을 선택한 뒤 상세 영역의 공식
+  수동 명령 안내에 따라 실행한다. 기존 설정·인증·세션과 복구 백업은 보존한다.
+- 상태 관측 시각과 supervisor heartbeat는 별개다. 오래된 runtime이나 응답 없는
+  supervisor의 작업은 새 요청을 합치거나 버튼을 잠그는 근거로 사용하지 않는다.
+  배포된 script가 바뀌면 이전 supervisor를 교체하며, 이전 버전의 데이터 복구가 진행
+  중이면 완료를 기다린다. gateway 프로세스는 이 교체만으로 재시작하지 않는다.
 - `dispose()`는 polling, RPC와 child handle을 정리할 뿐 gateway 또는 supervisor 기대 상태를
   대신 종료하지 않는다. 기존 직접 autostart 등록 UI는 supervisor가 대체한다.
 - 설정 변경은 명시된 allowlist만 허용하며 gateway 설정 파일을 EZTerminal이 직접

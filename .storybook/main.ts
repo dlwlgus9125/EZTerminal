@@ -13,6 +13,30 @@ const config: StorybookConfig = {
     reactDocgen: 'react-docgen',
   },
   async viteFinal(config) {
+    const existingIgnored = config.server?.watch?.ignored;
+    config.server = {
+      ...config.server,
+      watch: {
+        ...config.server?.watch,
+        ignored: [
+          ...(Array.isArray(existingIgnored) ? existingIgnored : existingIgnored ? [existingIgnored] : []),
+          // Generated directories already excluded by .gitignore. A trace HTML
+          // or mobile build must not trigger a full reload of the story under test.
+          '**/artifacts/**',
+          '**/test-results/**',
+          '**/playwright-report/**',
+          '**/blob-report/**',
+          '**/storybook-static/**',
+          '**/dist/**',
+          '**/.vite/**',
+          '**/out/**',
+          '**/out-*/**',
+          '**/.native-build/**',
+          '**/native/**/target/**',
+          '**/release-assets/**',
+        ],
+      },
+    };
     config.optimizeDeps = {
       ...config.optimizeDeps,
       include: [

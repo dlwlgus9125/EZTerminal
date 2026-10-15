@@ -64,12 +64,13 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     endOnClose = true,
     apiKeySource = 'ANTHROPIC_API_KEY',
     account?: Record<string, unknown>,
+    emitInitialization = true,
   ) {
     this.input = input;
     this.inputOptions = options;
     this.endOnClose = endOnClose;
     this.account = account;
-    this.emit({
+    if (emitInitialization) this.emit({
       type: 'system',
       subtype: 'init',
       uuid: 'provider-init',
@@ -138,6 +139,7 @@ function makeAdapter(options: {
   readonly endOnClose?: boolean;
   readonly apiKeySource?: string;
   readonly account?: Record<string, unknown>;
+  readonly emitInitialization?: boolean;
   readonly shutdownTimeoutMs?: number;
   readonly historyReader?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['historyReader'];
 } = {}): {
@@ -159,9 +161,11 @@ function makeAdapter(options: {
         options.endOnClose,
         options.apiKeySource,
         options.account,
+        options.emitInitialization,
       );
       return fakeQuery;
     },
+    extensionCommand: async () => '[]',
     historyReader: options.historyReader,
     initializationTimeoutMs: 100,
     operationTimeoutMs: 100,
@@ -439,6 +443,20 @@ describe('Claude provider review and enablement', () => {
 });
 
 describe('ClaudeProviderAdapter sessions', () => {
+  it('removes the complete tool catalog for planning and carries the exact managed reasoning and environment', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan', toolsDisabled: true, managedExecution: true,
+      reasoningEffort: 'high', environment: { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } });
+    expect(fixture.query.inputOptions).toMatchObject({ tools: [], disallowedTools: ['*'], settingSources: [], mcpServers: {}, plugins: [], agents: {},
+      permissionMode: 'plan', effort: 'high', env: { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } });
+    await expect(fixture.query.inputOptions.canUseTool!('Bash', { command: 'echo unsafe' }, { signal: new AbortController().signal, toolUseID: 'blocked', requestId: 'request-blocked' })).resolves.toMatchObject({ behavior: 'deny' });
+    await fixture.adapter.dispose();
+    const worker = makeAdapter();
+    await worker.adapter.createSession({ ...context, managedExecution: true, reasoningEffort: 'high', environment: { PORT: '4002' } });
+    expect(worker.query.inputOptions).toMatchObject({ disallowedTools: ['Agent', 'Task'], effort: 'high', env: { PORT: '4002' } });
+    expect(worker.query.inputOptions).not.toHaveProperty('tools');
+    await worker.adapter.dispose();
+  });
   it('creates and resumes through the SDK using an absolute executable and allowlisted environment', async () => {
     const created = makeAdapter();
     const handle = await created.adapter.createSession(context);
@@ -591,6 +609,27 @@ describe('ClaudeProviderAdapter sessions', () => {
     await approved.adapter.dispose();
   });
 
+  it('opens an approved native subscription session from zero-turn control evidence before system/init', async () => {
+    const fixture = makeAdapter({ emitInitialization: false, policy: { ...enabledPolicy, authenticationPath: 'existing-claude-ai-login', anthropicThirdPartyApproval: true }, account: { apiProvider: 'firstParty', subscriptionType: 'pro' } });
+    await expect(fixture.adapter.createSession(context)).resolves.toMatchObject({ providerSessionId });
+    expect(fixture.events.some(event => event.kind === 'turn-started' || event.kind === 'transcript')).toBe(false);
+    await fixture.adapter.dispose();
+  });
+
+  it('fails closed on ambiguous zero-turn auth and rechecks a conflicting later init source', async () => {
+    const policy = { ...enabledPolicy, authenticationPath: 'existing-claude-ai-login' as const, anthropicThirdPartyApproval: true };
+    const ambiguous = makeAdapter({ emitInitialization: false, policy, account: { apiProvider: 'firstParty' } });
+    await expect(ambiguous.adapter.createSession(context)).rejects.toMatchObject({ code: 'CLAUDE_AUTHENTICATION_FAILED' });
+    await ambiguous.adapter.dispose();
+    const fixture = makeAdapter({ emitInitialization: false, policy, account: { apiProvider: 'firstParty', subscriptionType: 'pro' } });
+    await fixture.adapter.createSession(context);
+    fixture.query.emit({ type: 'system', subtype: 'init', apiKeySource: 'ANTHROPIC_API_KEY' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'session-state', state: 'failed' }));
+    expect(fixture.query.inputOptions.abortController?.signal.aborted).toBe(true);
+    await fixture.adapter.dispose();
+  });
+
   it('lists SDK models and applies model and permission settings', async () => {
     const fixture = makeAdapter();
     await start(fixture);
@@ -612,6 +651,25 @@ describe('ClaudeProviderAdapter sessions', () => {
     })).resolves.toMatchObject({ model: 'opus', permissionPreset: 'full-access' });
     expect(fixture.query.models).toEqual(['opus']);
     expect(fixture.query.permissionModes).toEqual(['bypassPermissions']);
+    await fixture.adapter.dispose();
+  });
+
+  it('sends SDK image blocks and quoted reply context', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({
+      sessionId: context.sessionId, providerSessionId, turnId: 'turn-context', commandId: 'command-context', prompt: 'Review',
+      context: {
+        replyTo: { messageId: 'earlier', text: 'Prior answer' },
+        attachments: [{ id: 'a', name: 'screen.png', kind: 'image', mimeType: 'image/png', data: 'YWJj' }],
+      },
+    });
+    const submitted = await inputIterator.next();
+    expect(submitted.value?.message.content).toEqual([
+      { type: 'text', text: expect.stringContaining('Prior answer') },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } },
+    ]);
     await fixture.adapter.dispose();
   });
 
@@ -930,8 +988,21 @@ describe('ClaudeProviderAdapter sessions', () => {
     releaseReturn();
     await deactivating;
     await expect(listing).resolves.toEqual([
-      expect.objectContaining({ id: 'default', displayName: 'Claude' }),
+      expect.objectContaining({ id: 'sonnet', displayName: 'Claude Sonnet' }),
     ]);
+    await fixture.adapter.dispose();
+  });
+});
+
+describe('Claude zero-turn capabilities', () => {
+  it('loads native settings and closes an ephemeral query with no prompt or transcript', async () => {
+    const fixture = makeAdapter();
+    const catalog = await fixture.adapter.listCapabilities(context.workspaceRoot);
+    expect(catalog.models[0]?.id).toBe('sonnet');
+    expect(fixture.query.inputOptions).toMatchObject({ persistSession: false, settingSources: ['user', 'project', 'local'], cwd: context.workspaceRoot });
+    expect(await fixture.query.input[Symbol.asyncIterator]().next()).toEqual({ done: true, value: undefined });
+    expect(fixture.query.closeCount).toBe(1);
+    expect(fixture.events).toEqual([]);
     await fixture.adapter.dispose();
   });
 });

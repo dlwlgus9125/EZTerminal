@@ -14,6 +14,7 @@ export const WEBVIEW74_COMPATIBILITY_FEATURES = Object.freeze([
   'Element.replaceChildren',
   'WeakRef',
   'AggregateError',
+  'Promise.allSettled',
   'Blob.text',
   'Blob.arrayBuffer',
   'File.text',
@@ -56,6 +57,34 @@ function defineMethod(target: object, name: PropertyKey, value: unknown): void {
     writable: true,
     value,
   });
+}
+
+export function installPromiseAllSettled(promiseConstructor: PromiseConstructor = Promise): void {
+  if (typeof promiseConstructor.allSettled === 'function') return;
+  defineMethod(promiseConstructor, 'allSettled', function allSettled(this: PromiseConstructor, values: Iterable<unknown>): Promise<PromiseSettledResult<unknown>[]> {
+    return new this<PromiseSettledResult<unknown>[]>((resolve, reject) => {
+      if (values === null || values === undefined || typeof values[Symbol.iterator] !== 'function') throw new TypeError('Promise.allSettled requires an iterable');
+      const settled = Array.from(values, value => this.resolve(value).then(
+        result => ({ status: 'fulfilled' as const, value: result }),
+        reason => ({ status: 'rejected' as const, reason }),
+      ));
+      this.all(settled).then(resolve, reject);
+    });
+  });
+}
+
+/** Chrome 74 parses gap for grid while ignoring it for flex; CSS.supports cannot distinguish them. */
+export function installFlexGapSupport(documentObject: Document = document): void {
+  if (documentObject.documentElement.hasAttribute('data-ui-flex-gap')) return;
+  const probe = documentObject.createElement('div');
+  probe.style.cssText = 'position:absolute;top:-9999px;left:0;display:flex;flex-direction:column;gap:1px;visibility:hidden;margin:0;padding:0;border:0';
+  const first = documentObject.createElement('div'); const second = documentObject.createElement('div');
+  first.style.cssText = second.style.cssText = 'height:1px;width:1px;flex-shrink:0;margin:0;padding:0;border:0';
+  probe.appendChild(first); probe.appendChild(second);
+  (documentObject.body ?? documentObject.documentElement).appendChild(probe);
+  const distance = second.getBoundingClientRect().top - first.getBoundingClientRect().bottom;
+  probe.remove();
+  documentObject.documentElement.setAttribute('data-ui-flex-gap', distance > 0.5 ? 'supported' : 'unsupported');
 }
 
 export function installObjectHasOwn(
@@ -309,6 +338,7 @@ export function getMissingWebViewCompatibilityFeatures(
     ['Element.replaceChildren', typeof (globalObject.Element.prototype as ReplaceChildrenCompatibleElement).replaceChildren === 'function'],
     ['WeakRef', typeof globals.WeakRef === 'function'],
     ['AggregateError', typeof globals.AggregateError === 'function'],
+    ['Promise.allSettled', typeof globalObject.Promise.allSettled === 'function'],
     ['Blob.text', typeof blobPrototype.text === 'function'],
     ['Blob.arrayBuffer', typeof blobPrototype.arrayBuffer === 'function'],
     ['File.text', typeof filePrototype.text === 'function'],
@@ -329,6 +359,7 @@ export function installWebViewCompatibility(
   installElementReplaceChildren(globalObject.Element.prototype as ReplaceChildrenCompatibleElement);
   installWeakRef(globals);
   installAggregateError(globals);
+  installPromiseAllSettled(globalObject.Promise);
   installBlobMethods(
     globalObject.Blob.prototype as BlobMethodsCompatiblePrototype,
     globalObject.FileReader,
@@ -339,6 +370,7 @@ export function installWebViewCompatibility(
   );
   installCryptoRandomUuid(globalObject.crypto as CryptoRandomUuidCompatible);
   installHTMLElementInert(globalObject.HTMLElement.prototype, globalObject.document);
+  installFlexGapSupport(globalObject.document);
 
   const missingFeatures = getMissingWebViewCompatibilityFeatures(globalObject);
   if (missingFeatures.length > 0) {

@@ -41,14 +41,14 @@ function isThemeName(value: string): value is ThemeName {
   return listThemes().some((t) => t.id === value);
 }
 
-/** Reads the persisted choice, defaulting to 'matrix' for anything absent,
+/** Reads the persisted choice, defaulting to 'dark' for anything absent,
  * unrecognized, or on a storage error (private browsing / quota). */
 export function loadTheme(): ThemeName {
   try {
     const raw = localStorage.getItem(THEME_KEY);
-    return raw !== null && isThemeName(raw) ? raw : 'matrix';
+    return raw !== null && isThemeName(raw) ? raw : 'dark';
   } catch {
-    return 'matrix';
+    return 'dark';
   }
 }
 

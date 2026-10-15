@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { type DockviewApi } from 'dockview-react';
 import { buildLayoutEnvelope } from '../shared/layout-schema';
+import { serializeWorkbench } from './workbench-views';
 import {
   RENDERER_RECOVERY_MAX_ACTIVE_RUNS,
   RENDERER_RECOVERY_MAX_HISTORY,
@@ -23,7 +24,7 @@ function buildRendererRecoveryCheckpoint(
   api: DockviewApi,
   structuredAgentCreates: readonly RendererRecoveryStructuredAgentCreate[],
 ): RendererRecoveryCheckpoint | null {
-  const rawLayout = structuredClone(api.toJSON()) as unknown as Record<string, unknown>;
+  const rawLayout = structuredClone(serializeWorkbench(api)) as unknown as Record<string, unknown>;
   // Cwd/adoption are forbidden in durable layouts. The volatile checkpoint
   // stores them in its bounded pane section, so keep its layout equally clean.
   if (typeof rawLayout.panels === 'object' && rawLayout.panels !== null) {

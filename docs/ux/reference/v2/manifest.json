@@ -1,0 +1,434 @@
+{
+  "schemaVersion": 1,
+  "name": "EZTerminal 2.0",
+  "version": "0.1-review",
+  "date": "2026-10-13",
+  "revision": 6,
+  "revisionLabel": "채팅 기반 CLI 스킨 상세",
+  "changedScreens": [
+    "D05",
+    "D16",
+    "D18",
+    "M04"
+  ],
+  "screenRevisions": {
+    "D01": 2,
+    "D02": 2,
+    "D03": 2,
+    "D04": 2,
+    "D05": 6,
+    "D06": 2,
+    "D07": 2,
+    "D08": 2,
+    "D09": 2,
+    "D10": 4,
+    "D11": 2,
+    "D12": 4,
+    "D13": 4,
+    "D14": 2,
+    "D15": 4,
+    "D16": 6,
+    "D17": 4,
+    "D18": 6,
+    "D19": 3,
+    "D20": 3,
+    "D21": 2,
+    "D22": 2,
+    "D23": 2,
+    "D24": 3,
+    "D25": 4,
+    "D26": 2,
+    "D27": 4,
+    "D28": 2,
+    "D29": 2,
+    "D30": 2,
+    "D31": 2,
+    "D32": 2,
+    "D33": 2,
+    "D34": 2,
+    "D35": 2,
+    "D36": 4,
+    "D37": 2,
+    "D38": 4,
+    "D39": 2,
+    "D40": 2,
+    "D41": 2,
+    "D42": 2,
+    "D43": 2,
+    "D44": 4,
+    "M04": 6,
+    "M07": 4,
+    "M08": 4,
+    "M15": 4,
+    "M05": 4,
+    "M06": 4,
+    "M16": 4
+  },
+  "status": "r6 설계 승인 · 구현 진행 허가",
+  "implementationApproved": true,
+  "planningAddenda": [
+    "ai-operating-01",
+    "delivery-01"
+  ],
+  "summary": "대화에서 기획으로, 기획에서 완성으로.",
+  "description": "AI와 대화하며 요구사항, 화면, 작업, 검증을 하나의 프로젝트로 이어가는 개인용 작업 공간.",
+  "platforms": [
+    "Windows 10 22H2 / Windows 11 x64",
+    "Android 10+"
+  ],
+  "authority": "Approved r6 implementation baseline. Active DESIGN.md and frontend UX own promoted contracts; pinned desktop handoff remains immutable.",
+  "removedScreens": [
+    {
+      "id": "D14",
+      "reason": "로드맵은 EZTerminal 2.0 제작 문서이며 독립 제품 기능으로 만들지 않음."
+    }
+  ],
+  "policyConfirmation": {
+    "date": "2026-10-13",
+    "status": "confirmed",
+    "source": "deep-interview 최종 요약에 대한 사용자 1번 선택",
+    "scope": "11개 운영 정책",
+    "designApproved": false,
+    "implementationApproved": false
+  },
+  "canonical": "content.mjs",
+  "prototype": "index.html",
+  "visualValues": "prototype.css",
+  "runtimeMappings": "DESIGN.md and docs/ux/frontend-design.md section 16; prototype CSS is reference-only",
+  "userReview": "r6 whole-design-approved; individual clicks not asserted",
+  "sourceHashes": {
+    "build.mjs": "97b721cb348bc8b62d6fbfe80048f1b81a4890c998c8a1ff4f3c81eaea270caf",
+    "policy-planning.mjs": "1480300246cf78cfe1254032bc4f155905a247273d6348af720ba8ce958107c8",
+    "policy-ui.js": "518a1464e547be3eac2b62dd33deda06daa953e5593c726dea3a4c36cda662d7",
+    "profile-ui.js": "0a3e789738501749499b59922a5677e8380b1739699185089495fe512762486e",
+    "build-policies.mjs": "e10bd726b91f5cfb2f552979c26bf1d4fc8bf0e53cea8b74b786adf88f36aba0",
+    "verify-policies.mjs": "fbaba8ae91b09e80cacaeb9bc62c16cbfd6a0211bde8ed58c9ff5b24df1edfb5",
+    "terminal-skin.js": "b9d28ac0c330e2c92e1af64afda40f9a0a2de178f28e76e1c171bcb8c01e7a7f",
+    "chat-skin-review.js": "de3b513642c8120750d0f36b7100cd6178549c19c2afffa0a2abc99cbff2bb53",
+    "verify-terminal-skin.mjs": "0b99c462ca491f9b7f8689a07fc9d01da09230661138510a2a6efdc762105c79",
+    "content.mjs": "59305671792c1b48a699f942242e43ea0f004c52a5770ef85340d4431724c0dd",
+    "ai-planning.mjs": "7961817fa20a5a7567f372d94ea27e06395c2fcbeb86f5ae877280b194bb1e83",
+    "delivery-planning.mjs": "62c6848e2ac9e0e62d00570d6e2ba76b7b059804178a40d5ffe9fa5a42318e5a",
+    "delivery-ui.js": "b0b3bd497821f2423e175732599fa91b685a4b08b22d99a5a9ea3276b4ff3b2e",
+    "build-delivery.mjs": "f5982a4320647a8342c83df2c56b989e20b367e0adc5276a3516dbbf62bd0755",
+    "prototype.js": "19bc7e4300b36b79541ecbb5e31508051573537adf100ac68bfecd66795cb49a",
+    "prototype.css": "7cc53f595c5c3c23fc9ccaa329fd29d08211f10296935c1f3ac9329aa053171a",
+    "index.html": "eb511bc76980c7585c789b50386ad6d619970c852a448ea4f38d4aa75e7a490e",
+    "data.js": "defc5662f823d8e9672af6b1e92fed0208bafeca94f67f11245126b3d88abf86",
+    "catalog.json": "4d26693583ad4f643b7b2e7375c59913df12eab0fe1c1118e7894c11cbd146f4"
+  },
+  "screens": [
+    {
+      "id": "D01",
+      "detail": "screens/detail/D01.png",
+      "wireframe": "screens/wireframe/D01.png"
+    },
+    {
+      "id": "D02",
+      "detail": "screens/detail/D02.png",
+      "wireframe": "screens/wireframe/D02.png"
+    },
+    {
+      "id": "D03",
+      "detail": "screens/detail/D03.png",
+      "wireframe": "screens/wireframe/D03.png"
+    },
+    {
+      "id": "D04",
+      "detail": "screens/detail/D04.png",
+      "wireframe": "screens/wireframe/D04.png"
+    },
+    {
+      "id": "D05",
+      "detail": "screens/detail/D05.png",
+      "wireframe": "screens/wireframe/D05.png"
+    },
+    {
+      "id": "D06",
+      "detail": "screens/detail/D06.png",
+      "wireframe": "screens/wireframe/D06.png"
+    },
+    {
+      "id": "D07",
+      "detail": "screens/detail/D07.png",
+      "wireframe": "screens/wireframe/D07.png"
+    },
+    {
+      "id": "D08",
+      "detail": "screens/detail/D08.png",
+      "wireframe": "screens/wireframe/D08.png"
+    },
+    {
+      "id": "D09",
+      "detail": "screens/detail/D09.png",
+      "wireframe": "screens/wireframe/D09.png"
+    },
+    {
+      "id": "D10",
+      "detail": "screens/detail/D10.png",
+      "wireframe": "screens/wireframe/D10.png"
+    },
+    {
+      "id": "D11",
+      "detail": "screens/detail/D11.png",
+      "wireframe": "screens/wireframe/D11.png"
+    },
+    {
+      "id": "D12",
+      "detail": "screens/detail/D12.png",
+      "wireframe": "screens/wireframe/D12.png"
+    },
+    {
+      "id": "D13",
+      "detail": "screens/detail/D13.png",
+      "wireframe": "screens/wireframe/D13.png"
+    },
+    {
+      "id": "D15",
+      "detail": "screens/detail/D15.png",
+      "wireframe": "screens/wireframe/D15.png"
+    },
+    {
+      "id": "D16",
+      "detail": "screens/detail/D16.png",
+      "wireframe": "screens/wireframe/D16.png"
+    },
+    {
+      "id": "D17",
+      "detail": "screens/detail/D17.png",
+      "wireframe": "screens/wireframe/D17.png"
+    },
+    {
+      "id": "D18",
+      "detail": "screens/detail/D18.png",
+      "wireframe": "screens/wireframe/D18.png"
+    },
+    {
+      "id": "D19",
+      "detail": "screens/detail/D19.png",
+      "wireframe": "screens/wireframe/D19.png"
+    },
+    {
+      "id": "D20",
+      "detail": "screens/detail/D20.png",
+      "wireframe": "screens/wireframe/D20.png"
+    },
+    {
+      "id": "D21",
+      "detail": "screens/detail/D21.png",
+      "wireframe": "screens/wireframe/D21.png"
+    },
+    {
+      "id": "D22",
+      "detail": "screens/detail/D22.png",
+      "wireframe": "screens/wireframe/D22.png"
+    },
+    {
+      "id": "D23",
+      "detail": "screens/detail/D23.png",
+      "wireframe": "screens/wireframe/D23.png"
+    },
+    {
+      "id": "D24",
+      "detail": "screens/detail/D24.png",
+      "wireframe": "screens/wireframe/D24.png"
+    },
+    {
+      "id": "D25",
+      "detail": "screens/detail/D25.png",
+      "wireframe": "screens/wireframe/D25.png"
+    },
+    {
+      "id": "D26",
+      "detail": "screens/detail/D26.png",
+      "wireframe": "screens/wireframe/D26.png"
+    },
+    {
+      "id": "D27",
+      "detail": "screens/detail/D27.png",
+      "wireframe": "screens/wireframe/D27.png"
+    },
+    {
+      "id": "D28",
+      "detail": "screens/detail/D28.png",
+      "wireframe": "screens/wireframe/D28.png"
+    },
+    {
+      "id": "D29",
+      "detail": "screens/detail/D29.png",
+      "wireframe": "screens/wireframe/D29.png"
+    },
+    {
+      "id": "D30",
+      "detail": "screens/detail/D30.png",
+      "wireframe": "screens/wireframe/D30.png"
+    },
+    {
+      "id": "D31",
+      "detail": "screens/detail/D31.png",
+      "wireframe": "screens/wireframe/D31.png"
+    },
+    {
+      "id": "D32",
+      "detail": "screens/detail/D32.png",
+      "wireframe": "screens/wireframe/D32.png"
+    },
+    {
+      "id": "D33",
+      "detail": "screens/detail/D33.png",
+      "wireframe": "screens/wireframe/D33.png"
+    },
+    {
+      "id": "D34",
+      "detail": "screens/detail/D34.png",
+      "wireframe": "screens/wireframe/D34.png"
+    },
+    {
+      "id": "D35",
+      "detail": "screens/detail/D35.png",
+      "wireframe": "screens/wireframe/D35.png"
+    },
+    {
+      "id": "D36",
+      "detail": "screens/detail/D36.png",
+      "wireframe": "screens/wireframe/D36.png"
+    },
+    {
+      "id": "D37",
+      "detail": "screens/detail/D37.png",
+      "wireframe": "screens/wireframe/D37.png"
+    },
+    {
+      "id": "D38",
+      "detail": "screens/detail/D38.png",
+      "wireframe": "screens/wireframe/D38.png"
+    },
+    {
+      "id": "D39",
+      "detail": "screens/detail/D39.png",
+      "wireframe": "screens/wireframe/D39.png"
+    },
+    {
+      "id": "D40",
+      "detail": "screens/detail/D40.png",
+      "wireframe": "screens/wireframe/D40.png"
+    },
+    {
+      "id": "D41",
+      "detail": "screens/detail/D41.png",
+      "wireframe": "screens/wireframe/D41.png"
+    },
+    {
+      "id": "D42",
+      "detail": "screens/detail/D42.png",
+      "wireframe": "screens/wireframe/D42.png"
+    },
+    {
+      "id": "D43",
+      "detail": "screens/detail/D43.png",
+      "wireframe": "screens/wireframe/D43.png"
+    },
+    {
+      "id": "D44",
+      "detail": "screens/detail/D44.png",
+      "wireframe": "screens/wireframe/D44.png"
+    },
+    {
+      "id": "M01",
+      "detail": "screens/detail/M01.png",
+      "wireframe": "screens/wireframe/M01.png"
+    },
+    {
+      "id": "M02",
+      "detail": "screens/detail/M02.png",
+      "wireframe": "screens/wireframe/M02.png"
+    },
+    {
+      "id": "M03",
+      "detail": "screens/detail/M03.png",
+      "wireframe": "screens/wireframe/M03.png"
+    },
+    {
+      "id": "M04",
+      "detail": "screens/detail/M04.png",
+      "wireframe": "screens/wireframe/M04.png"
+    },
+    {
+      "id": "M05",
+      "detail": "screens/detail/M05.png",
+      "wireframe": "screens/wireframe/M05.png"
+    },
+    {
+      "id": "M06",
+      "detail": "screens/detail/M06.png",
+      "wireframe": "screens/wireframe/M06.png"
+    },
+    {
+      "id": "M07",
+      "detail": "screens/detail/M07.png",
+      "wireframe": "screens/wireframe/M07.png"
+    },
+    {
+      "id": "M08",
+      "detail": "screens/detail/M08.png",
+      "wireframe": "screens/wireframe/M08.png"
+    },
+    {
+      "id": "M09",
+      "detail": "screens/detail/M09.png",
+      "wireframe": "screens/wireframe/M09.png"
+    },
+    {
+      "id": "M10",
+      "detail": "screens/detail/M10.png",
+      "wireframe": "screens/wireframe/M10.png"
+    },
+    {
+      "id": "M11",
+      "detail": "screens/detail/M11.png",
+      "wireframe": "screens/wireframe/M11.png"
+    },
+    {
+      "id": "M12",
+      "detail": "screens/detail/M12.png",
+      "wireframe": "screens/wireframe/M12.png"
+    },
+    {
+      "id": "M13",
+      "detail": "screens/detail/M13.png",
+      "wireframe": "screens/wireframe/M13.png"
+    },
+    {
+      "id": "M14",
+      "detail": "screens/detail/M14.png",
+      "wireframe": "screens/wireframe/M14.png"
+    },
+    {
+      "id": "M15",
+      "detail": "screens/detail/M15.png",
+      "wireframe": "screens/wireframe/M15.png"
+    },
+    {
+      "id": "M16",
+      "detail": "screens/detail/M16.png",
+      "wireframe": "screens/wireframe/M16.png"
+    }
+  ],
+  "qaReport": "qa-report.json",
+  "approvalId": "ezterminal-v2-r6-2026-10-13",
+  "approvalManifest": "approvals/2026-10-13-r6-final.json",
+  "qaFreshness": {
+    "status": "historical-before-approval-cleanup",
+    "qaCreatedAt": "2026-10-13T03:19:32.187Z",
+    "changedSources": [
+      "build.mjs",
+      "build-policies.mjs",
+      "content.mjs",
+      "ai-planning.mjs",
+      "build-delivery.mjs",
+      "prototype.js",
+      "data.js",
+      "catalog.json"
+    ]
+  }
+}

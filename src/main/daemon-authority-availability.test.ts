@@ -1,7 +1,6 @@
-import { DAEMON_DATABASE_SCHEMA_VERSION } from '../shared/daemon-authority';
 import { describe, expect, it } from 'vitest';
 
-import { redactDaemonAuthorityAvailability } from '../shared/daemon-authority';
+import { DAEMON_DATABASE_SCHEMA_VERSION, redactDaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { DaemonStoreInitializationError } from './daemon-store';
 import {
   readyDaemonAuthorityAvailability,

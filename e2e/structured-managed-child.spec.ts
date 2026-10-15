@@ -288,7 +288,16 @@ test('restored Agent opens managed and provider-native children with enforced ow
     )))?.revision ?? 0;
     await managed.getByTestId('structured-agent-composer-input').fill(directInstruction);
     await managed.getByTestId('structured-agent-send').click();
-    await expect(managed.getByText(directInstruction, { exact: true })).toBeVisible();
+    // The composer also contains this text while the encrypted submit envelope
+    // is being saved. Wait for a delivered transcript item before checking the
+    // daemon receipt, rather than mistaking the editable draft for delivery.
+    // A stopped fixture provider keeps the accepted message in the canonical
+    // history view. Its visual identity remains the same after the runtime ends.
+    const deliveredConversation = window.getByTestId('structured-agent-session').filter({
+      has: window.getByRole('heading', { name: 'Managed Implementer', exact: true }),
+    });
+    await expect(deliveredConversation.getByTestId('structured-agent-transcript')
+      .getByText(directInstruction, { exact: true })).toBeVisible({ timeout: 20_000 });
 
     await expect.poll(async () => {
       const [snapshot, transcript] = await window.evaluate(async ({ sessionId }) => Promise.all([

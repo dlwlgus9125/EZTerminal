@@ -147,12 +147,12 @@ describe('applyThemeVarsAndEffects', () => {
     expect(document.documentElement.getAttribute('data-effect-crt-curvature')).toBe('on');
   });
 
-  it('applies Matrix variables under a missing custom id while preserving the requested selector', () => {
+  it('applies Dark variables under a missing custom id while preserving the requested selector', () => {
     document.documentElement.dataset.theme = 'missing-custom-theme';
     applyThemeVarsAndEffects('missing-custom-theme', { effectToggles: {}, platformDefaults: {} });
     expect(styleText()).toContain('[data-theme="missing-custom-theme"]');
-    expect(styleText()).toContain(`--term-bg:${THEMES.matrix.cssVars['--term-bg']};`);
-    expect(styleText()).toContain(`--ui-canvas:${THEMES.matrix.ui!.canvas};`);
+    expect(styleText()).toContain(`--ui-canvas:${THEMES.dark.ui!.canvas};`);
+    expect(styleText()).toContain(`--ui-text-primary:${THEMES.dark.ui!.textPrimary};`);
   });
 
   it('converts version 2 UI colors directly while version 1 remains seed-compatible', () => {

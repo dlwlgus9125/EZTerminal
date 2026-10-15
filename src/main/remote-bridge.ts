@@ -1,6 +1,14 @@
 import { createRemoteOpenClawSession, type RemoteOpenClawSource } from './remote-openclaw-session';
 export type { RemoteOpenClawSource, OpenClawChatTicketResult } from './remote-openclaw-session';
 import { isRecord, isRemoteClientIdentity, isDispatchableClientMessage } from './remote-message-validation';
+import type { WorkflowAuthority } from './workflow-authority';
+import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
+import type { ConversationHistoryClient, HistoryResumeRequest, HistoryResumeResult } from '../shared/conversation-history';
+import type { PlanningAuthority } from './planning-authority';
+import type { PlanningRunAuthority } from './planning-run-authority';
+import type { PlanningAiResult } from '../shared/planning-ai';
+import type { PlanningAssetResult } from '../shared/planning-asset';
+import type { ProjectArchiveResult } from '../shared/project-archive';
 
 /**
  * RemoteBridge — WS multiplexer for the mobile remote-control bridge (M0).
@@ -45,6 +53,10 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_VERSION_WORKFLOW,
+  REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
+  REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY,
+  REMOTE_PROTOCOL_VERSION_PLANNING,
   REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
   REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
@@ -54,7 +66,7 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
-  isRemoteProtocolVersion,
+  negotiateRemoteProtocol,
   base64ToUint8Array,
   encodeFrame,
   uint8ArrayToBase64,
@@ -74,6 +86,7 @@ import {
   DAEMON_PROTOCOL_VERSION,
   parseDaemonCommand,
   type DaemonCommand,
+  type DaemonPrincipal,
   type DaemonCommandReceipt,
   type DaemonEvent,
   type DaemonSnapshot,
@@ -579,7 +592,19 @@ export interface RemoteBridgeOptions {
   readonly agentCoordinationSource?: RemoteAgentCoordinationSource;
   readonly agentOrchestrationSource?: RemoteAgentOrchestrationSource;
   readonly daemonSource?: RemoteDaemonSource;
+  readonly planningSource?: Pick<PlanningAuthority, 'read' | 'execute'>;
+  readonly workflowSource?: Pick<WorkflowAuthority, 'read' | 'execute'>;
+  readonly workflowNavigationSource?: import('../shared/workflow').WorkflowNavigationAccess;
+  readonly workflowPreviewSource?: Pick<WorkflowAuthority, 'preview'>;
+  readonly agentCapabilitiesSource?: AgentCapabilitiesClient;
+  readonly planningRunSource?: Pick<PlanningRunAuthority, 'read' | 'execute' | 'readResult'>;
+  readonly planningAiSource?: { request(value: unknown, principalId: string): Promise<PlanningAiResult> };
+  readonly planningAssetSource?: { request(value: unknown, principalId: string): Promise<PlanningAssetResult> };
+  readonly projectArchiveSource?: { request(value: unknown, principalId: string): Promise<ProjectArchiveResult> };
   readonly agentHistorySource?: RemoteAgentHistorySource;
+  readonly conversationHistorySource?: Omit<ConversationHistoryClient, 'resumeHistory'> & {
+    resumeHistory(request: HistoryResumeRequest, principal: DaemonPrincipal): Promise<HistoryResumeResult>;
+  };
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
   /** Redeems a one-time pairing code. Absent means pairing is unavailable and
@@ -1101,10 +1126,9 @@ export function attachConnection(
         ws.close(AUTH_CLOSE_CODE);
         return;
       }
-      const requestedProtocol = parsed.protocolVersion;
+      const requestedProtocol = negotiateRemoteProtocol(parsed.protocolVersion, parsed.supportedProtocolVersions);
       const protocolCompatible = (
-        isRemoteProtocolVersion(requestedProtocol)
-        && requestedProtocol === REMOTE_PROTOCOL_VERSION
+        requestedProtocol !== null
         && typeof parsed.clientVersion === 'string'
         && parsed.clientVersion.trim().length > 0
         && isRemoteClientIdentity(parsed.clientIdentity)
@@ -1120,8 +1144,8 @@ export function attachConnection(
           ? (options.pairingSource?.match(candidateToken) ?? null)
           : null;
         if (byBearer || pairingGeneration !== null) {
-          // Every credential kind requires the exact v7 lifecycle contract;
-          // neither a persisted bearer nor a pairing code can negotiate down.
+          // Credentials authorize one bounded offer. Failure never starts a
+          // second lower-version attempt, nor consumes an incompatible pairing code.
           if (!protocolCompatible) {
             send({
               kind: 'auth-fail',
@@ -1719,6 +1743,134 @@ export function attachConnection(
         daemonEventsSubscribed = false;
         break;
 
+      case 'workflow-preview': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowPreviewSource && clientIdentity
+          ? options.workflowPreviewSource.preview(msg.request) : Promise.resolve({ ok: false, message: 'Update the authenticated host and client to use workflow previews.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'workflow-preview-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'conversation-history-resolve':
+      case 'conversation-history-list':
+      case 'conversation-history-read':
+      case 'conversation-history-prepare':
+      case 'conversation-history-resume': {
+        const source = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY && clientIdentity ? options.conversationHistorySource : undefined;
+        const unavailable = { ok: false, reason: 'unsupported', message: 'Update the authenticated PC and mobile app to use unified conversation history.' } as const;
+        const operation = source ? msg.kind === 'conversation-history-resolve'
+          ? negotiatedProtocol >= 16 && source.resolveConversation ? source.resolveConversation(msg.ref) : Promise.resolve(unavailable)
+          : msg.kind === 'conversation-history-list' ? source.listConversations(msg.query)
+          : msg.kind === 'conversation-history-read' ? source.readConversation(msg.conversationId, msg.cursor, msg.limit)
+            : msg.kind === 'conversation-history-prepare' ? source.prepareHistoryResume(msg.request)
+              : source.resumeHistory(msg.request, { kind: 'android', id: `android:${clientIdentity!.clientId}` }) : Promise.resolve(unavailable);
+        void operation.then(value => {
+          // Older readers validate strict v15 entry shapes and expect the requested alias back.
+          const legacyEntry = (entry: import('../shared/conversation-history').ConversationEntry) => {
+            const legacy = { ...entry }; delete legacy.aliases; delete legacy.sessionAliases;
+            return { ...legacy, ...(msg.kind === 'conversation-history-read' ? { conversationId: msg.conversationId }
+              : msg.kind === 'conversation-history-prepare' ? { conversationId: msg.request.conversationId } : {}) };
+          };
+          const result = negotiatedProtocol >= 16 || !value.ok ? value : 'items' in value
+            ? { ...value, items: value.items.map(legacyEntry) } : 'entry' in value ? { ...value, entry: legacyEntry(value.entry) } : value;
+          if (authed) send({ kind: `${msg.kind}-reply`, requestId: msg.requestId, result } as import('../shared/remote-protocol').ConversationHistoryReply);
+        }).catch(() => {
+          if (authed) send({ kind: `${msg.kind}-reply`, requestId: msg.requestId, result: { ok: false, reason: 'unavailable', message: 'Conversation history is temporarily unavailable.' } } as import('../shared/remote-protocol').ConversationHistoryReply);
+        });
+        break;
+      }
+      case 'workflow-navigation': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY && options.workflowNavigationSource && clientIdentity
+          ? options.workflowNavigationSource.getWorkflowNavigation(msg.projectId)
+          : Promise.resolve({ ok: false as const, error: 'unsupported', message: 'Update the connected PC to use project navigation summaries.' });
+        void result.then(value => { if (authed) send({ kind: 'workflow-navigation-reply', requestId: msg.requestId, result: value }); })
+          .catch(() => { if (authed) send({ kind: 'workflow-navigation-reply', requestId: msg.requestId, result: { ok: false, error: 'unavailable', message: 'Project navigation is temporarily unavailable.' } }); });
+        break;
+      }
+      case 'workflow-read':
+      case 'workflow-execute': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowSource && clientIdentity
+          ? msg.kind === 'workflow-read' ? options.workflowSource.read(msg.projectId) : options.workflowSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}` })
+          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use subproject workflows.' } as const);
+        void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'agent-capabilities-list': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES && options.agentCapabilitiesSource && clientIdentity
+          ? options.agentCapabilitiesSource.list(msg.request) : Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the authenticated host and client to discover provider extensions.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'agent-capabilities-list-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'agent-capabilities-manage': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES && options.agentCapabilitiesSource && clientIdentity
+          ? options.agentCapabilitiesSource.manage(msg.command) : Promise.resolve({ ok: false, code: 'unsupported', message: 'Update the authenticated host and client to manage provider extensions.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'agent-capabilities-manage-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'planning-read': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningSource
+          ? msg.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to read a subproject.' } as const)
+            : options.planningSource.read(msg.projectId, msg.subprojectId)
+          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the host and client to use planning.' } as const);
+        void result.then((value) => { if (authed) send({ kind: 'planning-read-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'planning-ai-request': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningAiSource && clientIdentity
+          ? (msg.request.type === 'start' ? msg.request.request.subprojectId : msg.request.subprojectId) && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+            ? Promise.resolve({ ok: false, message: 'Update the client to request a scoped proposal.' } as const)
+            : options.planningAiSource.request(msg.request, `android:${clientIdentity.clientId}`)
+          : Promise.resolve({ ok: false, message: 'Connect to an updated authenticated PC to request a proposal.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'planning-ai-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'planning-asset-request': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningAssetSource && clientIdentity
+          ? msg.request.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+            ? Promise.resolve({ ok: false, message: 'Update the client to manage scoped assets.' } as const)
+            : options.planningAssetSource.request(msg.request, `android:${clientIdentity.clientId}`)
+          : Promise.resolve({ ok: false, message: 'Connect to an updated authenticated PC to manage scene assets.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'planning-asset-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'project-archive-request': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.projectArchiveSource && clientIdentity
+          ? options.projectArchiveSource.request(msg.request, `android:${clientIdentity.clientId}`)
+          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated authenticated PC to manage project records.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'project-archive-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'planning-run-read':
+      case 'planning-run-execute': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningRunSource && clientIdentity
+          ? msg.kind === 'planning-run-read' ? msg.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to read a subproject execution.' } as const)
+            : options.planningRunSource.read(msg.projectId, msg.subprojectId)
+            : msg.command.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+              ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to execute a subproject.' } as const)
+              : options.planningRunSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}` })
+          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Planning execution requires a compatible authenticated connection.' } as const);
+        void result.then((value) => { if (authed) send({ kind: 'planning-run-reply', requestId: msg.requestId, result: value.ok && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+          ? { ...value, snapshot: { ...value.snapshot, runs: value.snapshot.runs.filter(run => !run.preparation.subprojectId && !run.preparation.workflow) } } : value }); });
+        break;
+      }
+      case 'planning-result-read': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningRunSource && clientIdentity
+          ? msg.query.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+            ? Promise.resolve({ ok: false, message: 'Update the client to read a subproject result.' } as const)
+            : options.planningRunSource.readResult(msg.query)
+          : Promise.resolve({ ok: false, message: 'Connect to an updated PC to read results.' } as const);
+        void result.then((value) => { if (authed) send({ kind: 'planning-result-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
+      case 'planning-execute': {
+        const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.planningSource && clientIdentity
+          ? msg.command.subprojectId && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
+            ? Promise.resolve({ ok: false, error: 'forbidden', message: 'Update the client to edit a subproject.' } as const)
+            : options.planningSource.execute(msg.command, `android:${clientIdentity.clientId}`)
+          : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the host and client to use planning.' } as const);
+        void result.then((value) => { if (authed) send({ kind: 'planning-execute-reply', requestId: msg.requestId, result: value }); });
+        break;
+      }
       case 'daemon-command': {
         if (
           negotiatedProtocol < DAEMON_PROTOCOL_VERSION

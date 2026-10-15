@@ -19,6 +19,7 @@ const storySources = [
   'src/renderer/workbench/DesktopHandoff.stories.tsx',
   'src/renderer/workbench/MobileShell.stories.tsx',
   'src/renderer/workbench/MobileActiveSurfaces.stories.tsx',
+  'src/renderer/workbench/MobileV2.stories.tsx',
   'src/renderer/ui/Overlays.stories.tsx',
   'src/renderer/ui/Feedback.stories.tsx',
 ].map((path) => readFileSync(resolve(process.cwd(), path), 'utf8')).join('\n');

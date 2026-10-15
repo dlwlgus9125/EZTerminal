@@ -485,6 +485,142 @@ async function authed(ws: FakeWs, options: RemoteBridgeOptions): Promise<void> {
   await flush();
 }
 
+describe('unified history over the authenticated v15 bridge', () => {
+  const failure = { ok: false, reason: 'not-found', message: 'Source missing.' } as const;
+  const request = { conversationId: 'conversation_native_opaque', revision: 'reviewed', commandId: 'same-request', permissionPreset: 'plan' } as const;
+  const source = () => ({ listConversations: vi.fn().mockResolvedValue({ ok: true, items: [], nextCursor: null }),
+    readConversation: vi.fn().mockResolvedValue(failure), prepareHistoryResume: vi.fn().mockResolvedValue(failure), resumeHistory: vi.fn().mockResolvedValue(failure) });
+
+  it('upgrades one authenticated baseline offer to v15 before routing the new history API', async () => {
+    const history = source(); const { options } = makeOptions({ conversationHistorySource: history }); const ws = new FakeWs(); attachConnection(ws, options);
+    ws.clientSend({ ...authMessage(), protocolVersion: 12, supportedProtocolVersions: [15, 14, 13, 12] }); await flush();
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'auth-ok', protocolVersion: 15 }));
+    ws.clientSend({ kind: 'conversation-history-list', requestId: 'list', query: {} }); await flush();
+    expect(history.listConversations).toHaveBeenCalledWith({}); ws.close();
+  });
+
+  it.each([[], [15, 12, 12], ['15', 12], [15], Array(17).fill(12)].map(offered => ({ offered })))('refuses a malformed authenticated offer without dispatching history: $offered', ({ offered }) => {
+    const history = source(); const { options } = makeOptions({ conversationHistorySource: history }); const ws = new FakeWs(); attachConnection(ws, options);
+    ws.clientSend({ ...authMessage(), protocolVersion: 12, supportedProtocolVersions: offered });
+    return flush().then(() => {
+      expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'auth-fail', reason: 'incompatible-protocol' }));
+      expect(history.listConversations).not.toHaveBeenCalled(); expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);
+    });
+  });
+
+  it('binds adoption to the authenticated device and rejects provider identity injection before dispatch', async () => {
+    const history = source(); const navigation = { getWorkflowNavigation: vi.fn().mockResolvedValue({ ok: false, error: 'not-found', message: 'Missing project.' }) };
+    const { options } = makeOptions({ conversationHistorySource: history, workflowNavigationSource: navigation }); const ws = new FakeWs(); await authed(ws, options);
+    ws.clientSend({ kind: 'conversation-history-resume', requestId: 'injected', request: { ...request, providerSessionId: 'arbitrary-provider-id' } });
+    await flush(); expect(history.resumeHistory).not.toHaveBeenCalled();
+    ws.clientSend({ kind: 'conversation-history-resume', requestId: 'valid', request });
+    ws.clientSend({ kind: 'workflow-navigation', requestId: 'nav', projectId: 'project' }); await flush();
+    expect(history.resumeHistory).toHaveBeenCalledWith(request, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001' });
+    expect(ws.sent).toContainEqual({ kind: 'conversation-history-resume-reply', requestId: 'valid', result: failure });
+    expect(navigation.getWorkflowNavigation).toHaveBeenCalledWith('project'); ws.close();
+  });
+
+  it.each([12, 13, 14] as const)('keeps v%s authenticated while explicitly refusing only the new history operations', async protocolVersion => {
+    const history = source(); const { options } = makeOptions({ conversationHistorySource: history }); const ws = new FakeWs(); attachConnection(ws, options);
+    ws.clientSend({ ...authMessage(), protocolVersion }); await flush();
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'auth-ok', protocolVersion }));
+    ws.clientSend({ kind: 'conversation-history-list', requestId: 'list', query: {} });
+    ws.clientSend({ kind: 'conversation-history-resume', requestId: 'resume', request }); await flush();
+    expect(history.listConversations).not.toHaveBeenCalled(); expect(history.resumeHistory).not.toHaveBeenCalled();
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'conversation-history-resume-reply', result: expect.objectContaining({ reason: 'unsupported' }) })); ws.close();
+  });
+});
+
+describe('planning over the authenticated bridge', () => {
+  const result = { ok: false, error: 'not-found', message: 'No project.' } as const;
+  const command = {
+    commandId: 'planning-1', projectId: 'project', expectedRevision: 0,
+    actor: { kind: 'ai', id: 'spoofed' }, type: 'planning.freeze',
+    payload: { baselineId: 'baseline-1', title: 'Approved design' },
+  } as const;
+
+  it('routes planning with the authenticated device identity and a correlated reply', async () => {
+    const source = { read: vi.fn().mockResolvedValue(result), execute: vi.fn().mockResolvedValue(result) };
+    const { options } = makeOptions({ planningSource: source });
+    const ws = new FakeWs();
+    await authed(ws, options);
+    ws.clientSend({ kind: 'planning-execute', requestId: 'request-1', command });
+    await flush();
+    expect(source.execute).toHaveBeenCalledWith(command, 'android:00000000-0000-4000-8000-000000000001');
+    expect(ws.sent).toContainEqual({ kind: 'planning-execute-reply', requestId: 'request-1', result });
+    ws.close();
+  });
+
+  it('rejects planning writes before authentication', async () => {
+    const source = { read: vi.fn(), execute: vi.fn() };
+    const { options } = makeOptions({ planningSource: source });
+    const ws = new FakeWs();
+    attachConnection(ws, options);
+    ws.clientSend({ kind: 'planning-execute', requestId: 'request-1', command });
+    await flush();
+    expect(source.execute).not.toHaveBeenCalled();
+    ws.close();
+  });
+
+  it('accepts v12 terminal clients but explicitly declines their planning requests', async () => {
+    const source = { read: vi.fn(), execute: vi.fn() };
+    const { options } = makeOptions({ planningSource: source });
+    const ws = new FakeWs();
+    attachConnection(ws, options);
+    ws.clientSend({ ...authMessage(), protocolVersion: 12 });
+    await flush();
+    expect(ws.sent.some((message) => message.kind === 'auth-ok')).toBe(true);
+    ws.clientSend({ kind: 'planning-execute', requestId: 'request-1', command });
+    await flush();
+    expect(source.execute).not.toHaveBeenCalled();
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'planning-execute-reply', result: expect.objectContaining({ error: 'unavailable' }) }));
+    ws.close();
+  });
+});
+
+describe('planning extension bridge authority', () => {
+  it('declines every scoped workflow/planning request from protocol 13 while keeping the authenticated connection', async () => {
+    const request = vi.fn(); const read = vi.fn(); const execute = vi.fn(); const readResult = vi.fn();
+    const { options } = makeOptions({ planningSource: { read, execute }, planningAiSource: { request }, planningAssetSource: { request }, planningRunSource: { read, execute, readResult } });
+    const ws = new FakeWs(); attachConnection(ws, options); ws.clientSend({ ...authMessage(), protocolVersion: 13 }); await flush();
+    const messages = [
+      { kind: 'planning-read', projectId: 'project', subprojectId: 'sub' },
+      { kind: 'planning-execute', command: { commandId: 'c', projectId: 'project', subprojectId: 'sub', expectedRevision: 0, actor: { kind: 'user', id: 'u' }, type: 'planning.freeze', payload: { baselineId: 'b', title: 'Ready' } } },
+      { kind: 'planning-ai-request', request: { type: 'read', projectId: 'project', subprojectId: 'sub' } },
+      { kind: 'planning-asset-request', request: { type: 'read', projectId: 'project', subprojectId: 'sub', assetId: 'asset' } },
+      { kind: 'planning-run-read', projectId: 'project', subprojectId: 'sub' },
+      { kind: 'planning-run-execute', command: { commandId: 'run', projectId: 'project', subprojectId: 'sub', expectedRevision: 0, type: 'start', payload: { runId: 'run' } } },
+      { kind: 'planning-result-read', query: { kind: 'attempt', projectId: 'project', subprojectId: 'sub', attemptId: 'attempt' } },
+      { kind: 'workflow-read', projectId: 'project' },
+    ];
+    for (const [index, value] of messages.entries()) ws.clientSend({ ...value, requestId: `legacy-${index}` });
+    await flush(); expect(request).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(readResult).not.toHaveBeenCalled();
+    expect(ws.sent.filter(value => 'requestId' in value && typeof value.requestId === 'string' && value.requestId.startsWith('legacy-'))).toHaveLength(messages.length); ws.close();
+  });
+  const cases = [
+    ['planning-ai-request', 'planning-ai-reply', 'planningAiSource', { type: 'read', projectId: 'project' }],
+    ['planning-asset-request', 'planning-asset-reply', 'planningAssetSource', { type: 'read', projectId: 'project', assetId: 'logo' }],
+    ['project-archive-request', 'project-archive-reply', 'projectArchiveSource', { type: 'inventory', projectId: 'project' }],
+  ] as const;
+  it.each(cases)('authenticates and correlates %s', async (kind, reply, sourceKey, request) => {
+    const result = { ok: false, error: 'unavailable', message: 'Unavailable' } as const;
+    const source = { request: vi.fn().mockResolvedValue(result) };
+    const { options } = makeOptions({ [sourceKey]: source });
+    const blocked = new FakeWs(); attachConnection(blocked, options);
+    blocked.clientSend({ kind, requestId: 'unauthenticated', request }); await flush();
+    expect(source.request).not.toHaveBeenCalled(); blocked.close();
+    const legacy = new FakeWs(); attachConnection(legacy, options);
+    legacy.clientSend({ ...authMessage(), protocolVersion: 12 }); await flush();
+    legacy.clientSend({ kind, requestId: 'legacy', request }); await flush();
+    expect(source.request).not.toHaveBeenCalled(); legacy.close();
+    const ws = new FakeWs(); await authed(ws, options);
+    ws.clientSend({ kind, requestId: 'extension-1', request }); await flush();
+    expect(source.request).toHaveBeenCalledOnce();
+    expect(source.request).toHaveBeenCalledWith(request, 'android:00000000-0000-4000-8000-000000000001');
+    expect(ws.sent).toContainEqual({ kind: reply, requestId: 'extension-1', result }); ws.close();
+  });
+});
+
 function daemonSnapshot(revision = 3, eventSequence = 5): DaemonSnapshot {
   return {
     protocolVersion: DAEMON_PROTOCOL_VERSION,
@@ -688,7 +824,7 @@ describe('RemoteBridge — auth gate', () => {
       kind: 'auth-fail',
       reason: 'incompatible-protocol',
       supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
-      supportedProtocolVersions: [REMOTE_PROTOCOL_VERSION],
+      supportedProtocolVersions: SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
       hostVersion: HOST_VERSION,
     });
     expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);

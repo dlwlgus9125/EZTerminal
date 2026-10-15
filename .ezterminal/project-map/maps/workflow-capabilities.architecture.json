@@ -1,0 +1,626 @@
+{
+  "schemaVersion": 2,
+  "id": "workflow-capabilities",
+  "type": "architecture",
+  "title": "Subproject workflows and native capabilities",
+  "summary": "Desktop and Android share direct project, subproject and stage navigation with small host summaries. Before-first-message completion changes drafts only; editable workflows retain the existing execution and native setting authority.",
+  "contentLocale": "en",
+  "layoutIntent": {
+    "density": "balanced",
+    "emphasisIds": [
+      "project-items",
+      "draft-registry",
+      "frozen-run",
+      "graph-runtime",
+      "managed-attempts",
+      "native-providers",
+      "capability-panel",
+      "capability-authority"
+    ]
+  },
+  "chapters": [
+    {
+      "id": "draft-and-conversation",
+      "title": "Drafts and conversations",
+      "summary": "General chats and subprojects are peers in direct navigation; metadata summaries preserve lineage without loading editable graph or conversation content.",
+      "focusIds": [
+        "project-items",
+        "draft-registry",
+        "stage-context",
+        "mcp-workflow",
+        "navigation-summary"
+      ]
+    },
+    {
+      "id": "native-extensions",
+      "title": "Native PC capabilities",
+      "summary": "Zero-turn discovery and explicit native changes expose disabled state, stable scope and durable recovery.",
+      "focusIds": [
+        "capability-panel",
+        "capability-authority",
+        "native-receipts",
+        "native-providers"
+      ]
+    },
+    {
+      "id": "frozen-execution",
+      "title": "Frozen execution",
+      "summary": "Graph preparation feeds the existing ledger and managed attempts while keeping current draft edits independent.",
+      "focusIds": [
+        "draft-registry",
+        "frozen-run",
+        "graph-runtime",
+        "managed-attempts",
+        "native-providers"
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "surfaces",
+      "label": "Shared desktop and Android surfaces"
+    },
+    {
+      "id": "host",
+      "label": "Project and native setting authority"
+    },
+    {
+      "id": "execution",
+      "label": "Existing execution and review authority"
+    },
+    {
+      "id": "providers",
+      "label": "Reviewed native providers"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "project-items",
+      "label": "Shared project and conversation tree",
+      "detail": "General chats and subprojects are peers. Stage chats open by stable Session ID; tree, recent and title search share one projection and host-scoped view state.",
+      "group": "surfaces",
+      "rank": 0,
+      "order": 0,
+      "kind": "surface",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/project-conversation-tree-model.ts",
+          "startLine": 64,
+          "endLine": 167,
+          "lineDigest": "sha256:42a729940c79287bc758a0594e58cb5552764a419e8f750ad6b5d0d9b7b4875a",
+          "claim": "One metadata-only projection keeps general chats and subprojects as peers, attaches stage conversations using exact links, and feeds tree, recent and title search views."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectConversationTree.tsx",
+          "startLine": 53,
+          "endLine": 155,
+          "lineDigest": "sha256:605ed6afd621c76d7fd155b560fbcb37f6bc9ce4725c70c08bf86e2be53e56b2",
+          "claim": "Host-scoped view state preserves search, expansion and selection. Scroll restoration waits for asynchronous row height; chevron expansion and named-item opening remain separate."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/MobilePlanningNavigator.tsx",
+          "startLine": 49,
+          "endLine": 62,
+          "lineDigest": "sha256:df01fc98afe927573c7ebf940e861dce14accd56b34454576b4c3f611dd8ab8c",
+          "claim": "Android derives a nonsecret authority fingerprint and uses the same shared navigation projection for the connected host."
+        }
+      ]
+    },
+    {
+      "id": "capability-panel",
+      "label": "Before-first-message discovery",
+      "detail": "Selection discovers metadata before the first message. Skills and commands edit the current draft; /resume opens history without submitting a model turn.",
+      "group": "surfaces",
+      "rank": 0,
+      "order": 1,
+      "kind": "surface",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/AgentCapabilitiesPanel.tsx",
+          "startLine": 67,
+          "endLine": 85,
+          "lineDigest": "sha256:411b59859236ffb916053fb936cfb7ba27b7559722ce9d955ec7eb1231d7dd50",
+          "claim": "Discovery begins when provider/workspace/session scope changes, before a message, and rejects stale asynchronous results after navigation."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/use-agent-completion.tsx",
+          "startLine": 11,
+          "endLine": 60,
+          "lineDigest": "sha256:af686816e3d283e02c63310b36a0faf7f3e6a31e5e19df57777a3ee7efa8327e",
+          "claim": "The shared controller keeps the keyboard-selected option inside the completion list, preserves draft context, respects IME composition and opens history without submitting a message."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/agent-completion.ts",
+          "startLine": 23,
+          "endLine": 52,
+          "lineDigest": "sha256:ee3d96210eb8078234e048b1b4f9d3a2b809863f519fca4819ca9dccd26a6fd0",
+          "claim": "Suggestions distinguish application history actions from native skills; insertion replaces only the current token and preserves other draft fields."
+        }
+      ]
+    },
+    {
+      "id": "draft-registry",
+      "label": "Workflow draft authority",
+      "detail": "Host-scoped revisioned drafts preserve stable node IDs, change history, archive boundaries and user ownership.",
+      "group": "host",
+      "rank": 1,
+      "order": 0,
+      "kind": "store",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 208,
+          "endLine": 272,
+          "lineDigest": "sha256:4256e34e1a90a256605cbd8147f580c5123e94e11528a0a263294be195f6e9fe",
+          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts but cannot execute, approve, archive or change ownership."
+        }
+      ]
+    },
+    {
+      "id": "capability-authority",
+      "label": "Native capability authority",
+      "detail": "Reviewed providers share PC configuration. Android manages that PC through authenticated v14 calls.",
+      "group": "host",
+      "rank": 1,
+      "order": 1,
+      "kind": "boundary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-capability-service.ts",
+          "startLine": 28,
+          "endLine": 63,
+          "lineDigest": "sha256:88148784c2958fda1e2b84322f767eed72e75d9448f04cd0308a5fb8fcc1f470",
+          "claim": "The reviewed provider supplies native metadata; built-in workflow skill appears only when tools are bound. Stable revisions include native configuration identity and host scope."
+        }
+      ]
+    },
+    {
+      "id": "stage-context",
+      "label": "Saved stage references",
+      "detail": "Host-resolved snapshots keep document and accepted-result references stable until the user refreshes them.",
+      "group": "host",
+      "rank": 2,
+      "order": 1,
+      "kind": "store",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 162,
+          "endLine": 207,
+          "lineDigest": "sha256:924253944a103be427abf9eb15473af3d900e7d3d1412fe159192b40d0550e95",
+          "claim": "Stage writes follow exact saved lineage, including continuation sources. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 136,
+          "endLine": 157,
+          "lineDigest": "sha256:8203afae1fbf7287851493d51c93923cc832a9b65f6039e80bf0dcb3ef67b60a",
+          "claim": "Explicit continuation copies the original stage reference snapshot after checking project, ordinary Session ownership and active stage; it does not silently refresh references."
+        }
+      ]
+    },
+    {
+      "id": "mcp-workflow",
+      "label": "AI draft and preview tools",
+      "detail": "Ordinary sessions can edit authorized drafts or one bound creation preview. Preview edits cannot create a saved subproject; run start and approvals require a user command.",
+      "group": "host",
+      "rank": 1,
+      "order": 2,
+      "kind": "boundary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-orchestration-mcp-server.ts",
+          "startLine": 362,
+          "endLine": 382,
+          "lineDigest": "sha256:9b6b9ac7f3ae9e615af4bcfc2f9375e7c11dddac3a63ae7c060d06f00d28dd7e",
+          "claim": "Session-authorized workflow tools read, validate, preview and edit drafts through the same host service; caller project identity cannot retarget the capability."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 66,
+          "endLine": 107,
+          "lineDigest": "sha256:72fd534a64cd35281b2ec6711d56ba9807ca5f3f586bd4c747509460efceebc5",
+          "claim": "One serialized project boundary binds a creation preview to one ordinary conversation. Exact command receipts and monotonic revisions reject duplicate contents, discarded-preview replies and changed drafts."
+        }
+      ]
+    },
+    {
+      "id": "native-receipts",
+      "label": "Durable native change receipts",
+      "detail": "Unknown outcomes block new mutations across process restarts. Receipt inspection never reruns native work.",
+      "group": "host",
+      "rank": 2,
+      "order": 2,
+      "kind": "store",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-capability-service.ts",
+          "startLine": 99,
+          "endLine": 150,
+          "lineDigest": "sha256:3f941bf1815f40eb84a06547ed62f7df083cce4c95abf280e8efaac1fcbd0b63",
+          "claim": "Native mutation saves an uncertain receipt before work, checks current revision and scope, never repeats the same command, and exposes nonsecret restart recovery plus explicit acknowledgement."
+        }
+      ]
+    },
+    {
+      "id": "frozen-run",
+      "label": "Frozen graph and run preparation",
+      "detail": "Explicit user preparation captures a graph revision and scoped planning baseline in the existing SQLite execution ledger.",
+      "group": "execution",
+      "rank": 2,
+      "order": 0,
+      "kind": "service",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 136,
+          "endLine": 192,
+          "lineDigest": "sha256:1e9ef8bf82cae1e1632bc36bde67a1595784cc954f483f4958085b030a6fea78",
+          "claim": "Explicit user run commands freeze graph and scoped planning into the existing ledger; receipt fingerprints reconcile retries before preparation or dispatch."
+        }
+      ]
+    },
+    {
+      "id": "graph-runtime",
+      "label": "Verified graph execution",
+      "detail": "Conditions, parallel joins, retry limits and approval waits advance only from verified frozen-run evidence.",
+      "group": "execution",
+      "rank": 3,
+      "order": 0,
+      "kind": "runtime",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-runtime.ts",
+          "startLine": 25,
+          "endLine": 113,
+          "lineDigest": "sha256:9ff47fcd2b992017e9b6d98963f833aba661d57aa0a8c504c598287f7566d93f",
+          "claim": "Runtime projection reads only the frozen graph and verified outcomes. Conditions, parallel joins, bounded retries and user approvals govern stage activation."
+        }
+      ]
+    },
+    {
+      "id": "managed-attempts",
+      "label": "Managed provider attempts",
+      "detail": "Existing worktree, permission, independent-review and integration gates remain authoritative for stage execution.",
+      "group": "execution",
+      "rank": 4,
+      "order": 0,
+      "kind": "runtime",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 413,
+          "endLine": 475,
+          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
+        }
+      ]
+    },
+    {
+      "id": "native-providers",
+      "label": "Native Codex and Claude",
+      "detail": "Native metadata is separate from model submission; selected skills and user settings follow provider-specific supported protocols.",
+      "group": "providers",
+      "rank": 5,
+      "order": 0,
+      "kind": "runtime",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/codex-provider-adapter.ts",
+          "startLine": 579,
+          "endLine": 668,
+          "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
+          "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/claude-provider-adapter.ts",
+          "startLine": 898,
+          "endLine": 968,
+          "lineDigest": "sha256:76650c632b70a0534cd56e1ca9d449e1d2692c30d566a95ec499dc0fede4522b",
+          "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt."
+        }
+      ]
+    },
+    {
+      "id": "navigation-summary",
+      "label": "Small navigation summaries",
+      "detail": "The host returns names, stage archive state and Session links. The list receives no graph instructions, documents, run bodies or transcripts.",
+      "group": "host",
+      "rank": 1,
+      "order": 3,
+      "kind": "service",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 114,
+          "endLine": 135,
+          "lineDigest": "sha256:6ce7b1e3c3c557bbd5a94f78e9b0e595fde517d7109916634c807127ab89e0d6",
+          "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated historical/current Session links only."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/use-project-conversation-navigation.ts",
+          "startLine": 49,
+          "endLine": 153,
+          "lineDigest": "sha256:636211db5681534b3fbc942cae4b015d3ef7a9f534ab98f4c9108afacb897211",
+          "claim": "Lazy metadata reads are fenced by host identity and coalesced per project; pagination remains separate and visible navigation polls only lightweight workflow summaries."
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "edit",
+      "from": "project-items",
+      "to": "draft-registry",
+      "label": "explicit scoped edits",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 208,
+          "endLine": 272,
+          "lineDigest": "sha256:4256e34e1a90a256605cbd8147f580c5123e94e11528a0a263294be195f6e9fe",
+          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts but cannot execute, approve, archive or change ownership."
+        }
+      ]
+    },
+    {
+      "id": "prepare",
+      "from": "draft-registry",
+      "to": "frozen-run",
+      "label": "user freezes graph revision",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 136,
+          "endLine": 192,
+          "lineDigest": "sha256:1e9ef8bf82cae1e1632bc36bde67a1595784cc954f483f4958085b030a6fea78",
+          "claim": "Explicit user run commands freeze graph and scoped planning into the existing ledger; receipt fingerprints reconcile retries before preparation or dispatch."
+        }
+      ]
+    },
+    {
+      "id": "advance",
+      "from": "frozen-run",
+      "to": "graph-runtime",
+      "label": "verified frozen graph",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-runtime.ts",
+          "startLine": 25,
+          "endLine": 113,
+          "lineDigest": "sha256:9ff47fcd2b992017e9b6d98963f833aba661d57aa0a8c504c598287f7566d93f",
+          "claim": "Runtime projection reads only the frozen graph and verified outcomes. Conditions, parallel joins, bounded retries and user approvals govern stage activation."
+        }
+      ]
+    },
+    {
+      "id": "dispatch",
+      "from": "graph-runtime",
+      "to": "managed-attempts",
+      "label": "ready stage activations",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 413,
+          "endLine": 475,
+          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
+        }
+      ]
+    },
+    {
+      "id": "model-turn",
+      "from": "managed-attempts",
+      "to": "native-providers",
+      "label": "existing provider lifecycle",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 413,
+          "endLine": 475,
+          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
+        }
+      ]
+    },
+    {
+      "id": "discover",
+      "from": "capability-panel",
+      "to": "capability-authority",
+      "label": "read before any message",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-capability-service.ts",
+          "startLine": 28,
+          "endLine": 63,
+          "lineDigest": "sha256:88148784c2958fda1e2b84322f767eed72e75d9448f04cd0308a5fb8fcc1f470",
+          "claim": "The reviewed provider supplies native metadata; built-in workflow skill appears only when tools are bound. Stable revisions include native configuration identity and host scope."
+        }
+      ]
+    },
+    {
+      "id": "native-metadata",
+      "from": "capability-authority",
+      "to": "native-providers",
+      "label": "native metadata control methods",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/codex-provider-adapter.ts",
+          "startLine": 579,
+          "endLine": 668,
+          "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
+          "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
+        }
+      ]
+    },
+    {
+      "id": "persist-receipt",
+      "from": "capability-authority",
+      "to": "native-receipts",
+      "label": "write receipt before native change",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-capability-service.ts",
+          "startLine": 99,
+          "endLine": 150,
+          "lineDigest": "sha256:3f941bf1815f40eb84a06547ed62f7df083cce4c95abf280e8efaac1fcbd0b63",
+          "claim": "Native mutation saves an uncertain receipt before work, checks current revision and scope, never repeats the same command, and exposes nonsecret restart recovery plus explicit acknowledgement."
+        }
+      ]
+    },
+    {
+      "id": "recover",
+      "from": "native-receipts",
+      "to": "capability-panel",
+      "label": "inspect saved result after restart",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-capability-service.ts",
+          "startLine": 99,
+          "endLine": 150,
+          "lineDigest": "sha256:3f941bf1815f40eb84a06547ed62f7df083cce4c95abf280e8efaac1fcbd0b63",
+          "claim": "Native mutation saves an uncertain receipt before work, checks current revision and scope, never repeats the same command, and exposes nonsecret restart recovery plus explicit acknowledgement."
+        }
+      ]
+    },
+    {
+      "id": "bind-stage",
+      "from": "draft-registry",
+      "to": "stage-context",
+      "label": "explicit link or refresh",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 162,
+          "endLine": 207,
+          "lineDigest": "sha256:924253944a103be427abf9eb15473af3d900e7d3d1412fe159192b40d0550e95",
+          "claim": "Stage writes follow exact saved lineage, including continuation sources. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
+        }
+      ]
+    },
+    {
+      "id": "stage-chat",
+      "from": "stage-context",
+      "to": "project-items",
+      "label": "host-owned reference snapshots",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 162,
+          "endLine": 207,
+          "lineDigest": "sha256:924253944a103be427abf9eb15473af3d900e7d3d1412fe159192b40d0550e95",
+          "claim": "Stage writes follow exact saved lineage, including continuation sources. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "from": "project-items",
+      "to": "mcp-workflow",
+      "label": "ordinary authorized session tools",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-orchestration-mcp-server.ts",
+          "startLine": 362,
+          "endLine": 382,
+          "lineDigest": "sha256:9b6b9ac7f3ae9e615af4bcfc2f9375e7c11dddac3a63ae7c060d06f00d28dd7e",
+          "claim": "Session-authorized workflow tools read, validate, preview and edit drafts through the same host service; caller project identity cannot retarget the capability."
+        }
+      ]
+    },
+    {
+      "id": "ai-edit",
+      "from": "mcp-workflow",
+      "to": "draft-registry",
+      "label": "same revisioned draft command",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 208,
+          "endLine": 272,
+          "lineDigest": "sha256:4256e34e1a90a256605cbd8147f580c5123e94e11528a0a263294be195f6e9fe",
+          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts but cannot execute, approve, archive or change ownership."
+        }
+      ]
+    },
+    {
+      "id": "project-to-navigation-summary",
+      "from": "project-items",
+      "to": "navigation-summary",
+      "label": "lazy metadata only",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts",
+          "startLine": 114,
+          "endLine": 135,
+          "lineDigest": "sha256:6ce7b1e3c3c557bbd5a94f78e9b0e595fde517d7109916634c807127ab89e0d6",
+          "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated historical/current Session links only."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/use-project-conversation-navigation.ts",
+          "startLine": 49,
+          "endLine": 153,
+          "lineDigest": "sha256:636211db5681534b3fbc942cae4b015d3ef7a9f534ab98f4c9108afacb897211",
+          "claim": "Lazy metadata reads are fenced by host identity and coalesced per project; pagination remains separate and visible navigation polls only lightweight workflow summaries."
+        }
+      ]
+    }
+  ],
+  "mainPath": [
+    "project-items",
+    "draft-registry",
+    "frozen-run",
+    "graph-runtime",
+    "managed-attempts",
+    "native-providers"
+  ]
+}

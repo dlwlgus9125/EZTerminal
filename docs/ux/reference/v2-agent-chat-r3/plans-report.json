@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "checkedAt": "2026-10-13T11:30:34.266Z",
+  "scope": "prototype only",
+  "passed": true,
+  "checks": [
+    {
+      "name": "desktop: empty project, cancel, create and discuss without a model turn",
+      "passed": true
+    },
+    {
+      "name": "desktop: switching plans preserves separate document and conversation drafts",
+      "passed": true
+    },
+    {
+      "name": "desktop: link a general conversation without recreating or sending it",
+      "passed": true
+    },
+    {
+      "name": "desktop: quick task prepares and starts without a plan or hidden turn",
+      "passed": true
+    },
+    {
+      "name": "mobile: empty project, cancel, create and discuss without a model turn",
+      "passed": true
+    },
+    {
+      "name": "mobile: switching plans preserves separate document and conversation drafts",
+      "passed": true
+    },
+    {
+      "name": "mobile: link a general conversation without recreating or sending it",
+      "passed": true
+    },
+    {
+      "name": "mobile: quick task prepares and starts without a plan or hidden turn",
+      "passed": true
+    },
+    {
+      "name": "link an existing plan without overwriting its document",
+      "passed": true
+    },
+    {
+      "name": "archive, filter and restore preserve plan content",
+      "passed": true
+    },
+    {
+      "name": "search and unmatched search do not erase records",
+      "passed": true
+    },
+    {
+      "name": "renaming and changing theme preserve unsaved document content",
+      "passed": true
+    },
+    {
+      "name": "review revisions preserve the old result and require a new explicit start",
+      "passed": true
+    },
+    {
+      "name": "user titles render as text without HTML execution",
+      "passed": true
+    },
+    {
+      "name": "plans-home/desktop: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-list/desktop: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-new/desktop: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-from-chat/desktop: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-empty/mobile: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-new/mobile: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-linked/mobile: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-quick/mobile: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "plans-archived/desktop: accessibility and capture",
+      "passed": true
+    },
+    {
+      "name": "no JavaScript errors or external requests",
+      "passed": true
+    }
+  ],
+  "captures": [
+    "plans-plans-home-desktop.png",
+    "plans-plans-list-desktop.png",
+    "plans-plans-new-desktop.png",
+    "plans-plans-from-chat-desktop.png",
+    "plans-plans-empty-mobile.png",
+    "plans-plans-new-mobile.png",
+    "plans-plans-linked-mobile.png",
+    "plans-plans-quick-mobile.png",
+    "plans-plans-archived-desktop.png"
+  ],
+  "errors": [],
+  "requests": []
+}

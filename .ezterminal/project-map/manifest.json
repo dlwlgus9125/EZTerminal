@@ -15,51 +15,199 @@
       "type": "architecture",
       "path": "maps/runtime-architecture.architecture.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/renderer/StructuredAgentDockPanel.tsx" },
-        { "rootAlias": "app", "relativePath": "src/preload/preload.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/main.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-history-service.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-project-observation.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-service.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/project-workspace.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-access-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-orchestration-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-project-sync.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-workspace-authority.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-cli-control.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-automation-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-orchestration-mcp-server.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-provider-adapter.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-provider-registry.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/codex-provider-adapter.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/claude-provider-adapter.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/provider-version.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-message-validation.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-openclaw-session.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-collaboration-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-history-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/app-update-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/file-tools-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/openclaw-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/session-surface-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/settings-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/terminal-tools-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" }
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/StructuredAgentDockPanel.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/preload/preload.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-project-observation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/project-workspace.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-access-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-orchestration-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-project-sync.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-workspace-authority.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-runtime.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-cli-control.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/daemon-protocol.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-agent-runtime.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-automation-runtime.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-orchestration-mcp-server.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-provider-adapter.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-provider-registry.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/codex-provider-adapter.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/claude-provider-adapter.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/provider-version.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-message-validation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-openclaw-session.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-collaboration-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/app-update-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/file-tools-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/local-mutation-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/openclaw-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/session-surface-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/settings-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/terminal-tools-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/ipc-registration.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/conversation-history.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/conversation-history-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/conversation-history-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectConversationNavigator.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/workbench-views.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/workbench-views.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/conversation-changes.ts"
+        }
       ],
       "review": {
-        "inputDigest": "sha256:671c282235ff0fa966746f7b221d5b4e20b43236100afebf6d4198ddf360b333",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed the temporary opt-in window diagnostics hook. It observes rendering and native window events without changing session authority, startup recovery, shutdown, or remote transport. All shifted main.ts evidence retains its exact prior content digest."
+        "inputDigest": "sha256:e062fe4f2f8966656a318fbe16fee368fa4918fdfc380904f23109fc0f64cf64",
+        "decision": "map-updated",
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
       }
     },
     {
@@ -67,17 +215,35 @@
       "type": "sequence",
       "path": "maps/terminal-pty-sequence.sequence.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/renderer/TerminalPane.tsx" },
-        { "rootAlias": "app", "relativePath": "src/main/session-surface-authority.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/run-command-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/interpreter-broker.ts" },
-        { "rootAlias": "app", "relativePath": "src/interpreter/interpreter-process.ts" },
-        { "rootAlias": "app", "relativePath": "src/interpreter/pty-session.ts" }
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/TerminalPane.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/session-surface-authority.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/run-command-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/interpreter-broker.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/interpreter/interpreter-process.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/interpreter/pty-session.ts"
+        }
       ],
       "review": {
         "inputDigest": "sha256:e444d707989d1f2c36b61a322355b3138febecacf390204b003381c6d3836dda",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed physical directory matching during legacy-terminal registration. Awaiting path resolution inside the existing router FIFO preserves the mapped principal, revision, outbox, durable commit, and authenticated event projection contracts."
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
       }
     },
     {
@@ -85,40 +251,127 @@
       "type": "lifecycle",
       "path": "maps/workbench-lifecycle.lifecycle.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/main/daemon-store-recovery.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/main.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/owned-startup-barrier.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ingress.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/graceful-shutdown.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/openclaw-lifecycle-coordinator.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-history-service.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-project-observation.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-service.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-access-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-workspace-authority.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-availability.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-collaboration-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-history-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/app-update-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/file-tools-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/openclaw-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/session-surface-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/settings-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/terminal-tools-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" }
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store-recovery.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/owned-startup-barrier.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/local-mutation-ingress.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/graceful-shutdown.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/openclaw-lifecycle-coordinator.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-project-observation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-access-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-workspace-authority.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-agent-runtime.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-availability.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-runtime.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-shutdown.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-collaboration-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/app-update-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/file-tools-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/local-mutation-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/openclaw-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/session-surface-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/settings-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/terminal-tools-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/ipc-registration.ts"
+        }
       ],
       "review": {
-        "inputDigest": "sha256:ef45e37da91b475f5fe9893a6589d1731336250483ce591c3a82155579c15554",
+        "inputDigest": "sha256:b8959ff90494d7ee350c835612b9a9f905bfe585cdb63d8ce009428f980d2304",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed the temporary opt-in window diagnostics hook. It observes rendering and native window events without changing session authority, startup recovery, shutdown, or remote transport. All shifted main.ts evidence retains its exact prior content digest."
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
       }
     },
     {
@@ -126,37 +379,131 @@
       "type": "dataflow",
       "path": "maps/remote-session-dataflow.dataflow.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/shared/remote-protocol.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/main.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-history-service.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/daemon-authority.ts" },
-        { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-message-validation.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-openclaw-session.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-collaboration-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-history-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/app-update-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/file-tools-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/local-mutation-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/openclaw-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-workspace-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/session-surface-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/settings-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/terminal-tools-ipc.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/ipc-registration.ts" },
-        { "rootAlias": "app", "relativePath": "mobile/src/transport/remote-openclaw-client.ts" },
-        { "rootAlias": "app", "relativePath": "mobile/src/transport/remote-agent-history-client.ts" },
-        { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-transport-contract.ts" }
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/remote-protocol.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/daemon-protocol.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/daemon-authority.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-message-validation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-openclaw-session.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-collaboration-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-history-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/app-update-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/file-tools-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/local-mutation-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/openclaw-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-workspace-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/session-surface-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/settings-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/terminal-tools-ipc.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/ipc-registration.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/remote-openclaw-client.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/remote-agent-history-client.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-transport-contract.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/conversation-history.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/workflow.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/conversation-history-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/legacy-conversation-history.ts"
+        }
       ],
       "review": {
-        "inputDigest": "sha256:076701a40f227661aed9e284c1dfff620a006e7043c8a90358269649ee99ac74",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed the temporary opt-in window diagnostics hook. It observes rendering and native window events without changing session authority, startup recovery, shutdown, or remote transport. All shifted main.ts evidence retains its exact prior content digest."
+        "inputDigest": "sha256:0bcf631057bb4f31adcdfc22087702e62be7bf53aae674ef1391ca6591bdbea6",
+        "decision": "map-updated",
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
       }
     },
     {
@@ -164,29 +511,247 @@
       "type": "workflow",
       "path": "maps/human-agent-collaboration.workflow.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/renderer/ProjectMapPanel.tsx" },
-        { "rootAlias": "app", "relativePath": "src/renderer/project-map-agent-launch.ts" },
-        { "rootAlias": "app", "relativePath": "src/renderer/TerminalPane.tsx" },
-        { "rootAlias": "app", "relativePath": "src/renderer/App.tsx" },
-        { "rootAlias": "app", "relativePath": "src/renderer/workbench-coordinator.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/agent-control-server.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-service.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-job-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-approval-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/project-map-exporter.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/project-map.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/project-map-scene.ts" },
-        { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" },
-        { "rootAlias": "app", "relativePath": "src/renderer/useDesktopAppearance.ts" },
-        { "rootAlias": "app", "relativePath": "src/renderer/useTerminalPreferences.ts" },
-        { "rootAlias": "app", "relativePath": "src/renderer/useCommandCenterCatalog.ts" },
-        { "rootAlias": "app", "relativePath": "src/renderer/useProjectDocumentNavigation.ts" },
-        { "rootAlias": "app", "relativePath": "src/renderer/useRendererRecovery.ts" }
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/project-map-agent-launch.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/TerminalPane.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/App.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/workbench-coordinator.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-control-server.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-job-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-approval-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-exporter.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/project-map.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/project-map-scene.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "native/remote-host/src/agent_control.rs"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/useDesktopAppearance.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/useTerminalPreferences.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/useCommandCenterCatalog.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/useProjectDocumentNavigation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/useRendererRecovery.ts"
+        }
       ],
       "review": {
-        "inputDigest": "sha256:a7b357e75370ac5cce6459da82a4f33b84c3bc40f60418f8ba3797cb369bed1d",
+        "inputDigest": "sha256:69e4a7eb81015d430ddea0217e5e2a71727d4334fab812b847e5ac2249d9513e",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+      }
+    },
+    {
+      "id": "planning-delivery",
+      "type": "architecture",
+      "path": "maps/planning-delivery.architecture.json",
+      "authoritativeInputs": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/chat-state-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-ai-scope.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-ai-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-authority.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-draft-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-execution-store.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-preparation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-repository.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-archive-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/PlanningWorkspacePanel.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/StructuredAgentSession.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ConversationChangeReview.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/conversation-changes.ts"
+        }
+      ],
+      "review": {
+        "inputDigest": "sha256:351c5592d7e73e65a9dbb27e00f143ac55000bc84e2da42cb0332caa2f2083ad",
         "decision": "map-updated",
-        "reason": "Reviewed startup recovery of prior-process legacy terminals before Project consent and authority preflight; refreshed source anchors. Active-session deletion protection, provider recovery, and transport authority are preserved."
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+      }
+    },
+    {
+      "id": "workflow-capabilities",
+      "type": "architecture",
+      "path": "maps/workflow-capabilities.architecture.json",
+      "authoritativeInputs": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/workflow/WorkflowWorkspacePanel.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/workflow-runtime.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-orchestration-mcp-server.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/AgentCapabilitiesPanel.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-capability-service.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/codex-provider-adapter.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/claude-provider-adapter.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/chat-state.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/workflow.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/project-conversation-tree-model.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectConversationTree.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/use-project-conversation-navigation.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectConversationNavigator.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/use-agent-completion.tsx"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/agent-completion.ts"
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/MobilePlanningNavigator.tsx"
+        }
+      ],
+      "review": {
+        "inputDigest": "sha256:b7fd6440a5f1492e1a8cc618359ba054b2d7da8b118d983fb19699a1a04edb46",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
       }
     }
   ]

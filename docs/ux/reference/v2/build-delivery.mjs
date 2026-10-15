@@ -1,0 +1,8 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+export async function buildDelivery(root,content) {
+ const md = '# 기획 이후 단계별 입력·산출물\n\n[예상 화면과 함께 보기](index.html#delivery) · [계약·검증·복구 설계](DELIVERY-DESIGN.md)\n\nr6 승인 기준에 포함한다. [승인 기록](APPROVAL.md). 아래 검증 결과는 실제로 실행된 기록이 아니다.\n\n' + content.deliveryStages.map(s=>`## ${s.id} ${s.name}\n\n${s.action}\n\n- 담당: ${content.aiProfiles.find(p=>p.id===s.role).name}\n- 입력: ${s.inputs.join(' / ')}\n- 산출물: ${s.outputs.join(' / ')}\n- 통과: ${s.gate}\n- 실패·복귀: ${s.failure}\n- 화면: [${s.screen}](index.html#screen/${s.screen}) · [${s.mobile}](index.html#screen/${s.mobile})\n\n![${s.name} 예상도](${s.id==='L7'?'screens/flows/delivery-release.png':'screens/detail/'+s.screen+'.png'})\n`).join('\n');
+ await fs.writeFile(path.join(root,'DELIVERY-STAGES.md'),md,'utf8');
+ await fs.appendFile(path.join(root,'HANDOFF.md'),'\n## 작업별 상세 인계 계약\n\n[공통 데이터·상태·검증·복구 설계](DELIVERY-DESIGN.md). 각 단계에서 작성자와 분리된 검토를 수행하고 W09는 최종 종합 검토를 추가한다.\n\n'+content.handoffs.map(w=>`### ${w.id} 상세\n\n- 입력: ${w.contract.inputs}\n- 산출물: ${w.contract.outputs}\n- 인터페이스·소유권: ${w.contract.interface}\n- 검증·통과 기준: ${w.contract.validation}\n- 실패 시: ${w.contract.failure}\n`).join('\n'),'utf8');
+ await fs.appendFile(path.join(root,'ROADMAP.md'),'\n## 실행할 때의 인계와 완료 조건\n\n기획 이후 사용자 흐름은 [단계별 예상 화면](index.html#delivery), 제작 작업의 구체 입력·출력·인터페이스·검증은 [W01–W09 상세 인계](HANDOFF.md#작업별-상세-인계-계약)를 따른다. G2의 Windows·Android는 병렬 가능하며 G3은 양쪽 shell 완료 후 시작한다. G4·G5는 G3 이후 병렬 가능하다. 모든 단계의 독립 검토와 통합 후 검사를 통과한 뒤 다음 단계로 넘긴다.\n\n[출시 준비와 실패 복구 기준](DELIVERY-DESIGN.md)을 G8 완료 조건에 포함한다. 코드 작성 완료·검사 미실행·기기 부재를 완료로 취급하지 않는다.\n','utf8');
+}

@@ -1,0 +1,12 @@
+{
+  "status":"candidate-for-final-review",
+  "approved":false,
+  "design_context":{"frontend_artifact":"docs/ux/frontend-design.md","design_systems":["DESIGN.md"],"tokens":["src/renderer/themes.ts","src/renderer/styles/ui-tokens.css"],"production_seams":["src/renderer/workbench-coordinator.ts","src/renderer/dockview-popouts.ts","src/renderer/StructuredAgentSession.tsx"],"profile":"google-alpha-0.4.0-ezpowers-1"},
+  "selected_direction":"Each workspace tab owns a split tree; every leaf owns conversation tabs. One session has one durable state, independent of pane geometry and window location.",
+  "behaviors":["Horizontal, vertical and 1+2 presets","Nested splits in main and auxiliary windows","Pointer and keyboard divider resize","Drag conversation tabs to merge or split; drag group grip to move a group","Explicit tab menu for equivalent keyboard operations","Real browser auxiliary window, return one tab or all; close restores conversations","Active input target indicated on pane chrome","Draft, reply, attachments, queue, approval, tool expansion, caret and scroll survive layout moves"],
+  "responsive":{"basis":"Actual iframe/pane CSS pixel dimensions, not outer browser width","desktop_enter":"Always send independent of pane width; Shift+Enter inserts newline; IME is guarded","mobile_enter":"Newline","narrow":"Collapse local header controls and show review inside the pane","short":"Compact composer and controls without dropping drafts or queue","too_small":"Show focused pane with a pane switcher; retain split tree for later restoration"},
+  "prototype_boundary":"Existing standalone chat is embedded in stable per-session frames for in-window moves. Auxiliary transfers serialize fixture UI state. Real Electron implementation must keep the existing Dockview panel instance and provider/PTY lifecycle; web prototype is not native-session validation.",
+  "previous_reference":"docs/ux/reference/v2-conversation-r6",
+  "site_source":"docs/ux/reference/v2-conversation-r6/site/dist",
+  "original_r6":"docs/ux/reference/v2-conversation-r6/site/dist/r6/index.html"
+}

@@ -1,3 +1,14 @@
+:root, [data-theme] {
+  /* Conversation roles derive from the active semantic palette, including v1/v2 mods. */
+  --ui-conversation-canvas: var(--ui-canvas);
+  --ui-conversation-user: var(--ui-surface-raised);
+  --ui-conversation-code: var(--ui-surface-inset);
+  --ui-conversation-composer: var(--ui-surface);
+  --ui-conversation-border: var(--ui-border-subtle);
+  --ui-pane-active-border: var(--ui-accent);
+  --ui-conversation-width: 52rem;
+}
+
 :root {
   /* Semantic colour fallbacks. Theme runtime may override these per theme. */
   --ui-canvas: #010301;
@@ -164,21 +175,21 @@
 }
 
 [data-theme='dark'] {
-  --ui-canvas: #070a09;
-  --ui-surface: #0c1110;
-  --ui-surface-raised: #121917;
-  --ui-surface-inset: #040706;
-  --ui-text-primary: #ecf6f1;
-  --ui-text-secondary: #b8c9c1;
-  --ui-text-muted: #91a59b;
+  --ui-canvas: #101113;
+  --ui-surface: #17191c;
+  --ui-surface-raised: #22252a;
+  --ui-surface-inset: #0c0d0f;
+  --ui-text-primary: #edf0f4;
+  --ui-text-secondary: #bdc3cc;
+  --ui-text-muted: #949da9;
   --ui-text-inverse: #07100c;
-  --ui-border-subtle: #2a3832;
-  --ui-border-strong: #637a70;
-  --ui-text-dim: #71857b;
-  --ui-border-mid: #1e2926;
+  --ui-border-subtle: #30353b;
+  --ui-border-strong: #69737f;
+  --ui-text-dim: #949da9;
+  --ui-border-mid: #30353b;
   /* Carries modal and pane boundaries, so it holds 3:1 against the surfaces it
      separates even though no automated gate covers this role. */
-  --ui-border-focus-soft: #4a7264;
+  --ui-border-focus-soft: #69737f;
   --ui-accent: #2fe0a0;
   --ui-accent-rgb: 47, 224, 160;
   --ui-on-accent: #04110c;

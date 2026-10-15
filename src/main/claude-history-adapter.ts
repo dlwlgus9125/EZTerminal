@@ -217,7 +217,7 @@ function structuredToolPath(toolName: string, input: unknown): string | null {
   return candidate;
 }
 
-function assistantEntries(record: JsonObject, turnId: string, index: number): AgentTranscriptEntry[] {
+function assistantEntries(record: JsonObject, turnId: string, index: number, fullText = false): AgentTranscriptEntry[] {
   const content = asObject(record.message)?.content;
   if (!Array.isArray(content)) return [];
   const entries: AgentTranscriptEntry[] = [];
@@ -229,7 +229,7 @@ function assistantEntries(record: JsonObject, turnId: string, index: number): Ag
       case 'text': {
         const markdown = asString(block.text) ?? '';
         if (markdown.trim()) {
-          entries.push({ type: 'message', id, role: 'assistant', markdown: markdown.slice(0, 20_000) });
+          entries.push({ type: 'message', id, role: 'assistant', markdown: fullText ? markdown : markdown.slice(0, 20_000) });
         }
         break;
       }
@@ -270,13 +270,13 @@ function isCommandPlumbing(text: string): boolean {
     .test(text);
 }
 
-function userEntries(record: JsonObject, turnId: string, index: number): AgentTranscriptEntry[] {
+function userEntries(record: JsonObject, turnId: string, index: number, fullText = false): AgentTranscriptEntry[] {
   const content = asObject(record.message)?.content;
   const id = opaqueTranscriptId('item', `${turnId}:${index}`);
   if (typeof content === 'string') {
-    const markdown = content.trim();
+    const markdown = fullText ? content : content.trim();
     if (!markdown || isCommandPlumbing(markdown)) return [];
-    return [{ type: 'message', id, role: 'user', markdown: markdown.slice(0, 20_000) }];
+    return [{ type: 'message', id, role: 'user', markdown: fullText ? markdown : markdown.slice(0, 20_000) }];
   }
   if (!Array.isArray(content)) return [];
   const entries: AgentTranscriptEntry[] = [];
@@ -286,9 +286,10 @@ function userEntries(record: JsonObject, turnId: string, index: number): AgentTr
     const blockId = opaqueTranscriptId('item', `${turnId}:${index}:${blockIndex}`);
     const type = asString(block.type);
     if (type === 'text') {
-      const markdown = (asString(block.text) ?? '').trim();
+      const text = asString(block.text) ?? '';
+      const markdown = fullText ? text : text.trim();
       if (markdown) {
-        entries.push({ type: 'message', id: blockId, role: 'user', markdown: markdown.slice(0, 20_000) });
+        entries.push({ type: 'message', id: blockId, role: 'user', markdown: fullText ? markdown : markdown.slice(0, 20_000) });
       }
       return;
     }
@@ -306,14 +307,14 @@ function userEntries(record: JsonObject, turnId: string, index: number): AgentTr
   return entries;
 }
 
-function transcriptEntries(record: JsonObject, turnId: string, index: number): AgentTranscriptEntry[] {
+function transcriptEntries(record: JsonObject, turnId: string, index: number, fullText = false): AgentTranscriptEntry[] {
   if (record.isSidechain === true) return [];
   switch (record.type) {
     case 'user':
       if (record.isMeta === true || record.isVisibleInTranscriptOnly === true) return [];
-      return userEntries(record, turnId, index);
+      return userEntries(record, turnId, index, fullText);
     case 'assistant':
-      return assistantEntries(record, turnId, index);
+      return assistantEntries(record, turnId, index, fullText);
     case 'system':
       return record.subtype === 'compact_boundary'
         ? [{
@@ -450,10 +451,20 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
     return { items, nextCursor: next < files.length ? String(next) : null };
   }
 
+  resolveProviderSessionId(privateId: string): string | null {
+    const sessionId = path.basename(privateId, '.jsonl');
+    return SESSION_ID_PATTERN.test(sessionId) ? sessionId : null;
+  }
+
+  readTranscriptForAdoption(privateId: string, cursor?: string, limit = MAX_AGENT_TRANSCRIPT_PAGE_SIZE): Promise<AgentTranscriptPage> {
+    return this.readTranscript(privateId, cursor, limit, true);
+  }
+
   async readTranscript(
     privateId: string,
     cursor?: string,
     limit = MAX_AGENT_TRANSCRIPT_PAGE_SIZE,
+    fullText = false,
   ): Promise<AgentTranscriptPage> {
     const boundedLimit = Math.max(1, Math.min(MAX_AGENT_TRANSCRIPT_PAGE_SIZE, Math.trunc(limit)));
     const empty: AgentTranscriptPage = {
@@ -492,7 +503,7 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
       const to = (position + 1 < index.offsets.length
         ? Math.min(index.offsets[position + 1]!, rangeEnd)
         : rangeEnd) - rangeStart;
-      turns.push(this.buildTurn(buffer.toString('utf8', from, Math.max(from, to)), index.offsets[position]!));
+      turns.push(this.buildTurn(buffer.toString('utf8', from, Math.max(from, to)), index.offsets[position]!, fullText));
     }
     return {
       historyId: '',
@@ -797,12 +808,12 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
     return this.promptIndex;
   }
 
-  private buildTurn(text: string, offset: number): AgentTranscriptTurn {
+  private buildTurn(text: string, offset: number, fullText = false): AgentTranscriptTurn {
     const id = opaqueTranscriptId('turn', String(offset));
     const entries: AgentTranscriptEntry[] = [];
     text.split('\n').forEach((line, index) => {
       const record = parseRecord(line);
-      if (record) entries.push(...transcriptEntries(record, id, index));
+      if (record) entries.push(...transcriptEntries(record, id, index, fullText));
     });
     return { id, status: 'completed', entries };
   }

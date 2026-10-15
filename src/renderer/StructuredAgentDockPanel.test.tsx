@@ -593,6 +593,7 @@ describe('StructuredAgentDockPanel', () => {
         sessionId: 'agent-crash-recovery',
         phase: 'delivery-uncertain',
         command,
+        composerDraft: { text: '$review unsent after recovery', skills: [{ providerId: 'codex', id: '/review/SKILL.md', name: 'review', invocation: '$review' }] },
       }],
       activePanelId: 'agent-session-structured-draft-crash-recovery',
     };
@@ -653,6 +654,8 @@ describe('StructuredAgentDockPanel', () => {
 
     expect(container.querySelector('[data-testid="structured-agent-first-prompt"]')).toBeNull();
     expect(registry.get('agent-session-structured-draft-crash-recovery')?.command).toBe(command);
+    expect(registry.get('agent-session-structured-draft-crash-recovery')?.composerDraft?.skills?.[0]?.invocation).toBe('$review');
+    expect(Array.from(container.querySelectorAll('textarea')).some(textarea => textarea.value === '$review unsent after recovery' && textarea.readOnly)).toBe(true);
     expect(peekRendererRecoveryStructuredAgentCreate('agent-session-structured-draft-crash-recovery')).toBeUndefined();
 
     act(() => container.querySelector<HTMLButtonElement>(

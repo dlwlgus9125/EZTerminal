@@ -1,0 +1,89 @@
+[
+  {
+    "width": 320,
+    "violations": [],
+    "metrics": {
+      "width": 304,
+      "height": 357,
+      "docWidth": 304,
+      "input": {
+        "x": 56.125,
+        "y": 299.109375,
+        "width": 179.875,
+        "height": 25,
+        "top": 299.109375,
+        "right": 236,
+        "bottom": 324.109375,
+        "left": 56.125
+      },
+      "button": {
+        "x": 245,
+        "y": 291.609375,
+        "width": 40,
+        "height": 40,
+        "top": 291.609375,
+        "right": 285,
+        "bottom": 331.609375,
+        "left": 245
+      }
+    }
+  },
+  {
+    "width": 390,
+    "violations": [],
+    "metrics": {
+      "width": 374,
+      "height": 561,
+      "docWidth": 374,
+      "input": {
+        "x": 56.125,
+        "y": 490.109375,
+        "width": 249.875,
+        "height": 25,
+        "top": 490.109375,
+        "right": 306,
+        "bottom": 515.109375,
+        "left": 56.125
+      },
+      "button": {
+        "x": 315,
+        "y": 482.609375,
+        "width": 40,
+        "height": 40,
+        "top": 482.609375,
+        "right": 355,
+        "bottom": 522.609375,
+        "left": 315
+      }
+    }
+  },
+  {
+    "width": 800,
+    "violations": [],
+    "metrics": {
+      "width": 400,
+      "height": 353,
+      "docWidth": 400,
+      "input": {
+        "x": 56.125,
+        "y": 303.609375,
+        "width": 275.875,
+        "height": 20,
+        "top": 303.609375,
+        "right": 332,
+        "bottom": 323.609375,
+        "left": 56.125
+      },
+      "button": {
+        "x": 341,
+        "y": 299.609375,
+        "width": 40,
+        "height": 28,
+        "top": 299.609375,
+        "right": 381,
+        "bottom": 327.609375,
+        "left": 341
+      }
+    }
+  }
+]

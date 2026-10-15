@@ -1,3 +1,4 @@
+import { toggleWorkbenchTool } from './workbench-navigation';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { createRegisteredE2eTempDir, test, expect } from './test';
@@ -74,7 +75,7 @@ test('running: opening chat from the drawer auto-closes the drawer and shows exa
   });
   try {
     const window = await app.firstWindow();
-    await window.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-openclaw');
     await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
       timeout: 10_000,
     });
@@ -103,11 +104,11 @@ test('running: opening chat from the drawer auto-closes the drawer and shows exa
 
     // The z-order defense itself still holds: re-opening the drawer OVER the
     // chat hides the native view again, and closing it restores it.
-    await window.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-openclaw');
     await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(false);
     // The single-sidebar workbench intentionally removes the drawer's duplicate
     // close button. The active rail destination is the canonical close control.
-    await window.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-openclaw');
     await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(true);
   } finally {
     await app.close();
@@ -129,7 +130,7 @@ test('detaching and redocking chat rehosts the same native WebContentsView', asy
 
   try {
     const main = await app.firstWindow();
-    await main.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(main, 'btn-toggle-openclaw');
     await expect(main.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
       timeout: 10_000,
     });
@@ -202,7 +203,7 @@ test('persistence round-trip: the chat panel restores after relaunch and re-requ
   try {
     const app1 = await launchApp(dir, extraEnv);
     const w1 = await app1.firstWindow();
-    await w1.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(w1, 'btn-toggle-openclaw');
     await expect(w1.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
       timeout: 10_000,
     });
@@ -247,7 +248,7 @@ test('stopped: chat panel shows guidance placeholder, no WebContentsView is ever
   });
   try {
     const window = await app.firstWindow();
-    await window.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-openclaw');
     await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'stopped', {
       timeout: 10_000,
     });

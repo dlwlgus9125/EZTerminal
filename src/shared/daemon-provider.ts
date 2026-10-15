@@ -11,6 +11,8 @@ export interface ProviderModel {
   readonly displayName: string;
   readonly description?: string;
   readonly supportsReasoning: boolean;
+  /** Exact values advertised by the provider for this model. */
+  readonly reasoningEfforts?: readonly string[];
   readonly isDefault: boolean;
 }
 

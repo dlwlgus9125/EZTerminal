@@ -43,6 +43,36 @@ function deferred<T>() {
 }
 
 describe('OpenClawLifecycleCoordinator', () => {
+  it.each(['running', 'repairing'] as const)('does not coalesce Start with a stale %s record from before reboot', async (previous) => {
+    const userDataDirectory = await makeDirectory();
+    const controlDirectory = path.join(userDataDirectory, 'openclaw-control');
+    await fs.mkdir(controlDirectory, { recursive: true });
+    const intent = {
+      schemaVersion: 1, intentId: 'before-reboot', generation: 1,
+      desiredState: 'running', action: 'start', requestedAt: '2026-09-01T00:00:00.000Z',
+    };
+    await fs.writeFile(path.join(controlDirectory, 'intent.json'), JSON.stringify(intent));
+    await fs.writeFile(path.join(controlDirectory, 'runtime.json'), JSON.stringify({
+      ...intent, status: { state: previous === 'running' ? 'running' : 'stopped', port: 18789 },
+      supervisorState: 'ready', issue: null, updatedAt: intent.requestedAt,
+      operation: previous === 'running' ? null : {
+        ...intent, phase: 'repairing', attempt: 1, maxAttempts: 3,
+      },
+    }));
+    const coordinator = new OpenClawLifecycleCoordinator({
+      userDataDirectory, supervisorAssetPath: 'unused', supervisor: fakeSupervisor(),
+      getPhysicalStatus: async () => ({ state: 'stopped', port: 18789 }),
+      now: () => new Date('2026-10-01T00:00:00.000Z'), pollMs: 60_000,
+    });
+    try {
+      await expect(coordinator.requestLifecycle('start')).resolves.toMatchObject({
+        accepted: true, generation: 2, coalesced: false,
+      });
+    } finally {
+      await coordinator.dispose();
+    }
+  });
+
   it('drains pending-intent recovery and does not wake after disposal begins', async () => {
     const userDataDirectory = await makeDirectory();
     const controlDirectory = path.join(userDataDirectory, 'openclaw-control');

@@ -1,16 +1,14 @@
-import { Bot, Home, LayoutGrid, Monitor, Settings, SquareTerminal, type LucideIcon } from 'lucide-react';
+import { Folder, ListChecks, MessageSquare, LayoutGrid, Settings, SquareTerminal, type LucideIcon } from 'lucide-react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileSignalMark } from './MobileSignalMark';
 
-/** Tab roots the shell can be parked on. `pc` and `more` are actions, not
- * roots — PC Control opens an immersive screen and More opens a sheet — but
- * they share the bar so the five-item IA stays literal. */
-export const MOBILE_TAB_ROOTS = ['home', 'terminal', 'agents'] as const;
+/** Legacy root IDs are kept for restore compatibility; home now opens Projects. */
+export const MOBILE_TAB_ROOTS = ['home', 'agents', 'tasks', 'terminal'] as const;
 export type MobileShellTab = (typeof MOBILE_TAB_ROOTS)[number];
 
-/** Literal five-item IA, including the two action destinations. */
-export const MOBILE_PRIMARY_DESTINATIONS = ['home', 'terminal', 'pc', 'agents', 'more'] as const;
+/** Project / Chat / Tasks / Terminal / More; More opens a sheet. */
+export const MOBILE_PRIMARY_DESTINATIONS = ['home', 'agents', 'tasks', 'terminal', 'more'] as const;
 
 interface TabItem {
   readonly id: string;
@@ -29,8 +27,7 @@ function TabButton({ item, railOnly = false }: { readonly item: TabItem; readonl
   return (
     <button
       type="button"
-      // Not a tablist: PC Control and More are actions (immersive screen /
-      // sheet), not panels, so `aria-current` marks the parked root instead.
+      // More opens a sheet; aria-current marks the current page destination.
       aria-current={item.selected ? 'page' : undefined}
       // Rail-only items render icon-first with the label hidden, so the name
       // has to come from aria-label rather than the (invisible) text node.
@@ -65,7 +62,6 @@ export function MobileTabBar({
   agentAttention,
   updateAvailable = false,
   onSelectTab,
-  onOpenPcControl,
   onOpenMore,
   onOpenSettings,
 }: {
@@ -73,20 +69,39 @@ export function MobileTabBar({
   readonly agentAttention: number;
   readonly updateAvailable?: boolean;
   readonly onSelectTab: (next: MobileShellTab) => void;
-  readonly onOpenPcControl: () => void;
+  /** Legacy caller compatibility; PC Control now lives in Projects and More. */
+  readonly onOpenPcControl?: () => void;
   readonly onOpenMore: () => void;
   readonly onOpenSettings: () => void;
 }): JSX.Element {
-  const { t } = useAppTranslation();
+  const { t, i18n } = useAppTranslation();
+  const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
 
   const items: readonly TabItem[] = [
     {
       id: 'home',
-      icon: Home,
-      label: t('mobile.tabs.home'),
+      icon: Folder,
+      label: t('agentHub.projects.title'),
       testId: 'shell-tab-home',
       selected: tab === 'home',
       onSelect: () => onSelectTab('home'),
+    },
+    {
+      id: 'agents',
+      icon: MessageSquare,
+      label: ko ? '대화' : 'Chat',
+      testId: 'shell-tab-agents',
+      selected: tab === 'agents',
+      badge: agentAttention,
+      onSelect: () => onSelectTab('agents'),
+    },
+    {
+      id: 'tasks',
+      icon: ListChecks,
+      label: ko ? '작업' : 'Tasks',
+      testId: 'shell-tab-tasks',
+      selected: tab === 'tasks',
+      onSelect: () => onSelectTab('tasks'),
     },
     {
       id: 'terminal',
@@ -95,23 +110,6 @@ export function MobileTabBar({
       testId: 'shell-tab-terminal',
       selected: tab === 'terminal',
       onSelect: () => onSelectTab('terminal'),
-    },
-    {
-      id: 'pc',
-      icon: Monitor,
-      label: t('mobile.tabs.pc'),
-      testId: 'shell-tab-pc',
-      selected: false,
-      onSelect: onOpenPcControl,
-    },
-    {
-      id: 'agents',
-      icon: Bot,
-      label: t('mobile.agents'),
-      testId: 'shell-tab-agents',
-      selected: tab === 'agents',
-      badge: agentAttention,
-      onSelect: () => onSelectTab('agents'),
     },
     {
       id: 'more',

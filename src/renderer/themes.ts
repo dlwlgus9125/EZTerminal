@@ -77,16 +77,16 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     name: 'Dark',
     cssVars: {},
     ui: {
-      canvas: '#070a09',
-      surface: '#0c1110',
-      surfaceRaised: '#121917',
-      surfaceInset: '#040706',
-      textPrimary: '#ecf6f1',
-      textSecondary: '#b8c9c1',
-      textMuted: '#91a59b',
+      canvas: '#101113',
+      surface: '#17191c',
+      surfaceRaised: '#22252a',
+      surfaceInset: '#0c0d0f',
+      textPrimary: '#edf0f4',
+      textSecondary: '#bdc3cc',
+      textMuted: '#949da9',
       textInverse: '#07100c',
-      borderSubtle: '#2a3832',
-      borderStrong: '#637a70',
+      borderSubtle: '#30353b',
+      borderStrong: '#69737f',
       accent: '#2fe0a0',
       onAccent: '#04110c',
       focus: '#65f4c0',
@@ -306,14 +306,14 @@ export function listThemes(): ThemeDefinition[] {
 
 /** Resolve against built-ins and the custom registry, applying contrast
  * correction to an effective copy. Missing custom ids intentionally fall back
- * to Matrix without replacing the requested/persisted identity. */
+ * to Dark without replacing the requested/persisted identity. */
 export function resolveTheme(
   requestedId: string,
   missingReason: ResolvedTheme['fallbackReason'] = 'missing-custom-theme',
 ): ResolvedTheme {
   const builtin = isBuiltinTheme(requestedId) ? THEMES[requestedId] : undefined;
   const registered = builtin ?? customThemes.get(requestedId);
-  const source = registered ?? THEMES.matrix;
+  const source = registered ?? THEMES.dark;
   const accessible = resolveAccessibleTheme(source, THEMES.dark.ui!);
   return {
     requestedId,

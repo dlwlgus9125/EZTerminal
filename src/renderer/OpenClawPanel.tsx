@@ -1,3 +1,4 @@
+import { OpenClawConnectionStatus, OpenClawControlStatus } from './OpenClawControlStatus';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -320,40 +321,8 @@ export function OpenClawPanel({
         )}
       </section>
 
-      {control && (
-        <section
-          className="status-section openclaw-control-card"
-          data-testid="openclaw-control"
-          data-phase={control.operation?.phase ?? 'idle'}
-          aria-live="polite"
-        >
-          <h2 className="status-section-title">{t('openClaw.controlTitle')}</h2>
-          <div className="openclaw-control-grid">
-            <span>{t('openClaw.desiredState')}</span>
-            <strong>{t(`openClaw.desired.${control.desiredState}`)}</strong>
-            <span>{t('openClaw.supervisor')}</span>
-            <strong>{t(`openClaw.supervisorState.${control.supervisorState}`)}</strong>
-          </div>
-          {control.operation && (
-            <div className="openclaw-control-progress" role="status">
-              <span>{t(`openClaw.phase.${control.operation.phase}`)}</span>
-              {control.operation.attempt > 0 && (
-                <span>{t('openClaw.attempt', {
-                  attempt: control.operation.attempt,
-                  max: control.operation.maxAttempts,
-                })}</span>
-              )}
-            </div>
-          )}
-          {control.issue && (
-            <div className="openclaw-control-issue" role="alert" data-testid="openclaw-control-issue">
-              <strong>{control.issue.detail}</strong>
-              <span>{control.issue.remediation}</span>
-              <code>{control.issue.diagnosticId}</code>
-            </div>
-          )}
-        </section>
-      )}
+      <OpenClawConnectionStatus status={status} />
+      {control && <OpenClawControlStatus control={control} testId="openclaw-control" />}
 
       {/* Console read-out. The handoff asks for channels / messages today /
           queued work; the gateway reports none of those, so these are the three

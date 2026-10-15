@@ -11,9 +11,14 @@
 
 ## Overview
 
-EZTerminal의 기준 이미지는 **green-phosphor terminal과 operations console을 결합한
-professional workbench**다. 사용자는 장식된 dashboard가 아니라 실제 세션, 파일,
-agent와 원격 장치를 오래 다루는 도구를 보고 있다고 느껴야 한다.
+EZTerminal의 기준 이미지는 **대화·기획·실행을 연결하는 차분한 professional workbench**다.
+현재 작업과 산출물에 가장 큰 시각적 공간을 주고, 상태·요청·실제 실행 대상을 명확하게
+표현한다. 사용자는 세션, 파일, agent와 원격 장치를 오래 다루는 도구를 보고 있다고 느껴야 한다.
+
+2026-10-13 승인한 [v2 r6 기준](docs/ux/reference/v2/APPROVAL.md)을 반영한다. 신규 기본값은
+Dark와 말풍선 스킨이며 기존 사용자의 theme·skin 설정은 보존한다. Matrix/CRT는 선택 가능한
+시각 표현으로 유지한다. 승인된 의도와 현재 구현의 일치 여부는
+[구현 진행 기록](docs/ezterminal-v2-implementation.md)에서 따로 검증한다.
 
 Matrix 정체성은 신호처럼 선명한 accent, 어두운 계층형 surface, 절제된 scanline과
 terminal 문법에서 나온다. 그러나 모든 theme에서 제품의 우선순위는 가독성, 실제
@@ -29,6 +34,11 @@ Agent 작업은 Project → Workspace → Session의 맥락을 유지하되 모�
 위의 작은 track과 session tab의 provenance로 드러낸다. 평상시에는 상태와 짧은 요약만 보이고
 입력 대기, 실패, 승인 요청처럼 사용자의 판단이 필요한 순간에만 시각적 무게를 높인다. 사용자는
 부모뿐 아니라 자식 Agent도 직접 열어 대화하고 권한·모델·lifecycle을 제어할 수 있어야 한다.
+
+말풍선과 CLI는 동일한 메시지 기반 채팅의 시각 표현이다. 말풍선은 메시지별 영역을 드러내고,
+CLI 스킨은 좌측에 이어지는 출력, 간결한 작성자·역할 표시와 프롬프트 표현을 사용한다.
+CLI 외형에서도 첨부·답장·승인·전송 같은 채팅 조작이 식별되어야 하며, 실제 셸 입력창으로
+오해하게 하는 가짜 경로·PTY 상태를 추가하지 않는다. 실제 터미널은 기존 도구로 유지한다.
 
 ## Colors
 

@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "id": "remote-session-dataflow",
   "type": "dataflow",
-  "title": "Authenticated v12 Agent session dataflow",
-  "summary": "How an Android Agent command crosses exact-version authentication into the revisioned SQLite authority, while successful remote launch and resume activity preserves its target or history identity before Project sync and correlated projection.",
+  "title": "Authenticated v14 Agent session dataflow",
+  "summary": "Android crosses authenticated version negotiation into one SQLite authority. v15 separates metadata lists, lazy preview and explicit continuation; prior workflow, planning and daemon feature gates remain compatible.",
   "contentLocale": "en",
   "layoutIntent": {
     "density": "balanced",
@@ -23,41 +23,86 @@
     {
       "id": "authenticated-command-path",
       "title": "Authenticated command path",
-      "summary": "The host accepts only an exact v12 authenticated connection, replaces the claimed principal with the connected Android identity, and executes through the durable command FIFO.",
-      "focusIds": ["mobile-agent-command", "v12-ingress", "android-principal-command", "authorized-outbox", "sqlite-session-graph"]
+      "summary": "One baseline-v12 offer negotiates the highest supported version on new hosts while earlier hosts retain v12. The host binds the authenticated Android principal; rejection stops automatic retries.",
+      "focusIds": [
+        "mobile-agent-command",
+        "v12-ingress",
+        "android-principal-command",
+        "authorized-outbox",
+        "sqlite-session-graph"
+      ]
     },
     {
       "id": "revisioned-return-path",
       "title": "Revisioned return path",
       "summary": "Committed events prompt authoritative snapshot refresh; duplicates are ignored and gaps or revision regression force a clean resubscription.",
-      "focusIds": ["sqlite-session-graph", "revisioned-events", "v12-egress", "mobile-agent-projection"]
+      "focusIds": [
+        "sqlite-session-graph",
+        "revisioned-events",
+        "v12-egress",
+        "mobile-agent-projection"
+      ]
     },
     {
       "id": "session-transcript",
-      "title": "Bounded session transcript",
-      "summary": "A selected structured Session reads a forward-only bounded transcript page and rejects malformed or mismatched items on mobile.",
-      "focusIds": ["sqlite-session-graph", "bounded-transcript", "v12-egress", "mobile-agent-projection"]
+      "title": "Bounded transcripts and history",
+      "summary": "Structured Session pages and selected native history are lazy reads. v15 metadata, preview and explicit continuation stay separate and mobile verifies each selected identity.",
+      "focusIds": [
+        "sqlite-session-graph",
+        "bounded-transcript",
+        "v12-egress",
+        "mobile-agent-projection",
+        "unified-history-requests",
+        "validated-history-projection"
+      ]
     },
     {
       "id": "safe-mode-projection",
       "title": "Safe-mode projection",
       "summary": "Remote clients receive authority availability without local recovery paths and cannot issue structured commands while the host is in terminal-only safe mode.",
-      "focusIds": ["authority-availability", "redacted-availability", "v12-egress", "mobile-agent-projection"]
+      "focusIds": [
+        "authority-availability",
+        "redacted-availability",
+        "v12-egress",
+        "mobile-agent-projection"
+      ]
     },
     {
       "id": "targeted-history-recording",
       "title": "Targeted activity recording",
       "summary": "Successful remote launch and resume activity keeps the original Agent launch target or indexed history identity and synchronizes only the resulting valid Project descriptors.",
-      "focusIds": ["v12-ingress", "targeted-history-observation", "sqlite-session-graph"]
+      "focusIds": [
+        "v12-ingress",
+        "targeted-history-observation",
+        "sqlite-session-graph"
+      ]
     }
   ],
   "stages": [
-    { "id": "mobile-intent", "label": "Mobile intent" },
-    { "id": "authenticated-ingress", "label": "Authenticated ingress" },
-    { "id": "main-authority", "label": "Electron-main authority" },
-    { "id": "host-projection", "label": "Host projection" },
-    { "id": "authenticated-egress", "label": "Authenticated egress" },
-    { "id": "mobile-projection", "label": "Mobile projection" }
+    {
+      "id": "mobile-intent",
+      "label": "Mobile intent"
+    },
+    {
+      "id": "authenticated-ingress",
+      "label": "Authenticated ingress"
+    },
+    {
+      "id": "main-authority",
+      "label": "Electron-main authority"
+    },
+    {
+      "id": "host-projection",
+      "label": "Host projection"
+    },
+    {
+      "id": "authenticated-egress",
+      "label": "Authenticated egress"
+    },
+    {
+      "id": "mobile-projection",
+      "label": "Mobile projection"
+    }
   ],
   "entities": [
     {
@@ -71,16 +116,16 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1041,
-          "endLine": 1072,
+          "startLine": 1090,
+          "endLine": 1121,
           "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "Mobile sends one daemon command request, rejects it locally in safe mode, and converts an unavailable connection into an explicit delivery-uncertain receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2465,
-          "endLine": 2471,
+          "startLine": 2727,
+          "endLine": 2733,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "Connection loss settles each pending daemon command as delivery-uncertain and clears it rather than replaying the mutation."
         }
@@ -88,8 +133,8 @@
     },
     {
       "id": "v12-ingress",
-      "label": "Authenticated v12 ingress",
-      "detail": "Operational frames enter only after bearer or one-shot pairing authentication, exact protocol negotiation, and client identity binding.",
+      "label": "Authenticated v15 / compatible v14-v12 ingress",
+      "detail": "One baseline-v12 auth offers supported versions. New hosts choose the highest shared version; older hosts keep v12. Credentials, identity and all feature gates stay authoritative.",
       "kind": "boundary",
       "stage": "authenticated-ingress",
       "order": 0,
@@ -97,18 +142,26 @@
         {
           "rootAlias": "app",
           "relativePath": "src/shared/remote-protocol.ts",
-          "startLine": 120,
-          "endLine": 145,
-          "lineDigest": "sha256:e5f74da22a64e9b276656eee8606ef048860b27253cf953d61d222d25cb1d29e",
-          "claim": "Remote protocol v12 replaces collaboration projection with the revisioned daemon surface and admits only version 12 in this build."
+          "startLine": 153,
+          "endLine": 177,
+          "lineDigest": "sha256:a26390aa09d2f97ffb90005d5a7f2b353dee10c65b84d13d98d66b27f65e2b32",
+          "claim": "One baseline-v12 auth may offer a bounded supported-version list. New hosts choose the highest shared version; absent offers keep the requested supported version and existing feature floors."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1091,
-          "endLine": 1172,
-          "lineDigest": "sha256:d7c9f4ba52ddcc24de61885963dfb0905e5f5c5facd9ec8a390ed60948214f29",
-          "claim": "The host ignores non-auth frames, verifies bearer or consumes a matching pairing generation, enforces exact v12 identity, then marks the socket authenticated."
+          "startLine": 1116,
+          "endLine": 1231,
+          "lineDigest": "sha256:a03a5abaea7d1253cc5e798f2c8af93ec0f7e18b0bfd9bf12364a047befc328c",
+          "claim": "A single auth offer negotiates a supported version after validating credentials and client identity. Failed negotiation consumes no pairing code and returns failure instead of retrying a lower version."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 2479,
+          "endLine": 2490,
+          "lineDigest": "sha256:fcbf44c42ac302695e9994f7ff8488cb5bcd725149732b44da631c5c7fc25a49",
+          "claim": "The phone sends one auth frame when the socket opens, using baseline v12 plus the explicit v15-v12 offer and the same token/client identity."
         }
       ]
     },
@@ -119,14 +172,16 @@
       "kind": "transform",
       "stage": "main-authority",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1722,
-        "endLine": 1759,
-        "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
-        "claim": "The command handler requires v12 and a bound client, replaces principal with that Android id, strictly parses the result, checks availability, and executes it."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1874,
+          "endLine": 1911,
+          "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
+          "claim": "The command handler requires v12 or later and a bound client, replaces principal with that Android id, strictly parses the result, checks availability, and executes it."
+        }
+      ]
     },
     {
       "id": "authorized-outbox",
@@ -135,14 +190,16 @@
       "kind": "transform",
       "stage": "main-authority",
       "order": 1,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 352,
-        "endLine": 438,
-        "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
-        "claim": "The exclusive router authorizes the bound principal, deduplicates by idempotency key, records provider dispatch, commits or rejects, and publishes durable events."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts",
+          "startLine": 359,
+          "endLine": 445,
+          "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
+          "claim": "The exclusive router authorizes the bound principal, deduplicates by idempotency key, records provider dispatch, commits or rejects, and publishes durable events."
+        }
+      ]
     },
     {
       "id": "sqlite-session-graph",
@@ -151,14 +208,16 @@
       "kind": "store",
       "stage": "main-authority",
       "order": 2,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/shared/daemon-protocol.ts",
-        "startLine": 217,
-        "endLine": 238,
-        "lineDigest": "sha256:ed1c720fab5764b6ec13ee8dadc43f98a6bed62b70f2c562b5fc7c9cbcbefcff",
-        "claim": "The v12 snapshot carries runtime settings and the revisioned Project, Workspace, Session, Agent, relation, turn, transcript, approval, and provider collections."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/daemon-protocol.ts",
+          "startLine": 219,
+          "endLine": 242,
+          "lineDigest": "sha256:03d196f202474d6d64905548b899e376f38969247c424d0a152444973bcd7880",
+          "claim": "The v12 snapshot carries runtime settings and the revisioned Project, Workspace, Session, Agent, relation, turn, transcript, approval, and provider collections."
+        }
+      ]
     },
     {
       "id": "revisioned-events",
@@ -171,18 +230,18 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 610,
-          "endLine": 626,
+          "startLine": 617,
+          "endLine": 633,
           "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
           "claim": "After a commit, the router reads ordered events from the store and treats observers as non-authoritative projections."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1007,
-          "endLine": 1012,
+          "startLine": 1032,
+          "endLine": 1037,
           "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
-          "claim": "The bridge emits daemon events only to authenticated, explicitly subscribed v12 connections."
+          "claim": "The bridge emits daemon events only to authenticated, explicitly subscribed v12-compatible connections."
         }
       ]
     },
@@ -193,14 +252,16 @@
       "kind": "transform",
       "stage": "host-projection",
       "order": 1,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1663,
-        "endLine": 1694,
-        "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
-        "claim": "Transcript reads require ready v12 authority and return either the exact bounded Session page or an explicit unavailable empty page."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1687,
+          "endLine": 1718,
+          "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
+          "claim": "Transcript reads require ready v12 authority and return either the exact bounded Session page or an explicit unavailable empty page."
+        }
+      ]
     },
     {
       "id": "targeted-history-observation",
@@ -213,24 +274,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 481,
-          "endLine": 488,
+          "startLine": 494,
+          "endLine": 501,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source separates target-aware successful launch recording from history-aware successful resume recording."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-history-service.ts",
-          "startLine": 239,
-          "endLine": 269,
+          "startLine": 242,
+          "endLine": 272,
           "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
           "claim": "Project targets and resume history ids only touch existing indexed Projects, while direct-directory launches return explicit deterministic Project registration intent."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1530,
-          "endLine": 1562,
+          "startLine": 1632,
+          "endLine": 1664,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -243,14 +304,16 @@
       "kind": "source",
       "stage": "main-authority",
       "order": 4,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/shared/daemon-authority.ts",
-        "startLine": 19,
-        "endLine": 43,
-        "lineDigest": "sha256:2777baa6b3eb69fe24ca386178ed60ebbd5f773554da6d44a818e8b1a78f1335",
-        "claim": "The authority type distinguishes ready and safe mode, records database disposition, and reserves recoveryPath for trusted Desktop consumers."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/daemon-authority.ts",
+          "startLine": 19,
+          "endLine": 43,
+          "lineDigest": "sha256:2777baa6b3eb69fe24ca386178ed60ebbd5f773554da6d44a818e8b1a78f1335",
+          "claim": "The authority type distinguishes ready and safe mode, records database disposition, and reserves recoveryPath for trusted Desktop consumers."
+        }
+      ]
     },
     {
       "id": "redacted-availability",
@@ -259,30 +322,34 @@
       "kind": "transform",
       "stage": "host-projection",
       "order": 2,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 402,
-        "endLine": 429,
-        "lineDigest": "sha256:dc53275637a10c00aa6a0cd59061566213a552752462d69286499b8ad5ba6d0d",
-        "claim": "RemoteDaemonSource is narrowed to snapshot, transcript, command, and event methods, and its availability is redacted before serialization."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 415,
+          "endLine": 442,
+          "lineDigest": "sha256:dc53275637a10c00aa6a0cd59061566213a552752462d69286499b8ad5ba6d0d",
+          "claim": "RemoteDaemonSource is narrowed to snapshot, transcript, command, and event methods, and its availability is redacted before serialization."
+        }
+      ]
     },
     {
       "id": "v12-egress",
-      "label": "Authenticated v12 egress",
-      "detail": "Correlated receipts, snapshots, transcripts, redacted availability, and subscribed events return over the authenticated connection.",
+      "label": "Authenticated v15 / compatible v14-v12 egress",
+      "detail": "Correlated replies carry receipts, summaries, lazily requested transcript pages, remote-safe availability and subscribed daemon events.",
       "kind": "boundary",
       "stage": "authenticated-egress",
       "order": 1,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/shared/remote-protocol.ts",
-        "startLine": 1156,
-        "endLine": 1187,
-        "lineDigest": "sha256:2254e94e91faaa3bda7b442095d1dd4613ecc2142cb6b3ffc8ea937a8d4e9103",
-        "claim": "The v12 return contract has explicit snapshot, transcript, redacted availability, correlated command receipt, and revisioned event envelopes."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/remote-protocol.ts",
+          "startLine": 1284,
+          "endLine": 1315,
+          "lineDigest": "sha256:2254e94e91faaa3bda7b442095d1dd4613ecc2142cb6b3ffc8ea937a8d4e9103",
+          "claim": "The v12 return contract has explicit snapshot, transcript, redacted availability, correlated command receipt, and revisioned event envelopes."
+        }
+      ]
     },
     {
       "id": "mobile-agent-projection",
@@ -295,18 +362,62 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2117,
-          "endLine": 2177,
+          "startLine": 2378,
+          "endLine": 2438,
           "lineDigest": "sha256:25106c9a3a1fd8bac8bd8d5ec443a564d65ac0ce6a3107da9b4d594c4d46c376",
           "claim": "Mobile accepts only a non-regressing authoritative snapshot and responds to event gaps or revision regression by refetching and resubscribing from the new cursor."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 3143,
-          "endLine": 3179,
+          "startLine": 3481,
+          "endLine": 3517,
           "lineDigest": "sha256:83c17a2a2e37318b6e54ea36408ac01d540a60d21fe46deaa8f6b932740e3810",
           "claim": "Mobile correlates receipts, validates bounded transcript items against the requested Session, and feeds valid daemon events into continuity handling."
+        }
+      ]
+    },
+    {
+      "id": "unified-history-requests",
+      "label": "Scoped history and navigation requests",
+      "detail": "Authenticated v15 requests separately list metadata, read a selected history page, prepare continuation or explicitly resume. The host binds continuation to the Android principal.",
+      "kind": "transform",
+      "stage": "main-authority",
+      "order": 5,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1752,
+          "endLine": 1780,
+          "lineDigest": "sha256:d9623e50622279b1a5ecf181bffde93dc0c2c5af9d7521a7bd26b6aea78b4719",
+          "claim": "History and navigation require v15 and an authenticated client. Resume receives the bound Android identity; summary and transcript operations remain separate."
+        }
+      ]
+    },
+    {
+      "id": "validated-history-projection",
+      "label": "Validated mobile history projection",
+      "detail": "Mobile validates typed replies and selected conversation identity. Earlier hosts retain bounded read compatibility while native continuation requires host support.",
+      "kind": "sink",
+      "stage": "mobile-projection",
+      "order": 1,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 1168,
+          "endLine": 1215,
+          "lineDigest": "sha256:c728e6ec70ac3268ed88646466edb17a4e1f3c5a37f2372308ff5678979bcc14",
+          "claim": "The transport rejects disconnected access, validates list/read/preparation/resume replies, checks selected identity, and delegates older hosts to the explicit compatibility reader."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 3098,
+          "endLine": 3123,
+          "lineDigest": "sha256:cae794fbef5daaaa7f4cc84ec542d44eae5341b1a10bd4b1d0d0b6c89f87e9ec",
+          "claim": "Mobile accepts one supported auth-ok version, validates host identity and pairing token handoff, and preserves that negotiated version for later feature gates."
         }
       ]
     }
@@ -322,18 +433,26 @@
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 1041,
-          "endLine": 1072,
+          "startLine": 1090,
+          "endLine": 1121,
           "lineDigest": "sha256:07bdca8ec155f078ba527842340021f689d7384aaa39564404a05269212c2879",
           "claim": "A command enters the transport once and immediately becomes delivery-uncertain when it cannot be sent."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-          "startLine": 2465,
-          "endLine": 2471,
+          "startLine": 2727,
+          "endLine": 2733,
           "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
           "claim": "A connection drop resolves the original pending command as delivery-uncertain and removes it without transport replay."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 3033,
+          "endLine": 3062,
+          "lineDigest": "sha256:e06de7d97f167589fdb7af32ac72bbb3aa4405fcc25075e74a6f72238217f62d",
+          "claim": "Protocol or credential rejection stops the transport, clears retry timing, settles pending work as unavailable and closes the socket; no lower-version retry is scheduled."
         }
       ]
     },
@@ -343,14 +462,16 @@
       "to": "android-principal-command",
       "label": "bind client identity",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1722,
-        "endLine": 1737,
-        "lineDigest": "sha256:a86dadd123a9026b869c1906a5faad520b47ec978e68d2a29fbd9af4263e4be9",
-        "claim": "Only the authenticated connection's client id becomes the Android principal of the strict daemon command."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1874,
+          "endLine": 1889,
+          "lineDigest": "sha256:a86dadd123a9026b869c1906a5faad520b47ec978e68d2a29fbd9af4263e4be9",
+          "claim": "Only the authenticated connection's client id becomes the Android principal of the strict daemon command."
+        }
+      ]
     },
     {
       "id": "principal-to-outbox",
@@ -358,14 +479,16 @@
       "to": "authorized-outbox",
       "label": "authorize and serialize",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 203,
-        "endLine": 224,
-        "lineDigest": "sha256:ae2c52bc6410a53d9fbd160fd5feeb9aaa31e96c7e09d0ed5472454964de2be8",
-        "claim": "The parsed command joins the same exclusive FIFO used by every daemon client."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts",
+          "startLine": 210,
+          "endLine": 231,
+          "lineDigest": "sha256:ae2c52bc6410a53d9fbd160fd5feeb9aaa31e96c7e09d0ed5472454964de2be8",
+          "claim": "The parsed command joins the same exclusive FIFO used by every daemon client."
+        }
+      ]
     },
     {
       "id": "ingress-to-history-observation",
@@ -377,24 +500,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2074,
-          "endLine": 2078,
+          "startLine": 2226,
+          "endLine": 2230,
           "lineDigest": "sha256:6ae1b97f47409e427806b6e930f0f493671f45ee81ae827240c7024f79291e00",
           "claim": "A successful Project launch records the exact Project launch target rather than reconstructing it from a reported working directory."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2168,
-          "endLine": 2172,
+          "startLine": 2320,
+          "endLine": 2324,
           "lineDigest": "sha256:2e02a59d7ea06680b0d60888320c21e35b577143de42312112f9085818a6a125",
           "claim": "A general successful launch passes its exact AgentLaunchTarget into activity recording."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 2301,
-          "endLine": 2301,
+          "startLine": 2453,
+          "endLine": 2453,
           "lineDigest": "sha256:de84c56e97e3e35cb078746525f9bdac031ea5c9003d064f767a8b22c0c7447e",
           "claim": "A successful resume records the original indexed history id."
         }
@@ -406,14 +529,16 @@
       "to": "sqlite-session-graph",
       "label": "atomic durable commit",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 385,
-        "endLine": 437,
-        "lineDigest": "sha256:524d17f1511b3f90f92e97de397a97fa3edce1c3f611e01958bf614f437980b5",
-        "claim": "Outbox state and command effects settle durably before the router returns a receipt or publishes events."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts",
+          "startLine": 392,
+          "endLine": 444,
+          "lineDigest": "sha256:524d17f1511b3f90f92e97de397a97fa3edce1c3f611e01958bf614f437980b5",
+          "claim": "Outbox state and command effects settle durably before the router returns a receipt or publishes events."
+        }
+      ]
     },
     {
       "id": "history-observation-to-graph",
@@ -425,16 +550,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1530,
-          "endLine": 1562,
+          "startLine": 1632,
+          "endLine": 1664,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-history-service.ts",
-          "startLine": 239,
-          "endLine": 269,
+          "startLine": 242,
+          "endLine": 272,
           "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
           "claim": "Project-target and history-specific records return no changed descriptor after removal; direct-directory launches instead return their deterministic id as explicit intent."
         }
@@ -446,14 +571,16 @@
       "to": "revisioned-events",
       "label": "ordered projection",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 610,
-        "endLine": 626,
-        "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
-        "claim": "Published events are read back from the durable sequence after commit rather than synthesized by a transport."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts",
+          "startLine": 617,
+          "endLine": 633,
+          "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
+          "claim": "Published events are read back from the durable sequence after commit rather than synthesized by a transport."
+        }
+      ]
     },
     {
       "id": "events-to-egress",
@@ -461,14 +588,16 @@
       "to": "v12-egress",
       "label": "subscribed event",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1007,
-        "endLine": 1012,
-        "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
-        "claim": "Only an authenticated v12 socket with an active daemon subscription receives the event envelope."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1032,
+          "endLine": 1037,
+          "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
+          "claim": "Only an authenticated v12-or-later socket with an active daemon subscription receives the event envelope."
+        }
+      ]
     },
     {
       "id": "egress-to-mobile",
@@ -476,14 +605,16 @@
       "to": "mobile-agent-projection",
       "label": "validate and reconcile",
       "kind": "primary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 2150,
-        "endLine": 2177,
-        "lineDigest": "sha256:c82412e21d9783fe44ab9a9fa30cf706ed69d4e046ff41c3c152431df2461a8b",
-        "claim": "A valid event advances the cursor through an authoritative refresh; a gap or regression invalidates the local projection and forces reseeding."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 2411,
+          "endLine": 2438,
+          "lineDigest": "sha256:c82412e21d9783fe44ab9a9fa30cf706ed69d4e046ff41c3c152431df2461a8b",
+          "claim": "A valid event advances the cursor through an authoritative refresh; a gap or regression invalidates the local projection and forces reseeding."
+        }
+      ]
     },
     {
       "id": "graph-to-transcript",
@@ -491,14 +622,16 @@
       "to": "bounded-transcript",
       "label": "read forward page",
       "kind": "secondary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-command-router.ts",
-        "startLine": 178,
-        "endLine": 196,
-        "lineDigest": "sha256:1a2db6d9849a2167256a4b6fe331d54606b8bee1062c3a4bf5adc7b75225ac58",
-        "claim": "Transports read Session transcript items through a bounded router method without access to the SQLite store itself."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts",
+          "startLine": 179,
+          "endLine": 197,
+          "lineDigest": "sha256:1a2db6d9849a2167256a4b6fe331d54606b8bee1062c3a4bf5adc7b75225ac58",
+          "claim": "Transports read Session transcript items through a bounded router method without access to the SQLite store itself."
+        }
+      ]
     },
     {
       "id": "transcript-to-egress",
@@ -506,14 +639,16 @@
       "to": "v12-egress",
       "label": "correlated page",
       "kind": "secondary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1663,
-        "endLine": 1694,
-        "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
-        "claim": "The host returns transcript items with the original request and Session ids or explicitly marks the page unavailable."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1687,
+          "endLine": 1718,
+          "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
+          "claim": "The host returns transcript items with the original request and Session ids or explicitly marks the page unavailable."
+        }
+      ]
     },
     {
       "id": "availability-to-redaction",
@@ -521,14 +656,16 @@
       "to": "redacted-availability",
       "label": "remove local paths",
       "kind": "secondary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/shared/daemon-authority.ts",
-        "startLine": 40,
-        "endLine": 57,
-        "lineDigest": "sha256:49a9eba64d4e60a7f5c99206127a5ed809e099ab9e761fdead5766b7456cf7a1",
-        "claim": "The remote-safe type and conversion preserve the safe-mode reason and schema while structurally excluding recoveryPath."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/daemon-authority.ts",
+          "startLine": 40,
+          "endLine": 57,
+          "lineDigest": "sha256:49a9eba64d4e60a7f5c99206127a5ed809e099ab9e761fdead5766b7456cf7a1",
+          "claim": "The remote-safe type and conversion preserve the safe-mode reason and schema while structurally excluding recoveryPath."
+        }
+      ]
     },
     {
       "id": "redaction-to-egress",
@@ -536,14 +673,67 @@
       "to": "v12-egress",
       "label": "safe status",
       "kind": "secondary",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1229,
-        "endLine": 1239,
-        "lineDigest": "sha256:1c7c6e9fe0085f95d654460a7ef58e52143ff70bdb0bbd162948e044c2191ac8",
-        "claim": "Immediately after authentication the host sends redacted availability and sends a structured snapshot only when authority state is ready."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1253,
+          "endLine": 1263,
+          "lineDigest": "sha256:1c7c6e9fe0085f95d654460a7ef58e52143ff70bdb0bbd162948e044c2191ac8",
+          "claim": "Immediately after authentication the host sends redacted availability and sends a structured snapshot only when authority state is ready."
+        }
+      ]
+    },
+    {
+      "id": "ingress-to-unified-history",
+      "from": "v12-ingress",
+      "to": "unified-history-requests",
+      "label": "separate read and continuation",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1752,
+          "endLine": 1780,
+          "lineDigest": "sha256:d9623e50622279b1a5ecf181bffde93dc0c2c5af9d7521a7bd26b6aea78b4719",
+          "claim": "History and navigation require v15 and an authenticated client. Resume receives the bound Android identity; summary and transcript operations remain separate."
+        }
+      ]
+    },
+    {
+      "id": "unified-history-to-egress",
+      "from": "unified-history-requests",
+      "to": "v12-egress",
+      "label": "correlated bounded reply",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1752,
+          "endLine": 1780,
+          "lineDigest": "sha256:d9623e50622279b1a5ecf181bffde93dc0c2c5af9d7521a7bd26b6aea78b4719",
+          "claim": "History and navigation require v15 and an authenticated client. Resume receives the bound Android identity; summary and transcript operations remain separate."
+        }
+      ]
+    },
+    {
+      "id": "egress-to-history-projection",
+      "from": "v12-egress",
+      "to": "validated-history-projection",
+      "label": "validate selected identity",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 1168,
+          "endLine": 1215,
+          "lineDigest": "sha256:c728e6ec70ac3268ed88646466edb17a4e1f3c5a37f2372308ff5678979bcc14",
+          "claim": "The transport rejects disconnected access, validates list/read/preparation/resume replies, checks selected identity, and delegates older hosts to the explicit compatibility reader."
+        }
+      ]
     }
   ],
   "primaryPath": [

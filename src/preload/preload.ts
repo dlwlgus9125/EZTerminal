@@ -110,6 +110,11 @@ ipcRenderer.on('packet-port', (event) => {
 });
 
 const api: EzTerminalApi = {
+  resolveConversation: ref => ipcRenderer.invoke('conversation-history:resolve', sessionSurfaceClientId, ref),
+  listConversations: query => ipcRenderer.invoke('conversation-history:list', sessionSurfaceClientId, query),
+  readConversation: (id, cursor, limit) => ipcRenderer.invoke('conversation-history:read', sessionSurfaceClientId, id, cursor, limit),
+  prepareHistoryResume: request => ipcRenderer.invoke('conversation-history:prepare-resume', sessionSurfaceClientId, request),
+  resumeHistory: request => ipcRenderer.invoke('conversation-history:resume', sessionSurfaceClientId, request),
   versions: {
     app: packageJson.version,
     protocol: REMOTE_PROTOCOL_VERSION,
@@ -204,6 +209,32 @@ const api: EzTerminalApi = {
     ),
   sendDaemonCommand: (command) =>
     ipcRenderer.invoke('daemon:command', sessionSurfaceClientId, command),
+  getWorkflowSnapshot: (projectId) => ipcRenderer.invoke('workflow:read', sessionSurfaceClientId, projectId),
+  getWorkflowNavigation: (projectId) => ipcRenderer.invoke('workflow:navigation', sessionSurfaceClientId, projectId),
+  executeWorkflowCommand: (command) => ipcRenderer.invoke('workflow:execute', sessionSurfaceClientId, command),
+  workflowPreview: (request) => ipcRenderer.invoke('workflow:preview', sessionSurfaceClientId, request),
+  workflowDraftRead: (projectId) => ipcRenderer.invoke('workflow-draft:read', sessionSurfaceClientId, projectId),
+  workflowDraftWrite: (projectId, request) => ipcRenderer.invoke('workflow-draft:write', sessionSurfaceClientId, projectId, request),
+  agentCapabilitiesList: (request) => ipcRenderer.invoke('agent-capabilities:list', sessionSurfaceClientId, request),
+  agentCapabilitiesManage: (command) => ipcRenderer.invoke('agent-capabilities:manage', sessionSurfaceClientId, command),
+  getPlanningSnapshot: (projectId, subprojectId) =>
+    ipcRenderer.invoke('planning:read', sessionSurfaceClientId, projectId, subprojectId),
+  getPlanningExecutionSnapshot: (projectId, subprojectId) => ipcRenderer.invoke('planning-run:read', sessionSurfaceClientId, projectId, subprojectId),
+  executePlanningRun: (command) => ipcRenderer.invoke('planning-run:execute', sessionSurfaceClientId, command),
+  readPlanningResult: (query) => ipcRenderer.invoke('planning-run:result', sessionSurfaceClientId, query),
+  planningAiRequest: (request) => ipcRenderer.invoke('planning-ai:request', sessionSurfaceClientId, request),
+  executePlanningAsset: (request) => ipcRenderer.invoke('planning-asset:request', sessionSurfaceClientId, request),
+  executeProjectArchive: (request) => ipcRenderer.invoke('project-archive:execute', sessionSurfaceClientId, request),
+  executePlanningCommand: (command) =>
+    ipcRenderer.invoke('planning:execute', sessionSurfaceClientId, command),
+  chatStateRead: (scope) =>
+    ipcRenderer.invoke('chat-state:read', sessionSurfaceClientId, scope),
+  chatStateWrite: (scope, request) =>
+    ipcRenderer.invoke('chat-state:write', sessionSurfaceClientId, scope, request),
+  planningDraftRead: (projectId, subprojectId) =>
+    ipcRenderer.invoke('planning-draft:read', sessionSurfaceClientId, projectId, subprojectId),
+  planningDraftWrite: (projectId, request, subprojectId) =>
+    ipcRenderer.invoke('planning-draft:write', sessionSurfaceClientId, projectId, request, subprojectId),
   onDaemonEvent: (listener): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,

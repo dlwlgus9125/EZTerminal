@@ -27,6 +27,7 @@ if (args.includes('--version')) {
   let input = '';
   let nextThread = 0;
   let nextTurn = 0;
+  const threadConfigs = new Map();
   const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
   const respond = (frame, result) => write({ jsonrpc: '2.0', id: frame.id, result });
 
@@ -61,8 +62,23 @@ if (args.includes('--version')) {
             nextCursor: null,
           });
           break;
+        case 'skills/list':
+          respond(frame, { data: [{ cwd: frame.params?.cwds?.[0], errors: [], skills: [
+            { name: 'fixture-review', path: 'C:\\fixture\\skills\\review\\SKILL.md', description: 'Review fixture changes', enabled: true, scope: 'user' },
+          ] }] });
+          break;
+        case 'plugin/installed':
+          respond(frame, { marketplaces: [], marketplaceLoadErrors: [] });
+          break;
+        case 'mcpServerStatus/list':
+          respond(frame, { data: [], nextCursor: null });
+          break;
+        case 'config/read':
+          respond(frame, { config: { mcp_servers: {} }, origins: {} });
+          break;
         case 'thread/start': {
           const threadId = `fixture-thread-${++nextThread}`;
+          threadConfigs.set(threadId, frame.params?.config);
           respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture' });
           break;
         }
@@ -70,13 +86,36 @@ if (args.includes('--version')) {
           const threadId = frame.params?.threadId;
           const turnSequence = ++nextTurn;
           const turnId = `fixture-turn-${turnSequence}`;
+          if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-last-input.json'), JSON.stringify(frame.params?.input));
           respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
-          setTimeout(() => {
+          setTimeout(async () => {
             write({
               jsonrpc: '2.0',
               method: 'turn/started',
               params: { threadId, turn: { id: turnId, status: 'inProgress', items: [] } },
             });
+            // Deterministic provider behavior, crossing the real authenticated app-tool
+            // endpoint. The product still owns preview validation and persistence.
+            let responseText = 'Structured Codex fixture ready.';
+            if (JSON.stringify(frame.params?.input).includes('EZTERMINAL_E2E_PREVIEW')) {
+              try {
+                const descriptor = threadConfigs.get(threadId)?.mcp_servers?.ezterminal_orchestration;
+                if (!descriptor) throw new Error('Missing app-tool descriptor');
+                const call = async (name, args) => {
+                  const response = await fetch(descriptor.url, { method: 'POST', headers: { ...descriptor.http_headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: `${name}-${turnSequence}`, method: 'tools/call', params: { name, arguments: args } }) });
+                  const data = await response.json();
+                  if (data.error || data.result?.isError) throw new Error(JSON.stringify(data.error ?? data.result));
+                  return JSON.parse(data.result.content[0].text);
+                };
+                const state = await call('workflow_read', {});
+                if (!state.preview) throw new Error('Creation preview unavailable');
+                const graph = state.preview.graph;
+                graph.nodes[0].title = 'AI preview stage';
+                const result = await call('preview_workflow', { commandId: `preview-${threadId}-${turnSequence}`, previewId: state.preview.id, expectedRevision: state.preview.revision, graph });
+                if (!result.ok) throw new Error(result.message);
+                responseText = 'AI preview updated through the authenticated app tool.';
+              } catch (reason) { responseText = `Preview fixture failed: ${String(reason)}`; }
+            }
             write({
               jsonrpc: '2.0',
               method: 'item/completed',
@@ -87,7 +126,7 @@ if (args.includes('--version')) {
                 item: {
                   id: `fixture-message-${turnSequence}`,
                   type: 'agentMessage',
-                  text: 'Structured Codex fixture ready.',
+                  text: responseText,
                   phase: null,
                 },
               },

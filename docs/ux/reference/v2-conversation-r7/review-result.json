@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-14",
+  "status": "candidate-for-final-review",
+  "approved": false,
+  "scope": "R7 responsive, interactive design proposal. Existing hosted R6 source extended with workspace tabs, local split trees, independent conversation tabs and browser auxiliary windows. R6 remains accessible under /r6/.",
+  "source": "../v2-conversation-r6/site/dist",
+  "capture_basis": {
+    "production": "../v2-conversation-r6/site/dist/assets/current-desktop-chat.png",
+    "context": "Real production chat component rendered using Storybook fixtures, previously captured and reviewed again beside R7. Installed app screenshot was a CLI tab; no claim of real provider-backed structured chat capture.",
+    "r7": "evidence/proposal-*.png",
+    "review": "Desktop columns, 1+2, light theme, a narrow desktop pane, a real auxiliary window and phone captures inspected. Mobile rows changed to focused-pane navigation after the capture/test showed too little reading space. Repetitive layout toast removed so it does not obscure the composer. Narrow queue controls compacted."
+  },
+  "decisions": [
+    "A workspace tab remembers its own split tree; each split leaf owns conversation tabs and an input target.",
+    "Horizontal, vertical, 1+2, nested split, divider resizing and focus mode are interactive.",
+    "Tab drag moves one conversation; the grip moves a group. Center drops merge tabs, edge drops split. Menus and keyboard controls cover the same operations.",
+    "A browser auxiliary window can split locally without taking other conversations from the main window. It returns conversations via a button or window close.",
+    "Phone and undersized containers show one pane with a switcher while retaining the original split tree.",
+    "Desktop Enter semantics depend on input device context, not a narrow pane width. Mobile Enter inserts a newline."
+  ],
+  "validation": {
+    "command": "pnpm e2e --config docs/ux/reference/v2-conversation-r7/playwright.config.cjs",
+    "passed": 8,
+    "failed": 0,
+    "responsive_combinations": 150,
+    "viewports": [[320,640],[390,844],[1024,768],[1440,900],[1920,1080]],
+    "layouts": ["columns","rows","triple"],
+    "states": ["completed","working","approval","error","offline","empty","uncertain","conflict","stopped","loading"],
+    "accessibility": "axe WCAG 2 A/AA and 2.1 AA, including embedded frames: zero violations across desktop columns, desktop 1+2, light and phone views. This is automated coverage, not a full manual accessibility certification.",
+    "behaviors": "Stable iframe identity across layouts; draft, attachment metadata, reply, queue and caret preservation; reload persistence; real popup transfer including scroll and approval state; local auxiliary split ownership; return and close recovery; popup blocking; tab and group drag; keyboard menus and dividers; desktop vs touch Enter; secondary-pane approval and inspector; global new conversation shortcut.",
+    "hosted_smoke": "Published R7 returned HTTP 200. Verified three-pane layout plus real auxiliary window local split and return, with no page errors. The platform-injected iframe is excluded from the app-frame readiness condition.",
+    "evidence": ["evidence/qa-report.json","evidence/responsive-metrics.json","evidence/accessibility.json","evidence/hosted-smoke.json"],
+    "performance_benchmark": "Not run."
+  },
+  "project_contract": "DESIGN.md, docs/ux/frontend-design.md and production Storybook/component contracts were read before design. Runtime theme sources retain ownership. Existing root machine-readable design validation limitations are recorded in the R6 review; no project document adoption or baseline replacement was performed.",
+  "boundaries": [
+    "All AI messages, progress, command approval and file diffs are fixtures. No provider, daemon, filesystem or Git actions are performed by the prototype.",
+    "Window moves serialize fixture UI state; native Electron adoption must retain the existing Dockview panel instance and provider/PTY lifecycle. The browser prototype does not prove native session continuity.",
+    "OS-outside dragging uses an explicit popup-opening button because of browser user-activation restrictions.",
+    "Attachment bytes are not persisted or uploaded, only filename and size metadata.",
+    "No Android device keyboard validation or product release certification."
+  ]
+}

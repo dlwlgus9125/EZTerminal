@@ -131,6 +131,7 @@ export type SpawnFn = (
 
 export interface HttpGetResult {
   readonly ok: boolean;
+  readonly statusCode?: number;
   /** Failure classification (absent when `ok` is true). `refused` is a
    * definitive "not running" signal (the OS rejected the connection
    * outright); `timeout`/`error` are ambiguous — the gateway may just be
@@ -159,7 +160,7 @@ export interface OpenClawServiceDeps {
   now?: () => number;
   cliTimeouts?: Partial<OpenClawCliTimeouts>;
   killProcess?: (child: ChildProcessLike) => void;
-  /** Production verifies start/restart with `/startupz` plus authenticated RPC.
+  /** Production verifies HTTP startup independently of management RPC.
    * Existing narrow unit fakes can opt in explicitly without acquiring real
    * timers or sockets. */
   verifyLifecycleReadiness?: boolean;
@@ -207,7 +208,8 @@ function defaultHttpGet(url: string): Promise<HttpGetResult> {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: HTTP_LIVENESS_TIMEOUT_MS }, (res) => {
       res.resume(); // drain — we only care that the server answered
-      resolve({ ok: (res.statusCode ?? 0) < 500 });
+      const statusCode = res.statusCode ?? 0;
+      resolve({ ok: statusCode >= 200 && statusCode < 300, statusCode });
     });
     req.on('timeout', () => {
       req.destroy();
@@ -516,6 +518,9 @@ export class OpenClawService {
   // probe — otherwise two concurrent failing probes would each advance
   // probeFailureStreak, shortening the intended debounce window.
   private statusProbe: Promise<OpenClawStatus> | null = null;
+  private managementProbe: Promise<void> | null = null;
+  private managementProbedAt = Number.NEGATIVE_INFINITY;
+  private managementStatus: Pick<OpenClawStatus, 'connectionState' | 'version'> = {};
 
   private rpc: OpenClawRpcConnection | null = null;
   private rpcRefCount = 0;
@@ -582,6 +587,8 @@ export class OpenClawService {
     this.wasRunning = false;
     this.probeFailureStreak = 0;
     this.statusProbe = null;
+    this.managementStatus = {};
+    this.managementProbedAt = Number.NEGATIVE_INFINITY;
     this.logCursor = undefined;
     this.logBackfillDone = false;
     if (this.rpc) {
@@ -657,7 +664,7 @@ export class OpenClawService {
 
     let probe: HttpGetResult;
     try {
-      probe = await this.httpGet(`${endpoint.origin}/`);
+      probe = await this.httpGet(`${endpoint.origin}/healthz`);
     } catch {
       return { state: 'unknown', port: endpoint.port };
     }
@@ -666,12 +673,8 @@ export class OpenClawService {
     if (probe.ok) {
       this.wasRunning = true;
       this.probeFailureStreak = 0;
-      const enrichment = await this.withRpc((rpc) => rpc.call('status'));
-      const version =
-        enrichment && typeof enrichment === 'object' && enrichment !== null && 'runtimeVersion' in enrichment
-          ? String((enrichment as { runtimeVersion: unknown }).runtimeVersion)
-          : undefined;
-      return { state: 'running', port: endpoint.port, version };
+      this.observeManagementConnection(endpoint);
+      return { state: 'running', port: endpoint.port, ...this.managementStatus };
     }
 
     // `refused` is definitive (a stopped gateway refuses instantly) — report
@@ -685,9 +688,29 @@ export class OpenClawService {
       }
     }
     this.wasRunning = false;
+    this.managementStatus = {};
     this.probeFailureStreak = 0;
     const starting = this.busyAction === 'start' || this.busyAction === 'restart';
     return { state: starting ? 'starting' : 'stopped', port: endpoint.port };
+  }
+
+  private observeManagementConnection(endpoint: OpenClawEndpoint): void {
+    if (this.managementProbe || this.now() - this.managementProbedAt < STATUS_POLL_INTERVAL_MS) return;
+    this.managementProbedAt = this.now();
+    if (!this.managementStatus.connectionState) this.managementStatus = { connectionState: 'checking' };
+    const probe = this.withRpc((rpc) => rpc.call('status')).then((value) => {
+      if (this.disposed || !this.wasRunning || endpoint.generation !== this.endpoint.generation) return;
+      const connected = value !== undefined;
+      this.managementStatus = {
+        connectionState: connected ? 'connected' : 'unavailable',
+        ...(value && typeof value === 'object' && 'runtimeVersion' in value
+          ? { version: String(value.runtimeVersion) } : {}),
+      };
+      this.notifyStatusListeners({ state: 'running', port: endpoint.port, ...this.managementStatus });
+    }).finally(() => {
+      if (this.managementProbe === probe) this.managementProbe = null;
+    });
+    this.managementProbe = probe;
   }
 
   /** PATH resolution only — no spawn (see the module doc). A `true` result
@@ -787,7 +810,7 @@ export class OpenClawService {
         result = {
           ok: false,
           code: 'unhealthy',
-          stderr: 'OpenClaw command completed but the gateway did not become RPC-ready',
+          stderr: 'OpenClaw command completed but its HTTP server did not finish starting',
         };
       }
       // A user-initiated stop must show up as `stopped` immediately, not
@@ -814,14 +837,13 @@ export class OpenClawService {
       const endpoint = this.endpoint;
       let startupReady = false;
       try {
-        startupReady = (await this.httpGet(`${endpoint.origin}/startupz`)).ok;
+        const live = await this.httpGet(`${endpoint.origin}/healthz`);
+        const startup = live.ok ? await this.httpGet(`${endpoint.origin}/startupz`) : live;
+        startupReady = live.ok && (startup.ok || startup.statusCode === 404);
       } catch {
         startupReady = false;
       }
-      const rpcReady = startupReady
-        ? (await this.withRpc((rpc) => rpc.call('status'))) !== undefined
-        : false;
-      if (startupReady && rpcReady) {
+      if (startupReady) {
         if (firstReadyAt === null) firstReadyAt = this.now();
         if (this.lifecycleStableMs === 0 || this.now() - firstReadyAt >= this.lifecycleStableMs) {
           return true;

@@ -9,6 +9,7 @@ export interface WorkspaceBarProps {
   readonly onApplyTwoByOne: () => void;
   readonly onApplyOnePlusTwo: () => void;
   readonly onApplySingle: () => void;
+  readonly onApplyRows?: () => void;
 }
 
 /**
@@ -26,8 +27,9 @@ export function WorkspaceBar({
   onApplyTwoByOne,
   onApplyOnePlusTwo,
   onApplySingle,
+  onApplyRows,
 }: WorkspaceBarProps): JSX.Element {
-  const { t } = useAppTranslation();
+  const { t, i18n } = useAppTranslation();
 
   return (
     <div className="workspace-bar" data-testid="workspace-bar">
@@ -37,6 +39,7 @@ export function WorkspaceBar({
       </span>
 
       <span className="workspace-bar__chips">
+        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
         <button
           type="button"
           className="workspace-bar__chip"

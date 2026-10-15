@@ -1,5 +1,6 @@
 import { Bot, Check, History, Plus } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { WorkflowConversationContext, WorkflowConversationUnavailable, useWorkflowConversationScope } from '../../src/renderer/workflow/WorkflowConversationContext';
 
 import type {
   AgentActivity,
@@ -11,15 +12,23 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../../src/shared/agent';
+import { conversationQueue } from '../../src/renderer/conversation-queue';
 import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
   type AgentCoordinationSnapshot,
   type ManagedMergeRequest,
 } from '../../src/shared/agent-coordination';
 import type {
+  AgentHistorySessionSummary,
   AgentLaunchBootstrap,
   AgentResumeBootstrap,
 } from '../../src/shared/agent-history';
+import type { ConversationEntry, ConversationHistoryClient } from '../../src/shared/conversation-history';
+import { ConversationHistoryPicker } from '../../src/renderer/ConversationHistoryPicker';
+import { ConversationStartPanel } from '../../src/renderer/ConversationStartPanel';
+import type { ConversationStartAccess } from '../../src/renderer/conversation-start';
+import { mobileConversationState } from './mobile-conversation-state';
+import { conversationOperationId } from '../../src/shared/conversation-start';
 import {
   EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   orchestrationWorkerActivityIds,
@@ -53,6 +62,7 @@ import { IconButton } from '../../src/renderer/ui';
 import {
   createDaemonCommand,
   type DaemonCommand,
+  type DaemonSnapshot,
   type DaemonTranscriptItem,
   type ManagedAgentState,
   type PermissionPreset,
@@ -67,8 +77,13 @@ import {
 import { MobileNewSessionDraft } from './MobileNewSessionDraft';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { MobilePageHeader } from './MobilePageHeader';
-import { MobileAgentProjects } from './MobileAgentProjects';
+import { MobileAgentHistorySheet } from './MobileAgentHistorySheet';
 import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
+import { useMobileChatDraft } from './use-mobile-chat-draft';
+import { MobileOfflineChatCacheStore } from './mobile-offline-chat-cache';
+import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
+import type { MobileChatStateStoreLike } from './mobile-chat-state-store';
+import type { ChatMessageContext } from '../../src/shared/chat-message';
 import { sessionViewKey } from '../../src/renderer/session-view-state';
 import { useLiveTerminalSessions, withLiveTerminalSessions } from '../../src/renderer/use-live-terminal-sessions';
 import { useMobileToast } from './MobileToast';
@@ -296,9 +311,17 @@ export function MobileAgentView({
   onLaunchAgent,
   onResumeHistory,
   transport,
-  daemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
+  daemonRuntimeState: incomingDaemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
   structuredTranscripts = EMPTY_STRUCTURED_TRANSCRIPTS,
   agentCreateRecovery,
+  chatStateStore,
+  projectId,
+  onProjectFilterChange,
+  flatConversations = false,
+  onOpenWorkflow,
+  historyRequest,
+  onHistoryRequestConsumed,
+  onHistoryRequestClosed,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
@@ -329,8 +352,21 @@ export function MobileAgentView({
   readonly structuredTranscripts?: Readonly<Record<string, readonly DaemonTranscriptItem[]>>;
   /** Workspace-owned durable recovery boundary. Missing controllers fail Agent creation closed. */
   readonly agentCreateRecovery?: MobileAgentCreateRecoveryController;
+  readonly chatStateStore?: MobileChatStateStoreLike;
+  readonly projectId?: string | null;
+  readonly onProjectFilterChange?: (projectId:string | null) => void;
+  readonly flatConversations?: boolean;
+  readonly onOpenWorkflow?: (projectId: string, subprojectId: string, nodeId?: string) => void;
+  readonly historyRequest?: { readonly conversationId?: string; readonly projectId?: string; readonly key: string };
+  readonly onHistoryRequestConsumed?: () => void;
+  readonly onHistoryRequestClosed?: () => void;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
+  const [historySnapshot, setHistorySnapshot] = useState<{ readonly transport: WsEzTerminalTransport; readonly snapshot: DaemonSnapshot }>();
+  const daemonRuntimeState = historySnapshot && historySnapshot.transport === transport
+    && historySnapshot.snapshot.revision > (incomingDaemonRuntimeState.snapshot?.revision ?? -1)
+    ? { ...incomingDaemonRuntimeState, snapshot: historySnapshot.snapshot }
+    : incomingDaemonRuntimeState;
   const liveTerminalIds = useLiveTerminalSessions(transport);
   const navigationSnapshot = useMemo(() => withLiveTerminalSessions(daemonRuntimeState.snapshot, liveTerminalIds), [daemonRuntimeState.snapshot, liveTerminalIds]);
   const showToast = useMobileToast();
@@ -348,8 +384,104 @@ export function MobileAgentView({
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(initialSessionId ?? null);
   useEffect(() => { onActiveSessionChange?.(selectedDaemonSessionId); }, [onActiveSessionChange, selectedDaemonSessionId]);
   const [newSessionTarget, setNewSessionTarget] = useState<MobileNewSessionTarget | null>(null);
+  const [conversationEntry, setConversationEntry] = useState<ConversationEntry>();
+  const draftIdentity = useRef(`structured-draft-${conversationOperationId()}`);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const historyInvokerRef = useRef<HTMLElement | null>(null);
+  const historyPreviewLayerId = `mobile-history-preview-${useId()}`;
+  const [historyPreviewBack, setHistoryPreviewBack] = useState<(() => void) | undefined>();
+  const historyPreviewChanged = useCallback((onBack: (() => void) | undefined) => setHistoryPreviewBack(() => onBack), []);
+  const [historyTarget, setHistoryTarget] = useState<{ readonly conversationId?: string; readonly projectId?: string }>();
+  const [cliHistory, setCliHistory] = useState<AgentHistorySessionSummary>();
   const [pendingCreatedAgent, setPendingCreatedAgent] = useState<PendingCreatedAgent | null>(null);
+  const capabilityClient = useMemo(() => transport && typeof transport.agentCapabilitiesList === 'function' ? {
+    list: transport.agentCapabilitiesList.bind(transport),
+    manage: transport.agentCapabilitiesManage.bind(transport),
+  } : undefined, [transport]);
+  const historyClient = useMemo<ConversationHistoryClient | undefined>(() => transport
+    && typeof transport.listConversations === 'function' && typeof transport.readConversation === 'function'
+    && typeof transport.prepareHistoryResume === 'function' && typeof transport.resumeHistory === 'function' ? {
+    listConversations: transport.listConversations.bind(transport),
+    readConversation: transport.readConversation.bind(transport),
+    prepareHistoryResume: transport.prepareHistoryResume.bind(transport),
+    resumeHistory: transport.resumeHistory.bind(transport),
+    resolveConversation: transport.resolveConversation?.bind(transport),
+  } : undefined, [transport]);
+  const conversationAccess = useMemo<ConversationStartAccess | undefined>(() => transport && (transport.negotiatedRemoteProtocolVersion ?? 0) >= 16 && historyClient ? {
+    history: historyClient, getSnapshot: () => transport.getDaemonSnapshot(), sendCommand: command => transport.sendDaemonCommand(command),
+    principal: { kind: 'android', id: 'mobile-agent-ui' },
+  } : undefined, [transport, historyClient]);
+  const conversationStorage = useMemo(() => mobileConversationState(() => transport!.getRemoteToken()), [transport]);
+  const [conversationViewScope, setConversationViewScope] = useState<string>();
+  const [selectedConversationId, setSelectedConversationId] = useState<string>();
+  const conversationNavigationReady = useRef(false);
+  const historyOpenRef = useRef(historyOpen); historyOpenRef.current = historyOpen;
+  const navigationIntent = useRef({ initialSessionId, historyRequest, newSessionRequest });
+  navigationIntent.current = { initialSessionId, historyRequest, newSessionRequest };
+  const selectConversation = useCallback((entry: ConversationEntry) => {
+    const transition = () => {
+    setNewSessionTarget(null); setHistoryOpen(false);
+    if (entry.action === 'open' && entry.linkedSessionId) {
+      setConversationEntry(undefined); setSelectedDaemonSessionId(entry.linkedSessionId);
+    } else { setConversationEntry(entry); setSelectedDaemonSessionId(null); }
+    };
+    if (historyOpenRef.current) navigation.replaceTopLayer(transition); else transition();
+  }, [navigation]);
+  useEffect(() => {
+    let alive = true;
+    conversationNavigationReady.current = false;
+    setConversationViewScope(undefined); setSelectedConversationId(undefined); setConversationEntry(undefined); setNewSessionTarget(null);
+    if (!transport || typeof transport.getRemoteToken !== 'function') return;
+    void conversationStorage.loadNavigation().then(({ scope, value }) => {
+      if (!alive) return;
+      setConversationViewScope(scope);
+      if (value) {
+        draftIdentity.current = value.draftId;
+        const intent = navigationIntent.current;
+        if (!intent.initialSessionId && !intent.historyRequest && !intent.newSessionRequest) {
+          if (value.entry) selectConversation(value.entry);
+          else if (value.target) setNewSessionTarget(value.target);
+        }
+      }
+      conversationNavigationReady.current = true;
+    }).catch(() => { if (alive) conversationNavigationReady.current = true; });
+    return () => { alive = false; };
+  }, [conversationStorage, transport, selectConversation]);
+  useEffect(() => {
+    if (!conversationNavigationReady.current || !conversationViewScope) return;
+    void conversationStorage.saveNavigation({ draftId: draftIdentity.current, ...(newSessionTarget ? { target: newSessionTarget } : {}),
+      ...(conversationEntry ? { entry: conversationEntry } : {}) }).catch(() => undefined);
+  }, [conversationEntry, newSessionTarget, selectedDaemonSessionId, conversationStorage, conversationViewScope]);
+  const selectedState = daemonRuntimeState.snapshot?.sessions.find(item => item.id === selectedDaemonSessionId)?.state;
+  useEffect(() => {
+    if (!selectedDaemonSessionId || !selectedState || !historyClient?.resolveConversation) return;
+    let alive = true;
+    void historyClient.resolveConversation({ kind: 'session', id: selectedDaemonSessionId }).then(result => {
+      if (alive && result.ok) {
+        setSelectedConversationId(result.entry.conversationId);
+        if (result.entry.action !== 'open') selectConversation(result.entry);
+      }
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [selectedDaemonSessionId, selectedState, historyClient, selectConversation]);
+  useEffect(() => {
+    if (!historyRequest) return;
+    historyInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setHistoryPreviewBack(undefined);
+    setHistoryTarget(historyRequest);
+    if (historyRequest.conversationId && historyClient && conversationAccess) {
+      void historyClient.readConversation(historyRequest.conversationId).then(result => {
+        if (result.ok) selectConversation(result.entry);
+        else setHistoryOpen(true);
+      });
+    } else setHistoryOpen(true);
+    onHistoryRequestConsumed?.();
+  }, [historyRequest, onHistoryRequestConsumed, historyClient, conversationAccess, selectConversation]);
+  useEffect(() => {
+    if (!historyOpen || !historyPreviewBack) return undefined;
+    return navigation.pushLayer({ id: historyPreviewLayerId, kind: 'page', onBack: historyPreviewBack });
+  }, [historyOpen, historyPreviewBack, historyPreviewLayerId, navigation]);
+  const seededCapabilityDrafts = useRef(new Set<string>());
   const [preparedAgentCreate, setPreparedAgentCreate] = useState<UncertainAgentCreate | null>(
     agentCreateRecovery?.recovery ?? null,
   );
@@ -409,6 +541,8 @@ export function MobileAgentView({
       head.sessionId === selectedDaemonSessionId
     ))?.lastSequence ?? 0
     : 0;
+  const disconnectedRef = useRef(disconnected);
+  disconnectedRef.current = disconnected;
 
   const syncTranscript = useCallback((
     targetSessionId: string,
@@ -416,6 +550,7 @@ export function MobileAgentView({
   ): Promise<void> => {
     if (
       transcriptSessionRef.current !== targetSessionId
+      || disconnectedRef.current
       || !transport
       || typeof transport.getDaemonTranscript !== 'function'
     ) return Promise.resolve();
@@ -556,6 +691,7 @@ export function MobileAgentView({
     setTranscriptError(null);
     const canLoad = Boolean(
       selectedDaemonSessionId
+      && !disconnectedRef.current
       && transport
       && typeof transport.getDaemonTranscript === 'function'
     );
@@ -569,10 +705,18 @@ export function MobileAgentView({
   }, [selectedDaemonSessionId, selectedTranscriptSeed, syncTranscript, transport]);
 
   useEffect(() => {
-    if (selectedDaemonSessionId) {
+    if (selectedDaemonSessionId && !disconnected) {
       void syncTranscript(selectedDaemonSessionId, selectedTranscriptHead);
     }
-  }, [selectedDaemonSessionId, selectedTranscriptHead, syncTranscript]);
+  }, [disconnected, selectedDaemonSessionId, selectedTranscriptHead, syncTranscript]);
+
+  useEffect(() => {
+    if (!selectedDaemonSessionId || !transport?.isAuthed || !authoritativeTranscript.length
+      || typeof transport.getRemoteToken !== 'function') return;
+    void transport.getRemoteToken().then(mobileAgentCreateAuthorityFingerprint)
+      .then((authority) => new MobileOfflineChatCacheStore().saveTranscript(authority, selectedDaemonSessionId, authoritativeTranscript))
+      .catch(() => undefined);
+  }, [authoritativeTranscript, selectedDaemonSessionId, transport]);
 
   useEffect(() => {
     if (!transport) return undefined;
@@ -847,8 +991,10 @@ export function MobileAgentView({
     const access: StructuredAgentCreateAccess = {
       getSnapshot: () => transport.getDaemonSnapshot(),
       sendCommand: async (command) => {
-        const recovery = mobileAgentCreateRecoveryFromCommand(command);
-        const prepared = await agentCreateRecovery.prepare(command).catch(() => false);
+        const draft = uncertainAgentCreate?.input ?? input;
+        const composer = draft.draftText === undefined && draft.draftSkills === undefined ? undefined : { draftText: draft.draftText, draftSkills: draft.draftSkills };
+        const recovery = mobileAgentCreateRecoveryFromCommand(command, composer);
+        const prepared = await (composer ? agentCreateRecovery.prepare(command, composer) : agentCreateRecovery.prepare(command)).catch(() => false);
         if (!prepared) {
           prepareFailed = true;
           setPreparedAgentCreate(null);
@@ -1007,6 +1153,7 @@ export function MobileAgentView({
   };
 
   const openNewSession = useCallback((workspaceId?: string): void => {
+    setConversationEntry(undefined);
     setSelectedDaemonSessionId(null);
     setNewSessionTarget({
       ...(uncertainAgentCreate?.input.workspaceId
@@ -1028,12 +1175,13 @@ export function MobileAgentView({
   }, [uncertainAgentCreate]);
 
   const closeDetailState = useCallback((): void => {
+    setConversationEntry(undefined);
     setHistoryOpen(false);
     setNewSessionTarget(null);
     setSelectedDaemonSessionId(null);
     queueMicrotask(() => newSessionButtonRef.current?.focus());
   }, []);
-  const detailOpen = historyOpen || newSessionTarget !== null || selectedDaemonSessionId !== null;
+  const detailOpen = newSessionTarget !== null || selectedDaemonSessionId !== null || !!conversationEntry;
   useEffect(() => {
     if (!detailOpen) return undefined;
     return navigation.pushLayer({
@@ -1134,16 +1282,90 @@ export function MobileAgentView({
     });
   }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
 
-  if (historyOpen && transport && onResumeHistory && onLaunchAgent) return (
-    <main className="mob-page" data-testid="mobile-project-history-page">
-      <MobilePageHeader title={t('sessionNavigation.projectHistory')} backLabel={t('common.back')} onBack={closeDetailState} />
-      <div className="mob-page__body"><MobileAgentProjects transport={transport} onResumeHistory={onResumeHistory} onLaunchAgent={onLaunchAgent} hideLaunchActions /></div>
-    </main>
-  );
+  const chatDraft=useMobileChatDraft({transport,projectId:selectedDaemonSession?.projectId,sessionId:selectedDaemonSession?.id,store:chatStateStore});
+  const secureChatEnabled=Boolean(transport && typeof transport.getRemoteToken === 'function');
+  useEffect(() => {
+    const created = pendingCreatedAgent;
+    if (!created?.input.draftText || created.sessionId !== selectedDaemonSession?.id || seededCapabilityDrafts.current.has(created.sessionId)) return;
+    if (secureChatEnabled && chatDraft.status !== 'saved') return;
+    if (secureChatEnabled) {
+      if (!chatDraft.draftState?.text) chatDraft.onDraftChange({ text: created.input.draftText, ...(created.input.draftSkills?.length ? { skills: created.input.draftSkills } : {}) });
+    }
+    seededCapabilityDrafts.current.add(created.sessionId);
+  }, [pendingCreatedAgent, selectedDaemonSession?.id, secureChatEnabled, chatDraft]);
+  const sendChatCommand=async (command:DaemonCommand):Promise<StructuredAgentUiResult> => {
+    if (!secureChatEnabled) return dispatchDaemonCommand(command);
+    const receipt=await chatDraft.send(command);
+    if (!receipt) return {ok:false,message:language === 'ko' ? '전송 결과를 확인할 수 없습니다. 초안을 보존했습니다. 연결과 기기 저장 상태를 확인하세요.' : 'Delivery is unconfirmed. Your draft was retained. Check the connection and secure storage.',deliveryUncertain:true};
+    if (!receipt.ok) return {ok:false,message:receipt.error.message,deliveryUncertain:receipt.status === 'delivery-uncertain'};
+    daemonRevisionRef.current=receipt.revision;
+    return {ok:true};
+  };
+
+  const workflowAccess = useMemo(() => transport && typeof transport.getWorkflowSnapshot === 'function' ? { getWorkflowSnapshot: transport.getWorkflowSnapshot.bind(transport), executeWorkflowCommand: transport.executeWorkflowCommand.bind(transport) } : undefined, [transport]);
+  const workflowContext = useWorkflowConversationScope(workflowAccess, selectedDaemonSession?.projectId, selectedDaemonSessionId);
+
+  const openHistory = (): void => {
+    historyInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setHistoryPreviewBack(undefined); setHistoryTarget(undefined); setHistoryOpen(true);
+  };
+  const openCliHistory = (entry: ConversationEntry): void => {
+    if (!entry.historyId || (entry.providerId !== 'codex' && entry.providerId !== 'claude')) throw new Error('CLI history unavailable.');
+    setCliHistory({ historyId: entry.historyId, projectId: entry.projectId, provider: entry.providerId, title: entry.title,
+      preview: entry.preview, createdAt: entry.createdAt, updatedAt: entry.updatedAt, roots: entry.roots, source: entry.source });
+    setHistoryOpen(false);
+  };
+  const historyOverlay = <>
+    {historyOpen && <MobileActionSheet title={language === 'ko' ? '이전 대화' : 'Previous conversations'} onClose={() => { setHistoryOpen(false); if (historyTarget) onHistoryRequestClosed?.(); }} returnFocusRef={historyInvokerRef} variant="fullscreen" testId="mobile-conversation-history" className="mobile-conversation-history-sheet" contentClassName="mobile-conversation-history-content">
+      <ConversationHistoryPicker client={historyClient} variant="mobile" disconnected={disconnected}
+        onOpenConversation={conversationAccess ? selectConversation : undefined}
+        currentProjectId={historyTarget?.projectId ?? selectedDaemonSession?.projectId ?? projectId ?? undefined}
+        initialConversationId={historyTarget?.conversationId}
+        projects={navigationSnapshot?.projects.map((project) => ({ id: project.id, name: project.name }))}
+        onPreviewBackChange={historyPreviewChanged}
+        onOpenSession={async ({ sessionId }) => {
+          const refreshed = transport && typeof transport.getDaemonSnapshot === 'function' ? await transport.getDaemonSnapshot() : null;
+          const authority = refreshed ?? daemonRuntimeState.snapshot;
+          if (!authority?.sessions.some((session) => session.id === sessionId && session.kind === 'agent' && session.source === 'structured')) throw new Error('The continued conversation is not available yet.');
+          // The freshly adopted Session may arrive in the next snapshot render.
+          // Do not send this identity through the legacy terminal focus path.
+          if (refreshed && transport) setHistorySnapshot({ transport, snapshot: refreshed });
+          setNewSessionTarget(null); setSelectedDaemonSessionId(sessionId); setHistoryOpen(false);
+        }}
+        onOpenCliHistory={onResumeHistory ? openCliHistory : undefined}
+      />
+    </MobileActionSheet>}
+    {cliHistory && onResumeHistory && <MobileAgentHistorySheet session={cliHistory} onClose={() => setCliHistory(undefined)} onResume={async (bootstrap) => { await onResumeHistory(bootstrap); setCliHistory(undefined); }} />}
+  </>;
+
+  if ((conversationEntry || newSessionTarget && !uncertainAgentCreate && (!agentCreateRecovery || agentCreateRecovery.status === 'ready')) && conversationAccess) {
+    return <><div className="mobile-conversation-page">
+      <button type="button" className="mobile-back-button" onClick={closeDetailFromUi}>{language === 'ko' ? '목록으로' : 'Back to conversations'}</button>
+      <ConversationStartPanel key={conversationEntry?.conversationId ?? draftIdentity.current} identity={conversationEntry?.conversationId ?? draftIdentity.current}
+        entry={conversationEntry} projectId={projectId ?? undefined} workspaceId={newSessionTarget?.workspaceId}
+        viewStateScope={conversationViewScope ?? (transport ? sessionViewKey(transport, 'conversation') : 'offline')}
+        snapshot={daemonRuntimeState.snapshot} access={conversationAccess} storage={conversationStorage} capabilityClient={capabilityClient}
+        disconnected={disconnected} variant="mobile" onOpenHistory={openHistory}
+        onContinueCli={onResumeHistory && transport ? async entry => {
+          if (!entry.historyId || (entry.providerId !== 'codex' && entry.providerId !== 'claude')) throw new Error('CLI record unavailable.');
+          const prepared = await transport.prepareAgentResume(entry.historyId);
+          if (!prepared?.canResume || prepared.missingRecordedRoots.length) throw new Error('Restore the recorded working folder before continuing.');
+          await onResumeHistory({ kind: 'resume', historyId: entry.historyId, provider: entry.providerId, cwd: prepared.recordedRoots[0], rootChoice: 'recorded', revision: prepared.revision, initialPrompt: '' });
+        } : undefined}
+        onStarted={async sessionId => {
+          const refreshed = await transport!.getDaemonSnapshot();
+          if (refreshed) setHistorySnapshot({ transport: transport!, snapshot: refreshed });
+          setConversationEntry(undefined); setNewSessionTarget(null); setSelectedDaemonSessionId(sessionId);
+          draftIdentity.current = `structured-draft-${conversationOperationId()}`;
+        }} />
+    </div>{historyOverlay}</>;
+  }
 
   if (newSessionTarget) {
-    return (
+    return (<>
       <MobileNewSessionDraft
+        capabilityClient={capabilityClient}
+        onOpenHistory={openHistory}
         initialIntent={{ kind: 'agent' }}
         state={daemonRuntimeState}
         disconnected={disconnected}
@@ -1164,7 +1386,8 @@ export function MobileAgentView({
         launchAccess={transport}
         onLaunchCli={onLaunchAgent}
       />
-    );
+      {historyOverlay}
+    </>);
   }
 
   if (selectedDaemonSession && selectedDaemonAgent && selectedDaemonWorkspace) {
@@ -1199,7 +1422,7 @@ export function MobileAgentView({
       availableModels.unshift({ id: selectedDaemonAgent.model, label: selectedDaemonAgent.model });
     }
     const providerOwned = selectedDaemonRelation?.owner === 'provider-native';
-    const archivedHistory = isDaemonSessionArchived(selectedDaemonSession, selectedDaemonAgent);
+    const archivedHistory = isDaemonSessionArchived(selectedDaemonSession, selectedDaemonAgent) || workflowContext.scope?.readOnly === true;
     const canCancel = !providerOwned
       && selectedDaemonAgent.providerSessionId !== undefined
       && DAEMON_CANCELLABLE_STATES.has(selectedDaemonAgent.state);
@@ -1209,9 +1432,11 @@ export function MobileAgentView({
       && DAEMON_ARCHIVABLE_STATES.has(selectedDaemonAgent.state);
     const canDetach = selectedDaemonRelation?.owner === 'managed'
       && !archivedHistory;
-    return (
+    return (<>
       <MobileStructuredAgentSession
-        viewStateKey={transport ? sessionViewKey(transport, `agent:${selectedDaemonSession.id}`) : undefined}
+        capabilityClient={capabilityClient}
+        onOpenHistory={openHistory}
+        viewStateKey={conversationViewScope ? `${conversationViewScope}:conversation:${selectedConversationId ?? selectedDaemonSession.id}` : transport ? sessionViewKey(transport, `agent:${selectedDaemonSession.id}`) : undefined}
         sessionId={selectedDaemonSession.id}
         title={selectedDaemonSession.title}
         providerId={selectedDaemonAgent.providerId}
@@ -1230,14 +1455,35 @@ export function MobileAgentView({
         awaitingFirstMessage={selectedDaemonAgent.state === 'idle' && !selectedDaemonAgent.providerSessionId && !daemonRuntimeState.snapshot?.turns.some((turn) => turn.sessionId === selectedDaemonSessionId)}
         state={selectedDaemonAgent.state}
         queuedCount={selectedDaemonAgent.queuedTurnCount}
+        queueItems={conversationQueue(selectedDaemonSession.id, daemonRuntimeState.snapshot?.turns ?? [], selectedTranscript)}
+        onQueueAction={!providerOwned && !archivedHistory && daemonRuntimeState.snapshot?.capabilities?.includes('agent-queue') ? (item, action) => dispatchDaemonCommand(createDaemonCommand({
+          ...buildCommandBase(), type: 'agent.queue', payload: { sessionId: selectedDaemonSession.id, turnId: item.turnId, turnRevision: item.revision, action },
+        })) : undefined}
         items={selectedTranscript}
         approvals={(daemonRuntimeState.snapshot?.approvals ?? []).filter((approval) => (
           approval.sessionId === selectedDaemonSession.id
         ))}
         transcriptLoading={loadedTranscriptSessionId === selectedDaemonSession.id && transcriptLoading}
         transcriptError={visibleTranscriptError}
-        disabled={disconnected || !transport}
+        disabled={disconnected || !transport || (secureChatEnabled && (chatDraft.status === 'loading' || chatDraft.status === 'unavailable'))}
+        allowDraftWhenDisabled={disconnected && (!secureChatEnabled || (chatDraft.status !== 'loading' && chatDraft.status !== 'unavailable'))}
+        draftStorageStatus={secureChatEnabled ? chatDraft.status : undefined}
+        offlineRead={disconnected}
+        onRetryDraftStorage={chatDraft.retryStorage}
+        {...(secureChatEnabled ? {
+          draftState:chatDraft.draftState,
+          onDraftChange:chatDraft.onDraftChange,
+          sendDisabled:disconnected || workflowContext.loading || chatDraft.status === 'loading' || chatDraft.status === 'unavailable' || chatDraft.sending,
+          sendDisabledReason:disconnected
+            ? (language === 'ko' ? '오프라인 · 초안을 작성할 수 있습니다. 재연결 후 직접 전송하세요.' : 'Offline · You can write a draft. Send it explicitly after reconnecting.')
+            : chatDraft.status === 'unavailable' ? (language === 'ko' ? '기기 보안 저장소를 사용할 수 없습니다. 초안 저장 상태를 확인하세요.' : 'Secure draft storage is unavailable. Check device storage.') : undefined,
+          deliveryUncertain:Boolean(chatDraft.pending),
+          onReconcileDelivery:() => chatDraft.pending ? sendChatCommand(chatDraft.pending) : Promise.resolve({ok:true as const}),
+        } : {sendDisabled:disconnected || workflowContext.loading})}
+        supportsMessageContext={Boolean(transport && transport.negotiatedRemoteProtocolVersion >= 13
+          && (selectedDaemonProvider?.protocol === 'codex-app-server' || selectedDaemonProvider?.protocol === 'claude-agent-sdk'))}
         historyOnly={archivedHistory}
+        workflowContext={workflowContext.scope ? <WorkflowConversationContext scope={workflowContext.scope} onRefresh={workflowContext.refreshReferences} busy={workflowContext.loading} error={workflowContext.error} onReturn={onOpenWorkflow ? () => { const scope = workflowContext.scope!; onOpenWorkflow(scope.projectId, scope.subprojectId, scope.nodeId); } : undefined} /> : workflowContext.error ? <WorkflowConversationUnavailable message={workflowContext.error} onRetry={workflowContext.retry} /> : undefined}
         {...(selectedDaemonRelation ? { owner: selectedDaemonRelation.owner } : {})}
         {...(selectedDaemonChildren.length > 0 ? {
           childTrack: (
@@ -1254,15 +1500,15 @@ export function MobileAgentView({
             void transport.getDaemonSnapshot();
           }
         }}
-        onSend={(prompt) => dispatchDaemonCommand(createDaemonCommand({
+        onSend={(prompt,context?:ChatMessageContext) => sendChatCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.submit',
-          payload: { sessionId: selectedDaemonSession.id, prompt },
+          payload: { sessionId: selectedDaemonSession.id, prompt, ...(context ? {context} : {}) },
         }))}
-        onInterruptAndSend={(prompt) => dispatchDaemonCommand(createDaemonCommand({
+        onInterruptAndSend={(prompt,context?:ChatMessageContext) => sendChatCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.interrupt-and-submit',
-          payload: { sessionId: selectedDaemonSession.id, prompt },
+          payload: { sessionId: selectedDaemonSession.id, prompt, ...(context ? {context} : {}) },
         }))}
         onChangeSettings={(settings: {
           readonly model?: string;
@@ -1306,7 +1552,8 @@ export function MobileAgentView({
           })),
         } : {})}
       />
-    );
+      {historyOverlay}
+    </>);
   }
 
   return (
@@ -1323,7 +1570,7 @@ export function MobileAgentView({
         ) : undefined}
         actions={(
           <div className="mob-agent-projects__head-actions">
-          {transport && onResumeHistory && onLaunchAgent && <IconButton icon={History} aria-label={t('sessionNavigation.projectHistory')} onClick={() => setHistoryOpen(true)} data-testid="mobile-project-history" />}
+          <IconButton icon={History} aria-label={language === 'ko' ? '이전 대화' : 'Previous conversations'} onClick={openHistory} data-testid="mobile-project-history" />
           <IconButton
             ref={newSessionButtonRef}
             icon={Plus}
@@ -1432,7 +1679,7 @@ export function MobileAgentView({
             </article>
           ))}
           {[
-            ...visible.filter((item) => bucketOf(item.status) === 'attention'),
+            ...visible.filter((item) => bucketOf(item.status) === 'attention' && !(flatConversations && navigationSnapshot?.sessions.some((session) => session.id === item.sessionId && session.source === 'structured'))),
             ...(transport ? [null] : []),
             ...(!navigationSnapshot ? visible.filter((item) => bucketOf(item.status) !== 'attention') : []),
           ].map((item) => {
@@ -1441,6 +1688,9 @@ export function MobileAgentView({
                 <Fragment key="daemon-projects">
                 {terminalCreationError && <p role="alert">{terminalCreationError.message} <button type="button" className="mob-cta" disabled={disconnected} onClick={() => void requestTerminalSession(terminalCreationError.workspaceId)}>{t('common.retry')}</button></p>}
                 <MobileDaemonNavigator
+                  flatConversations={flatConversations}
+                  projectFilter={projectId}
+                  onProjectFilterChange={onProjectFilterChange}
                   state={{ ...daemonRuntimeState, snapshot: navigationSnapshot }}
                   visibility={daemonNavigatorVisibility}
                   onVisibilityChange={setDaemonNavigatorVisibility}
@@ -1720,6 +1970,7 @@ export function MobileAgentView({
           </div>
         </MobileActionSheet>
       )}
+      {historyOverlay}
     </main>
   );
 }

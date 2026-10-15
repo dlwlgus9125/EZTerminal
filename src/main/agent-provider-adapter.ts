@@ -1,3 +1,5 @@
+import type { ChatMessageContext } from '../shared/chat-message';
+import type { AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
 import type {
   DaemonCommand,
   DaemonTranscriptItem,
@@ -16,6 +18,11 @@ export type {
 } from '../shared/daemon-provider';
 
 export interface ProviderSessionContext {
+  readonly reasoningEffort?: string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly managedExecution?: true;
+  /** Require a provider-enforced empty tool catalog; unsupported adapters must reject. */
+  readonly toolsDisabled?: true;
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly workspaceRoot: string;
@@ -36,6 +43,8 @@ export interface ProviderSessionHandle {
 }
 
 export interface ProviderSubmitInput {
+  readonly reasoningEffort?: string;
+  readonly context?: ChatMessageContext;
   readonly sessionId: string;
   readonly providerSessionId: string;
   readonly turnId: string;
@@ -148,6 +157,10 @@ export interface AgentProviderAdapter {
 
   probe(signal?: AbortSignal): Promise<ProviderProbeResult>;
   listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]>;
+  /** Metadata-only discovery: never create a user message, turn, or durable conversation. */
+  listCapabilities?(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog>;
+  /** Explicit native settings mutation; does not restart or change live sessions. */
+  manageExtension?(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void>;
 
   createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle>;
   resumeSession(

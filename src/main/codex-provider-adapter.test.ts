@@ -219,6 +219,65 @@ async function pendingTurnFixture(
 }
 
 describe('CodexProviderAdapter', () => {
+  it('revalidates selected skill identities and sends native skill input on the first turn', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async (method) => {
+      if (method === 'skills/list') return { data: [{ skills: [{ name: 'review', path: 'C:/skills/review/SKILL.md', enabled: true }] }] };
+      if (method === 'turn/start') return { turn: { id: 'native-turn' } };
+      return {};
+    };
+    await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: '$review Inspect', context: { skills: [{ providerId: 'codex', id: 'C:/skills/review/SKILL.md', name: 'review', invocation: '$review' }] } });
+    expect(connection.requests.find((entry) => entry.method === 'turn/start')?.params).toMatchObject({ input: [{ type: 'text', text: '$review Inspect' }, { type: 'skill', name: 'review', path: 'C:/skills/review/SKILL.md' }] });
+    await adapter.dispose();
+  });
+
+  it('does not submit a turn when a selected skill is removed or disabled', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async () => ({ data: [{ skills: [{ name: 'review', path: 'C:/skills/review/SKILL.md', enabled: false }] }] });
+    await expect(adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: '$review Inspect', context: { skills: [{ providerId: 'codex', id: 'C:/skills/review/SKILL.md', name: 'review', invocation: '$review' }] } })).rejects.toThrow('unavailable');
+    expect(connection.requests.some((entry) => entry.method === 'turn/start')).toBe(false);
+    await adapter.dispose();
+  });
+  it('discovers skills, installed plugins, models and MCP without a thread or turn', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'model/list') return { data: [{ id: 'native-model', displayName: 'Native model' }] };
+      if (method === 'skills/list') return { data: [{ skills: [{ name: 'review', path: 'C:/skills/review/SKILL.md', enabled: true, scope: 'user' }] }] };
+      if (method === 'plugin/installed') return { marketplaces: [{ name: 'local', plugins: [{ id: 'off@local', name: 'Off plugin', installed: true, enabled: false }] }] };
+      if (method === 'mcpServerStatus/list') return { data: [{ name: 'docs', authStatus: 'notLoggedIn' }] };
+      if (method === 'config/read') return { config: { mcp_servers: { docs: { command: 'docs' }, off: { command: 'off', enabled: false } } }, origins: { mcp_servers: { name: { type: 'user' } } } };
+      throw new Error(`Forbidden zero-turn method: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const result = await adapter.listCapabilities(process.cwd());
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'skill', invocation: '$review', enabled: true }),
+      expect.objectContaining({ kind: 'plugin', id: 'off@local', enabled: false }),
+      expect.objectContaining({ kind: 'mcp', id: 'docs' }),
+      expect.objectContaining({ kind: 'mcp', id: 'off', enabled: false, status: 'disabled' }),
+    ]));
+    expect(result.issues).toEqual([]);
+    expect(connection.requests.map((entry) => entry.method).sort()).toEqual(['config/read', 'mcpServerStatus/list', 'model/list', 'plugin/installed', 'skills/list']);
+    expect(connection.requests.find((entry) => entry.method === 'config/read')?.params).toEqual({ cwd: process.cwd(), includeLayers: false });
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+  it('rejects unsupported tool-free planning before connecting while preserving managed execution settings', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = new CodexProviderAdapter({ connection });
+    await expect(adapter.createSession(context({ toolsDisabled: true, permissionPreset: 'plan' }))).rejects.toThrow(/verified tool-free/u);
+    await expect(adapter.resumeSession({ ...context({ toolsDisabled: true }), providerSessionId: 'old' })).rejects.toThrow(/verified tool-free/u);
+    expect(connection.requests).toEqual([]);
+    connection.requestImpl = async () => ({ thread: { id: 'managed-thread' }, model: 'gpt-5.6-sol' });
+    await adapter.createSession(context({ managedExecution: true, reasoningEffort: 'high', environment: { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } }));
+    expect(connection.requests[0]?.params).toMatchObject({ config: { model_reasoning_effort: 'high', 'features.multi_agent': false,
+      'shell_environment_policy.set': { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } } });
+    await adapter.dispose();
+  });
   it('probes the minimum supported executable without starting app-server', async () => {
     const connection = new FakeCodexConnection();
     const resolveExecutable = vi.fn(async () => 'C:\\Tools\\codex.exe');
@@ -448,7 +507,7 @@ describe('CodexProviderAdapter', () => {
           }
         : {
             data: [
-              { id: 'id-a', model: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', hidden: false, supportedReasoningEfforts: [{}], isDefault: true },
+              { id: 'id-a', model: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'high' }], isDefault: true },
               { id: 'hidden', model: 'hidden', hidden: true },
             ],
             nextCursor: 'page-2',
@@ -456,7 +515,7 @@ describe('CodexProviderAdapter', () => {
     };
     const adapter = new CodexProviderAdapter({ connection });
     await expect(adapter.listModels()).resolves.toEqual([
-      { id: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', supportsReasoning: true, isDefault: true },
+      { id: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', supportsReasoning: true, reasoningEfforts: ['high'], isDefault: true },
       { id: 'gpt-b', displayName: 'GPT B', supportsReasoning: false, isDefault: false },
     ]);
     expect(connection.requests).toHaveLength(2);
@@ -529,6 +588,24 @@ describe('CodexProviderAdapter', () => {
         excludeTurns: true,
       },
     });
+    await adapter.dispose();
+  });
+
+  it('sends real image inputs and quoted file context to Codex', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async () => ({ turn: { id: 'provider-turn-context' } });
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-context', commandId: 'command-context', prompt: 'Review',
+      context: { attachments: [
+        { id: 'image', name: 'screen.png', kind: 'image', mimeType: 'image/png', data: 'YWJj' },
+        { id: 'text', name: 'notes.txt', kind: 'text', mimeType: 'text/plain', data: 'Requirements' },
+      ] },
+    });
+    expect(connection.requests.at(-1)).toMatchObject({ params: { input: [
+      { type: 'text', text: expect.stringContaining('Requirements') },
+      { type: 'image', url: 'data:image/png;base64,YWJj' },
+    ] } });
     await adapter.dispose();
   });
 
@@ -704,6 +781,36 @@ describe('CodexProviderAdapter', () => {
     await expect(legacyApproval).resolves.toEqual({
       decision: { denied: { rejection: 'Denied by the user in EZTerminal.' } },
     });
+    await adapter.dispose();
+  });
+
+  it('round-trips native MCP tool approval without persisting a permission grant', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe(event => events.push(event));
+    const params = { threadId: 'thread-1', turnId: 'provider-turn', serverName: 'ezterminal_orchestration', mode: 'form',
+      _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'], tool_params: { commandId: 'preview-1' } },
+      message: 'Allow the MCP server to run preview_workflow?', requestedSchema: { type: 'object', properties: {} } };
+    const approval = connection.serverRequest('mcpServer/elicitation/request', 'mcp-1', params);
+    await Promise.resolve();
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'approval-requested', providerRequestId: 'mcp-tool:s:mcp-1', title: 'Run MCP tool', detail: expect.stringContaining('preview_workflow') }));
+    await expect(adapter.resolveApproval({ sessionId: 'other-session', providerSessionId: 'thread-1', providerRequestId: 'mcp-tool:s:mcp-1', decision: 'allow' })).rejects.toThrow('does not belong');
+    await adapter.resolveApproval({ sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'mcp-tool:s:mcp-1', decision: 'allow' });
+    await expect(approval).resolves.toEqual({ action: 'accept', content: {}, _meta: null });
+    const denied = connection.serverRequest('mcpServer/elicitation/request', 'mcp-2', params);
+    await adapter.resolveApproval({ sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'mcp-tool:s:mcp-2', decision: 'deny' });
+    await expect(denied).resolves.toEqual({ action: 'decline', content: null, _meta: null });
+    const closed = connection.serverRequest('mcpServer/elicitation/request', 'mcp-3', params);
+    await adapter.dispose();
+    await expect(closed).resolves.toEqual({ action: 'decline', content: null, _meta: null });
+  });
+
+  it('rejects unsupported MCP forms instead of treating data collection as binary approval', async () => {
+    const connection = new FakeCodexConnection(); const adapter = await attachedAdapter(connection);
+    const params = { threadId: 'thread-1', serverName: 'external', mode: 'form', _meta: { codex_approval_kind: 'mcp_tool_call' }, requestedSchema: { type: 'object', properties: { token: { type: 'string' } } } };
+    await expect(connection.serverRequest('mcpServer/elicitation/request', 'form-1', params)).rejects.toThrow('MCP form');
+    await expect(connection.serverRequest('mcpServer/elicitation/request', 'form-2', { ...params, mode: 'url' })).rejects.toThrow('MCP form');
     await adapter.dispose();
   });
 
@@ -1440,6 +1547,19 @@ describe('CodexProviderAdapter', () => {
       method: 'thread/read', params: { threadId: 'thread-1', includeTurns: true },
     }]);
     await adapter.dispose();
+  });
+
+  it('publishes reviewable patches only for completed file changes during reconciliation', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async () => ({ thread: { id: 'thread-1', turns: [{ id: 'turn-1', status: 'inProgress', items:
+      ['completed', 'inProgress', 'failed', 'declined'].map(status => ({ id: status, type: 'fileChange', status, changes: [{ path: `${status}.ts`, diff: '@@ -1 +1 @@\n-old\n+new' }] })),
+    }] } });
+    const adapter = new CodexProviderAdapter({ connection });
+    try {
+      const result = await adapter.reconcile({ sessionId: 'session-1', providerSessionId: 'thread-1', unsettledCommands: [] });
+      expect(result.transcriptItems?.filter(item => item.text.startsWith('{"type":"ezterminal.file-changes.v1"'))).toHaveLength(1);
+      expect(result.transcriptItems?.[0].text).toContain('completed.ts');
+    } finally { await adapter.dispose(); }
   });
 
   it('surfaces an unexpected app-server exit for every attached session and disposes once', async () => {

@@ -186,6 +186,9 @@ export function MobileDaemonNavigator({
   terminalAccess,
   onNewTerminal,
   activities,
+  flatConversations = false,
+  projectFilter,
+  onProjectFilterChange,
 }: {
   readonly state: DaemonRuntimeViewState;
   readonly onRetry: () => void;
@@ -200,6 +203,9 @@ export function MobileDaemonNavigator({
   readonly terminalAccess?: Pick<EzTerminalApi, 'listRuns' | 'terminateSessionGuarded'>;
   readonly onNewTerminal?: (workspaceId: string) => void;
   readonly activities?: readonly AgentActivity[];
+  readonly flatConversations?: boolean;
+  readonly projectFilter?: string | null;
+  readonly onProjectFilterChange?: (projectId:string | null) => void;
 }): JSX.Element {
   const { i18n, t } = useAppTranslation();
   const language: 'en' | 'ko' = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko')
@@ -285,6 +291,26 @@ export function MobileDaemonNavigator({
       : state.status === 'recovering'
         ? copy.reconnecting
         : null;
+
+  if (flatConversations) {
+    const conversations=snapshot?.sessions.filter(session => isStructuredDaemonAgentSession(session)
+      && (!projectFilter || session.projectId === projectFilter)
+      && isDaemonSessionArchived(session,agents.get(session.id)) === showArchived) ?? [];
+    const chatLabel=language === 'ko' ? '대화' : 'Chat';
+    return <section className="mob-daemon-nav mobile-v2" aria-label={chatLabel} data-testid="mobile-daemon-navigator" data-sync-status={state.status}>
+      <header className="mob-daemon-nav__head"><h2>{showArchived ? copy.archived : chatLabel}</h2>
+        <button type="button" className="mob-btn-ghost" onClick={() => changeVisibility(showArchived ? 'active' : 'archived')}><Archive aria-hidden="true" />{showArchived ? copy.backToCurrent : copy.archived}</button>
+      </header>
+      {onProjectFilterChange && <label className="mobile-v2__project-select">{copy.projects}<select value={projectFilter ?? ''} onChange={event => onProjectFilterChange(event.target.value || null)}><option value="">{language === 'ko' ? '모든 프로젝트' : 'All projects'}</option>{projects.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>}
+      {statusMessage && <p role="status">{statusMessage}</p>}
+      {state.availability?.state === 'legacy-only-safe-mode' && <DaemonSafeModeNotice availability={state.availability} compact />}
+      {state.status === 'error' && <div role="alert"><p>{copy.loadFailed}</p><button type="button" className="mob-btn-ghost" onClick={onRetry}>{copy.retry}</button></div>}
+      {snapshot && conversations.length === 0 && <p className="mob-empty">{language === 'ko' ? '표시할 대화가 없습니다.' : 'No conversations to show.'}</p>}
+      <ul className="mob-daemon-nav__list">{conversations.map(session => <li key={session.id}><button type="button" className="mob-daemon-nav__row" data-testid="mobile-daemon-session" data-session-id={session.id} onClick={() => onSelectSession(session.id)} aria-label={`${copy.openSession}: ${session.title}`}>
+        <Bot aria-hidden="true" /><span><strong>{session.title}</strong><small>{snapshot?.projects.find(entry => entry.id === session.projectId)?.name} · {snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name}</small><small>{sessionMeta(session,language,showArchived ? copy.archived : undefined)}</small></span><ChevronRight aria-hidden="true" />
+      </button></li>)}</ul>
+    </section>;
+  }
 
   return (
     <section

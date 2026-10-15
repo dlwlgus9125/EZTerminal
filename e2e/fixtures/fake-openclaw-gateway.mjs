@@ -47,7 +47,7 @@ function handleRpc(method, params, state) {
 
 const server = createServer((req, res) => {
   const state = readState();
-  if (req.method === 'GET' && req.url === '/startupz') {
+  if (req.method === 'GET' && (req.url === '/startupz' || req.url === '/healthz')) {
     res.writeHead(state.running ? 200 : 503, { 'Content-Type': 'text/plain' });
     res.end(state.running ? 'ready' : 'stopped');
     return;
