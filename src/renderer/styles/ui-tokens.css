@@ -43,6 +43,10 @@
   --ui-conversation-border: var(--ui-border-subtle);
   --ui-pane-active-border: var(--ui-accent);
   --ui-conversation-width: 52rem;
+  /* Chat transcript column and roles that alias semantic ones per theme scope. */
+  --ui-chat-max-width: 46rem;
+  --ui-chat-code-bg: var(--ui-surface-inset);
+  --ui-chat-link: var(--ui-info);
 }
 
 :root {

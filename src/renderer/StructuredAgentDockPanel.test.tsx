@@ -433,7 +433,7 @@ describe('StructuredAgentDockPanel', () => {
     expect(container.querySelectorAll('[data-testid="structured-agent-session"]')).toHaveLength(1);
     expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
       .toBe(originalCommand.payload.sessionId);
-    expect(container.querySelector('[data-kind="user-message"]')).toBeNull();
+    expect(container.querySelector('[data-kind="user"]')).toBeNull();
   });
 
   it('retains an uncertain exact create across panel unmount and remount', async () => {
@@ -913,6 +913,9 @@ describe('StructuredAgentDockPanel', () => {
     await flush();
 
     expect(getTranscript).toHaveBeenCalledWith(sessionId, 3, 500);
+    // The result joins a collapsed activity run; open it to read the output.
+    act(() => container.querySelector<HTMLButtonElement>('.chat-run__header')!.click());
+    act(() => Array.from(container.querySelectorAll<HTMLButtonElement>('.chat-tool__line')).at(-1)!.click());
     expect(container.textContent).toContain('Incremental result');
 
     act(() => root.unmount());
@@ -1052,9 +1055,9 @@ describe('StructuredAgentDockPanel', () => {
     expect(container.querySelector('[data-testid="structured-agent-composer-input"]')).toBeNull();
     expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
     expect(container.querySelector('[data-testid="structured-agent-heartbeat"]')).toBeNull();
-    expect(container.querySelector('.structured-agent-approval__actions')).toBeNull();
+    expect(container.querySelector('.chat-dock')).toBeNull();
 
-    const related = container.querySelector<HTMLButtonElement>('.structured-agent-message__child-link')!;
+    const related = container.querySelector<HTMLButtonElement>('[data-kind="child"] button')!;
     act(() => related.click());
     expect(onOpenSession).toHaveBeenCalledWith({
       sessionId: childSessionId,

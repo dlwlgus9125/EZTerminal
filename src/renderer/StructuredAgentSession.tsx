@@ -1,25 +1,22 @@
+import type { ApprovalResponse } from '../shared/approval-request';
+import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
+import { ChatProvider } from './chat/ChatContext';
+import { ChatTranscript } from './chat/ChatTranscript';
+import { useChatLocale } from './chat/copy';
+import { ApprovalDock } from './chat/dock/ApprovalDock';
+import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
-import { decodeFileChanges } from '../shared/conversation-changes';
 import {
   AlertTriangle,
   Archive,
   Bot,
-  Check,
   ChevronRight,
-  Circle,
   Clock3,
-  Code2,
-  Copy,
-  FileCheck2,
-  LoaderCircle,
   Paperclip,
   Reply,
-  RotateCcw,
   Send,
-  ShieldAlert,
   Square,
   Unlink2,
-  Wrench,
   X,
 } from 'lucide-react';
 import {
@@ -40,27 +37,26 @@ import { useAgentCompletion, type CapabilityDiscoveryState } from './use-agent-c
 import type {
   DaemonApproval,
   DaemonTranscriptItem,
+  DaemonTurn,
   ManagedAgentState,
   PermissionPreset,
   WorkspaceKind,
 } from '../shared/daemon-protocol';
 import {
   CHAT_ATTACHMENT_ACCEPT, CHAT_IMAGE_MIME_TYPES, MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES,
-  MAX_CHAT_REPLY_LENGTH, validateChatMessageContext,
+  validateChatMessageContext,
   type ChatAttachment, type ChatMessageContext, type ChatReplyReference, type ChatSkillReference,
 } from '../shared/chat-message';
 import {
   captureTranscriptAnchor, restoreTranscriptAnchor, readChatSkin, writeChatSkin, subscribeChatSkin,
   type ChatComposerDraft, type ChatSkin, type TranscriptAnchor,
 } from './chat-view-state';
-import { ProgressiveSafeMarkdown } from './ProgressiveSafeMarkdown';
 import { useAppTranslation } from './i18n';
-import { readSessionViewState, saveSessionViewState, readTranscriptViewState, saveTranscriptViewState } from './session-view-state';
+import { readSessionViewState, saveSessionViewState } from './session-view-state';
 import { Button, Field, Select } from './ui';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
-import { conversationTranscriptGroups } from './conversation-transcript-groups';
 
 export type StructuredAgentUiResult =
   | { readonly ok: true }
@@ -756,88 +752,11 @@ export function StructuredAgentDraftPanel({
   );
 }
 
-interface DisplayTranscriptItem extends DaemonTranscriptItem {
-  readonly sourceIds: readonly string[];
-}
-
-function transcriptMessageId(item: DisplayTranscriptItem): string {
-  return item.messageId ?? item.sourceIds[0] ?? item.id;
-}
-
 /** Coalesces adjacent streaming chunks without changing authoritative ordering. */
 export function coalesceStructuredAgentTranscript(
   items: readonly DaemonTranscriptItem[],
-): readonly DisplayTranscriptItem[] {
-  const ordered = items.slice().sort((left, right) => left.sequence - right.sequence);
-  const result: DisplayTranscriptItem[] = [];
-  const messageIndexes = new Map<string, number>();
-  for (const item of ordered) {
-    const messageKey = item.messageId ? `${item.sessionId}:${item.turnId ?? ''}:${item.kind}:${item.messageId}` : undefined;
-    const messageIndex = messageKey === undefined ? undefined : messageIndexes.get(messageKey);
-    if (messageIndex !== undefined) {
-      const current = result[messageIndex];
-      result[messageIndex] = {
-        ...item,
-        text: item.isDelta ? `${current.text}${item.text}` : item.text,
-        sourceIds: [...current.sourceIds, item.id],
-      };
-      continue;
-    }
-    if (messageKey) messageIndexes.set(messageKey, result.length);
-    const previous = result.at(-1);
-    const sameLogicalItem = previous && previous.id === item.id;
-    const adjacentDelta = previous
-      && !item.messageId && !previous.messageId
-      && item.isDelta
-      && previous.isDelta
-      && previous.kind === item.kind
-      && previous.turnId === item.turnId
-      && previous.sessionId === item.sessionId;
-    if (sameLogicalItem) {
-      if (item.isDelta) {
-        result[result.length - 1] = {
-          ...item,
-          text: `${previous.text}${item.text}`,
-          sourceIds: [...previous.sourceIds, item.id],
-        };
-      } else {
-        result[result.length - 1] = { ...item, sourceIds: previous.sourceIds };
-      }
-    } else if (adjacentDelta) {
-      result[result.length - 1] = {
-        ...previous,
-        sequence: item.sequence,
-        text: `${previous.text}${item.text}`,
-        sourceIds: [...previous.sourceIds, item.id],
-      };
-    } else {
-      result.push({ ...item, sourceIds: [item.id] });
-    }
-  }
-  return result;
-}
-
-const APPROVAL_STATE_ICON = {
-  pending: Clock3,
-  allowed: Check,
-  denied: Square,
-  expired: Circle,
-} as const;
-
-function ConversationExecutionGroup({ id, stateKey, count, children }: { id: string; stateKey?: string; count: number; children: ReactNode }): JSX.Element {
-  const { i18n } = useAppTranslation();
-  const key = stateKey ? `${stateKey}:execution:${id}` : undefined;
-  const [expanded, setExpanded] = useState(() => key ? readSessionViewState<boolean>(key) ?? false : false);
-  return <li className="conversation-execution" data-message-id={id}>
-    <details open={expanded} onToggle={event => {
-      const open = event.currentTarget.open;
-      setExpanded(open);
-      if (key) saveSessionViewState(key, open);
-    }}>
-      <summary><Wrench aria-hidden="true" /><span>{i18n.language.startsWith('ko') ? '실행 기록' : 'Execution details'}</span><span>{count}</span><ChevronRight aria-hidden="true" /></summary>
-      <ol>{children}</ol>
-    </details>
-  </li>;
+): readonly (DaemonTranscriptItem & { readonly sourceIds: readonly string[] })[] {
+  return coalesceTranscript(items);
 }
 
 export interface StructuredAgentTranscriptProps {
@@ -845,278 +764,100 @@ export interface StructuredAgentTranscriptProps {
   readonly stateKey?: string;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
+  /** Turn records enable "Working for 12s" and settle tools of finished turns. */
+  readonly turns?: readonly DaemonTurn[];
   readonly providerLabel: string;
+  readonly skin?: ChatSkin;
+  readonly workspaceRoot?: string;
   readonly loading?: boolean;
   readonly error?: string | null;
   readonly onRetry?: () => void;
   readonly onResolveApproval?: (
     approvalId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ) => Promise<StructuredAgentUiResult>;
+  /** Host accepts answers, plan mode and deny feedback (`approval-response-v1`). */
+  readonly approvalResponses?: boolean;
   readonly onOpenRelatedSession?: (sessionId: string) => void;
+  readonly onOpenLink?: (url: string) => void;
+  readonly onReviewChanges?: () => void;
   readonly controlsDisabled?: boolean;
   readonly onReply?: (reply: ChatReplyReference) => void;
   readonly onReuse?: (text: string) => void;
 }
 
+/**
+ * The conversation, its pending approval and the agent's task list. Rows come
+ * from the shared chat view-model so both skins present the same content.
+ */
 export const StructuredAgentTranscript = memo(function StructuredAgentTranscript({
   beforeMessages,
   stateKey,
   items,
   approvals = [],
+  turns,
   providerLabel,
+  skin,
+  workspaceRoot,
   loading = false,
   error = null,
   onRetry,
   onResolveApproval,
+  approvalResponses = false,
   onOpenRelatedSession,
+  onOpenLink,
+  onReviewChanges,
   controlsDisabled = false,
   onReply,
   onReuse,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const savedScroll = useRef(stateKey ? readTranscriptViewState(stateKey) : undefined);
-  const followTailRef = useRef(savedScroll.current?.follow ?? true);
-  const displayItems = useMemo(() => {
-    const representedApprovals = new Set(
-      items.filter((item) => item.kind === 'approval').map((item) => item.id),
-    );
-    const lastSequence = items.reduce((maximum, item) => Math.max(maximum, item.sequence), 0);
-    const synthesized = approvals
-      .filter((approval) => !representedApprovals.has(approval.id))
-      .map((approval, index): DaemonTranscriptItem => ({
-        id: approval.id,
-        sessionId: approval.sessionId,
-        ...(approval.turnId ? { turnId: approval.turnId } : {}),
-        sequence: lastSequence + index + 1,
-        kind: 'approval',
-        text: approval.title,
-        isDelta: false,
-        isSensitive: false,
-        createdAt: approval.createdAt,
-      }));
-    return coalesceStructuredAgentTranscript([...items, ...synthesized]);
-  }, [approvals, items]);
-  const approvalById = useMemo(
-    () => new Map(approvals.map((approval) => [approval.id, approval])),
-    [approvals],
-  );
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [showLatest, setShowLatest] = useState(false);
-  const { i18n: transcriptI18n } = useAppTranslation();
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || displayItems.length === 0) return;
-    if (savedScroll.current) {
-      restoreTranscriptAnchor(viewport, savedScroll.current);
-      savedScroll.current = undefined;
-    } else if (followTailRef.current) viewport.scrollTop = viewport.scrollHeight;
-  }, [displayItems]);
-
-  const resolveApproval = async (approvalId: string, decision: 'allow' | 'deny'): Promise<void> => {
-    if (!onResolveApproval || resolvingId || controlsDisabled) return;
-    setResolvingId(approvalId);
-    setApprovalError(null);
-    const result = await onResolveApproval(approvalId, decision).catch((): StructuredAgentUiResult => ({
-      ok: false,
-      message: 'The approval could not be delivered.',
-    }));
-    setResolvingId(null);
-    if (!result.ok) setApprovalError(result.message);
-  };
-
-  const renderItem = (item: DisplayTranscriptItem, index: number): JSX.Element => {
-            const recordedChanges = decodeFileChanges(item.text);
-            const content = recordedChanges.length ? recordedChanges.map(change => `${change.path}\n${change.patch}`).join('\n\n') : item.text;
-            const isAssistant = item.kind === 'assistant-message';
-            const messageId = transcriptMessageId(item);
-            const context = item.context ?? {};
-            const approval = item.kind === 'approval' ? approvalById.get(item.id) : undefined;
-            const ApprovalIcon = approval ? APPROVAL_STATE_ICON[approval.state] : ShieldAlert;
-            const label = item.kind === 'user-message'
-              ? copy.you
-              : item.kind === 'assistant-message'
-                ? providerLabel || copy.assistant
-                : item.kind === 'reasoning'
-                  ? copy.reasoning
-                  : item.kind === 'tool-call'
-                    ? copy.toolCall
-                    : item.kind === 'tool-result'
-                      ? copy.toolResult
-                      : item.kind === 'approval'
-                        ? copy.approval
-                        : item.kind === 'child-summary'
-                          ? copy.childSummary
-                          : item.kind === 'error'
-                            ? copy.error
-                            : copy.notice;
-            return (
-              <li key={`${item.sessionId}:${item.turnId ?? ''}:${item.kind}:${messageId}`} className="structured-agent-transcript__item">
-                <article
-                  className="structured-agent-message"
-                  data-kind={item.kind}
-                  data-message-id={messageId}
-                  data-streaming={item.isDelta || undefined}
-                  aria-label={label}
-                  {...(item.kind === 'error' ? { role: 'alert' } : {})}
-                >
-                  <header className="structured-agent-message__header">
-                    <span className="structured-agent-message__kind">
-                      <span className="structured-agent-message__prompt" aria-hidden="true">{item.kind === 'user-message' ? '›' : '●'}</span>
-                      {item.kind === 'tool-call' ? <Wrench aria-hidden="true" />
-                        : item.kind === 'tool-result' ? <FileCheck2 aria-hidden="true" />
-                          : item.kind === 'reasoning' ? <Code2 aria-hidden="true" />
-                            : item.kind === 'approval' ? <ApprovalIcon aria-hidden="true" />
-                              : item.kind === 'error' ? <AlertTriangle aria-hidden="true" />
-                                : <Bot aria-hidden="true" />}
-                      {label}
-                    </span>
-                    <time dateTime={item.createdAt}>{item.createdAt.slice(11, 16)}</time>
-                  </header>
-
-                  {context.replyTo && <blockquote className="structured-agent-message__reply">{context.replyTo.text}</blockquote>}
-                  {context.attachments && context.attachments.length > 0 && <ul className="structured-agent-message__attachments">
-                    {context.attachments.map((attachment) => <li key={attachment.id}>
-                      {attachment.kind === 'image'
-                        ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
-                        : <Paperclip aria-hidden="true" />}
-                      <span>{attachment.name}</span>
-                    </li>)}
-                  </ul>}
-
-                  {item.kind === 'reasoning' ? (
-                    <details className="structured-agent-message__reasoning">
-                      <summary>{copy.reasoning}</summary>
-                      <p>{content}</p>
-                    </details>
-                  ) : item.kind === 'tool-call' || item.kind === 'tool-result' ? (
-                    <details className="structured-agent-message__reasoning">
-                      <summary>{label}</summary>
-                      <pre className="structured-agent-message__tool"><code>{content}</code></pre>
-                    </details>
-                  ) : item.kind === 'approval' ? (
-                    <div className="structured-agent-approval" data-risk={approval?.risk ?? 'write'}>
-                      <strong>{approval?.title ?? content}</strong>
-                      {approval?.detail && <p>{approval.detail}</p>}
-                      <span className="structured-agent-approval__state">
-                        {approval?.state === 'allowed' ? copy.allowed
-                          : approval?.state === 'denied' ? copy.denied
-                            : approval?.state === 'expired' ? copy.expired
-                              : copy.pending}
-                      </span>
-                      {(!approval || approval.state === 'pending') && onResolveApproval && (
-                        <div className="structured-agent-approval__actions">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={controlsDisabled || resolvingId !== null}
-                            onClick={() => void resolveApproval(approval?.id ?? item.id, 'deny')}
-                          >
-                            {copy.deny}
-                          </Button>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            disabled={controlsDisabled || (resolvingId !== null && resolvingId !== (approval?.id ?? item.id))}
-                            loading={resolvingId === (approval?.id ?? item.id)}
-                            onClick={() => void resolveApproval(approval?.id ?? item.id, 'allow')}
-                          >
-                            {copy.allow}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <ProgressiveSafeMarkdown
-                      className="structured-agent-message__markdown"
-                      markdown={content}
-                      priority={index}
-                    />
-                  )}
-
-                  {item.relatedSessionId && onOpenRelatedSession && (
-                    <Button
-                      className="structured-agent-message__child-link"
-                      variant="ghost"
-                      size="sm"
-                      trailingIcon={<ChevronRight />}
-                      onClick={() => onOpenRelatedSession(item.relatedSessionId!)}
-                    >
-                      {copy.openRelated}
-                    </Button>
-                  )}
-                  {isAssistant && item.isDelta && (
-                    <span className="structured-agent-message__streaming" role="status" aria-live="polite">
-                      <span aria-hidden="true" />{copy.streaming}
-                    </span>
-                  )}
-                  {(item.kind === 'user-message' || isAssistant) && <div className="structured-agent-message__actions">
-                    <Button variant="ghost" size="sm" leadingIcon={<Copy />} onClick={() => {
-                      void navigator.clipboard?.writeText(content).then(() => setCopyStatus(copy.copied), () => setCopyStatus(copy.copyFailed));
-                      if (!navigator.clipboard) setCopyStatus(copy.copyFailed);
-                    }}>{copy.copyMessage}</Button>
-                    {onReply && !item.isSensitive && content.length > 0 && <Button variant="ghost" size="sm" leadingIcon={<Reply />}
-                      onClick={() => onReply({ messageId: item.sourceIds[0] ?? item.id, text: content.slice(0, MAX_CHAT_REPLY_LENGTH) })}>{copy.replyMessage}</Button>}
-                    {item.kind === 'user-message' && onReuse && <Button variant="ghost" size="sm" leadingIcon={<RotateCcw />}
-                      onClick={() => onReuse(content)}>{copy.reuseMessage}</Button>}
-                  </div>}
-                </article>
-              </li>
-            );
-  };
-
+  const locale = useChatLocale();
+  const model = useMemo(() => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }), [items, approvals, turns]);
+  const [dockCollapsed, setDockCollapsed] = useState(false);
+  const pendingId = model.pending?.approval.id;
+  useEffect(() => setDockCollapsed(false), [pendingId]);
+  const unfinishedTodo = model.todo && model.todo.some((item) => item.status !== 'completed') ? model.todo : undefined;
   return (
-    <div
-      ref={viewportRef}
-      className="structured-agent-transcript"
-      data-testid="structured-agent-transcript"
-      onScroll={(event) => {
-        const target = event.currentTarget;
-        followTailRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-        setShowLatest(!followTailRef.current);
-        if (stateKey) saveTranscriptViewState(stateKey, captureTranscriptAnchor(target));
-      }}
+    <ChatProvider
+      skin={skin ?? readChatSkin()}
+      locale={locale}
+      stateKey={stateKey}
+      {...(workspaceRoot ? { workspaceRoot } : {})}
+      {...(onReply ? { onReply } : {})}
+      {...(onReuse ? { onReuse } : {})}
+      {...(onOpenLink ? { onOpenLink } : {})}
+      {...(onOpenRelatedSession ? { onOpenRelated: onOpenRelatedSession } : {})}
+      {...(onReviewChanges ? { onReviewChanges } : {})}
     >
-      {beforeMessages}
-      {error && (
-        <div className="structured-agent__banner structured-agent__banner--error" role="alert">
-          <AlertTriangle aria-hidden="true" />
-          <span>{error}</span>
-          {onRetry && <Button variant="ghost" size="sm" onClick={onRetry}>{copy.retry}</Button>}
-        </div>
+      <ChatTranscript
+        model={model}
+        providerLabel={providerLabel || copy.assistant}
+        stateKey={stateKey}
+        loading={loading}
+        error={error}
+        onRetry={onRetry}
+        before={beforeMessages}
+        emptyLabel={copy.transcriptEmpty}
+        loadingLabel={copy.transcriptLoading}
+        retryLabel={copy.retry}
+      />
+      {unfinishedTodo && <TaskDock items={unfinishedTodo} />}
+      {model.pending && onResolveApproval && (
+        <ApprovalDock
+          pending={model.pending}
+          pendingCount={model.pendingCount}
+          canRespond={approvalResponses}
+          disabled={controlsDisabled}
+          collapsed={dockCollapsed}
+          onCollapsedChange={setDockCollapsed}
+          onResolve={(approvalId, decision, response) => (response
+            ? onResolveApproval(approvalId, decision, response)
+            : onResolveApproval(approvalId, decision))}
+        />
       )}
-      {loading && displayItems.length === 0 && (
-        <p className="structured-agent-transcript__state" role="status">
-          <LoaderCircle className="structured-agent__spinner" aria-hidden="true" />
-          {copy.transcriptLoading}
-        </p>
-      )}
-      {!loading && !error && displayItems.length === 0 && (
-        <p className="structured-agent-transcript__state" data-testid="structured-agent-empty">
-          <Bot aria-hidden="true" />
-          {copy.transcriptEmpty}
-        </p>
-      )}
-      {displayItems.length > 0 && (
-        <ol className="structured-agent-transcript__list" aria-label={copy.transcript}>
-          {conversationTranscriptGroups(displayItems).map(group => group.execution
-            ? <ConversationExecutionGroup key={group.id} id={group.id} stateKey={stateKey} count={group.items.length}>
-                {group.items.map(item => renderItem(item, displayItems.indexOf(item)))}
-              </ConversationExecutionGroup>
-            : renderItem(group.items[0], displayItems.indexOf(group.items[0])))}
-        </ol>
-      )}
-      {showLatest && <Button className="conversation-latest" variant="secondary" size="sm" onClick={() => {
-        if (viewportRef.current) viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
-        followTailRef.current = true; setShowLatest(false);
-      }}>{transcriptI18n.language.startsWith('ko') ? '최신 메시지로' : 'Jump to latest'}</Button>}
-      {approvalError && <p className="structured-agent__form-error" role="alert">{approvalError}</p>}
-      {copyStatus && <p className="structured-agent-message__copy-status" role="status">{copyStatus}</p>}
-    </div>
+    </ChatProvider>
   );
 });
 
@@ -1553,6 +1294,12 @@ export interface StructuredAgentSessionPanelProps {
   readonly queuedCount?: number;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
+  /** Turn records for live "Working for…" status and settling tools of finished turns. */
+  readonly turns?: readonly DaemonTurn[];
+  /** Host accepts answers, plan mode and deny feedback (`approval-response-v1`). */
+  readonly approvalResponses?: boolean;
+  /** Opens an http(s) link from chat in the system browser. */
+  readonly onOpenLink?: (url: string) => void;
   readonly transcriptLoading?: boolean;
   readonly transcriptError?: string | null;
   readonly disabled?: boolean;
@@ -1583,6 +1330,7 @@ export interface StructuredAgentSessionPanelProps {
   readonly onResolveApproval?: (
     approvalId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ) => Promise<StructuredAgentUiResult>;
   readonly onOpenRelatedSession?: (sessionId: string) => void;
   readonly onCancel?: () => Promise<StructuredAgentUiResult>;
@@ -1639,6 +1387,9 @@ export function StructuredAgentSessionPanel({
   awaitingFirstMessage = false,
   items,
   approvals = [],
+  turns,
+  approvalResponses = false,
+  onOpenLink,
   transcriptLoading = false,
   transcriptError = null,
   disabled = false,
@@ -1716,7 +1467,7 @@ export function StructuredAgentSessionPanel({
   const [draftAction, setDraftAction] = useState<(NonNullable<StructuredAgentComposerProps['draftAction']> & { sessionId: string }) | undefined>();
   const actionSequence = useRef(0);
   const captureSkinView = (): void => {
-    const viewport = panelRef.current?.querySelector<HTMLElement>('[data-testid="structured-agent-transcript"]');
+    const viewport = panelRef.current?.querySelector<HTMLElement>('.chat-viewport__scroll');
     const input = panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]');
     skinTransition.current = {
       ...(viewport ? { anchor: captureTranscriptAnchor(viewport) } : {}),
@@ -1728,7 +1479,7 @@ export function StructuredAgentSessionPanel({
   useLayoutEffect(() => {
     const saved = skinTransition.current;
     if (!saved) return;
-    const viewport = panelRef.current?.querySelector<HTMLElement>('[data-testid="structured-agent-transcript"]');
+    const viewport = panelRef.current?.querySelector<HTMLElement>('.chat-viewport__scroll');
     const input = panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]');
     if (viewport && saved.anchor) restoreTranscriptAnchor(viewport, saved.anchor);
     if (input && saved.selection) { input.setSelectionRange(...saved.selection); if (saved.focused) input.focus({ preventScroll: true }); }
@@ -1986,6 +1737,11 @@ export function StructuredAgentSessionPanel({
         stateKey={viewStateKey ? `${viewStateKey}:transcript` : variant === 'desktop' ? `desktop-agent-transcript:${sessionId}` : undefined}
         items={items}
         approvals={approvals}
+        {...(turns ? { turns } : {})}
+        skin={activeSkin}
+        workspaceRoot={workspace.path}
+        approvalResponses={approvalResponses}
+        {...(onOpenLink ? { onOpenLink } : {})}
         providerLabel={providerLabel}
         loading={transcriptLoading}
         error={transcriptError}

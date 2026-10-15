@@ -1,0 +1,166 @@
+import { useAppTranslation } from '../i18n';
+import type { ChatLocale } from './model/summary';
+
+const EN = {
+  you: 'You',
+  copy: 'Copy',
+  copied: 'Copied',
+  copyFailed: 'Copy failed',
+  reply: 'Reply',
+  reuse: 'Use as draft',
+  showMore: 'Show full message',
+  showLess: 'Show less',
+  showAll: (lines: number) => `Show all (${lines} lines)`,
+  truncated: 'Output truncated',
+  exit: (code: number) => `exit ${code}`,
+  failedCount: (count: number) => `${count} failed`,
+  deniedCount: (count: number) => `${count} denied`,
+  interruptedCount: (count: number) => `${count} interrupted`,
+  working: (time: string) => `Working for ${time}`,
+  worked: (time: string) => `Worked for ${time}`,
+  interruptedAfter: (time: string) => `Interrupted after ${time}`,
+  failedAfter: (time: string) => `Failed after ${time}`,
+  queued: 'Queued',
+  waiting: 'Waiting for approval',
+  thinking: 'Thinking',
+  thoughtFor: (time: string) => `Thought for ${time}`,
+  changedFiles: (count: number) => `${count} ${count === 1 ? 'file' : 'files'} changed`,
+  review: 'Review',
+  plan: 'Plan',
+  planFile: 'Plan file',
+  asked: 'Asked',
+  answered: 'Answer',
+  awaitingAnswer: 'Waiting for your answer',
+  tasks: 'Tasks',
+  tasksProgress: (done: number, total: number) => `${done} of ${total} tasks completed`,
+  started: 'Started',
+  completed: 'Completed',
+  added: 'Added',
+  openRelated: 'Open Agent',
+  input: 'Input',
+  output: 'Output',
+  noOutput: 'No output',
+  newMessages: 'New',
+  jumpToLatest: 'Jump to latest',
+  transcript: 'Conversation',
+  approval: {
+    allow: 'Allow',
+    deny: 'Deny',
+    denyWithFeedback: 'Deny with feedback…',
+    feedbackLabel: 'Tell the agent what to do instead',
+    sendFeedback: 'Send feedback',
+    cancel: 'Cancel',
+    collapse: 'Hide to type',
+    expand: 'Show request',
+    pendingMore: (count: number) => `+${count} more waiting`,
+    risk: { read: 'Read access', write: 'Changes files', danger: 'Runs commands' },
+    cwd: 'In',
+    reason: 'Reason',
+    question: 'Question',
+    other: 'Other…',
+    otherPlaceholder: 'Type your answer',
+    submit: 'Submit answer',
+    next: 'Next',
+    skip: 'Skip',
+    step: (index: number, total: number) => `Question ${index} of ${total}`,
+    planTitle: 'Approve this plan?',
+    approvePlan: 'Approve and start',
+    approvePlanFull: 'Approve with full access',
+    keepPlanning: 'Keep planning…',
+    keepPlanningLabel: 'What should change in the plan?',
+    unsupportedAnswer: 'This host cannot send answers yet; Allow continues with the provider’s default.',
+  },
+};
+
+const KO: typeof EN = {
+  you: '나',
+  copy: '복사',
+  copied: '복사됨',
+  copyFailed: '복사하지 못했습니다',
+  reply: '답장',
+  reuse: '초안으로 사용',
+  showMore: '전체 보기',
+  showLess: '접기',
+  showAll: ((lines: number) => `모두 보기 (${lines}줄)`),
+  truncated: '출력이 잘렸습니다',
+  exit: ((code: number) => `종료 ${code}`),
+  failedCount: ((count: number) => `${count}개 실패`),
+  deniedCount: ((count: number) => `${count}개 거부`),
+  interruptedCount: ((count: number) => `${count}개 중단`),
+  working: ((time: string) => `${time}째 작업 중`),
+  worked: ((time: string) => `${time} 동안 작업함`),
+  interruptedAfter: ((time: string) => `${time} 뒤 중단됨`),
+  failedAfter: ((time: string) => `${time} 뒤 실패`),
+  queued: '대기열',
+  waiting: '승인 대기 중',
+  thinking: '생각 중',
+  thoughtFor: ((time: string) => `${time} 동안 생각함`),
+  changedFiles: ((count: number) => `파일 ${count}개 변경`),
+  review: '검토',
+  plan: '계획',
+  planFile: '계획 파일',
+  asked: '질문',
+  answered: '답변',
+  awaitingAnswer: '답변을 기다리는 중',
+  tasks: '작업',
+  tasksProgress: ((done: number, total: number) => `${total}개 중 ${done}개 완료`),
+  started: '시작',
+  completed: '완료',
+  added: '추가',
+  openRelated: 'Agent 열기',
+  input: '입력',
+  output: '출력',
+  noOutput: '출력 없음',
+  newMessages: '새 메시지',
+  jumpToLatest: '최신으로 이동',
+  transcript: '대화',
+  approval: {
+    allow: '허용',
+    deny: '거부',
+    denyWithFeedback: '피드백과 함께 거부…',
+    feedbackLabel: '대신 무엇을 해야 하는지 알려 주세요',
+    sendFeedback: '피드백 보내기',
+    cancel: '취소',
+    collapse: '숨기고 입력하기',
+    expand: '요청 보기',
+    pendingMore: ((count: number) => `${count}개 더 대기 중`),
+    risk: { read: '읽기 권한', write: '파일 변경', danger: '명령 실행' },
+    cwd: '위치',
+    reason: '이유',
+    question: '질문',
+    other: '직접 입력…',
+    otherPlaceholder: '답변을 입력하세요',
+    submit: '답변 보내기',
+    next: '다음',
+    skip: '건너뛰기',
+    step: ((index: number, total: number) => `질문 ${index}/${total}`),
+    planTitle: '이 계획을 승인할까요?',
+    approvePlan: '승인하고 시작',
+    approvePlanFull: '전체 권한으로 승인',
+    keepPlanning: '계획 계속 다듬기…',
+    keepPlanningLabel: '계획에서 무엇을 바꿔야 하나요?',
+    unsupportedAnswer: '이 호스트는 아직 답변을 보낼 수 없습니다. 허용하면 제공자의 기본 동작으로 진행합니다.',
+  },
+};
+
+export type ChatCopy = typeof EN;
+
+export function chatCopy(locale: ChatLocale): ChatCopy {
+  return locale === 'ko' ? KO : EN;
+}
+
+export function useChatLocale(): ChatLocale {
+  const { i18n } = useAppTranslation();
+  return (i18n.resolvedLanguage ?? i18n.language ?? 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
+}
+
+export function useChatCopy(): ChatCopy {
+  return chatCopy(useChatLocale());
+}
+
+/** Local wall-clock time; transcript timestamps are stored in UTC. */
+export function formatClock(iso: string, locale: ChatLocale): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString(locale === 'ko' ? 'ko-KR' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}

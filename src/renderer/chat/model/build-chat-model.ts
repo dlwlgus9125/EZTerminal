@@ -268,7 +268,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         push({
           kind: 'user', id: `user:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, ...(item.context ? { context: item.context } : {}),
-          messageId: item.sourceIds[0] ?? item.id, sensitive: item.isSensitive,
+          messageId: item.sourceIds[0] ?? item.id, anchorId: item.messageId ?? item.sourceIds[0] ?? item.id, sensitive: item.isSensitive,
         });
         if (turnId && !statusInserted.has(turnId)) {
           const turn = turnById.get(turnId);
@@ -287,7 +287,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         if (turnId) lastAssistantByTurn.set(turnId, normalized(item.text));
         push({
           kind: 'assistant', id: `assistant:${item.sourceIds[0] ?? item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
-          text: item.text, messageId: item.sourceIds[0] ?? item.id,
+          text: item.text, messageId: item.sourceIds[0] ?? item.id, anchorId: item.messageId ?? item.sourceIds[0] ?? item.id,
           streaming: item.isDelta && (turnActive(turnId) || !turnById.size), sensitive: item.isSensitive,
         });
         break;
@@ -299,7 +299,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           break;
         }
         const durationMs = payload?.type === 'reasoning' ? payload.durationMs : undefined;
-        if (!item.text.trim() && durationMs === undefined) break;
+        // A blank reasoning block under a second is noise, not "Thought for 0s".
+        if (!item.text.trim() && (durationMs === undefined || durationMs < 1_000)) break;
         activityFor(item).push({
           kind: 'thought', id: item.sourceIds[0] ?? item.id, text: item.text,
           ...(durationMs !== undefined ? { durationMs } : {}), streaming: item.isDelta && turnActive(turnId),
@@ -391,7 +392,9 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         const text = normalized(item.text);
         if (LIFECYCLE_NOTICE.test(text)) break;
         if (turnId && lastAssistantByTurn.get(turnId) === text) break;
-        push({ kind: 'notice', id: `notice:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text });
+        push(item.relatedSessionId
+          ? { kind: 'child', id: `notice:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text, relatedSessionId: item.relatedSessionId }
+          : { kind: 'notice', id: `notice:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text });
         break;
       }
       case 'error':
@@ -445,7 +448,19 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     pending = { approval, ...(request ? { request } : {}), ...(tool ? { tool: { ...tool } } : {}) };
   }
 
-  return { rows: finalRows, ...(todo ? { todo } : {}), ...(pending ? { pending } : {}), pendingCount: pendingApprovals.length };
+  // The dock asks the pending question / shows the pending plan; don't repeat it in the transcript.
+  let shownRows = finalRows;
+  const pendingKind = pending?.request?.kind;
+  if (pendingKind === 'question' || pendingKind === 'plan') {
+    const kind = pendingKind;
+    const index = [...finalRows].reverse().findIndex((row) => row.kind === kind && row.status === undefined);
+    if (index >= 0) {
+      const target = finalRows.length - 1 - index;
+      shownRows = finalRows.filter((_row, rowIndex) => rowIndex !== target);
+    }
+  }
+
+  return { rows: shownRows, ...(todo ? { todo } : {}), ...(pending ? { pending } : {}), pendingCount: pendingApprovals.length };
 }
 
 export type { ToolStatus };

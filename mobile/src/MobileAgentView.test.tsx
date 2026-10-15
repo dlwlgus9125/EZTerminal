@@ -522,7 +522,7 @@ describe('MobileAgentView', () => {
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
     expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
       .toBe(command.payload.sessionId);
-    expect(container.querySelector('[data-kind="user-message"]')).toBeNull();
+    expect(container.querySelector('[data-kind="user"]')).toBeNull();
     expect(container.textContent).toContain('Not started');
   });
 
@@ -670,7 +670,7 @@ describe('MobileAgentView', () => {
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
     expect(container.querySelector('[data-session-id]')?.getAttribute('data-session-id'))
       .toBe(originalCommand.payload.sessionId);
-    expect(container.querySelector('[data-kind="user-message"]')).toBeNull();
+    expect(container.querySelector('[data-kind="user"]')).toBeNull();
   });
 
   it('keeps an uncertain command locked without replay when fresh authority is unavailable', async () => {
@@ -1154,6 +1154,9 @@ describe('MobileAgentView', () => {
     });
 
     expect(getDaemonTranscript).toHaveBeenCalledWith('structured-session-1', 3, 500);
+    // The result joins a collapsed activity run; open it to read the output.
+    await act(async () => container.querySelector<HTMLButtonElement>('.chat-run__header')!.click());
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('.chat-tool__line')).at(-1)!.click());
     expect(container.textContent).toContain('Incremental mobile result');
 
     await act(async () => root.unmount());
@@ -1400,7 +1403,7 @@ describe('MobileAgentView', () => {
     await clickButtonText(container, 'EZTerminal');
     await clickButtonText(container, 'Main checkout');
     await clickButtonText(container, 'Structured mobile task');
-    await clickButtonText(container, 'Open related session');
+    await clickButtonText(container, 'Open Agent');
 
     expect(onFocusSession).toHaveBeenLastCalledWith('native-child');
     expect(container.querySelector('h1')?.textContent).toContain('Provider-owned child');

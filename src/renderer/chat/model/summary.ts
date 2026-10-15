@@ -88,13 +88,19 @@ export function summarizeActivity(entries: readonly ChatActivity[], live: boolea
   const thoughtMs = thoughts.some((thought) => thought.durationMs !== undefined)
     ? thoughts.reduce((total, thought) => total + (thought.durationMs ?? 0), 0)
     : undefined;
-  const counts = new Map<ToolCategory | 'fetch', { total: number; running: number }>();
+  const counts = new Map<ToolCategory | 'fetch', { total: number; running: number; targets: Set<string> }>();
   for (const tool of tools) {
     const key = bucket(tool);
-    const entry = counts.get(key) ?? { total: 0, running: 0 };
+    const entry = counts.get(key) ?? { total: 0, running: 0, targets: new Set<string>() };
     entry.total += 1;
     if (tool.status === 'running') entry.running += 1;
+    if (tool.target) entry.targets.add(tool.target.toLowerCase());
     counts.set(key, entry);
+  }
+  // Reading or editing the same file twice is still "1 file".
+  const FILE_BUCKETS = new Set<ToolCategory | 'fetch'>(['read', 'edit', 'write']);
+  for (const [key, entry] of counts) {
+    if (FILE_BUCKETS.has(key) && entry.targets.size > 0 && entry.targets.size < entry.total) entry.total = entry.targets.size;
   }
   const phrases = locale === 'ko' ? KO : EN;
   const parts = ORDER.flatMap((key) => {

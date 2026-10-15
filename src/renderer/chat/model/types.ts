@@ -72,12 +72,15 @@ export type ChatRow =
       readonly context?: ChatMessageContext;
       /** Identity a reply quotes (first source item). */
       readonly messageId: string;
+      /** Provider message identity; stable across streamed and final chunks. */
+      readonly anchorId: string;
       readonly sensitive: boolean;
     })
   | (RowBase & {
       readonly kind: 'assistant';
       readonly text: string;
       readonly messageId: string;
+      readonly anchorId: string;
       readonly streaming: boolean;
       readonly sensitive: boolean;
     })

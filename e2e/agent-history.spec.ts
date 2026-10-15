@@ -375,7 +375,7 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
   await rows.first().click();
 
   const transcript = window.getByTestId('conversation-start').locator('.structured-agent-transcript');
-  const turns = transcript.locator('.structured-agent-message[data-kind="user-message"]');
+  const turns = transcript.locator('.chat-row[data-kind="user"]');
   // Exactly one page: the newest twenty of the twenty-six turns on disk.
   await expect(turns).toHaveCount(20, { timeout: 15_000 });
   await expect(transcript).toContainText(PROMPT);

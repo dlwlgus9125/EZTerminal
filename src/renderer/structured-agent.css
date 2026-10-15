@@ -1291,7 +1291,7 @@
 .conversation-execution > details > ol { display: grid; gap: var(--ui-space-3); list-style: none; margin: var(--ui-space-2) 0 0; padding: var(--ui-space-3); border-left: 1px solid var(--ui-border-strong); background: var(--ui-conversation-code); }
 .conversation-execution summary:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
 .structured-agent--live .structured-agent-composer {
-  width: min(calc(100% - 2rem), var(--ui-conversation-width)); flex: 0 0 auto;
+  width: min(calc(100% - 2rem), var(--ui-chat-max-width)); flex: 0 0 auto;
   margin: 0 auto var(--ui-space-4); padding: var(--ui-space-3);
   border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-xl); background: var(--ui-conversation-composer);
 }
