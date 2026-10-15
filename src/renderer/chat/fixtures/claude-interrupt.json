@@ -1,0 +1,65 @@
+{
+  "provider": "claude",
+  "scenario": "interrupt",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Write a detailed 600-word essay about the history of terminal emulators. Do not use any tools.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_f360433441093a9c4921d6c8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Write a detailed 600-word essay about the history of terminal emulators. Do not use any tools.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "turn-summary-997dd3f9adf71453f024d676619c18a5",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude was interrupted.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 3,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_d0ec4a32db0558119913a7e5",
+      "sessionId": "replay-session",
+      "kind": "assistant-message",
+      "text": "# From Teletypes to GPU-Accelerated Windows: A History of Terminal Emulators\n\nThe terminal emulator is one of the oldest ideas still",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "provider-error-34f4e45302da67f495d69dc89d9ddfd6",
+      "sessionId": "replay-session",
+      "kind": "error",
+      "text": "Claude Agent encountered an unexpected provider error.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 5,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

@@ -1,0 +1,144 @@
+{
+  "provider": "claude",
+  "scenario": "todo",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Use the TodoWrite tool to track these three steps and complete them in order, updating the list as you go: (1) read README.md, (2) read src/app.ts, (3) answer in one sentence what greet returns.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_f360433441093a9c4921d6c8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Use the TodoWrite tool to track these three steps and complete them in order, updating the list as you go: (1) read README.md, (2) read src/app.ts, (3) answer in one sentence what greet returns.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "claude_6766791852b74d3a5ade186b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "ToolSearch\n{\n  \"query\": \"TodoWrite\",\n  \"max_results\": 3\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "claude_80ca532473f0e2726ede3b59",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "No matching deferred tools found",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "claude_a48f53df0b2f4cbe4a707562",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "TodoWrite isn't available in this session, so I'll track the steps inline.\n\n**Steps:** (1) ☐ read README.md · (2) ☐ read src/app.ts · (3) ☐ answer",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "claude_918031db436848fa3dc26194",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\README.md\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "claude_48b4df23f49d4db94c61583e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "1\t# Demo app\n2\t\n3\tA tiny demo project used for EZTerminal provider fixture capture.\n4\tThe `greet` helper lives in src/app.ts.\n5\t",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "claude_de533e06ae82c4edf20b9390",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "**Steps:** (1) ☑ read README.md · (2) ☐ read src/app.ts · (3) ☐ answer",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "claude_c2924a23c96c64b5213bddb0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "claude_63913a669c4ae71a0bab858b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "1\texport function greet(name: string): string {\n2\t  return `Hello, ${name}!`;\n3\t}\n4\t\n5\texport function main(): void {\n6\t  console.log(greet('world'));\n7\t}\n8\t",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "claude_5c2c3ee0e59bda9d252a9d9d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I couldn't use TodoWrite because it isn't available in this session, so I tracked the three steps in my messages instead.\n\n**Steps:** (1) ☑ read README.md · (2) ☑ read src/app.ts · (3) ☑ answer\n\n`greet(name)` returns the string `Hello, ${name}!`, so `greet('world')` returns `\"Hello, world!\"`.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 11
+    },
+    {
+      "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude completed the turn.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 12,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

@@ -1,0 +1,255 @@
+{
+  "provider": "claude",
+  "scenario": "edit-create",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "In src/app.ts rename the function `greet` to `greetUser` and update its call site, then create a new file notes.md containing exactly one line: `Renamed greet to greetUser.` Do nothing else.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_f360433441093a9c4921d6c8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "In src/app.ts rename the function `greet` to `greetUser` and update its call site, then create a new file notes.md containing exactly one line: `Renamed greet to greetUser.` Do nothing else.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "claude_76d6b500ef8a1b6fd018407d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "claude_2596f95c433d2b85eddc6d59",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "1\texport function greet(name: string): string {\n2\t  return `Hello, ${name}!`;\n3\t}\n4\t\n5\texport function main(): void {\n6\t  console.log(greet('world'));\n7\t}\n8\t",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "claude_452a717095d095e0656d4886",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Edit\n{\n  \"replace_all\": false,\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\",\n  \"old_string\": \"export function greet(\",\n  \"new_string\": \"export function greetUser(\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "claude_6e657c1e8e45a3ec4295f7b9",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "claude_0fccff7cee8602a2e383dad2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"-export function greet(\\n+export function greetUser(\",\"coverage\":\"fragment\"}]}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "claude_d9bedca064ebeb85792cea88",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Edit\n{\n  \"replace_all\": false,\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\",\n  \"old_string\": \"console.log(greet(\",\n  \"new_string\": \"console.log(greetUser(\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "claude_17c5fe8a801c50ecee4e2a54",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "claude_f9ee9132570041d34adb9d12",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"-console.log(greet(\\n+console.log(greetUser(\",\"coverage\":\"fragment\"}]}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "claude_59a6fb48c3df838cb64b902a",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Write\nRenamed greet to greetUser.\n",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 11
+    },
+    {
+      "id": "claude_b02faa46d434c2e7a41fab08",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 12
+    },
+    {
+      "id": "claude_72645486d1803d7ddc5b7518",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\notes.md\",\"patch\":\"+Renamed greet to greetUser.\\n+\",\"coverage\":\"fragment\"}]}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 13
+    },
+    {
+      "id": "claude_681039b48a4895d94068715b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I renamed `greet` to `greetUser` in `src/app.ts` and updated the one call in `main()`. I also created `notes.md` with the single line `Renamed greet to greetUser.`\n\nI didn't check other files: `greet` was exported, so anything that imports it elsewhere will need updating too.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 14
+    },
+    {
+      "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude completed the turn.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 15,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-9801e5a94052d008e881bc07f0a1d2cf",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "a639f732-3988-4808-99c1-13833b776c5e",
+      "risk": "write",
+      "title": "Claude requests Edit",
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "approval-f0553026c826cafaadd142cdb1845f39",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "c9251302-4504-4476-8935-51874f86b944",
+      "risk": "write",
+      "title": "Claude requests Edit",
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "approval-b243809337d63c57bc07550851701404",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "9095a18f-a691-4e3f-9219-cccab64cc9e7",
+      "risk": "write",
+      "title": "Claude requests Write",
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "toolName": "Edit",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "file_path": "<WORKSPACE>\\src\\app.ts",
+          "old_string": "export function greet(",
+          "new_string": "export function greetUser(",
+          "replace_all": false
+        },
+        "toolUseID": "toolu_018KgYRUvdVjhkZriNCnSnhM"
+      }
+    },
+    {
+      "toolName": "Edit",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "file_path": "<WORKSPACE>\\src\\app.ts",
+          "old_string": "console.log(greet(",
+          "new_string": "console.log(greetUser(",
+          "replace_all": false
+        },
+        "toolUseID": "toolu_0135GrhYSECnCLXTrjQnJLmA"
+      }
+    },
+    {
+      "toolName": "Write",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "file_path": "<WORKSPACE>\\notes.md",
+          "content": "Renamed greet to greetUser.\n"
+        },
+        "toolUseID": "toolu_01NJWA58XJnSPmSb8DR3BztK"
+      }
+    }
+  ]
+}

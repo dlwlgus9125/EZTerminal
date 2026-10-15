@@ -1,0 +1,172 @@
+{
+  "provider": "claude",
+  "scenario": "command-ok-fail",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Run `node --version`, then run `node -e \"process.exit(3)\"` as two separate shell commands. Report both results in one sentence. Do not run anything else.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_f360433441093a9c4921d6c8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Run `node --version`, then run `node -e \"process.exit(3)\"` as two separate shell commands. Report both results in one sentence. Do not run anything else.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "claude_6c4b7b46ea7e4389b909bf8e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "PowerShell\n{\n  \"command\": \"node --version\",\n  \"description\": \"Show Node.js version\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "claude_9f9d2bf86a91cbc3b6f67643",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "claude_b911466f7b7ff6686b247b73",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "v24.14.0",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "claude_8510ca3f4c16837c922af5e5",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "PowerShell\n{\n  \"command\": \"node -e \\\"process.exit(3)\\\"\",\n  \"description\": \"Run Node that exits with code 3\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "claude_e29cfa409ab2d8aeb9d14bf1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "claude_414479dc26cc579f77442614",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "Exit code 3",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "claude_63a3bb1660a6c5cc646021db",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "`node --version` printed `v24.14.0`, and `node -e \"process.exit(3)\"` exited with code 3 as intended, printing nothing.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude completed the turn.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 10,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-37c1da03eead6b221c44cffacf1b634d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "1de004d9-90b5-4a9e-9c59-edcf4d2f7a41",
+      "risk": "danger",
+      "title": "Claude requests PowerShell",
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "approval-a2fec37b3adbe2f7f8083c43b54e27d2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "ed6a2193-7c6b-4631-a2fe-d0a6fdee487f",
+      "risk": "danger",
+      "title": "Claude requests PowerShell",
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "toolName": "PowerShell",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "command": "node --version",
+          "description": "Show Node.js version"
+        },
+        "toolUseID": "toolu_0122rknPaJP24JMwdjLWvBEp"
+      }
+    },
+    {
+      "toolName": "PowerShell",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "command": "node -e \"process.exit(3)\"",
+          "description": "Run Node that exits with code 3"
+        },
+        "toolUseID": "toolu_01Q8SPFWH1eKjBu8UxPG1Yuz"
+      }
+    }
+  ]
+}
