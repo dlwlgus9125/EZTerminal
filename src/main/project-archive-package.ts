@@ -38,7 +38,8 @@ export function redactArchiveValue(value: unknown, exclusions: ProjectArchiveMan
     const object = value as Record<string, unknown>;
     if (object.isSensitive === true && typeof object.text === 'string') {
       exclusions.push({ item, reason: 'Sensitive transcript text and attachments were excluded.' });
-      value = { ...object, text: '[REDACTED SENSITIVE CONTENT]', context: undefined };
+      // Tool payloads carry commands, paths and targets of the same sensitive turn.
+      value = { ...object, text: '[REDACTED SENSITIVE CONTENT]', context: undefined, payload: undefined };
     } else if (object.kind === 'text' && typeof object.data === 'string' && object.data.length >= 16 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(object.data)) {
       const bytes = Buffer.from(object.data, 'base64'); const decoded = bytes.toString('utf8');
       if (Buffer.from(decoded).equals(bytes)) {

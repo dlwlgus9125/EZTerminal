@@ -1,3 +1,4 @@
+import type { ApprovalResponse } from '../shared/approval-request';
 import { createHash } from 'node:crypto';
 import { validateChatMessageContext, type ChatMessageContext, type ChatReplyReference } from '../shared/chat-message';
 
@@ -199,6 +200,9 @@ function agentInput(
   const model = Object.prototype.hasOwnProperty.call(patch, 'model')
     ? patch.model
     : agent.model;
+  const reasoningEffort = Object.prototype.hasOwnProperty.call(patch, 'reasoningEffort')
+    ? patch.reasoningEffort
+    : agent.reasoningEffort;
   const currentTurnId = Object.prototype.hasOwnProperty.call(patch, 'currentTurnId')
     ? patch.currentTurnId
     : agent.currentTurnId;
@@ -207,6 +211,7 @@ function agentInput(
     providerId: patch.providerId ?? agent.providerId,
     ...(providerSessionId ? { providerSessionId } : {}),
     ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     permissionPreset: patch.permissionPreset ?? agent.permissionPreset,
     state: patch.state ?? agent.state,
     ...(currentTurnId ? { currentTurnId } : {}),
@@ -268,6 +273,7 @@ function transcriptInput(item: DaemonTranscriptItem): DaemonTranscriptItemInput 
     isSensitive: item.isSensitive,
     ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}),
     ...(item.context ? { context: item.context } : {}),
+    ...(item.payload ? { payload: item.payload } : {}),
     createdAt: item.createdAt,
   };
 }
@@ -769,6 +775,7 @@ export class DaemonAgentRuntime {
         messageId: item.messageId ?? item.id,
         kind: item.kind, text: item.text, isDelta: item.isDelta, isSensitive: item.isSensitive, createdAt: item.createdAt,
         ...(item.context ? { context: item.context } : {}), ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}),
+        ...(item.payload ? { payload: item.payload } : {}),
       }))));
       const next = items.at(-1)!.sequence;
       if (next <= afterSequence) return commandError('invalid-state', 'The source transcript cursor did not advance.');
@@ -885,6 +892,7 @@ export class DaemonAgentRuntime {
         command.payload.prompt,
         now,
         messageContext,
+        messageContext?.replyTo ? this.replyAnchorIsSensitive(session.id, messageContext.replyTo) : false,
       )]),
     );
     return {
@@ -961,18 +969,23 @@ export class DaemonAgentRuntime {
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
     if (!agent) return commandError('not-found', 'Agent Session was not found.');
     if (TERMINAL_AGENT_STATES.has(agent.state)) return commandError('invalid-state', 'Agent Session has ended.');
-    if (agent.currentTurnId) return commandError('invalid-state', 'Change Agent settings between turns.');
+    // Effort is read at the next submit, so it may change while a turn runs.
+    const effortOnly = command.payload.reasoningEffort !== undefined
+      && command.payload.model === undefined && command.payload.permissionPreset === undefined;
+    if (agent.currentTurnId && !effortOnly) return commandError('invalid-state', 'Change Agent settings between turns.');
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const nextModel = command.payload.model ?? agent.model;
     const nextPermissionPreset = command.payload.permissionPreset ?? agent.permissionPreset;
+    const nextEffort = command.payload.reasoningEffort ?? agent.reasoningEffort;
     return {
       ok: true,
       commit: { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
         ...(nextModel ? { model: nextModel } : {}),
+        ...(nextEffort ? { reasoningEffort: nextEffort } : {}),
         permissionPreset: nextPermissionPreset,
       }) }] },
-      afterCommit: () => agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId) ? this.runBackground(
+      afterCommit: () => !effortOnly && agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId) ? this.runBackground(
         `update Agent settings ${agent.sessionId}`,
         () => this.applyProviderSettings(
           agent.sessionId,
@@ -1314,6 +1327,7 @@ export class DaemonAgentRuntime {
         agent.providerSessionId!,
         approval.providerRequestId,
         command.payload.decision,
+        command.payload.response,
       ),
     ) };
   }
@@ -1519,6 +1533,7 @@ export class DaemonAgentRuntime {
     text: string,
     createdAt: string,
     context?: ChatMessageContext,
+    isSensitive = false,
   ): DaemonTranscriptItemInput {
     return {
       id: stableId('message', commandId, 'user'),
@@ -1527,7 +1542,7 @@ export class DaemonAgentRuntime {
       kind: 'user-message',
       text,
       isDelta: false,
-      isSensitive: false,
+      isSensitive,
       createdAt,
       ...(context ? { context } : {}),
     };
@@ -1749,7 +1764,8 @@ export class DaemonAgentRuntime {
           commandId: selected.turn.commandId,
           prompt: selected.prompt,
           context: this.contextForTurn(selected.turn),
-          reasoningEffort: this.options.preparedSessionSettings?.(selected.turn.sessionId)?.reasoningEffort,
+          reasoningEffort: this.options.preparedSessionSettings?.(selected.turn.sessionId)?.reasoningEffort
+            ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
         }, this.lifecycleAbortController.signal);
         let shouldArmTimeout = false;
         await this.transition((snapshot) => {
@@ -2059,6 +2075,7 @@ export class DaemonAgentRuntime {
             risk: event.risk,
             title: event.title,
             ...(event.detail ? { detail: event.detail } : {}),
+            ...(event.request ? { request: event.request } : {}),
             state: stale ? 'expired' : 'pending',
             ...(stale ? { resolvedAt: now } : {}),
           } },
@@ -2723,6 +2740,20 @@ export class DaemonAgentRuntime {
     }
   }
 
+  /** A reply that quotes a sensitive message carries that text, so it inherits the flag. */
+  private replyAnchorIsSensitive(sessionId: string, reply: ChatReplyReference): boolean {
+    let afterSequence = 0;
+    for (;;) {
+      const page = this.options.readTranscript(sessionId, afterSequence, 2_000);
+      const anchor = page.find((item) => item.id === reply.messageId || item.messageId === reply.messageId
+        || item.id === stableId('history-message', sessionId, reply.messageId));
+      if (anchor) return anchor.isSensitive;
+      const next = page.at(-1)?.sequence;
+      if (page.length < 2_000 || next === undefined || next <= afterSequence) return false;
+      afterSequence = next;
+    }
+  }
+
   private isValidReply(sessionId: string, reply: ChatReplyReference): boolean {
     let anchor: DaemonTranscriptItem | undefined;
     let text = '';
@@ -2732,18 +2763,16 @@ export class DaemonAgentRuntime {
       for (const item of page) {
         if (!anchor) {
           if (item.id !== reply.messageId && item.messageId !== reply.messageId && item.id !== stableId('history-message', sessionId, reply.messageId)) continue;
-          if (item.isSensitive || !['user-message', 'assistant-message'].includes(item.kind)) return false;
+          if (!['user-message', 'assistant-message'].includes(item.kind)) return false;
           anchor = item;
           text = item.text;
         } else if (anchor.messageId) {
           if (item.messageId !== anchor.messageId || item.turnId !== anchor.turnId || item.kind !== anchor.kind) continue;
-          if (item.isSensitive) return false;
           text = item.isDelta ? text + item.text : item.text;
         } else {
           if (item.kind !== anchor.kind || item.turnId !== anchor.turnId || item.messageId || !item.isDelta) {
             return text.startsWith(reply.text);
           }
-          if (item.isSensitive) return false;
           text += item.text;
         }
       }
@@ -2995,6 +3024,7 @@ export class DaemonAgentRuntime {
     providerSessionId: string,
     providerRequestId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ): Promise<void> {
     const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
     if (!provider.ok) {
@@ -3002,7 +3032,7 @@ export class DaemonAgentRuntime {
       return;
     }
     try {
-      await provider.value.resolveApproval({ sessionId, providerSessionId, providerRequestId, decision });
+      await provider.value.resolveApproval({ sessionId, providerSessionId, providerRequestId, decision, ...(response ? { response } : {}) });
     } catch (error) {
       await this.markSessionDeliveryUncertain(
         sessionId,
@@ -3054,7 +3084,8 @@ export class DaemonAgentRuntime {
     let bytes = 0;
     for (const item of expanded) {
       const itemBytes = Buffer.byteLength(item.text, 'utf8')
-        + (item.context ? Buffer.byteLength(JSON.stringify(item.context), 'utf8') : 0);
+        + (item.context ? Buffer.byteLength(JSON.stringify(item.context), 'utf8') : 0)
+        + (item.payload ? Buffer.byteLength(JSON.stringify(item.payload), 'utf8') : 0);
       if (batch.length >= MAX_TRANSCRIPT_BATCH_ITEMS || bytes + itemBytes > MAX_TRANSCRIPT_BATCH_UTF8_BYTES) {
         batches.push(batch);
         batch = [];

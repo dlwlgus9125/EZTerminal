@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { ApprovalResponseSchema, type ApprovalRequest, type ApprovalResponse } from './approval-request';
 import { ChatMessageContextSchema, type ChatMessageContext } from './chat-message';
+import type { TranscriptPayload } from './transcript-payload';
 
 export const DAEMON_PROTOCOL_VERSION = 12 as const;
 
@@ -96,6 +98,8 @@ export interface DaemonAgent extends RevisionedRecord {
   readonly providerId: string;
   readonly providerSessionId?: string;
   readonly model?: string;
+  /** Provider reasoning effort chosen in the composer (`agent-effort-v1`). */
+  readonly reasoningEffort?: string;
   readonly permissionPreset: PermissionPreset;
   readonly state: ManagedAgentState;
   readonly currentTurnId?: string;
@@ -150,6 +154,8 @@ export interface DaemonTranscriptItem {
   readonly isDelta: boolean;
   readonly isSensitive: boolean;
   readonly relatedSessionId?: string;
+  /** Structured tool/todo/reasoning/plan metadata (`transcript-payload-v1`); `text` stays authoritative. */
+  readonly payload?: TranscriptPayload;
   readonly createdAt: string;
 }
 
@@ -167,6 +173,8 @@ export interface DaemonApproval extends RevisionedRecord {
   readonly risk: 'read' | 'write' | 'danger';
   readonly title: string;
   readonly detail?: string;
+  /** What is being approved (`approval-request-v1`); title/detail remain the legacy summary. */
+  readonly request?: ApprovalRequest;
   readonly state: 'pending' | 'allowed' | 'denied' | 'expired';
   readonly resolvedAt?: string;
 }
@@ -354,12 +362,19 @@ export interface DaemonCommandPayloads {
     readonly sessionId: string;
     readonly model?: string;
     readonly permissionPreset?: PermissionPreset;
+    /** Sent only to hosts advertising `agent-effort-v1`. */
+    readonly reasoningEffort?: string;
   };
   /** Cooperatively interrupts only the active turn; queued turns and provider Session remain resumable. */
   readonly 'agent.cancel': { readonly sessionId: string };
   readonly 'agent.archive': { readonly sessionId: string };
   readonly 'agent.detach': { readonly sessionId: string };
-  readonly 'permission.resolve': { readonly approvalId: string; readonly decision: 'allow' | 'deny' };
+  readonly 'permission.resolve': {
+    readonly approvalId: string;
+    readonly decision: 'allow' | 'deny';
+    /** Sent only to hosts advertising `approval-response-v1`. */
+    readonly response?: ApprovalResponse;
+  };
   readonly 'provider.enable': ProviderEnableInput;
   readonly 'provider.disable': { readonly providerId: string };
   readonly 'provider.update': ProviderEnableInput;
@@ -617,11 +632,11 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'agent.interrupt-and-submit': AgentMessagePayloadSchema,
   'agent.interrupt': SessionIdSchema,
   'agent.queue': z.object({ sessionId: IdentifierSchema, turnId: IdentifierSchema, turnRevision: z.number().int().nonnegative(), action: z.enum(['remove', 'take', 'run-next']) }).strict(),
-  'agent.set-settings': z.object({ sessionId: IdentifierSchema, model: NonEmptyStringSchema.optional(), permissionPreset: PermissionPresetSchema.optional() }).strict(),
+  'agent.set-settings': z.object({ sessionId: IdentifierSchema, model: NonEmptyStringSchema.optional(), permissionPreset: PermissionPresetSchema.optional(), reasoningEffort: z.string().min(1).max(32).optional() }).strict(),
   'agent.cancel': SessionIdSchema,
   'agent.archive': SessionIdSchema,
   'agent.detach': SessionIdSchema,
-  'permission.resolve': z.object({ approvalId: IdentifierSchema, decision: z.enum(['allow', 'deny']) }).strict(),
+  'permission.resolve': z.object({ approvalId: IdentifierSchema, decision: z.enum(['allow', 'deny']), response: ApprovalResponseSchema.optional() }).strict(),
   'provider.enable': ProviderEnableSchema,
   'provider.disable': z.object({ providerId: IdentifierSchema }).strict(),
   'provider.update': ProviderEnableSchema,

@@ -1,3 +1,4 @@
+import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-request';
 import type { ChatMessageContext } from '../shared/chat-message';
 import type { AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
 import type {
@@ -67,6 +68,8 @@ export interface ProviderApprovalDecision {
   readonly providerSessionId: string;
   readonly providerRequestId: string;
   readonly decision: 'allow' | 'deny';
+  /** Answers, plan mode or deny feedback; adapters ignore kinds they cannot express. */
+  readonly response?: ApprovalResponse;
 }
 
 export interface ProviderReconciliationInput {
@@ -124,6 +127,8 @@ export type AgentProviderEvent =
       readonly risk: 'read' | 'write' | 'danger';
       readonly title: string;
       readonly detail?: string;
+      /** Structured subject of the approval (command, files, question, plan). */
+      readonly request?: ApprovalRequest;
     }
   | {
       readonly kind: 'native-subagent';

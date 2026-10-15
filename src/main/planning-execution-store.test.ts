@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createDaemonCommand } from '../shared/daemon-protocol';
 import type { ExecutionPreparation } from '../shared/planning-execution';
-import { DaemonStore } from './daemon-store';
+import { DAEMON_DATABASE_SCHEMA_VERSION, DaemonStore } from './daemon-store';
 import { PlanningExecutionStore } from './planning-execution-store';
 
 const NOW = '2026-10-13T00:00:00.000Z';
@@ -293,10 +293,10 @@ describe('PlanningExecutionStore', () => {
     await f.authority.appendTranscriptBatch([{ id: 'old-message', sessionId: 'S1', kind: 'user-message', text: 'Keep me', isDelta: false, isSensitive: false }]);
     await f.authority.close();
     const db = new DatabaseSync(f.authority.databasePath);
-    db.exec('DROP TABLE planning_execution_attempt_refs; DROP TABLE planning_execution_runs; DROP TABLE planning_execution_projects; DROP TABLE planning_execution_receipts; ALTER TABLE transcript_items DROP COLUMN context_json; PRAGMA user_version = 4;');
+    db.exec('DROP TABLE planning_execution_attempt_refs; DROP TABLE planning_execution_runs; DROP TABLE planning_execution_projects; DROP TABLE planning_execution_receipts; ALTER TABLE transcript_items DROP COLUMN payload_json; ALTER TABLE approvals DROP COLUMN request_json; ALTER TABLE agents DROP COLUMN reasoning_effort; ALTER TABLE transcript_items DROP COLUMN context_json; PRAGMA user_version = 4;');
     db.close();
     const reopened = await fixture(f.directory);
-    expect(reopened.authority.getDiagnostics().schemaVersion).toBe(6);
+    expect(reopened.authority.getDiagnostics().schemaVersion).toBe(DAEMON_DATABASE_SCHEMA_VERSION);
     expect(reopened.authority.getTranscript('S1')).toMatchObject([{ text: 'Keep me' }]);
     expect(reopened.ledger.read('P1')).toMatchObject({ revision: 0, runs: [] });
     expect(readdirSync(f.directory)).toContain('orchestration-recovery');

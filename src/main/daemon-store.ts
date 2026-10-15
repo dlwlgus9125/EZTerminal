@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, ApprovalRequestSchema, parseApprovalRequest } from '../shared/approval-request';
 import { ChatMessageContextSchema } from '../shared/chat-message';
+import { TRANSCRIPT_PAYLOAD_CAPABILITY, TranscriptPayloadSchema, parseTranscriptPayload } from '../shared/transcript-payload';
 
 import {
   DAEMON_PROTOCOL_VERSION,
@@ -581,10 +583,10 @@ export class DaemonStore {
   getConversationPreview(sessionId: string): string {
     const database = this.requireDatabase();
     const last = database.prepare(`SELECT kind, turn_id, COALESCE(message_id, id) AS message_key FROM transcript_items
-      WHERE session_id = ? AND kind IN ('user-message', 'assistant-message') AND is_sensitive = 0 ORDER BY sequence DESC LIMIT 1`).get(sessionId) as SqlRow | undefined;
+      WHERE session_id = ? AND kind IN ('user-message', 'assistant-message') ORDER BY sequence DESC LIMIT 1`).get(sessionId) as SqlRow | undefined;
     if (!last) return '';
     const rows = this.all(database, `SELECT substr(text, -1000) AS excerpt, is_delta FROM transcript_items
-      WHERE session_id = ? AND kind = ? AND turn_id IS ? AND COALESCE(message_id, id) = ? AND is_sensitive = 0 ORDER BY sequence DESC LIMIT 64`,
+      WHERE session_id = ? AND kind = ? AND turn_id IS ? AND COALESCE(message_id, id) = ? ORDER BY sequence DESC LIMIT 64`,
     sessionId, last.kind, last.turn_id, last.message_key);
     const parts: string[] = [];
     for (const row of rows) {
@@ -599,12 +601,12 @@ export class DaemonStore {
       throw new Error('Invalid conversation page.');
     const database = this.requireDatabase();
     const groups = this.all(database, `SELECT turn_id, kind, COALESCE(message_id, id) AS message_key, MIN(sequence) AS first_sequence
-      FROM transcript_items WHERE session_id = ? AND sequence < ? AND is_sensitive = 0
+      FROM transcript_items WHERE session_id = ? AND sequence < ?
       GROUP BY turn_id, kind, COALESCE(message_id, id) ORDER BY first_sequence DESC LIMIT ?`, sessionId, beforeSequence, limit + 1);
     const selected = groups.slice(0, limit).reverse();
     const items = selected.map((group): DaemonTranscriptItem => {
       const fragments = this.all(database, `SELECT * FROM transcript_items WHERE session_id = ? AND turn_id IS ? AND kind = ?
-        AND COALESCE(message_id, id) = ? AND is_sensitive = 0 ORDER BY sequence`,
+        AND COALESCE(message_id, id) = ? ORDER BY sequence`,
       sessionId, group.turn_id, group.kind, group.message_key);
       const first = fragments[0]!;
       return { id: requiredString(first, 'id'), sessionId, sequence: integer(first, 'sequence'),
@@ -612,7 +614,10 @@ export class DaemonStore {
         ...(optionalString(first, 'message_id') === undefined ? {} : { messageId: optionalString(first, 'message_id') }),
         kind: requiredString(first, 'kind') as DaemonTranscriptItem['kind'],
         text: fragments.reduce((text, row) => bool(row, 'is_delta') ? text + requiredString(row, 'text') : requiredString(row, 'text'), ''),
-        isDelta: false, isSensitive: false, createdAt: requiredString(first, 'created_at') };
+        isDelta: false, isSensitive: fragments.some(row => bool(row, 'is_sensitive')),
+        ...(optionalString(first, 'context_json') === undefined ? {} : { context: ChatMessageContextSchema.parse(JSON.parse(requiredString(first, 'context_json'))) }),
+        ...transcriptPayloadFromRow(fragments.at(-1)!),
+        createdAt: requiredString(first, 'created_at') };
     });
     return { items, nextCursor: groups.length > limit && selected[0] ? String(selected[0].first_sequence) : null };
   }
@@ -893,7 +898,7 @@ export class DaemonStore {
     const runtime = this.runtimeRow(database);
     return {
       protocolVersion: DAEMON_PROTOCOL_VERSION,
-      capabilities: ['agent-queue'],
+      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, 'agent-effort-v1'],
       revision: runtime.revision,
       eventSequence: runtime.eventSequence,
       generatedAt: this.isoNow(),
@@ -923,6 +928,7 @@ export class DaemonStore {
         sessionId: requiredString(row, 'session_id'), providerId: requiredString(row, 'provider_id'),
         ...(optionalString(row, 'provider_session_id') === undefined ? {} : { providerSessionId: optionalString(row, 'provider_session_id') }),
         ...(optionalString(row, 'model') === undefined ? {} : { model: optionalString(row, 'model') }),
+        ...(optionalString(row, 'reasoning_effort') === undefined ? {} : { reasoningEffort: optionalString(row, 'reasoning_effort') }),
         permissionPreset: requiredString(row, 'permission_preset') as DaemonAgent['permissionPreset'],
         state: requiredString(row, 'state') as DaemonAgent['state'],
         ...(optionalString(row, 'current_turn_id') === undefined ? {} : { currentTurnId: optionalString(row, 'current_turn_id') }),
@@ -957,6 +963,7 @@ export class DaemonStore {
         ...(optionalString(row, 'turn_id') === undefined ? {} : { turnId: optionalString(row, 'turn_id') }),
         providerRequestId: requiredString(row, 'provider_request_id'), risk: requiredString(row, 'risk') as DaemonApproval['risk'],
         title: requiredString(row, 'title'), ...(optionalString(row, 'detail') === undefined ? {} : { detail: optionalString(row, 'detail') }),
+        ...approvalRequestFromRow(row),
         state: requiredString(row, 'state') as DaemonApproval['state'],
         ...(optionalString(row, 'resolved_at') === undefined ? {} : { resolvedAt: optionalString(row, 'resolved_at') }),
         revision: integer(row, 'revision'), createdAt: requiredString(row, 'created_at'), updatedAt: requiredString(row, 'updated_at'),
@@ -1046,6 +1053,7 @@ export class DaemonStore {
       ...(optionalString(row, 'related_session_id') === undefined ? {} : { relatedSessionId: optionalString(row, 'related_session_id') }),
       ...(optionalString(row, 'message_id') === undefined ? {} : { messageId: optionalString(row, 'message_id') }),
       ...(optionalString(row, 'context_json') === undefined ? {} : { context: ChatMessageContextSchema.parse(JSON.parse(requiredString(row, 'context_json'))) }),
+      ...transcriptPayloadFromRow(row),
       createdAt: requiredString(row, 'created_at'),
     }));
   }
@@ -1635,6 +1643,19 @@ export class DaemonStore {
         throw error;
       }
     }
+    if (version < 7) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.exec('ALTER TABLE transcript_items ADD COLUMN payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json))');
+        database.exec('ALTER TABLE approvals ADD COLUMN request_json TEXT CHECK (request_json IS NULL OR json_valid(request_json))');
+        database.exec('ALTER TABLE agents ADD COLUMN reasoning_effort TEXT');
+        database.exec('PRAGMA user_version = 7');
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
     const row = database.prepare('SELECT singleton FROM runtime_settings WHERE singleton = 1').get();
     if (!row) throw new Error('Daemon database is missing runtime metadata.');
   }
@@ -1764,17 +1785,18 @@ export class DaemonStore {
         database.prepare(`
           INSERT INTO agents (
             session_id, provider_id, provider_session_id, model, permission_preset, state, current_turn_id,
-            queued_turn_count, orchestration_enabled, revision, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            queued_turn_count, orchestration_enabled, revision, created_at, updated_at, reasoning_effort
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id) DO UPDATE SET
             provider_id = excluded.provider_id, provider_session_id = excluded.provider_session_id,
-            model = excluded.model, permission_preset = excluded.permission_preset, state = excluded.state,
+            model = excluded.model, reasoning_effort = excluded.reasoning_effort,
+            permission_preset = excluded.permission_preset, state = excluded.state,
             current_turn_id = excluded.current_turn_id, queued_turn_count = excluded.queued_turn_count,
             orchestration_enabled = excluded.orchestration_enabled, revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
           value.sessionId, value.providerId, value.providerSessionId ?? null, value.model ?? null,
           value.permissionPreset, value.state, value.currentTurnId ?? null, value.queuedTurnCount,
-          value.orchestrationEnabled ? 1 : 0, revision, now, now,
+          value.orchestrationEnabled ? 1 : 0, revision, now, now, value.reasoningEffort ?? null,
         );
         return [{ kind: 'entity.upserted', payload: { entityType: 'agent', entityId: value.sessionId } }];
       }
@@ -1838,15 +1860,17 @@ export class DaemonStore {
         database.prepare(`
           INSERT INTO approvals (
             id, session_id, turn_id, provider_request_id, risk, title, detail, state, resolved_at,
-            revision, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            revision, created_at, updated_at, request_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             session_id = excluded.session_id, turn_id = excluded.turn_id, provider_request_id = excluded.provider_request_id,
-            risk = excluded.risk, title = excluded.title, detail = excluded.detail, state = excluded.state,
+            risk = excluded.risk, title = excluded.title, detail = excluded.detail, request_json = excluded.request_json,
+            state = excluded.state,
             resolved_at = excluded.resolved_at, revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
           value.id, value.sessionId, value.turnId ?? null, value.providerRequestId, value.risk, value.title,
           value.detail ?? null, value.state, value.resolvedAt ?? null, revision, now, now,
+          value.request ? JSON.stringify(ApprovalRequestSchema.parse(value.request)) : null,
         );
         return [
           { kind: 'entity.upserted', payload: { entityType: 'approval', entityId: value.id } },
@@ -1977,7 +2001,8 @@ export class DaemonStore {
       throw new Error(`Transcript batch must contain between 1 and ${this.maxTranscriptBatchItems} items.`);
     }
     const byteLength = items.reduce((total, item) => total + Buffer.byteLength(item.text, 'utf8')
-      + (item.context ? Buffer.byteLength(JSON.stringify(item.context), 'utf8') : 0), 0);
+      + (item.context ? Buffer.byteLength(JSON.stringify(item.context), 'utf8') : 0)
+      + (item.payload ? Buffer.byteLength(JSON.stringify(item.payload), 'utf8') : 0), 0);
     if (byteLength > this.maxTranscriptBatchUtf8Bytes) {
       throw new Error(`Transcript batch exceeds ${this.maxTranscriptBatchUtf8Bytes} UTF-8 bytes.`);
     }
@@ -1985,8 +2010,9 @@ export class DaemonStore {
     const rangeBySession = new Map<string, { from: number; to: number }>();
     const insert = database.prepare(`
       INSERT INTO transcript_items (
-        id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at, message_id, context_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at, message_id, context_json,
+        payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const findExisting = database.prepare('SELECT id FROM transcript_items WHERE id = ?');
     for (const item of items) {
@@ -2007,6 +2033,7 @@ export class DaemonStore {
         item.id, item.sessionId, item.turnId ?? null, sequence, item.kind, item.text,
         item.isDelta ? 1 : 0, item.isSensitive ? 1 : 0, item.relatedSessionId ?? null, item.createdAt ?? now, item.messageId ?? null,
         item.context ? JSON.stringify(ChatMessageContextSchema.parse(item.context)) : null,
+        item.payload ? JSON.stringify(TranscriptPayloadSchema.parse(item.payload)) : null,
       );
       nextSequenceBySession.set(item.sessionId, sequence);
       const range = rangeBySession.get(item.sessionId);
@@ -2091,5 +2118,28 @@ export class DaemonStore {
       database.exec('ROLLBACK');
       throw error;
     }
+  }
+}
+
+/** A stored payload this build cannot read is dropped, never fatal: `text` still renders. */
+function transcriptPayloadFromRow(row: SqlRow): Pick<DaemonTranscriptItem, 'payload'> {
+  const raw = optionalString(row, 'payload_json');
+  if (raw === undefined) return {};
+  try {
+    const payload = parseTranscriptPayload(JSON.parse(raw));
+    return payload ? { payload } : {};
+  } catch {
+    return {};
+  }
+}
+
+function approvalRequestFromRow(row: SqlRow): Pick<DaemonApproval, 'request'> {
+  const raw = optionalString(row, 'request_json');
+  if (raw === undefined) return {};
+  try {
+    const request = parseApprovalRequest(JSON.parse(raw));
+    return request ? { request } : {};
+  } catch {
+    return {};
   }
 }
