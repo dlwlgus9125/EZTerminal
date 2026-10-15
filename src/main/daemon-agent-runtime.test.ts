@@ -2448,6 +2448,33 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('fails a turn at once when the provider session cannot start, since the prompt never left', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    vi.mocked(h.codex.createSession).mockRejectedValueOnce(Object.assign(
+      new Error('The Claude executable path or version no longer matches the pinned Agent SDK review.'),
+      { code: 'CLAUDE_EXECUTABLE_INVALID' },
+    ));
+    await h.execute('agent.create', {
+      sessionId: 'agent-1',
+      workspaceId: 'workspace-1',
+      title: 'Agent',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      initialPrompt: 'Read the README.',
+    });
+    await h.runtime.whenIdle();
+    const snapshot = h.router.getSnapshot();
+    expect(snapshot.turns[0]).toMatchObject({ state: 'failed', errorCode: 'CLAUDE_EXECUTABLE_INVALID' });
+    expect(snapshot.agents[0]).toMatchObject({ state: 'idle' });
+    expect(snapshot.agents[0]?.currentTurnId).toBeUndefined();
+    expect(snapshot.sessions[0]?.state).not.toBe('delivery-uncertain');
+    expect(h.codex.submit).not.toHaveBeenCalled();
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
   it('leaves plan mode for the mode chosen when a plan is approved', async () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');

@@ -1710,6 +1710,7 @@ export class DaemonAgentRuntime {
         continue;
       }
       let providerSessionId = selected.agent.providerSessionId;
+      let promptSent = false;
       try {
         if (!providerSessionId) {
           const handle = await provider.value.createSession(this.sessionContext(
@@ -1761,6 +1762,7 @@ export class DaemonAgentRuntime {
           continue;
         }
         if (this.disposed) return;
+        promptSent = true;
         await provider.value.submit({
           sessionId: selected.turn.sessionId,
           providerSessionId,
@@ -1792,6 +1794,36 @@ export class DaemonAgentRuntime {
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Provider delivery could not be confirmed.';
+        if (!promptSent) {
+          // The session could not start or attach, so the prompt never left: fail the turn
+          // now (with the provider's reason) instead of waiting out an uncertain delivery.
+          const code = typeof (error as { code?: unknown } | null)?.code === 'string'
+            ? (error as { code: string }).code
+            : 'provider-start-failed';
+          await this.transition((snapshot) => {
+            const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
+            const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
+            const session = snapshot.sessions.find((entry) => entry.id === selected.turn.sessionId);
+            if (!turn || !agent || !session || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
+              return undefined;
+            }
+            return { mutations: [
+              { kind: 'turn.upsert', value: turnInput(turn, { state: 'failed', errorCode: code, finishedAt: this.isoNow() }) },
+              { kind: 'agent.upsert', value: agentInput(agent, { state: 'idle', currentTurnId: undefined }) },
+              { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+              ...this.transcriptMutations([{
+                id: stableId('start-error', selected.turn.id, detail),
+                sessionId: selected.turn.sessionId,
+                turnId: selected.turn.id,
+                kind: 'error',
+                text: detail,
+                isDelta: false,
+                isSensitive: false,
+              }]),
+            ] };
+          });
+          continue;
+        }
         let markedUncertain = false;
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
