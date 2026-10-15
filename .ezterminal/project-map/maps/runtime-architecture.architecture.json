@@ -244,16 +244,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1998,
-          "endLine": 2047,
+          "startLine": 1999,
+          "endLine": 2048,
           "lineDigest": "sha256:6d1e43fe7176736977a5bcd58d409d25d26377a5eba237fb282c450f74b11a2f",
           "claim": "Only after Project preflight and ordered MCP, Agent, and automation startup does main publish ready availability; any failure is cleaned up and latched as terminal-only safe mode."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1516,
-          "endLine": 1626,
+          "startLine": 1517,
+          "endLine": 1627,
           "lineDigest": "sha256:f7370e46d70e7d0705763f51e9508b7bf8425b72581f70db23ce9332994bdeb9",
           "claim": "The closeable Project FIFO serializes discovery and fresh-snapshot sync, propagates cancellation, and passes reactivation ids only for explicit user intent."
         }
@@ -673,8 +673,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 935,
-          "endLine": 1023,
+          "startLine": 936,
+          "endLine": 1024,
           "lineDigest": "sha256:da623efbb43e4da7a02e9806a8da4901eec1a4b92298270adc50a48b3a92b95d",
           "claim": "One provider runtime receives durable SQLite transitions, frozen execution settings, workflow MCP admission, archived-conversation checks and host-resolved stage reference context."
         }
@@ -690,8 +690,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1838,
-          "endLine": 1993,
+          "startLine": 1839,
+          "endLine": 1994,
           "lineDigest": "sha256:aec722e17dc73aaec4827ac9482ffae3d2cc86e067a25fb7d978d0dbf168b54f",
           "claim": "The Project FIFO persists approval or revocation intent before changing daemon authority, finalizes consent afterward, compensates failed approval, and recovers pending work before provider startup."
         }
@@ -757,16 +757,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1686,
-          "endLine": 1816,
+          "startLine": 1687,
+          "endLine": 1817,
           "lineDigest": "sha256:f413e4b30da9c13756c3aa31a25071a66eeb6ae3d5134eb739c9277499ee2dd8",
           "claim": "Project save stops active orchestration when authority shrinks, retires obsolete daemon descendants and capabilities, clears removed consent and auxiliary authority, then publishes and explicitly reactivates the replacement."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1897,
-          "endLine": 1935,
+          "startLine": 1898,
+          "endLine": 1936,
           "lineDigest": "sha256:74a21e03bc0ef6f81e53fdbb270edc7a2757b88d7d971b4f2c949b7192d70c50",
           "claim": "Full removal stops Project runs, applies the fail-closed daemon transition, revokes MCP and Agent-control tokens, and only then removes consent, coordination, orchestration, and history records."
         }
@@ -866,8 +866,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1633,
-          "endLine": 1665,
+          "startLine": 1634,
+          "endLine": 1666,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Launch, resume, and Project or worker activity records enter the same main-owned FIFO; only direct-directory launch conveys explicit Project re-registration intent before sync."
         },
@@ -899,8 +899,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 935,
-          "endLine": 979,
+          "startLine": 936,
+          "endLine": 980,
           "lineDigest": "sha256:94edbcf0c8f887804566df8811e5f791bf396ec47957e233f65100613e7efcb9",
           "claim": "One provider runtime receives durable SQLite transitions, frozen execution settings, workflow MCP admission, archived-conversation checks and host-resolved stage reference context."
         },
@@ -1075,8 +1075,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1508,
-          "endLine": 1514,
+          "startLine": 1509,
+          "endLine": 1515,
           "lineDigest": "sha256:45e1aa66606870c1719bd6ca9c34b7fa825b62f74f061c3f806d7ee7d865f812",
           "claim": "Main binds the history service to the existing daemon, SQLite store, provider runtime and lightweight workflow lineage service."
         }

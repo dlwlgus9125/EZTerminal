@@ -224,6 +224,13 @@ checkpoint에 exact command를 확인 저장한 뒤 전송한다. 미확정 crea
 함께 경고한다. 메모리 checkpoint의 동시 미확정 create 상한은 64개이며, 상한을 넘는 새 create는 기존
 레코드를 잘라내지 않고 persistence와 daemon 전송 전에 fail closed한다.
 
+Desktop 채팅·기획·워크플로 초안은 Electron safeStorage(Windows DPAPI 사용자 범위)로 암호화해
+user data의 전용 디렉터리(`chat-state`, `planning-drafts`, `workflow-drafts`)에 저장한다. Windows에서는
+그 디렉터리에 현재 사용자와 SYSTEM만 허용하는 보호·상속 DACL을 시작 시 한 번 적용·검증하고, 안에서 만든
+파일은 이를 상속한다. 입력 중 저장마다 PowerShell로 파일 DACL을 다시 검증하지 않는 대신 디렉터리 DACL이
+다른 principal의 파일 생성·교체를 막고, 내용은 DPAPI 암호문으로 기밀성과 무결성을 지킨다. 원격 토큰 등
+다른 비밀은 파일별 DACL 검증을 유지하며 `guard:secure-storage`가 이 경계를 고정한다.
+
 Desktop quit, daemon restart와 Android reconnect를 거쳐도 prompt가 중복 제출되거나 process가 orphan되지
 않아야 한다. 복구할 수 없는 turn은 성공이나 실행 중으로 가장하지 않고 interrupted 또는
 delivery-uncertain으로 표시한다. 명시적 Quit은 queued/working/blocked turn과 관련 schedule run을

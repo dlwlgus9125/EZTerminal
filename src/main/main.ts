@@ -58,6 +58,7 @@ import { ChatStateStore } from './chat-state-store';
 import { createDesktopRecoveryProtector } from './desktop-recovery-protector';
 import { installChatStateIpc } from './chat-state-ipc';
 import { PlanningDraftStore } from './planning-draft-store';
+import { protectedDirectoryAcl, type WindowsAclRunner } from './secure-atomic-file';
 import { installPlanningDraftIpc } from './planning-draft-ipc';
 import { installSessionSurfaceIpc } from './session-surface-ipc';
 import { installLayoutIpc, installPreferencesIpc, installThemeIpc } from './settings-ipc';
@@ -2106,8 +2107,16 @@ app.on('ready', async () => {
         return safeStorage.decryptString(ciphertext);
       },
   });
+  /** Draft stores protect their directory once rather than every file (secure-atomic-file.ts). */
+  const draftDirectory = (name: string): { readonly directory: string; readonly windowsAcl: WindowsAclRunner } => {
+    const directory = path.join(app.getPath('userData'), name);
+    const acl = protectedDirectoryAcl(directory);
+    // Start now so the first save does not wait for PowerShell; a failure resurfaces on that save.
+    void acl.prepare().catch(() => undefined);
+    return { directory, windowsAcl: acl.windowsAcl };
+  };
   const chatStateStore = new ChatStateStore({
-    directory: path.join(app.getPath('userData'), 'chat-state'),
+    ...draftDirectory('chat-state'),
     protector: desktopRecoveryProtector,
     resolveScope: async (scope) => {
       await chatStateReady;
@@ -2126,7 +2135,7 @@ app.on('ready', async () => {
     },
   });
   const planningDraftStore = new PlanningDraftStore({
-    directory: path.join(app.getPath('userData'), 'planning-drafts'),
+    ...draftDirectory('planning-drafts'),
     protector: desktopRecoveryProtector,
     resolveSubproject: (projectId, subprojectId) => workflowService.owns(projectId, subprojectId),
     resolveProject: async (projectId) => {
@@ -2136,7 +2145,7 @@ app.on('ready', async () => {
       return !!project && !project.archivedAt;
     },
   });
-  const workflowDraftStore = new WorkflowDraftStore({ directory: path.join(app.getPath('userData'), 'workflow-drafts'), hostId: workflowHostId,
+  const workflowDraftStore = new WorkflowDraftStore({ ...draftDirectory('workflow-drafts'), hostId: workflowHostId,
     protector: desktopRecoveryProtector, resolveProject: async projectId => { await chatStateReady; return daemonAvailability?.state === 'ready'
       && daemonCommandRouter.getSnapshot().projects.some(project => project.id === projectId && !project.archivedAt); } });
   ipcMain.handle('workflow-draft:read', (event, clientId, projectId) => resolveDesktopSessionPrincipal(event, clientId) ? workflowDraftStore.read(projectId) : { ok: false, error: 'forbidden', message: 'An authenticated application surface is required.' });

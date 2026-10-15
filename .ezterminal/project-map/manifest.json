@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:017852ba14595107a99864ece81114bd0b5147e693ca0cd4f619cceb143ac11d",
+        "inputDigest": "sha256:75be85080b23bf5873754081920cc2e6d6b4bba81d8353c22908edcaa6c9cb98",
         "decision": "map-updated",
-        "reason": "Reviewed the chat overhaul: transcript payloads, approval requests/responses, agent effort (schema v7, capability flags, no protocol bump), Claude streaming, fail-fast start, version-range launch, edit line diffs. Relocated anchors; rechecked changed blocks."
+        "reason": "Reviewed the chat overhaul: transcript payloads, approval requests/responses, effort (schema v7, capability flags, no protocol bump), Claude streaming, fail-fast start, version-range launch, edit line diffs, draft directory ACL. Relocated anchors; rechecked changes."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3287f3fcb9e617220f10d88999a69e090f19baa584c68147bc7ae9d638c62412",
+        "inputDigest": "sha256:402678dfeb726d82041d47e42880318e278c60723e48a70530554f7a6117b13d",
         "decision": "no-semantic-impact",
-        "reason": "Inputs changed for the chat overhaul and compact shell; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
+        "reason": "Inputs changed for the chat overhaul, compact shell and draft-directory ACL wiring; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -501,7 +501,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:91010216306dc3449cbaae009b6cc28ddfae85640a71cbc0f247981756048c4f",
+        "inputDigest": "sha256:0e68d8ae5a71fabf3f218eb12891e68197a7f64a0a4a3e0da978970036614797",
         "decision": "no-semantic-impact",
         "reason": "Inputs gained optional transcript payload, approval request and effort fields behind capability flags; the v12 snapshot and v16 remote flow are unchanged. Relocated source anchors only."
       }
