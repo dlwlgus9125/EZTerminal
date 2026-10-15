@@ -16,6 +16,14 @@ describe('caret completion boundaries', () => {
   it.each(['https://example.com/rev', 'open /tmp/folder', '`/resume', 'echo foo$rev', 'C:\\Work\\$rev'])('does not hijack path/code %s', text => {
     expect(completionToken(text)).toBeUndefined();
   });
+  it('mentions a workspace path with @, including separators, but not inside an email or code', () => {
+    const text = 'see @src/au please';
+    expect(completionToken(text, 11)).toEqual({ start: 4, end: 11, trigger: '@', query: 'src/au' });
+    const next = insertCompletion({ text, selectionStart: 11, selectionEnd: 11 }, '@src/auth/useLogin.ts', completionToken(text, 11));
+    expect(next.text).toBe('see @src/auth/useLogin.ts please');
+    expect(completionToken('mail me@example.com')).toBeUndefined();
+    expect(completionToken('`@src')).toBeUndefined();
+  });
   it('does not complete a selected passage or path with a suffix beyond the caret', () => {
     expect(completionToken('$review', 1, 5)).toBeUndefined();
     expect(completionToken('/resume/notes', 7)).toBeUndefined();

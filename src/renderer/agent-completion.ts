@@ -1,9 +1,9 @@
 import type { AgentCapabilityCatalog } from '../shared/agent-capabilities';
 import type { ChatComposerDraft, ChatSkillReference } from '../shared/chat-message';
 
-export interface CompletionToken { start: number; end: number; trigger: '/' | '$'; query: string }
+export interface CompletionToken { start: number; end: number; trigger: '/' | '$' | '@'; query: string }
 export interface AgentCompletion {
-  id: string; label: string; description?: string; group: 'app' | 'skill' | 'provider';
+  id: string; label: string; description?: string; group: 'app' | 'skill' | 'provider' | 'file';
   invocation?: string; skill?: ChatSkillReference; action?: 'history'; disabledReason?: string;
 }
 /** A token at the caret, never a URL, path, code span, or selected passage. */
@@ -11,6 +11,12 @@ export function completionToken(text: string, start = text.length, end = start):
   if (start !== end) return;
   const before = text.slice(0, start);
   if ((before.match(/`/gu)?.length ?? 0) % 2 !== 0) return;
+  // `@` mentions a workspace file; its query may contain path separators.
+  const mention = before.match(/(?:^|\s)@([^\s`@]*)$/u);
+  if (mention) {
+    const tail = text.slice(start).match(/^[^\s`@]*/u)?.[0] ?? '';
+    return { start: start - mention[1].length - 1, end: start + tail.length, trigger: '@', query: mention[1] };
+  }
   const match = /(?:^|\s)([$/])([^\s$/`]*)$/u.exec(before);
   if (!match) return;
   const tokenStart = start - match[2].length - 1;
@@ -22,6 +28,7 @@ export function completionToken(text: string, start = text.length, end = start):
 
 export function agentCompletions(catalog: AgentCapabilityCatalog | undefined, filter: 'skills' | 'commands' | CompletionToken,
   historyAvailable: boolean, ko: boolean): AgentCompletion[] {
+  if (typeof filter !== 'string' && filter.trigger === '@') return [];
   const query = typeof filter === 'string' ? '' : filter.query.toLocaleLowerCase();
   const skillsOnly = filter === 'skills' || (typeof filter !== 'string' && filter.trigger === '$');
   const items: AgentCompletion[] = skillsOnly ? [] : [{ id: 'app:resume', label: '/resume', group: 'app', action: 'history',

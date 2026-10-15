@@ -117,8 +117,12 @@ export const KoreanComposition: Story = {
     await userEvent.keyboard('{Escape}');
     await expect(canvas.queryByRole('listbox')).not.toBeInTheDocument();
     await expect(input).toHaveValue('$rev');
-    await userEvent.click(canvas.getByRole('button', { name: 'Skills' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Add' }));
+    await userEvent.click(await canvas.findByRole('menuitem', { name: 'Skills' }));
     await canvas.findByRole('listbox');
+    // The menu restores focus a frame after closing; the input must keep it.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await expect(input).toHaveFocus();
     await userEvent.keyboard('{Tab}');
     await expect(input).toHaveValue('$rev');
     await expect(send).not.toHaveBeenCalled();

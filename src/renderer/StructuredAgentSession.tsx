@@ -9,12 +9,22 @@ import { ConversationChangeReview } from './ConversationChangeReview';
 import {
   AlertTriangle,
   Archive,
+  ArrowUp,
+  AtSign,
   Bot,
+  Cpu,
+  Gauge,
+  NotebookPen,
+  ShieldAlert,
+  ShieldCheck,
+  LoaderCircle,
+  Plus,
+  Sparkles,
+  SquareSlash,
   ChevronRight,
   Clock3,
   Paperclip,
   Reply,
-  Send,
   Square,
   Unlink2,
   X,
@@ -32,7 +42,7 @@ import {
   type ReactNode,
 } from 'react';
 import { insertCompletion } from './agent-completion';
-import { useAgentCompletion, type CapabilityDiscoveryState } from './use-agent-completion';
+import { useAgentCompletion, type CapabilityDiscoveryState, type ComposerFileSearch } from './use-agent-completion';
 
 import type {
   DaemonApproval,
@@ -53,7 +63,8 @@ import {
 } from './chat-view-state';
 import { useAppTranslation } from './i18n';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
-import { Button, Field, Select } from './ui';
+import { Button, Field, Menu, MenuItem, Select } from './ui';
+import { SettingPill } from './chat/composer/SettingPill';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
@@ -948,6 +959,15 @@ export interface StructuredAgentComposerProps {
   readonly onReconcileDelivery?: () => Promise<StructuredAgentUiResult>;
   readonly draftAction?: { readonly id: number; readonly text?: string; readonly insert?: string; readonly skill?: ChatSkillReference; readonly replyTo?: ChatReplyReference };
   readonly variant?: 'desktop' | 'mobile';
+  /** `@` file mentions; absent where the workspace cannot be searched (Android). */
+  readonly fileSearch?: ComposerFileSearch;
+  /** Earlier prompts of this conversation, oldest first, for ↑ recall. */
+  readonly recentPrompts?: readonly string[];
+  /** Stops the running turn (Esc, or the stop button when the draft is empty). */
+  readonly onStop?: () => void;
+  readonly stopping?: boolean;
+  /** Resolves a dropped file to a workspace path so it can be mentioned instead of uploaded. */
+  readonly pathForDrop?: (file: File) => string | null;
 }
 
 /** Owns the draft below the transcript so streamed items never disturb typing. */
@@ -976,6 +996,11 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   onReconcileDelivery,
   draftAction,
   variant = 'desktop',
+  fileSearch,
+  recentPrompts = [],
+  onStop,
+  stopping = false,
+  pathForDrop,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
@@ -1000,7 +1025,16 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     onDraftChange?.(next);
   };
   const completion = useAgentCompletion({ value, onChange: updateDraft, inputRef, catalog: capabilityCatalog,
-    discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile' });
+    discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile', ...(fileSearch ? { fileSearch } : {}) });
+  const [dragging, setDragging] = useState(false);
+  const recall = useRef<number | undefined>(undefined);
+  // Grow with the text up to eight lines, then scroll inside the box.
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+  }, [value.text]);
   useEffect(() => {
     if (draftState && JSON.stringify(draftState) !== JSON.stringify(valueRef.current)) {
       valueRef.current = draftState;
@@ -1107,29 +1141,110 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (completion.keyDown(event)) return;
-    if (completion.composing.current) return;
-    if (variant === 'mobile' || event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (completion.composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Escape' && busy && onStop && !stopping) {
+      event.preventDefault();
+      onStop();
+      return;
+    }
+    const input = event.currentTarget;
+    const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+    if (event.key === 'ArrowUp' && recentPrompts.length > 0 && (valueRef.current.text === '' || (recall.current !== undefined && atStart))) {
+      event.preventDefault();
+      const index = recall.current === undefined ? recentPrompts.length - 1 : Math.max(0, recall.current - 1);
+      recall.current = index;
+      const text = recentPrompts[index] ?? '';
+      updateDraft({ ...valueRef.current, text, selectionStart: 0, selectionEnd: 0 });
+      return;
+    }
+    if (event.key === 'ArrowDown' && recall.current !== undefined && input.selectionStart === valueRef.current.text.length) {
+      event.preventDefault();
+      const index = recall.current + 1;
+      recall.current = index < recentPrompts.length ? index : undefined;
+      const text = recall.current === undefined ? '' : recentPrompts[recall.current] ?? '';
+      updateDraft({ ...valueRef.current, text, selectionStart: text.length, selectionEnd: text.length });
+      return;
+    }
+    if (variant === 'mobile' || event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
+    recall.current = undefined;
     void deliver('send');
   };
 
+  const mentionPaths = (paths: readonly string[]): void => {
+    if (!paths.length) return;
+    const current = valueRef.current;
+    const position = current.selectionEnd ?? current.text.length;
+    const before = current.text.slice(0, position);
+    const insertion = `${before && !/\s$/u.test(before) ? ' ' : ''}${paths.map((path) => `@${path.includes(' ') ? `"${path}"` : path}`).join(' ')} `;
+    const text = `${before}${insertion}${current.text.slice(position)}`;
+    updateDraft({ ...current, text, selectionStart: position + insertion.length, selectionEnd: position + insertion.length });
+    inputRef.current?.focus();
+  };
+
+  /** Starts an `@` mention at the caret so the file picker opens. */
+  const insertMention = (): void => {
+    const current = valueRef.current;
+    const position = current.selectionEnd ?? current.text.length;
+    const before = current.text.slice(0, position);
+    const lead = before && !/\s$/u.test(before) ? ' ' : '';
+    const text = `${before}${lead}@${current.text.slice(position)}`;
+    const caret = position + lead.length + 1;
+    updateDraft({ ...current, text, selectionStart: caret, selectionEnd: caret });
+    inputRef.current?.focus();
+  };
+
+  const takeFiles = (files: FileList | File[]): void => {
+    const list = Array.from(files);
+    const images = list.filter((file) => (CHAT_IMAGE_MIME_TYPES as readonly string[]).includes(file.type));
+    const others = list.filter((file) => !images.includes(file));
+    const mentioned: string[] = [];
+    const uploads: File[] = [...images];
+    for (const file of others) {
+      const path = pathForDrop?.(file);
+      if (path) mentioned.push(path); else uploads.push(file);
+    }
+    mentionPaths(mentioned);
+    if (uploads.length) {
+      const transfer = new DataTransfer();
+      uploads.forEach((file) => transfer.items.add(file));
+      void attachFiles(transfer.files);
+    }
+  };
+
+  const hasDraft = draft.trim().length > 0 || attachments.length > 0;
+  const sendBlocked = disabled || sendDisabled || queueBusy || uncertain || readingFiles || !hasDraft || submitting !== null;
+  const showStop = busy && !hasDraft && onStop !== undefined;
+
   return (
     <form
-      className="structured-agent-composer"
+      className="structured-agent-composer chat-composer"
       data-variant={variant}
       data-busy={busy || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void deliver('send');
       }}
+      onDragOver={(event) => {
+        if (disabled || !Array.from(event.dataTransfer.types).includes('Files')) return;
+        event.preventDefault();
+        if (!dragging) setDragging(true);
+      }}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.files.length) return;
+        event.preventDefault();
+        setDragging(false);
+        if (!disabled) takeFiles(event.dataTransfer.files);
+      }}
     >
-      {queuedCount > 0 && <details className="conversation-queue" open>
-        <summary><Clock3 aria-hidden="true" />{ko ? '대기 중인 요청' : 'Queued requests'} <span>{queuedCount}</span></summary>
-        {queueItems.length === 0 && <p>{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
-        <ol>{queueItems.map(item => <li key={item.turnId}>
+      {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
+        <p className="chat-queue__title"><Clock3 aria-hidden="true" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
+        {queueItems.length === 0 && <p className="chat-queue__loading">{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
+        <ol>{queueItems.map(item => <li key={item.turnId} className="chat-queue__item">
           <p>{item.text}</p>
           {!!item.context?.attachments?.length && <small>{ko ? '첨부' : 'Attachments'} {item.context.attachments.length}</small>}
-          {onQueueAction && <div className="conversation-queue__actions">{(['take', 'remove', 'run-next'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
+          {onQueueAction && <div className="conversation-queue__actions">{(['run-next', 'take', 'remove'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
             disabled={disabled || sendDisabled || queueBusy || submitting !== null || uncertain || (action === 'take' && !!value.parkedDraft)} onClick={() => {
               if (queueBusyRef.current || submittingRef.current) return;
               queueBusyRef.current = true; setQueueBusy(true); setError(null);
@@ -1143,9 +1258,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
                   inputRef.current?.focus();
                 }
               }).catch(() => setError(ko ? '결과를 확인하지 못했습니다. 대기열 상태를 새로 확인하세요.' : 'The result is unknown. Refresh the queue before trying again.')).finally(() => { queueBusyRef.current = false; setQueueBusy(false); });
-            }}>{action === 'take' ? (ko ? '편집' : 'Edit') : action === 'remove' ? (ko ? '삭제' : 'Remove') : (ko ? '중단 후 실행' : 'Interrupt and run')}</Button>)}</div>}
+            }}>{action === 'take' ? (ko ? '편집' : 'Edit') : action === 'remove' ? (ko ? '삭제' : 'Remove') : (ko ? '중단하고 지금 보내기' : 'Interrupt and run now')}</Button>)}</div>}
         </li>)}</ol>
-      </details>}
+      </section>}
       {value.parkedDraft && <div className="structured-agent-composer__parked" role="status">
         <span>{ko ? '기존 초안을 보관했습니다. 이 요청을 보내면 복원합니다.' : 'Previous draft saved. It will return after you send this request.'}</span>
         <Button type="button" variant="ghost" size="sm" disabled={queueBusy || submitting !== null || uncertain} onClick={() => {
@@ -1154,53 +1269,129 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         }}>{ko ? '초안 전환' : 'Switch draft'}</Button>
       </div>}
       {completion.menu}
-      {value.replyTo && <div className="structured-agent-composer__reply">
-        <Reply aria-hidden="true" /><blockquote>{value.replyTo.text}</blockquote>
-        <Button variant="ghost" size="sm" disabled={disabled} aria-label={copy.removeReply}
-          onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><X /></Button>
-      </div>}
-      {attachments.length > 0 && <ul className="structured-agent-composer__attachments">
-        {attachments.map((attachment) => <li key={attachment.id}>
-          <details><summary><Paperclip aria-hidden="true" /><span>{attachment.name}</span></summary>
-            {attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} /> : <pre>{attachment.data}</pre>}
-          </details>
-          <Button variant="ghost" size="sm" disabled={disabled} aria-label={`${copy.removeAttachment}: ${attachment.name}`}
-            onClick={() => updateDraft({ ...valueRef.current, attachments: (valueRef.current.attachments ?? []).filter((entry) => entry.id !== attachment.id) })}><X /></Button>
-        </li>)}
-      </ul>}
-      <div className="structured-agent-composer__input-row"><span className="structured-agent-composer__prompt" aria-hidden="true">›</span>
-      <Field
-        id={composerId}
-        label={copy.message}
-        labelHidden
-        error={attempted && !draft.trim() && attachments.length === 0 ? copy.required : undefined}
-      >
-        <textarea
-          {...completion.inputProps}
+      <div className="chat-composer__box" data-dragging={dragging || undefined} data-disabled={disabled || undefined}>
+        {value.replyTo && <div className="structured-agent-composer__reply">
+          <Reply aria-hidden="true" /><blockquote>{value.replyTo.text}</blockquote>
+          <Button variant="ghost" size="sm" disabled={disabled} aria-label={copy.removeReply}
+            onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><X /></Button>
+        </div>}
+        {attachments.length > 0 && <ul className="structured-agent-composer__attachments">
+          {attachments.map((attachment) => <li key={attachment.id} data-kind={attachment.kind}>
+            {attachment.kind === 'image'
+              ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
+              : <Paperclip aria-hidden="true" />}
+            <span>{attachment.name}</span>
+            <Button variant="ghost" size="sm" disabled={disabled} aria-label={`${copy.removeAttachment}: ${attachment.name}`}
+              onClick={() => updateDraft({ ...valueRef.current, attachments: (valueRef.current.attachments ?? []).filter((entry) => entry.id !== attachment.id) })}><X /></Button>
+          </li>)}
+        </ul>}
+        <div className="structured-agent-composer__input-row"><span className="structured-agent-composer__prompt" aria-hidden="true">›</span>
+        <Field
           id={composerId}
-          ref={inputRef}
-          autoFocus={autoFocus}
-          className="structured-agent-textarea structured-agent-textarea--composer"
-          rows={2}
-          maxLength={65_536}
-          value={draft}
-          placeholder={copy.messagePlaceholder}
-          disabled={disabled}
-          aria-describedby={disabledReason ? disabledReasonId : undefined}
-          onKeyDown={keyDown}
-          onChange={(event) => {
-            updateDraft({ ...valueRef.current, text: event.currentTarget.value, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd });
-            setError(null);
-          }}
-          onSelect={(event) => {
-            const input = event.currentTarget;
-            if (valueRef.current.selectionStart !== input.selectionStart || valueRef.current.selectionEnd !== input.selectionEnd) {
-              updateDraft({ ...valueRef.current, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
-            }
-          }}
-          data-testid="structured-agent-composer-input"
-        />
-      </Field>
+          label={copy.message}
+          labelHidden
+          error={attempted && !draft.trim() && attachments.length === 0 ? copy.required : undefined}
+        >
+          <textarea
+            {...completion.inputProps}
+            id={composerId}
+            ref={inputRef}
+            autoFocus={autoFocus}
+            className="structured-agent-textarea structured-agent-textarea--composer chat-composer__input"
+            rows={1}
+            maxLength={65_536}
+            value={draft}
+            placeholder={busy
+              ? (ko ? '다음에 보낼 메시지를 입력하세요 (Esc로 중단)' : 'Queue a follow-up (Esc to stop)')
+              : fileSearch
+                ? (ko ? '무엇이든 요청하세요 · @ 파일 참조 · / 명령' : 'Ask anything · @ to mention files · / for commands')
+                : copy.messagePlaceholder}
+            disabled={disabled}
+            aria-describedby={disabledReason ? disabledReasonId : undefined}
+            onKeyDown={keyDown}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.files);
+              if (!files.length || disabled) return;
+              event.preventDefault();
+              takeFiles(files);
+            }}
+            onChange={(event) => {
+              recall.current = undefined;
+              updateDraft({ ...valueRef.current, text: event.currentTarget.value, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd });
+              setError(null);
+            }}
+            onSelect={(event) => {
+              const input = event.currentTarget;
+              if (valueRef.current.selectionStart !== input.selectionStart || valueRef.current.selectionEnd !== input.selectionEnd) {
+                updateDraft({ ...valueRef.current, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
+              }
+            }}
+            data-testid="structured-agent-composer-input"
+          />
+        </Field>
+        </div>
+        <div className="chat-composer__bar">
+          <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
+            hidden onChange={(event) => void attachFiles(event.currentTarget.files)} />
+          <Menu
+            label={ko ? '추가' : 'Add'}
+            placement="top-start"
+            trigger={<button type="button" className="chat-composer__plus" disabled={disabled} aria-label={ko ? '추가' : 'Add'} title={ko ? '추가' : 'Add'}><Plus aria-hidden="true" /></button>}
+          >
+            <MenuItem icon={Paperclip} disabled={!supportsMessageContext || readingFiles} onSelect={() => fileInputRef.current?.click()}>
+              {supportsMessageContext ? copy.attach : copy.attachmentUnsupported}
+            </MenuItem>
+            {fileSearch && <MenuItem icon={AtSign} onSelect={insertMention}>
+              {ko ? '파일 참조' : 'Mention a file'}
+            </MenuItem>}
+            <MenuItem icon={Sparkles} onSelect={() => completion.openManual('skills')}>{ko ? '스킬' : 'Skills'}</MenuItem>
+            <MenuItem icon={SquareSlash} onSelect={() => completion.openManual('commands')}>{ko ? '명령' : 'Commands'}</MenuItem>
+          </Menu>
+          {toolbar && <div className="conversation-composer-toolbar chat-composer__settings">{toolbar}</div>}
+          <span className="chat-composer__spacer" />
+          {busy && onInterruptAndSend && hasDraft && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={sendBlocked}
+              loading={submitting === 'interrupt'}
+              loadingLabel={copy.sending}
+              onClick={() => void deliver('interrupt')}
+              data-testid="structured-agent-interrupt-send"
+            >
+              {copy.interruptSend}
+            </Button>
+          )}
+          {showStop ? (
+            <button
+              type="button"
+              className="chat-composer__send"
+              data-kind="stop"
+              disabled={disabled || stopping}
+              aria-label={ko ? '중단' : 'Stop'}
+              title={ko ? '중단 (Esc)' : 'Stop (Esc)'}
+              onClick={() => onStop?.()}
+              data-testid="structured-agent-stop"
+            >
+              {stopping ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="chat-composer__send"
+              data-kind={busy ? 'queue' : 'send'}
+              disabled={sendBlocked}
+              aria-label={busy ? copy.queue : copy.send}
+              title={busy ? copy.queue : copy.send}
+              data-testid="structured-agent-send"
+            >
+              {submitting === 'send' ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+              <span className="ez-ui-visually-hidden">{busy ? copy.queue : copy.send}</span>
+            </button>
+          )}
+        </div>
+        {dragging && <div className="chat-composer__drop" aria-hidden="true">{ko ? '놓아서 첨부하기 — 파일은 경로로, 이미지는 첨부로 추가됩니다' : 'Drop to attach — files are added as paths, images as attachments'}</div>}
       </div>
       {disabledReason && (
         <p
@@ -1213,50 +1404,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         </p>
       )}
       {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
-      <div className="structured-agent-composer__meta">
-        {toolbar && <div className="conversation-composer-toolbar">{toolbar}</div>}
-        <span aria-live="polite">
-          {queuedCount > 0 ? formatTemplate(copy.queued, { count: queuedCount }) : busy ? copy.busyHint : variant === 'mobile' ? copy.mobileSendHint : copy.desktopSendHint}
-        </span>
-        <div className="structured-agent-composer__actions">
-          {completion.buttons}
-          <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
-            hidden onChange={(event) => void attachFiles(event.currentTarget.files)} />
-          <Button variant="ghost" size="sm" type="button" disabled={disabled || !supportsMessageContext || readingFiles}
-            className="structured-agent-composer__attach"
-            title={supportsMessageContext ? copy.attach : copy.attachmentUnsupported} aria-label={copy.attach}
-            leadingIcon={<Paperclip />} onClick={() => fileInputRef.current?.click()}>{copy.attach}</Button>
-          <Button variant="ghost" size="sm" type="button" disabled={disabled} aria-label={copy.addReference}
-            onClick={() => { const text = valueRef.current.text; const position = inputRef.current?.selectionStart ?? text.length;
-              updateDraft({ ...valueRef.current, text: `${text.slice(0, position)}@${text.slice(position)}`, selectionStart: position + 1, selectionEnd: position + 1 }); inputRef.current?.focus(); }}>@</Button>
-          {busy && onInterruptAndSend && (
-            <Button
-              type="button"
-              variant="danger"
-              size="sm"
-              disabled={disabled || sendDisabled || queueBusy || uncertain || readingFiles || (!draft.trim() && attachments.length === 0) || submitting !== null}
-              loading={submitting === 'interrupt'}
-              loadingLabel={copy.sending}
-              onClick={() => void deliver('interrupt')}
-              data-testid="structured-agent-interrupt-send"
-            >
-              {copy.interruptSend}
-            </Button>
-          )}
-          <Button
-            type="submit"
-            variant="primary"
-            size="sm"
-            disabled={disabled || sendDisabled || queueBusy || uncertain || readingFiles || (!draft.trim() && attachments.length === 0) || submitting !== null}
-            loading={submitting === 'send'}
-            loadingLabel={copy.sending}
-            leadingIcon={<Send />}
-            data-testid="structured-agent-send"
-          >
-            {busy ? copy.queue : copy.send}
-          </Button>
-        </div>
-      </div>
+      {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}
       {uncertain && <div className="structured-agent__banner" role="status"><span>{copy.uncertain}</span>
         {onReconcileDelivery && <Button type="button" variant="ghost" size="sm" disabled={disabled || sendDisabled || submitting !== null}
           onClick={() => { setSubmitting('send'); void onReconcileDelivery().then((result) => {
@@ -1326,7 +1474,13 @@ export interface StructuredAgentSessionPanelProps {
   readonly onChangeSettings?: (settings: {
     readonly model?: string;
     readonly permissionPreset: PermissionPreset;
+    readonly reasoningEffort?: string;
   }) => Promise<StructuredAgentUiResult>;
+  /** Current reasoning effort; the effort pill appears only when the host accepts it. */
+  readonly reasoningEffort?: string;
+  readonly effortSupported?: boolean;
+  readonly fileSearch?: ComposerFileSearch;
+  readonly pathForDrop?: (file: File) => string | null;
   readonly onResolveApproval?: (
     approvalId: string,
     decision: 'allow' | 'deny',
@@ -1390,6 +1544,10 @@ export function StructuredAgentSessionPanel({
   turns,
   approvalResponses = false,
   onOpenLink,
+  reasoningEffort,
+  effortSupported = false,
+  fileSearch,
+  pathForDrop,
   transcriptLoading = false,
   transcriptError = null,
   disabled = false,
@@ -1487,6 +1645,17 @@ export function StructuredAgentSessionPanel({
   }, [activeSkin]);
   const [selectedModel, setSelectedModel] = useState(model ?? '');
   const [selectedPermission, setSelectedPermission] = useState(permissionPreset);
+  const [selectedEffort, setSelectedEffort] = useState(reasoningEffort ?? '');
+  useEffect(() => setSelectedEffort(reasoningEffort ?? ''), [reasoningEffort]);
+  const recentPrompts = useMemo(() => {
+    const prompts: string[] = [];
+    for (const item of items) {
+      if (item.kind !== 'user-message' || item.isDelta) continue;
+      const text = item.text.trim();
+      if (text && prompts.at(-1) !== text) prompts.push(text);
+    }
+    return prompts.slice(-50);
+  }, [items]);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [lifecycleBusy, setLifecycleBusy] = useState<StructuredAgentLifecycleAction | null>(null);
@@ -1531,17 +1700,20 @@ export function StructuredAgentSessionPanel({
     }
   }, [canArchive, canCancel, canDetach, lifecycleBusy]);
 
-  const updateSettings = async (nextModel: string, nextPermission: PermissionPreset): Promise<void> => {
+  const updateSettings = async (nextModel: string, nextPermission: PermissionPreset, nextEffort = selectedEffort): Promise<void> => {
     const previousModel = selectedModel;
     const previousPermission = selectedPermission;
+    const previousEffort = selectedEffort;
     setSelectedModel(nextModel);
     setSelectedPermission(nextPermission);
+    setSelectedEffort(nextEffort);
     setSettingsError(null);
     if (!onChangeSettings) return;
     setSettingsBusy(true);
     const result = await onChangeSettings({
       ...(nextModel ? { model: nextModel } : {}),
       permissionPreset: nextPermission,
+      ...(nextEffort && nextEffort !== previousEffort ? { reasoningEffort: nextEffort } : {}),
     }).catch((): StructuredAgentUiResult => ({
       ok: false,
       message: 'The session settings could not be updated.',
@@ -1550,9 +1722,21 @@ export function StructuredAgentSessionPanel({
     if (!result.ok) {
       setSelectedModel(previousModel);
       setSelectedPermission(previousPermission);
+      setSelectedEffort(previousEffort);
       setSettingsError(result.message);
     }
   };
+  const effortOptions = providerId === 'claude'
+    ? (['low', 'medium', 'high', 'xhigh', 'max'] as const)
+    : (['minimal', 'low', 'medium', 'high', 'xhigh'] as const);
+  const effortLabel = (value: string): string => ({
+    minimal: i18n.language.startsWith('ko') ? '최소' : 'Minimal',
+    low: i18n.language.startsWith('ko') ? '낮음' : 'Low',
+    medium: i18n.language.startsWith('ko') ? '보통' : 'Medium',
+    high: i18n.language.startsWith('ko') ? '높음' : 'High',
+    xhigh: i18n.language.startsWith('ko') ? '매우 높음' : 'Extra high',
+    max: i18n.language.startsWith('ko') ? '최대' : 'Max',
+  } as Record<string, string>)[value] ?? value;
 
   const runLifecycle = async (
     action: StructuredAgentLifecycleAction,
@@ -1586,36 +1770,37 @@ export function StructuredAgentSessionPanel({
               </>
             ) : (
               <>
-                <Field label={copy.model} labelHidden>
-                  <Select
-                    uiSize="sm"
-                    value={selectedModel}
-                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                    aria-label={copy.model}
-                    onChange={(event) => void updateSettings(event.currentTarget.value, selectedPermission)}
-                    data-testid="structured-agent-live-model"
-                  >
-                    {!model && <option value="">{copy.providerDefault}</option>}
-                    {availableModels.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                  </Select>
-                </Field>
-                <Field label={copy.permission} labelHidden>
-                  <Select
-                    uiSize="sm"
-                    value={selectedPermission}
-                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                    aria-label={copy.permission}
-                    onChange={(event) => void updateSettings(
-                      selectedModel,
-                      event.currentTarget.value as PermissionPreset,
-                    )}
-                    data-testid="structured-agent-live-permission"
-                  >
-                    {PERMISSION_ORDER.map((preset) => (
-                      <option key={preset} value={preset}>{permissionCopy(copy, preset).label}</option>
-                    ))}
-                  </Select>
-                </Field>
+                <SettingPill
+                  label={copy.model}
+                  icon={Cpu}
+                  value={selectedModel}
+                  placeholder={copy.providerDefault}
+                  options={availableModels.map((option) => ({ value: option.id, label: option.label }))}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onChange={(next) => void updateSettings(next, selectedPermission)}
+                  testId="structured-agent-live-model"
+                />
+                {effortSupported && (
+                  <SettingPill
+                    label={i18n.language.startsWith('ko') ? '추론 강도' : 'Reasoning effort'}
+                    icon={Gauge}
+                    value={selectedEffort}
+                    placeholder={i18n.language.startsWith('ko') ? '기본 강도' : 'Default effort'}
+                    options={effortOptions.map((value) => ({ value, label: effortLabel(value) }))}
+                    disabled={disabled || settingsBusy}
+                    onChange={(next) => void updateSettings(selectedModel, selectedPermission, next)}
+                    testId="structured-agent-live-effort"
+                  />
+                )}
+                <SettingPill
+                  label={copy.permission}
+                  icon={selectedPermission === 'full-access' ? ShieldAlert : selectedPermission === 'plan' ? NotebookPen : ShieldCheck}
+                  value={selectedPermission}
+                  options={PERMISSION_ORDER.map((preset) => ({ value: preset, label: permissionCopy(copy, preset).label, description: permissionCopy(copy, preset).hint }))}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onChange={(next) => void updateSettings(selectedModel, next)}
+                  testId="structured-agent-live-permission"
+                />
               </>
             )}
           </div>
@@ -1785,6 +1970,11 @@ export function StructuredAgentSessionPanel({
           onSend={(prompt, context) => sendWithCapabilities(prompt, context, onSend)}
           onInterruptAndSend={onInterruptAndSend ? (prompt, context) => sendWithCapabilities(prompt, context, onInterruptAndSend) : undefined}
           variant={variant}
+          recentPrompts={recentPrompts}
+          {...(canCancel ? { onStop: () => void runLifecycle('cancel', onCancel) } : {})}
+          stopping={lifecycleBusy === 'cancel'}
+          {...(fileSearch ? { fileSearch } : {})}
+          {...(pathForDrop ? { pathForDrop } : {})}
         />
       )}
     </section>

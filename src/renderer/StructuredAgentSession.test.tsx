@@ -399,10 +399,14 @@ describe('StructuredAgentSessionPanel', () => {
     );
     expect(container.querySelector('[data-testid="structured-agent-child-track"]')?.textContent)
       .toContain('Reserved child projection');
-    const model = container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-live-model"]')!;
-    setValue(model, 'gpt-6');
+    const model = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-model"]')!;
+    expect(model.getAttribute('aria-label')).toContain('GPT-5');
+    act(() => model.click());
+    const option = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find((item) => item.textContent?.includes('GPT-6'))!;
+    act(() => option.click());
     await flush();
     expect(onChangeSettings).toHaveBeenCalledWith({ model: 'gpt-6', permissionPreset: 'standard' });
+    expect(model.getAttribute('aria-label')).toContain('GPT-6');
   });
 
   it('guards lifecycle actions, reports failure, and preserves a typed draft', async () => {

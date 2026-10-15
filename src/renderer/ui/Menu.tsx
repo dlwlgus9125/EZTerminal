@@ -75,8 +75,14 @@ export function Menu({
   const close = useCallback((restoreFocus = true): void => {
     setOpen(false);
     if (restoreFocus) {
-      const ownerWindow = rootRef.current?.ownerDocument.defaultView ?? window;
-      ownerWindow.requestAnimationFrame(() => triggerRef.current?.focus());
+      const ownerDocument = rootRef.current?.ownerDocument ?? document;
+      const ownerWindow = ownerDocument.defaultView ?? window;
+      ownerWindow.requestAnimationFrame(() => {
+        // An item that moved focus on purpose (e.g. into a text field) keeps it.
+        const active = ownerDocument.activeElement;
+        if (active && active !== ownerDocument.body && !rootRef.current?.contains(active)) return;
+        triggerRef.current?.focus();
+      });
     }
   }, [setOpen]);
 

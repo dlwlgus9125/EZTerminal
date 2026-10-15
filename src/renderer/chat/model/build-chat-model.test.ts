@@ -58,6 +58,14 @@ describe('buildChatModel over recorded provider sessions', () => {
     });
   }
 
+  it('puts a live turn status after the turn rows and a finished one before them', () => {
+    const { items } = golden('claude-read-search');
+    const live = buildChatModel({ items, turns: finishedTurns(items, 'working') });
+    expect(kinds(live.rows)).toEqual(['user', 'activity', 'assistant', 'turn-status']);
+    const done = buildChatModel({ items, turns: finishedTurns(items) });
+    expect(kinds(done.rows)).toEqual(['user', 'turn-status', 'activity', 'assistant']);
+  });
+
   it('pairs Claude reads and searches into one run with targets', () => {
     const { items } = golden('claude-read-search');
     const model = buildChatModel({ items, turns: finishedTurns(items) });

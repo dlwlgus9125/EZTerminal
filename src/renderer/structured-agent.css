@@ -1292,11 +1292,15 @@
 .conversation-execution summary:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
 .structured-agent--live .structured-agent-composer {
   width: min(calc(100% - 2rem), var(--ui-chat-max-width)); flex: 0 0 auto;
-  margin: 0 auto var(--ui-space-4); padding: var(--ui-space-3);
-  border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-xl); background: var(--ui-conversation-composer);
+  margin: 0 auto var(--ui-space-3); padding: 0; border: 0; background: none;
 }
-.structured-agent--live .structured-agent-composer:focus-within { border-color: var(--ui-pane-active-border); }
-.structured-agent--live .structured-agent-textarea--composer { min-height: 3.5rem; max-height: 10rem; padding: var(--ui-space-2); border: 0; box-shadow: none; background: transparent; resize: vertical; }
+/* The bordered box, bar, pills and send button live in chat/chat.css. */
+.structured-agent--live .structured-agent-textarea--composer {
+  min-height: 1.6em; max-height: calc(8 * 1.6em + 2 * var(--ui-space-2)); padding: var(--ui-space-2) var(--ui-space-2) var(--ui-space-1);
+  border: 0; box-shadow: none; background: transparent; resize: none; overflow-y: auto;
+  font: var(--ui-font-size-md) / 1.6 var(--ui-font-body);
+}
+.structured-agent--live[data-skin='cli'] .structured-agent-textarea--composer { font-family: var(--ui-font-mono); font-size: var(--ui-font-size-sm); }
 .structured-agent--live .structured-agent-composer__meta { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); align-items: center; }
 .structured-agent--live .structured-agent-composer__meta > span { order: 3; flex: 1 0 100%; font-size: var(--ui-font-size-xs); }
 .conversation-composer-toolbar { flex: 1 1 12rem; min-width: 0; }

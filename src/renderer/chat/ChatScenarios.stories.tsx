@@ -32,13 +32,17 @@ interface Golden {
 }
 
 const STARTED = '2026-10-15T09:30:00.000Z';
+const STORY_FILES = ['README.md', 'package.json', 'src/app.ts', 'src/auth/useLogin.ts', 'src/auth/LoginForm.tsx', 'notes.md'];
 const FINISHED = '2026-10-15T09:30:42.000Z';
 
 function turnsOf(items: readonly DaemonTranscriptItem[], state: DaemonTurn['state']): DaemonTurn[] {
   const ids = [...new Set(items.flatMap((item) => (item.turnId ? [item.turnId] : [])))];
   return ids.map((id) => ({
     id, sessionId: items[0]?.sessionId ?? 'session', commandId: `command-${id}`, state,
-    startedAt: STARTED, ...(state === 'working' || state === 'blocked' ? {} : { finishedAt: FINISHED }),
+    // A running turn started 37s ago so its timer reads like a real one.
+    ...(state === 'working' || state === 'blocked'
+      ? { startedAt: new Date(Date.now() - 37_000).toISOString() }
+      : { startedAt: STARTED, finishedAt: FINISHED }),
     revision: 1, createdAt: STARTED, updatedAt: FINISHED,
   }));
 }
@@ -99,6 +103,11 @@ function Scenario({ golden, items, approvals, turnState = 'completed', state = '
           onChangeSettings={fn(async () => ({ ok: true as const }))}
           onResolveApproval={fn(async () => ({ ok: true as const }))}
           onOpenLink={fn()}
+          onCancel={fn(async () => ({ ok: true as const }))}
+          effortSupported
+          reasoningEffort="high"
+          supportsMessageContext
+          fileSearch={async (query) => STORY_FILES.filter((file) => file.toLowerCase().includes(query.toLowerCase()))}
         />
       </div>
     </AppI18nProvider>

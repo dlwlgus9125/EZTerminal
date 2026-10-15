@@ -420,22 +420,33 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
     }
   }
 
-  // Liveness and per-turn change rollups.
+  // Liveness and per-turn change rollups. A live turn's status trails its rows
+  // (where the work is happening); a finished turn's status heads them.
   const finalRows: ChatRow[] = [];
+  const liveStatus = new Map<string, ChatRow>();
   for (let index = 0; index < rows.length; index += 1) {
     let row = rows[index];
     if (row.kind === 'activity') {
       const live = turnActive(row.turnId) && row.entries.some((entry) => (entry.kind === 'tool' ? entry.tool.status === 'running' : entry.streaming));
       row = { ...row, entries: row.entries.map((entry) => (entry.kind === 'tool' ? { kind: 'tool', tool: { ...entry.tool } } : entry)), live };
     }
-    finalRows.push(row);
+    if (row.kind === 'turn-status' && ACTIVE_TURN_STATES.has(row.state)) liveStatus.set(row.turnId, row);
+    else finalRows.push(row);
     const next = rows[index + 1];
-    if (row.turnId && turnFiles.has(row.turnId) && next?.turnId !== row.turnId) {
-      const entry = turnFiles.get(row.turnId)!;
-      turnFiles.delete(row.turnId);
-      finalRows.push({ kind: 'changes', id: `changes:${row.turnId}`, turnId: row.turnId, createdAt: row.createdAt, files: mergeFiles(entry.files), changes: entry.changes });
+    if (row.turnId && next?.turnId !== row.turnId) {
+      const entry = turnFiles.get(row.turnId);
+      if (entry) {
+        turnFiles.delete(row.turnId);
+        finalRows.push({ kind: 'changes', id: `changes:${row.turnId}`, turnId: row.turnId, createdAt: row.createdAt, files: mergeFiles(entry.files), changes: entry.changes });
+      }
+      const status = liveStatus.get(row.turnId);
+      if (status) {
+        liveStatus.delete(row.turnId);
+        finalRows.push(status);
+      }
     }
   }
+  finalRows.push(...liveStatus.values());
 
   const pendingApprovals = approvals
     .filter((approval) => approval.state === 'pending')

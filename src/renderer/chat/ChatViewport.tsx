@@ -34,6 +34,11 @@ function estimate(row: ChatRow | undefined): number {
  * jump-to-latest pill and a "New" divider when content arrives while scrolled
  * up, and restores the reader's position by row id after remounts.
  */
+/** A running turn's status trails its rows instead of heading them. */
+function liveStatus(row: ChatRow): '' | undefined {
+  return row.kind === 'turn-status' && !row.finishedAt ? '' : undefined;
+}
+
 export function ChatViewport({ rows, renderRow, stateKey, before, after, onReachTop, testId = 'structured-agent-transcript', label }: {
   readonly rows: readonly ChatRow[];
   readonly renderRow: (row: ChatRow) => ReactNode;
@@ -145,7 +150,7 @@ export function ChatViewport({ rows, renderRow, stateKey, before, after, onReach
               {virtualizer.getVirtualItems().map((item) => {
                 const row = rows[item.index]!;
                 return (
-                  <li key={item.key} ref={virtualizer.measureElement} data-index={item.index} data-row-id={row.id} data-kind={row.kind}
+                  <li key={item.key} ref={virtualizer.measureElement} data-index={item.index} data-row-id={row.id} data-kind={row.kind} data-live={liveStatus(row)}
                     className="chat-row" style={{ transform: `translateY(${item.start - listOffset}px)` }}>
                     {rowNode(row)}
                   </li>
@@ -158,7 +163,7 @@ export function ChatViewport({ rows, renderRow, stateKey, before, after, onReach
           <div className="chat-viewport__content">
             {before}
             <ol className="chat-rows" aria-label={label}>
-              {rows.map((row) => <li key={row.id} data-row-id={row.id} data-kind={row.kind} className="chat-row">{rowNode(row)}</li>)}
+              {rows.map((row) => <li key={row.id} data-row-id={row.id} data-kind={row.kind} data-live={liveStatus(row)} className="chat-row">{rowNode(row)}</li>)}
             </ol>
             {after}
           </div>

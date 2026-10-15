@@ -8,9 +8,13 @@ import './agent-completion.css';
 
 export interface CapabilityDiscoveryState { loading: boolean; error?: string }
 
-export function useAgentCompletion({ value, onChange, inputRef, catalog, discovery, onOpenHistory, disabled, mobile = false }:
+/** Workspace-relative paths matching a query, best first. */
+export type ComposerFileSearch = (query: string) => Promise<readonly string[]>;
+
+export function useAgentCompletion({ value, onChange, inputRef, catalog, discovery, onOpenHistory, disabled, mobile = false, fileSearch }:
   { value: ChatComposerDraft; onChange: (next: ChatComposerDraft) => void; inputRef: RefObject<HTMLTextAreaElement>;
-    catalog?: AgentCapabilityCatalog; discovery?: CapabilityDiscoveryState; onOpenHistory?: () => void; disabled?: boolean; mobile?: boolean }) {
+    catalog?: AgentCapabilityCatalog; discovery?: CapabilityDiscoveryState; onOpenHistory?: () => void; disabled?: boolean; mobile?: boolean;
+    fileSearch?: ComposerFileSearch }) {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const listId = useId();
@@ -22,8 +26,27 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
   const fingerprint = `${value.text}:${value.selectionStart}:${value.selectionEnd}`;
   const token = completionToken(value.text, value.selectionStart, value.selectionEnd);
   const filter = manual ?? token;
-  const open = !disabled && !composing && dismissed !== fingerprint && !!filter;
-  const items = open ? agentCompletions(catalog, filter!, !!onOpenHistory, ko) : [];
+  const mentioning = !manual && token?.trigger === '@';
+  const [files, setFiles] = useState<{ query: string; paths: readonly string[]; loading: boolean }>({ query: '', paths: [], loading: false });
+  useEffect(() => {
+    if (!mentioning || !fileSearch || disabled) return undefined;
+    const query = token!.query;
+    let cancelled = false;
+    setFiles((current) => ({ ...current, loading: true }));
+    const timer = setTimeout(() => {
+      void fileSearch(query).then(
+        (paths) => { if (!cancelled) setFiles({ query, paths: paths.slice(0, 20), loading: false }); },
+        () => { if (!cancelled) setFiles({ query, paths: [], loading: false }); },
+      );
+    }, 120);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // The token query is the only input that changes the search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mentioning, token?.query, fileSearch, disabled]);
+  const open = !disabled && !composing && dismissed !== fingerprint && !!filter && (!mentioning || !!fileSearch);
+  const items: AgentCompletion[] = !open ? [] : mentioning
+    ? files.paths.map((path) => ({ id: `file:${path}`, label: path, group: 'file' as const, invocation: `@${path}` }))
+    : agentCompletions(catalog, filter!, !!onOpenHistory, ko);
   const active = Math.min(activeIndex, Math.max(0, items.length - 1));
   useEffect(() => setActiveIndex(0), [fingerprint, manual, catalog?.revision]);
   useEffect(() => setManual(undefined), [fingerprint]);
@@ -61,10 +84,11 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
   };
   const buttons = <><Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => { setManual('skills'); setDismissed(undefined); inputRef.current?.focus(); }}>{ko ? '스킬' : 'Skills'}</Button>
     <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => { setManual('commands'); setDismissed(undefined); inputRef.current?.focus(); }}>{ko ? '명령' : 'Commands'}</Button></>;
-  const groupName = (group: AgentCompletion['group']): string => group === 'app' ? 'EZTerminal' : group === 'provider'
+  const openManual = (kind: 'skills' | 'commands'): void => { setManual(kind); setDismissed(undefined); inputRef.current?.focus(); };
+  const groupName = (group: AgentCompletion['group']): string => group === 'file' ? (ko ? '파일' : 'Files') : group === 'app' ? 'EZTerminal' : group === 'provider'
     ? (ko ? '제공자 명령·스킬' : 'Provider commands and skills') : (ko ? '스킬' : 'Skills');
   const menu = open ? <div className="agent-completion" data-testid="agent-completion">
-    <div className="agent-completion__heading"><strong>{manual === 'skills' || token?.trigger === '$' ? (ko ? '스킬' : 'Skills') : (ko ? '명령·스킬' : 'Commands and skills')}</strong>
+    <div className="agent-completion__heading"><strong>{mentioning ? (ko ? '파일 참조' : 'Mention a file') : manual === 'skills' || token?.trigger === '$' ? (ko ? '스킬' : 'Skills') : (ko ? '명령·스킬' : 'Commands and skills')}</strong>
       <Button type="button" size="sm" variant="ghost" onMouseDown={event => event.preventDefault()} onClick={close}>{ko ? '닫기' : 'Close'}</Button></div>
     <div id={listId} role="listbox" aria-label={ko ? '입력 자동완성' : 'Input suggestions'} className="agent-completion__list">
       {items.map((item, index) => <div key={item.id}>
@@ -75,14 +99,16 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
         </div>
       </div>)}
     </div>
-    <p className="agent-completion__status" role="status">{discovery?.loading ? (ko ? 'PC의 목록을 조회 중입니다.' : 'Discovering on the connected PC…')
+    <p className="agent-completion__status" role="status">{mentioning ? (files.loading ? (ko ? '파일을 찾는 중…' : 'Searching files…')
+      : items.length === 0 ? (ko ? '일치하는 파일이 없습니다.' : 'No matching files.') : (ko ? '↑↓ 이동 · Enter 선택 · Esc 닫기' : '↑↓ Navigate · Enter Select · Esc Close'))
+      : discovery?.loading ? (ko ? 'PC의 목록을 조회 중입니다.' : 'Discovering on the connected PC…')
       : discovery?.error ? `${catalog ? (ko ? '이전 목록 · ' : 'Previous catalog · ') : ''}${discovery.error}`
       : !catalog ? (ko ? '이 연결에서는 제공자 목록을 확인할 수 없습니다.' : 'Provider discovery is unavailable for this connection.')
       : items.length === 0 ? ((typeof filter === 'object' && filter.query) ? (ko ? '일치하는 항목이 없습니다.' : 'No matching suggestions.') : (ko ? '설치된 스킬이 없습니다.' : 'No installed skills.'))
       : catalog.issues.length ? (ko ? '일부 목록을 확인하지 못했습니다. 확장 관리에서 다시 조회하세요.' : 'Some extensions could not be read. Refresh in extension management.')
       : (mobile ? (ko ? '항목을 눌러 입력에 추가' : 'Tap a suggestion to insert') : (ko ? '↑↓ 이동 · Enter 선택 · Esc 닫기' : '↑↓ Navigate · Enter Select · Esc Close'))}</p>
   </div> : null;
-  return { menu, buttons, keyDown, composing: compositionRef,
+  return { menu, buttons, keyDown, composing: compositionRef, open, openManual,
     inputProps: { 'aria-autocomplete': 'list' as const, 'aria-controls': open ? listId : undefined,
       'aria-activedescendant': open && items.length ? `${listId}-${active}` : undefined,
       onCompositionStart: () => { compositionRef.current = true; setComposing(true); },
