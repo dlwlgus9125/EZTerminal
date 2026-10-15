@@ -7,8 +7,12 @@ import { ApprovalDock } from './chat/dock/ApprovalDock';
 import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
 import {
+  Activity,
   AlertTriangle,
   Archive,
+  FileDiff,
+  History,
+  MoreHorizontal,
   ArrowUp,
   AtSign,
   Bot,
@@ -63,7 +67,8 @@ import {
 } from './chat-view-state';
 import { useAppTranslation } from './i18n';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
-import { Button, Field, Menu, MenuItem, Select } from './ui';
+import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, Select } from './ui';
+import { conversationFileChanges } from '../shared/conversation-changes';
 import { SettingPill } from './chat/composer/SettingPill';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
@@ -190,6 +195,12 @@ interface StructuredAgentCopy {
   readonly skin: string;
   readonly bubbleSkin: string;
   readonly cliSkin: string;
+  readonly conversationMenu: string;
+  readonly previousConversations: string;
+  readonly heartbeatMenu: string;
+  readonly heartbeatOn: string;
+  readonly changedFiles: (count: number) => string;
+  readonly close: string;
   readonly copyMessage: string;
   readonly copied: string;
   readonly copyFailed: string;
@@ -208,6 +219,8 @@ interface StructuredAgentCopy {
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   en: {
     skin: 'Conversation skin', bubbleSkin: 'Bubbles', cliSkin: 'CLI',
+    conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat',
+    changedFiles: (count) => `${count} ${count === 1 ? 'file' : 'files'} changed`, close: 'Close',
     copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
     replyMessage: 'Reply', reuseMessage: 'Use as draft', removeReply: 'Remove reply',
     attach: 'Attach image or text', attachmentUnsupported: 'Attachments and replies require a compatible connected host.',
@@ -288,6 +301,8 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   },
   ko: {
     skin: '대화 스킨', bubbleSkin: '말풍선', cliSkin: 'CLI',
+    conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트',
+    changedFiles: (count) => `파일 ${count}개 변경`, close: '닫기',
     copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
     replyMessage: '답장', reuseMessage: '입력에 가져오기', removeReply: '답장 취소',
     attach: '이미지·텍스트 첨부', attachmentUnsupported: '첨부와 답장은 지원하는 호스트에 연결해야 사용할 수 있습니다.',
@@ -971,7 +986,7 @@ export interface StructuredAgentComposerProps {
   readonly fileSearch?: ComposerFileSearch;
   /** Earlier prompts of this conversation, oldest first, for ↑ recall. */
   readonly recentPrompts?: readonly string[];
-  /** Stops the running turn (Esc, or the stop button when the draft is empty). */
+  /** Present while the turn can be stopped: Esc, or the stop button when the draft is empty. */
   readonly onStop?: () => void;
   readonly stopping?: boolean;
   /** Resolves a dropped file to a workspace path so it can be mentioned instead of uploaded. */
@@ -1150,7 +1165,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (completion.keyDown(event)) return;
     if (completion.composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape' && busy && onStop && !stopping) {
+    if (event.key === 'Escape' && onStop && !stopping) {
       event.preventDefault();
       onStop();
       return;
@@ -1222,7 +1237,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
 
   const hasDraft = draft.trim().length > 0 || attachments.length > 0;
   const sendBlocked = disabled || sendDisabled || queueBusy || uncertain || readingFiles || !hasDraft || submitting !== null;
-  const showStop = busy && !hasDraft && onStop !== undefined;
+  // onStop is offered only while the turn can be stopped, including while it waits for approval.
+  const showStop = !hasDraft && onStop !== undefined;
 
   return (
     <form
@@ -1478,6 +1494,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
   readonly heartbeatControl?: ReactNode;
+  /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
+  readonly heartbeatActive?: boolean;
   readonly recoveryControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
   readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
@@ -1579,6 +1597,7 @@ export function StructuredAgentSessionPanel({
   owner = 'managed',
   childTrack,
   heartbeatControl,
+  heartbeatActive = false,
   recoveryControl,
   onRetryTranscript,
   onSend,
@@ -1619,6 +1638,9 @@ export function StructuredAgentSessionPanel({
   const [wideReview, setWideReview] = useState(false);
   const [reviewAside, setReviewAside] = useState(false);
   const [reviewRequest, setReviewRequest] = useState(0);
+  const [heartbeatOpen, setHeartbeatOpen] = useState(false);
+  // Files, not change records: two edits of one file count once, as in the turn's change card.
+  const changeCount = useMemo(() => new Set(conversationFileChanges(items, sessionId).map((change) => change.path.toLowerCase())).size, [items, sessionId]);
   useLayoutEffect(() => {
     const element = panelRef.current;
     if (!element) return;
@@ -1821,6 +1843,12 @@ export function StructuredAgentSessionPanel({
           </div>
   );
 
+  const capabilitiesPanel = !historyOnly && !providerOwned && capabilityClient && (providerId === 'codex' || providerId === 'claude') ? <AgentCapabilitiesPanel compact={variant !== 'mobile'}
+        client={capabilityClient} providerId={providerId} workspaceId={workspace.id} sessionId={capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId} remote={variant === 'mobile'}
+        onCatalog={setCapabilityCatalog} onDiscoveryState={setCapabilityDiscovery} disabled={composerDisabled}
+        onInsert={(item) => { setSelectedCapabilities((current) => [...current.filter((entry) => entry.id !== item.id), item]); setDraftAction({ id: ++actionSequence.current, sessionId, insert: item.invocation, ...(item.kind === 'skill' && item.invocation ? { skill: { providerId, id: item.id, name: item.name, invocation: item.invocation } } : {}) }); }}
+      /> : null;
+
   return (
     <section
       ref={panelRef}
@@ -1852,86 +1880,135 @@ export function StructuredAgentSessionPanel({
             </span>
           )}
         </div>
-        <div className="structured-agent-session-controls">
-          {headerActions}
-          {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
-          <Field label={copy.skin} labelHidden>
-            <Select uiSize="sm" value={activeSkin} aria-label={copy.skin} data-testid="structured-agent-skin"
-              onPointerDown={captureSkinView}
-              onChange={(event) => { captureSkinView(); const next = event.currentTarget.value as ChatSkin; setPreferredSkin(next); writeChatSkin(next); onSkinChange?.(next); }}>
-              <option value="bubble">{copy.bubbleSkin}</option><option value="cli">{copy.cliSkin}</option>
-            </Select>
-          </Field>
-          {historyOnly && settingsControls}
-          {hasLifecycleActions && (
-            <div
-              className="structured-agent-session-lifecycle"
-              role="group"
-              aria-label={copy.lifecycle}
-              aria-busy={lifecycleBusy !== null || undefined}
-              data-testid="structured-agent-lifecycle"
+        {/* Desktop: one-row header with an overflow menu. Android keeps its inline controls. */}
+        {variant === 'mobile' ? (
+          <div className="structured-agent-session-controls">
+            {headerActions}
+            {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
+            <Field label={copy.skin} labelHidden>
+              <Select uiSize="sm" value={activeSkin} aria-label={copy.skin} data-testid="structured-agent-skin"
+                onPointerDown={captureSkinView}
+                onChange={(event) => { captureSkinView(); const next = event.currentTarget.value as ChatSkin; setPreferredSkin(next); writeChatSkin(next); onSkinChange?.(next); }}>
+                <option value="bubble">{copy.bubbleSkin}</option><option value="cli">{copy.cliSkin}</option>
+              </Select>
+            </Field>
+            {historyOnly && settingsControls}
+            {hasLifecycleActions && (
+              <div
+                className="structured-agent-session-lifecycle"
+                role="group"
+                aria-label={copy.lifecycle}
+                aria-busy={lifecycleBusy !== null || undefined}
+                data-testid="structured-agent-lifecycle"
+              >
+                {canDetach && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={<Unlink2 />}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    loading={lifecycleBusy === 'detach'}
+                    loadingLabel={copy.detachingSession}
+                    onClick={() => void runLifecycle('detach', onDetach)}
+                    data-testid="structured-agent-detach"
+                  >
+                    {copy.detachSession}
+                  </Button>
+                )}
+                {canArchive && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={<Archive />}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    loading={lifecycleBusy === 'archive'}
+                    loadingLabel={copy.archivingSession}
+                    onClick={() => void runLifecycle('archive', onArchive)}
+                    data-testid="structured-agent-archive"
+                  >
+                    {copy.archiveSession}
+                  </Button>
+                )}
+                {canCancel && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    leadingIcon={<Square />}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    loading={lifecycleBusy === 'cancel'}
+                    loadingLabel={copy.stoppingAgent}
+                    onClick={() => void runLifecycle('cancel', onCancel)}
+                    data-testid="structured-agent-cancel"
+                  >
+                    {copy.stopAgent}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="structured-agent-session-controls">
+            {headerActions}
+            {heartbeatActive && (
+              <button type="button" className="chat-header-chip" onClick={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-chip">
+                <Activity aria-hidden="true" />{copy.heartbeatOn}
+              </button>
+            )}
+            {changeCount > 0 && (
+              <Button type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
+                {copy.changedFiles(changeCount)}
+              </Button>
+            )}
+            {capabilitiesPanel}
+            {historyOnly && settingsControls}
+            <Menu
+              label={copy.conversationMenu}
+              placement="bottom-end"
+              trigger={(
+                <button type="button" className="chat-icon-action chat-header-more" aria-label={copy.conversationMenu} title={copy.conversationMenu}
+                  aria-busy={lifecycleBusy !== null || undefined} data-testid="structured-agent-menu">
+                  <MoreHorizontal aria-hidden="true" />
+                </button>
+              )}
             >
-              {canDetach && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<Unlink2 />}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  loading={lifecycleBusy === 'detach'}
-                  loadingLabel={copy.detachingSession}
-                  onClick={() => void runLifecycle('detach', onDetach)}
-                  data-testid="structured-agent-detach"
-                >
+              {onOpenHistory && <MenuItem icon={History} onSelect={onOpenHistory}>{copy.previousConversations}</MenuItem>}
+              <MenuLabel>{copy.skin}</MenuLabel>
+              {(['bubble', 'cli'] as const).map((skin) => (
+                <MenuRadioItem key={skin} checked={activeSkin === skin} data-testid={`structured-agent-skin-${skin}`}
+                  onSelect={() => { captureSkinView(); setPreferredSkin(skin); writeChatSkin(skin); onSkinChange?.(skin); }}>
+                  {skin === 'bubble' ? copy.bubbleSkin : copy.cliSkin}
+                </MenuRadioItem>
+              ))}
+              {heartbeatControl !== undefined && <MenuSeparator />}
+              {heartbeatControl !== undefined && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
+              {hasLifecycleActions && (canDetach || canArchive) && <MenuSeparator />}
+              {!historyOnly && canDetach && (
+                <MenuItem icon={Unlink2} disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onSelect={() => void runLifecycle('detach', onDetach)} data-testid="structured-agent-detach">
                   {copy.detachSession}
-                </Button>
+                </MenuItem>
               )}
-              {canArchive && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<Archive />}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  loading={lifecycleBusy === 'archive'}
-                  loadingLabel={copy.archivingSession}
-                  onClick={() => void runLifecycle('archive', onArchive)}
-                  data-testid="structured-agent-archive"
-                >
+              {!historyOnly && canArchive && (
+                <MenuItem icon={Archive} disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onSelect={() => void runLifecycle('archive', onArchive)} data-testid="structured-agent-archive">
                   {copy.archiveSession}
-                </Button>
+                </MenuItem>
               )}
-              {canCancel && (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  leadingIcon={<Square />}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  loading={lifecycleBusy === 'cancel'}
-                  loadingLabel={copy.stoppingAgent}
-                  onClick={() => void runLifecycle('cancel', onCancel)}
-                  data-testid="structured-agent-cancel"
-                >
-                  {copy.stopAgent}
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
+            </Menu>
+          </div>
+        )}
         {settingsError && <p className="structured-agent__form-error" role="alert">{settingsError}</p>}
         {lifecycleError && <p className="structured-agent__form-error" role="alert">{lifecycleError}</p>}
       </header>
 
+      {variant === 'mobile' && capabilitiesPanel}
       <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
         onAsideChange={setReviewAside}
         openRequest={reviewRequest}
+        hideTrigger={variant !== 'mobile'}
         onOpenProjectFiles={onOpenProjectFiles}
         onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />
       {workflowContext}
-      {!historyOnly && !providerOwned && capabilityClient && (providerId === 'codex' || providerId === 'claude') && <AgentCapabilitiesPanel
-        client={capabilityClient} providerId={providerId} workspaceId={workspace.id} sessionId={capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId} remote={variant === 'mobile'}
-        onCatalog={setCapabilityCatalog} onDiscoveryState={setCapabilityDiscovery} disabled={composerDisabled}
-        onInsert={(item) => { setSelectedCapabilities((current) => [...current.filter((entry) => entry.id !== item.id), item]); setDraftAction({ id: ++actionSequence.current, sessionId, insert: item.invocation, ...(item.kind === 'skill' && item.invocation ? { skill: { providerId, id: item.id, name: item.name, invocation: item.invocation } } : {}) }); }}
-      />}
-
       <StructuredAgentTranscript
         beforeMessages={beforeMessages}
         key={`transcript:${viewStateKey ?? sessionId}`}
@@ -1962,7 +2039,12 @@ export function StructuredAgentSessionPanel({
           {childTrack}
         </section>
       )}
-      {heartbeatControl}
+      {variant === 'mobile' && heartbeatControl}
+      {variant !== 'mobile' && heartbeatControl !== undefined && (
+        <Dialog open={heartbeatOpen} onOpenChange={setHeartbeatOpen} title={copy.heartbeatOn} ownerDocument={panelRef.current?.ownerDocument} closeLabel={copy.close}>
+          {heartbeatControl}
+        </Dialog>
+      )}
       {recoveryControl}
       {!historyOnly && (
         <StructuredAgentComposer

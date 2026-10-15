@@ -1294,6 +1294,43 @@
   width: min(calc(100% - 2rem), var(--ui-chat-max-width)); flex: 0 0 auto;
   margin: 0 auto var(--ui-space-3); padding: 0; border: 0; background: none;
 }
+/* Desktop conversation header: one row — provider · title · workspace, state, then actions.
+   Mobile keeps its wrapping two-row header. No flex gap (shared with Android). */
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header {
+  flex-wrap: nowrap; gap: 0; min-height: 2.75rem;
+  padding: var(--ui-space-1) var(--ui-space-2) var(--ui-space-1) var(--ui-space-4);
+}
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity {
+  display: flex; align-items: baseline; flex: 1 1 auto; min-width: 0; overflow: hidden;
+}
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity > * + * { margin-left: var(--ui-space-2); }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity .structured-agent__eyebrow { flex: none; }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity h1 { flex: 0 1 auto; min-width: 0; }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity p { flex: 0 100 auto; min-width: 0; }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__status { flex: none; margin-left: var(--ui-space-3); }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-controls {
+  flex: none; flex-wrap: nowrap; justify-content: flex-end; gap: 0; margin-left: var(--ui-space-3);
+}
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-controls > * + * { margin-left: var(--ui-space-1); }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header > .structured-agent__form-error { flex-basis: 100%; }
+
+.chat-header-more {
+  width: 2rem;
+  height: 2rem;
+}
+.chat-header-more > svg {
+  width: 1rem;
+  height: 1rem;
+}
+.chat-header-chip {
+  display: inline-flex; align-items: center; height: 1.75rem; padding: 0 var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-round); background: transparent;
+  color: var(--ui-accent); font: 500 var(--ui-font-size-xs) / 1 var(--ui-font-body); cursor: pointer;
+}
+.chat-header-chip > svg { width: 0.875rem; height: 0.875rem; margin-right: var(--ui-space-1); }
+.chat-header-chip:hover { background: var(--ui-surface-hover); }
+.chat-header-chip:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+
 /* The bordered box, bar, pills and send button live in chat/chat.css. */
 .structured-agent--live .structured-agent-textarea--composer {
   min-height: 1.6em; max-height: calc(8 * 1.6em + 2 * var(--ui-space-2)); padding: var(--ui-space-2) var(--ui-space-2) var(--ui-space-1);

@@ -72,6 +72,16 @@ function render(node: ReactNode, locale: 'en' | 'ko' = 'en'): void {
   ));
 }
 
+/** Desktop keeps session actions and the skin choice in the header's overflow menu. */
+function openSessionMenu(): void {
+  if (!document.querySelector('[role="menu"]')) act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
+}
+
+function chooseSkin(skin: 'bubble' | 'cli'): void {
+  openSessionMenu();
+  act(() => document.querySelector<HTMLButtonElement>(`[data-testid="structured-agent-skin-${skin}"]`)!.click());
+}
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -430,17 +440,22 @@ describe('StructuredAgentSessionPanel', () => {
     );
     const input = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
     setValue(input, 'Keep this draft');
+    openSessionMenu();
     expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
 
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-cancel"]')!.click());
-    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')?.getAttribute('aria-busy')).toBe('true');
+    // Stop lives in the composer: Esc (or the stop button once the draft is empty).
+    const escape = (): void => act(() => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    escape();
+    expect(container.querySelector('[data-testid="structured-agent-menu"]')?.getAttribute('aria-busy')).toBe('true');
+    openSessionMenu();
     expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')?.disabled).toBe(true);
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-cancel"]')!.click());
+    escape();
     await flush();
 
     expect(onCancel).toHaveBeenCalledOnce();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('Stop failed safely');
     expect(input.value).toBe('Keep this draft');
+    openSessionMenu();
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')!.click());
     await flush();
     expect(onDetach).toHaveBeenCalledOnce();
@@ -463,7 +478,10 @@ describe('StructuredAgentSessionPanel', () => {
         onDetach={async () => ({ ok: true })}
       />,
     );
-    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
+    openSessionMenu();
+    expect(container.querySelector('[data-testid="structured-agent-detach"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-stop"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')?.disabled).toBe(true);
     expect(container.querySelector('[data-testid="structured-agent-composer-disabled-reason"]')?.textContent)
       .toContain('owned by the provider');
@@ -547,7 +565,7 @@ describe('message-based chat skins', () => {
     const items = [transcriptItem('patch', 2, 'tool-result', encodeFileChanges([{ path: 'src/a.ts', patch: '@@ -8 +8 @@\n-old\n+new', coverage: 'patch' }])!, { sessionId: 'skin-session' })];
     render(panel({ items, onSend, skin: 'bubble' }));
     setValue(input(), 'My question\n');
-    act(() => container.querySelector<HTMLButtonElement>('.conversation-review__trigger')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-review-changes"]')!.click());
     await flush();
     const patch = document.querySelector('[data-testid="conversation-change-review"]')!;
     act(() => patch.querySelector<HTMLButtonElement>('[data-kind="add"]')!.click());
@@ -573,8 +591,7 @@ describe('message-based chat skins', () => {
     expect(container.querySelector('.chat-output__pre')?.textContent).toContain('Long output');
     setValue(input(), 'Unsent draft');
     act(() => input().setSelectionRange(2, 6));
-    const skin = container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-skin"]')!;
-    setValue(skin, 'cli');
+    chooseSkin('cli');
     expect(container.querySelector('[data-testid="structured-agent-session"]')?.getAttribute('data-skin')).toBe('cli');
     expect(input()).toBe(originalInput);
     expect(input().value).toBe('Unsent draft');
@@ -587,7 +604,7 @@ describe('message-based chat skins', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(onResolve).not.toHaveBeenCalled();
     expect(localStorage.getItem('ezterminal.chat.skin')).toBe('cli');
-    setValue(skin, 'bubble');
+    chooseSkin('bubble');
     expect(input()).toBe(originalInput);
   });
 
@@ -601,7 +618,7 @@ describe('message-based chat skins', () => {
     const reply = container.querySelector<HTMLButtonElement>('[data-message-id="provider-message"] button[aria-label="Reply"]')!;
     act(() => reply.click());
     setValue(input(), 'Explain this');
-    setValue(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-skin"]')!, 'cli');
+    chooseSkin('cli');
     expect(container.querySelector('.structured-agent-composer__reply')?.textContent).toContain('Hello world');
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
     await flush();
@@ -624,7 +641,7 @@ describe('message-based chat skins', () => {
     const onSend = vi.fn(async () => ({ ok: true as const }));
     const attachment = { id: 'attachment-1', name: 'requirements.md', kind: 'text' as const, mimeType: 'text/markdown', data: 'Keep the existing terminal.' };
     render(panel({ onSend, supportsMessageContext: true, draftState: { text: 'Read this', attachments: [attachment] } }));
-    setValue(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-skin"]')!, 'cli');
+    chooseSkin('cli');
     expect(container.querySelector('.structured-agent-composer__attachments')?.textContent).toContain(attachment.name);
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
     await flush();

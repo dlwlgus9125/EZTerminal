@@ -1235,8 +1235,10 @@ export function StructuredAgentDockPanel(
       childTrack={directChildren.length > 0 && props.onOpenSession ? (
         <StructuredAgentChildTrack items={directChildren} onSelectSession={openRelatedSession} />
       ) : undefined}
+      heartbeatActive={heartbeatAvailable && heartbeat?.enabled === true}
       heartbeatControl={heartbeatAvailable ? (
         <StructuredAgentHeartbeat
+          defaultOpen
           sessionId={sessionId}
           value={heartbeat}
           automationReady={automationReady}

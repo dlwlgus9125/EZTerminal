@@ -115,6 +115,8 @@ export interface StructuredAgentHeartbeatProps {
   readonly onSave: (input: StructuredAgentHeartbeatInput) => Promise<StructuredAgentUiResult>;
   readonly onRunNow: () => Promise<StructuredAgentUiResult>;
   readonly onEnableHost: () => Promise<StructuredAgentUiResult>;
+  /** Start expanded, e.g. when shown in a dialog opened just for it. */
+  readonly defaultOpen?: boolean;
 }
 
 function localTimezone(): string {
@@ -147,12 +149,13 @@ export function StructuredAgentHeartbeat({
   onSave,
   onRunNow,
   onEnableHost,
+  defaultOpen = false,
 }: StructuredAgentHeartbeatProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const language = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko') ? 'ko' : 'en';
   const copy = COPY[language];
   const formId = useId();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [prompt, setPrompt] = useState(value?.prompt ?? copy.defaultPrompt);
   const [cron, setCron] = useState(value?.cron ?? '*/15 * * * *');
   const [timezone, setTimezone] = useState(value?.timezone ?? localTimezone());
@@ -168,7 +171,7 @@ export function StructuredAgentHeartbeat({
 
   useEffect(() => {
     const sessionValue = latestValueRef.current;
-    setOpen(false);
+    setOpen(defaultOpen);
     setPrompt(sessionValue?.prompt ?? latestDefaultPromptRef.current);
     setCron(sessionValue?.cron ?? '*/15 * * * *');
     setTimezone(sessionValue?.timezone ?? localTimezone());
@@ -177,7 +180,7 @@ export function StructuredAgentHeartbeat({
     setBusy(null);
     setConfirmHost(false);
     setError(null);
-  }, [sessionId]);
+  }, [defaultOpen, sessionId]);
 
   useEffect(() => {
     if (dirty || busy !== null) return;

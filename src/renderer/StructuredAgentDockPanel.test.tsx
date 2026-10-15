@@ -1053,7 +1053,10 @@ describe('StructuredAgentDockPanel', () => {
     expect(container.querySelector('[data-history-only="true"]')).not.toBeNull();
     expect(container.textContent).toContain('A related Agent retained useful context.');
     expect(container.querySelector('[data-testid="structured-agent-composer-input"]')).toBeNull();
-    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
+    expect(container.querySelector('[data-testid="structured-agent-detach"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-heartbeat-open"]')).toBeNull();
     expect(container.querySelector('[data-testid="structured-agent-heartbeat"]')).toBeNull();
     expect(container.querySelector('.chat-dock')).toBeNull();
 
@@ -1243,6 +1246,8 @@ describe('StructuredAgentDockPanel', () => {
       providerLabel: 'Codex',
     });
 
+    // Session actions live in the header's overflow menu.
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')!.click());
     await flush();
     expect(commands.at(-1)).toMatchObject({

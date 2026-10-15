@@ -3,6 +3,8 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../shared/daemon-protocol';
 import { AppI18nProvider } from '../i18n';
+import type { AgentCapabilitiesClient } from '../../shared/agent-capabilities';
+import { StructuredAgentHeartbeat } from '../StructuredAgentHeartbeat';
 import { StructuredAgentSessionPanel } from '../StructuredAgentSession';
 import { HighlighterProvider } from './markdown/HighlighterProvider';
 import claudeApprovalDeny from './fixtures/claude-approval-deny.json';
@@ -72,6 +74,21 @@ function legacyHost(golden: Golden): Golden {
   return { ...golden, approvals: golden.approvals.map((approval) => Object.fromEntries(Object.entries(approval).filter(([key]) => key !== 'request')) as unknown as DaemonApproval) };
 }
 
+/** Extension discovery answered by the host, so the header shows "Extensions N". */
+function capabilityClient(providerId: 'codex' | 'claude'): AgentCapabilitiesClient {
+  return {
+    list: async () => ({ ok: true as const, value: {
+      providerId, workspaceId: 'main', workspaceRoot: '<WORKSPACE>', hostId: 'Development PC', revision: 'a'.repeat(64),
+      observedAt: STARTED, canManage: false, application: 'new-session' as const, models: [], actions: [], issues: [],
+      items: [
+        { id: 'review', kind: 'skill' as const, name: 'review', description: 'Review the changes', enabled: true, invocation: providerId === 'claude' ? '/review' : '$review', actions: [] },
+        { id: 'docs', kind: 'skill' as const, name: 'docs', description: 'Write documentation', enabled: true, invocation: providerId === 'claude' ? '/docs' : '$docs', actions: [] },
+      ],
+    } }),
+    manage: async () => ({ ok: false as const, message: 'Not in stories' }),
+  } as unknown as AgentCapabilitiesClient;
+}
+
 interface ScenarioArgs {
   readonly golden: Golden;
   readonly items?: readonly DaemonTranscriptItem[];
@@ -80,9 +97,10 @@ interface ScenarioArgs {
   readonly state?: 'idle' | 'working' | 'blocked';
   readonly skin: 'bubble' | 'cli';
   readonly locale?: 'ko' | 'en';
+  readonly heartbeatActive?: boolean;
 }
 
-function Scenario({ golden, items, approvals, turnState = 'completed', state = 'idle', skin, locale = 'ko' }: ScenarioArgs): JSX.Element {
+function Scenario({ golden, items, approvals, turnState = 'completed', state = 'idle', skin, locale = 'ko', heartbeatActive = false }: ScenarioArgs): JSX.Element {
   const shown = items ?? golden.items;
   const claude = golden.provider === 'claude';
   return (
@@ -90,7 +108,7 @@ function Scenario({ golden, items, approvals, turnState = 'completed', state = '
       <HighlighterProvider>
       <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
         <StructuredAgentSessionPanel
-          sessionId={`story-${golden.provider}`}
+          sessionId={golden.items[0]?.sessionId ?? `story-${golden.provider}`}
           title={claude ? '로그인 재시도 표시 수정' : 'Codex 작업'}
           providerId={golden.provider}
           providerLabel={claude ? 'Claude' : 'Codex'}
@@ -110,6 +128,15 @@ function Scenario({ golden, items, approvals, turnState = 'completed', state = '
           onResolveApproval={fn(async () => ({ ok: true as const }))}
           onOpenLink={fn()}
           onCancel={fn(async () => ({ ok: true as const }))}
+          onArchive={fn(async () => ({ ok: true as const }))}
+          onOpenHistory={fn()}
+          capabilityClient={capabilityClient(claude ? 'claude' : 'codex')}
+          heartbeatActive={heartbeatActive}
+          heartbeatControl={(
+            <StructuredAgentHeartbeat defaultOpen sessionId="story" automationReady
+              onSave={fn(async () => ({ ok: true as const }))} onRunNow={fn(async () => ({ ok: true as const }))}
+              onEnableHost={fn(async () => ({ ok: true as const }))} />
+          )}
           effortSupported
           reasoningEffort="high"
           supportsMessageContext
@@ -204,3 +231,5 @@ export const FindInConversation: Story = {
     await waitFor(() => expect(canvas.queryByTestId('chat-find')).not.toBeInTheDocument());
   },
 };
+/** The one-row header with every action present: changes, extensions, a running heartbeat and the session menu. */
+export const HeaderActions: Story = { args: { golden: editGolden, skin: 'bubble', heartbeatActive: true } };

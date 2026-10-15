@@ -16,6 +16,8 @@ export interface AgentCapabilitiesPanelProps {
   readonly onInsert?: (item: AgentCapabilityItem) => void;
   readonly disabled?: boolean;
   readonly remote?: boolean;
+  /** Header placement: a short summary whose body opens as a dropdown. */
+  readonly compact?: boolean;
 }
 const LABELS: Readonly<Record<AgentExtensionAction, readonly [string, string]>> = {
   'plugin-install': ['플러그인 설치', 'Install plugin'], 'plugin-remove': ['플러그인 제거', 'Remove plugin'],
@@ -32,7 +34,7 @@ const commandId = (): string => `extension-${Array.from(crypto.getRandomValues(n
 const KIND_LABELS = { skill: '스킬', plugin: '플러그인', mcp: 'MCP', 'app-skill': '앱 스킬', models: '모델', skills: '스킬', plugins: '플러그인' };
 const STATUS_LABELS: Record<string, string> = { connected: '연결됨', ready: '준비됨', failed: '연결 실패', 'needs-auth': 'PC 인증 필요', notLoggedIn: 'PC 인증 필요', unsupported: '상태 조회 미지원', pending: '연결 대기', disabled: '비활성', configured: '설정됨', oAuth: 'OAuth 설정', bearerToken: '토큰 설정' };
 
-export function AgentCapabilitiesPanel({ client, providerId, workspaceId, sessionId, onCatalog, onDiscoveryState, onInsert, disabled, remote }: AgentCapabilitiesPanelProps): JSX.Element {
+export function AgentCapabilitiesPanel({ client, providerId, workspaceId, sessionId, onCatalog, onDiscoveryState, onInsert, disabled, remote, compact = false }: AgentCapabilitiesPanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const [catalog, setCatalog] = useState<AgentCapabilityCatalog>();
@@ -124,8 +126,8 @@ export function AgentCapabilitiesPanel({ client, providerId, workspaceId, sessio
     } catch { if (activeScope.current.client === client && activeScope.current.scopeKey === scopeKey) setError(ko ? '연결이 끊어져 결과를 확인할 수 없습니다. 같은 요청 결과를 확인해 주세요.' : 'The connection was lost. Check the result of this same request.'); }
     finally { if (activeScope.current.client === client && activeScope.current.scopeKey === scopeKey) setManaging(false); }
   };
-  return <details className="agent-capabilities" data-testid="agent-capabilities">
-    <summary><Sparkles size={14} aria-hidden="true" />{ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP'} <span>{loading ? (ko ? '조회 중' : 'Loading') : catalog ? `${catalog.items.length}` : (ko ? '조회 필요' : 'Unavailable')}</span></summary>
+  return <details className={compact ? 'agent-capabilities agent-capabilities--compact' : 'agent-capabilities'} data-testid="agent-capabilities">
+    <summary title={ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP'}><Sparkles size={14} aria-hidden="true" />{compact ? (ko ? '확장' : 'Extensions') : (ko ? '스킬 · 플러그인 · MCP' : 'Skills · plugins · MCP')} <span>{loading ? (ko ? '조회 중' : 'Loading') : catalog ? `${catalog.items.length}` : (ko ? '조회 필요' : 'Unavailable')}</span></summary>
     <div className="agent-capabilities__body">
       <div className="agent-capabilities__heading"><p>{ko ? '첫 메시지 없이 조회합니다.' : 'Discovery does not send a message.'} {catalog && <>{remote ? (ko ? '연결된 PC' : 'Connected PC') : 'PC'}: {catalog.hostId} · {catalog.workspaceRoot}</>}</p><Button size="sm" onClick={() => void refresh()} disabled={loading || managing}><RefreshCw size={14} aria-hidden="true" />{ko ? '새로고침' : 'Refresh'}</Button></div>
       {error && <p role="alert">{error}</p>}

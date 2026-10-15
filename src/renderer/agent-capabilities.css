@@ -12,3 +12,18 @@
 .agent-capabilities__items p { margin-block: var(--ui-space-1); }
 .agent-capabilities__manage form { display: grid; gap: var(--ui-space-3); margin-block: var(--ui-space-3); }
 [data-variant="mobile"] .agent-capabilities summary, [data-variant="mobile"] .agent-capabilities button { min-height: max(2.75rem, var(--ui-control-height-lg)); }
+/* Header placement: a short summary; the catalog opens as a dropdown instead of a full-width row. */
+.agent-capabilities--compact { position: relative; border-block-end: 0; }
+.agent-capabilities--compact > summary {
+  height: 2rem; padding: 0 var(--ui-space-2); border-radius: var(--ui-radius-md);
+  color: var(--ui-text-secondary); white-space: nowrap; list-style: none;
+}
+.agent-capabilities--compact > summary::-webkit-details-marker { display: none; }
+.agent-capabilities--compact > summary:hover { background: var(--ui-surface-hover); color: var(--ui-text-primary); }
+.agent-capabilities--compact > summary > span { margin-inline-start: var(--ui-space-1); }
+.agent-capabilities--compact > .agent-capabilities__body {
+  position: absolute; top: calc(100% + var(--ui-space-1)); right: 0; z-index: 30;
+  width: 30rem; max-width: 80vw; max-height: 60vh; overflow: auto;
+  border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised); box-shadow: var(--ui-shadow-raised);
+}
