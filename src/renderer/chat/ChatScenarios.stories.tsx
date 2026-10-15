@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import type { ApprovalRequest } from '../../shared/approval-request';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../shared/daemon-protocol';
@@ -188,3 +188,23 @@ export const CommandPendingCli: Story = { args: { golden: denyGolden, items: den
 export const EditPendingBubble: Story = { args: { golden: editGolden, items: editItems, approvals: [editApproval], turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
 export const DeniedBubble: Story = { args: { golden: denyGolden, skin: 'bubble' } };
 export const EnglishCommandsBubble: Story = { args: { golden: codexCommandOkFail as unknown as Golden, skin: 'bubble', locale: 'en' } };
+export const FindInConversation: Story = {
+  args: { golden: claudeMarkdown as unknown as Golden, skin: 'bubble', locale: 'en' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('structured-agent-composer-input'));
+    await userEvent.keyboard('{Control>}f{/Control}');
+    const field = await canvas.findByRole('textbox', { name: 'Find in conversation' });
+    await waitFor(() => expect(field).toHaveFocus());
+    await userEvent.type(field, 'union');
+    const status = within(canvas.getByTestId('chat-find')).getByRole('status');
+    await waitFor(() => expect(status.textContent).toMatch(/^\d+ of \d+$/u));
+    const [current, total] = status.textContent!.split(' of ').map(Number);
+    await expect(current).toBe(total);
+    await userEvent.keyboard('{Enter}');
+    await expect(status.textContent).toBe(`1 of ${total}`);
+    await expect(canvasElement.querySelector('[data-find-current]')?.getAttribute('data-kind')).toBe('user');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(canvas.queryByTestId('chat-find')).not.toBeInTheDocument());
+  },
+};

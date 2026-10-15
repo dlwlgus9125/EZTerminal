@@ -1,11 +1,13 @@
 import { AlertTriangle, Bot, LoaderCircle } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '../ui';
 import { useChatContext } from './ChatContext';
 import { ChatRowView } from './ChatRowView';
 import { ChatViewport } from './ChatViewport';
 import { useChatCopy } from './copy';
+import { FindBar } from './FindBar';
+import { findRows } from './model/find';
 import type { ChatModel } from './model/types';
 import './chat.css';
 
@@ -29,6 +31,35 @@ export function ChatTranscript({
 }: ChatTranscriptProps): JSX.Element {
   const copy = useChatCopy();
   const { skin } = useChatContext();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const [find, setFind] = useState<{ readonly query: string; readonly index: number; readonly seq: number }>();
+  const matches = useMemo(() => (find ? findRows(model.rows, find.query) : []), [find?.query, model.rows]);
+  const index = find && matches.length ? Math.min(find.index, matches.length - 1) : 0;
+  const current = find ? matches[index] : undefined;
+  const focusRow = useMemo(() => (current && find ? { id: current, seq: find.seq } : undefined), [current, find?.seq]);
+
+  // Ctrl+F anywhere in this conversation panel (transcript or composer) opens find.
+  useEffect(() => {
+    const host = rootRef.current?.closest<HTMLElement>('.structured-agent') ?? rootRef.current;
+    if (!host) return undefined;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'f') return;
+      event.preventDefault();
+      setFind((open) => open ?? { query: '', index: 0, seq: 0 });
+      requestAnimationFrame(() => {
+        findInputRef.current?.focus();
+        findInputRef.current?.select();
+      });
+    };
+    host.addEventListener('keydown', onKeyDown);
+    return () => host.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const closeFind = (): void => {
+    setFind(undefined);
+    rootRef.current?.querySelector<HTMLElement>('.chat-viewport__scroll')?.focus();
+  };
   const status = (
     <>
       {before}
@@ -54,15 +85,33 @@ export function ChatTranscript({
     </>
   );
   return (
-    <div className="chat-transcript" data-chat-skin={skin}>
+    <div ref={rootRef} className="chat-transcript" data-chat-skin={skin}>
       <ChatViewport
         rows={model.rows}
         stateKey={stateKey}
         label={copy.transcript}
         before={status}
         onReachTop={onReachTop}
+        {...(find ? { highlight: find.query } : {})}
+        {...(focusRow ? { focusRow } : {})}
         renderRow={(row) => <ChatRowView row={row} providerLabel={providerLabel} />}
       />
+      {find && (
+        <FindBar
+          inputRef={findInputRef}
+          query={find.query}
+          index={index}
+          count={matches.length}
+          // A new query starts at the newest match, where the reader usually is.
+          onQuery={(query) => setFind((open) => ({
+            query, index: Math.max(0, findRows(model.rows, query).length - 1), seq: (open?.seq ?? 0) + 1,
+          }))}
+          onStep={(delta) => setFind((open) => open && matches.length
+            ? { ...open, index: (index + delta + matches.length) % matches.length, seq: open.seq + 1 }
+            : open)}
+          onClose={closeFind}
+        />
+      )}
     </div>
   );
 }

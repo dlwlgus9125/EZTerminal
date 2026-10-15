@@ -6,10 +6,73 @@
 
 /* ── viewport ─────────────────────────────────────────────────────────── */
 .chat-transcript {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* find in conversation */
+.chat-find {
+  position: absolute;
+  top: var(--ui-space-2);
+  right: var(--ui-space-4);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  height: 2.25rem;
+  padding: 0 var(--ui-space-1) 0 var(--ui-space-2);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-raised);
+  animation: chat-fade-in var(--ui-motion-fast) var(--ui-ease-standard);
+}
+
+.chat-find > * + * {
+  margin-left: var(--ui-space-1);
+}
+
+.chat-find__icon {
+  flex: 0 0 auto;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--ui-text-muted);
+}
+
+.chat-find__input {
+  width: 12rem;
+  min-width: 0;
+  padding: 0 var(--ui-space-1);
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-primary);
+  font: var(--ui-font-size-sm) / 1.5 var(--ui-font-body);
+  outline: none;
+}
+
+.chat-find__count {
+  min-width: 3.5rem;
+  color: var(--ui-text-muted);
+  font: var(--ui-font-size-xs) / 1 var(--ui-font-body);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.chat-find .chat-icon-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+::highlight(chat-find) {
+  background-color: var(--ui-warning-muted);
+  color: var(--ui-text-primary);
+}
+
+::highlight(chat-find-current) {
+  background-color: var(--ui-warning);
+  color: var(--ui-text-inverse);
 }
 
 .chat-viewport {
@@ -1231,7 +1294,8 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-spin,
   .chat-cli-glyph[data-tone='live'],
-  .chat-jump {
+  .chat-jump,
+  .chat-find {
     animation: none;
   }
   .chat-chevron,

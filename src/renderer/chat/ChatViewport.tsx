@@ -28,18 +28,65 @@ function estimate(row: ChatRow | undefined): number {
   }
 }
 
+interface HighlightRegistry {
+  set(name: string, highlight: unknown): void;
+  delete(name: string): void;
+}
+
+/**
+ * Find matches of every mounted viewport, painted as `::highlight(chat-find)`;
+ * matches inside the current row also as `::highlight(chat-find-current)`.
+ */
+const findRanges = new Map<symbol, { readonly all: Range[]; readonly current: Range[] }>();
+
+function paintFindHighlight(): void {
+  const registry = (globalThis.CSS as unknown as { highlights?: HighlightRegistry } | undefined)?.highlights;
+  const HighlightType = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+  if (!registry || !HighlightType) return;
+  for (const [name, ranges] of [
+    ['chat-find', [...findRanges.values()].flatMap((entry) => entry.all)],
+    ['chat-find-current', [...findRanges.values()].flatMap((entry) => entry.current)],
+  ] as const) {
+    if (!ranges.length) {
+      registry.delete(name);
+      continue;
+    }
+    const highlight = new HighlightType(...ranges) as { priority?: number };
+    // The current row's matches paint over the others.
+    if (name === 'chat-find-current') highlight.priority = 1;
+    registry.set(name, highlight);
+  }
+}
+
+function matchRanges(root: Element, needle: string, limit = 2_000): Range[] {
+  const ranges: Range[] = [];
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node && ranges.length < limit; node = walker.nextNode()) {
+    const text = (node.nodeValue ?? '').toLocaleLowerCase();
+    for (let at = text.indexOf(needle); at >= 0 && ranges.length < limit; at = text.indexOf(needle, at + needle.length)) {
+      const range = root.ownerDocument.createRange();
+      range.setStart(node, at);
+      range.setEnd(node, at + needle.length);
+      ranges.push(range);
+    }
+  }
+  return ranges;
+}
+
+/** A running turn's status trails its rows instead of heading them. */
+function liveStatus(row: ChatRow): '' | undefined {
+  return row.kind === 'turn-status' && !row.finishedAt ? '' : undefined;
+}
+
 /**
  * Scroll container for chat rows: follows the tail while the reader is at the
  * bottom (also when rows grow after async highlighting or expansion), offers a
  * jump-to-latest pill and a "New" divider when content arrives while scrolled
  * up, and restores the reader's position by row id after remounts.
  */
-/** A running turn's status trails its rows instead of heading them. */
-function liveStatus(row: ChatRow): '' | undefined {
-  return row.kind === 'turn-status' && !row.finishedAt ? '' : undefined;
-}
-
-export function ChatViewport({ rows, renderRow, stateKey, before, after, onReachTop, testId = 'structured-agent-transcript', label }: {
+export function ChatViewport({
+  rows, renderRow, stateKey, before, after, onReachTop, testId = 'structured-agent-transcript', label, highlight, focusRow,
+}: {
   readonly rows: readonly ChatRow[];
   readonly renderRow: (row: ChatRow) => ReactNode;
   readonly stateKey?: string;
@@ -49,6 +96,10 @@ export function ChatViewport({ rows, renderRow, stateKey, before, after, onReach
   readonly onReachTop?: () => void;
   readonly testId?: string;
   readonly label: string;
+  /** Find-in-chat query; matches in mounted rows are highlighted. */
+  readonly highlight?: string;
+  /** Row to bring into view and mark as the current find match; `seq` re-triggers the same row. */
+  readonly focusRow?: { readonly id: string; readonly seq: number };
 }): JSX.Element {
   const copy = useChatCopy();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -116,6 +167,50 @@ export function ChatViewport({ rows, renderRow, stateKey, before, after, onReach
     return () => observer.disconnect();
   }, [virtual]);
 
+  // Find: scroll the current match into view without leaving follow mode on.
+  useLayoutEffect(() => {
+    if (!focusRow) return;
+    const index = rows.findIndex((row) => row.id === focusRow.id);
+    if (index < 0) return;
+    following.current = false;
+    if (virtual) {
+      virtualizer.scrollToIndex(index, { align: 'center' });
+    } else {
+      scrollRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(focusRow.id)}"]`)?.scrollIntoView({ block: 'center' });
+    }
+    // Only a new target (or a repeat request) scrolls; row updates do not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRow]);
+
+  // Find: highlight matches in whatever rows are mounted, repainting as rows mount or change.
+  useEffect(() => {
+    const element = scrollRef.current;
+    const needle = highlight?.trim().toLocaleLowerCase();
+    if (!element || !needle || typeof MutationObserver === 'undefined') return undefined;
+    const key = Symbol('chat-find');
+    let frame = 0;
+    const paint = (): void => {
+      const list = element.querySelector('.chat-rows');
+      const all = list ? matchRanges(list, needle) : [];
+      const currentRow = list?.querySelector('[data-find-current]');
+      findRanges.set(key, { all, current: currentRow ? all.filter((range) => currentRow.contains(range.startContainer)) : [] });
+      paintFindHighlight();
+    };
+    const schedule = (): void => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(paint);
+    };
+    schedule();
+    const observer = new MutationObserver(schedule);
+    observer.observe(element, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-find-current'] });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      findRanges.delete(key);
+      paintFindHighlight();
+    };
+  }, [highlight]);
+
   const onScroll = (): void => {
     const element = scrollRef.current;
     if (!element) return;
@@ -151,6 +246,7 @@ export function ChatViewport({ rows, renderRow, stateKey, before, after, onReach
                 const row = rows[item.index]!;
                 return (
                   <li key={item.key} ref={virtualizer.measureElement} data-index={item.index} data-row-id={row.id} data-kind={row.kind} data-live={liveStatus(row)}
+                    data-find-current={row.id === focusRow?.id ? '' : undefined}
                     className="chat-row" style={{ transform: `translateY(${item.start - listOffset}px)` }}>
                     {rowNode(row)}
                   </li>
@@ -163,7 +259,8 @@ export function ChatViewport({ rows, renderRow, stateKey, before, after, onReach
           <div className="chat-viewport__content">
             {before}
             <ol className="chat-rows" aria-label={label}>
-              {rows.map((row) => <li key={row.id} data-row-id={row.id} data-kind={row.kind} data-live={liveStatus(row)} className="chat-row">{rowNode(row)}</li>)}
+              {rows.map((row) => <li key={row.id} data-row-id={row.id} data-kind={row.kind} data-live={liveStatus(row)}
+                data-find-current={row.id === focusRow?.id ? '' : undefined} className="chat-row">{rowNode(row)}</li>)}
             </ol>
             {after}
           </div>
