@@ -228,7 +228,10 @@ test('restored Agent opens managed and provider-native children with enforced ow
     await expect(managed).toBeVisible();
     await expect(managed.getByText('Implementation is ready for direct follow-up.')).toBeVisible();
     await expect(managed.getByTestId('structured-agent-composer-input')).toBeEnabled();
+    // Session actions live in the header's menu.
+    await managed.getByTestId('structured-agent-menu').click();
     await expect(managed.getByTestId('structured-agent-detach')).toBeVisible();
+    await window.keyboard.press('Escape');
 
     const providerNativeChild = managed.getByTestId('structured-agent-child').filter({
       hasText: 'Provider Native Reviewer',
@@ -258,8 +261,11 @@ test('restored Agent opens managed and provider-native children with enforced ow
 
     await window.locator('.dv-tab', { hasText: 'Managed Implementer' }).click();
     await expect(managed).toBeVisible();
+    await managed.getByTestId('structured-agent-menu').click();
     await managed.getByTestId('structured-agent-detach').click();
+    await managed.getByTestId('structured-agent-menu').click();
     await expect(managed.getByTestId('structured-agent-detach')).toHaveCount(0);
+    await window.keyboard.press('Escape');
 
     await expect.poll(async () => {
       const snapshot = await window.evaluate(async () => (

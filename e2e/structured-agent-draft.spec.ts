@@ -227,7 +227,9 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await composer.press('Enter');
     await expect(composer).toHaveValue('$fixture-review ');
     expect((await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot()))?.turns).toEqual([]);
-    await session.getByRole('button', { name: 'Previous conversations', exact: true }).click();
+    // Previous conversations live in the header's session menu.
+    await session.getByTestId('structured-agent-menu').click();
+    await session.getByRole('menuitem', { name: 'Previous conversations', exact: true }).click();
     await expect(window.getByTestId('conversation-history-dialog')).toBeVisible();
     await window.getByRole('button', { name: 'Close previous conversations', exact: true }).click();
     await expect(composer).toHaveValue('$fixture-review ');

@@ -278,9 +278,12 @@ test('lists a local Claude session for a terminal project and opens it read-only
   await rows.first().click();
   const panel = window.getByTestId('conversation-start');
   await expect(panel).toBeVisible({ timeout: 15_000 });
-  const transcript = panel.locator('.structured-agent-transcript');
+  const transcript = panel.getByTestId('structured-agent-transcript');
   await expect(transcript).toContainText(PROMPT);
   await expect(transcript).toContainText('reading the handoff package now');
+  // Tool activity reads as a collapsed run ("Ran 1 command and edited 1 file"); expanding it names the command.
+  await expect(transcript).toContainText('Ran 1 command');
+  await transcript.locator('.chat-run__header').first().click();
   await expect(transcript).toContainText('pnpm test:unit');
   // Slash-command plumbing is not conversation.
   await expect(transcript).not.toContainText('/clear');
@@ -334,7 +337,7 @@ test('keeps the complete current file and an unplaced provider record in one rev
   await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
   await window.locator('.agent-history-row').first().click();
-  const transcript = window.getByTestId('conversation-start').locator('.structured-agent-transcript');
+  const transcript = window.getByTestId('conversation-start').getByTestId('structured-agent-transcript');
   await transcript.locator('.conversation-history__changes summary').click();
   const fileChange = transcript.getByRole('button', { name: 'src/app.ts', exact: true });
   await expect(fileChange).toBeVisible({ timeout: 15_000 });
@@ -374,7 +377,7 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
 
-  const transcript = window.getByTestId('conversation-start').locator('.structured-agent-transcript');
+  const transcript = window.getByTestId('conversation-start').getByTestId('structured-agent-transcript');
   const turns = transcript.locator('.chat-row[data-kind="user"]');
   // Exactly one page: the newest twenty of the twenty-six turns on disk.
   await expect(turns).toHaveCount(20, { timeout: 15_000 });
