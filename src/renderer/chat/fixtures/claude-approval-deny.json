@@ -18,17 +18,6 @@
       "createdAt": "2026-10-01T09:00:00.000Z"
     },
     {
-      "id": "claude_f360433441093a9c4921d6c8",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "user-message",
-      "text": "Delete README.md using a shell command. If a tool call is denied or fails, stop immediately and say so in one sentence; do not retry or try alternatives.",
-      "isDelta": false,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 2
-    },
-    {
       "id": "claude_6dc533cc41a4d22164b141f7",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
@@ -36,8 +25,19 @@
       "text": "PowerShell\n{\n  \"command\": \"Remove-Item README.md -Confirm:$false\",\n  \"description\": \"Delete README.md\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_0175LMubZ1Hx3fYtiwcvFPQ5",
+        "name": "PowerShell",
+        "category": "command",
+        "phase": "call",
+        "status": "running",
+        "target": "Remove-Item README.md -Confirm:$false",
+        "command": "Remove-Item README.md -Confirm:$false"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 3
+      "sequence": 2
     },
     {
       "id": "claude_8fa7f34626aeedfb3d7b6eb5",
@@ -48,7 +48,7 @@
       "isDelta": false,
       "isSensitive": false,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 4
+      "sequence": 3
     },
     {
       "id": "claude_97de13d59940e5eb7ebea915",
@@ -58,11 +58,33 @@
       "text": "Denied by the user.",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_0175LMubZ1Hx3fYtiwcvFPQ5",
+        "name": "PowerShell",
+        "category": "command",
+        "phase": "result",
+        "status": "denied"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "claude_0349ac755d98cb507e4f00bd",
+      "messageId": "claude_msg:msg_011Cg3KZCVeTCmekHn5acjVu:0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I didn't delete README.md because the shell command was denied, and I stopped there without trying anything else.",
+      "isDelta": true,
+      "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 5
     },
     {
       "id": "claude_ac7f36114dc4c499869b904f",
+      "messageId": "claude_msg:msg_011Cg3KZCVeTCmekHn5acjVu:0",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -91,7 +113,14 @@
       "turnId": "replay-turn-1",
       "providerRequestId": "8a04750c-bb8b-4f4d-9b14-19534283b482",
       "risk": "danger",
-      "title": "Claude requests PowerShell",
+      "title": "Run command",
+      "detail": "Remove-Item README.md -Confirm:$false",
+      "request": {
+        "v": 1,
+        "callId": "toolu_0175LMubZ1Hx3fYtiwcvFPQ5",
+        "kind": "command",
+        "command": "Remove-Item README.md -Confirm:$false"
+      },
       "state": "denied",
       "revision": 2,
       "createdAt": "2026-10-01T09:00:00.000Z",

@@ -18,13 +18,18 @@
       "createdAt": "2026-10-01T09:00:00.000Z"
     },
     {
-      "id": "claude_f360433441093a9c4921d6c8",
+      "id": "claude_8136d0b5f0be730724f303c0",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
-      "kind": "user-message",
-      "text": "Use the TodoWrite tool to track these three steps and complete them in order, updating the list as you go: (1) read README.md, (2) read src/app.ts, (3) answer in one sentence what greet returns.",
+      "kind": "reasoning",
+      "text": "",
       "isDelta": false,
       "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 2
     },
@@ -36,6 +41,15 @@
       "text": "ToolSearch\n{\n  \"query\": \"TodoWrite\",\n  \"max_results\": 3\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_011mKoxwLd9GHxCmFbmzhyHc",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 3
     },
@@ -47,11 +61,33 @@
       "text": "No matching deferred tools found",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_011mKoxwLd9GHxCmFbmzhyHc",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 4
     },
     {
+      "id": "claude_bf1512fd45f7d47fdc3b845e",
+      "messageId": "claude_msg:msg_011Cg3Kbr4ukWwe5riPVhb4U:0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "TodoWrite isn't available in this session, so I'll track the steps inline.\n\n**Steps:** (1) ☐ read README.md · (2) ☐ read src/app.ts · (3) ☐ answer",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
       "id": "claude_a48f53df0b2f4cbe4a707562",
+      "messageId": "claude_msg:msg_011Cg3Kbr4ukWwe5riPVhb4U:0",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -59,7 +95,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 5
+      "sequence": 6
     },
     {
       "id": "claude_918031db436848fa3dc26194",
@@ -69,8 +105,18 @@
       "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\README.md\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01PGAB2UGTs6rv76RRnsUFaD",
+        "name": "Read",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\README.md"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 6
+      "sequence": 7
     },
     {
       "id": "claude_48b4df23f49d4db94c61583e",
@@ -80,11 +126,33 @@
       "text": "1\t# Demo app\n2\t\n3\tA tiny demo project used for EZTerminal provider fixture capture.\n4\tThe `greet` helper lives in src/app.ts.\n5\t",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01PGAB2UGTs6rv76RRnsUFaD",
+        "name": "Read",
+        "category": "read",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 7
+      "sequence": 8
+    },
+    {
+      "id": "claude_6d3ad5daf38693232b1d552f",
+      "messageId": "claude_msg:msg_011Cg3Kc2oZaRMAb9t58qKoQ:0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "**Steps:** (1) ☑ read README.md · (2) ☐ read src/app.ts · (3) ☐ answer",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
     },
     {
       "id": "claude_de533e06ae82c4edf20b9390",
+      "messageId": "claude_msg:msg_011Cg3Kc2oZaRMAb9t58qKoQ:0",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -92,7 +160,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 8
+      "sequence": 10
     },
     {
       "id": "claude_c2924a23c96c64b5213bddb0",
@@ -102,8 +170,18 @@
       "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_019tjU1KAArMntZ2WuyLF5Mj",
+        "name": "Read",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 9
+      "sequence": 11
     },
     {
       "id": "claude_63913a669c4ae71a0bab858b",
@@ -113,11 +191,49 @@
       "text": "1\texport function greet(name: string): string {\n2\t  return `Hello, ${name}!`;\n3\t}\n4\t\n5\texport function main(): void {\n6\t  console.log(greet('world'));\n7\t}\n8\t",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_019tjU1KAArMntZ2WuyLF5Mj",
+        "name": "Read",
+        "category": "read",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 10
+      "sequence": 12
+    },
+    {
+      "id": "claude_6ab21db3bcd5ba718dc45cbf",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 13
+    },
+    {
+      "id": "claude_261daf2083d66650b1bfb39d",
+      "messageId": "claude_msg:msg_011Cg3KcB88RVsGErEPR16XG:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I couldn't use TodoWrite because it isn't available in this session, so I tracked the three steps in my messages instead.\n\n**Steps:** (1) ☑ read README.md · (2) ☑ read src/app.ts · (3) ☑ answer\n\n`greet(name)` returns the string `Hello, ${name}!`, so `greet('world')` returns `\"Hello, world!\"`.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 14
     },
     {
       "id": "claude_5c2c3ee0e59bda9d252a9d9d",
+      "messageId": "claude_msg:msg_011Cg3KcB88RVsGErEPR16XG:1",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -125,7 +241,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 11
+      "sequence": 15
     },
     {
       "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
@@ -135,7 +251,7 @@
       "text": "Claude completed the turn.",
       "isDelta": false,
       "isSensitive": false,
-      "sequence": 12,
+      "sequence": 16,
       "createdAt": "2026-10-01T09:00:00.000Z"
     }
   ],

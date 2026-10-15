@@ -89,13 +89,21 @@ export function summarizeActivity(entries: readonly ChatActivity[], live: boolea
     ? thoughts.reduce((total, thought) => total + (thought.durationMs ?? 0), 0)
     : undefined;
   const counts = new Map<ToolCategory | 'fetch', { total: number; running: number; targets: Set<string> }>();
-  for (const tool of tools) {
-    const key = bucket(tool);
+  const count = (key: ToolCategory | 'fetch', running: boolean, target: string | undefined): void => {
     const entry = counts.get(key) ?? { total: 0, running: 0, targets: new Set<string>() };
     entry.total += 1;
-    if (tool.status === 'running') entry.running += 1;
-    if (tool.target) entry.targets.add(tool.target.toLowerCase());
+    if (running) entry.running += 1;
+    if (target) entry.targets.add(target.toLowerCase());
     counts.set(key, entry);
+  };
+  for (const tool of tools) {
+    const running = tool.status === 'running';
+    // One change set (Codex fileChange) can create some files and edit others.
+    if ((tool.category === 'edit' || tool.category === 'write') && tool.files && tool.files.length > 1) {
+      for (const file of tool.files) count(file.kind === 'add' ? 'write' : 'edit', running, file.path);
+    } else {
+      count(bucket(tool), running, tool.target);
+    }
   }
   // Reading or editing the same file twice is still "1 file".
   const FILE_BUCKETS = new Set<ToolCategory | 'fetch'>(['read', 'edit', 'write']);

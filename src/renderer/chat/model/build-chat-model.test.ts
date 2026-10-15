@@ -133,6 +133,10 @@ describe('buildChatModel over recorded provider sessions', () => {
       .flatMap((entry) => (entry.kind === 'tool' ? [entry.tool] : []));
     const edit = tools.find((tool) => tool.category === 'edit' || tool.category === 'write');
     expect(edit?.files?.map((file) => file.path.replace(/^.*[\\/]/u, '')).sort()).toEqual(['app.ts', 'notes.md']);
+    // One change set that adds one file and edits another counts both.
+    const run = model.rows.find((row): row is Extract<ChatRow, { kind: 'activity' }> => row.kind === 'activity'
+      && row.entries.some((entry) => entry.kind === 'tool' && entry.tool === edit))!;
+    expect(summarizeActivity(run.entries, false, 'en').text).toBe('Read 1 file, edited 1 file, and created 1 file');
   });
 
   it('builds the task list from Claude task tools and hides tool discovery', () => {

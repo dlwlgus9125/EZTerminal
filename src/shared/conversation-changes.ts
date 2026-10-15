@@ -35,17 +35,31 @@ export function conversationFileChanges(items: readonly DaemonTranscriptItem[], 
   return changes.sort((a, b) => a.sequence - b.sequence);
 }
 
+/** Lines of a text body; a final newline ends the last line rather than adding an empty one. */
+function bodyLines(text: string): string[] {
+  return text.replace(/\r?\n$/u, '').split('\n');
+}
+
 export function claudeFileChange(name: string, input: unknown): RecordedFileChange | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const data = input as Record<string, unknown>;
   if (typeof data.file_path !== 'string') return undefined;
   if (name === 'Edit' && typeof data.old_string === 'string' && typeof data.new_string === 'string') {
     return { path: data.file_path, coverage: 'fragment', patch: [
-      ...data.old_string.split('\n').map(line => `-${line}`), ...data.new_string.split('\n').map(line => `+${line}`),
+      ...bodyLines(data.old_string).map(line => `-${line}`), ...bodyLines(data.new_string).map(line => `+${line}`),
     ].join('\n') };
   }
+  if (name === 'MultiEdit' && Array.isArray(data.edits)) {
+    const hunks = data.edits.flatMap((edit: unknown) => {
+      const entry = edit && typeof edit === 'object' ? edit as Record<string, unknown> : undefined;
+      return typeof entry?.old_string === 'string' && typeof entry.new_string === 'string'
+        ? [[...bodyLines(entry.old_string).map(line => `-${line}`), ...bodyLines(entry.new_string).map(line => `+${line}`)].join('\n')]
+        : [];
+    });
+    return hunks.length ? { path: data.file_path, coverage: 'fragment', patch: hunks.join('\n') } : undefined;
+  }
   if (name === 'Write' && typeof data.content === 'string') {
-    return { path: data.file_path, coverage: 'fragment', patch: data.content.split('\n').map(line => `+${line}`).join('\n') };
+    return { path: data.file_path, coverage: 'fragment', patch: bodyLines(data.content).map(line => `+${line}`).join('\n') };
   }
   return undefined;
 }

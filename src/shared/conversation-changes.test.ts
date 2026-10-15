@@ -13,6 +13,18 @@ describe('recorded conversation changes', () => {
       { text: '+new', kind: 'add', after: 8 }, { text: ' context', kind: 'context', before: 9, after: 9 },
     ]);
   });
+  it('treats a final newline as the end of the last line, not an extra added line', () => {
+    expect(claudeFileChange('Write', { file_path: 'notes.md', content: 'One line.\n' })!.patch).toBe('+One line.');
+    expect(claudeFileChange('Edit', { file_path: 'a.ts', old_string: 'a\r\n', new_string: 'b\n' })!.patch).toBe('-a\n+b');
+    expect(claudeFileChange('Write', { file_path: 'blank.md', content: 'x\n\n' })!.patch).toBe('+x\n+');
+  });
+  it('records every replacement of a MultiEdit', () => {
+    const change = claudeFileChange('MultiEdit', { file_path: 'a.ts', edits: [
+      { old_string: 'one', new_string: 'uno' }, { old_string: 'two\n', new_string: 'dos\n' }, { old_string: 1 },
+    ] })!;
+    expect(change).toEqual({ path: 'a.ts', coverage: 'fragment', patch: '-one\n+uno\n-two\n+dos' });
+    expect(claudeFileChange('MultiEdit', { file_path: 'a.ts', edits: [] })).toBeUndefined();
+  });
   it('does not invent file line numbers for a partial Edit or Write operation', () => {
     const edit = claudeFileChange('Edit', { file_path: 'a.ts', old_string: 'old', new_string: 'new' })!;
     expect(edit.coverage).toBe('fragment');

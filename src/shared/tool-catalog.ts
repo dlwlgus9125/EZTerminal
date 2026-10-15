@@ -27,8 +27,12 @@ const CLAUDE_TOOL_CATEGORIES: Readonly<Record<string, ToolCategory>> = {
   Task: 'agent',
   Agent: 'agent',
   TodoWrite: 'todo',
+  TaskCreate: 'todo',
+  TaskUpdate: 'todo',
+  TaskList: 'todo',
   AskUserQuestion: 'question',
   ExitPlanMode: 'plan',
+  ToolSearch: 'other',
 };
 
 export function toolCategory(name: string): ToolCategory {

@@ -18,17 +18,6 @@
       "createdAt": "2026-10-01T09:00:00.000Z"
     },
     {
-      "id": "claude_f360433441093a9c4921d6c8",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "user-message",
-      "text": "In src/app.ts rename the function `greet` to `greetUser` and update its call site, then create a new file notes.md containing exactly one line: `Renamed greet to greetUser.` Do nothing else.",
-      "isDelta": false,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 2
-    },
-    {
       "id": "claude_76d6b500ef8a1b6fd018407d",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
@@ -36,8 +25,18 @@
       "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01AWXoigVVDQNNaiUgNLDFxv",
+        "name": "Read",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 3
+      "sequence": 2
     },
     {
       "id": "claude_2596f95c433d2b85eddc6d59",
@@ -47,8 +46,17 @@
       "text": "1\texport function greet(name: string): string {\n2\t  return `Hello, ${name}!`;\n3\t}\n4\t\n5\texport function main(): void {\n6\t  console.log(greet('world'));\n7\t}\n8\t",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01AWXoigVVDQNNaiUgNLDFxv",
+        "name": "Read",
+        "category": "read",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 4
+      "sequence": 3
     },
     {
       "id": "claude_452a717095d095e0656d4886",
@@ -58,8 +66,18 @@
       "text": "Edit\n{\n  \"replace_all\": false,\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\",\n  \"old_string\": \"export function greet(\",\n  \"new_string\": \"export function greetUser(\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_018KgYRUvdVjhkZriNCnSnhM",
+        "name": "Edit",
+        "category": "edit",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 5
+      "sequence": 4
     },
     {
       "id": "claude_6e657c1e8e45a3ec4295f7b9",
@@ -70,7 +88,7 @@
       "isDelta": false,
       "isSensitive": false,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 6
+      "sequence": 5
     },
     {
       "id": "claude_0fccff7cee8602a2e383dad2",
@@ -80,8 +98,25 @@
       "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"-export function greet(\\n+export function greetUser(\",\"coverage\":\"fragment\"}]}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_018KgYRUvdVjhkZriNCnSnhM",
+        "name": "Edit",
+        "category": "edit",
+        "phase": "result",
+        "status": "completed",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\src\\app.ts",
+            "kind": "update",
+            "added": 1,
+            "removed": 1
+          }
+        ]
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 7
+      "sequence": 6
     },
     {
       "id": "claude_d9bedca064ebeb85792cea88",
@@ -91,8 +126,18 @@
       "text": "Edit\n{\n  \"replace_all\": false,\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\",\n  \"old_string\": \"console.log(greet(\",\n  \"new_string\": \"console.log(greetUser(\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_0135GrhYSECnCLXTrjQnJLmA",
+        "name": "Edit",
+        "category": "edit",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 8
+      "sequence": 7
     },
     {
       "id": "claude_17c5fe8a801c50ecee4e2a54",
@@ -103,7 +148,7 @@
       "isDelta": false,
       "isSensitive": false,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 9
+      "sequence": 8
     },
     {
       "id": "claude_f9ee9132570041d34adb9d12",
@@ -113,19 +158,46 @@
       "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"-console.log(greet(\\n+console.log(greetUser(\",\"coverage\":\"fragment\"}]}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_0135GrhYSECnCLXTrjQnJLmA",
+        "name": "Edit",
+        "category": "edit",
+        "phase": "result",
+        "status": "completed",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\src\\app.ts",
+            "kind": "update",
+            "added": 1,
+            "removed": 1
+          }
+        ]
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 10
+      "sequence": 9
     },
     {
       "id": "claude_59a6fb48c3df838cb64b902a",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-call",
-      "text": "Write\nRenamed greet to greetUser.\n",
+      "text": "Write\n{\n  \"file_path\": \"<WORKSPACE>\\\\notes.md\",\n  \"content\": \"Renamed greet to greetUser.\\n\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01NJWA58XJnSPmSb8DR3BztK",
+        "name": "Write",
+        "category": "write",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\notes.md"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 11
+      "sequence": 10
     },
     {
       "id": "claude_b02faa46d434c2e7a41fab08",
@@ -136,21 +208,66 @@
       "isDelta": false,
       "isSensitive": false,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 12
+      "sequence": 11
     },
     {
       "id": "claude_72645486d1803d7ddc5b7518",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-result",
-      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\notes.md\",\"patch\":\"+Renamed greet to greetUser.\\n+\",\"coverage\":\"fragment\"}]}",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\notes.md\",\"patch\":\"+Renamed greet to greetUser.\",\"coverage\":\"fragment\"}]}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01NJWA58XJnSPmSb8DR3BztK",
+        "name": "Write",
+        "category": "write",
+        "phase": "result",
+        "status": "completed",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\notes.md",
+            "kind": "add",
+            "added": 1
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 12
+    },
+    {
+      "id": "claude_0e1931b02d98ba32b8b74b0c",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 13
     },
     {
+      "id": "claude_125a6acd363351ca99c54945",
+      "messageId": "claude_msg:msg_011Cg3KY2NuxZmnkSwjQTQ8C:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I renamed `greet` to `greetUser` in `src/app.ts` and updated the one call in `main()`. I also created `notes.md` with the single line `Renamed greet to greetUser.`\n\nI didn't check other files: `greet` was exported, so anything that imports it elsewhere will need updating too.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 14
+    },
+    {
       "id": "claude_681039b48a4895d94068715b",
+      "messageId": "claude_msg:msg_011Cg3KY2NuxZmnkSwjQTQ8C:1",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -158,7 +275,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 14
+      "sequence": 15
     },
     {
       "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
@@ -168,7 +285,7 @@
       "text": "Claude completed the turn.",
       "isDelta": false,
       "isSensitive": false,
-      "sequence": 15,
+      "sequence": 16,
       "createdAt": "2026-10-01T09:00:00.000Z"
     }
   ],
@@ -179,7 +296,20 @@
       "turnId": "replay-turn-1",
       "providerRequestId": "a639f732-3988-4808-99c1-13833b776c5e",
       "risk": "write",
-      "title": "Claude requests Edit",
+      "title": "Edit app.ts",
+      "detail": "<WORKSPACE>\\src\\app.ts",
+      "request": {
+        "v": 1,
+        "callId": "toolu_018KgYRUvdVjhkZriNCnSnhM",
+        "kind": "file-change",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\src\\app.ts",
+            "kind": "update",
+            "diff": "@@\n-export function greet(\n+export function greetUser("
+          }
+        ]
+      },
       "state": "allowed",
       "revision": 2,
       "createdAt": "2026-10-01T09:00:00.000Z",
@@ -192,7 +322,20 @@
       "turnId": "replay-turn-1",
       "providerRequestId": "c9251302-4504-4476-8935-51874f86b944",
       "risk": "write",
-      "title": "Claude requests Edit",
+      "title": "Edit app.ts",
+      "detail": "<WORKSPACE>\\src\\app.ts",
+      "request": {
+        "v": 1,
+        "callId": "toolu_0135GrhYSECnCLXTrjQnJLmA",
+        "kind": "file-change",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\src\\app.ts",
+            "kind": "update",
+            "diff": "@@\n-console.log(greet(\n+console.log(greetUser("
+          }
+        ]
+      },
       "state": "allowed",
       "revision": 2,
       "createdAt": "2026-10-01T09:00:00.000Z",
@@ -205,7 +348,19 @@
       "turnId": "replay-turn-1",
       "providerRequestId": "9095a18f-a691-4e3f-9219-cccab64cc9e7",
       "risk": "write",
-      "title": "Claude requests Write",
+      "title": "Edit notes.md",
+      "detail": "<WORKSPACE>\\notes.md",
+      "request": {
+        "v": 1,
+        "callId": "toolu_01NJWA58XJnSPmSb8DR3BztK",
+        "kind": "file-change",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\notes.md",
+            "diff": "@@\n+Renamed greet to greetUser."
+          }
+        ]
+      },
       "state": "allowed",
       "revision": 2,
       "createdAt": "2026-10-01T09:00:00.000Z",

@@ -17,208 +17,16 @@
       "createdAt": "2026-10-01T09:00:00.000Z"
     },
     {
-      "id": "codex_item_638b1a9923ee3e10ef60a3cf",
-      "messageId": "codex_message_c87dd44c4751663bc9308c67",
+      "id": "codex_delta_7ab03022891e50bfa4482d65",
+      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
-      "kind": "user-message",
-      "text": "Use your update_plan tool to track these three steps and complete them in order, updating the plan as you go: (1) read README.md, (2) read src/app.ts, (3) answer in one sentence what greet returns.",
-      "isDelta": false,
+      "kind": "assistant-message",
+      "text": "I’ll read the two files in order and track each step in the plan.\n",
+      "isDelta": true,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 2
-    },
-    {
-      "id": "codex_delta_b61d3d1bf11a669904e3b40e",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "I",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 3
-    },
-    {
-      "id": "codex_delta_d43afdd6686941bbe2b5f3b1",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "’ll",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 4
-    },
-    {
-      "id": "codex_delta_45917e03fc7d740c0a58bee7",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " read",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 5
-    },
-    {
-      "id": "codex_delta_7a0c79ff4cdc8e8ecd6415de",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " the",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 6
-    },
-    {
-      "id": "codex_delta_b5b10f4e2bfff013cda497a0",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " two",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 7
-    },
-    {
-      "id": "codex_delta_7a6731f16c773a2472006169",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " files",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 8
-    },
-    {
-      "id": "codex_delta_d4275495a8eaf37a1f7611a2",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " in",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 9
-    },
-    {
-      "id": "codex_delta_eadbb501976574520b223692",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " order",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 10
-    },
-    {
-      "id": "codex_delta_a98890e08ad9889fbf0484dc",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " and",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 11
-    },
-    {
-      "id": "codex_delta_865284cb9c91cdfceb8a718c",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " track",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 12
-    },
-    {
-      "id": "codex_delta_55dd33d46cd96a29c6222980",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " each",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 13
-    },
-    {
-      "id": "codex_delta_376169ac14e286d3ea370f4e",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " step",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 14
-    },
-    {
-      "id": "codex_delta_f94ebad7ff4631858f65b471",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " in",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 15
-    },
-    {
-      "id": "codex_delta_44d4b1a5cf6293aeb6dcafc1",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " the",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 16
-    },
-    {
-      "id": "codex_delta_5a9da5cebf6da45c26096e71",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " plan",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 17
-    },
-    {
-      "id": "codex_delta_02b9680b375f6beb5fefd26d",
-      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": ".\n",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 18
     },
     {
       "id": "codex_item_613eb4aea15e6b06ca645d00",
@@ -230,7 +38,37 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 19
+      "sequence": 3
+    },
+    {
+      "id": "codex_plan_072c5bf61ba9e35688ef2007",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [ ] Read README.md (in progress)\n- [ ] Read src/app.ts\n- [ ] Answer in one sentence what greet returns",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "in_progress"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "pending"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "pending"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
     },
     {
       "id": "codex_item_b5116b763c9cc6f0266c08ee",
@@ -238,11 +76,23 @@
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-call",
-      "text": "$ \"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'Get-Content -LiteralPath README.md'",
+      "text": "$ Get-Content -LiteralPath README.md",
       "isDelta": false,
       "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-495725ab-5552-4701-ad80-a50610cc11d5",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\README.md",
+        "command": "Get-Content -LiteralPath README.md",
+        "cwd": "<WORKSPACE>"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 20
+      "sequence": 5
     },
     {
       "id": "codex_item_c6ab185a905bb164cf09eb74",
@@ -253,8 +103,52 @@
       "text": "# Demo app\r\n\r\nA tiny demo project used for EZTerminal provider fixture capture.\r\nThe `greet` helper lives in src/app.ts.\r\n",
       "isDelta": false,
       "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-495725ab-5552-4701-ad80-a50610cc11d5",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "result",
+        "status": "completed",
+        "target": "<WORKSPACE>\\README.md",
+        "command": "Get-Content -LiteralPath README.md",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 533
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 21
+      "sequence": 6
+    },
+    {
+      "id": "codex_plan_f763ce68ab328515351ac858",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [ ] Read src/app.ts (in progress)\n- [ ] Answer in one sentence what greet returns",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "in_progress"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "pending"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
     },
     {
       "id": "codex_item_3269b688593f5b43240db58f",
@@ -262,11 +156,23 @@
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-call",
-      "text": "$ \"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'Get-Content -LiteralPath src/app.ts'",
+      "text": "$ Get-Content -LiteralPath src/app.ts",
       "isDelta": false,
       "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-3238a501-77c2-4e9d-9c73-d91e1a85de32",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content -LiteralPath src/app.ts",
+        "cwd": "<WORKSPACE>"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 22
+      "sequence": 8
     },
     {
       "id": "codex_item_9581efd3e44bb614e10fce86",
@@ -277,260 +183,94 @@
       "text": "export function greet(name: string): string {\r\n  return `Hello, ${name}!`;\r\n}\r\n\r\nexport function main(): void {\r\n  console.log(greet('world'));\r\n}\r\n",
       "isDelta": false,
       "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-3238a501-77c2-4e9d-9c73-d91e1a85de32",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "result",
+        "status": "completed",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content -LiteralPath src/app.ts",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 617
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 23
+      "sequence": 9
     },
     {
-      "id": "codex_delta_e100d07fd5ede2826d1983af",
+      "id": "codex_plan_bb68014c323d0e634121f61c",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [ ] Answer in one sentence what greet returns (in progress)",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "in_progress"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "codex_plan_ae6a6921301a4769040d37d1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [x] Answer in one sentence what greet returns",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "completed"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 11
+    },
+    {
+      "id": "codex_delta_5caffc5c50d6739806a57057",
       "messageId": "codex_message_56853f50244967a45cea7ad7",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
-      "text": "`",
+      "text": "`greet(name)` returns the string `Hello, ${name}!`, with the supplied name inserted.",
       "isDelta": true,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 24
-    },
-    {
-      "id": "codex_delta_ce727403ea13dbbeffa531a5",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "g",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 25
-    },
-    {
-      "id": "codex_delta_4c278199057f81122d781e9c",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "reet",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 26
-    },
-    {
-      "id": "codex_delta_36d68b3f9d268aa6f50dde81",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "(name",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 27
-    },
-    {
-      "id": "codex_delta_3b8f8c752b5f03a3b2424cf7",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": ")`",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 28
-    },
-    {
-      "id": "codex_delta_f8360bb7f5a9e4e06b6266c7",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " returns",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 29
-    },
-    {
-      "id": "codex_delta_e50ec9a05c1048b50cbeb019",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " the",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 30
-    },
-    {
-      "id": "codex_delta_4b494fbf185d7649fd5a18a2",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " string",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 31
-    },
-    {
-      "id": "codex_delta_53021056493ec8195bfbe0ce",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " `",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 32
-    },
-    {
-      "id": "codex_delta_f598f6866d569214297771ec",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "Hello",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 33
-    },
-    {
-      "id": "codex_delta_de576caddc43c4954ad077d2",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": ",",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 34
-    },
-    {
-      "id": "codex_delta_13a055216b8553013e272aab",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " ${",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 35
-    },
-    {
-      "id": "codex_delta_e749b3ff061e3ccad2deea5d",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "name",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 36
-    },
-    {
-      "id": "codex_delta_fa78d3430283073ebfd0c9e9",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "}!",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 37
-    },
-    {
-      "id": "codex_delta_d24b1169bae39f84fcc0b3f3",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": "`,",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 38
-    },
-    {
-      "id": "codex_delta_451f00115bd1f9711f08469a",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " with",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 39
-    },
-    {
-      "id": "codex_delta_43a57c73e77346677a81233d",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " the",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 40
-    },
-    {
-      "id": "codex_delta_8286a470618fe577610c6c00",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " supplied",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 41
-    },
-    {
-      "id": "codex_delta_6bae4e28c7691a522b4b2e52",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " name",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 42
-    },
-    {
-      "id": "codex_delta_f5f14629136b1471bbdc5418",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": " inserted",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 43
-    },
-    {
-      "id": "codex_delta_e416da13d0338ba2475063d1",
-      "messageId": "codex_message_56853f50244967a45cea7ad7",
-      "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
-      "kind": "assistant-message",
-      "text": ".",
-      "isDelta": true,
-      "isSensitive": true,
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 44
+      "sequence": 12
     },
     {
       "id": "codex_item_50a9a502002cc65153c43b5a",
@@ -542,7 +282,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 45
+      "sequence": 13
     },
     {
       "id": "turn-summary-be700f6d22355b535356f3c495498fe3",
@@ -552,7 +292,7 @@
       "text": "`greet(name)` returns the string `Hello, ${name}!`, with the supplied name inserted.",
       "isDelta": false,
       "isSensitive": false,
-      "sequence": 46,
+      "sequence": 14,
       "createdAt": "2026-10-01T09:00:00.000Z"
     }
   ],

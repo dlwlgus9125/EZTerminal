@@ -18,18 +18,36 @@
       "createdAt": "2026-10-01T09:00:00.000Z"
     },
     {
-      "id": "claude_f360433441093a9c4921d6c8",
+      "id": "claude_81aac279bb957e8f60dfb869",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
-      "kind": "user-message",
-      "text": "Use the TodoWrite tool to track these three steps and complete them in order, updating the list as you go: (1) read README.md, (2) read src/app.ts, (3) answer in one sentence what greet returns.",
+      "kind": "reasoning",
+      "text": "",
       "isDelta": false,
       "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 2
     },
     {
+      "id": "claude_08242921e81e438d5e70352f",
+      "messageId": "claude_msg:msg_011Cg3KkV8pAtiED2Vo5145f:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "TodoWrite isn't available here, but the Task tools are. I'll load those to track the steps.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
       "id": "claude_710027a59340beac890a24bb",
+      "messageId": "claude_msg:msg_011Cg3KkV8pAtiED2Vo5145f:1",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -37,7 +55,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 3
+      "sequence": 4
     },
     {
       "id": "claude_bde8da315f968ddd639a3eb0",
@@ -47,19 +65,37 @@
       "text": "ToolSearch\n{\n  \"query\": \"select:TaskCreate,TaskUpdate\",\n  \"max_results\": 2\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01JmvSi2ZNLtBcAa67aV2WDM",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 4
+      "sequence": 5
     },
     {
       "id": "claude_47a6547aef30656eb5642c20",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-result",
-      "text": "{\n  \"type\": \"tool_reference\",\n  \"tool_name\": \"TaskCreate\"\n}\n{\n  \"type\": \"tool_reference\",\n  \"tool_name\": \"TaskUpdate\"\n}",
+      "text": "TaskCreate\nTaskUpdate",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01JmvSi2ZNLtBcAa67aV2WDM",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 5
+      "sequence": 6
     },
     {
       "id": "claude_92b849986d25759fb10308d8",
@@ -69,8 +105,17 @@
       "text": "TaskCreate\n{\n  \"subject\": \"Read README.md\",\n  \"description\": \"Read the project README.md\",\n  \"activeForm\": \"Reading README.md\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Nq6ktFkvkhuJAAXC3epHtq",
+        "name": "TaskCreate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 6
+      "sequence": 7
     },
     {
       "id": "claude_2904c9d97ffa15d5b2eae525",
@@ -80,8 +125,40 @@
       "text": "Task #1 created successfully: Read README.md",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Nq6ktFkvkhuJAAXC3epHtq",
+        "name": "TaskCreate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 7
+      "sequence": 8
+    },
+    {
+      "id": "claude_b83133c221a6de5f7abe2065",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [ ] Read README.md",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "pending",
+            "active": "Reading README.md"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
     },
     {
       "id": "claude_14bbe74fb8acffaf9d9df2cd",
@@ -91,8 +168,17 @@
       "text": "TaskCreate\n{\n  \"subject\": \"Read src/app.ts\",\n  \"description\": \"Read src/app.ts to find greet\",\n  \"activeForm\": \"Reading src/app.ts\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Uj5ERx5hW8B1FpJ4vR1DG2",
+        "name": "TaskCreate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 8
+      "sequence": 10
     },
     {
       "id": "claude_f47fe871fe4b85cdd4f8390d",
@@ -102,8 +188,45 @@
       "text": "Task #2 created successfully: Read src/app.ts",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Uj5ERx5hW8B1FpJ4vR1DG2",
+        "name": "TaskCreate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 9
+      "sequence": 11
+    },
+    {
+      "id": "claude_f967127e1d0a34f9bcd0b0c8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [ ] Read README.md\n- [ ] Read src/app.ts",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "pending",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "pending",
+            "active": "Reading src/app.ts"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 12
     },
     {
       "id": "claude_98b96d5a6e4aa6908f998768",
@@ -113,8 +236,17 @@
       "text": "TaskCreate\n{\n  \"subject\": \"Answer what greet returns\",\n  \"description\": \"Answer in one sentence what greet returns\",\n  \"activeForm\": \"Answering\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Ww48eyuUMjk5TZT5FvUTxB",
+        "name": "TaskCreate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 10
+      "sequence": 13
     },
     {
       "id": "claude_c83a9bb4acd9c2bbc81dfa01",
@@ -124,8 +256,50 @@
       "text": "Task #3 created successfully: Answer what greet returns",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Ww48eyuUMjk5TZT5FvUTxB",
+        "name": "TaskCreate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 11
+      "sequence": 14
+    },
+    {
+      "id": "claude_eaae37f5052d57ca49a80718",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [ ] Read README.md\n- [ ] Read src/app.ts\n- [ ] Answer what greet returns",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "pending",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "pending",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "pending",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 15
     },
     {
       "id": "claude_441fd9516faa35cda0a9e586",
@@ -135,8 +309,17 @@
       "text": "TaskUpdate\n{\n  \"taskId\": \"1\",\n  \"status\": \"in_progress\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01V7wiH1fHHA8vCgKtitJebo",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 12
+      "sequence": 16
     },
     {
       "id": "claude_c8d2cdb780d13221e60229b1",
@@ -146,8 +329,50 @@
       "text": "Updated task #1 status",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01V7wiH1fHHA8vCgKtitJebo",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 13
+      "sequence": 17
+    },
+    {
+      "id": "claude_b3ba16d469a8c36145a3f459",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [ ] Read README.md (in progress)\n- [ ] Read src/app.ts\n- [ ] Answer what greet returns",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "in_progress",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "pending",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "pending",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 18
     },
     {
       "id": "claude_eff81e05ffd4e009124cd8de",
@@ -157,8 +382,18 @@
       "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\README.md\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01H2pufRxfoMuftjNBeU2k6s",
+        "name": "Read",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\README.md"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 14
+      "sequence": 19
     },
     {
       "id": "claude_0150939e71ad512e2b296b9e",
@@ -168,8 +403,17 @@
       "text": "1\t# Demo app\n2\t\n3\tA tiny demo project used for EZTerminal provider fixture capture.\n4\tThe `greet` helper lives in src/app.ts.\n5\t",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01H2pufRxfoMuftjNBeU2k6s",
+        "name": "Read",
+        "category": "read",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 15
+      "sequence": 20
     },
     {
       "id": "claude_f2bb9507fdfd7f6a48408942",
@@ -179,8 +423,17 @@
       "text": "TaskUpdate\n{\n  \"taskId\": \"1\",\n  \"status\": \"completed\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01DoQ6iZLao3PDdc2zh9hms6",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 16
+      "sequence": 21
     },
     {
       "id": "claude_111f98c86b236a21a7282f4f",
@@ -190,8 +443,50 @@
       "text": "Updated task #1 status",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01DoQ6iZLao3PDdc2zh9hms6",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 17
+      "sequence": 22
+    },
+    {
+      "id": "claude_c42592c7c88035ae82ce9e54",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [ ] Read src/app.ts\n- [ ] Answer what greet returns",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "pending",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "pending",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 23
     },
     {
       "id": "claude_3810bb1f93455d6576951f36",
@@ -201,8 +496,17 @@
       "text": "TaskUpdate\n{\n  \"taskId\": \"2\",\n  \"status\": \"in_progress\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_015v5ug35VrqVnWsz4U2ApV5",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 18
+      "sequence": 24
     },
     {
       "id": "claude_5ce5f9b325a674c91db912f4",
@@ -212,8 +516,50 @@
       "text": "Updated task #2 status",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_015v5ug35VrqVnWsz4U2ApV5",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 19
+      "sequence": 25
+    },
+    {
+      "id": "claude_4894f87637849774543c04f2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [ ] Read src/app.ts (in progress)\n- [ ] Answer what greet returns",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "in_progress",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "pending",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 26
     },
     {
       "id": "claude_c8afaf9bdcef009e62214b0f",
@@ -223,8 +569,18 @@
       "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01MzGSPU42rft4EQagBFnniY",
+        "name": "Read",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 20
+      "sequence": 27
     },
     {
       "id": "claude_736b8c7606bf74d0f6a69e8a",
@@ -234,8 +590,17 @@
       "text": "1\texport function greet(name: string): string {\n2\t  return `Hello, ${name}!`;\n3\t}\n4\t\n5\texport function main(): void {\n6\t  console.log(greet('world'));\n7\t}\n8\t",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01MzGSPU42rft4EQagBFnniY",
+        "name": "Read",
+        "category": "read",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 21
+      "sequence": 28
     },
     {
       "id": "claude_fcc118c87e3416da2936cc1c",
@@ -245,8 +610,17 @@
       "text": "TaskUpdate\n{\n  \"taskId\": \"2\",\n  \"status\": \"completed\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01MdX9Mqq4akKdgSQhxCxjug",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 22
+      "sequence": 29
     },
     {
       "id": "claude_9ca6eb47356512a51d55260a",
@@ -256,8 +630,50 @@
       "text": "Updated task #2 status",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01MdX9Mqq4akKdgSQhxCxjug",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 23
+      "sequence": 30
+    },
+    {
+      "id": "claude_3217bd8ecbfce65113195477",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [ ] Answer what greet returns",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "pending",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 31
     },
     {
       "id": "claude_777f7b58017e7e9fd96caa08",
@@ -267,8 +683,17 @@
       "text": "TaskUpdate\n{\n  \"taskId\": \"3\",\n  \"status\": \"in_progress\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01BXnMhhXwSgtC3D7cUkkUXe",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 24
+      "sequence": 32
     },
     {
       "id": "claude_aa10d4224bd4561bc24c0257",
@@ -278,8 +703,50 @@
       "text": "Updated task #3 status",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01BXnMhhXwSgtC3D7cUkkUXe",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 25
+      "sequence": 33
+    },
+    {
+      "id": "claude_b90cf5c0ab0718e8209f1c36",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [ ] Answer what greet returns (in progress)",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "in_progress",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 34
     },
     {
       "id": "claude_b69b06f46816a669f174381e",
@@ -289,8 +756,17 @@
       "text": "TaskUpdate\n{\n  \"taskId\": \"3\",\n  \"status\": \"completed\"\n}",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_012fjcHHREnhnwJxiSubBXgL",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "call",
+        "status": "running"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 26
+      "sequence": 35
     },
     {
       "id": "claude_2b0f8e68fb74d7d8885dec7b",
@@ -300,11 +776,82 @@
       "text": "Updated task #3 status",
       "isDelta": false,
       "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_012fjcHHREnhnwJxiSubBXgL",
+        "name": "TaskUpdate",
+        "category": "todo",
+        "phase": "result",
+        "status": "completed"
+      },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 27
+      "sequence": 36
+    },
+    {
+      "id": "claude_9bc7ed31a19b7cdacc8861b4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [x] Answer what greet returns",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "claude-todowrite",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed",
+            "active": "Reading README.md"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed",
+            "active": "Reading src/app.ts"
+          },
+          {
+            "text": "Answer what greet returns",
+            "status": "completed",
+            "active": "Answering"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 37
+    },
+    {
+      "id": "claude_a29212fb9df9865c83b72122",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 38
+    },
+    {
+      "id": "claude_2401c9ff27ef8318060c1e38",
+      "messageId": "claude_msg:msg_011Cg3Kmim92EBeNR6kstnPP:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "`greet(name)` returns the string `` `Hello, ${name}!` `` (for example, `greet('world')` gives `\"Hello, world!\"`).\n\nThere was no TodoWrite tool in this session, so I tracked the three steps with the Task tools (TaskCreate/TaskUpdate) instead. All three are marked done.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 39
     },
     {
       "id": "claude_6620cf95f4a2b8ff2c4948b6",
+      "messageId": "claude_msg:msg_011Cg3Kmim92EBeNR6kstnPP:1",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "assistant-message",
@@ -312,7 +859,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 28
+      "sequence": 40
     },
     {
       "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
@@ -322,7 +869,7 @@
       "text": "Claude completed the turn.",
       "isDelta": false,
       "isSensitive": false,
-      "sequence": 29,
+      "sequence": 41,
       "createdAt": "2026-10-01T09:00:00.000Z"
     }
   ],
