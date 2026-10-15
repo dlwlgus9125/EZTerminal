@@ -963,7 +963,9 @@ export class DaemonStore {
         ...(optionalString(row, 'turn_id') === undefined ? {} : { turnId: optionalString(row, 'turn_id') }),
         providerRequestId: requiredString(row, 'provider_request_id'), risk: requiredString(row, 'risk') as DaemonApproval['risk'],
         title: requiredString(row, 'title'), ...(optionalString(row, 'detail') === undefined ? {} : { detail: optionalString(row, 'detail') }),
-        ...approvalRequestFromRow(row),
+        // The request is kept for history but only travels while it can be answered:
+        // a resolved diff or plan would otherwise ride in every snapshot push.
+        ...(requiredString(row, 'state') === 'pending' ? approvalRequestFromRow(row) : {}),
         state: requiredString(row, 'state') as DaemonApproval['state'],
         ...(optionalString(row, 'resolved_at') === undefined ? {} : { resolvedAt: optionalString(row, 'resolved_at') }),
         revision: integer(row, 'revision'), createdAt: requiredString(row, 'created_at'), updatedAt: requiredString(row, 'updated_at'),
@@ -1864,13 +1866,14 @@ export class DaemonStore {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             session_id = excluded.session_id, turn_id = excluded.turn_id, provider_request_id = excluded.provider_request_id,
-            risk = excluded.risk, title = excluded.title, detail = excluded.detail, request_json = excluded.request_json,
+            risk = excluded.risk, title = excluded.title, detail = excluded.detail,
+            request_json = COALESCE(excluded.request_json, approvals.request_json),
             state = excluded.state,
             resolved_at = excluded.resolved_at, revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
           value.id, value.sessionId, value.turnId ?? null, value.providerRequestId, value.risk, value.title,
           value.detail ?? null, value.state, value.resolvedAt ?? null, revision, now, now,
-          value.request ? JSON.stringify(ApprovalRequestSchema.parse(value.request)) : null,
+          serializedApprovalRequest(value.request),
         );
         return [
           { kind: 'entity.upserted', payload: { entityType: 'approval', entityId: value.id } },
@@ -2033,7 +2036,7 @@ export class DaemonStore {
         item.id, item.sessionId, item.turnId ?? null, sequence, item.kind, item.text,
         item.isDelta ? 1 : 0, item.isSensitive ? 1 : 0, item.relatedSessionId ?? null, item.createdAt ?? now, item.messageId ?? null,
         item.context ? JSON.stringify(ChatMessageContextSchema.parse(item.context)) : null,
-        item.payload ? JSON.stringify(TranscriptPayloadSchema.parse(item.payload)) : null,
+        serializedTranscriptPayload(item.payload),
       );
       nextSequenceBySession.set(item.sessionId, sequence);
       const range = rangeBySession.get(item.sessionId);
@@ -2119,6 +2122,28 @@ export class DaemonStore {
       throw error;
     }
   }
+}
+
+/** Maximum serialized approval request; larger requests keep only title/detail. */
+const MAX_APPROVAL_REQUEST_BYTES = 64 * 1024;
+
+/**
+ * Persistence is tolerant on write as well as read: a payload or request an
+ * adapter shaped wrongly is dropped (the item and approval still land with their
+ * legacy text), never a reason to fail the whole batch or block the turn.
+ */
+function serializedTranscriptPayload(payload: unknown): string | null {
+  if (payload === undefined) return null;
+  const parsed = TranscriptPayloadSchema.safeParse(payload);
+  return parsed.success ? JSON.stringify(parsed.data) : null;
+}
+
+function serializedApprovalRequest(request: unknown): string | null {
+  if (request === undefined) return null;
+  const parsed = ApprovalRequestSchema.safeParse(request);
+  if (!parsed.success) return null;
+  const json = JSON.stringify(parsed.data);
+  return Buffer.byteLength(json, 'utf8') <= MAX_APPROVAL_REQUEST_BYTES ? json : null;
 }
 
 /** A stored payload this build cannot read is dropped, never fatal: `text` still renders. */

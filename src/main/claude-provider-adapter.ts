@@ -1,3 +1,4 @@
+import type { DeltaCoalescerOptions } from './delta-coalescer';
 import { claudeFileChange, encodeFileChanges, type RecordedFileChange } from '../shared/conversation-changes';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -308,6 +309,8 @@ export interface ClaudeProviderAdapterOptions {
   readonly operationTimeoutMs?: number;
   readonly shutdownTimeoutMs?: number;
   readonly extensionCommand?: typeof runNativeExtensionCommand;
+  /** Streaming batch timing; replay passes a scheduler that never fires so goldens are deterministic. */
+  readonly deltaCoalescer?: DeltaCoalescerOptions;
 }
 
 type TurnState = 'submitted' | 'completed' | 'interrupted' | 'failed';

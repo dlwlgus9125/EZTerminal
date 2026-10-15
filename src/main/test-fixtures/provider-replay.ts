@@ -15,7 +15,9 @@ import { fileURLToPath } from 'node:url';
 
 import type { Options, PermissionResult, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
+import type { ApprovalResponse } from '../../shared/approval-request';
 import type { DaemonApproval, DaemonTranscriptItem, PermissionPreset } from '../../shared/daemon-protocol';
+import type { DeltaCoalescerOptions } from '../delta-coalescer';
 import type { AgentProviderAdapter, AgentProviderEvent, ProviderSessionHandle } from '../agent-provider-adapter';
 import {
   ClaudeProviderAdapter,
@@ -191,9 +193,40 @@ interface ReplayHarness {
   readonly providerResponses: unknown[];
   readonly failures: unknown[];
   /** Approval decisions queued by the fake provider just before it asks. */
-  readonly decisions: ('allow' | 'deny')[];
+  readonly decisions: ReplayDecision[];
   handle?: ProviderSessionHandle;
   run(operation: () => Promise<unknown>): void;
+}
+
+interface ReplayDecision {
+  readonly decision: 'allow' | 'deny';
+  /** The richer answer the recorded user gave (question answers, plan approval). */
+  readonly response?: ApprovalResponse;
+}
+
+/**
+ * Streaming flushes only at block/item boundaries during replay: the timer
+ * never fires, so goldens do not depend on wall-clock batching.
+ */
+export const REPLAY_DELTA_COALESCER: DeltaCoalescerOptions = {
+  schedule: () => undefined,
+  cancel: () => undefined,
+};
+
+/** The user's recorded Claude answer, expressed as the response the UI would send. */
+function claudeRecordedDecision(toolName: string, response: PermissionResult): ReplayDecision {
+  if (response.behavior !== 'allow') {
+    const message = typeof response.message === 'string' ? response.message : '';
+    return message && message !== 'Denied by the user.'
+      ? { decision: 'deny', response: { kind: 'feedback', message } }
+      : { decision: 'deny' };
+  }
+  const answers = (response.updatedInput as { answers?: unknown } | undefined)?.answers;
+  if (toolName === 'AskUserQuestion' && answers && typeof answers === 'object') {
+    return { decision: 'allow', response: { kind: 'answers', answers: answers as Record<string, string> } };
+  }
+  if (toolName === 'ExitPlanMode') return { decision: 'allow', response: { kind: 'plan', mode: 'standard' } };
+  return { decision: 'allow' };
 }
 
 function createHarness(fixture: ProviderCaptureFixture): ReplayHarness {
@@ -218,9 +251,10 @@ function subscribeHarness(adapter: AgentProviderAdapter, harness: ReplayHarness)
     const providerSessionId = harness.handle?.providerSessionId ?? '';
     const answer = harness.projection.apply(event, providerSessionId);
     if (event.kind !== 'approval-requested') return;
-    const recorded = harness.decisions.shift() ?? 'deny';
+    const recorded = harness.decisions.shift() ?? { decision: 'deny' };
     // A stale approval is denied by the runtime without asking the user.
-    const decision = answer === 'stale' ? 'deny' : recorded;
+    const decision = answer === 'stale' ? 'deny' : recorded.decision;
+    const response = answer === 'stale' ? undefined : recorded.response;
     setImmediate(() => harness.run(async () => {
       if (answer !== 'stale') harness.projection.resolveApproval(event.providerRequestId, decision, providerSessionId);
       await adapter.resolveApproval({
@@ -228,6 +262,7 @@ function subscribeHarness(adapter: AgentProviderAdapter, harness: ReplayHarness)
         providerSessionId,
         providerRequestId: event.providerRequestId,
         decision,
+        ...(response ? { response } : {}),
       });
     }));
   });
@@ -293,7 +328,7 @@ class ClaudeReplaySession implements ClaudeQuerySession {
       } else if (line.dir === 'canUseTool') {
         const canUseTool = this.input.options.canUseTool;
         if (!canUseTool) throw new Error(`${this.fixture.name}: the adapter registered no canUseTool callback.`);
-        this.harness.decisions.push(line.response.behavior === 'allow' ? 'allow' : 'deny');
+        this.harness.decisions.push(claudeRecordedDecision(line.toolName, line.response));
         const result = await canUseTool(line.toolName, line.input, {
           ...line.options,
           signal: this.signal.signal,
@@ -381,6 +416,7 @@ async function replayClaude(fixture: ProviderCaptureFixture): Promise<ProviderRe
     createId: sequentialIds('replay-claude'),
     now: () => new Date(REPLAY_NOW),
     shutdownTimeoutMs: 1_000,
+    deltaCoalescer: REPLAY_DELTA_COALESCER,
   });
   const unsubscribe = subscribeHarness(adapter, harness);
   try {
@@ -504,7 +540,7 @@ class CodexReplayConnection implements CodexAppServerConnection {
           harness.providerResponses.push({ method, error: { code: -32601 } });
           continue;
         }
-        harness.decisions.push(recordedCodexDecision(this.fixture, frame.id));
+        harness.decisions.push({ decision: recordedCodexDecision(this.fixture, frame.id) });
         try {
           harness.providerResponses.push({ method, result: await handler(frame.params, { id: frame.id, method }) });
         } catch (error) {
@@ -555,6 +591,7 @@ async function replayCodex(fixture: ProviderCaptureFixture): Promise<ProviderRep
     connection,
     now: () => new Date(REPLAY_NOW),
     idFactory: sequentialIds('replay-codex'),
+    deltaCoalescer: REPLAY_DELTA_COALESCER,
   });
   const unsubscribe = subscribeHarness(adapter, harness);
   const commandId = fixture.meta.clientUserMessageId ?? REPLAY_COMMAND_ID;
@@ -693,6 +730,7 @@ class RuntimeProjection {
           isSensitive: item.isSensitive,
           ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}),
           ...(item.context ? { context: item.context } : {}),
+          ...(item.payload ? { payload: item.payload } : {}),
           createdAt: item.createdAt,
         });
         return undefined;
@@ -760,6 +798,7 @@ class RuntimeProjection {
           risk: event.risk,
           title: event.title,
           ...(event.detail ? { detail: event.detail } : {}),
+          ...(event.request ? { request: event.request } : {}),
           state: stale ? 'expired' : 'pending',
           ...(stale ? { resolvedAt: REPLAY_NOW } : {}),
           revision: 1,

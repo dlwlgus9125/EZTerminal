@@ -638,6 +638,47 @@ describe('DaemonStore', () => {
     await store.close();
   });
 
+  it('keeps an approval request while pending, hides it after resolution, and drops a malformed one', async () => {
+    const store = new DaemonStore(makeDirectory());
+    await store.init();
+    await store.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation()] });
+    const request = { v: 1, kind: 'command', command: 'pnpm test', cwd: 'C:\\repo', callId: 'toolu_1' } as const;
+    const pending = {
+      id: 'approval-request', sessionId: 'session-1', providerRequestId: 'provider-request', risk: 'danger' as const,
+      title: 'Run command', state: 'pending' as const, request,
+    };
+    await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: pending }] });
+    expect(store.getSnapshot().approvals[0]).toMatchObject({ id: 'approval-request', request });
+
+    // The runtime rebuilds the value without `request` when it resolves; the store keeps it.
+    const { request: _omitted, ...withoutRequest } = pending;
+    await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...withoutRequest, state: 'allowed', resolvedAt: FIXED_TIME } }] });
+    expect(store.getSnapshot().approvals[0]).toMatchObject({ state: 'allowed' });
+    expect(store.getSnapshot().approvals[0]).not.toHaveProperty('request');
+
+    await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: {
+      ...pending, id: 'approval-malformed', providerRequestId: 'provider-request-2',
+      request: { ...request, unexpected: true } as unknown as typeof request,
+    } }] });
+    const malformed = store.getSnapshot().approvals.find((approval) => approval.id === 'approval-malformed');
+    expect(malformed).toMatchObject({ state: 'pending', title: 'Run command' });
+    expect(malformed).not.toHaveProperty('request');
+    await store.close();
+  });
+
+  it('stores a transcript item even when its payload is malformed', async () => {
+    const store = new DaemonStore(makeDirectory());
+    await store.init();
+    await store.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation('terminal-1', 'terminal')] });
+    await store.appendTranscriptBatch([{
+      id: 'tool', sessionId: 'terminal-1', kind: 'tool-call', text: 'Read\n{}', isDelta: false, isSensitive: false,
+      payload: { v: 1, type: 'tool', callId: 'x', name: 'Read', category: 'read', phase: 'call', extra: 1 } as never,
+    }]);
+    expect(store.getTranscript('terminal-1')[0]).toMatchObject({ id: 'tool', text: 'Read\n{}' });
+    expect(store.getTranscript('terminal-1')[0]).not.toHaveProperty('payload');
+    await store.close();
+  });
+
   it('serializes competing commits so only the command with the current revision applies', async () => {
     const store = new DaemonStore(makeDirectory());
     await store.init();

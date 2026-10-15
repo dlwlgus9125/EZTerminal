@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { parseApprovalRequest } from '../../shared/approval-request';
+import { parseTranscriptPayload } from '../../shared/transcript-payload';
 import {
   PROVIDER_GOLDEN_DIRECTORY,
   listProviderCaptureFixtures,
@@ -24,6 +26,14 @@ describe('recorded provider sessions replayed through the current adapters', () 
   for (const name of fixtures) {
     it(`${name} matches its golden transcript`, async () => {
       const golden = await replayProviderFixture(readProviderCaptureFixture(name));
+      // The store drops a payload or request that fails its schema; an adapter
+      // must never emit one, so the replay fails loudly instead.
+      for (const item of golden.items) {
+        if (item.payload !== undefined) expect(parseTranscriptPayload(item.payload), `${item.id} payload`).toBeDefined();
+      }
+      for (const approval of golden.approvals) {
+        if (approval.request !== undefined) expect(parseApprovalRequest(approval.request), `${approval.id} request`).toBeDefined();
+      }
       const target = path.join(PROVIDER_GOLDEN_DIRECTORY, `${name}.json`);
       const serialized = `${JSON.stringify(golden, null, 2)}\n`;
       if (updateGoldens) {

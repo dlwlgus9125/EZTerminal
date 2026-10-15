@@ -1,3 +1,4 @@
+import type { DeltaCoalescerOptions } from './delta-coalescer';
 import { encodeFileChanges } from '../shared/conversation-changes';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -135,6 +136,8 @@ export interface CodexProviderAdapterOptions {
   readonly probeTimeoutMs?: number;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
+  /** Streaming batch timing; replay passes a scheduler that never fires so goldens are deterministic. */
+  readonly deltaCoalescer?: DeltaCoalescerOptions;
 }
 
 function asObject(value: unknown): JsonObject | undefined {
