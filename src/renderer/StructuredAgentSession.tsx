@@ -793,6 +793,10 @@ export interface StructuredAgentTranscriptProps {
   readonly onOpenRelatedSession?: (sessionId: string) => void;
   readonly onOpenLink?: (url: string) => void;
   readonly onReviewChanges?: () => void;
+  /** Older messages exist above the loaded window. */
+  readonly hasEarlier?: boolean;
+  readonly loadingEarlier?: boolean;
+  readonly onLoadEarlier?: () => void;
   readonly controlsDisabled?: boolean;
   readonly onReply?: (reply: ChatReplyReference) => void;
   readonly onReuse?: (text: string) => void;
@@ -819,6 +823,9 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   onOpenRelatedSession,
   onOpenLink,
   onReviewChanges,
+  hasEarlier = false,
+  loadingEarlier = false,
+  onLoadEarlier,
   controlsDisabled = false,
   onReply,
   onReuse,
@@ -853,6 +860,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
         emptyLabel={copy.transcriptEmpty}
         loadingLabel={copy.transcriptLoading}
         retryLabel={copy.retry}
+        {...(hasEarlier && onLoadEarlier ? { earlier: { loading: loadingEarlier, onLoad: onLoadEarlier } } : {})}
       />
       {unfinishedTodo && <TaskDock items={unfinishedTodo} />}
       {model.pending && onResolveApproval && (
@@ -1448,6 +1456,9 @@ export interface StructuredAgentSessionPanelProps {
   readonly approvalResponses?: boolean;
   /** Opens an http(s) link from chat in the system browser. */
   readonly onOpenLink?: (url: string) => void;
+  readonly hasEarlier?: boolean;
+  readonly loadingEarlier?: boolean;
+  readonly onLoadEarlier?: () => void;
   readonly transcriptLoading?: boolean;
   readonly transcriptError?: string | null;
   readonly disabled?: boolean;
@@ -1544,6 +1555,9 @@ export function StructuredAgentSessionPanel({
   turns,
   approvalResponses = false,
   onOpenLink,
+  hasEarlier = false,
+  loadingEarlier = false,
+  onLoadEarlier,
   reasoningEffort,
   effortSupported = false,
   fileSearch,
@@ -1604,6 +1618,7 @@ export function StructuredAgentSessionPanel({
   const panelRef = useRef<HTMLElement>(null);
   const [wideReview, setWideReview] = useState(false);
   const [reviewAside, setReviewAside] = useState(false);
+  const [reviewRequest, setReviewRequest] = useState(0);
   useLayoutEffect(() => {
     const element = panelRef.current;
     if (!element) return;
@@ -1907,6 +1922,7 @@ export function StructuredAgentSessionPanel({
 
       <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
         onAsideChange={setReviewAside}
+        openRequest={reviewRequest}
         onOpenProjectFiles={onOpenProjectFiles}
         onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />
       {workflowContext}
@@ -1927,6 +1943,10 @@ export function StructuredAgentSessionPanel({
         workspaceRoot={workspace.path}
         approvalResponses={approvalResponses}
         {...(onOpenLink ? { onOpenLink } : {})}
+        onReviewChanges={() => setReviewRequest((request) => request + 1)}
+        hasEarlier={hasEarlier}
+        loadingEarlier={loadingEarlier}
+        {...(onLoadEarlier ? { onLoadEarlier } : {})}
         providerLabel={providerLabel}
         loading={transcriptLoading}
         error={transcriptError}

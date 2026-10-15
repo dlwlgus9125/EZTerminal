@@ -13,6 +13,18 @@
   flex-direction: column;
 }
 
+.chat-earlier {
+  display: flex;
+  justify-content: center;
+  padding: var(--ui-space-3) 0 0;
+}
+
+.chat-earlier .chat-spin {
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-1);
+}
+
 /* find in conversation */
 .chat-find {
   position: absolute;

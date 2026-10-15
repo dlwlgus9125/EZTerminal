@@ -211,9 +211,24 @@ export function ChatViewport({
     };
   }, [highlight]);
 
+  // Rows loaded above (earlier messages) must not move what the reader is looking at.
+  const firstRowId = rows[0]?.id;
+  const previous = useRef<{ readonly firstRowId?: string; readonly height: number; readonly top: number }>({ height: 0, top: 0 });
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const before = previous.current;
+    if (before.firstRowId && firstRowId !== before.firstRowId && !following.current
+      && rows.some((row) => row.id === before.firstRowId)) {
+      element.scrollTop = before.top + (element.scrollHeight - before.height);
+    }
+    previous.current = { firstRowId, height: element.scrollHeight, top: element.scrollTop };
+  });
+
   const onScroll = (): void => {
     const element = scrollRef.current;
     if (!element) return;
+    previous.current = { ...previous.current, height: element.scrollHeight, top: element.scrollTop };
     const bottom = element.scrollHeight - element.scrollTop - element.clientHeight < FOLLOW_THRESHOLD_PX;
     following.current = bottom;
     setAtBottom(bottom);

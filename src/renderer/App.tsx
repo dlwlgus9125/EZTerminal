@@ -74,6 +74,7 @@ import { ConversationHistoryDialog } from './ConversationHistoryPicker';
 import { ConversationDockPanel } from './ConversationDockPanel';
 import type { ConversationEntry } from '../shared/conversation-history';
 import { StructuredAgentCreateRecoveryRegistry } from './structured-agent-create-recovery';
+import { useStructuredAgentTabStatuses } from './structured-agent-tab-status';
 
 import { ProjectEditorPanel } from './ProjectEditorPanel';
 import { ProjectMapPanel, type ProjectMapEvidenceTarget } from './ProjectMapPanel';
@@ -1386,6 +1387,7 @@ export function App(): JSX.Element {
     return window.ezterminalDesktop?.onAgentSessionReveal((sessionId) => focusAgentSession(sessionId));
   }, [focusAgentSession]);
 
+  const structuredTabStatuses = useStructuredAgentTabStatuses();
   const agentTabStatuses = useMemo<ReadonlyMap<string, AgentTabPresentation>>(() => {
     const rank: Record<AgentStatus, number> = {
       blocked: 0,
@@ -1396,7 +1398,8 @@ export function App(): JSX.Element {
       unknown: 5,
       idle: 6,
     };
-    const result = new Map<string, AgentTabPresentation>();
+    // Structured Agent panels publish their own state; terminal Agent activity is added below.
+    const result = new Map<string, AgentTabPresentation>(structuredTabStatuses);
     for (const activity of agentSnapshot.items) {
       for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
         if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
@@ -1411,7 +1414,7 @@ export function App(): JSX.Element {
       }
     }
     return result;
-  }, [agentSnapshot, sessionPaneBindings]);
+  }, [agentSnapshot, sessionPaneBindings, structuredTabStatuses]);
   const terminalConversationChecks = useRef(new Map<string, { at: number; activityId: string; resolved: boolean }>());
   useEffect(() => {
     if (!window.ezterminal.resolveConversation) return;
@@ -1766,6 +1769,10 @@ export function App(): JSX.Element {
     }, { kind: 'main-tab' });
     revealOpenedSession();
   }, [sessionMirroringCoordinator, revealOpenedSession]);
+
+  // A clicked notification for a structured Agent conversation opens it.
+  useEffect(() => window.ezterminalDesktop?.onStructuredAgentReveal?.((sessionId) => openStructuredAgentSession({ sessionId })),
+    [openStructuredAgentSession]);
 
   const structuredAgentNavigationValue = useMemo<StructuredAgentNavigationContextValue>(() => ({
     continueCli: async entry => {

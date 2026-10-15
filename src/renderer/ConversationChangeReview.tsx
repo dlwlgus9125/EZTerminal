@@ -8,10 +8,12 @@ import { readSessionViewState, saveSessionViewState } from './session-view-state
 import { ConversationReviewOverlayContext } from './conversation-review-overlay';
 
 interface ReviewState { open: boolean; scope: 'latest' | 'all'; selected?: string; reviewed: string[]; range?: [number, number] }
-export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange }: {
+export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange, openRequest = 0 }: {
   sessionId: string; items: readonly DaemonTranscriptItem[]; wide: boolean; mobile: boolean; ownerDocument?: Document; onQuote?: (text: string) => void; onOpenProjectFiles?: () => void;
   /** Reports whether the review is docked beside the transcript, so the panel can reserve room without :has(). */
   onAsideChange?: (open: boolean) => void;
+  /** Incremented by the transcript's "Review" action to open this review on the latest turn. */
+  openRequest?: number;
 }): JSX.Element {
   const { i18n } = useAppTranslation(); const ko = i18n.language.startsWith('ko');
   const HostOverlay = useContext(ConversationReviewOverlayContext);
@@ -22,6 +24,8 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   const asideOpen = wide && state.open;
   useEffect(() => { onAsideChange?.(asideOpen); }, [asideOpen, onAsideChange]);
   const update = (patch: Partial<ReviewState>): void => setState(current => { const next = { ...current, ...patch }; saveSessionViewState(key, next); return next; });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request opens the review
+  useEffect(() => { if (openRequest > 0) update({ open: true, scope: 'latest' }); }, [openRequest]);
   const changes = useMemo(() => conversationFileChanges(items, sessionId), [items, sessionId]);
   const latestTurn = changes.at(-1)?.turnId;
   const visible = changes.filter(change => state.scope === 'all' || change.turnId === latestTurn);

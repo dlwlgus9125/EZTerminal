@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { ApprovalResponse } from '../shared/approval-request';
 import { PlanningNavigationContext } from './PlanningWorkspaceDockPanel';
 import { WorkflowConversationContext, WorkflowConversationUnavailable, useWorkflowConversationScope } from './workflow/WorkflowConversationContext';
 import type { IDockviewPanelProps } from 'dockview-react';
@@ -16,8 +17,10 @@ import {
   type DaemonCommandReceipt,
   type DaemonSnapshot,
   type DaemonTranscriptItem,
+  type ManagedAgentState,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
+import { setStructuredAgentTabStatus, structuredTabStatus, tabProvider } from './structured-agent-tab-status';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import type { RendererRecoveryStructuredAgentCreate } from '../shared/renderer-recovery';
@@ -75,6 +78,11 @@ let fallbackId = 0;
 
 const TRANSCRIPT_PAGE_SIZE = 500;
 const TRANSCRIPT_PAGES_PER_YIELD = 10;
+/** A reopened conversation loads its newest items first; older ones load on demand. */
+const TRANSCRIPT_TAIL_WINDOW = 3 * TRANSCRIPT_PAGE_SIZE;
+/** The tail is extended (bounded) until it shows this many prompts, for old delta-heavy sessions. */
+const TRANSCRIPT_TAIL_MIN_PROMPTS = 2;
+const TRANSCRIPT_TAIL_MAX_EXTENSIONS = 8;
 const HEARTBEAT_SESSION_STATES = new Set([
   'starting',
   'queued',
@@ -113,6 +121,40 @@ function localUserItem(
     createdAt: new Date().toISOString(),
     ...(context ? { context } : {}),
   };
+}
+
+/** Chat links open in the OS browser; main accepts only credential-free http(s). */
+function openLink(url: string): void {
+  if (/^https?:/iu.test(url)) void window.ezterminalDesktop?.openExternalHttpUrl(url);
+}
+
+/** Electron's File -> absolute path bridge, for files dropped on the composer. */
+function pathForDrop(file: File): string | null {
+  try {
+    return window.ezterminalDesktop?.getPathForFile(file) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+let mentionSearchSequence = 0;
+/** One stable function per root: the composer re-runs its search whenever the function changes. */
+const mentionSearches = new Map<string, (query: string) => Promise<readonly string[]>>();
+
+/** `@` mentions search the session's workspace with the Quick Open file index. */
+function desktopFileSearch(root: string | undefined): ((query: string) => Promise<readonly string[]>) | undefined {
+  const desktop = window.ezterminalDesktop;
+  if (!root || typeof desktop?.searchWorkspaceFiles !== 'function') return undefined;
+  const existing = mentionSearches.get(root);
+  if (existing) return existing;
+  const search = async (query: string): Promise<readonly string[]> => {
+    if (!query.trim()) return [];
+    mentionSearchSequence += 1;
+    const result = await desktop.searchWorkspaceFiles({ requestId: `agent-mention-${mentionSearchSequence}`, root, query });
+    return result.ok ? result.matches.map((match) => match.relativePath.replace(/\\/gu, '/')) : [];
+  };
+  mentionSearches.set(root, search);
+  return search;
 }
 
 export function mergeAuthoritativeTranscript(
@@ -286,6 +328,12 @@ export function StructuredAgentDockPanel(
   const transcriptSessionRef = useRef<string | null>(restoredSessionId);
   const transcriptGenerationRef = useRef(0);
   const transcriptInFlightRef = useRef<Promise<void> | null>(null);
+  /** Sequence below the oldest loaded item; 0 once the whole transcript is loaded. */
+  const transcriptFloorRef = useRef(0);
+  const [transcriptFloor, setTranscriptFloor] = useState(0);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const earlierInFlightRef = useRef(false);
+  const tailExtensionsRef = useRef(0);
 
   useEffect(() => {
     const recovery = recoveredCreateRef.current;
@@ -342,6 +390,13 @@ export function StructuredAgentDockPanel(
       && transcriptCursorRef.current >= transcriptTargetRef.current
     ) return Promise.resolve();
     if (transcriptInFlightRef.current) return transcriptInFlightRef.current;
+    if (transcriptCursorRef.current === 0 && authoritativeItemsRef.current.length === 0
+      && transcriptTargetRef.current > TRANSCRIPT_TAIL_WINDOW) {
+      const floor = transcriptTargetRef.current - TRANSCRIPT_TAIL_WINDOW;
+      transcriptCursorRef.current = floor;
+      transcriptFloorRef.current = floor;
+      setTranscriptFloor(floor);
+    }
     const generation = transcriptGenerationRef.current;
     let shouldContinue = false;
     let failed = false;
@@ -428,6 +483,47 @@ export function StructuredAgentDockPanel(
     return promise;
   }, [capabilities]);
 
+  const loadEarlierTranscript = useCallback(async (): Promise<void> => {
+    const targetSessionId = transcriptSessionRef.current;
+    const floor = transcriptFloorRef.current;
+    if (!targetSessionId || floor <= 0 || earlierInFlightRef.current) return;
+    const generation = transcriptGenerationRef.current;
+    earlierInFlightRef.current = true;
+    setLoadingEarlier(true);
+    try {
+      const from = Math.max(0, floor - TRANSCRIPT_PAGE_SIZE);
+      const page = await capabilities.daemon.getTranscript(targetSessionId, from, floor - from);
+      if (transcriptGenerationRef.current !== generation || transcriptSessionRef.current !== targetSessionId) return;
+      const validPage = page
+        .filter((item) => item.sessionId === targetSessionId && Number.isSafeInteger(item.sequence) && item.sequence > from && item.sequence <= floor)
+        .sort((left, right) => left.sequence - right.sequence);
+      if (validPage.length !== floor - from || validPage.some((item, index) => item.sequence !== from + index + 1)) {
+        throw new Error('The earlier Agent transcript page contains a sequence gap.');
+      }
+      const next = mergeAuthoritativeTranscript(authoritativeItemsRef.current, validPage);
+      authoritativeItemsRef.current = next;
+      setAuthoritativeItems(next);
+      transcriptFloorRef.current = from;
+      setTranscriptFloor(from);
+    } catch {
+      if (transcriptGenerationRef.current === generation) setTranscriptError('Earlier messages could not be loaded.');
+    } finally {
+      earlierInFlightRef.current = false;
+      if (transcriptGenerationRef.current === generation) setLoadingEarlier(false);
+    }
+  }, [capabilities]);
+
+  // A tail of streamed deltas can hold less than one exchange; extend it a few pages.
+  useEffect(() => {
+    // Judge the tail only once some of it has arrived.
+    if (transcriptFloor <= 0 || loadingEarlier || authoritativeItems.length === 0
+      || tailExtensionsRef.current >= TRANSCRIPT_TAIL_MAX_EXTENSIONS) return;
+    const prompts = authoritativeItems.filter((item) => item.kind === 'user-message').length;
+    if (prompts >= TRANSCRIPT_TAIL_MIN_PROMPTS) return;
+    tailExtensionsRef.current += 1;
+    void loadEarlierTranscript();
+  }, [authoritativeItems, loadEarlierTranscript, loadingEarlier, transcriptFloor]);
+
   useEffect(() => {
     let cancelled = false;
     void Promise.resolve()
@@ -452,13 +548,18 @@ export function StructuredAgentDockPanel(
     transcriptTargetRef.current = 0;
     transcriptCursorRef.current = 0;
     transcriptInFlightRef.current = null;
+    transcriptFloorRef.current = 0;
+    setTranscriptFloor(0);
+    tailExtensionsRef.current = 0;
     authoritativeItemsRef.current = [];
     setAuthoritativeItems([]);
     setLocalItems((current) => current.filter((item) => item.sessionId === sessionId));
     setTranscriptError(null);
     setTranscriptLoading(sessionId !== null);
     if (sessionId && availability !== undefined && availability?.state !== 'legacy-only-safe-mode') {
-      void syncTranscript(sessionId);
+      // Without a snapshot the head is unknown; the snapshot effect starts the load at the tail.
+      const head = snapshotRef.current?.transcriptHeads.find((candidate) => candidate.sessionId === sessionId);
+      if (snapshotRef.current) void syncTranscript(sessionId, head?.lastSequence ?? 0);
     } else if (availability?.state === 'legacy-only-safe-mode') {
       setTranscriptLoading(false);
     }
@@ -511,8 +612,10 @@ export function StructuredAgentDockPanel(
     if (availability === undefined || availability?.state === 'legacy-only-safe-mode') return undefined;
     let queued = false;
     return capabilities.daemon.observeEvents((event) => {
-      if (event.kind === 'transcript.appended' && event.payload.sessionId === transcriptSessionRef.current) {
-        void syncTranscript(event.payload.sessionId, event.payload.toSequence);
+      if (event.kind === 'transcript.appended') {
+        if (event.payload.sessionId === transcriptSessionRef.current) void syncTranscript(event.payload.sessionId, event.payload.toSequence);
+        // Appends (streamed deltas several times a second) do not change the snapshot.
+        return;
       }
       if (queued) return;
       queued = true;
@@ -738,6 +841,30 @@ export function StructuredAgentDockPanel(
     });
   }, [transcriptItems]);
 
+  // Tab dot: live state, plus "done" for a turn that finished while this tab was not in front.
+  const tabAgent = snapshot?.agents.find((candidate) => candidate.sessionId === sessionId);
+  const tabProviderLabel = snapshot?.providers.find((candidate) => candidate.id === tabAgent?.providerId)?.displayName;
+  const [unseenDone, setUnseenDone] = useState(false);
+  const previousAgentState = useRef<ManagedAgentState | undefined>(undefined);
+  useEffect(() => {
+    const previous = previousAgentState.current;
+    previousAgentState.current = tabAgent?.state;
+    const wasActive = previous === 'starting' || previous === 'queued' || previous === 'working' || previous === 'blocked';
+    if (wasActive && (tabAgent?.state === 'idle' || tabAgent?.state === 'done') && props.api.isActive === false) setUnseenDone(true);
+  }, [props.api, tabAgent?.state]);
+  useEffect(() => {
+    const disposable = props.api.onDidActiveChange?.((event) => { if (event.isActive) setUnseenDone(false); });
+    return () => disposable?.dispose();
+  }, [props.api]);
+  const tabStatus = structuredTabStatus(tabAgent?.state, unseenDone);
+  const tabProviderId = tabAgent?.providerId;
+  useEffect(() => {
+    setStructuredAgentTabStatus(props.api.id, tabStatus && tabProviderId ? {
+      status: tabStatus, provider: tabProvider(tabProviderId), ...(tabProviderLabel ? { providerLabel: tabProviderLabel } : {}),
+    } : undefined);
+  }, [props.api.id, tabProviderId, tabProviderLabel, tabStatus]);
+  useEffect(() => () => setStructuredAgentTabStatus(props.api.id, undefined), [props.api.id]);
+
   if (availability?.state === 'legacy-only-safe-mode' && (sessionId || !props.onOpenTerminal)) {
     return (
       <div className="structured-agent-safe-mode" data-testid="structured-agent-safe-mode">
@@ -806,6 +933,8 @@ export function StructuredAgentDockPanel(
   const workspaceOption: StructuredAgentWorkspaceOption = workspace
     ? { id: workspace.id, label: workspace.name, kind: workspace.kind, path: workspace.rootPath }
     : { id: createdDraft?.workspaceId ?? '', label: 'Workspace unavailable', kind: 'local' };
+  const workspaceRoot = workspace?.rootPath;
+  const fileSearch = desktopFileSearch(workspaceRoot);
 
   const runSessionCommand = async (
     type: 'agent.submit' | 'agent.interrupt-and-submit',
@@ -876,6 +1005,7 @@ export function StructuredAgentDockPanel(
   const changeSettings = async (settings: {
     readonly model?: string;
     readonly permissionPreset: PermissionPreset;
+    readonly reasoningEffort?: string;
   }): Promise<StructuredAgentUiResult> => {
     const authority = await latestSnapshot();
     if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
@@ -891,6 +1021,9 @@ export function StructuredAgentDockPanel(
         sessionId,
         permissionPreset: settings.permissionPreset,
         ...(settings.model ? { model: settings.model } : {}),
+        ...(settings.reasoningEffort && authority.capabilities?.includes('agent-effort-v1')
+          ? { reasoningEffort: settings.reasoningEffort }
+          : {}),
       },
     }));
     return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
@@ -899,6 +1032,7 @@ export function StructuredAgentDockPanel(
   const resolveApproval = async (
     approvalId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ): Promise<StructuredAgentUiResult> => {
     const authority = await latestSnapshot();
     if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
@@ -910,7 +1044,8 @@ export function StructuredAgentDockPanel(
       issuedAt: new Date().toISOString(),
       principal: { kind: 'desktop', id: 'renderer-agent-ui' },
       type: 'permission.resolve',
-      payload: { approvalId, decision },
+      // Older hosts validate this payload strictly and would reject the extra field.
+      payload: { approvalId, decision, ...(response && authority.capabilities?.includes('approval-response-v1') ? { response } : {}) },
     }));
     return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
   };
@@ -1037,6 +1172,7 @@ export function StructuredAgentDockPanel(
   };
 
   const heartbeat = snapshot?.heartbeats.find((candidate) => candidate.sessionId === sessionId);
+  const sessionTurns = (snapshot?.turns ?? []).filter((turn) => turn.sessionId === sessionId);
   const automationReady = snapshot?.runtime.keepRunning === true && snapshot.runtime.startAtLogin === true;
   const historyOnly = session !== undefined && isDaemonSessionArchived(session, agent) || workflowContext.scope?.readOnly === true;
   const heartbeatAvailable = owner === 'managed'
@@ -1077,7 +1213,17 @@ export function StructuredAgentDockPanel(
         return receipt ? resultOf(receipt) : { ok: false, message: 'Queue result unknown. Refresh before trying again.' };
       } : undefined}
       items={transcriptItems}
+      turns={sessionTurns}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}
+      approvalResponses={snapshot?.capabilities?.includes('approval-response-v1') === true}
+      effortSupported={snapshot?.capabilities?.includes('agent-effort-v1') === true}
+      {...(agent?.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {})}
+      onOpenLink={openLink}
+      {...(fileSearch ? { fileSearch } : {})}
+      pathForDrop={pathForDrop}
+      hasEarlier={transcriptFloor > 0}
+      loadingEarlier={loadingEarlier}
+      onLoadEarlier={() => void loadEarlierTranscript()}
       transcriptLoading={transcriptLoading && transcriptItems.length === 0}
       transcriptError={transcriptError ?? loadError ?? (!createdDraft && !loading && snapshot && !session
         ? 'This Agent session is no longer available.'

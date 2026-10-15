@@ -23,11 +23,13 @@ export interface ChatTranscriptProps {
   readonly loadingLabel: string;
   readonly retryLabel: string;
   readonly onReachTop?: () => void;
+  /** Older rows exist above; loads on the button or when the reader nears the top. */
+  readonly earlier?: { readonly loading: boolean; readonly onLoad: () => void };
 }
 
 /** Conversation rows for one session in the active skin. Must render inside ChatProvider. */
 export function ChatTranscript({
-  model, providerLabel, stateKey, loading = false, error = null, onRetry, before, emptyLabel, loadingLabel, retryLabel, onReachTop,
+  model, providerLabel, stateKey, loading = false, error = null, onRetry, before, emptyLabel, loadingLabel, retryLabel, onReachTop, earlier,
 }: ChatTranscriptProps): JSX.Element {
   const copy = useChatCopy();
   const { skin } = useChatContext();
@@ -65,6 +67,14 @@ export function ChatTranscript({
   const status = (
     <>
       {before}
+      {earlier && (
+        <div className="chat-earlier">
+          <button type="button" className="chat-link-button" disabled={earlier.loading} onClick={earlier.onLoad} data-testid="chat-load-earlier">
+            {earlier.loading ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}
+            {earlier.loading ? copy.loadingEarlier : copy.loadEarlier}
+          </button>
+        </div>
+      )}
       {error && (
         <div className="structured-agent__banner structured-agent__banner--error" role="alert">
           <AlertTriangle aria-hidden="true" />
@@ -93,7 +103,7 @@ export function ChatTranscript({
         stateKey={stateKey}
         label={copy.transcript}
         before={status}
-        onReachTop={onReachTop}
+        onReachTop={earlier ? () => { if (!earlier.loading) earlier.onLoad(); } : onReachTop}
         {...(find ? { highlight: find.query } : {})}
         {...(focusRow ? { focusRow } : {})}
         renderRow={(row) => <ChatRowView row={row} providerLabel={providerLabel} />}
