@@ -145,7 +145,7 @@
   border: 1px solid var(--ui-border-mid);
   border-radius: var(--ui-radius-md);
   color: var(--ui-text-dim);
-  font-family: var(--ui-font-heading);
+  font-family: var(--ui-font-display);
   font-size: var(--ui-font-size-13);
   line-height: var(--ui-line-height-tight);
   white-space: nowrap;
@@ -235,7 +235,7 @@
   gap: var(--ui-space-2);
   margin: 0;
   color: var(--ui-text-primary);
-  font: 400 var(--ui-font-size-26)/1 var(--ui-font-heading);
+  font: 400 var(--ui-font-size-26)/1 var(--ui-font-display);
   letter-spacing: var(--ui-letter-spacing-heading);
   white-space: nowrap;
 }

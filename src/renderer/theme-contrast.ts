@@ -357,6 +357,61 @@ export function uiThemeColorsToCssVars(ui: UiThemeColors): Readonly<Record<strin
   return { ...vars, ...channelVars };
 }
 
+export interface DerivedUiTokenOptions {
+  /** Phosphor bloom; Light and High Contrast opt out. */
+  readonly glow: boolean;
+  /** Decorative mid border. Built-ins declare one; custom themes fall back to borderSubtle. */
+  readonly borderMid?: string;
+}
+
+/** sRGB mix identical to `color-mix(in srgb, a <amount>, b)` for opaque inputs. */
+function mixHex(a: string, b: string, amount: number): string {
+  const from = parseCssColor(b);
+  const to = parseCssColor(a);
+  if (!from || !to) return a;
+  return toHex(interpolate(opaque(from), opaque(to), amount));
+}
+
+function alpha(color: string, amount: number): string {
+  const channels = cssColorToRgbChannels(color) ?? '0, 0, 0';
+  return `rgba(${channels}, ${amount})`;
+}
+
+/**
+ * Interaction, status-tint and chat roles precomputed from the seventeen
+ * semantic colours. They used to be `color-mix()` declarations, which Android
+ * WebView 74 (Chrome 74) cannot evaluate; a custom property holding one turns
+ * every consumer invalid there. Built-in themes mirror these values in
+ * ui-tokens.css (pinned by ui-tokens.test.ts); custom themes get them from
+ * theme-runtime.ts.
+ */
+export function deriveUiTokens(ui: UiThemeColors, options: DerivedUiTokenOptions): Readonly<Record<string, string>> {
+  const borderMid = options.borderMid ?? ui.borderSubtle;
+  const glow = (amount: number): string => (options.glow ? alpha(ui.accent, amount) : 'rgba(0, 0, 0, 0)');
+  return {
+    '--ui-surface-hover': mixHex(ui.accent, ui.surface, 0.08),
+    '--ui-surface-active': mixHex(ui.accent, ui.surface, 0.14),
+    '--ui-surface-selected': mixHex(ui.accent, ui.surface, 0.18),
+    '--ui-accent-muted': mixHex(ui.accent, ui.surface, 0.16),
+    '--ui-accent-hover': mixHex(ui.accent, ui.textPrimary, 0.88),
+    '--ui-info-muted': mixHex(ui.info, ui.surface, 0.14),
+    '--ui-success-muted': mixHex(ui.success, ui.surface, 0.14),
+    '--ui-warning-muted': mixHex(ui.warning, ui.surface, 0.14),
+    '--ui-danger-muted': mixHex(ui.danger, ui.surface, 0.14),
+    '--ui-danger-soft': mixHex(ui.danger, ui.surface, 0.22),
+    '--ui-warning-border': mixHex(ui.warning, borderMid, 0.55),
+    '--ui-danger-border': mixHex(ui.danger, borderMid, 0.55),
+    '--ui-warning-ring': alpha(ui.warning, 0.35),
+    '--ui-danger-ring': alpha(ui.danger, 0.35),
+    '--ui-glow-text': `0 0 12px ${glow(0.5)}`,
+    '--ui-glow-box': `0 0 0 1px ${glow(0.25)}, 0 0 28px ${glow(0.18)}`,
+    '--ui-chat-user-bubble': mixHex(ui.textPrimary, ui.surface, 0.06),
+    '--ui-chat-inline-code': mixHex(ui.textPrimary, ui.surface, 0.09),
+    '--ui-chat-diff-add': mixHex(ui.success, ui.surfaceInset, 0.14),
+    '--ui-chat-diff-remove': mixHex(ui.danger, ui.surfaceInset, 0.14),
+  };
+}
+
 /** Produce an effective palette without mutating the registered/source theme.
  * Each role moves only as far toward black or white as needed to satisfy its
  * strictest functional surface. */

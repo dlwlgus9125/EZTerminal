@@ -122,14 +122,14 @@
 
 .ez-ui-button[data-variant='primary']:not(:disabled):hover,
 .ez-ui-icon-button[data-variant='primary']:not(:disabled):hover {
-  background: color-mix(in srgb, var(--ui-accent) 88%, var(--ui-text-primary));
-  border-color: color-mix(in srgb, var(--ui-accent) 88%, var(--ui-text-primary));
+  background: var(--ui-accent-hover);
+  border-color: var(--ui-accent-hover);
   color: var(--ui-on-accent);
 }
 
 .ez-ui-button[data-variant='danger']:not(:disabled):hover,
 .ez-ui-icon-button[data-variant='danger']:not(:disabled):hover {
-  background: color-mix(in srgb, var(--ui-danger) 22%, var(--ui-surface));
+  background: var(--ui-danger-soft);
   border-color: var(--ui-danger);
   color: var(--ui-danger);
 }
@@ -634,26 +634,26 @@
 }
 
 .ez-ui-dialog[data-tone='warning'] {
-  border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+  border-color: var(--ui-warning-border);
 }
 
 .ez-ui-dialog[data-tone='warning']::before {
   background: linear-gradient(
     90deg,
     var(--ui-warning),
-    color-mix(in srgb, var(--ui-warning) 35%, transparent)
+    var(--ui-warning-ring)
   );
 }
 
 .ez-ui-dialog[data-tone='danger'] {
-  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  border-color: var(--ui-danger-border);
 }
 
 .ez-ui-dialog[data-tone='danger']::before {
   background: linear-gradient(
     90deg,
     var(--ui-danger),
-    color-mix(in srgb, var(--ui-danger) 35%, transparent)
+    var(--ui-danger-ring)
   );
 }
 
@@ -675,13 +675,13 @@
 }
 
 .ez-ui-dialog[data-tone='warning'] .ez-ui-dialog__icon {
-  border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+  border-color: var(--ui-warning-border);
   background: var(--ui-warning-muted);
   color: var(--ui-warning);
 }
 
 .ez-ui-dialog[data-tone='danger'] .ez-ui-dialog__icon {
-  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  border-color: var(--ui-danger-border);
   background: var(--ui-danger-muted);
   color: var(--ui-danger);
 }

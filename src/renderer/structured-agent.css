@@ -1337,7 +1337,7 @@
 [data-theme='matrix'] .structured-agent--live { text-shadow: none; }
 @media (prefers-reduced-motion: reduce) { .structured-agent__spinner { animation: none; } }
 .structured-agent--live { position: relative; }
-.structured-agent--live:has(> .conversation-review__aside) { padding-right: min(34%, 32rem); }
+.structured-agent--live[data-review-aside] { padding-right: min(34%, 32rem); }
 .conversation-review__trigger { align-self: flex-end; margin: 0 var(--ui-space-3); flex-shrink: 0; }
 .conversation-review__aside { position: absolute; right: 0; top: 0; bottom: 0; width: min(34%, 32rem); border-left: 1px solid var(--ui-border-subtle); overflow: auto; background: var(--ui-surface); }
 .conversation-review { display: flex; flex-direction: column; gap: var(--ui-space-3); padding: var(--ui-space-3); min-width: 0; font-size: var(--ui-font-size-sm); }
@@ -1351,8 +1351,8 @@
 .conversation-review__patch { overflow: auto; max-height: 55vh; border: 1px solid var(--ui-border-subtle); background: var(--ui-conversation-code); }
 .conversation-review__line { display: flex; gap: var(--ui-space-2); min-width: 100%; width: max-content; padding: var(--ui-space-1) var(--ui-space-2); border: 0; color: var(--ui-text-primary); background: transparent; text-align: left; font-family: var(--ui-font-terminal); font-size: var(--ui-font-size-xs); cursor: pointer; }
 .conversation-review__line code { white-space: pre; }
-.conversation-review__line[data-kind='add'] { background: color-mix(in srgb, var(--ui-success) 12%, transparent); }
-.conversation-review__line[data-kind='remove'] { background: color-mix(in srgb, var(--ui-danger) 12%, transparent); }
+.conversation-review__line[data-kind='add'] { background: rgba(var(--ui-success-rgb), 0.12); }
+.conversation-review__line[data-kind='remove'] { background: rgba(var(--ui-danger-rgb), 0.12); }
 .conversation-review__line[aria-pressed='true'] { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
 .conversation-review__line:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
 .conversation-review__number { width: 3em; flex-shrink: 0; text-align: right; color: var(--ui-text-primary); }

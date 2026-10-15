@@ -3,6 +3,7 @@ import type { ThemeMod } from '../shared/theme-schema';
 import { EFFECT_CATALOG, applyEffects, resolveActiveEffects, type EffectId } from './effects';
 import {
   cssColorToRgbChannels,
+  deriveUiTokens,
   resolveProviderIdentityColors,
   seedUiThemeColors,
   uiThemeColorsToCssVars,
@@ -86,6 +87,9 @@ export function applyThemeVarsAndEffects(
     const effectiveVars = {
       ...theme.cssVars,
       ...(theme.ui ? uiThemeColorsToCssVars(theme.ui) : {}),
+      // Built-ins carry these in ui-tokens.css; a custom theme only exists here.
+      // Custom themes keep the accent glow they inherited from :root before.
+      ...(theme.ui ? deriveUiTokens(theme.ui, { glow: true }) : {}),
       ...(providerColors ? {
         '--ui-agent-codex': providerColors.codex,
         '--ui-agent-claude': providerColors.claude,

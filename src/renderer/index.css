@@ -4,42 +4,7 @@
    The structured block/table engine is unchanged; only its skin is.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Self-hosted font faces so the packaged renderer renders them: its build-time
-   CSP is `font-src 'self'` (see vite.renderer.config.ts), which blocks remote
-   Google Fonts, and offline builds can't reach them anyway. Vite fingerprints +
-   emits these woff2 from ./fonts into the bundle, served from 'self'. Latin
-   subset only. Share Tech Mono / VT323 are Matrix theme faces (E1+), declared
-   unconditionally but only referenced under [data-theme='matrix'], so the other
-   built-in themes never fetch them. JetBrains Mono / Fira Code are body-font
-   picker entries (fonts.ts FONT_CATALOG), selectable independent of theme. */
-@font-face {
-  font-family: 'Share Tech Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/share-tech-mono-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'VT323';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/vt323-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/jetbrains-mono-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Fira Code';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/fira-code-latin.woff2') format('woff2');
-}
+/* Font faces live in styles/ui-tokens.css (imported through ui/styles.css). */
 
 :root {
   color-scheme: dark;

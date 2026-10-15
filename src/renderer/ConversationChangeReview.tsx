@@ -1,4 +1,4 @@
-import { useContext, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { FileDiff, X } from 'lucide-react';
 import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { conversationFileChanges, reviewLines } from '../shared/conversation-changes';
@@ -8,8 +8,10 @@ import { readSessionViewState, saveSessionViewState } from './session-view-state
 import { ConversationReviewOverlayContext } from './conversation-review-overlay';
 
 interface ReviewState { open: boolean; scope: 'latest' | 'all'; selected?: string; reviewed: string[]; range?: [number, number] }
-export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles }: {
+export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange }: {
   sessionId: string; items: readonly DaemonTranscriptItem[]; wide: boolean; mobile: boolean; ownerDocument?: Document; onQuote?: (text: string) => void; onOpenProjectFiles?: () => void;
+  /** Reports whether the review is docked beside the transcript, so the panel can reserve room without :has(). */
+  onAsideChange?: (open: boolean) => void;
 }): JSX.Element {
   const { i18n } = useAppTranslation(); const ko = i18n.language.startsWith('ko');
   const HostOverlay = useContext(ConversationReviewOverlayContext);
@@ -17,6 +19,8 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   const key = `conversation-review:${sessionId}`;
   const [state, setState] = useState<ReviewState>(() => readSessionViewState<ReviewState>(key) ?? { open: false, scope: 'latest', reviewed: [] });
   const [lineLimit, setLineLimit] = useState(400);
+  const asideOpen = wide && state.open;
+  useEffect(() => { onAsideChange?.(asideOpen); }, [asideOpen, onAsideChange]);
   const update = (patch: Partial<ReviewState>): void => setState(current => { const next = { ...current, ...patch }; saveSessionViewState(key, next); return next; });
   const changes = useMemo(() => conversationFileChanges(items, sessionId), [items, sessionId]);
   const latestTurn = changes.at(-1)?.turnId;

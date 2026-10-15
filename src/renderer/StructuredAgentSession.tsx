@@ -1694,6 +1694,7 @@ export function StructuredAgentSessionPanel({
   const titleId = useId();
   const panelRef = useRef<HTMLElement>(null);
   const [wideReview, setWideReview] = useState(false);
+  const [reviewAside, setReviewAside] = useState(false);
   useLayoutEffect(() => {
     const element = panelRef.current;
     if (!element) return;
@@ -1878,6 +1879,7 @@ export function StructuredAgentSessionPanel({
       data-provider={providerId}
       data-state={state}
       data-skin={activeSkin}
+      data-review-aside={reviewAside || undefined}
       data-history-only={historyOnly || undefined}
       data-testid="structured-agent-session"
       aria-labelledby={titleId}
@@ -1968,6 +1970,7 @@ export function StructuredAgentSessionPanel({
       </header>
 
       <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
+        onAsideChange={setReviewAside}
         onOpenProjectFiles={onOpenProjectFiles}
         onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />
       {workflowContext}
