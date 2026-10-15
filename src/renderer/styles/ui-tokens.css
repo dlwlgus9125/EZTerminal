@@ -365,6 +365,41 @@
   --ui-glow-color: var(--ui-accent);
 }
 
+/* Chat code syntax per built-in theme. Unset themes (custom ones) fall back to
+   the semantic roles in chat/markdown/highlighter.ts; these keep keyword,
+   function and string apart where those roles share a hue. */
+[data-theme='dark'] {
+  --ui-code-token-keyword: #c4a7f5;
+  --ui-code-token-function: #7aa7ff;
+  --ui-code-token-string: #9fd08a;
+  --ui-code-token-string-expression: #9fd08a;
+  --ui-code-token-constant: #e9b872;
+}
+
+[data-theme='light'] {
+  --ui-code-token-keyword: #7a3eb1;
+  --ui-code-token-function: #2f5fd0;
+  --ui-code-token-string: #1a7a4f;
+  --ui-code-token-string-expression: #1a7a4f;
+  --ui-code-token-constant: #8a5a00;
+}
+
+[data-theme='high-contrast'] {
+  --ui-code-token-keyword: #66b2ff;
+  --ui-code-token-function: #ff99ff;
+  --ui-code-token-string: #00ff66;
+  --ui-code-token-string-expression: #00ff66;
+  --ui-code-token-constant: #ffcc00;
+}
+
+[data-theme='matrix'] {
+  --ui-code-token-keyword: #62d8ff;
+  --ui-code-token-function: #35e58f;
+  --ui-code-token-string: #b6f5d0;
+  --ui-code-token-string-expression: #b6f5d0;
+  --ui-code-token-constant: #ffd166;
+}
+
 /* derived-ui-tokens:start — generated from themes.ts; rewrite with
    UPDATE_DERIVED_UI_TOKENS=1 pnpm vitest run src/renderer/styles/ui-tokens.test.ts */
 :root {

@@ -332,44 +332,6 @@
   color: var(--ui-text-primary);
 }
 
-/* Interim prose styling until the chat markdown module owns it. */
-.chat-prose {
-  font: var(--ui-font-size-md) / var(--ui-line-height-relaxed) var(--ui-font-body);
-  color: var(--ui-text-primary);
-  overflow-wrap: anywhere;
-}
-
-.chat-prose > :first-child { margin-top: 0; }
-.chat-prose > :last-child { margin-bottom: 0; }
-.chat-prose p { margin: 0 0 var(--ui-space-3); }
-.chat-prose a { color: var(--ui-chat-link); text-underline-offset: 0.2em; }
-.chat-prose code {
-  padding: 0.1em 0.35em;
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-chat-inline-code);
-  font-family: var(--ui-font-mono);
-  font-size: 0.9em;
-}
-.chat-prose pre {
-  margin: 0 0 var(--ui-space-3);
-  padding: var(--ui-space-3);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-chat-code-bg);
-  overflow-x: auto;
-}
-.chat-prose pre code { padding: 0; background: none; font-size: var(--ui-font-size-xs); line-height: var(--ui-line-height-normal); }
-.chat-prose ul, .chat-prose ol { margin: 0 0 var(--ui-space-3); padding-left: 1.4em; }
-.chat-prose li + li { margin-top: var(--ui-space-1); }
-.chat-prose h1, .chat-prose h2, .chat-prose h3 { margin: var(--ui-space-4) 0 var(--ui-space-2); line-height: var(--ui-line-height-tight); }
-.chat-prose h1 { font-size: 1.29em; }
-.chat-prose h2 { font-size: 1.14em; }
-.chat-prose h3 { font-size: 1.07em; }
-.chat-prose blockquote { margin: 0 0 var(--ui-space-3); padding-left: var(--ui-space-3); border-left: 2px solid var(--ui-border-strong); color: var(--ui-text-secondary); }
-.chat-prose table { display: block; width: max-content; max-width: 100%; margin: 0 0 var(--ui-space-3); overflow-x: auto; border-collapse: collapse; font-size: var(--ui-font-size-sm); }
-.chat-prose th, .chat-prose td { padding: var(--ui-space-1) var(--ui-space-3); border: 1px solid var(--ui-border-subtle); text-align: left; vertical-align: top; }
-.chat-prose th { background: var(--ui-surface-raised); font-weight: 600; }
-
 /* activity run */
 .chat-run {
   color: var(--ui-text-secondary);
@@ -1010,28 +972,6 @@
 
 .chat-cli-status {
   color: var(--ui-text-muted);
-}
-
-.chat-prose--cli {
-  font: var(--ui-font-size-sm) / var(--ui-line-height-relaxed) var(--ui-font-mono);
-}
-
-.chat-prose--cli h1,
-.chat-prose--cli h2,
-.chat-prose--cli h3 {
-  font-size: 1em;
-  color: var(--ui-accent);
-}
-
-.chat-prose--cli code {
-  background: none;
-  padding: 0;
-  color: var(--ui-info);
-  font-size: 1em;
-}
-
-.chat-prose--cli pre {
-  border-radius: var(--ui-radius-sm);
 }
 
 /* ── docks (approval, tasks) ─────────────────────────────────────────── */

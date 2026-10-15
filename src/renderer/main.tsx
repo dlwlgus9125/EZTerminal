@@ -4,6 +4,7 @@ import { App } from './App';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { AuxiliaryShell } from './AuxiliaryShell';
 import { BootIntroOverlay } from './BootIntroOverlay';
+import { HighlighterProvider } from './chat/markdown/HighlighterProvider';
 import { useAppTranslation } from './i18n';
 import { DesktopUiPreferencesProvider } from './ui-preferences';
 import { ToastProvider } from './ui';
@@ -35,13 +36,16 @@ const auxiliaryWindow = new URLSearchParams(window.location.search).get('ez-popo
 createRoot(container).render(
   <StrictMode>
     <AppErrorBoundary>
-      {auxiliaryWindow ? (
-        <AuxiliaryShell />
-      ) : (
-        <DesktopUiPreferencesProvider>
-          <DesktopApplication />
-        </DesktopUiPreferencesProvider>
-      )}
+      {/* Desktop only: Android leaves chat code blocks plain. */}
+      <HighlighterProvider>
+        {auxiliaryWindow ? (
+          <AuxiliaryShell />
+        ) : (
+          <DesktopUiPreferencesProvider>
+            <DesktopApplication />
+          </DesktopUiPreferencesProvider>
+        )}
+      </HighlighterProvider>
     </AppErrorBoundary>
   </StrictMode>,
 );

@@ -5,6 +5,7 @@ import type { ApprovalRequest } from '../../shared/approval-request';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../shared/daemon-protocol';
 import { AppI18nProvider } from '../i18n';
 import { StructuredAgentSessionPanel } from '../StructuredAgentSession';
+import { HighlighterProvider } from './markdown/HighlighterProvider';
 import claudeApprovalDeny from './fixtures/claude-approval-deny.json';
 import claudeAskQuestion from './fixtures/claude-ask-question.json';
 import claudeEditCreate from './fixtures/claude-edit-create.json';
@@ -82,6 +83,7 @@ function Scenario({ golden, items, approvals, turnState = 'completed', state = '
   const claude = golden.provider === 'claude';
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
+      <HighlighterProvider>
       <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
         <StructuredAgentSessionPanel
           sessionId={`story-${golden.provider}`}
@@ -110,6 +112,7 @@ function Scenario({ golden, items, approvals, turnState = 'completed', state = '
           fileSearch={async (query) => STORY_FILES.filter((file) => file.toLowerCase().includes(query.toLowerCase()))}
         />
       </div>
+      </HighlighterProvider>
     </AppI18nProvider>
   );
 }
