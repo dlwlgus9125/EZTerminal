@@ -124,16 +124,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 678,
-          "endLine": 763,
+          "startLine": 683,
+          "endLine": 768,
           "lineDigest": "sha256:553d740f99709fd3be92e2000da2f830413ad7136f3bd5033b9a434adb37cd95",
           "claim": "Initialization validates containment and existing database material, rejects future schemas, and requires a verified migration or legacy backup before mutation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 766,
-          "endLine": 803,
+          "startLine": 771,
+          "endLine": 808,
           "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
           "claim": "The store opens with strict SQLite options, enables WAL and full synchronization, migrates, recovers uncertain commands, then marks itself ready."
         },
@@ -158,24 +158,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1936,
-          "endLine": 2046,
+          "startLine": 1937,
+          "endLine": 2047,
           "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
           "claim": "Main marks prior-process legacy terminals interrupted, recovers pending consent, and synchronizes Projects before the ordered MCP, Agent, and automation startup publishes ready availability and binds the exact shutdown barrier."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 367,
-          "endLine": 385,
+          "startLine": 373,
+          "endLine": 391,
           "lineDigest": "sha256:d3a345787b078d0f1879d601daa0ddbc9b4ebf9fbf168f73cb1649a33a4ebee2",
           "claim": "Agent startup restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, reconciles unsettled work, and rearms durable timeouts."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1515,
-          "endLine": 1548,
+          "startLine": 1516,
+          "endLine": 1549,
           "lineDigest": "sha256:4aa5ef82af26651b2557828ce4eca703a91ab92700f343749c0170c62f888d58",
           "claim": "The Project-operation FIFO rejects new work after shutdown begins, preserves its exact accepted prefix, and serializes both successful and failed predecessors."
         }
@@ -208,8 +208,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2037,
-          "endLine": 2045,
+          "startLine": 2038,
+          "endLine": 2046,
           "lineDigest": "sha256:3af45fffdc9e0a0cb7de49d6d5a9d989d64a1e1bd62f11f4f154a16dc7c4e3e9",
           "claim": "Main reports structured authority failure as a terminal-preserving safe mode rather than failing the entire desktop runtime."
         }
@@ -286,8 +286,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2424,
-          "endLine": 2574,
+          "startLine": 2425,
+          "endLine": 2575,
           "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier."
         },
@@ -314,8 +314,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 655,
-          "endLine": 675,
+          "startLine": 660,
+          "endLine": 680,
           "lineDigest": "sha256:ab7c115ed1aef1694fe596607ce70a22db79d78cca505d9e191c16eed88c6375",
           "claim": "DaemonStore serializes initialization, latches a structured failure, and never exposes a partially initialized database."
         }
@@ -332,8 +332,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1936,
-          "endLine": 2046,
+          "startLine": 1937,
+          "endLine": 2047,
           "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
           "claim": "Successful database, prior-process legacy terminal recovery, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
         }
@@ -350,8 +350,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2030,
-          "endLine": 2045,
+          "startLine": 2031,
+          "endLine": 2046,
           "lineDigest": "sha256:3d781ac239406fc6562df5790dbc60b6ad32f0d3c342c06d302931b722aa1e08",
           "claim": "Any rejected structured-authority preflight or startup becomes one process-lifetime safe-mode availability record and is logged while legacy terminals remain enabled."
         }
@@ -404,8 +404,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2434,
-          "endLine": 2474,
+          "startLine": 2435,
+          "endLine": 2475,
           "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
           "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
         }
@@ -474,8 +474,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2424,
-          "endLine": 2574,
+          "startLine": 2425,
+          "endLine": 2575,
           "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
           "claim": "Main closes ingress first, drains main startup and local mutations, and orders OpenClaw and desktop cleanup while DaemonStore awaits the exact authority and concurrent writer barrier."
         }

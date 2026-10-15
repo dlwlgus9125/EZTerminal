@@ -121,25 +121,25 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/AgentCapabilitiesPanel.tsx",
-          "startLine": 67,
-          "endLine": 85,
+          "startLine": 90,
+          "endLine": 108,
           "lineDigest": "sha256:411b59859236ffb916053fb936cfb7ba27b7559722ce9d955ec7eb1231d7dd50",
           "claim": "Discovery begins when provider/workspace/session scope changes, before a message, and rejects stale asynchronous results after navigation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/use-agent-completion.tsx",
-          "startLine": 11,
-          "endLine": 60,
-          "lineDigest": "sha256:af686816e3d283e02c63310b36a0faf7f3e6a31e5e19df57777a3ee7efa8327e",
-          "claim": "The shared controller keeps the keyboard-selected option inside the completion list, preserves draft context, respects IME composition and opens history without submitting a message."
+          "startLine": 14,
+          "endLine": 83,
+          "lineDigest": "sha256:0f8d89009270771c0913c96f576ad1eacdfc443c2c1eb7b9b676a6095fab1f9b",
+          "claim": "The shared controller keeps the keyboard-selected option inside the completion list, preserves draft context, respects IME composition, offers @ workspace files where the host can search, and opens history without submitting."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/agent-completion.ts",
-          "startLine": 23,
-          "endLine": 52,
-          "lineDigest": "sha256:ee3d96210eb8078234e048b1b4f9d3a2b809863f519fca4819ca9dccd26a6fd0",
+          "startLine": 29,
+          "endLine": 59,
+          "lineDigest": "sha256:2b1f463a68fa3b487ec5e82cdb51b368603ff7a125d74d3b2ad4e1f8ec00fb5c",
           "claim": "Suggestions distinguish application history actions from native skills; insertion replaces only the current token and preserves other draft fields."
         }
       ]
@@ -324,16 +324,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 579,
-          "endLine": 668,
+          "startLine": 852,
+          "endLine": 941,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 898,
-          "endLine": 968,
+          "startLine": 1124,
+          "endLine": 1194,
           "lineDigest": "sha256:76650c632b70a0534cd56e1ca9d449e1d2692c30d566a95ec499dc0fede4522b",
           "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt."
         }
@@ -480,8 +480,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 579,
-          "endLine": 668,
+          "startLine": 852,
+          "endLine": 941,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }

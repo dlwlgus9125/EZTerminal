@@ -212,8 +212,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/shared/daemon-protocol.ts",
-          "startLine": 219,
-          "endLine": 242,
+          "startLine": 227,
+          "endLine": 250,
           "lineDigest": "sha256:03d196f202474d6d64905548b899e376f38969247c424d0a152444973bcd7880",
           "claim": "The v12 snapshot carries runtime settings and the revisioned Project, Workspace, Session, Agent, relation, turn, transcript, approval, and provider collections."
         }
@@ -290,8 +290,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1632,
-          "endLine": 1664,
+          "startLine": 1633,
+          "endLine": 1665,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -550,8 +550,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1632,
-          "endLine": 1664,
+          "startLine": 1633,
+          "endLine": 1665,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },

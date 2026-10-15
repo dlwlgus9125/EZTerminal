@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e062fe4f2f8966656a318fbe16fee368fa4918fdfc380904f23109fc0f64cf64",
+        "inputDigest": "sha256:f2a4f6e09d319892e79ba0cdab5257c8327c77a7b688cfd21b65c38b8581ed7c",
         "decision": "map-updated",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "reason": "Reviewed the chat overhaul: transcript payloads, approval requests and responses, agent effort (schema v7 behind capability flags, no protocol bump), Claude streaming, fail-fast provider start and version-range launch. Relocated anchors; rechecked changed blocks."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b8959ff90494d7ee350c835612b9a9f905bfe585cdb63d8ce009428f980d2304",
+        "inputDigest": "sha256:3287f3fcb9e617220f10d88999a69e090f19baa584c68147bc7ae9d638c62412",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "reason": "Inputs changed for the chat overhaul and compact shell; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0bcf631057bb4f31adcdfc22087702e62be7bf53aae674ef1391ca6591bdbea6",
-        "decision": "map-updated",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "inputDigest": "sha256:91010216306dc3449cbaae009b6cc28ddfae85640a71cbc0f247981756048c4f",
+        "decision": "no-semantic-impact",
+        "reason": "Inputs gained optional transcript payload, approval request and effort fields behind capability flags; the v12 snapshot and v16 remote flow are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:69e4a7eb81015d430ddea0217e5e2a71727d4334fab812b847e5ac2249d9513e",
+        "inputDigest": "sha256:9fdd00bc691352383dee00cfcbffca86edf43d3595f034e04286bc70535b8eee",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "reason": "Inputs changed for the chat overhaul and compact shell; Project Map navigation and approval collaboration are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:351c5592d7e73e65a9dbb27e00f143ac55000bc84e2da42cb0332caa2f2083ad",
+        "inputDigest": "sha256:597c3f63207f0d6aaa3abb90682cfd0c9c39a9f3f4f8c118cd732c0a55221b64",
         "decision": "map-updated",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "reason": "Reviewed the one-row desktop chat header (skin and history in the session menu, header review button) and the review open request. Claims hold; relocated anchors to the changed blocks."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b7fd6440a5f1492e1a8cc618359ba054b2d7da8b118d983fb19699a1a04edb46",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "inputDigest": "sha256:0349b859cb9a705fdc58bae03bb645e70f4be7fcef6ad9b850d2bb28823b4fc8",
+        "decision": "map-updated",
+        "reason": "Reviewed composer @ workspace-file mentions and the compact extensions summary. Updated the completion claim; relocated anchors and rechecked changed discovery and completion blocks against current code."
       }
     }
   ]

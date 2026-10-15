@@ -122,16 +122,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 1875,
-          "endLine": 1920,
-          "lineDigest": "sha256:40df2ced36e6311ac5cbb12d273ac270469381b25628bb14f138de50c7d2e5f3",
+          "startLine": 1869,
+          "endLine": 1987,
+          "lineDigest": "sha256:44603b646c102487c5ff83001e1dde50d2fdc0e951b59f8ff38ff1ee38a9e24f",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 479,
-          "endLine": 490,
+          "startLine": 501,
+          "endLine": 512,
           "lineDigest": "sha256:3dfb280a860ff96e8649251a3ecddcb51ea1d56045a81ae5c2293b1e683cb1a2",
           "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
         },
@@ -139,8 +139,8 @@
           "rootAlias": "app",
           "relativePath": "src/renderer/ConversationChangeReview.tsx",
           "startLine": 1,
-          "endLine": 59,
-          "lineDigest": "sha256:0cb51d7526c7c2d75e4a4f67b1f3589ee5986a6151e6845708fadb19710da966",
+          "endLine": 69,
+          "lineDigest": "sha256:cd5e84c621303872cf509d3d96a3dd996ac184c5d57834e1c55384d0f68109da",
           "claim": "Both skins review only completed non-sensitive records from the selected session. Quotes enter the existing draft without submission; fragment records do not invent file line numbers."
         }
       ]

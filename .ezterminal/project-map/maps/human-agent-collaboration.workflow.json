@@ -183,8 +183,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/App.tsx",
-          "startLine": 1958,
-          "endLine": 1966,
+          "startLine": 1965,
+          "endLine": 1973,
           "lineDigest": "sha256:269830d8137e1d7644219237fbf0421fd14414ce31b5cc6a69f7671d4548a92b",
           "claim": "The Project Map navigation callback routes the validated bootstrap and project session into a new workbench terminal and reports whether it opened."
         },
