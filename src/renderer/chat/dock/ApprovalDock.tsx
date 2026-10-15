@@ -215,7 +215,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
       <div className="chat-dock__detail">
         {command && <pre className="chat-output__command"><code>{`$ ${command}`}</code></pre>}
         {request?.kind === 'command' && request.cwd && <p className="chat-dock__meta">{copy.approval.cwd} {request.cwd}</p>}
-        {changes.length > 0 && <div className="chat-dock__scroll">{changes.map((change, index) => <DiffView key={index} change={change} />)}</div>}
+        {changes.length > 0 && <div className="chat-dock__scroll">{changes.map((change, index) => <DiffView key={index} change={change} workspaceRoot={context.workspaceRoot} />)}</div>}
         {request?.kind === 'tool' && request.input && <OutputBlock text={request.input} label={copy.input} />}
         {request && 'reason' in request && request.reason && <p className="chat-dock__meta">{copy.approval.reason}: {request.reason}</p>}
         {!request && approval.detail && <p className="chat-dock__meta">{approval.detail}</p>}

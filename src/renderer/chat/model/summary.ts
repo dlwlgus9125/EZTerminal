@@ -161,13 +161,21 @@ export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
 }
 
 /** Short display target: a path collapses to its tail; commands stay one line. */
-export function toolDisplayTarget(tool: ChatTool, workspaceRoot?: string): string {
-  const raw = tool.command ?? tool.target ?? tool.query ?? (tool.server ? `${tool.server} / ${tool.name}` : tool.name);
-  let value = raw.split(/\r?\n/u, 1)[0] ?? raw;
-  value = value.replace(/<WORKSPACE>[\\/]+/gu, '');
+/** A path as the reader knows it: relative to the conversation's workspace when inside it. */
+export function workspacePath(path: string, workspaceRoot?: string): string {
+  let value = path.replace(/<WORKSPACE>[\\/]+/gu, '');
   if (workspaceRoot) {
     const root = workspaceRoot.replace(/[\\/]+$/u, '');
-    if (value.toLowerCase().startsWith(root.toLowerCase())) value = value.slice(root.length).replace(/^[\\/]+/u, '');
+    if (value.toLowerCase().startsWith(`${root.toLowerCase()}\\`) || value.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {
+      value = value.slice(root.length).replace(/^[\\/]+/u, '');
+    }
   }
   return value.replace(/\\\\/gu, '\\');
+}
+
+export function toolDisplayTarget(tool: ChatTool, workspaceRoot?: string): string {
+  const raw = tool.command ?? tool.target ?? tool.query ?? (tool.server ? `${tool.server} / ${tool.name}` : tool.name);
+  const value = raw.split(/\r?\n/u, 1)[0] ?? raw;
+  // Commands may mention the workspace anywhere; only a leading root is stripped.
+  return workspacePath(value, workspaceRoot);
 }

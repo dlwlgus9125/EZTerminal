@@ -195,7 +195,8 @@ try {
   await page.waitForLoadState('domcontentloaded');
   await poll(() => page.evaluate(() => window.ezterminal.getDaemonAvailability()), (value) => value?.state === 'ready', 60_000, 'daemon');
   const saved = await page.evaluate((root) => window.ezterminal.saveAgentProject({ name: 'UX live check', primaryRoot: root, additionalRoots: [], pinned: false }), workspace);
-  if (!saved?.ok) throw new Error(`saveAgentProject failed: ${JSON.stringify(saved)}`);
+  // A rerun on the same profile finds the scratch project already registered.
+  if (!saved?.ok && saved?.reason !== 'duplicate') throw new Error(`saveAgentProject failed: ${JSON.stringify(saved)}`);
   const ready = await poll(() => snapshot(page), (snap) => snap.workspaces.some((entry) => samePath(entry.rootPath, workspace)), 60_000, 'scratch workspace');
   const scratch = ready.workspaces.find((entry) => samePath(entry.rootPath, workspace));
   const project = { projectId: scratch.projectId, workspaceId: scratch.id };

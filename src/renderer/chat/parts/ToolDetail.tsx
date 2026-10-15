@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import type { ChatTool } from '../model/types';
+import { useChatContext } from '../ChatContext';
 import { useChatCopy } from '../copy';
 import { DiffView } from './DiffView';
 
@@ -53,11 +54,12 @@ export function ToolDetail({ tool, variant = 'card' }: {
   readonly variant?: 'card' | 'cli';
 }): JSX.Element {
   const copy = useChatCopy();
+  const { workspaceRoot } = useChatContext();
   const failed = tool.status === 'failed' || tool.status === 'denied';
   if (tool.changes?.length) {
     return (
       <div className="chat-tool-detail">
-        {tool.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} variant={variant} />)}
+        {tool.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} variant={variant} workspaceRoot={workspaceRoot} />)}
       </div>
     );
   }

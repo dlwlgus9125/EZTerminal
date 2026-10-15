@@ -6,9 +6,7 @@ import { reviewLines, type RecordedFileChange } from '../../../shared/conversati
 /** Max lines rendered per file before "show all"; the viewport scrolls within 288px. */
 const MAX_LINES = 400;
 
-function displayPath(path: string): string {
-  return path.replace(/<WORKSPACE>[\\/]+/gu, '').replace(/\\\\/gu, '\\');
-}
+import { workspacePath } from '../model/summary';
 
 export function diffCounts(change: RecordedFileChange): { readonly added: number; readonly removed: number } {
   const lines = change.patch.split('\n');
@@ -22,10 +20,12 @@ export function diffCounts(change: RecordedFileChange): { readonly added: number
  * Unified diff of one recorded change. Line numbers appear only for real
  * provider patches; Claude edit fragments carry no file positions.
  */
-export function DiffView({ change, variant = 'card' }: {
+export function DiffView({ change, variant = 'card', workspaceRoot }: {
   readonly change: RecordedFileChange;
   readonly variant?: 'card' | 'cli';
+  readonly workspaceRoot?: string;
 }): JSX.Element {
+  const displayPath = (path: string): string => workspacePath(path, workspaceRoot);
   const lines = useMemo(() => reviewLines(change).slice(0, MAX_LINES), [change]);
   const { added, removed } = diffCounts(change);
   const Icon = removed === 0 && added > 0 ? FilePlus2 : added === 0 && removed > 0 ? FileMinus2 : FilePen;

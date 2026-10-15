@@ -234,7 +234,7 @@ export function CliChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.Ele
           {added > 0 && <span className="chat-diff__added"> +{added}</span>}{removed > 0 && <span className="chat-diff__removed"> −{removed}</span>}
         </button>
         {context.onReviewChanges && <button type="button" className="chat-link-button" onClick={context.onReviewChanges}>{copy.review}</button>}
-        {open && row.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} variant="cli" />)}
+        {open && row.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} variant="cli" workspaceRoot={context.workspaceRoot} />)}
       </div>
     </section>
   );

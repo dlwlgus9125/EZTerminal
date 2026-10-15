@@ -2,7 +2,7 @@ import { AlertTriangle, Check, ChevronRight, CircleSlash, FileDiff, ListChecks, 
 
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
-import { formatDuration, summarizeActivity, toolDisplayTarget, toolVerb } from '../model/summary';
+import { formatDuration, summarizeActivity, toolDisplayTarget, toolVerb, workspacePath } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
 import { DiffView } from '../parts/DiffView';
 import { Prose } from '../parts/Prose';
@@ -259,7 +259,7 @@ export function BubbleChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.
       <ul className="chat-changes__files">
         {row.files.map((file) => (
           <li key={file.path}>
-            <span className="chat-changes__path" title={file.path}>{file.path.replace(/<WORKSPACE>[\\/]+/gu, '')}</span>
+            <span className="chat-changes__path" title={file.path}>{workspacePath(file.path, context.workspaceRoot)}</span>
             <span className="chat-diff__counts">
               {(file.added ?? 0) > 0 && <span className="chat-diff__added">+{file.added}</span>}
               {(file.removed ?? 0) > 0 && <span className="chat-diff__removed">−{file.removed}</span>}
@@ -267,7 +267,7 @@ export function BubbleChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.
           </li>
         ))}
       </ul>
-      {open && row.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} />)}
+      {open && row.changes.map((change, index) => <DiffView key={`${change.path}:${index}`} change={change} workspaceRoot={context.workspaceRoot} />)}
     </section>
   );
 }
