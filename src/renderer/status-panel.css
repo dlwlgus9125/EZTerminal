@@ -1,0 +1,289 @@
+/* Monitor sidebar destination. Tokens only (guard:design-style checks this file).
+   Glow is left to Matrix signals elsewhere; these instruments read by form. */
+
+/* == MONITOR SCOPE == an instrument, not a chart. The grid is the graticule and
+   the sweep edge marks "now", so the trace reads as something being measured
+   rather than a summary that happens to be drawn. */
+.status-scope-card {
+  background: var(--ui-surface-inset);
+}
+
+.status-scope-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--ui-space-2);
+  margin-block-end: var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.status-scope-readout {
+  font-variant-numeric: tabular-nums;
+}
+
+.status-scope-readout--cpu {
+  color: var(--ui-accent);
+}
+
+.status-scope-readout--mem {
+  color: var(--ui-info);
+}
+
+.status-scope {
+  position: relative;
+  block-size: 96px;
+  overflow: hidden;
+  border-radius: var(--ui-radius-md);
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 23px,
+      rgba(var(--ui-accent-rgb), 0.08) 23px 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 23px,
+      rgba(var(--ui-accent-rgb), 0.08) 23px 24px
+    );
+}
+
+.status-scope-trace {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.status-scope-cpu {
+  stroke: var(--ui-accent);
+}
+
+.status-scope-mem {
+  stroke: var(--ui-info);
+  opacity: 0.7;
+}
+
+/* The leading edge of the sweep — where the next sample lands. */
+.status-scope-sweep {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: 34px;
+  border-inline-end: 2px solid rgba(var(--ui-accent-rgb), 0.6);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(var(--ui-accent-rgb), 0.12)
+  );
+}
+
+.status-waterfall-title {
+  margin-block: var(--ui-space-3) var(--ui-space-2);
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.status-waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-text-secondary);
+}
+
+.status-waterfall-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.status-waterfall-time {
+  flex: 0 0 auto;
+  inline-size: 3.5rem;
+  color: var(--ui-text-dim);
+}
+
+.status-waterfall-bar {
+  flex: 0 1 auto;
+  block-size: 12px;
+  min-inline-size: 2px;
+  border-radius: 1px;
+  background: var(--ui-accent);
+  transition: inline-size 0.6s ease;
+}
+
+/* A second that stands out against the rest of the window, not against a fixed
+   byte count — a busy link and an idle one need different definitions. */
+.status-waterfall-bar[data-spike='true'] {
+  background: var(--ui-warning);
+}
+
+.status-waterfall-rate {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Connections read as addressable rows, matching the pane/card language. */
+.status-conn-table tr,
+.status-section[data-testid='status-section-conns'] .status-conn-row {
+  border-radius: var(--ui-radius-md);
+}
+
+.status-polling-note {
+  margin: 0;
+  padding: 0 var(--ui-space-3) var(--ui-space-4);
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+/* The scope grid sits behind the trace at the same 24px pitch the handoff
+   specifies, so the sparkline reads as an instrument rather than a decoration. */
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 40px;
+  margin-top: var(--ui-space-1);
+  padding: var(--ui-space-1) 0;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-accent);
+  background-color: var(--ui-surface-inset);
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      rgba(var(--ui-accent-rgb), 0.09) 0 1px,
+      transparent 1px 24px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(var(--ui-accent-rgb), 0.09) 0 1px,
+      transparent 1px 24px
+    );
+}
+
+.status-disk-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+
+.status-disk-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-disk-bar {
+  height: 5px;
+  margin-top: var(--ui-space-1);
+  background: var(--ui-surface-inset);
+  border-radius: var(--ui-radius-md);
+  overflow: hidden;
+}
+
+/* Load bars share the accent so the whole panel reads as one instrument. Blue
+   is reserved for the memory trace, which is the one series that needs to stay
+   distinguishable from CPU on the shared scope. */
+.status-disk-bar-fill {
+  height: 100%;
+  background: var(--ui-accent);
+}
+
+.status-core-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--ui-space-1) var(--ui-space-3);
+  margin-top: var(--ui-space-2);
+}
+
+.status-core-grid--compact {
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--ui-space-1) var(--ui-space-2);
+}
+
+.status-core-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-mem-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  margin-top: var(--ui-space-2);
+}
+
+.status-net-sparks {
+  display: flex;
+  gap: var(--ui-space-2);
+  margin-top: var(--ui-space-1);
+}
+
+.status-net-sparks .sparkline {
+  flex: 1 1 50%;
+  margin-top: 0;
+}
+
+.status-net-sparks .sparkline:last-child {
+  color: var(--ui-info);
+}
+
+.status-proc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ui-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-proc-table th {
+  text-align: left;
+  padding: var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font-weight: 600;
+}
+
+.status-proc-table td {
+  padding: var(--ui-space-1);
+  color: var(--ui-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 0;
+}
+
+.status-packet-toggle {
+  margin-top: var(--ui-space-2);
+  width: 100%;
+}
+
+.status-packet-view {
+  margin-top: var(--ui-space-2);
+}
+
+.status-packet-ack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-secondary);
+}
+
+.status-packet-status {
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-warning);
+}
+
+.status-packet-status a {
+  color: var(--ui-info);
+}

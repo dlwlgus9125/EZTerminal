@@ -740,15 +740,14 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  background: var(--term-bg-raised);
-  border-left: 1px solid var(--term-border);
+  background: var(--ui-surface-raised);
+  border-left: 1px solid var(--ui-border-subtle);
   box-shadow: -6px 0 18px rgba(0, 0, 0, 0.35);
 }
 
 .status-section {
-  padding: 0.6rem 0.85rem;
-  border-bottom: 1px solid var(--term-border-faint);
+  padding: var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 /* Shared section heading for every sidebar destination: a dim, wide-tracked
@@ -763,24 +762,22 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .status-metric {
-  font-size: 0.82rem;
-  color: var(--term-fg-bright);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .status-loading {
-  font-size: 0.75rem;
-  color: var(--term-fg-faint);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-muted);
 }
 
+/* Freshness is a quiet line above the instruments, not a box of its own. */
 .status-freshness {
   display: grid;
   gap: var(--ui-space-1);
-  margin: 0 0.6rem 0.6rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-inset);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 .status-freshness-error {
@@ -801,17 +798,8 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   animation-play-state: paused;
 }
 
-/* Monitor sections read as instrument cards. Scoped by the section test ids so
-   the Settings panel, which shares the .status-section class for its
-   categories, keeps its plain full-width layout. */
-.status-section[data-testid^='status-section-'] {
-  margin: 0 0.6rem 0.6rem;
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--ui-border-mid);
-  border-bottom: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-raised);
-}
+/* Monitor sections are plain sections divided by rules, like every sidebar body;
+   only the scope keeps a frame, because it is the instrument. */
 
 /* The pairing token is read off the screen and typed into a phone, so it gets
    display sizing and wide tracking rather than inline-code sizing. */
@@ -1335,293 +1323,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .remote-topology-wire-rtt {
   inset-block-end: 0;
   color: var(--ui-text-dim);
-}
-
-/* == MONITOR SCOPE == an instrument, not a chart. The grid is the graticule and
-   the sweep edge marks "now", so the trace reads as something being measured
-   rather than a summary that happens to be drawn. */
-.status-scope-card {
-  background: var(--ui-surface-inset);
-}
-
-.status-scope-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--ui-space-2);
-  margin-block-end: var(--ui-space-2);
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-12);
-}
-
-.status-scope-readout {
-  font-variant-numeric: tabular-nums;
-}
-
-.status-scope-readout--cpu {
-  color: var(--ui-accent);
-}
-
-.status-scope-readout--mem {
-  color: var(--ui-info);
-}
-
-.status-scope {
-  position: relative;
-  block-size: 96px;
-  overflow: hidden;
-  border-radius: var(--ui-radius-md);
-  background:
-    repeating-linear-gradient(
-      0deg,
-      transparent 0 23px,
-      color-mix(in srgb, var(--ui-accent) 8%, transparent) 23px 24px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 23px,
-      color-mix(in srgb, var(--ui-accent) 8%, transparent) 23px 24px
-    );
-}
-
-.status-scope-trace {
-  position: absolute;
-  inset: 0;
-  inline-size: 100%;
-  block-size: 100%;
-}
-
-.status-scope-cpu {
-  stroke: var(--ui-accent);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ui-accent) 80%, transparent));
-}
-
-.status-scope-mem {
-  stroke: var(--ui-info);
-  opacity: 0.7;
-}
-
-/* The leading edge of the sweep — where the next sample lands. */
-.status-scope-sweep {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: 0;
-  inline-size: 34px;
-  border-inline-end: 2px solid color-mix(in srgb, var(--ui-accent) 60%, transparent);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ui-accent) 12%, transparent)
-  );
-}
-
-.status-waterfall-title {
-  margin-block: var(--ui-space-3) var(--ui-space-2);
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-2xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.status-waterfall {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-2xs);
-  color: var(--ui-text-secondary);
-}
-
-.status-waterfall-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-}
-
-.status-waterfall-time {
-  flex: 0 0 auto;
-  inline-size: 3.5rem;
-  color: var(--ui-text-dim);
-}
-
-.status-waterfall-bar {
-  flex: 0 0 auto;
-  block-size: 12px;
-  min-inline-size: 2px;
-  border-radius: 1px;
-  background: var(--ui-accent);
-  transition: inline-size 0.6s ease;
-}
-
-/* A second that stands out against the rest of the window, not against a fixed
-   byte count — a busy link and an idle one need different definitions. */
-.status-waterfall-bar[data-spike='true'] {
-  background: var(--ui-warning);
-}
-
-.status-waterfall-rate {
-  margin-inline-start: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Connections read as addressable rows, matching the pane/card language. */
-.status-conn-table tr,
-.status-section[data-testid='status-section-conns'] .status-conn-row {
-  border-radius: var(--ui-radius-md);
-}
-
-.status-polling-note {
-  margin: 0;
-  padding: 0 0.85rem 0.9rem;
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-2xs);
-  line-height: var(--ui-line-height-normal);
-}
-
-/* The scope grid sits behind the trace at the same 24px pitch the handoff
-   specifies, so the sparkline reads as an instrument rather than a decoration. */
-.sparkline {
-  display: block;
-  width: 100%;
-  height: 40px;
-  margin-top: 0.3rem;
-  padding: 2px 0;
-  border-radius: var(--ui-radius-md);
-  color: var(--ui-accent);
-  background-color: var(--ui-surface-inset);
-  background-image:
-    repeating-linear-gradient(
-      to right,
-      color-mix(in srgb, var(--ui-accent) 9%, transparent) 0 1px,
-      transparent 1px 24px
-    ),
-    repeating-linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--ui-accent) 9%, transparent) 0 1px,
-      transparent 1px 24px
-    );
-  filter: drop-shadow(0 0 4px color-mix(in srgb, currentcolor 55%, transparent));
-}
-
-.status-disk-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.status-disk-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.72rem;
-  color: var(--term-fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.status-disk-bar {
-  height: 5px;
-  margin-top: 0.15rem;
-  background: var(--term-bg-inset);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-/* Load bars share the accent so the whole panel reads as one instrument. Blue
-   is reserved for the memory trace, which is the one series that needs to stay
-   distinguishable from CPU on the shared scope. */
-.status-disk-bar-fill {
-  height: 100%;
-  background: var(--ui-accent);
-}
-
-.status-core-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.3rem 0.6rem;
-  margin-top: 0.5rem;
-}
-
-.status-core-grid--compact {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.2rem 0.35rem;
-}
-
-.status-core-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.68rem;
-  color: var(--term-fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.status-mem-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-top: 0.5rem;
-}
-
-.status-net-sparks {
-  display: flex;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
-}
-
-.status-net-sparks .sparkline {
-  flex: 1 1 50%;
-  margin-top: 0;
-}
-
-.status-net-sparks .sparkline:last-child {
-  color: var(--term-blue);
-}
-
-.status-proc-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.status-proc-table th {
-  text-align: left;
-  padding: 0.15rem 0.25rem;
-  color: var(--term-cyan);
-  font-weight: 600;
-}
-
-.status-proc-table td {
-  padding: 0.15rem 0.25rem;
-  color: var(--term-fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 0;
-}
-
-.status-packet-toggle {
-  margin-top: 0.5rem;
-  width: 100%;
-}
-
-.status-packet-view {
-  margin-top: 0.5rem;
-}
-
-.status-packet-ack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--term-fg-dim);
-}
-
-.status-packet-status {
-  font-size: 0.72rem;
-  color: var(--term-amber);
-}
-
-.status-packet-status a {
-  color: var(--term-blue);
 }
 
 /* Settings drawer (v0.2.0 M2; theme/font selects + import added in
