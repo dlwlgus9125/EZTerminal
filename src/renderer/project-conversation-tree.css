@@ -54,8 +54,9 @@
 @media (prefers-reduced-motion: reduce) {
   .project-conversation-tree__status { animation: none !important; }
 }
-/* Desktop: a project row shows only its "⋯" at rest, so the name keeps the row;
-   new chat and terminal join it on hover or focus. */
+/* Desktop: a project row shows only its "⋯", so the name keeps the row. New chat and
+   terminal join it when the pointer or focus reaches that action zone — not on row hover
+   or row focus, where they would cover the name the pointer is about to click. */
 @media (hover: hover) {
   .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] { position: relative; }
   .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__label { padding-right: 2.25rem; }
@@ -63,11 +64,11 @@
     /* No transform: it would trap the Manage menu below the following rows. */
     position: absolute; top: 0; bottom: 0; right: var(--ui-space-1); z-index: 3;
   }
-  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:not(:hover):not(:focus-within) > .project-conversation-tree__actions > :not(:last-child) {
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__actions:not(:hover):not(:focus-within) > :not(:last-child) {
     display: none;
   }
-  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:hover > .project-conversation-tree__actions,
-  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project']:focus-within > .project-conversation-tree__actions {
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__actions:hover,
+  .project-conversation-tree:not([data-mobile]) .project-conversation-tree__row[data-kind='project'] > .project-conversation-tree__actions:focus-within {
     padding-left: var(--ui-space-4); background: var(--ui-surface);
   }
 }
