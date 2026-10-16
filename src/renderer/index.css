@@ -2216,14 +2216,15 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   gap: 6px;
 }
 
+/* Inset like the hub body above it; the rule still spans the full width. */
 .agent-hub-footer {
   flex: none;
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-space-3) 0;
   border-top: 1px solid var(--ui-border-subtle);
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--ui-space-2);
 }
 
 .agent-hub-footer__safe-mode {
