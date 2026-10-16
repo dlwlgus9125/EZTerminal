@@ -345,6 +345,37 @@ export function seedUiThemeColors(theme: ThemeDefinition, fallback: UiThemeColor
   };
 }
 
+/** The inverse of {@link seedUiThemeColors}: terminal-chrome roles (`--term-*`) for a
+ * custom theme whose `cssVars` leave some out. Legacy chrome (dock tabs, find bar,
+ * context menus, PTY chips) still reads `--term-*`; without this a custom theme that
+ * only supplies `ui` keeps the `:root` dark values there while the rest follows it.
+ * The terminal background comes from the xterm canvas so the frame matches it.
+ * Callers spread the theme's explicit `cssVars` over the result. */
+export function seedTerminalCssVars(ui: UiThemeColors, xterm: ThemeDefinition['xterm']): Readonly<Record<string, string>> {
+  const hover = deriveUiTokens(ui, { glow: false })['--ui-surface-hover'];
+  const accent = cssColorToRgbChannels(ui.accent);
+  const selection = xterm.selectionBackground ?? (accent ? `rgba(${accent}, 0.28)` : undefined);
+  return {
+    '--term-bg': xterm.background ?? ui.canvas,
+    '--term-bg-raised': ui.surfaceRaised,
+    '--term-bg-inset': ui.surfaceInset,
+    ...(hover ? { '--term-bg-hover': hover } : {}),
+    // The built-in chrome border is the subtle one; "faint" sits between it and the surface.
+    '--term-border': ui.borderSubtle,
+    '--term-border-faint': mixHex(ui.borderSubtle, ui.surface, 0.5),
+    '--term-fg': ui.textPrimary,
+    '--term-fg-bright': ui.textPrimary,
+    '--term-fg-dim': ui.textSecondary,
+    '--term-fg-faint': ui.textMuted,
+    '--term-green': ui.success,
+    '--term-red': ui.danger,
+    '--term-amber': ui.warning,
+    '--term-cyan': ui.info,
+    '--term-blue': ui.info,
+    ...(selection ? { '--term-selection': selection } : {}),
+  };
+}
+
 export function uiThemeColorsToCssVars(ui: UiThemeColors): Readonly<Record<string, string>> {
   const vars = Object.fromEntries(
     (Object.keys(UI_CSS_VAR_NAMES) as (keyof UiThemeColors)[]).map((role) => [UI_CSS_VAR_NAMES[role], ui[role]]),

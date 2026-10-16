@@ -100,6 +100,22 @@ describe('applyThemeVarsAndEffects', () => {
     expect(text).toContain('--ui-agent-claude-rgb:');
   });
 
+  it('seeds the terminal-chrome roles a ui-only custom theme leaves out; explicit cssVars win', () => {
+    registerTheme(customTheme('ui-only-light', {
+      cssVars: { '--term-fg': '#123456' },
+      ui: THEMES.light.ui,
+      xterm: { background: '#fbfbfa' },
+    }));
+    document.documentElement.dataset.theme = 'ui-only-light';
+    applyThemeVarsAndEffects('ui-only-light', { effectToggles: {}, platformDefaults: {} });
+    const text = styleText();
+    expect(text).toContain('--term-bg:#fbfbfa;');
+    expect(text).toContain('--term-fg:#123456;');
+    for (const name of ['--term-bg-raised', '--term-bg-inset', '--term-border', '--term-fg-dim', '--term-green', '--term-red', '--term-amber', '--term-blue']) {
+      expect(text).toContain(`${name}:`);
+    }
+  });
+
   it('writes empty textContent for a built-in theme (matrix)', () => {
     document.documentElement.dataset.theme = 'matrix';
     // Seed non-empty content first so we can prove it gets cleared, not just left alone.
