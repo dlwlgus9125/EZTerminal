@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3083f5b84b332e025bdad932a0c9d800eb99a719129c31b0ca18e5d512a81138",
+        "inputDigest": "sha256:2dbbc639dea1812b8d8e696e60720c61b5582d1c3010eca3e5b01670081f1db6",
         "decision": "map-updated",
-        "reason": "Reviewed provider settings sync: Claude Full access relaunches the session armed, a changed effort applies before the next message, and resume carries the source model, effort and permission, found even before history is listed. Relocated anchors; claims hold."
+        "reason": "Reviewed applied settings: a session on provider defaults reports the model and effort the provider applies (Claude get_settings, Codex thread start/resume) and the runtime records them unless the user chose an effort. Relocated anchors; claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:468dc111bd7ac2b271000ed41719bc84647d539476f9416e198392f74891106d",
+        "inputDigest": "sha256:51ea68978104b2a9cbf265eaaaac52edab706a4bf833e780dec4f404e2a2f007",
         "decision": "no-semantic-impact",
-        "reason": "Inputs changed for provider settings and history resume; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
+        "reason": "Inputs changed for recording provider-applied model and effort; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c598e4c4e6b095c8c79278234220881dc2675defad282fa4c5af9f0585badfc6",
+        "inputDigest": "sha256:637399fe3a337d4ebe5bbaf321e0a93c9d6fb6962746c91892e84619c05031d1",
         "decision": "no-semantic-impact",
-        "reason": "The chat model pill now also lists the model a resumed conversation runs on when the provider catalog omits it; Session identity, skin and history picker behavior are unchanged. Relocated anchors only."
+        "reason": "The chat model pill names a concrete model by the provider alias row that resolves to it; Session identity, skin and history picker behavior are unchanged. Relocated anchors only."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:067c353dc80f2029e19b839b098ea3fa6edcbed8de09fb5dd68d51486c9e7bc9",
+        "inputDigest": "sha256:c9a814e316bf2d5c38089454fcff8d3f631b5ca4353dc06f01ccbebedc983980",
         "decision": "no-semantic-impact",
-        "reason": "Inputs changed for provider settings and history resume; workflow capabilities and their behavior are unchanged. Relocated source anchors only."
+        "reason": "Provider model rows may carry the concrete model an alias resolves to; workflow capabilities and their behavior are unchanged. Relocated source anchors only."
       }
     }
   ]

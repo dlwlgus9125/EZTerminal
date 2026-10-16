@@ -166,8 +166,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 374,
-          "endLine": 392,
+          "startLine": 384,
+          "endLine": 402,
           "lineDigest": "sha256:d3a345787b078d0f1879d601daa0ddbc9b4ebf9fbf168f73cb1649a33a4ebee2",
           "claim": "Agent startup restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, reconciles unsettled work, and rearms durable timeouts."
         },
