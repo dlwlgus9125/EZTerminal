@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:67ce54326efdcf69bb0c80012c2479d76dbc561e827123ef240b8ecd2164a95d",
+        "inputDigest": "sha256:841be894789dd01df1d802a8394d992bee7466b74b98f3a2bc8b85a0dab691b6",
         "decision": "map-updated",
         "reason": "Reviewed the chat overhaul: transcript payloads, approval requests/responses, effort (schema v7, capability flags, no protocol bump), Claude streaming, fail-fast start, version-range launch, edit line diffs, draft directory ACL. Relocated anchors; rechecked changes."
       }
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e255b0fa71182ba76a5003fa4d2f4bea35ca18b304df2a5e7e7ea1e6f9271fe4",
+        "inputDigest": "sha256:f327ea2150d16ea3155999b7376d099f4172ab2e6b499fe9efda9cb11382ff0c",
         "decision": "map-updated",
-        "reason": "Reviewed the one-row desktop chat header (skin and history in the session menu, header review button), the review open request and Claude edits shown as line diffs. Claims hold; relocated anchors to the changed blocks."
+        "reason": "Reviewed the one-row chat header, review open request, Claude line diffs and planning embedded in the project page (one header, states in words, markdown summaries, per-file result diffs). Claims hold; relocated anchors to the changed blocks."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:12ee46873bfa50f1ffa55ba65f49f80dece9706400d9ea3c37e1db0bc6c846ff",
+        "inputDigest": "sha256:917d40d94406a5ca434d1d91c739f4b316a754a5cf14cd53c073d7ed63ec7362",
         "decision": "map-updated",
-        "reason": "Reviewed composer @ workspace-file mentions, the compact extensions summary and Claude edit line diffs. Updated the completion claim; relocated anchors and rechecked changed discovery and completion blocks."
+        "reason": "Reviewed composer @ file mentions, the compact extensions summary, Claude edit line diffs and the project page items/quick-tasks switch. Updated the completion claim; relocated anchors and rechecked changed blocks."
       }
     }
   ]

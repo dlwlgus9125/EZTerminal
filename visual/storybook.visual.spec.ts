@@ -298,6 +298,62 @@ test("project workbench content is readable and bounded", async ({ page }) => {
   });
 });
 
+test.describe("Planning and workflow project screens", () => {
+  // Each story pins its own locale (workflow: English, planning: Korean).
+  for (const visualCase of [
+    {
+      name: "wide English project items",
+      viewport: { width: 1200, height: 800 },
+      storyId: "production-workflow-project-workspace--project-items",
+      testId: "workflow-workspace",
+      locale: "en",
+      theme: "dark",
+      screenshot: "desktop-1200x800-workflow-items-dark-en.png",
+    },
+    {
+      name: "narrow light project items",
+      viewport: { width: 800, height: 600 },
+      storyId: "production-workflow-project-workspace--project-items",
+      testId: "workflow-workspace",
+      locale: "en",
+      theme: "light",
+      screenshot: "desktop-800x600-workflow-items-light-en.png",
+    },
+    {
+      name: "wide Korean planning overview",
+      viewport: { width: 1200, height: 800 },
+      storyId: "production-planning-project-workspace--overview",
+      testId: "planning-workspace",
+      locale: "ko",
+      theme: "dark",
+      screenshot: "desktop-1200x800-planning-overview-dark-ko.png",
+    },
+    {
+      name: "narrow Korean planning conversations",
+      viewport: { width: 800, height: 600 },
+      storyId: "production-planning-project-workspace--conversations",
+      testId: "planning-workspace",
+      locale: "ko",
+      theme: "light",
+      screenshot: "desktop-800x600-planning-conversations-light-ko.png",
+    },
+  ] as const) {
+    test(visualCase.name, async ({ page }) => {
+      await page.setViewportSize(visualCase.viewport);
+      await openStory(page, visualCase.storyId, {
+        theme: visualCase.theme,
+        locale: visualCase.locale,
+        density: "adaptive",
+        motion: "reduced",
+      });
+      await expect(page.getByTestId(visualCase.testId)).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(visualCase.screenshot, { animations: "disabled" });
+    });
+  }
+});
+
 test.describe("Project Map creation visual contracts", () => {
   for (const visualCase of [
     {
