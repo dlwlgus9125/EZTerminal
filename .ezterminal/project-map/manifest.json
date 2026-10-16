@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f327ea2150d16ea3155999b7376d099f4172ab2e6b499fe9efda9cb11382ff0c",
+        "inputDigest": "sha256:32d3805eba4732bba892b45796104f7c03fda7592763f26c1ab2d0bde5263579",
         "decision": "map-updated",
-        "reason": "Reviewed the one-row chat header, review open request, Claude line diffs and planning embedded in the project page (one header, states in words, markdown summaries, per-file result diffs). Claims hold; relocated anchors to the changed blocks."
+        "reason": "Reviewed child Agents as one row of chips above the composer and localized agent states. The skin/history and draft-handoff claims hold; the two chat anchors moved with the file and were relocated exactly."
       }
     },
     {
