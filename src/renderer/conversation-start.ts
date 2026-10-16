@@ -1,4 +1,4 @@
-import { createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonPrincipal, type DaemonSnapshot } from '../shared/daemon-protocol';
+import { createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonPrincipal, type DaemonSnapshot, type PermissionPreset } from '../shared/daemon-protocol';
 import type { ChatMessageContext } from '../shared/chat-message';
 import { ChatMessageContextSchema } from '../shared/chat-message';
 import type { ConversationHistoryClient } from '../shared/conversation-history';
@@ -13,6 +13,35 @@ export interface ConversationStartAccess {
   history: ConversationHistoryClient;
   principal: DaemonPrincipal;
 }
+/**
+ * What the start form begins with. A previous conversation continues with what it last ran with —
+ * the host's resume preparation (`source`) — never with another conversation's settings; a new
+ * conversation starts from the most recent one in the project.
+ */
+export function initialConversationSettings(input: {
+  readonly entry?: { readonly providerId: string; readonly workspaceId?: string };
+  readonly recent?: { readonly providerId: string; readonly model?: string; readonly permissionPreset: PermissionPreset };
+  readonly source?: { readonly model?: string; readonly permissionPreset: PermissionPreset } | null;
+  readonly fallbackProviderId?: string;
+  readonly fallbackWorkspaceId?: string;
+}): ConversationSettings {
+  const { entry, recent, source } = input;
+  if (entry) {
+    return {
+      providerId: entry.providerId,
+      workspaceId: entry.workspaceId ?? input.fallbackWorkspaceId ?? '',
+      ...(source?.model ? { model: source.model } : {}),
+      permissionPreset: source?.permissionPreset ?? 'standard',
+    };
+  }
+  return {
+    providerId: recent?.providerId ?? input.fallbackProviderId ?? '',
+    workspaceId: input.fallbackWorkspaceId ?? '',
+    ...(recent?.model ? { model: recent.model } : {}),
+    permissionPreset: recent?.permissionPreset ?? 'standard',
+  };
+}
+
 export type ConversationStarted = { ok: true; sessionId: string; conversationId?: string } | { ok: false; message: string; deliveryUncertain?: boolean };
 const newId = conversationOperationId;
 

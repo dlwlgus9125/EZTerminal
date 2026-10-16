@@ -1625,8 +1625,10 @@ export function StructuredAgentSessionPanel({
   const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
   const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
   useEffect(() => { setCapabilityCatalog(undefined); setSelectedCapabilities([]); }, [sessionId, providerId, workspace.id]);
-  const availableModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
+  const listedModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
     ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : modelOptions;
+  // A resumed conversation may run on a concrete model id the provider lists only under an alias.
+  const availableModels = model && !listedModels.some((entry) => entry.id === model) ? [...listedModels, { id: model, label: model }] : listedModels;
   const sendWithCapabilities = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
     if (context?.skills?.some((skill) => skill.providerId !== providerId)) return { ok: false, message: 'The selected skills belong to another provider. Remove or select them again.' };
     const selected = [...selectedCapabilities.filter((item) => item.invocation && prompt.includes(item.invocation)),

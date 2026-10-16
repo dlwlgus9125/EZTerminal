@@ -420,6 +420,26 @@ describe('StructuredAgentSessionPanel', () => {
     expect(model.getAttribute('aria-label')).toContain('GPT-6');
   });
 
+  it('shows a resumed conversation model the provider list does not name', () => {
+    render(
+      <StructuredAgentSessionPanel
+        sessionId="session-1"
+        title="Resumed"
+        providerId="claude"
+        providerLabel="Claude"
+        workspace={{ id: 'workspace-1', label: 'Feature', kind: 'worktree' }}
+        model="claude-opus-5-5"
+        modelOptions={[]}
+        permissionPreset="full-access"
+        state="idle"
+        items={[]}
+        onSend={async () => ({ ok: true })}
+        onChangeSettings={async () => ({ ok: true })}
+      />,
+    );
+    expect(container.querySelector('[data-testid="structured-agent-live-model"]')?.getAttribute('aria-label')).toContain('claude-opus-5-5');
+  });
+
   it('guards lifecycle actions, reports failure, and preserves a typed draft', async () => {
     const onCancel = vi.fn(async () => ({ ok: false as const, message: 'Stop failed safely' }));
     const onDetach = vi.fn(async () => ({ ok: true as const }));

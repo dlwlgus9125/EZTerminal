@@ -4,10 +4,10 @@ import type { ConversationEntry } from '../shared/conversation-history';
 import type { ChatStateScope, ChatStateSnapshot } from '../shared/chat-state';
 import { hasConversationDraft, importConversationDraft } from './conversation-draft-migration';
 import type { ConversationSettings } from '../shared/conversation-start';
-import type { DaemonSnapshot, DaemonTranscriptItem } from '../shared/daemon-protocol';
+import type { DaemonSnapshot, DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
 import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
-import { ConversationStartController, type ConversationStartAccess } from './conversation-start';
+import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
 import { historyTranscriptItems } from './chat/model/history-items';
@@ -63,13 +63,27 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const workspaces = useMemo(() => structuredAgentWorkspaceOptions(snapshot, entry?.projectId ?? projectId), [snapshot, entry?.projectId, projectId]);
   const recent = snapshot?.agents.filter(agent => entry?.linkedSessionId ? agent.sessionId === entry.linkedSessionId : snapshot.sessions.some(session => session.id === agent.sessionId && (!projectId || session.projectId === projectId)))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-  const initial: ConversationSettings = { providerId: entry?.providerId ?? recent?.providerId ?? providers.find(item => !item.disabled)?.id ?? '',
-    workspaceId: entry?.workspaceId ?? workspaceId ?? workspaces[0]?.id ?? '', model: recent?.providerId === entry?.providerId || !entry ? recent?.model : undefined,
-    permissionPreset: recent?.permissionPreset ?? 'standard' };
+  // A previous conversation continues with what it last ran with; the host reads that from its own
+  // record or the provider's transcript. Until it answers, sending would use the wrong settings.
+  const [source, setSource] = useState<{ model?: string; permissionPreset: PermissionPreset } | null | undefined>(initialEntry ? undefined : null);
+  useEffect(() => {
+    if (!originalId || disconnected) return;
+    let alive = true;
+    void access.history.prepareHistoryResume({ conversationId: originalId })
+      .then(prepared => { if (alive) setSource(prepared.ok ? { ...(prepared.model ? { model: prepared.model } : {}), permissionPreset: prepared.permissionPreset } : null); })
+      .catch(() => { if (alive) setSource(null); });
+    return () => { alive = false; };
+  }, [access, originalId, disconnected]);
+  const initial: ConversationSettings = initialConversationSettings({
+    ...(entry ? { entry: { providerId: entry.providerId, ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}) } } : {}),
+    ...(recent ? { recent } : {}), source,
+    fallbackProviderId: providers.find(item => !item.disabled)?.id ?? '',
+    fallbackWorkspaceId: workspaceId ?? workspaces[0]?.id ?? '',
+  });
   const settings = view.settings ?? initial;
   const selectedProvider = providers.find(item => item.id === settings.providerId);
   const selectedWorkspace = workspaces.find(item => item.id === settings.workspaceId);
-  const canSend = !disconnected && view.status === 'ready' && !loading && !draftLoading && !draftLoadFailed && !inheritedPending && (!entry || !!page)
+  const canSend = !disconnected && view.status === 'ready' && !loading && !draftLoading && !draftLoadFailed && !inheritedPending && (!entry || (!!page && source !== undefined))
     && !!settings.providerId && (!!entry || !!selectedWorkspace) && !selectedProvider?.disabled;
   useEffect(() => {
     if (!initialEntry?.linkedSessionId) return;

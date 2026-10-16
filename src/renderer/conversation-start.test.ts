@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatStateSnapshot, ChatStateScope } from '../shared/chat-state';
 import type { DaemonCommand, DaemonSnapshot } from '../shared/daemon-protocol';
 import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
-import { ConversationStartController, type ConversationStartAccess } from './conversation-start';
+import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 
 const settings = { workspaceId: 'workspace', providerId: 'codex', permissionPreset: 'standard' as const };
 const scope: ChatStateScope = { projectId: 'project', sessionId: 'draft-1', kind: 'draft' };
@@ -90,5 +90,19 @@ describe('first message transaction', () => {
     h.recovery.updateDraft({ text: 'My next message' });
     expect(await h.controller.send(settings, 'Hello')).toMatchObject({ ok: true });
     expect(h.recovery.getSnapshot().draft.text).toBe('My next message');
+  });
+});
+
+describe('start form settings', () => {
+  it('continues a previous conversation with what it last ran with, never another conversation’s settings', () => {
+    const recent = { providerId: 'claude', model: 'claude-sonnet-5-5', permissionPreset: 'plan' as const };
+    const source = { model: 'claude-opus-5-5', permissionPreset: 'full-access' as const };
+    expect(initialConversationSettings({ entry: { providerId: 'claude', workspaceId: 'w' }, recent, source }))
+      .toEqual({ providerId: 'claude', workspaceId: 'w', model: 'claude-opus-5-5', permissionPreset: 'full-access' });
+  });
+
+  it('starts a new conversation from the most recent one in the project', () => {
+    expect(initialConversationSettings({ recent: { providerId: 'codex', model: 'gpt-6-astra', permissionPreset: 'full-access' }, fallbackWorkspaceId: 'w' }))
+      .toEqual({ providerId: 'codex', workspaceId: 'w', model: 'gpt-6-astra', permissionPreset: 'full-access' });
   });
 });
