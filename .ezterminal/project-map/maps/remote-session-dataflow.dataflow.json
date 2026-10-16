@@ -282,8 +282,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-history-service.ts",
-          "startLine": 242,
-          "endLine": 272,
+          "startLine": 243,
+          "endLine": 273,
           "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
           "claim": "Project targets and resume history ids only touch existing indexed Projects, while direct-directory launches return explicit deterministic Project registration intent."
         },
@@ -558,8 +558,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-history-service.ts",
-          "startLine": 242,
-          "endLine": 272,
+          "startLine": 243,
+          "endLine": 273,
           "lineDigest": "sha256:209236b06009af2f4d19cb425628b72e2d34536160971d4ce9c42044c5954db1",
           "claim": "Project-target and history-specific records return no changed descriptor after removal; direct-directory launches instead return their deterministic id as explicit intent."
         }

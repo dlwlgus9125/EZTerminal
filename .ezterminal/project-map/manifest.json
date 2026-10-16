@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:841be894789dd01df1d802a8394d992bee7466b74b98f3a2bc8b85a0dab691b6",
+        "inputDigest": "sha256:3083f5b84b332e025bdad932a0c9d800eb99a719129c31b0ca18e5d512a81138",
         "decision": "map-updated",
-        "reason": "Reviewed the chat overhaul: transcript payloads, approval requests/responses, effort (schema v7, capability flags, no protocol bump), Claude streaming, fail-fast start, version-range launch, edit line diffs, draft directory ACL. Relocated anchors; rechecked changes."
+        "reason": "Reviewed provider settings sync: Claude Full access relaunches the session armed, a changed effort applies before the next message, and resume carries the source model, effort and permission, found even before history is listed. Relocated anchors; claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a9603c59c92acb6d7612bcdf0f40aa69d507e14abcf12bdd679577a095370ecf",
+        "inputDigest": "sha256:468dc111bd7ac2b271000ed41719bc84647d539476f9416e198392f74891106d",
         "decision": "no-semantic-impact",
-        "reason": "Inputs changed for the chat overhaul, compact shell and draft-directory ACL wiring; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
+        "reason": "Inputs changed for provider settings and history resume; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8066a353237f133c2676128c39588fef865815147dec8407e7e7a631532fdc8e",
+        "inputDigest": "sha256:fb02c0fce009edb56cd0d00d5e8595930dee28a559e5be1ead7d735fc70c54d3",
         "decision": "no-semantic-impact",
-        "reason": "Inputs gained optional transcript payload, approval request and effort fields behind capability flags; the v12 snapshot and v16 remote flow are unchanged. Relocated source anchors only."
+        "reason": "agent.resume gained an optional reasoning effort used only by the desktop history service; the v12 snapshot and v16 remote flow are unchanged. Relocated source anchors only."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:32d3805eba4732bba892b45796104f7c03fda7592763f26c1ab2d0bde5263579",
-        "decision": "map-updated",
-        "reason": "Reviewed child Agents as one row of chips above the composer and localized agent states. The skin/history and draft-handoff claims hold; the two chat anchors moved with the file and were relocated exactly."
+        "inputDigest": "sha256:c598e4c4e6b095c8c79278234220881dc2675defad282fa4c5af9f0585badfc6",
+        "decision": "no-semantic-impact",
+        "reason": "The chat model pill now also lists the model a resumed conversation runs on when the provider catalog omits it; Session identity, skin and history picker behavior are unchanged. Relocated anchors only."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:917d40d94406a5ca434d1d91c739f4b316a754a5cf14cd53c073d7ed63ec7362",
-        "decision": "map-updated",
-        "reason": "Reviewed composer @ file mentions, the compact extensions summary, Claude edit line diffs and the project page items/quick-tasks switch. Updated the completion claim; relocated anchors and rechecked changed blocks."
+        "inputDigest": "sha256:067c353dc80f2029e19b839b098ea3fa6edcbed8de09fb5dd68d51486c9e7bc9",
+        "decision": "no-semantic-impact",
+        "reason": "Inputs changed for provider settings and history resume; workflow capabilities and their behavior are unchanged. Relocated source anchors only."
       }
     }
   ]
