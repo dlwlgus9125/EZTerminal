@@ -202,6 +202,7 @@ export function PlanningWorkspaceDockPanel(
         const key = subproject?.id ?? '';
         if (!draftStores.has(key)) draftStores.set(key, desktopPlanningDraftStorage(projectId, subproject?.id));
         return <PlanningWorkspacePanel
+      embedded
       projectId={projectId}
       projectName={subproject?.title ?? projectName}
       subprojectId={subproject?.id}

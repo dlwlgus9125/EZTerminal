@@ -55,6 +55,16 @@
 .planning-workspace__navigation .ez-ui-tab-list {
   flex-shrink: 0;
 }
+/* Embedded in the project workspace: its header and padding frame this panel. */
+.planning-workspace[data-embedded] .planning-workspace__navigation {
+  padding: 0;
+}
+.planning-workspace__embedded-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  margin-left: auto;
+}
 .planning-workspace__navigation > * {
   flex-shrink: 0;
 }

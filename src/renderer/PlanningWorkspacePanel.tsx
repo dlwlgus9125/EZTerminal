@@ -109,6 +109,8 @@ export interface PlanningWorkspacePanelProps {
   readonly onOpenTerminal?: () => void;
   readonly onOpenFiles?: () => void;
   readonly onExportScene?: (name: string, content: string) => Promise<void>;
+  /** Inside the project workspace, which already owns the project header, back and refresh. */
+  readonly embedded?: boolean;
 }
 
 const SECTIONS: readonly PlanningWorkspaceSection[] = [
@@ -178,6 +180,7 @@ function PlanningWorkspaceContent({
   onOpenTerminal,
   onOpenFiles,
   onExportScene,
+  embedded = false,
 }: PlanningWorkspacePanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const korean = (i18n.resolvedLanguage ?? i18n.language).startsWith("ko");
@@ -852,13 +855,50 @@ function PlanningWorkspaceContent({
     </Badge>
   );
 
+  const revisionBadge = snapshot && (
+    <Badge>
+      {copy("초안", "Draft")} · r{snapshot.revision}
+    </Badge>
+  );
+  const pendingActions = (
+    <>
+      {pendingArchive && (
+        <Button
+          size="sm"
+          onClick={() => {
+            setSection("review");
+            setArchiveOpen(true);
+          }}
+        >
+          {copy("보관 요청 확인", "Check archive request")}
+        </Button>
+      )}
+      {pendingCount > 0 && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={locked}
+          onClick={() => {
+            setDiscardKeys([]);
+            setDiscardOpen(true);
+          }}
+        >
+          {copy(
+            `미저장 변경 ${pendingCount}`,
+            `${pendingCount} unsaved changes`,
+          )}
+        </Button>
+      )}
+    </>
+  );
   return (
     <section
       className="planning-workspace"
       data-mobile={mobile || undefined}
+      data-embedded={embedded || undefined}
       data-testid="planning-workspace"
     >
-      <header className="planning-workspace__header">
+      {!embedded && <header className="planning-workspace__header">
         <div className="planning-workspace__identity">
           {onBack && (
             <IconButton
@@ -873,40 +913,10 @@ function PlanningWorkspaceContent({
             </span>
             <h1>{projectName}</h1>
           </div>
-          {snapshot && (
-            <Badge>
-              {copy("초안", "Draft")} · r{snapshot.revision}
-            </Badge>
-          )}
+          {revisionBadge}
         </div>
         <div className="planning-workspace__actions">
-          {pendingArchive && (
-            <Button
-              size="sm"
-              onClick={() => {
-                setSection("review");
-                setArchiveOpen(true);
-              }}
-            >
-              {copy("보관 요청 확인", "Check archive request")}
-            </Button>
-          )}
-          {pendingCount > 0 && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={locked}
-              onClick={() => {
-                setDiscardKeys([]);
-                setDiscardOpen(true);
-              }}
-            >
-              {copy(
-                `미저장 변경 ${pendingCount}`,
-                `${pendingCount} unsaved changes`,
-              )}
-            </Button>
-          )}
+          {pendingActions}
           {onOpenTerminal && (
             <Button
               variant="ghost"
@@ -934,7 +944,7 @@ function PlanningWorkspaceContent({
             onClick={() => void refresh()}
           />
         </div>
-      </header>
+      </header>}
       {disabled && (
         <p className="planning-workspace__message" role="status">
           {disabledReason ??
@@ -992,6 +1002,12 @@ function PlanningWorkspaceContent({
             >
               {copy("파일", "Files")}
             </Button>
+          )}
+          {embedded && (
+            <div className="planning-workspace__embedded-actions">
+              {revisionBadge}
+              {pendingActions}
+            </div>
           )}
         </div>
         {(error || uncertain) && (
