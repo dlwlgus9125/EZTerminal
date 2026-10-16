@@ -136,7 +136,9 @@ function MobileWorkbenchLayers({
         {terminal}
       </div>
       {pageActive && (
-        <section className="mobile-page-shell" data-testid="mobile-page-shell">
+        // A page can stay mounted while the terminal is the active layer (MobileWorkspace keeps
+        // its planning navigator alive); the opaque shell must not cover the terminal then.
+        <section className="mobile-page-shell" data-testid="mobile-page-shell" hidden={resolvedTerminalActive}>
           {page}
         </section>
       )}
