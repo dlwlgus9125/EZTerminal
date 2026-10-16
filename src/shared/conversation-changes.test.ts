@@ -1,7 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { claudeFileChange, conversationFileChanges, decodeFileChanges, encodeFileChanges, replacementLines, reviewLines } from './conversation-changes';
+import { claudeFileChange, conversationFileChanges, decodeFileChanges, encodeFileChanges, gitDiffFileChanges, replacementLines, reviewLines } from './conversation-changes';
 import type { DaemonTranscriptItem } from './daemon-protocol';
 
+
+
+describe('gitDiffFileChanges', () => {
+  const diff = [
+    'diff --git a/src/app.ts b/src/app.ts',
+    'index 1111111..2222222 100644',
+    '--- a/src/app.ts',
+    '+++ b/src/app.ts',
+    '@@ -1,3 +1,3 @@',
+    ' keep',
+    '--- removed line that starts with dashes',
+    '+added',
+    'diff --git a/old.md b/old.md',
+    'deleted file mode 100644',
+    'index 3333333..0000000',
+    '--- a/old.md',
+    '+++ /dev/null',
+    '@@ -1 +0,0 @@',
+    '-gone',
+    '',
+  ].join('\n');
+
+  it('splits a multi-file git diff into one numbered change per file without its header lines', () => {
+    const changes = gitDiffFileChanges(diff);
+    expect(changes.map((change) => change.path)).toEqual(['src/app.ts', 'old.md']);
+    expect(changes[0]).toEqual({ path: 'src/app.ts', coverage: 'patch', patch: '@@ -1,3 +1,3 @@\n keep\n--- removed line that starts with dashes\n+added' });
+    expect(reviewLines(changes[0]!).find((line) => line.kind === 'remove')).toMatchObject({ before: 2 });
+    expect(changes[1]!.patch).toBe('@@ -1 +0,0 @@\n-gone');
+  });
+
+  it('returns nothing for text that is not a git diff', () => {
+    expect(gitDiffFileChanges('No file changes from the base commit.')).toEqual([]);
+  });
+});
 
 describe('replacementLines', () => {
   it('keeps unchanged lines as context and shows only what an edit adds', () => {

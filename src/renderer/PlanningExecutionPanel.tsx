@@ -35,6 +35,7 @@ import {
   LoadingState,
   Select,
 } from "./ui";
+import { ChatMarkdown } from "./chat/markdown/ChatMarkdown";
 
 export interface PlanningExecutionAccess {
   readPlanningResult?: PlanningResultReader;
@@ -673,7 +674,7 @@ export function PlanningExecutionPanel({
             </p>
             {attempt && (
               <>
-                <p>{attempt.summary}</p>
+                {attempt.summary && <ChatMarkdown markdown={attempt.summary} />}
                 {pendingApprovals.length > 0 && (
                   <div className="planning-workspace__message" role="status">
                     <strong>

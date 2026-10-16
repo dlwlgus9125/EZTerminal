@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { gitDiffFileChanges } from "../shared/conversation-changes";
 import type { ExecutionRun } from "../shared/planning-execution";
 import type { PlanningDeviceEvidenceInput } from "../shared/planning-device-evidence";
 import { PlanningDeviceEvidenceForm, type PlanningDeviceEvidenceTarget } from "./PlanningDeviceEvidenceForm";
@@ -11,6 +12,9 @@ import type {
 } from "../shared/planning-result";
 import { useAppTranslation } from "./i18n";
 import { Badge, Button, Dialog, EmptyState, LoadingState } from "./ui";
+import { ChatMarkdown } from "./chat/markdown/ChatMarkdown";
+import { DiffView } from "./chat/parts/DiffView";
+import "./chat/chat.css";
 
 export type PlanningResultReader = (
   query: PlanningResultQuery,
@@ -178,6 +182,7 @@ export function PlanningResultDetails({
   const [diff, setDiff] = useState<{ text?: string; error?: string } | null>(
     null,
   );
+  const diffChanges = useMemo(() => (diff?.text ? gitDiffFileChanges(diff.text) : []), [diff?.text]);
   useEffect(() => {
     let current = true;
     setRecord(null);
@@ -446,13 +451,21 @@ export function PlanningResultDetails({
                 {diff?.error ? (
                   <p role="alert">{diff.error}</p>
                 ) : diff?.text !== undefined ? (
-                  <pre>
-                    {diff.text ||
-                      text(
-                        "기준 커밋과 파일 변경이 같습니다.",
-                        "No file changes from the base commit.",
-                      )}
-                  </pre>
+                  diffChanges.length > 0 ? (
+                    <div className="planning-workspace__result-diff">
+                      {diffChanges.map((change) => (
+                        <DiffView key={change.path} change={change} />
+                      ))}
+                    </div>
+                  ) : (
+                    <pre>
+                      {diff.text ||
+                        text(
+                          "기준 커밋과 파일 변경이 같습니다.",
+                          "No file changes from the base commit.",
+                        )}
+                    </pre>
+                  )
                 ) : (
                   <LoadingState
                     label={text("변경 내용 읽는 중", "Reading result diff")}
@@ -472,12 +485,12 @@ export function PlanningResultDetails({
                 >
                   {attempt.review.decision}
                 </Badge>
-                <p>{attempt.review.summary}</p>
+                <ChatMarkdown markdown={attempt.review.summary} />
                 <ul>
                   {attempt.review.inspections.map((entry) => (
                     <li key={entry.validationId}>
                       {entry.validationId} · {entry.status}
-                      <p>{entry.summary}</p>
+                      <ChatMarkdown markdown={entry.summary} />
                     </li>
                   ))}
                 </ul>

@@ -118,13 +118,49 @@ export function claudeFileChange(name: string, input: unknown): RecordedFileChan
   return undefined;
 }
 
+const GIT_FILE_HEADER = /^(?:index |--- |\+\+\+ |new file mode |deleted file mode |old mode |new mode |similarity index |dissimilarity index |rename from |rename to |copy from |copy to )/u;
+
+/**
+ * One numbered change per file of a multi-file `git diff`, without its header lines (the path
+ * is shown separately). Header lines are only recognized before a file's first hunk, so a
+ * removed line that starts with dashes stays content. Text that is not a git diff yields none.
+ */
+export function gitDiffFileChanges(text: string): RecordedFileChange[] {
+  const changes: RecordedFileChange[] = [];
+  let path: string | undefined;
+  let lines: string[] = [];
+  let inHunk = false;
+  const flush = (): void => {
+    if (path !== undefined) changes.push({ path, coverage: 'patch', patch: lines.join('\n').replace(/\n+$/u, '') });
+  };
+  for (const line of text.replace(/\r\n?/gu, '\n').split('\n')) {
+    const start = line.match(/^diff --git a\/(.+?) b\/(.+)$/u);
+    if (start) {
+      flush();
+      path = start[2];
+      lines = [];
+      inHunk = false;
+      continue;
+    }
+    if (path === undefined) continue;
+    if (!inHunk && GIT_FILE_HEADER.test(line)) continue;
+    if (line.startsWith('@@')) inHunk = true;
+    lines.push(line);
+  }
+  flush();
+  return changes;
+}
+
 export interface ReviewLine { readonly text: string; readonly kind: 'add' | 'remove' | 'context' | 'header'; readonly before?: number; readonly after?: number }
 export function reviewLines(change: RecordedFileChange): ReviewLine[] {
   let before: number | undefined; let after: number | undefined;
+  // File headers only precede the first hunk; inside one, "--- x" is a removed "-- x".
+  let inHunk = false;
   return change.patch.split('\n').map(text => {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if (hunk && change.coverage === 'patch') { before = Number(hunk[1]); after = Number(hunk[2]); return { text, kind: 'header' }; }
-    if (/^(?:diff |index |--- |\+\+\+ |\\ |@@)/.test(text)) return { text, kind: 'header' };
+    const hunk = text.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk && change.coverage === 'patch') { inHunk = true; before = Number(hunk[1]); after = Number(hunk[2]); return { text, kind: 'header' }; }
+    if (/^(?:\\ |@@)/.test(text)) { inHunk = true; return { text, kind: 'header' }; }
+    if (change.coverage === 'patch' && !inHunk && /^(?:diff |index |--- |\+\+\+ )/.test(text)) return { text, kind: 'header' };
     if (text.startsWith('+')) { const line = { text, kind: 'add' as const, after }; if (after !== undefined) after++; return line; }
     if (text.startsWith('-')) { const line = { text, kind: 'remove' as const, before }; if (before !== undefined) before++; return line; }
     const line = { text, kind: 'context' as const, before, after };

@@ -16,6 +16,7 @@ import {
   Input,
   Select,
 } from "./ui";
+import { ChatMarkdown } from "./chat/markdown/ChatMarkdown";
 
 export type PlanningProfileDrafts = Readonly<
   Record<string, { value: PlanningRoleProfile; dirty: boolean }>
@@ -351,9 +352,7 @@ export function PlanningProfileEditor({
                 <small>
                   r{proposal.baseVersion} → {proposal.proposed.title}
                 </small>
-                <pre className="planning-workspace__proposal">
-                  {proposal.proposed.instructions}
-                </pre>
+                <ChatMarkdown markdown={proposal.proposed.instructions} />
                 <p>
                   {proposal.proposed.allowedTools
                     .map((tool) => tools[tool])

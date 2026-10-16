@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 import type { WorkflowAccess } from '../../shared/workflow';
 import type { WorkflowConversationContext as ReferenceSnapshot } from '../../shared/workflow-conversation';
 import { Badge, Button } from '../ui';
+import { ChatMarkdown } from '../chat/markdown/ChatMarkdown';
 import { useWorkflowCopy } from './WorkflowEditor';
 
 export interface WorkflowConversationScope {
@@ -79,7 +80,7 @@ export function WorkflowConversationContext({ scope, onReturn, onRefresh, busy, 
   return <aside className="workflow-conversation-context" aria-label={text('대화의 작업 맥락', 'Conversation context')}>
     <span><strong>{scope.subprojectTitle}</strong>{scope.nodeTitle ? ` · ${scope.nodeTitle}` : scope.mode === 'flow-edit' ? text(' · 흐름 편집', ' · Flow editing') : ''}</span>
     <Badge>{scope.mode === 'run' ? text('실행 버전', 'Run version') : text('연결 버전', 'Linked version')} {scope.revision}</Badge>
-    {scope.referenceSnapshot && <details><summary>{text('참조 중인 저장 단계 문서', 'Referenced saved stage document')} · v{scope.referenceSnapshot.graphRevision}</summary><p>{scope.referenceSnapshot.title}</p><pre>{scope.referenceSnapshot.document || text('저장된 본문 없음', 'No saved document text')}</pre>{scope.referenceSnapshot.references.map((reference, index) => <div key={`${reference.nodeId}-${index}`}><strong>{reference.title} · {reference.kind === 'document' ? text('단계 문서', 'Stage document') : text('실행 결과', 'Execution result')}</strong><pre>{reference.text}</pre></div>)}</details>}
+    {scope.referenceSnapshot && <details><summary>{text('참조 중인 저장 단계 문서', 'Referenced saved stage document')} · v{scope.referenceSnapshot.graphRevision}</summary><p>{scope.referenceSnapshot.title}</p>{scope.referenceSnapshot.document ? <ChatMarkdown markdown={scope.referenceSnapshot.document} /> : <p>{text('저장된 본문 없음', 'No saved document text')}</p>}{scope.referenceSnapshot.references.map((reference, index) => <div key={`${reference.nodeId}-${index}`}><strong>{reference.title} · {reference.kind === 'document' ? text('단계 문서', 'Stage document') : text('실행 결과', 'Execution result')}</strong><pre>{reference.text}</pre></div>)}</details>}
     {scope.stale && !scope.readOnly && <span role="status">{text('저장 문서가 변경되었습니다. 이 대화는 표시된 참조 버전을 사용합니다.', 'The saved document changed. This conversation uses the reference version shown here.')}</span>}
     {scope.mode === 'stage' && !scope.readOnly && onRefresh && <Button disabled={busy} onClick={() => void onRefresh()}>{text('저장본으로 참조 갱신', 'Refresh references from saved version')}</Button>}
     {error && <span role="alert">{error}</span>}
