@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2dbbc639dea1812b8d8e696e60720c61b5582d1c3010eca3e5b01670081f1db6",
+        "inputDigest": "sha256:b8abe5a8088cb01a9ed360254b4b8c0e375ce2a40a6d6160da5cc573b87c3d38",
         "decision": "map-updated",
-        "reason": "Reviewed applied settings: a session on provider defaults reports the model and effort the provider applies (Claude get_settings, Codex thread start/resume) and the runtime records them unless the user chose an effort. Relocated anchors; claims hold."
+        "reason": "Reviewed subagent nesting: unified history no longer lists attached subagent chats (managed or provider-native) as rows of their own; they stay reachable under the parent conversation and return to the list once detached. Anchor claim updated."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fb02c0fce009edb56cd0d00d5e8595930dee28a559e5be1ead7d735fc70c54d3",
+        "inputDigest": "sha256:627168894e43b2b7ea6952b8481105296909cd8e7249c476a8c8a1bfd7d37d47",
         "decision": "no-semantic-impact",
-        "reason": "agent.resume gained an optional reasoning effort used only by the desktop history service; the v12 snapshot and v16 remote flow are unchanged. Relocated source anchors only."
+        "reason": "Inputs changed because unified history now leaves attached subagent chats to their parent conversation; remote transport, session mirroring and history wire shapes are unchanged. Relocated anchors only."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c9a814e316bf2d5c38089454fcff8d3f631b5ca4353dc06f01ccbebedc983980",
-        "decision": "no-semantic-impact",
-        "reason": "Provider model rows may carry the concrete model an alias resolves to; workflow capabilities and their behavior are unchanged. Relocated source anchors only."
+        "inputDigest": "sha256:bbd27e54ccf69bfdffe3eb22b2248a8053f1ef2edae481411805cb7187e8bb97",
+        "decision": "map-updated",
+        "reason": "Reviewed the conversation tree: attached subagent chats fold under their parent conversation, collapsed by default, and are left out of the recent view and title search. Anchor claim updated."
       }
     }
   ]

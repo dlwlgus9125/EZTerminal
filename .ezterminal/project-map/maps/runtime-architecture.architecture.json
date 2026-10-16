@@ -563,15 +563,15 @@
           "rootAlias": "app",
           "relativePath": "src/main/conversation-history-service.ts",
           "startLine": 103,
-          "endLine": 185,
-          "lineDigest": "sha256:47fb386717f99a67ebef264c26ccfc6c87f486d1e2f207991220364107662569",
-          "claim": "Unified history paginates app and native metadata, suppresses native rows already owned by an Agent, and reads transcript pages only through the separate read operation."
+          "endLine": 187,
+          "lineDigest": "sha256:29a4b84e42163636a08855183a4be4440542627c13b7196e7546414677588472",
+          "claim": "Unified history paginates app and native metadata, leaves attached subagent chats to their parent conversation, suppresses native rows already owned by an Agent, and reads transcript pages only through the separate read operation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/conversation-history-service.ts",
-          "startLine": 210,
-          "endLine": 284,
+          "startLine": 212,
+          "endLine": 286,
           "lineDigest": "sha256:ac8b74a11cb6bcd0149cd0bc656380e16507db81f5704bf826328d69c021a8bc",
           "claim": "Explicit continuation rechecks source and revision, reuses exact durable requests, opens an existing owner, or admits the native transcript through the runtime."
         }

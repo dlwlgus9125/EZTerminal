@@ -86,10 +86,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/project-conversation-tree-model.ts",
-          "startLine": 64,
-          "endLine": 167,
-          "lineDigest": "sha256:42a729940c79287bc758a0594e58cb5552764a419e8f750ad6b5d0d9b7b4875a",
-          "claim": "One metadata-only projection keeps general chats and subprojects as peers, attaches stage conversations using exact links, and feeds tree, recent and title search views."
+          "startLine": 67,
+          "endLine": 187,
+          "lineDigest": "sha256:66aec6d52f99001afc5ff23f5ff44bf34677f03d78814fe23e6a51aabc34f93c",
+          "claim": "One metadata-only projection keeps general chats and subprojects as peers, attaches stage conversations using exact links, folds attached subagent chats under their parent, and feeds tree, recent and title search views."
         },
         {
           "rootAlias": "app",
