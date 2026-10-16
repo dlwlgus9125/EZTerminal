@@ -213,6 +213,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       disabled={busy} allowDraftWhenDisabled draftState={view.draft} onDraftChange={recovery.updateDraft}
       sendDisabled={!canSend || !!view.start} sendDisabledReason={!canSend ? disconnected ? text('오프라인 · 초안은 보존됩니다', 'Offline · draft retained')
         : selectedProvider?.disabled ? text('PC의 AI 설정을 준비하면 이 대화에서 이어갈 수 있습니다.', 'Prepare this provider in PC settings to continue here.')
+        : entry && source === undefined ? text('이 대화의 이전 설정을 확인하는 중…', 'Checking this conversation’s settings…')
         : text('AI와 작업 위치를 확인하세요', 'Check AI and working folder') : undefined}
       onSend={send} supportsMessageContext capabilityClient={capabilityClient} capabilitySessionId={null} variant={variant} onOpenHistory={onOpenHistory}
       onChangeSettings={async next => recovery.saveComposition({ settings: { ...settings, ...next } })}
