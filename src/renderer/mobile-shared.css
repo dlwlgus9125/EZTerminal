@@ -20,6 +20,17 @@
 [data-ui-flex-gap='unsupported'] .workflow-item { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-item > * + * { margin-left: var(--ui-space-3); }
 [data-ui-flex-gap='unsupported'] .workflow-node-list .workflow-item > * + * { margin-left: 0; }
+/* Planning (MobilePlanningNavigator): the project header, its actions and the planning tool row. */
+[data-ui-flex-gap='unsupported'] .planning-workspace__header,
+[data-ui-flex-gap='unsupported'] .planning-workspace__identity,
+[data-ui-flex-gap='unsupported'] .planning-workspace__actions,
+[data-ui-flex-gap='unsupported'] .planning-workspace__embedded-actions,
+[data-ui-flex-gap='unsupported'] .planning-workspace__subnav { gap: 0; }
+[data-ui-flex-gap='unsupported'] .planning-workspace__header > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__actions > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__embedded-actions > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__identity > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__subnav > * { margin-right: var(--ui-space-2); }
 
 /*
  * Deliberate mobile/shared boundary.
