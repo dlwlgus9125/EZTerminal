@@ -83,7 +83,8 @@ function derivedRegion(source: string): string {
   const start = source.indexOf(DERIVED_START);
   const startEnd = source.indexOf('*/', start) + 2;
   const end = source.indexOf(DERIVED_END);
-  return source.slice(startEnd, end).trim();
+  // A Windows checkout (core.autocrlf) stores the sheet with CRLF; the generated region is LF.
+  return source.slice(startEnd, end).replace(/\r\n/gu, '\n').trim();
 }
 
 if (process.env.UPDATE_DERIVED_UI_TOKENS === '1') {
