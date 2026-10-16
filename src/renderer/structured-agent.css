@@ -391,10 +391,9 @@
 
 .structured-agent-child-track {
   flex: 0 0 auto;
-  padding: var(--ui-space-2) var(--ui-space-4);
+  padding: var(--ui-space-1) var(--ui-space-4);
   border-top: 1px solid var(--ui-border-subtle);
-  border-bottom: 1px solid var(--ui-border-subtle);
-  background: var(--ui-surface-raised);
+  background: var(--ui-surface);
 }
 
 .structured-agent-heartbeat {
@@ -513,67 +512,63 @@
   gap: var(--ui-space-2);
 }
 
+/* Child Agents: one row of chips above the composer. Margins, not flex gap: this sheet
+   ships to Android (WebView 74 ignores flex gap). */
 .structured-agent-children {
-  display: grid;
+  display: flex;
+  align-items: center;
   min-width: 0;
-  gap: var(--ui-space-2);
 }
 
 .structured-agent-children__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ui-space-2);
-  color: var(--ui-text-secondary);
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-3xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.structured-agent-children__heading > span:last-child {
-  min-width: 1.35rem;
-  padding: 0.05rem var(--ui-space-1);
-  border-radius: var(--ui-radius-pill);
-  background: var(--ui-surface-selected);
-  text-align: center;
+  flex: 0 0 auto;
+  margin-right: var(--ui-space-2);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-2xs);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .structured-agent-children__list {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
-  gap: var(--ui-space-2);
   margin: 0;
-  padding: 0 0 var(--ui-space-1);
+  padding: 0;
   overflow-x: auto;
   list-style: none;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .structured-agent-children__list > li {
+  flex: 0 0 auto;
   min-width: 0;
-  max-width: 72vw;
-  flex: 0 0 17rem;
+  max-width: 16rem;
+}
+
+.structured-agent-children__list > li + li {
+  margin-left: var(--ui-space-1);
 }
 
 .structured-agent-child {
-  display: grid;
-  width: 100%;
-  min-height: 3.25rem;
-  box-sizing: border-box;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
+  display: flex;
   align-items: center;
-  gap: var(--ui-space-1) var(--ui-space-2);
-  padding: var(--ui-space-2) var(--ui-space-3);
+  max-width: 100%;
+  min-height: 1.75rem;
+  box-sizing: border-box;
+  padding: 0 var(--ui-space-2);
   border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-surface-raised);
   color: var(--ui-text-primary);
+  font: inherit;
+  font-size: var(--ui-font-size-xs);
   cursor: pointer;
-  text-align: start;
+}
+
+.structured-agent-child > * + * {
+  margin-left: var(--ui-space-1);
 }
 
 .structured-agent-child:hover {
@@ -590,58 +585,36 @@
   border-style: dashed;
 }
 
-.structured-agent-child > svg {
-  width: 0.9rem;
-  height: 0.9rem;
-  grid-column: 2;
-  grid-row: 1 / 3;
-  color: var(--ui-text-muted);
+.structured-agent-child[data-state='blocked'],
+.structured-agent-child[data-state='delivery-uncertain'] {
+  border-color: var(--ui-warning);
 }
 
-.structured-agent-child__identity {
-  display: flex;
+.structured-agent-child[data-state='error'] {
+  border-color: var(--ui-danger);
+}
+
+.structured-agent-child__title {
   min-width: 0;
-  align-items: baseline;
-  gap: var(--ui-space-2);
-}
-
-.structured-agent-child__identity strong,
-.structured-agent-child__identity small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.structured-agent-child__identity strong {
-  min-width: 0;
-  font-size: var(--ui-font-size-sm);
-}
-
-.structured-agent-child__identity small {
-  flex: 0 1 auto;
+.structured-agent-child__status {
+  flex: 0 0 auto;
   color: var(--ui-text-muted);
-  font-size: var(--ui-font-size-3xs);
 }
 
-.structured-agent-child__meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--ui-space-2);
+.structured-agent-child[data-state='blocked'] .structured-agent-child__status,
+.structured-agent-child[data-state='delivery-uncertain'] .structured-agent-child__status {
+  color: var(--ui-warning);
 }
 
-.structured-agent-child__meta .structured-agent-state,
-.structured-agent-child__owner {
-  font-size: var(--ui-font-size-3xs);
+.structured-agent-child[data-state='error'] .structured-agent-child__status {
+  color: var(--ui-danger);
 }
 
-.structured-agent-child__owner {
-  overflow: hidden;
-  color: var(--ui-text-muted);
-  font-family: var(--ui-font-terminal);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .structured-agent-transcript {
   min-height: 0;
@@ -964,6 +937,10 @@
 
 .structured-agent[data-variant='mobile'] .structured-agent-children__list > li {
   max-width: 78vw;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-child {
+  min-height: 2.75rem;
 }
 
 .structured-agent[data-variant='mobile'] .structured-agent-transcript__list {

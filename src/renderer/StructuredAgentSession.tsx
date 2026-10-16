@@ -25,7 +25,6 @@ import {
   Plus,
   Sparkles,
   SquareSlash,
-  ChevronRight,
   Clock3,
   Paperclip,
   Reply,
@@ -918,42 +917,35 @@ export function StructuredAgentChildTrack({
   const stateLabel = useAgentStateLabel();
   if (items.length === 0) return null;
 
+  // One row of chips above the composer: state dot, name and state. Provider and ownership
+  // stay in the accessible name and tooltip; attention states carry the visual weight.
   return (
-    <nav className="structured-agent-children" aria-label={copy.childTrack}>
-      <div className="structured-agent-children__heading">
-        <span>{copy.childTrack}</span>
-        <span aria-label={`${items.length} ${copy.childTrack}`}>{items.length}</span>
-      </div>
+    <nav className="structured-agent-children" aria-label={`${copy.childTrack} ${items.length}`}>
+      <span className="structured-agent-children__heading" aria-hidden="true">{copy.childTrack}</span>
       <ul className="structured-agent-children__list">
-        {items.map((item) => (
-          <li key={item.sessionId}>
-            <button
-              type="button"
-              className="structured-agent-child"
-              data-owner={item.owner}
-              data-state={item.state}
-              aria-label={`${copy.openRelated}: ${item.title}`}
-              onClick={() => onSelectSession(item.sessionId)}
-              data-testid="structured-agent-child"
-            >
-              <span className="structured-agent-child__identity">
-                <strong>{item.title}</strong>
-                <small>{item.providerLabel}</small>
-              </span>
-              <span className="structured-agent-child__meta">
-                <span className="structured-agent-state" data-state={item.state}>
-                  <span aria-hidden="true" />
-                  <span className="ez-ui-visually-hidden">{copy.status}: </span>{stateLabel(item.state)}
-                </span>
-                <span className="structured-agent-child__owner">
-                  {item.owner === 'provider-native' ? copy.providerOwned : copy.managed}
-                  {item.owner === 'provider-native' && <> · {copy.readOnly}</>}
-                </span>
-              </span>
-              <ChevronRight aria-hidden="true" />
-            </button>
-          </li>
-        ))}
+        {items.map((item) => {
+          const ownership = item.owner === 'provider-native' ? `${copy.providerOwned} · ${copy.readOnly}` : copy.managed;
+          const details = `${item.title} · ${stateLabel(item.state)} · ${item.providerLabel} · ${ownership}`;
+          return (
+            <li key={item.sessionId}>
+              <button
+                type="button"
+                className="structured-agent-child"
+                data-owner={item.owner}
+                data-state={item.state}
+                title={details}
+                aria-label={`${copy.openRelated}: ${details}`}
+                onClick={() => onSelectSession(item.sessionId)}
+                data-testid="structured-agent-child"
+              >
+                <span className="structured-agent-state" data-state={item.state}><span aria-hidden="true" /></span>
+                <span className="structured-agent-child__title">{item.title}</span>
+                <span className="structured-agent-child__status">{stateLabel(item.state)}</span>
+                <span className="ez-ui-visually-hidden"> · {item.providerLabel} · {ownership}</span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );
@@ -2052,7 +2044,7 @@ export function StructuredAgentSessionPanel({
         onOpenRelatedSession={onOpenRelatedSession}
       />
       {childTrack !== undefined && (
-        <section className="structured-agent-child-track" aria-label={copy.childTrack} data-testid="structured-agent-child-track">
+        <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
           {childTrack}
         </section>
       )}
