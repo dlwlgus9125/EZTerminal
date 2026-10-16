@@ -98,4 +98,4 @@
 .scene-designer[data-mobile] .scene-designer__toolbar .scene-designer__actions button { flex: 1; }
 .scene-preview__image { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .scene-preview__element[data-asset-font] { font-family: var(--scene-asset-font, var(--ui-font-body)); }
-.scene-preview__element[data-asset-font] :is(button,input,textarea,select) { font-family: inherit; }
+.scene-preview__element[data-asset-font] button, .scene-preview__element[data-asset-font] input, .scene-preview__element[data-asset-font] textarea, .scene-preview__element[data-asset-font] select { font-family: inherit; }

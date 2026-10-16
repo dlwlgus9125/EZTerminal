@@ -19,7 +19,7 @@
 @media (max-width: 600px) {
   .planning-ai { padding: var(--ui-space-3); }
   .planning-ai__changes article > div { grid-template-columns: minmax(0, 1fr); }
-  .planning-ai :is(button, select, input) { min-height: 48px; }
+  .planning-ai button, .planning-ai select, .planning-ai input { min-height: 48px; }
 }
 .planning-ai__context { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); padding: var(--ui-space-3); }
 .planning-ai__context summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; }

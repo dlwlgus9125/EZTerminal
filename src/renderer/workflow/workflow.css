@@ -45,7 +45,7 @@
 .workflow-editor__body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 20rem); align-items: start; gap: var(--ui-space-4); }
 .workflow-canvas { min-width: 0; max-height: 34rem; overflow: auto; border: 1px solid var(--ui-border-subtle); background: var(--ui-canvas); border-radius: var(--ui-radius-lg); }
 .workflow-canvas__content { position: relative; }
-.workflow-edges { position: absolute; inset: 0; pointer-events: none; }
+.workflow-edges { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
 .workflow-edges path { fill: none; stroke: var(--ui-text-muted); stroke-width: 1.5; }
 .workflow-edges marker path { fill: var(--ui-text-muted); stroke: none; }
 .workflow-edges text { fill: var(--ui-text-primary); font-size: var(--ui-font-size-xs); paint-order: stroke; stroke: var(--ui-canvas); stroke-width: 3px; }

@@ -112,6 +112,23 @@ describe('UI token contract', () => {
     }
   });
 
+  it('ships no selector or property Chrome 74 drops whole rules over in planning and workflow CSS', () => {
+    // These files reach Android through MobilePlanningNavigator; an unparsed :is() or inset
+    // silently drops the rule (a lost 48px touch target, an unpositioned graph overlay).
+    for (const file of [
+      'src/renderer/planning-workspace.css',
+      'src/renderer/planning/planning-ai.css',
+      'src/renderer/planning/scene-designer.css',
+      'src/renderer/workflow/workflow.css',
+    ]) {
+      const source = withoutComments(readFileSync(resolve(process.cwd(), file), 'utf8'));
+      expect(source, `${file} must not use color-mix()`).not.toMatch(/color-mix\(/);
+      expect(source, `${file} must not use :has()`).not.toMatch(/:has\(/);
+      expect(source, `${file} must not use :is()`).not.toMatch(/:is\(/);
+      expect(source, `${file} must not use inset`).not.toMatch(/(?:^|[;{\s])inset\s*:/m);
+    }
+  });
+
   it('defines every semantic colour consumed by primitives', () => {
     for (const token of [
       '--ui-canvas',
