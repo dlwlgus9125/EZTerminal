@@ -564,7 +564,9 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   min-width: 0;
   min-height: 0;
   display: flex;
-  overflow: hidden;
+  /* clip, not hidden: hidden still lets focus and scrollIntoView scroll the whole shell
+     when panel content (or a hidden dockview panel) overflows the dock host. */
+  overflow: clip;
 }
 
 .workbench-body > .dock-host {

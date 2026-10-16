@@ -231,3 +231,27 @@ test('wide shell reflows once, switches destinations in place, and resizes by ke
     await app.close();
   }
 });
+
+test('focus or scrollIntoView inside a panel never scrolls the shell itself', async () => {
+  const app = await launchApp();
+  try {
+    const window = await app.firstWindow();
+    await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+    // Hidden dockview panels and tall panel content overflow the dock host; the shell
+    // must clip that overflow rather than become programmatically scrollable.
+    const scrolled = await window.evaluate(() => {
+      const body = document.querySelector<HTMLElement>('.workbench-body')!;
+      const tall = document.createElement('div');
+      tall.style.cssText = 'position:absolute;top:0;left:0;width:1px;height:4000px';
+      body.appendChild(tall);
+      body.scrollTop = 300;
+      tall.scrollIntoView({ block: 'end' });
+      const result = body.scrollTop;
+      tall.remove();
+      return result;
+    });
+    expect(scrolled).toBe(0);
+  } finally {
+    await app.close();
+  }
+});
