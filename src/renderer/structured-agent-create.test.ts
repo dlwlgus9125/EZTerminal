@@ -191,6 +191,14 @@ describe('structured Agent create projections', () => {
     expect(structuredAgentModelOptions([], 'custom-model')).toEqual([
       { id: 'custom-model', label: 'custom-model' },
     ]);
+    // A session on Claude's defaults runs the concrete id its `opus` row resolves to.
+    expect(structuredAgentModelOptions([], 'claude-opus-5-5', [
+      { id: 'default', displayName: 'Default (recommended)', resolvedModel: 'claude-opus-5-5', isDefault: true },
+      { id: 'opus', displayName: 'Opus 5.5', resolvedModel: 'claude-opus-5-5' },
+    ])).toEqual([
+      { id: 'default', label: 'Default (recommended)', resolvedModel: 'claude-opus-5-5', isDefault: true },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', resolvedModel: 'claude-opus-5-5' },
+    ]);
 
     const workspaces = structuredAgentWorkspaceOptions(snapshot, 'project-1');
     expect(workspaces).toEqual([{

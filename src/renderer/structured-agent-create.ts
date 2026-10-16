@@ -16,7 +16,7 @@ export type StructuredAgentCreateCommand = DaemonCommandEnvelope<'agent.create'>
 
 export type StructuredAgentProviderModelCatalogs = Readonly<Record<
   string,
-  readonly { readonly id: string; readonly displayName: string }[]
+  readonly { readonly id: string; readonly displayName: string; readonly resolvedModel?: string; readonly isDefault?: boolean }[]
 >>;
 
 export interface StructuredAgentCreateAccess {
@@ -85,16 +85,31 @@ export function structuredAgentSessionTitle(prompt: string): string {
 export function structuredAgentModelOptions(
   capabilities: readonly string[],
   current?: string,
-  catalog?: readonly { readonly id: string; readonly displayName: string }[],
+  catalog?: StructuredAgentProviderModelCatalogs[string],
 ): readonly StructuredAgentModelOption[] {
-  const labels = new Map(catalog?.map((model) => [model.id, model.displayName]) ?? []);
+  const options = new Map<string, StructuredAgentModelOption>(catalog?.map((model) => [model.id, {
+    id: model.id, label: model.displayName,
+    ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}), ...(model.isDefault ? { isDefault: true } : {}),
+  }]) ?? []);
   const capabilityIds = capabilities.flatMap((capability) => {
     const match = /^(?:model:|model=)(.+)$/u.exec(capability);
     return match?.[1] ? [match[1]] : [];
   });
-  for (const id of capabilityIds) if (!labels.has(id)) labels.set(id, id);
-  if (current && !labels.has(current)) labels.set(current, current);
-  return [...labels].map(([id, label]) => ({ id, label }));
+  for (const id of capabilityIds) if (!options.has(id)) options.set(id, { id, label: id });
+  return withCurrentModel([...options.values()], current);
+}
+
+/**
+ * Keeps the model a session runs selectable. A provider may list it only under an alias (Claude
+ * lists `opus` for `claude-opus-5-5`); that row then stands for it, otherwise it is added as is.
+ */
+export function withCurrentModel(
+  options: readonly StructuredAgentModelOption[],
+  current?: string,
+): readonly StructuredAgentModelOption[] {
+  if (!current || options.some((option) => option.id === current)) return options;
+  const alias = options.find((option) => option.resolvedModel === current && !option.isDefault);
+  return alias ? options.map((option) => option === alias ? { ...option, id: current } : option) : [...options, { id: current, label: current }];
 }
 
 export function structuredAgentProviderOptions(

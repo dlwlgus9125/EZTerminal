@@ -918,6 +918,7 @@ function providerModel(model: ModelInfo, isDefault: boolean): ProviderModel {
     description: safeText(model.description, 500) || undefined,
     supportsReasoning: model.supportsEffort !== false,
     ...(model.supportedEffortLevels?.length ? { reasoningEfforts: model.supportedEffortLevels } : {}),
+    ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}),
     isDefault,
   };
 }

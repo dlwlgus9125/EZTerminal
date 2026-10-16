@@ -78,7 +78,7 @@ export interface AgentCapabilitiesClient {
 }
 
 const ReceiptSchema = z.object({ commandId: text, action: AgentExtensionActionSchema, state: z.enum(['applied', 'uncertain']), application: z.literal('new-session'), observedAt: z.string().optional() });
-const ModelSchema = z.object({ id: z.string(), displayName: z.string(), description: z.string().optional(), supportsReasoning: z.boolean(), reasoningEfforts: z.array(z.string()).optional(), isDefault: z.boolean() });
+const ModelSchema = z.object({ id: z.string(), displayName: z.string(), description: z.string().optional(), supportsReasoning: z.boolean(), reasoningEfforts: z.array(z.string()).optional(), resolvedModel: z.string().optional(), isDefault: z.boolean() });
 export const AgentCapabilityCatalogSchema = z.object({
   providerId: z.enum(['codex', 'claude']), workspaceId: text, workspaceRoot: text, hostId: text,
   observedAt: z.string(), revision: z.string().regex(/^[a-f0-9]{64}$/u), canManage: z.boolean(), application: z.literal('new-session'),

@@ -73,6 +73,7 @@ import { SettingPill } from './chat/composer/SettingPill';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
+import { withCurrentModel } from './structured-agent-create';
 
 export type StructuredAgentUiResult =
   | { readonly ok: true }
@@ -83,6 +84,8 @@ export type { ChatComposerDraft, ChatSkin } from './chat-view-state';
 export interface StructuredAgentModelOption {
   readonly id: string;
   readonly label: string;
+  readonly resolvedModel?: string;
+  readonly isDefault?: boolean;
 }
 
 export interface StructuredAgentProviderOption {
@@ -1626,9 +1629,8 @@ export function StructuredAgentSessionPanel({
   const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
   useEffect(() => { setCapabilityCatalog(undefined); setSelectedCapabilities([]); }, [sessionId, providerId, workspace.id]);
   const listedModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
-    ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : modelOptions;
-  // A resumed conversation may run on a concrete model id the provider lists only under an alias.
-  const availableModels = model && !listedModels.some((entry) => entry.id === model) ? [...listedModels, { id: model, label: model }] : listedModels;
+    ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName, resolvedModel: entry.resolvedModel, isDefault: entry.isDefault })) : modelOptions;
+  const availableModels = withCurrentModel(listedModels, model);
   const sendWithCapabilities = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
     if (context?.skills?.some((skill) => skill.providerId !== providerId)) return { ok: false, message: 'The selected skills belong to another provider. Remove or select them again.' };
     const selected = [...selectedCapabilities.filter((item) => item.invocation && prompt.includes(item.invocation)),

@@ -440,6 +440,34 @@ describe('StructuredAgentSessionPanel', () => {
     expect(container.querySelector('[data-testid="structured-agent-live-model"]')?.getAttribute('aria-label')).toContain('claude-opus-5-5');
   });
 
+  it('names a concrete model by the provider alias that resolves to it', () => {
+    render(
+      <StructuredAgentSessionPanel
+        sessionId="session-1"
+        title="Defaults"
+        providerId="claude"
+        providerLabel="Claude"
+        workspace={{ id: 'workspace-1', label: 'Feature', kind: 'worktree' }}
+        model="claude-opus-5-5"
+        modelOptions={[
+          { id: 'default', label: 'Default (recommended)', resolvedModel: 'claude-opus-5-5', isDefault: true },
+          { id: 'opus', label: 'Opus 5.5', resolvedModel: 'claude-opus-5-5' },
+          { id: 'sonnet', label: 'Sonnet 5.5', resolvedModel: 'claude-sonnet-5-5' },
+        ]}
+        permissionPreset="standard"
+        state="idle"
+        items={[]}
+        onSend={async () => ({ ok: true })}
+        onChangeSettings={async () => ({ ok: true })}
+      />,
+    );
+    const pill = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-model"]')!;
+    expect(pill.getAttribute('aria-label')).toContain('Opus 5.5');
+    act(() => pill.click());
+    const rows = [...container.querySelectorAll('[role="menuitemradio"]')].map((item) => `${item.getAttribute('aria-checked')}:${item.textContent}`);
+    expect(rows).toEqual(['false:Default (recommended)', 'true:Opus 5.5', 'false:Sonnet 5.5']);
+  });
+
   it('guards lifecycle actions, reports failure, and preserves a typed draft', async () => {
     const onCancel = vi.fn(async () => ({ ok: false as const, message: 'Stop failed safely' }));
     const onDetach = vi.fn(async () => ({ ok: true as const }));

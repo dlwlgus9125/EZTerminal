@@ -15,6 +15,8 @@ export interface ProviderModel {
   readonly supportsReasoning: boolean;
   /** Exact values advertised by the provider for this model. */
   readonly reasoningEfforts?: readonly string[];
+  /** The concrete model an alias row runs (Claude `opus` → `claude-opus-5-5`). */
+  readonly resolvedModel?: string;
   readonly isDefault: boolean;
 }
 
