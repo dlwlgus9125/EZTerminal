@@ -325,13 +325,16 @@ theme 값은 [`ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)와
 
 Application chrome은 semantic `--ui-*` token을 사용하고 `--term-*`은 xterm, terminal
 output과 기존 custom theme compatibility로 제한한다. Custom theme의 persisted schema는
-유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Feature는
-theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
+유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Custom theme이
+`--term-*`을 생략하면 runtime이 그 `ui` palette와 xterm 배경으로 채우고, 명시한 값이 우선한다.
+Feature는 theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
 
 파생 role(hover·selected·status tint·glow·chat surface)은 built-in theme마다
 `ui-tokens.css`의 생성 영역에 고정되고 custom theme은 runtime이 같은 함수
 (`deriveUiTokens`)로 계산한다. 공유 foundation, primitive와 채팅 CSS는 Android WebView 74
-하한 때문에 `color-mix()`와 `:has()`를 쓰지 않으며 `ui-tokens.test.ts`가 이를 검사한다.
+하한 때문에 `color-mix()`와 `:has()`를 쓰지 않는다. Android로 가는 그 밖의 sheet에서
+`color-mix()`는 같은 블록에 Chrome 74가 읽는 같은 속성의 대체 선언이 앞설 때만 쓴다.
+`ui-tokens.test.ts`가 두 규칙을 검사한다.
 Font token은 body, display(wordmark·Matrix heading), heading(기본은 body), terminal,
 mono(chat code, terminal font를 따름)로 나뉜다.
 
