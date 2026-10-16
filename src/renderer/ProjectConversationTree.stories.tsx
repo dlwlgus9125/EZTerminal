@@ -10,7 +10,7 @@ import { Button } from './ui';
 import './index.css';
 
 const onOpen = fn();
-function NavigationStory({ mobile = false, offline = false, empty = false, error = false, locale = 'ko' }: { mobile?: boolean; offline?: boolean; empty?: boolean; error?: boolean; locale?: 'ko' | 'en' }): JSX.Element {
+function NavigationStory({ mobile = false, offline = false, empty = false, error = false, statuses = false, locale = 'ko' }: { mobile?: boolean; offline?: boolean; empty?: boolean; error?: boolean; statuses?: boolean; locale?: 'ko' | 'en' }): JSX.Element {
   const ko = locale === 'ko';
   const [target, setTarget] = useState<ProjectNavigationTarget>();
   const workflow = useMemo(() => {
@@ -20,12 +20,17 @@ function NavigationStory({ mobile = false, offline = false, empty = false, error
   }, [ko]);
   const access = useMemo(() => ({ getWorkflowSnapshot: async () => ({ ok: true as const, snapshot: workflow }), executeWorkflowCommand: async () => ({ ok: false as const, error: 'read-only-story', message: 'Read-only Storybook preview.' }) }), [workflow]);
   const nodes = useMemo(() => projectConversationTree({ projects: empty ? [] : [{ id: 'project-story', title: 'EZTerminal', pinned: true }, { id: 'second-project', title: 'EZCliTool' }], workflows: empty ? {} : { 'project-story': workflowNavigationFixture(workflow) }, conversations: empty ? [] : [
-    { id: 'general', projectId: 'project-story', title: ko ? '빌드 옵션이 어떻게 동작하지?' : 'How do build options work?', source: 'agent', providerLabel: 'Codex', updatedAt: 1_792_000_100_000, sessionId: 'general' },
+    { id: 'general', projectId: 'project-story', title: ko ? '빌드 옵션이 어떻게 동작하지?' : 'How do build options work?', source: 'agent', providerLabel: 'Codex', updatedAt: 1_792_000_100_000, sessionId: 'general', status: statuses ? 'working' : undefined },
+    ...(statuses ? [
+      { id: 'upload', projectId: 'project-story', title: ko ? '업로드 테스트 실패 원인' : 'Why the upload test fails', source: 'agent' as const, providerLabel: 'Claude', updatedAt: 1_792_000_090_000, sessionId: 'upload', status: 'error' },
+      { id: 'release', projectId: 'project-story', title: ko ? '릴리스 노트 초안' : 'Draft the release notes', source: 'agent' as const, providerLabel: 'Codex', updatedAt: 1_792_000_080_000, sessionId: 'release', status: 'queued' },
+      { id: 'sent', projectId: 'project-story', title: ko ? '설정 화면 문구 정리' : 'Tidy the settings copy', source: 'agent' as const, providerLabel: 'Codex', updatedAt: 1_792_000_070_000, sessionId: 'sent', status: 'delivery-uncertain' },
+    ] : []),
     { id: 'cli', projectId: 'project-story', title: ko ? '어제 CLI에서 확인한 배포 조건' : 'Yesterday’s release checks in CLI', source: 'native', providerLabel: 'Claude', updatedAt: 1_792_000_000_000 },
-    { id: 'stage', projectId: 'project-story', title: ko ? '로그인 요구사항 검토' : 'Review login requirements', source: 'stage', providerLabel: 'Codex', updatedAt: 1_792_000_200_000, sessionId: 'chat-stage' },
+    { id: 'stage', projectId: 'project-story', title: ko ? '로그인 요구사항 검토' : 'Review login requirements', source: 'stage', providerLabel: 'Codex', updatedAt: 1_792_000_200_000, sessionId: 'chat-stage', status: statuses ? 'blocked' : undefined },
     { id: 'archived', projectId: 'project-story', title: ko ? '지난 인증 흐름 검토' : 'Previous authentication review', source: 'agent', providerLabel: 'Claude', updatedAt: 1_790_000_000_000, sessionId: 'archived', archived: true },
-  ] }), [empty, ko, workflow]);
-  const scope = `story-project-tree-${mobile}-${offline}-${empty}-${error}-${locale}`;
+  ] }), [empty, ko, statuses, workflow]);
+  const scope = `story-project-tree-${mobile}-${offline}-${empty}-${error}-${statuses}-${locale}`;
   useState(() => { window.localStorage.removeItem(`ezterminal:project-navigation:v1:${scope}`); });
   const selectedWorkflow = target?.kind === 'stage' || target?.kind === 'subproject' ? target : undefined;
   return <AppI18nProvider locale={locale} languages={[locale]}><div className="project-navigation-story" data-mobile={mobile || undefined}>
@@ -58,3 +63,18 @@ export const Android: Story = { args: { mobile: true } };
 export const AndroidOffline: Story = { args: { mobile: true, offline: true } };
 export const Empty: Story = { args: { empty: true, locale: 'en' } };
 export const RecoverableError: Story = { args: { error: true, locale: 'en' } };
+/** Status dots: working pulses, needs attention / delivery unconfirmed / error / queued in their roles. */
+export const ConversationStatuses: Story = { args: { statuses: true, locale: 'en' }, play: async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await userEvent.click(canvas.getByRole('button', { name: 'Expand: Login improvements' }));
+  await userEvent.click(canvas.getByRole('button', { name: 'Expand: Investigation' }));
+  await expect(canvas.getByRole('treeitem', { name: /How do build options work\?.* · Working$/ })).toBeVisible();
+  await expect(canvas.getByRole('treeitem', { name: /Why the upload test fails.* · Error$/ })).toBeVisible();
+  await expect(canvas.getByRole('treeitem', { name: /Draft the release notes.* · Queued$/ })).toBeVisible();
+  await expect(canvas.getByRole('treeitem', { name: /Tidy the settings copy.* · Delivery unconfirmed$/ })).toBeVisible();
+  await expect(canvas.getByRole('treeitem', { name: /Review login requirements.* · Needs attention$/ })).toBeVisible();
+  for (const status of ['working', 'error', 'queued', 'delivery-uncertain', 'blocked']) {
+    await expect(canvasElement.querySelector(`.project-conversation-tree__status[data-status='${status}']`)).not.toBeNull();
+  }
+} };
+export const ConversationStatusesKorean: Story = { args: { statuses: true } };
