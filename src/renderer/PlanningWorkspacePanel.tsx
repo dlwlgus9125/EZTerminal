@@ -22,6 +22,7 @@ import type {
 import { PlanningCommandSchema } from "../shared/planning";
 import { selectPlanningTasks } from "../shared/planning-selection";
 import { useAppTranslation } from "./i18n";
+import { useAgentStateLabel } from "./agent-state-label";
 import { PlanningLinkEditor } from "./PlanningLinkEditor";
 import { PlanningStructureEditor } from "./PlanningStructureEditor";
 import {
@@ -183,6 +184,7 @@ function PlanningWorkspaceContent({
   embedded = false,
 }: PlanningWorkspacePanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
+  const stateLabel = useAgentStateLabel();
   const korean = (i18n.resolvedLanguage ?? i18n.language).startsWith("ko");
   const copy = (ko: string, en: string): string => (korean ? ko : en);
   const scopeRun = useCallback((request: PlanningRunRequest): PlanningRunRequest => subprojectId ? { ...request, subprojectId } : request, [subprojectId]);
@@ -855,6 +857,15 @@ function PlanningWorkspaceContent({
     </Badge>
   );
 
+  /** What each section holds, shown beside its tab instead of as overview tiles. */
+  const sectionCounts: Partial<Record<PlanningWorkspaceSection, number>> = snapshot
+    ? {
+        planning: snapshot.draft.items.length,
+        design: snapshot.draft.scenes.length,
+        tasks: snapshot.draft.tasks.length,
+        review: snapshot.baselines.length,
+      }
+    : {};
   const revisionBadge = snapshot && (
     <Badge>
       {copy("초안", "Draft")} · r{snapshot.revision}
@@ -988,7 +999,7 @@ function PlanningWorkspaceContent({
         <div className="planning-workspace__navigation">
           <TabList label={copy("프로젝트 영역", "Project sections")}>
             {SECTIONS.map((value) => (
-              <Tab key={value} value={value}>
+              <Tab key={value} value={value} data-count={sectionCounts[value] || undefined}>
                 {labels[value]}
               </Tab>
             ))}
@@ -1150,33 +1161,6 @@ function PlanningWorkspaceContent({
                   onClose={() => setQuickTaskId(null)}
                 />
               )}
-              <div className="planning-workspace__overview-grid">
-                {(["planning", "design", "tasks", "review"] as const).map(
-                  (value) => (
-                    <button
-                      className="planning-workspace__summary"
-                      key={value}
-                      onClick={() => setSection(value)}
-                    >
-                      <span>{labels[value]}</span>
-                      <strong>
-                        {value === "planning"
-                          ? snapshot.draft.items.length
-                          : value === "design"
-                            ? snapshot.draft.scenes.length
-                            : value === "tasks"
-                              ? snapshot.draft.tasks.length
-                              : snapshot.baselines.length}
-                      </strong>
-                      <small>
-                        {value === "review"
-                          ? copy("확정 기준선", "Frozen baselines")
-                          : copy("항목 열기", "Open items")}
-                      </small>
-                    </button>
-                  ),
-                )}
-              </div>
               <h3>{copy("최근 변경", "Recent changes")}</h3>
               {snapshot.history.length ? (
                 <ol className="planning-workspace__history">
@@ -1608,7 +1592,7 @@ function PlanningWorkspaceContent({
                         </small>
                       </span>
                       {conversation.status && (
-                        <Badge>{conversation.status}</Badge>
+                        <Badge>{stateLabel(conversation.status)}</Badge>
                       )}
                     </button>
                   ))}

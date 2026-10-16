@@ -334,7 +334,8 @@ describe('StructuredAgentChildTrack', () => {
     expect(children).toHaveLength(2);
     expect(children[0]?.textContent).toContain('Accessibility review');
     expect(children[0]?.textContent).toContain('Codex');
-    expect(children[0]?.textContent).toContain('idle');
+    // The state reads in the UI language, not as the raw protocol value.
+    expect(children[0]?.textContent).toContain('Ready');
     expect(children[0]?.textContent).toContain('Managed');
     expect(children[1]?.textContent).toContain('Provider-owned');
     expect(children[1]?.textContent).toContain('Read only');

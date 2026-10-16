@@ -66,6 +66,7 @@ import {
   type ChatComposerDraft, type ChatSkin, type TranscriptAnchor,
 } from './chat-view-state';
 import { useAppTranslation } from './i18n';
+import { useAgentStateLabel } from './agent-state-label';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
 import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, Select } from './ui';
 import { conversationFileChanges } from '../shared/conversation-changes';
@@ -914,6 +915,7 @@ export function StructuredAgentChildTrack({
   onSelectSession,
 }: StructuredAgentChildTrackProps): JSX.Element | null {
   const copy = useStructuredAgentCopy();
+  const stateLabel = useAgentStateLabel();
   if (items.length === 0) return null;
 
   return (
@@ -941,7 +943,7 @@ export function StructuredAgentChildTrack({
               <span className="structured-agent-child__meta">
                 <span className="structured-agent-state" data-state={item.state}>
                   <span aria-hidden="true" />
-                  <span className="ez-ui-visually-hidden">{copy.status}: </span>{item.state}
+                  <span className="ez-ui-visually-hidden">{copy.status}: </span>{stateLabel(item.state)}
                 </span>
                 <span className="structured-agent-child__owner">
                   {item.owner === 'provider-native' ? copy.providerOwned : copy.managed}
@@ -1626,6 +1628,7 @@ export function StructuredAgentSessionPanel({
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
+  const stateLabel = useAgentStateLabel();
   const [capabilityCatalog, setCapabilityCatalog] = useState<AgentCapabilityCatalog>();
   const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
   const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
@@ -1886,7 +1889,7 @@ export function StructuredAgentSessionPanel({
         <div className="structured-agent-session-header__status">
           <span className="structured-agent-state" data-state={state}>
             <span aria-hidden="true" />
-            <span className="ez-ui-visually-hidden">{copy.status}: </span>{statusLabel ?? (awaitingFirstMessage ? copy.notStarted : state)}
+            <span className="ez-ui-visually-hidden">{copy.status}: </span>{statusLabel ?? (awaitingFirstMessage ? copy.notStarted : stateLabel(state))}
           </span>
           {owner === 'provider-native' && (
             <span className="structured-agent-session-header__owner">

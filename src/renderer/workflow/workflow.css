@@ -1,7 +1,7 @@
 .workflow-workspace { min-width: 0; height: 100%; overflow: auto; color: var(--ui-text-primary); background: var(--ui-surface); font: var(--ui-font-size-md)/var(--ui-line-height-normal) var(--ui-font-body); padding: var(--ui-space-4); box-sizing: border-box; }
 .workflow-workspace *, .workflow-workspace *::before, .workflow-workspace *::after { box-sizing: border-box; }
 .workflow-header, .workflow-toolbar, .workflow-inline { display: flex; align-items: center; gap: var(--ui-space-2); flex-wrap: wrap; }
-.workflow-header { padding-bottom: var(--ui-space-4); border-bottom: 1px solid var(--ui-border-subtle); margin-bottom: var(--ui-space-4); }
+.workflow-header { padding-bottom: var(--ui-space-3); border-bottom: 1px solid var(--ui-border-subtle); margin-bottom: var(--ui-space-3); }
 .workflow-header > div { flex: 1; min-width: 0; }
 .workflow-header h2 { margin: 0; font: inherit; font-size: var(--ui-font-size-xl); font-weight: 600; overflow-wrap: anywhere; }
 .workflow-header small, .workflow-item small, .workflow-run-nodes small { display: block; color: var(--ui-text-muted); }
@@ -13,9 +13,25 @@
 .workflow-toolbar > input { flex: 1; min-width: 10rem; }
 .workflow-toolbar [role='group'] { display: flex; gap: var(--ui-space-1); }
 .workflow-toolbar [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
+/* Project view: a segmented switch between items and quick tasks (a mode, not a section).
+   Scoped under .workflow-workspace to outrank the button variant rules. */
+.workflow-switch { display: inline-flex; flex-wrap: nowrap; gap: 0; align-self: flex-start; padding: 2px; margin-bottom: var(--ui-space-3); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-lg); background: var(--ui-surface-inset); }
+.workflow-workspace .workflow-switch > .ez-ui-button { border-color: transparent; background: transparent; color: var(--ui-text-secondary); }
+.workflow-workspace .workflow-switch > .ez-ui-button[aria-pressed='true'] { border-color: var(--ui-border-subtle); background: var(--ui-surface-raised); color: var(--ui-text-primary); }
+/* Subproject sections read as tabs, like the planning sections inside them. */
+.workflow-tabs { gap: 0; flex-wrap: nowrap; overflow-x: auto; margin-bottom: var(--ui-space-3); border-bottom: 1px solid var(--ui-border-subtle); }
+.workflow-workspace .workflow-tabs > .ez-ui-button { flex: 0 0 auto; border: 0; border-radius: 0; background: transparent; color: var(--ui-text-secondary); box-shadow: inset 0 -2px 0 transparent; }
+.workflow-workspace .workflow-tabs > .ez-ui-button[aria-pressed='true'] { background: transparent; color: var(--ui-text-primary); box-shadow: inset 0 -2px 0 var(--ui-accent); }
 .workflow-items, .workflow-node-list, .workflow-run-nodes { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--ui-space-2); }
 .workflow-items > li { min-width: 0; }
 .workflow-item { width: 100%; min-width: 0; display: flex; gap: var(--ui-space-3); align-items: center; text-align: left; font: inherit; color: inherit; background: var(--ui-surface); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-lg); padding: var(--ui-space-3); cursor: pointer; }
+/* Project items read as one list: rows share a frame and dividers instead of each being a card. */
+.workflow-items { gap: 0; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-lg); overflow: hidden; }
+.workflow-items:empty { display: none; }
+.workflow-items > li + li { border-top: 1px solid var(--ui-border-subtle); }
+.workflow-items .workflow-item { border: 0; border-radius: 0; padding: var(--ui-space-2) var(--ui-space-3); background: transparent; }
+.workflow-items .workflow-item:hover { background: var(--ui-surface-hover); }
+.workflow-items .workflow-conversation-row { padding-right: var(--ui-space-2); }
 .workflow-item:hover { background: var(--ui-surface-hover); }
 .workflow-item[aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
 .workflow-item > span { min-width: 0; display: grid; gap: var(--ui-space-1); }

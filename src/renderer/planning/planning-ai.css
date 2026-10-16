@@ -1,28 +1,28 @@
 .planning-ai { display: flex; flex-direction: column; gap: var(--ui-space-3); padding: var(--ui-space-4); border-top: 1px solid var(--ui-border-subtle); color: var(--ui-text-primary); min-width: 0; }
-.planning-ai > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.planning-ai > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ui-space-3); }
 .planning-ai h3, .planning-ai h4, .planning-ai h5, .planning-ai p { margin: 0; }
 .planning-ai h3 { font-size: var(--ui-font-size-lg); }
 .planning-ai p { color: var(--ui-text-secondary); overflow-wrap: anywhere; }
-.planning-ai__settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.planning-ai__settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--ui-space-3); }
 .planning-ai__instruction { resize: vertical; min-height: 96px; width: 100%; box-sizing: border-box; border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-sm); padding: var(--ui-space-3); color: var(--ui-text-primary); background: var(--ui-surface-inset); font: inherit; }
 .planning-ai__instruction:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
 .planning-ai__error { color: var(--ui-danger) !important; }
 .planning-ai__pending, .planning-ai__proposal { display: flex; flex-direction: column; gap: var(--ui-space-3); padding: var(--ui-space-3); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-sm); }
 .scene-designer__ai { border-top: 1px solid var(--ui-border-subtle); flex: 0 0 auto; max-height: 55vh; overflow: auto; }
 .scene-designer__ai > summary { padding: var(--ui-space-3); min-height: 48px; box-sizing: border-box; cursor: pointer; }
-.planning-ai__status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.planning-ai__changes { display: flex; flex-direction: column; gap: 12px; }
-.planning-ai__changes article { padding: 12px; border: 1px solid var(--ui-border-subtle); }
+.planning-ai__status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
+.planning-ai__changes { display: flex; flex-direction: column; gap: var(--ui-space-3); }
+.planning-ai__changes article { padding: var(--ui-space-3); border: 1px solid var(--ui-border-subtle); }
 .planning-ai__changes article > strong { overflow-wrap: anywhere; }
-.planning-ai__changes article > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.planning-ai__changes article > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ui-space-3); margin-top: var(--ui-space-2); }
 .planning-ai__changes pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: inherit; max-height: 360px; overflow: auto; margin-bottom: 0; }
 @media (max-width: 600px) {
-  .planning-ai { padding: 12px; }
+  .planning-ai { padding: var(--ui-space-3); }
   .planning-ai__changes article > div { grid-template-columns: minmax(0, 1fr); }
   .planning-ai :is(button, select, input) { min-height: 48px; }
 }
-.planning-ai__context { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); padding: 12px; }
+.planning-ai__context { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-sm); padding: var(--ui-space-3); }
 .planning-ai__context summary { cursor: pointer; min-height: 48px; display: flex; align-items: center; }
 .planning-ai__context pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--ui-text-secondary); }
-.planning-ai__reference { display: flex; align-items: center; gap: 12px; min-height: 48px; overflow-wrap: anywhere; }
+.planning-ai__reference { display: flex; align-items: center; gap: var(--ui-space-3); min-height: 48px; overflow-wrap: anywhere; }
 .planning-ai__reference input { flex: 0 0 auto; }
