@@ -27,6 +27,15 @@ describe('durable Windows recovery encryption', () => {
     expect(h.legacy.decrypt).not.toHaveBeenCalled();
     expect(h.protectKey.mock.calls.map(([operation]) => operation)).toEqual(['protect', 'unprotect']);
   });
+  it('loads the key ahead of the first draft, and a failed load is tried again on use', async () => {
+    const h = await fixture();
+    h.protectKey.mockRejectedValueOnce(new Error('OS busy'));
+    await expect(h.protector.prepare()).rejects.toThrow(/OS busy/);
+    await expect(h.protector.prepare()).resolves.toBeUndefined();
+    const calls = h.protectKey.mock.calls.length;
+    expect(await h.protector.decrypt(await h.protector.encrypt('ready'))).toBe('ready');
+    expect(h.protectKey).toHaveBeenCalledTimes(calls);
+  });
   it('shares one wrapped key across simultaneous saves while giving each ciphertext a fresh nonce', async () => {
     const h = await fixture();
     const [one, two] = await Promise.all([h.protector.encrypt('same'), h.protector.encrypt('same')]);

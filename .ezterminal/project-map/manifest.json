@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:75be85080b23bf5873754081920cc2e6d6b4bba81d8353c22908edcaa6c9cb98",
+        "inputDigest": "sha256:67ce54326efdcf69bb0c80012c2479d76dbc561e827123ef240b8ecd2164a95d",
         "decision": "map-updated",
         "reason": "Reviewed the chat overhaul: transcript payloads, approval requests/responses, effort (schema v7, capability flags, no protocol bump), Claude streaming, fail-fast start, version-range launch, edit line diffs, draft directory ACL. Relocated anchors; rechecked changes."
       }
@@ -369,7 +369,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:402678dfeb726d82041d47e42880318e278c60723e48a70530554f7a6117b13d",
+        "inputDigest": "sha256:a9603c59c92acb6d7612bcdf0f40aa69d507e14abcf12bdd679577a095370ecf",
         "decision": "no-semantic-impact",
         "reason": "Inputs changed for the chat overhaul, compact shell and draft-directory ACL wiring; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
       }
@@ -501,7 +501,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0e68d8ae5a71fabf3f218eb12891e68197a7f64a0a4a3e0da978970036614797",
+        "inputDigest": "sha256:8066a353237f133c2676128c39588fef865815147dec8407e7e7a631532fdc8e",
         "decision": "no-semantic-impact",
         "reason": "Inputs gained optional transcript payload, approval request and effort fields behind capability flags; the v12 snapshot and v16 remote flow are unchanged. Relocated source anchors only."
       }

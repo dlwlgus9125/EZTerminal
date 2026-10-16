@@ -94,7 +94,12 @@ foreach ($rule in $verified.GetAccessRules($true, $true, [System.Security.Princi
 if (-not $seenCurrent -or -not $seenSystem) { throw 'Required ACL principal is missing' }
 `.trim();
 
-export type WindowsAclRunner = (filePath: string) => Promise<void>;
+/**
+ * `read`: the file already exists and is about to be read or removed. `write`: the file
+ * was just created or replaced. The per-file runner treats both the same.
+ */
+export type WindowsAclIntent = 'read' | 'write';
+export type WindowsAclRunner = (filePath: string, intent?: WindowsAclIntent) => Promise<void>;
 
 /** Apply and verify a current-user + SYSTEM DACL without invoking a shell. */
 export function applyAndVerifyWindowsAcl(
@@ -158,7 +163,10 @@ export function applyAndVerifyWindowsDirectoryAcl(
 export interface ProtectedDirectoryAcl {
   /** Protects the directory with one PowerShell run; a failure is not kept, so the next call tries again. */
   prepare(): Promise<void>;
-  /** SecureAtomicFile runner for files in the directory: they inherit its DACL, so no per-file run. */
+  /**
+   * SecureAtomicFile runner for files in the directory: they inherit its DACL, so no per-file
+   * run. Writes wait for the protection; reads of existing ciphertext do not.
+   */
   readonly windowsAcl: WindowsAclRunner;
 }
 
@@ -186,11 +194,18 @@ export function protectedDirectoryAcl(
   };
   return {
     prepare,
-    windowsAcl: async (filePath) => {
+    windowsAcl: async (filePath, intent = 'write') => {
       if (key(path.dirname(filePath)) !== key(directory)) {
         throw new Error('Secure file is outside its protected directory.');
       }
-      await prepare();
+      const protection = prepare();
+      // A file that already exists keeps its DACL and its DPAPI ciphertext; only files this
+      // process creates need the inheritable directory DACL in place first.
+      if (intent === 'read') {
+        void protection.catch(() => undefined);
+        return;
+      }
+      await protection;
     },
   };
 }
@@ -226,7 +241,8 @@ export class SecureAtomicFile {
   constructor(dir: string, name: string, options: SecureAtomicFileOptions = {}) {
     this.target = path.join(dir, name);
     this.platform = options.platform ?? process.platform;
-    this.windowsAcl = options.windowsAcl ?? applyAndVerifyWindowsAcl;
+    // Wrapped: the default's second parameter is its process runner, not an intent.
+    this.windowsAcl = options.windowsAcl ?? ((filePath) => applyAndVerifyWindowsAcl(filePath));
     this.maxBytes = options.maxBytes !== undefined
       && Number.isFinite(options.maxBytes)
       && options.maxBytes > 0
@@ -262,7 +278,7 @@ export class SecureAtomicFile {
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Remote token path must be a regular file.');
 
     if (this.platform === 'win32') {
-      await this.windowsAcl(this.target);
+      await this.windowsAcl(this.target, 'read');
       const verified = await fs.lstat(this.target);
       if (!verified.isFile() || verified.isSymbolicLink()) throw new Error('Remote token path changed during ACL verification.');
     }
@@ -307,7 +323,7 @@ export class SecureAtomicFile {
         // Harden the empty staging path before content is written. Callers that
         // require confidentiality on Windows must still pass ciphertext: a
         // DACL update cannot revoke a handle another principal already opened.
-        await this.windowsAcl(tmp);
+        await this.windowsAcl(tmp, 'write');
         await this.assertHandlePathIdentity(handle, tmp, opened);
       }
       await handle.writeFile(data, 'utf8');
@@ -357,7 +373,7 @@ export class SecureAtomicFile {
     const stat = await lstatIfPresent(filePath);
     if (!stat) return;
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Remote token temporary path must be a regular file.');
-    await this.protectRequired(filePath);
+    await this.protectRequired(filePath, 'read');
     await fs.unlink(filePath);
   }
 
@@ -370,7 +386,7 @@ export class SecureAtomicFile {
     const stat = await lstatIfPresent(filePath);
     if (!stat) return;
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Secure path must be a regular file.');
-    await this.protectRequired(filePath);
+    await this.protectRequired(filePath, 'read');
   }
 
   private async assertHandlePathIdentity(
@@ -403,9 +419,9 @@ export class SecureAtomicFile {
     }
   }
 
-  private async protectRequired(filePath: string): Promise<void> {
+  private async protectRequired(filePath: string, intent: WindowsAclIntent = 'write'): Promise<void> {
     if (this.platform === 'win32') {
-      await this.windowsAcl(filePath);
+      await this.windowsAcl(filePath, intent);
       const stat = await fs.lstat(filePath);
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Secure path changed during ACL verification.');
       return;

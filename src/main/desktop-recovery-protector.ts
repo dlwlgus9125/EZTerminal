@@ -4,6 +4,8 @@ import { SecureAtomicFile, type SecureAtomicFileOptions } from './secure-atomic-
 import type { ChatStateStoreOptions } from './chat-state-store';
 
 type Protector = ChatStateStoreOptions['protector'];
+/** `prepare` loads the key ahead of the first draft; a failure is not kept, so use tries again. */
+export type DesktopRecoveryProtector = Protector & { prepare(): Promise<void> };
 const PREFIX = Buffer.from('EZREC1');
 const KEY_SCRIPT = `Add-Type -AssemblyName System.Security
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -38,8 +40,8 @@ function protectWindowsKey(operation: 'protect' | 'unprotect', bytes: Buffer): P
  */
 export function createDesktopRecoveryProtector(directory: string, legacy: Protector, options: SecureAtomicFileOptions & {
   readonly protectKey?: typeof protectWindowsKey;
-} = {}): Protector {
-  if ((options.platform ?? process.platform) !== 'win32') return legacy;
+} = {}): DesktopRecoveryProtector {
+  if ((options.platform ?? process.platform) !== 'win32') return { ...legacy, prepare: async () => undefined };
   const file = new SecureAtomicFile(directory, 'recovery-key-v1.bin', { ...options, maxBytes: 16_384 });
   const protectKey = options.protectKey ?? protectWindowsKey;
   let pendingKey: Promise<Buffer> | undefined;
@@ -65,6 +67,7 @@ export function createDesktopRecoveryProtector(directory: string, legacy: Protec
     return pendingKey;
   };
   return {
+    prepare: async () => { await key(); },
     available: () => true,
     encrypt: async plaintext => {
       const secret = await key();

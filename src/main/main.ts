@@ -2107,6 +2107,9 @@ app.on('ready', async () => {
         return safeStorage.decryptString(ciphertext);
       },
   });
+  // Unwrapping the draft key takes several PowerShell runs; start now so the first draft
+  // opened does not wait for them. A failure resurfaces on that first use.
+  void desktopRecoveryProtector.prepare().catch(() => undefined);
   /** Draft stores protect their directory once rather than every file (secure-atomic-file.ts). */
   const draftDirectory = (name: string): { readonly directory: string; readonly windowsAcl: WindowsAclRunner } => {
     const directory = path.join(app.getPath('userData'), name);

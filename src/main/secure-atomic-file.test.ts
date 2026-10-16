@@ -186,6 +186,26 @@ describe('protectedDirectoryAcl', () => {
     expect(harden).toHaveBeenCalledTimes(2);
   });
 
+  it('reads existing files without waiting for the protection, and holds writes until it is done', async () => {
+    const directory = makeDir();
+    writeFileSync(path.join(directory, 'draft.bin'), 'stored');
+    let finish: (() => void) | undefined;
+    const harden = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const acl = protectedDirectoryAcl(directory, { platform: 'win32', harden });
+    const file = new SecureAtomicFile(directory, 'draft.bin', { platform: 'win32', windowsAcl: acl.windowsAcl });
+
+    await file.init();
+    await expect(file.readText()).resolves.toBe('stored');
+    let written = false;
+    const write = file.writeAtomic('next').then(() => { written = true; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(written).toBe(false);
+    finish?.();
+    await write;
+    expect(readFileSync(file.path, 'utf8')).toBe('next');
+    expect(harden).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a file outside the protected directory', async () => {
     const acl = protectedDirectoryAcl(makeDir(), { platform: 'win32', harden: async () => undefined });
     await expect(acl.windowsAcl(path.join(makeDir(), 'elsewhere.bin'))).rejects.toThrow(/outside/);
