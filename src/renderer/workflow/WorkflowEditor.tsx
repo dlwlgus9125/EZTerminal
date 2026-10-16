@@ -70,9 +70,15 @@ export function WorkflowEditor({ graph, selectedNodeId, onSelectNode, onChange, 
           const from = graph.nodes.find(node => node.id === edge.from); const to = graph.nodes.find(node => node.id === edge.to);
           if (!from || !to) return null;
           const x1 = from.position.x + 210; const y1 = from.position.y + 40; const x2 = to.position.x; const y2 = to.position.y + 40;
-          return <g key={edge.id}><path d={`M ${x1} ${y1} C ${x1 + 45} ${y1}, ${x2 - 45} ${y2}, ${x2} ${y2}`} markerEnd={`url(#${arrowId})`} /><text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 8}>{workflowOutcomeLabel(edge.outcome, text)}</text></g>;
+          return <g key={edge.id}><path d={`M ${x1} ${y1} C ${x1 + 45} ${y1}, ${x2 - 45} ${y2}, ${x2} ${y2}`} markerEnd={`url(#${arrowId})`} /></g>;
         })}</svg>
         {graph.nodes.map(node => <button type="button" className="workflow-node" key={node.id} data-selected={node.id === selectedNodeId || undefined} style={{ left: node.position.x, top: node.position.y }} onClick={() => onSelectNode(node.id)} aria-pressed={node.id === selectedNodeId}><small>{workflowOperationLabel(node.operation, text)}{graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</small><strong>{node.title || text('이름 없는 단계', 'Untitled stage')}</strong><span>{node.providerId ?? text('AI 설정 확인', 'Check AI settings')}</span></button>)}
+        {graph.edges.map(edge => {
+          const from = graph.nodes.find(node => node.id === edge.from); const to = graph.nodes.find(node => node.id === edge.to);
+          if (!from || !to) return null;
+          const x = (from.position.x + 210 + to.position.x) / 2; const y = (from.position.y + to.position.y) / 2 + 40;
+          return <span key={edge.id} className="workflow-edge-label" style={{ left: x, top: y }} aria-hidden="true">{workflowOutcomeLabel(edge.outcome, text)}</span>;
+        })}
       </div></div> : <ol className="workflow-node-list">{graph.nodes.map(node => <li key={node.id}><button type="button" className="workflow-item" aria-pressed={node.id === selectedNodeId} onClick={() => onSelectNode(node.id)}><strong>{node.title || text('이름 없는 단계', 'Untitled stage')}</strong><span>{workflowOperationLabel(node.operation, text)}{graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</span><small>{graph.edges.filter(edge => edge.from === node.id).map(edge => `${workflowOutcomeLabel(edge.outcome, text)} → ${label(edge.to)}`).join(' · ') || text('다음 연결 없음', 'No outgoing connection')}</small></button></li>)}</ol>}
       {selected ? <div className="workflow-inspector" aria-label={text('단계 편집', 'Stage editor')}>
         <div className="workflow-toolbar"><h3>{text('단계', 'Stage')}</h3><Badge>{selected.id === graph.entryNodeId ? text('시작점', 'Entry') : workflowOperationLabel(selected.operation, text)}</Badge>{onOpenStage && <Button onClick={() => onOpenStage(selected.id)}>{text('문서와 대화', 'Document and chats')}</Button>}</div>

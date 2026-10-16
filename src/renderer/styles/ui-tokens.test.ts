@@ -112,9 +112,10 @@ describe('UI token contract', () => {
     }
   });
 
-  it('ships no selector or property Chrome 74 drops whole rules over in planning and workflow CSS', () => {
-    // These files reach Android through MobilePlanningNavigator; an unparsed :is() or inset
-    // silently drops the rule (a lost 48px touch target, an unpositioned graph overlay).
+  it('ships no selector Chrome 74 drops whole rules over in planning and workflow CSS', () => {
+    // These files reach Android through MobilePlanningNavigator. The chrome74 build target
+    // lowers properties such as inset, but not selectors: an unparsed :is() drops the whole
+    // rule (here, the mobile 48px touch target).
     for (const file of [
       'src/renderer/planning-workspace.css',
       'src/renderer/planning/planning-ai.css',
@@ -125,7 +126,6 @@ describe('UI token contract', () => {
       expect(source, `${file} must not use color-mix()`).not.toMatch(/color-mix\(/);
       expect(source, `${file} must not use :has()`).not.toMatch(/:has\(/);
       expect(source, `${file} must not use :is()`).not.toMatch(/:is\(/);
-      expect(source, `${file} must not use inset`).not.toMatch(/(?:^|[;{\s])inset\s*:/m);
     }
   });
 

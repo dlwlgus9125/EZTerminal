@@ -568,6 +568,9 @@
   gap: var(--ui-space-3);
   min-width: 0;
 }
+.planning-workspace__result > .ez-ui-button {
+  align-self: flex-start;
+}
 .planning-workspace__result h3,
 .planning-workspace__result p {
   margin: 0;

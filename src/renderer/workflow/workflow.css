@@ -48,7 +48,8 @@
 .workflow-edges { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
 .workflow-edges path { fill: none; stroke: var(--ui-text-muted); stroke-width: 1.5; }
 .workflow-edges marker path { fill: var(--ui-text-muted); stroke: none; }
-.workflow-edges text { fill: var(--ui-text-primary); font-size: var(--ui-font-size-xs); paint-order: stroke; stroke: var(--ui-canvas); stroke-width: 3px; }
+/* Above the nodes and centered on the edge, so a short gap or a long outcome stays readable. */
+.workflow-edge-label { position: absolute; z-index: 1; transform: translate(-50%, -50%); padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface-raised); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); line-height: var(--ui-line-height-normal); white-space: nowrap; pointer-events: none; }
 .workflow-node { position: absolute; width: 210px; min-height: 80px; padding: var(--ui-space-3); display: grid; gap: var(--ui-space-1); text-align: left; font: inherit; background: var(--ui-surface-raised); color: var(--ui-text-primary); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-lg); cursor: pointer; }
 .workflow-node small, .workflow-node span { font-size: var(--ui-font-size-xs); color: var(--ui-text-muted); }
 .workflow-node[data-selected] { border-color: var(--ui-accent); outline: 2px solid var(--ui-accent); outline-offset: 2px; }
