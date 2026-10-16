@@ -100,6 +100,7 @@ interface SessionState {
   readonly providerSessionId: string;
   readonly workspaceRoot: string;
   model?: string;
+  readonly reasoningEffort?: string;
   permissionPreset: PermissionPreset;
   nextTranscriptSequence: number;
   activeTurn?: {
@@ -1009,7 +1010,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const providerSessionId = asString(thread?.id);
       if (!providerSessionId) throw new Error('Codex thread/start returned no thread id.');
       this.assertLifecycleGeneration(lifecycleGeneration);
-      const state = this.registerSession(context, providerSessionId, asString(result?.model) ?? context.model);
+      const state = this.registerSession(context, providerSessionId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
     } catch (error) {
@@ -1052,7 +1053,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         throw new Error('Codex thread/resume returned a different thread id.');
       }
       this.assertLifecycleGeneration(lifecycleGeneration);
-      const state = this.registerSession(context, resumedId, asString(result?.model) ?? context.model);
+      const state = this.registerSession(context, resumedId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
     } catch (error) {
@@ -2353,7 +2354,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return '';
   }
 
-  private registerSession(context: ProviderSessionContext, providerSessionId: string, model?: string): SessionState {
+  private registerSession(context: ProviderSessionContext, providerSessionId: string, model?: string, appliedEffort?: string | null): SessionState {
     const existingOwner = this.sessionIdByProviderId.get(providerSessionId);
     if (existingOwner && existingOwner !== context.sessionId) {
       throw new Error(`Codex thread ${providerSessionId} is already attached to another EZTerminal session.`);
@@ -2363,6 +2364,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       providerSessionId,
       workspaceRoot: context.workspaceRoot,
       ...(model ? { model } : {}),
+      ...(context.reasoningEffort ?? appliedEffort ? { reasoningEffort: context.reasoningEffort ?? appliedEffort! } : {}),
       permissionPreset: context.permissionPreset,
       nextTranscriptSequence: 0,
       preResponseLifecycle: new Map(),
@@ -2390,6 +2392,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       sessionId: state.sessionId,
       providerSessionId: state.providerSessionId,
       ...(state.model ? { model: state.model } : {}),
+      ...(state.reasoningEffort ? { reasoningEffort: state.reasoningEffort } : {}),
       permissionPreset: state.permissionPreset,
     };
   }

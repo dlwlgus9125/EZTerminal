@@ -113,6 +113,16 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     return { models: this.supported, ...(this.account ? { account: this.account } : {}) };
   }
 
+  /** What the real CLI reports after merging the user's settings (sdk.mjs get_settings). */
+  applied: { readonly model?: string; readonly effort?: string | null } = { model: 'claude-opus-5-5', effort: 'xhigh' };
+
+  async getSettings(): Promise<unknown> {
+    // Launch options win over the user's settings, as in the CLI.
+    return { effective: {}, sources: [], applied: {
+      model: this.inputOptions.model ?? this.applied.model, effort: this.inputOptions.effort ?? this.applied.effort,
+    } };
+  }
+
   async supportedModels(): Promise<typeof this.supported> {
     return this.supported;
   }
@@ -508,6 +518,7 @@ describe('ClaudeProviderAdapter sessions', () => {
       sessionId: context.sessionId,
       providerSessionId,
       model: 'sonnet',
+      reasoningEffort: 'xhigh',
       permissionPreset: 'standard',
     });
     expect(created.query.inputOptions).toMatchObject({
@@ -670,6 +681,23 @@ describe('ClaudeProviderAdapter sessions', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'session-state', state: 'failed' }));
     expect(fixture.query.inputOptions.abortController?.signal.aborted).toBe(true);
+    await fixture.adapter.dispose();
+  });
+
+  it('reports the model and effort the CLI applies to a session on provider defaults', async () => {
+    const fixture = makeAdapter();
+    const { model: unused, ...defaults } = context;
+    void unused;
+    await expect(fixture.adapter.createSession(defaults)).resolves.toMatchObject({ model: 'claude-opus-5-5', reasoningEffort: 'xhigh' });
+    // The CLI already runs at that effort, so the first message does not re-apply it.
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-1', commandId: 'command-1', prompt: 'Hi', reasoningEffort: 'xhigh' });
+    expect(fixture.query.flagSettings).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('keeps explicitly chosen settings over what the CLI defaults to', async () => {
+    const fixture = makeAdapter();
+    await expect(fixture.adapter.createSession({ ...context, reasoningEffort: 'low' })).resolves.toMatchObject({ model: 'sonnet', reasoningEffort: 'low' });
     await fixture.adapter.dispose();
   });
 

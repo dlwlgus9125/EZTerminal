@@ -584,6 +584,50 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('records the model and effort a provider applies when the user chose neither', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    vi.mocked(h.codex.createSession).mockImplementationOnce(async (context) => ({
+      sessionId: context.sessionId, providerSessionId: 'codex-defaults', model: 'gpt-6-astra', reasoningEffort: 'high', permissionPreset: context.permissionPreset,
+    }));
+    await h.execute('agent.create', {
+      sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hi.',
+    });
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ sessionId: 'agent-1', model: 'gpt-6-astra', reasoningEffort: 'high' });
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('keeps a chosen effort when a resumed provider session reports its own default', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-source', workspaceId: 'workspace-1', title: 'Source', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Go.',
+      });
+      const sourceTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'agent-source')!;
+      const providerSessionId = h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-source')!.providerSessionId!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-source', turnId: sourceTurn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-source', state: 'completed' });
+      await h.runtime.whenIdle();
+      vi.mocked(h.codex.resumeSession).mockImplementationOnce(async (context) => ({
+        sessionId: context.sessionId, providerSessionId: context.providerSessionId, reasoningEffort: 'medium', permissionPreset: context.permissionPreset,
+      }));
+      await h.execute('agent.resume', {
+        sessionId: 'agent-resumed', sourceSessionId: 'agent-source', workspaceId: 'workspace-1', providerId: 'codex',
+        providerSessionId, title: 'Resumed', permissionPreset: 'standard', reasoningEffort: 'xhigh',
+      });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-resumed')).toMatchObject({ reasoningEffort: 'xhigh' });
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('transfers a stopped Provider Session handle exactly once when resuming', async () => {
     const h = await harness();
     try {

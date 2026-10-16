@@ -40,6 +40,8 @@ export interface ProviderSessionHandle {
   readonly sessionId: string;
   readonly providerSessionId: string;
   readonly model?: string;
+  /** The effort the provider runs at: the chosen one, or what it applies by default. */
+  readonly reasoningEffort?: string;
   readonly permissionPreset: PermissionPreset;
 }
 

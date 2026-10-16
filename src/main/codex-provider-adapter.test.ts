@@ -223,6 +223,24 @@ async function pendingTurnFixture(
 }
 
 describe('CodexProviderAdapter', () => {
+  it('reports the model and effort Codex applies when a thread starts or resumes on defaults', async () => {
+    const connection = new FakeCodexConnection();
+    let started = 0;
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: `thread-start-${++started}` }, model: 'gpt-6-astra', reasoningEffort: 'high' };
+      if (method === 'thread/resume') return { thread: { id: 'thread-2' }, model: 'gpt-6-astra', reasoningEffort: 'medium' };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-09-04T03:00:00.000Z') });
+    const { model: unused, ...defaults } = context();
+    void unused;
+    await expect(adapter.createSession(defaults)).resolves.toMatchObject({ model: 'gpt-6-astra', reasoningEffort: 'high' });
+    await expect(adapter.resumeSession({ ...defaults, sessionId: 'session-2', providerSessionId: 'thread-2' }))
+      .resolves.toMatchObject({ model: 'gpt-6-astra', reasoningEffort: 'medium' });
+    // An explicitly chosen effort is kept.
+    await expect(adapter.createSession({ ...defaults, sessionId: 'session-3', reasoningEffort: 'low' })).resolves.toMatchObject({ reasoningEffort: 'low' });
+  });
+
   it('revalidates selected skill identities and sends native skill input on the first turn', async () => {
     const connection = new FakeCodexConnection();
     const adapter = await attachedAdapter(connection);

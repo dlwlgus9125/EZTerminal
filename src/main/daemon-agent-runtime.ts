@@ -17,6 +17,7 @@ import type {
   AgentProviderAdapter,
   AgentProviderEvent,
   ProviderSessionContext,
+  ProviderSessionHandle,
 } from './agent-provider-adapter';
 import type {
   DaemonCommandExecutionContext,
@@ -189,6 +190,15 @@ function sessionInput(
     source: session.source,
     ...(archivedAt ? { archivedAt } : {}),
   };
+}
+
+/**
+ * The effort a provider reports it runs at, recorded only when the user chose none: the session
+ * context does not carry the agent's chosen effort (it is applied per message), so the provider's
+ * default must not overwrite that choice.
+ */
+function appliedEffort(agent: DaemonAgent, handle: ProviderSessionHandle): { reasoningEffort?: string } {
+  return !agent.reasoningEffort && handle.reasoningEffort ? { reasoningEffort: handle.reasoningEffort } : {};
 }
 
 function agentInput(
@@ -1735,6 +1745,7 @@ export class DaemonAgentRuntime {
             return { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
               providerSessionId: handle.providerSessionId,
               ...(handle.model ? { model: handle.model } : {}),
+              ...appliedEffort(agent, handle),
               permissionPreset: handle.permissionPreset,
               state: 'working',
             }) }] };
@@ -2934,6 +2945,7 @@ export class DaemonAgentRuntime {
           { kind: 'agent.upsert', value: agentInput(currentAgent, {
             providerSessionId: handle.providerSessionId,
             ...(handle.model ? { model: handle.model } : {}),
+            ...appliedEffort(currentAgent, handle),
             permissionPreset: handle.permissionPreset,
             ...(!hasCurrent ? { state: currentAgent.queuedTurnCount > 0 ? 'queued' : 'idle' } : {}),
           }) },

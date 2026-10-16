@@ -283,6 +283,8 @@ export interface ClaudeQuerySession extends AsyncIterable<SDKMessage> {
   setModel(model?: string): Promise<void>;
   /** Session-scoped settings, live-applied; used for the per-message reasoning effort. */
   applyFlagSettings?(settings: { readonly effortLevel?: string | null }): Promise<void>;
+  /** Merged settings; `applied` is what the next request uses (in sdk.mjs, not in sdk.d.ts). */
+  getSettings?(): Promise<unknown>;
   initializationResult(): Promise<unknown>;
   supportedModels(): Promise<ModelInfo[]>;
   supportedCommands?(): Promise<readonly { name: string; description: string }[]>;
@@ -1466,6 +1468,31 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   /**
+   * A session launched on provider defaults runs whatever the user's Claude settings choose; report
+   * that model and effort so the conversation shows and keeps what actually runs. Older CLIs lack
+   * get_settings, which only leaves the defaults unnamed.
+   */
+  private async readAppliedSettings(session: SessionRecord, signal?: AbortSignal): Promise<void> {
+    if (!session.query.getSettings) return;
+    let applied: { model?: unknown; effort?: unknown } | undefined;
+    try {
+      const settings = await bounded(abortable(session.query.getSettings(), signal), this.operationTimeoutMs);
+      applied = asObject(asObject(settings)?.applied) ?? undefined;
+    } catch {
+      this.throwIfAborted(signal);
+      return;
+    }
+    const model = typeof applied?.model === 'string' && applied.model ? applied.model : undefined;
+    const effort = typeof applied?.effort === 'string' && applied.effort ? applied.effort : undefined;
+    if (effort) session.appliedEffort = effort;
+    session.handle = {
+      ...session.handle,
+      ...(!session.context.model && model ? { model } : {}),
+      ...(session.context.reasoningEffort ?? effort ? { reasoningEffort: session.context.reasoningEffort ?? effort } : {}),
+    };
+  }
+
+  /**
    * The CLI accepts `bypassPermissions` only on a session launched with
    * `allowDangerouslySkipPermissions`, which is armed only when the user chose Full access. Choosing
    * it later resumes the same provider session with the flag armed. Only between turns.
@@ -1654,9 +1681,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       );
       if (session.startupError) throw session.startupError;
       this.throwIfAborted(signal);
+      await this.readAppliedSettings(session, signal);
       session.initialized = true;
       this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'idle' });
-      return handle;
+      return session.handle;
     } catch (error) {
       const classified = classifyClaudeProviderError(error);
       this.emitProviderError(context.sessionId, classified);
