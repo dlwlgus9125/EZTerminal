@@ -1,0 +1,354 @@
+/* OpenClaw sidebar destination. Tokens only (guard:design-style checks this file); the
+   OpenClaw-hosted chat body keeps its own frame and is not styled here. */
+
+/* Gateway status: state, version and port, then the three numbers the gateway reports. */
+.openclaw-state-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.openclaw-state-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ui-text-muted);
+}
+
+.openclaw-state-running .openclaw-state-dot {
+  background: var(--ui-success);
+}
+
+.openclaw-state-starting .openclaw-state-dot {
+  background: var(--ui-warning);
+}
+
+.openclaw-state-stopped .openclaw-state-dot {
+  background: var(--ui-text-dim);
+}
+
+.openclaw-state-not-installed .openclaw-state-dot,
+.openclaw-state-unknown .openclaw-state-dot {
+  background: var(--ui-danger);
+}
+
+.openclaw-state-detail {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.openclaw-state-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One quiet row inside the status block, as in the handoff; not a row of KPI tiles. */
+.openclaw-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ui-space-2);
+  margin: var(--ui-space-3) 0 0;
+}
+
+.openclaw-stats > div {
+  display: flex;
+  flex-direction: column-reverse;
+  min-width: 0;
+}
+
+.openclaw-stats dt {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-2xs);
+}
+
+.openclaw-stats dd {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-md);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.openclaw-guidance-text {
+  margin: 0 0 var(--ui-space-2);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.openclaw-guidance-cmd {
+  display: block;
+  margin-bottom: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-xs);
+}
+
+.openclaw-guidance-link {
+  color: var(--ui-accent);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* Lifecycle and open actions: rows of equal small buttons. */
+.openclaw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2);
+}
+
+.openclaw-actions + .openclaw-actions,
+.openclaw-error-inline + .openclaw-actions {
+  margin-top: var(--ui-space-2);
+}
+
+.openclaw-actions > .ez-ui-button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.openclaw-error-inline {
+  margin-top: var(--ui-space-2);
+  color: var(--ui-danger);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* Supervisor (control) status. */
+.openclaw-control-card {
+  border-inline-start: 2px solid var(--ui-info);
+}
+
+.openclaw-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ui-space-1) var(--ui-space-3);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.openclaw-control-grid strong {
+  color: var(--ui-text-primary);
+  font-weight: 600;
+  text-align: end;
+}
+
+.openclaw-control-progress,
+.openclaw-control-issue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  margin-top: var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  font-size: var(--ui-font-size-xs);
+}
+
+.openclaw-control-progress {
+  color: var(--ui-warning);
+}
+
+.openclaw-control-issue {
+  border: 1px solid var(--ui-danger);
+  color: var(--ui-text-primary);
+}
+
+.openclaw-control-issue strong {
+  color: var(--ui-danger);
+}
+
+.openclaw-control-issue code {
+  overflow-wrap: anywhere;
+  color: var(--ui-text-secondary);
+}
+
+.openclaw-control-details {
+  margin-top: var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
+}
+
+.openclaw-control-details > summary {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  color: var(--ui-text-secondary);
+  font-weight: 600;
+}
+
+.openclaw-control-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.openclaw-control-details > summary::before {
+  content: '';
+  width: 0.375rem;
+  height: 0.375rem;
+  margin: 0 var(--ui-space-2) 0 var(--ui-space-1);
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.openclaw-control-details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.openclaw-control-details pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Channels the gateway is bridging, folded out of the sessions it reports. */
+.openclaw-channels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+
+.openclaw-channel {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  font-size: var(--ui-font-size-xs);
+}
+
+.openclaw-channel-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ui-text-dim);
+}
+
+/* Lit only while a run is actually in flight on that channel. */
+.openclaw-channel-dot[data-live='true'] {
+  background: var(--ui-accent);
+}
+
+.openclaw-channel-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.openclaw-channel-meta {
+  color: var(--ui-text-muted);
+}
+
+.openclaw-channel-time {
+  margin-inline-start: auto;
+  color: var(--ui-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.openclaw-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+
+.openclaw-session-row {
+  padding: var(--ui-space-2);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.openclaw-session-key {
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.openclaw-session-updated {
+  margin-top: var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-2xs);
+}
+
+/* Gateway log, in the terminal face. */
+.openclaw-log-view {
+  height: 13.75rem;
+  overflow-y: auto;
+  padding: var(--ui-space-2);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.openclaw-log-line {
+  display: flex;
+  gap: var(--ui-space-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.openclaw-log-time {
+  flex: 0 0 auto;
+  color: var(--ui-text-muted);
+}
+
+.openclaw-log-level {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.openclaw-log-message {
+  color: var(--ui-text-primary);
+}
+
+.openclaw-log-level-info .openclaw-log-level,
+.openclaw-log-level-debug .openclaw-log-level {
+  color: var(--ui-info);
+}
+
+.openclaw-log-level-warn .openclaw-log-level {
+  color: var(--ui-warning);
+}
+
+.openclaw-log-level-error .openclaw-log-level {
+  color: var(--ui-danger);
+}
+
+.openclaw-log-resume {
+  width: 100%;
+  margin-top: var(--ui-space-2);
+}
+
+/* Core settings: labelled fields, then a save action at its own width. */
+.openclaw-config {
+  display: grid;
+  gap: var(--ui-space-2);
+}
+
+.openclaw-config > .ez-ui-button {
+  justify-self: start;
+}
+
+.openclaw-restart-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  margin-top: var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-warning);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-warning-muted);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-xs);
+}
