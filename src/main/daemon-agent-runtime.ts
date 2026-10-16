@@ -106,6 +106,7 @@ export interface NativeHistoryAdoption {
   readonly sourceUpdatedAt: number;
   readonly model?: string;
   readonly permissionPreset: DaemonAgent['permissionPreset'];
+  readonly reasoningEffort?: string;
   readonly transcript: readonly DaemonTranscriptItemInput[];
   readonly requestReceipt?: { readonly id: string; readonly fingerprint: string };
 }
@@ -602,7 +603,8 @@ export class DaemonAgentRuntime {
         { kind: 'session.upsert', value: { id: input.sessionId, projectId: workspace.projectId, workspaceId: workspace.id,
           kind: 'agent', title: input.title, state: 'starting', source: 'structured' } },
         { kind: 'agent.upsert', value: { sessionId: input.sessionId, providerId: input.providerId, providerSessionId: input.providerSessionId,
-          ...(input.model ? { model: input.model } : {}), permissionPreset: input.permissionPreset, state: 'starting', queuedTurnCount: 0,
+          ...(input.model ? { model: input.model } : {}), permissionPreset: input.permissionPreset,
+          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}), state: 'starting', queuedTurnCount: 0,
           orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled } },
         ...this.transcriptMutations(input.transcript),
         { kind: 'migration-receipt.record', value: { id: stableId('native-history', input.historyId), source: 'native-history-adoption',
@@ -756,6 +758,7 @@ export class DaemonAgentRuntime {
         providerSessionId: command.payload.providerSessionId,
         ...(command.payload.model ? { model: command.payload.model } : {}),
         permissionPreset: command.payload.permissionPreset,
+        ...(command.payload.reasoningEffort ? { reasoningEffort: command.payload.reasoningEffort } : {}),
         state: 'starting',
         queuedTurnCount: 0,
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled,

@@ -23,6 +23,7 @@ import { createReadStream, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import readline from 'node:readline';
 
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
@@ -34,9 +35,11 @@ import {
 } from '../shared/agent-history';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import { presetForClaudePermissionMode } from './claude-provider-adapter';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
+  ProviderResumeSettings,
   ProviderFileChangeRecord,
   ProviderFileChangeSet,
   ProviderHistorySession,
@@ -458,6 +461,37 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
 
   readTranscriptForAdoption(privateId: string, cursor?: string, limit = MAX_AGENT_TRANSCRIPT_PAGE_SIZE): Promise<AgentTranscriptPage> {
     return this.readTranscript(privateId, cursor, limit, true);
+  }
+
+  async readResumeSettings(privateId: string): Promise<ProviderResumeSettings | null> {
+    let model: string | undefined;
+    let reasoningEffort: string | undefined;
+    let permissionPreset: ProviderResumeSettings['permissionPreset'];
+    try {
+      const lines = readline.createInterface({ input: createReadStream(privateId, { encoding: 'utf8' }), crlfDelay: Infinity });
+      for await (const line of lines) {
+        // Cheap prefilters: only these two record kinds carry settings.
+        const permission = line.includes('"permission-mode"');
+        if (!permission && !line.includes('"assistant"')) continue;
+        let record: Record<string, unknown>;
+        try { record = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+        if (permission && record.type === 'permission-mode' && typeof record.permissionMode === 'string') {
+          permissionPreset = presetForClaudePermissionMode(record.permissionMode);
+        } else if (record.type === 'assistant' && record.isSidechain !== true) {
+          const recorded = (record.message as { model?: unknown } | undefined)?.model;
+          if (typeof recorded !== 'string' || !recorded || recorded === '<synthetic>') continue;
+          model = recorded;
+          reasoningEffort = typeof record.effort === 'string' && record.effort ? record.effort : undefined;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return {
+      ...(model ? { model } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(permissionPreset ? { permissionPreset } : {}),
+    };
   }
 
   async readTranscript(

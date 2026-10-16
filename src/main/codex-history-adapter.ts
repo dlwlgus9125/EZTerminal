@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
 
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
@@ -11,9 +13,11 @@ import {
 } from '../shared/agent-history';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import { presetForCodexTurnContext } from './codex-provider-adapter';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
+  ProviderResumeSettings,
   ProviderFileChangeRecord,
   ProviderFileChangeSet,
   ProviderHistorySession,
@@ -246,6 +250,37 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
 
   readTranscriptForAdoption(privateId: string, cursor?: string, limit = 20): Promise<AgentTranscriptPage> {
     return this.readTranscript(privateId, cursor, limit, true);
+  }
+
+  async readResumeSettings(privateId: string): Promise<ProviderResumeSettings | null> {
+    try {
+      const thread = asObject(asObject(await this.client.request('thread/read', { threadId: privateId, includeTurns: false }))?.thread);
+      if (!thread) return null;
+      const model = asString(thread.model);
+      const reasoningEffort = asString(thread.reasoningEffort);
+      const rollout = asString(thread.path);
+      let permissionPreset: ProviderResumeSettings['permissionPreset'];
+      if (rollout) {
+        const lines = readline.createInterface({ input: createReadStream(rollout, { encoding: 'utf8' }), crlfDelay: Infinity });
+        for await (const line of lines) {
+          if (!line.includes('"turn_context"')) continue;
+          let payload: JsonObject | null = null;
+          try { payload = asObject(asObject(JSON.parse(line))?.payload); } catch { continue; }
+          if (!payload) continue;
+          permissionPreset = presetForCodexTurnContext(
+            asString(payload.approval_policy) ?? undefined,
+            asString(asObject(payload.sandbox_policy)?.type) ?? undefined,
+          );
+        }
+      }
+      return {
+        ...(model ? { model } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(permissionPreset ? { permissionPreset } : {}),
+      };
+    } catch {
+      return null;
+    }
   }
 
   async readTranscript(privateId: string, cursor?: string, limit = 10, fullText = false): Promise<AgentTranscriptPage> {

@@ -30,7 +30,7 @@ type Located = { entry: ConversationEntry; session?: DaemonSession; agent?: Daem
 
 export interface ConversationHistoryServiceOptions {
   readonly terminalHistory?: (sessionId: string) => Promise<string | null>;
-  readonly history: Pick<AgentHistoryService, 'listProjects' | 'listSessions' | 'readTranscript' | 'readTranscriptForAdoption' | 'resolveHistorySource'>;
+  readonly history: Pick<AgentHistoryService, 'listProjects' | 'listSessions' | 'readTranscript' | 'readTranscriptForAdoption' | 'resolveHistorySource' | 'readResumeSettings' | 'findProviderHistory'>;
   readonly daemon: Pick<DaemonCommandRouter, 'getSnapshot' | 'getTranscript' | 'execute' | 'applySystemTransition'>;
   readonly store: Pick<DaemonStore, 'getMigrationReceipt' | 'listMigrationReceipts' | 'findCommand' | 'getConversationPreview' | 'getConversationTranscript' | 'pendingConversationSource'>;
   readonly runtime: Pick<DaemonAgentRuntime, 'adoptNativeHistory'>;
@@ -200,7 +200,11 @@ export class ConversationHistoryService implements ConversationHistoryClient {
     if (!parsed.success) return failed('invalid', 'Invalid history resume request.');
     try {
       const located = await this.locate(parsed.data.conversationId, true);
-      return located ? this.prepare(located, parsed.data) : failed('not-found', 'The source conversation no longer exists.');
+      if (!located) return failed('not-found', 'The source conversation no longer exists.');
+      // Effort stays host-side: the preparation schema is shared with older clients.
+      const { reasoningEffort, ...preparation } = await this.prepare(located, parsed.data) as HistoryResumePreparation & { reasoningEffort?: string };
+      void reasoningEffort;
+      return preparation;
     } catch { return failed('unavailable', 'The source conversation could not be checked.'); }
   }
 
@@ -251,6 +255,7 @@ export class ConversationHistoryService implements ConversationHistoryClient {
                 sessionId, sourceSessionId: located.session.id, workspaceId: preparation.workspaceId, providerId: located.agent.providerId,
                 providerSessionId: located.agent.providerSessionId, title: located.entry.title,
                 ...(preparation.model ? { model: preparation.model } : {}), permissionPreset: preparation.permissionPreset,
+                ...(preparation.reasoningEffort ? { reasoningEffort: preparation.reasoningEffort } : {}),
               } });
             const applied = await this.options.daemon.execute(command);
             result = applied.ok ? { ok: true, sessionId, alreadyLinked: false }
@@ -266,7 +271,8 @@ export class ConversationHistoryService implements ConversationHistoryClient {
           result = await this.options.runtime.adoptNativeHistory({ sessionId, workspaceId: preparation.workspaceId,
             providerId: checked.summary.provider, providerSessionId: checked.providerSessionId, historyId: checked.summary.historyId,
             rootPath: checked.summary.roots[0]!, title: checked.summary.title, sourceUpdatedAt: checked.summary.updatedAt,
-            ...(preparation.model ? { model: preparation.model } : {}), permissionPreset: preparation.permissionPreset, transcript,
+            ...(preparation.model ? { model: preparation.model } : {}), permissionPreset: preparation.permissionPreset,
+            ...(preparation.reasoningEffort ? { reasoningEffort: preparation.reasoningEffort } : {}), transcript,
             requestReceipt: { id: receiptId, fingerprint: requestFingerprint } });
         } else return failed('unavailable', 'This conversation no longer owns a provider session.');
         if (result.ok && located.session && result.sessionId !== located.session.id) {
@@ -280,7 +286,7 @@ export class ConversationHistoryService implements ConversationHistoryClient {
     });
   }
 
-  private async prepare(located: Located, request: HistoryResumePreparationRequest): Promise<HistoryResumePreparation> {
+  private async prepare(located: Located, request: HistoryResumePreparationRequest): Promise<HistoryResumePreparation & { reasoningEffort?: string }> {
     const snapshot = this.options.daemon.getSnapshot();
     const { session, agent } = located;
     const navigation = this.options.workflow ? await this.options.workflow(located.entry.projectId) : undefined;
@@ -289,8 +295,16 @@ export class ConversationHistoryService implements ConversationHistoryClient {
       : session ? snapshot.workspaces.find(item => item.id === session.workspaceId)
         : snapshot.workspaces.find(item => !item.archivedAt && item.projectId === entry.projectId && entry.roots[0] && pathKey(item.rootPath) === pathKey(entry.roots[0]));
     const project = snapshot.projects.find(item => item.id === (workspace?.projectId ?? entry.projectId));
-    const model = request.model ?? agent?.model;
-    const permissionPreset = request.permissionPreset ?? agent?.permissionPreset ?? 'standard';
+    // A conversation continues with what it last ran with unless the user chose otherwise. A linked
+    // conversation imported from a CLI may never have recorded its model or effort; read only then.
+    const needsSource = !(request.model ?? agent?.model) || !agent?.reasoningEffort || !agent?.permissionPreset;
+    const nativeHistoryId = !needsSource ? null : located.native?.summary.historyId
+      ?? (agent?.providerSessionId && (agent.providerId === 'codex' || agent.providerId === 'claude')
+        ? await this.options.history.findProviderHistory(agent.providerId, agent.providerSessionId) : null);
+    const source = nativeHistoryId ? await this.options.history.readResumeSettings(nativeHistoryId) : null;
+    const model = request.model ?? agent?.model ?? source?.model;
+    const permissionPreset = request.permissionPreset ?? agent?.permissionPreset ?? source?.permissionPreset ?? 'standard';
+    const reasoningEffort = agent?.reasoningEffort ?? source?.reasoningEffort;
     const provider = snapshot.providers.find(item => item.id === entry.providerId);
     let reason: ConversationHistoryFailure['reason'] | undefined;
     let message: string | undefined;
@@ -322,7 +336,8 @@ export class ConversationHistoryService implements ConversationHistoryClient {
       navigation?.ok ? JSON.stringify(navigation.snapshot) : '', workspace?.id ?? '', workspace?.rootPath ?? '', model ?? '', permissionPreset);
     return { ok: true, entry, revision, ...(workspace ? { workspaceId: workspace.id } : {}), canResume: !reason,
       ...(reason ? { blockedReason: reason, message } : {}), ...(session ? { linkedSessionId: session.id } : {}),
-      action: reason ? 'unavailable' : action, ...(model ? { model } : {}), permissionPreset };
+      action: reason ? 'unavailable' : action, ...(model ? { model } : {}), permissionPreset,
+      ...(reasoningEffort ? { reasoningEffort } : {}) };
   }
 
   private async locate(conversationId: string, refresh = false): Promise<Located | null> {

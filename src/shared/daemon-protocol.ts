@@ -347,6 +347,7 @@ export interface DaemonCommandPayloads {
     readonly title: string;
     readonly model?: string;
     readonly permissionPreset: PermissionPreset;
+    readonly reasoningEffort?: string;
     readonly parentSessionId?: string;
   };
   readonly 'agent.submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
@@ -626,6 +627,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     title: NonEmptyStringSchema,
     model: NonEmptyStringSchema.optional(),
     permissionPreset: PermissionPresetSchema,
+    reasoningEffort: z.string().min(1).max(32).optional(),
     parentSessionId: IdentifierSchema.optional(),
   }).strict(),
   'agent.submit': AgentMessagePayloadSchema,

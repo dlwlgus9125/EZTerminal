@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -338,4 +338,21 @@ it('a model-only CLI override leaves Codex sandbox configuration intact', () => 
   const command = adapter.buildNewCommand(['C:\\Work'], { provider: 'codex', model: 'custom-model' });
   expect(command?.commandText).toContain("--model 'custom-model'");
   expect(command?.commandText).not.toContain('--sandbox');
+});
+
+it('reads the model, effort and permission a Codex thread last ran with', async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ez-codex-resume-settings-'));
+  const rollout = path.join(directory, 'rollout.jsonl');
+  const turnContext = (approval: string, sandbox: string) => JSON.stringify({ type: 'turn_context', payload: {
+    model: 'gpt-6-astra', effort: 'xhigh', approval_policy: approval, sandbox_policy: { type: sandbox } } });
+  writeFileSync(rollout, [turnContext('on-request', 'workspace-write'), turnContext('never', 'danger-full-access')].join('\n') + '\n');
+  const request = vi.fn(async (method: string) => {
+    expect(method).toBe('thread/read');
+    return { thread: { id: 'thread-1', model: 'gpt-6-astra', reasoningEffort: 'xhigh', path: rollout } };
+  });
+  const adapter = new CodexHistoryAdapter(requester(request as CodexAppServerRequester['request']));
+  await expect(adapter.readResumeSettings('thread-1')).resolves.toEqual({
+    model: 'gpt-6-astra', reasoningEffort: 'xhigh', permissionPreset: 'full-access',
+  });
+  expect(request).toHaveBeenCalledWith('thread/read', { threadId: 'thread-1', includeTurns: false });
 });

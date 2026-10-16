@@ -207,6 +207,13 @@ function permissionStartSettings(permissionPreset: PermissionPreset): JsonObject
   }
 }
 
+/** The inverse of permissionStartSettings(), for a turn context recorded in a Codex rollout. */
+export function presetForCodexTurnContext(approvalPolicy: string | undefined, sandbox: string | undefined): PermissionPreset {
+  if (sandbox === 'danger-full-access' && approvalPolicy === 'never') return 'full-access';
+  if (sandbox === 'read-only') return 'plan';
+  return 'standard';
+}
+
 function permissionUpdateSettings(permissionPreset: PermissionPreset, workspaceRoot: string): JsonObject {
   switch (permissionPreset) {
     case 'plan':

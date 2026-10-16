@@ -27,6 +27,7 @@ import type {
   AgentHistoryProviderAdapter,
   ProviderFileChangeSet,
   ProviderHistorySession,
+  ProviderResumeSettings,
 } from './agent-history-provider';
 import {
   AgentProjectStore,
@@ -376,8 +377,8 @@ export class AgentHistoryService {
     let cursor: string | undefined;
     do {
       const projects = await this.listProjects(false, cursor, 100);
+      // A saved project's summary never lists providers (see projectSummary), so scan every project.
       for (const project of projects.items) {
-        if (!project.providers.includes(provider)) continue;
         let sessions: string | undefined;
         do { const page = await this.listSessions(project.projectId, sessions, 100); const match = find(); if (match) return match; sessions = page.nextCursor ?? undefined; } while (sessions);
       }
@@ -422,6 +423,13 @@ export class AgentHistoryService {
     if (!source?.adapter.readTranscriptForAdoption) return null;
     const page = await source.adapter.readTranscriptForAdoption(source.privateSession.privateId, cursor, limit);
     return { ...page, historyId, provider: source.adapter.provider };
+  }
+
+  /** The settings the selected native conversation last ran with; null when unknown. */
+  async readResumeSettings(historyId: string): Promise<ProviderResumeSettings | null> {
+    const source = await this.findSession(historyId);
+    if (!source?.adapter.readResumeSettings) return null;
+    return source.adapter.readResumeSettings(source.privateSession.privateId).catch(() => null);
   }
 
   /** Resolve opaque session/turn ids to a provider-owned structured change set. */

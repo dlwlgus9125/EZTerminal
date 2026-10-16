@@ -3,6 +3,14 @@ import type {
   AgentHistoryProvider,
   AgentTranscriptPage,
 } from '../shared/agent-history';
+import type { PermissionPreset } from '../shared/daemon-protocol';
+
+/** The settings a native conversation last ran with, so resuming it continues the same way. */
+export interface ProviderResumeSettings {
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly permissionPreset?: PermissionPreset;
+}
 
 export interface ProviderHistorySession {
   readonly privateId: string;
@@ -85,6 +93,8 @@ export interface AgentHistoryProviderAdapter {
    * place a provider declares a support limit, rather than the caller guessing.
    */
   buildResumeCommand(privateId: string, roots: readonly string[]): AgentResumeCommand | null;
+  /** Reads only the selected conversation, at resume time; listing must stay index-only. */
+  readResumeSettings?(privateId: string): Promise<ProviderResumeSettings | null>;
   /** Builds a fresh interactive CLI launch. No prompt is included in argv. */
   buildNewCommand?(roots: readonly string[], launch?: AgentFreshLaunchOptions): AgentPrivateCommand | null;
   dispose(): Promise<void>;

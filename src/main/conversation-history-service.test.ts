@@ -102,6 +102,23 @@ describe('unified conversation history', () => {
     const before = await h.service.readConversation(native.conversationId);
     expect(before.ok).toBe(true);
   });
+  it('continues a stopped conversation with the effort and permission it last ran with', async () => {
+    const h = await harness(); const native = await h.first();
+    const adopted = await h.service.resumeHistory(await h.request()); if (!adopted.ok) throw new Error(adopted.message);
+    await h.runtime.whenIdle();
+    await h.execute('agent.set-settings', { sessionId: adopted.sessionId, permissionPreset: 'full-access', reasoningEffort: 'high' });
+    await h.execute('agent.archive', { sessionId: adopted.sessionId });
+    // No overrides: the continuation must not fall back to defaults.
+    const prepared = await h.service.prepareHistoryResume({ conversationId: native.conversationId }); if (!prepared.ok) throw new Error(prepared.message);
+    expect(prepared).toMatchObject({ model: 'current-model', permissionPreset: 'full-access' });
+    expect(prepared).not.toHaveProperty('reasoningEffort');
+    const continued = await h.service.resumeHistory({ conversationId: native.conversationId, revision: prepared.revision, commandId: 'continue-settings' });
+    if (!continued.ok) throw new Error(continued.message);
+    await h.runtime.whenIdle();
+    expect(h.daemon.getSnapshot().agents.find((agent) => agent.sessionId === continued.sessionId))
+      .toMatchObject({ model: 'current-model', permissionPreset: 'full-access', reasoningEffort: 'high' });
+  });
+
   it('keeps complete interleaved message groups across backwards page boundaries', async () => {
     const h = await harness(); const result = await h.service.resumeHistory(await h.request()); if (!result.ok) throw new Error(result.message); await h.runtime.whenIdle();
     const base = { sessionId: result.sessionId, kind: 'assistant-message' as const, isSensitive: false, createdAt: now().toISOString() };
