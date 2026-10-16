@@ -1267,7 +1267,8 @@ describe('MobileAgentView', () => {
     expect(childButtons).toHaveLength(2);
     expect(childButtons[0]?.textContent).toContain('Managed accessibility child');
     expect(childButtons[0]?.textContent).toContain('Codex');
-    expect(childButtons[0]?.textContent).toContain('working');
+    // The state reads as its localized label (useAgentStateLabel), not the raw enum.
+    expect(childButtons[0]?.textContent).toContain('Working');
     expect(childButtons[0]?.textContent).toContain('Managed');
     expect(childButtons[1]?.textContent).toContain('Provider-owned');
     expect(container.textContent).not.toContain('Detached child');

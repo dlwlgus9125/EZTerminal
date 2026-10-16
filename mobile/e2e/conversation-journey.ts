@@ -38,12 +38,17 @@ async function main(): Promise<void> {
   const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
   let desktop: Awaited<ReturnType<typeof launchDesktop>> | undefined;
   try {
-    desktop = await launchDesktop({ env: { [pathKey]: `${path.resolve('e2e/fixtures/fake-codex')}${path.delimiter}${process.env[pathKey] ?? ''}`, USERPROFILE: fixture, HOME: fixture, CLAUDE_CONFIG_DIR: claude } });
+    // Resolved from this file, not the working directory: `pnpm --dir mobile` runs from mobile/,
+    // where a cwd-relative path does not exist and the real codex on PATH would answer instead.
+    const fakeCodex = path.resolve(import.meta.dirname, '../../e2e/fixtures/fake-codex');
+    desktop = await launchDesktop({ env: { [pathKey]: `${fakeCodex}${path.delimiter}${process.env[pathKey] ?? ''}`, USERPROFILE: fixture, HOME: fixture, CLAUDE_CONFIG_DIR: claude } });
     const host = desktop.window;
     const saved = await host.evaluate(root => window.ezterminal.saveAgentProject({ name: 'Conversation UX', primaryRoot: root, additionalRoots: [], pinned: true }), root);
     assert.ok(saved.ok);
     const probe = await host.evaluate(() => window.ezterminal.inspectDaemonProvider('codex'));
     assert.ok(probe.ok);
+    // Never enable a real provider: this journey must run on the deterministic fixture only.
+    assert.ok(path.resolve(probe.value.probe.executablePath).startsWith(fakeCodex), `expected the fake codex, found ${probe.value.probe.executablePath}`);
     const enabled = await host.evaluate(async inspection => {
       const snapshot = await window.ezterminal.getDaemonSnapshot();
       if (!snapshot) throw new Error('Missing snapshot');
@@ -81,7 +86,8 @@ async function main(): Promise<void> {
     await waitFor(`document.querySelector(${JSON.stringify(input)}).value === 'Draft restored after Android force stop'`, 'restored draft');
     assert.equal((await host.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.agents.length, 0);
     await capture('03-restored-draft');
-    await waitFor(`document.querySelector('[data-testid="structured-agent-send"]')?.disabled === false`, 'first Send ready');
+    // Evaluated inside WebView 74, which predates optional chaining.
+    await waitFor(`(document.querySelector('[data-testid="structured-agent-send"]') || {}).disabled === false`, 'first Send ready');
     await tapTestIdOnce('structured-agent-send');
     await waitForTestIdHidden('conversation-start', 30_000);
     await waitForTestId('structured-agent-session');

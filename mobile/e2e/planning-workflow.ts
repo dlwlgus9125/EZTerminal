@@ -273,6 +273,8 @@ async function main(): Promise<void> {
     // encrypted graph cache. Provider discovery uses the reviewed CLI fixture;
     // no provider turn or execution is started in this scenario.
     await recordWorkflowRuntimeErrors();
+    // Planning replaces the project's item list (Phase 4); subprojects live in the other view.
+    await clickLabel('[data-testid="workflow-workspace"] .workflow-switch button', ['Subprojects and conversations', '소프로젝트·대화']);
     await clickLabel('[data-testid="workflow-workspace"] button', ['New subproject', '새 소프로젝트']);
     await fillSelector('.workflow-create input', 'Android subproject');
     await clickLabel('[role="dialog"] button', ['Create subproject', '소프로젝트 만들기']);
