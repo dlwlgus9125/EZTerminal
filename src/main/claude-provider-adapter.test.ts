@@ -41,6 +41,7 @@ class FakeClaudeQuery implements ClaudeQuerySession {
   readonly input: AsyncIterable<SDKUserMessage>;
   readonly permissionModes: string[] = [];
   readonly models: Array<string | undefined> = [];
+  readonly flagSettings: Array<{ readonly effortLevel?: string | null }> = [];
   closeCount = 0;
   interruptCount = 0;
   interruptReceipt: { still_queued?: readonly string[] } | undefined;
@@ -104,6 +105,10 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     this.models.push(model);
   }
 
+  async applyFlagSettings(settings: { readonly effortLevel?: string | null }): Promise<void> {
+    this.flagSettings.push(settings);
+  }
+
   async initializationResult(): Promise<unknown> {
     return { models: this.supported, ...(this.account ? { account: this.account } : {}) };
   }
@@ -147,9 +152,11 @@ function makeAdapter(options: {
 } = {}): {
   readonly adapter: ClaudeProviderAdapter;
   readonly query: FakeClaudeQuery;
+  readonly queries: FakeClaudeQuery[];
   readonly events: AgentProviderEvent[];
 } {
   let fakeQuery: FakeClaudeQuery | undefined;
+  const queries: FakeClaudeQuery[] = [];
   const events: AgentProviderEvent[] = [];
   const adapter = new ClaudeProviderAdapter({
     enablementStore: new MemoryClaudeProviderEnablementStore(options.policy ?? enabledPolicy),
@@ -165,6 +172,7 @@ function makeAdapter(options: {
         options.account,
         options.emitInitialization,
       );
+      queries.push(fakeQuery);
       return fakeQuery;
     },
     extensionCommand: async () => '[]',
@@ -184,6 +192,7 @@ function makeAdapter(options: {
       if (!fakeQuery) throw new Error('query not created');
       return fakeQuery;
     },
+    queries,
     events,
   };
 }
@@ -677,14 +686,46 @@ describe('ClaudeProviderAdapter sessions', () => {
         isDefault: true,
       },
     ]);
+    const launched = fixture.query;
     await expect(fixture.adapter.setSettings({
       sessionId: context.sessionId,
       providerSessionId,
       model: 'opus',
       permissionPreset: 'full-access',
     })).resolves.toMatchObject({ model: 'opus', permissionPreset: 'full-access' });
-    expect(fixture.query.models).toEqual(['opus']);
-    expect(fixture.query.permissionModes).toEqual(['bypassPermissions']);
+    // The CLI refuses bypassPermissions on a session launched without the flag, so Full access
+    // relaunches the same provider session with it armed instead of calling setPermissionMode.
+    expect(launched.permissionModes).toEqual([]);
+    expect(launched.closeCount).toBe(1);
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.query.inputOptions).toMatchObject({
+      resume: providerSessionId, model: 'opus', permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true,
+    });
+    await fixture.adapter.dispose();
+  });
+
+  it('applies a changed reasoning effort before the next message', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, reasoningEffort: 'high' });
+    expect(fixture.query.inputOptions).toMatchObject({ effort: 'high' });
+    const send = (id: string, reasoningEffort: string) => fixture.adapter.submit({
+      sessionId: context.sessionId, providerSessionId, turnId: `turn-${id}`, commandId: `command-${id}`, prompt: 'Go', reasoningEffort,
+    });
+    await send('1', 'high');
+    await send('2', 'max');
+    await send('3', 'max');
+    expect(fixture.query.flagSettings).toEqual([{ effortLevel: 'max' }]);
+    await fixture.adapter.dispose();
+  });
+
+  it('switches an armed Full access session in place, without relaunching', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'full-access' });
+    expect(fixture.query.inputOptions).toMatchObject({ permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true });
+    await fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId, permissionPreset: 'standard' });
+    await fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId, permissionPreset: 'full-access' });
+    expect(fixture.queries).toHaveLength(1);
+    expect(fixture.query.permissionModes).toEqual(['default', 'bypassPermissions']);
     await fixture.adapter.dispose();
   });
 
@@ -1069,8 +1110,19 @@ describe('ClaudeProviderAdapter sessions', () => {
       updatedInput: { ...questionInput, answers: { 'Formal or casual?': 'Casual' } } });
     await expect(plan).resolves.toMatchObject({ behavior: 'allow', updatedInput: { plan: '# Plan\n- step' } });
     await expect(write).resolves.toEqual({ behavior: 'deny', message: 'Put it under docs/ instead.', toolUseID: 'toolu_w' });
-    expect(fixture.query.permissionModes).toEqual(['bypassPermissions']);
+    // Mid-turn the unarmed session cannot enter bypass; edits are accepted for the rest of the
+    // turn and the session relaunches armed before the next message.
+    expect(fixture.query.permissionModes).toEqual(['acceptEdits']);
     await expect(fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId })).resolves.toMatchObject({ permissionPreset: 'full-access' });
+    expect(fixture.queries).toHaveLength(1);
+
+    const planTurn = (await fixture.query.input[Symbol.asyncIterator]().next()).value as SDKUserMessage;
+    fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'result-ask', session_id: providerSessionId,
+      user_message_uuid: planTurn.uuid, user_message_uuids: [planTurn.uuid], is_error: false });
+    await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-ask' })));
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-next', commandId: 'command-next', prompt: 'Next' });
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.query.inputOptions).toMatchObject({ resume: providerSessionId, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true });
     await fixture.adapter.dispose();
   });
 

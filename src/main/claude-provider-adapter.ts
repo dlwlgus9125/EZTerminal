@@ -281,6 +281,8 @@ export interface ClaudeQuerySession extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<ClaudeInterruptReceipt | undefined>;
   setPermissionMode(mode: NonNullable<Options['permissionMode']>): Promise<void>;
   setModel(model?: string): Promise<void>;
+  /** Session-scoped settings, live-applied; used for the per-message reasoning effort. */
+  applyFlagSettings?(settings: { readonly effortLevel?: string | null }): Promise<void>;
   initializationResult(): Promise<unknown>;
   supportedModels(): Promise<ModelInfo[]>;
   supportedCommands?(): Promise<readonly { name: string; description: string }[]>;
@@ -365,6 +367,12 @@ interface TranscriptOptions {
 
 interface SessionRecord {
   readonly context: ProviderSessionContext;
+  /** Launched with allowDangerouslySkipPermissions; the CLI refuses bypassPermissions otherwise. */
+  readonly bypassArmed: boolean;
+  /** A plan approval chose Full access mid-turn; relaunch armed before the next message. */
+  relaunchArmed?: boolean;
+  /** The effort the CLI is currently using, so a changed one is applied before the next message. */
+  appliedEffort?: string;
   readonly enablement: ClaudeProviderEnablement;
   handle: ProviderSessionHandle;
   readonly abortController: AbortController;
@@ -500,6 +508,13 @@ function deterministicCommandUuid(commandId: string): string {
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** The inverse of permissionMode(), for a mode recorded in a Claude transcript. */
+export function presetForClaudePermissionMode(mode: string): PermissionPreset {
+  if (mode === 'bypassPermissions') return 'full-access';
+  if (mode === 'plan') return 'plan';
+  return 'standard';
 }
 
 function permissionMode(preset: PermissionPreset): NonNullable<Options['permissionMode']> {
@@ -1216,8 +1231,20 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   async submit(input: ProviderSubmitInput, signal?: AbortSignal): Promise<void> {
     this.throwIfAborted(signal);
-    const session = this.session(input.sessionId, input.providerSessionId);
+    let session = this.session(input.sessionId, input.providerSessionId);
     if (session.turnsByCommand.has(input.commandId)) return;
+    if (session.relaunchArmed) {
+      await this.relaunchArmed(session, session.handle.model);
+      session = this.session(input.sessionId, input.providerSessionId);
+    }
+    if (input.reasoningEffort && input.reasoningEffort !== session.appliedEffort && session.query.applyFlagSettings) {
+      try {
+        await bounded(abortable(session.query.applyFlagSettings({ effortLevel: input.reasoningEffort }), signal), this.operationTimeoutMs);
+      } catch (error) {
+        throw classifyClaudeProviderError(error);
+      }
+      session.appliedEffort = input.reasoningEffort;
+    }
     if (input.context?.skills?.length) {
       if (session.context.toolsDisabled || !session.query.supportedCommands) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
       const commands = await bounded(abortable(session.query.supportedCommands(), signal), this.operationTimeoutMs);
@@ -1295,6 +1322,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     readonly permissionPreset?: PermissionPreset;
   }): Promise<ProviderSessionHandle> {
     const session = this.session(input.sessionId, input.providerSessionId);
+    if (input.permissionPreset === 'full-access' && !session.bypassArmed) {
+      return this.relaunchArmed(session, 'model' in input ? input.model : session.handle.model);
+    }
     try {
       if ('model' in input) {
         await bounded(session.query.setModel(input.model), this.operationTimeoutMs);
@@ -1348,8 +1378,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     });
     if (!plan) return;
     // After the settle: the CLI itself leaves plan mode for `default` once ExitPlanMode is approved.
+    // An unarmed session cannot enter bypass mid-turn: accept edits for the rest of this turn and
+    // relaunch armed before the next message.
+    const deferBypass = plan.mode === 'full-access' && !session.bypassArmed;
     try {
-      await bounded(session.query.setPermissionMode(permissionMode(plan.mode)), this.operationTimeoutMs);
+      await bounded(session.query.setPermissionMode(deferBypass ? 'acceptEdits' : permissionMode(plan.mode)), this.operationTimeoutMs);
+      if (deferBypass) session.relaunchArmed = true;
       session.handle = { ...session.handle, permissionPreset: plan.mode };
     } catch {
       // The approval itself was delivered, so this is not a delivery failure.
@@ -1431,6 +1465,29 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     return { commands, transcriptItems };
   }
 
+  /**
+   * The CLI accepts `bypassPermissions` only on a session launched with
+   * `allowDangerouslySkipPermissions`, which is armed only when the user chose Full access. Choosing
+   * it later resumes the same provider session with the flag armed. Only between turns.
+   */
+  private async relaunchArmed(session: SessionRecord, model: string | undefined): Promise<ProviderSessionHandle> {
+    if (session.pendingApprovals.size > 0 || [...session.turnsByCommand.values()].some((turn) => turn.state === 'submitted')) {
+      throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    }
+    const { model: launchModel, reasoningEffort: launchEffort, ...base } = session.context;
+    void launchModel;
+    void launchEffort;
+    const context: ProviderSessionContext = {
+      ...base,
+      ...(model ? { model } : {}),
+      ...(session.appliedEffort ? { reasoningEffort: session.appliedEffort } : {}),
+      permissionPreset: 'full-access',
+    };
+    const providerSessionId = session.handle.providerSessionId;
+    await this.disposeSession(session.context.sessionId, providerSessionId);
+    return this.startSession(context, providerSessionId);
+  }
+
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session || session.handle.providerSessionId !== providerSessionId) return;
@@ -1506,6 +1563,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     });
     const session: SessionRecord = {
       context,
+      bypassArmed: context.permissionPreset === 'full-access',
+      ...(context.reasoningEffort ? { appliedEffort: context.reasoningEffort } : {}),
       enablement: readiness.enablement,
       handle,
       abortController,
@@ -1547,7 +1606,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       cwd: context.workspaceRoot,
       pathToClaudeCodeExecutable: executablePath,
       permissionMode: permissionMode(context.permissionPreset),
-      allowDangerouslySkipPermissions: context.permissionPreset === 'full-access',
+      allowDangerouslySkipPermissions: session.bypassArmed,
       canUseTool,
       // Planning proposals are read once complete; only conversations stream.
       includePartialMessages: !context.toolsDisabled,
