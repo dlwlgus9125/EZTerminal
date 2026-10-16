@@ -87,7 +87,7 @@ test('packaged previous CLI conversations open and scroll without losing project
     await expect(conversation).toBeVisible();
     await expect(page.getByTestId('conversation-history-dialog')).toHaveCount(0);
     await expect(page.locator('.feature-load-error'), JSON.stringify(errors)).toHaveCount(0);
-    const transcript = conversation.locator('.structured-agent-transcript');
+    const transcript = conversation.getByTestId('structured-agent-transcript');
     await expect(transcript).toContainText('Prior response');
     await transcript.hover();
     await page.mouse.wheel(0, 750);
