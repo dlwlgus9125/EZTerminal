@@ -1308,7 +1308,8 @@
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity h1 { flex: 0 1 auto; min-width: 0; }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity p { flex: 0 100 auto; min-width: 0; }
 /* The title outranks the state text: a long state ("Enter a first message") shrinks first. */
-.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__status { flex: 0 4 auto; min-width: 2rem; overflow: hidden; margin-left: var(--ui-space-3); }
+/* stretch, not end: an end-aligned nowrap label overflows to the left and loses its start. */
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__status { flex: 0 4 auto; min-width: 2rem; overflow: hidden; margin-left: var(--ui-space-3); justify-items: stretch; }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__status .structured-agent-state { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__status .structured-agent-state > span:first-child { display: inline-block; margin-right: var(--ui-space-2); vertical-align: middle; }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity h1 { min-width: 4rem; }
