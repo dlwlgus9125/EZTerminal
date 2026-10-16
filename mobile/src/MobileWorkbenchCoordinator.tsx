@@ -5,6 +5,7 @@ import {
   useMobileNavigationHistory,
 } from './MobileNavigationHistory';
 import { setElementIsolated } from './dom-isolation';
+import { MobileConversationReviewProvider } from './MobileConversationReviewProvider';
 
 /**
  * Keeps terminal-owned React/xterm state alive while opaque auxiliary pages
@@ -39,17 +40,19 @@ export function MobileWorkbenchCoordinator({
 }): JSX.Element {
   return (
     <MobileNavigationHistoryProvider>
-      <MobileWorkbenchLayers
-        terminal={terminal}
-        page={page}
-        overlays={overlays}
-        navigation={navigation}
-        terminalActive={terminalActive}
-        destinationActive={destinationActive}
-        tabRootActive={tabRootActive}
-        onRequestRoot={onRequestRoot}
-        onRequestTabRoot={onRequestTabRoot}
-      />
+      <MobileConversationReviewProvider>
+        <MobileWorkbenchLayers
+          terminal={terminal}
+          page={page}
+          overlays={overlays}
+          navigation={navigation}
+          terminalActive={terminalActive}
+          destinationActive={destinationActive}
+          tabRootActive={tabRootActive}
+          onRequestRoot={onRequestRoot}
+          onRequestTabRoot={onRequestTabRoot}
+        />
+      </MobileConversationReviewProvider>
     </MobileNavigationHistoryProvider>
   );
 }
@@ -133,7 +136,9 @@ function MobileWorkbenchLayers({
         {terminal}
       </div>
       {pageActive && (
-        <section className="mobile-page-shell" data-testid="mobile-page-shell">
+        // A page can stay mounted while the terminal is the active layer (MobileWorkspace keeps
+        // its planning navigator alive); the opaque shell must not cover the terminal then.
+        <section className="mobile-page-shell" data-testid="mobile-page-shell" hidden={resolvedTerminalActive}>
           {page}
         </section>
       )}

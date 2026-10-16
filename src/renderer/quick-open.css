@@ -19,9 +19,7 @@
   background: var(--ui-surface);
   border: 1px solid var(--ui-border-focus-soft);
   border-radius: var(--ui-radius-xl);
-  box-shadow:
-    var(--ui-glow-box),
-    var(--ui-shadow-overlay);
+  box-shadow: var(--ui-shadow-overlay);
   font-family: var(--ui-font-body);
   animation: ez-modal-in var(--ui-motion-modal) var(--ui-ease-standard);
 }

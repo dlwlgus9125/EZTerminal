@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import type { FilePreviewResult } from '../shared/file-preview';
 import { FilePreviewContent } from './FilePreviewContent';
 import { useAppTranslation } from './i18n';
+import { Button } from './ui';
 import { Dialog } from './ui/Dialog';
 
 export interface RichFileViewerOverlayProps {
@@ -49,10 +50,10 @@ export function RichFileViewerOverlay({
       closeButtonTestId="viewer-close"
       footer={(
         <div className="file-viewer-actions">
-          <button className="btn btn-split" type="button" onClick={onInsert}>{t('fileViewer.insert')}</button>
-          {onOpen && <button className="btn btn-split" type="button" onClick={onOpen}>{t('fileViewer.open')}</button>}
-          {onReveal && <button className="btn btn-split" type="button" onClick={onReveal}>{t('fileViewer.reveal')}</button>}
-          {!result.ok && <button className="btn btn-split" type="button" onClick={onRetry}>{t('common.retry')}</button>}
+          <Button size="sm" variant="primary" onClick={onInsert}>{t('fileViewer.insert')}</Button>
+          {onOpen && <Button size="sm" onClick={onOpen}>{t('fileViewer.open')}</Button>}
+          {onReveal && <Button size="sm" onClick={onReveal}>{t('fileViewer.reveal')}</Button>}
+          {!result.ok && <Button size="sm" onClick={onRetry}>{t('common.retry')}</Button>}
         </div>
       )}
     >

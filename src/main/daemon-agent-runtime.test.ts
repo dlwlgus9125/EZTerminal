@@ -136,6 +136,8 @@ async function harness(options: {
   readonly shutdownStepTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
   readonly revokeOrchestrationForSession?: (sessionId: string) => void;
+  readonly conversationContext?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationContext'];
+  readonly conversationWritable?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationWritable'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -273,6 +275,60 @@ async function archiveWorkspaceOrProject(
 }
 
 describe('DaemonAgentRuntime', () => {
+  it('binds host stage references to the accepted transcript and provider turn while rejecting forged client references', async () => {
+    const reference = { projectId: 'project-1', subprojectId: 'sub', nodeId: 'stage', graphRevision: 3, fingerprint: 'a'.repeat(64), title: 'Plan', document: 'Saved document', instructions: '', references: [] };
+    const context = vi.fn(async (_projectId: string, sessionId: string) => sessionId === 'stage-chat' ? reference : undefined);
+    const h = await harness({ conversationContext: context });
+    try {
+      await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+      await h.execute('agent.create', { sessionId: 'stage-chat', workspaceId: 'workspace-1', providerId: 'codex', title: 'Stage', permissionPreset: 'plan' });
+      expect(await h.execute('agent.submit', { sessionId: 'stage-chat', prompt: 'Explain', context: { workflow: reference } })).toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+      expect(await h.execute('agent.submit', { sessionId: 'stage-chat', prompt: 'Explain' })).toMatchObject({ ok: true });
+      expect(h.codex.submit).toHaveBeenCalledWith(expect.objectContaining({ context: { workflow: reference } }), expect.anything());
+      expect(h.store.getTranscript('stage-chat').find(item => item.kind === 'user-message')?.context?.workflow).toEqual(reference);
+      await h.execute('agent.create', { sessionId: 'general', workspaceId: 'workspace-1', providerId: 'codex', title: 'General', permissionPreset: 'plan' });
+      await h.execute('agent.submit', { sessionId: 'general', prompt: 'Question' });
+      expect(h.store.getTranscript('general').find(item => item.kind === 'user-message')?.context?.workflow).toBeUndefined();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+  it('persists attachments with the accepted turn and rejects cross-session reply references', async () => {
+    const h = await harness();
+    try {
+      await h.prepareWorkspace();
+      await h.enable(h.codex, 'codex');
+      expect((await h.execute('agent.create', {
+        sessionId: 'chat-context', workspaceId: 'workspace-1',
+        providerId: 'codex', title: 'Context', permissionPreset: 'standard',
+      })).ok).toBe(true);
+      await h.store.appendTranscriptBatch([{
+        id: 'reply-source', sessionId: 'chat-context', kind: 'assistant-message', text: 'Earlier answer', isDelta: false, isSensitive: false,
+      }]);
+      const context = {
+        replyTo: { messageId: 'reply-source', text: 'Earlier answer' },
+        attachments: [{ id: 'a', name: 'notes.txt', kind: 'text' as const, mimeType: 'text/plain', data: 'Requirement' }],
+      };
+      expect((await h.execute('agent.submit', { sessionId: 'chat-context', prompt: 'Review', context })).ok).toBe(true);
+      expect(h.codex.submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'Review', context }), expect.anything());
+      expect(h.store.getTranscript('chat-context').find((item) => item.kind === 'user-message')?.context).toEqual(context);
+      expect((await h.execute('agent.create', {
+        sessionId: 'other-chat', workspaceId: 'workspace-1',
+        providerId: 'codex', title: 'Other', permissionPreset: 'standard',
+      })).ok).toBe(true);
+      expect(await h.execute('agent.submit', { sessionId: 'other-chat', prompt: 'Review', context })).toMatchObject({
+        ok: false, error: { code: 'invalid-command' },
+      });
+      expect(h.store.getTranscript('other-chat')).toHaveLength(0);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+    const reopened = new DaemonStore(h.directory);
+    await reopened.init();
+    try {
+      expect(reopened.getTranscript('chat-context').find((item) => item.kind === 'user-message')?.context?.attachments?.[0]?.data).toBe('Requirement');
+    } finally { await reopened.close(); }
+  });
+
   it.each(['Workspace', 'Project'] as const)(
     'ignores provider-native child events after a %s owner archive',
     async (owner) => {
@@ -1691,11 +1747,7 @@ describe('DaemonAgentRuntime', () => {
       routerRef.current = router;
 
       await restartedRuntime.start();
-      expect(codex.resumeSession).toHaveBeenCalledOnce();
-      expect(codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({
-        sessionId: 'agent-1',
-        providerSessionId,
-      }), expect.any(AbortSignal));
+      expect(codex.resumeSession).not.toHaveBeenCalled();
 
       const receipt = await router.execute(createDaemonCommand({
         commandId: 'command-after-restart',
@@ -1709,6 +1761,8 @@ describe('DaemonAgentRuntime', () => {
       await restartedRuntime.whenIdle();
 
       expect(receipt).toMatchObject({ ok: true, status: 'applied' });
+      expect(codex.resumeSession).toHaveBeenCalledOnce();
+      expect(codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'agent-1', providerSessionId }), expect.any(AbortSignal));
       expect(codex.createSession).not.toHaveBeenCalled();
       expect(codex.submit).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'agent-1',
@@ -2390,6 +2444,72 @@ describe('DaemonAgentRuntime', () => {
       agents: [{ sessionId: 'agent-1', state: 'working', currentTurnId: turn.id }],
     });
     expect(h.codex.resolveApproval).toHaveBeenCalledTimes(2);
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('fails a turn at once when the provider session cannot start, since the prompt never left', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    vi.mocked(h.codex.createSession).mockRejectedValueOnce(Object.assign(
+      new Error('The Claude executable path or version no longer matches the pinned Agent SDK review.'),
+      { code: 'CLAUDE_EXECUTABLE_INVALID' },
+    ));
+    await h.execute('agent.create', {
+      sessionId: 'agent-1',
+      workspaceId: 'workspace-1',
+      title: 'Agent',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      initialPrompt: 'Read the README.',
+    });
+    await h.runtime.whenIdle();
+    const snapshot = h.router.getSnapshot();
+    expect(snapshot.turns[0]).toMatchObject({ state: 'failed', errorCode: 'CLAUDE_EXECUTABLE_INVALID' });
+    expect(snapshot.agents[0]).toMatchObject({ state: 'idle' });
+    expect(snapshot.agents[0]?.currentTurnId).toBeUndefined();
+    expect(snapshot.sessions[0]?.state).not.toBe('delivery-uncertain');
+    expect(h.codex.submit).not.toHaveBeenCalled();
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('leaves plan mode for the mode chosen when a plan is approved', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'agent-1',
+      workspaceId: 'workspace-1',
+      title: 'Agent',
+      providerId: 'codex',
+      permissionPreset: 'plan',
+      initialPrompt: 'Plan a change.',
+    });
+    const turn = h.router.getSnapshot().turns[0]!;
+    h.codex.emit({
+      kind: 'approval-requested',
+      sessionId: 'agent-1',
+      turnId: turn.id,
+      providerRequestId: 'provider-plan-1',
+      risk: 'write',
+      title: 'Approve plan',
+      request: { v: 1, kind: 'plan', callId: 'call-plan', markdown: '- step' },
+    });
+    await h.runtime.whenIdle();
+    const approval = h.router.getSnapshot().approvals[0]!;
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ permissionPreset: 'plan' });
+
+    await h.execute('permission.resolve', {
+      approvalId: approval.id, decision: 'allow', response: { kind: 'plan', mode: 'full-access' },
+    });
+    expect(h.codex.resolveApproval).toHaveBeenCalledWith(expect.objectContaining({
+      providerRequestId: 'provider-plan-1',
+      decision: 'allow',
+      response: { kind: 'plan', mode: 'full-access' },
+    }));
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ permissionPreset: 'full-access', state: 'working' });
     await h.runtime.dispose();
     await h.store.close();
   });
@@ -3763,4 +3883,47 @@ it('persists empty Agents across restart and dispatches only the first submitted
     await restoredRuntime?.dispose(); await restoredStore?.close();
     if (!closed) { await h.runtime.dispose(); await h.store.close(); }
   }
+});
+
+
+describe('conversation queue management', () => {
+  it('takes a queued request without losing its transcript, rejects stale and cross-session edits, and replays once', async () => {
+    const h = await harness();
+    try {
+      await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+      await h.execute('agent.create', { sessionId: 'queue-chat', workspaceId: 'workspace-1', title: 'Queue', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Running' });
+      await h.execute('agent.submit', { sessionId: 'queue-chat', prompt: 'Take me back' });
+      const queued = h.router.getSnapshot().turns.find(turn => turn.state === 'queued')!;
+      expect(await h.execute('agent.queue', { sessionId: 'other', turnId: queued.id, turnRevision: queued.revision, action: 'take' })).toMatchObject({ ok: false });
+      expect(await h.execute('agent.queue', { sessionId: 'queue-chat', turnId: queued.id, turnRevision: queued.revision - 1, action: 'take' })).toMatchObject({ ok: false });
+      const command = createDaemonCommand({ commandId: 'queue-take-once', idempotencyKey: 'queue-take-once', expectedRevision: h.store.getRevision(), issuedAt: '2026-09-04T10:00:00.000Z', principal: { kind: 'desktop', id: 'test' }, type: 'agent.queue', payload: { sessionId: 'queue-chat', turnId: queued.id, turnRevision: queued.revision, action: 'take' } });
+      expect(await h.router.execute(command)).toMatchObject({ ok: true });
+      expect(await h.router.execute(command)).toMatchObject({ ok: true });
+      expect(h.router.getSnapshot().turns.find(turn => turn.id === queued.id)).toMatchObject({ state: 'interrupted', errorCode: 'queue-taken' });
+      expect(h.router.getSnapshot().agents[0].queuedTurnCount).toBe(0);
+      expect(h.store.getTranscript('queue-chat').some(item => item.turnId === queued.id && item.text === 'Take me back')).toBe(true);
+      expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toEqual(['Running']);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+  it('runs the selected request next without duplicating it or reordering the rest', async () => {
+    const h = await harness();
+    try {
+      await h.prepareWorkspace(); await h.enable(h.codex, 'codex');
+      await h.execute('agent.create', { sessionId: 'queue-chat', workspaceId: 'workspace-1', title: 'Queue', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Running' });
+      await h.execute('agent.submit', { sessionId: 'queue-chat', prompt: 'Second' });
+      await h.execute('agent.submit', { sessionId: 'queue-chat', prompt: 'Chosen' });
+      const before = h.router.getSnapshot();
+      const current = before.turns.find(turn => turn.state === 'working')!;
+      const chosen = before.turns.filter(turn => turn.state === 'queued').sort((a,b) => a.enqueueSequence! - b.enqueueSequence!).at(-1)!;
+      expect(await h.execute('agent.queue', { sessionId: 'queue-chat', turnId: chosen.id, turnRevision: chosen.revision, action: 'run-next' })).toMatchObject({ ok: true });
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'queue-chat', turnId: current.id, outcome: 'interrupted' });
+      await h.runtime.whenIdle();
+      expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toEqual(['Running', 'Chosen']);
+      expect(await h.execute('agent.queue', { sessionId: 'queue-chat', turnId: chosen.id, turnRevision: chosen.revision, action: 'remove' })).toMatchObject({ ok: false });
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'queue-chat', turnId: chosen.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toEqual(['Running', 'Chosen', 'Second']);
+      expect(h.router.getSnapshot().turns).toHaveLength(3);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
 });

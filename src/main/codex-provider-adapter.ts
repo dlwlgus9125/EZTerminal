@@ -1,8 +1,15 @@
+import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
+import { clipApprovalBody, type ApprovalRequest } from '../shared/approval-request';
+import { encodeFileChanges } from '../shared/conversation-changes';
+import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import crossSpawn from 'cross-spawn';
+import { promptWithChatContext } from '../shared/chat-message';
+import type { AgentCapabilityItem, AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import { codexMcpArguments, runNativeExtensionCommand } from './agent-native-extensions';
 
 import type {
   DaemonTranscriptItem,
@@ -46,6 +53,8 @@ const MAX_MODEL_PAGES = 40;
 const MAX_SEMANTIC_TEXT = 1024 * 1024;
 const MAX_PROBE_OUTPUT = 64 * 1024;
 const MAX_PRE_RESPONSE_LIFECYCLE_TURNS = 8;
+const MAX_STARTED_ITEMS = 64;
+const MAX_SUBMITTED_COMMANDS = 64;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
 const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
@@ -80,6 +89,12 @@ export interface CodexCommandResult {
   readonly exitCode: number;
 }
 
+interface StartedItem {
+  readonly providerTurnId: string;
+  readonly item: JsonObject;
+  readonly startedAtMs?: number;
+}
+
 interface SessionState {
   readonly sessionId: string;
   readonly providerSessionId: string;
@@ -104,9 +119,15 @@ interface SessionState {
   preResponseLifecycleOverflowed: boolean;
   readonly completedItemKeys: Set<string>;
   readonly nativeStateByChild: Map<string, string>;
+  readonly deltas: DeltaCoalescer;
+  /** In-flight items by id: reasoning timing, the diff a file approval lacks, rows to close on interrupt. */
+  readonly startedItems: Map<string, StartedItem>;
+  /** The runtime already persisted these prompts, so Codex's echo of them is dropped. */
+  readonly submittedCommandIds: Set<string>;
+  readonly planRevisions: Map<string, number>;
 }
 
-type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'legacy-command' | 'legacy-file-change';
+type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change';
 
 interface PendingApproval {
   readonly providerRequestId: string;
@@ -131,6 +152,10 @@ export interface CodexProviderAdapterOptions {
   readonly probeTimeoutMs?: number;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
+  /** Streaming batch timing; replay passes a scheduler that never fires so goldens are deterministic. */
+  readonly deltaCoalescer?: DeltaCoalescerOptions;
+  /** Enable Codex's `update_plan` tool so plan progress arrives as turn/plan/updated (default true). */
+  readonly enableUpdatePlan?: boolean;
 }
 
 function asObject(value: unknown): JsonObject | undefined {
@@ -408,6 +433,254 @@ function orchestrationConfig(context: ProviderSessionContext): JsonObject | unde
   };
 }
 
+const TOOL_ITEM_TYPES = new Set([
+  'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageView', 'imageGeneration',
+]);
+
+/** Shells Codex wraps commands in, and the flag after which the user-visible command starts. */
+const SHELL_WRAPPERS: ReadonlyArray<{ readonly shell: RegExp; readonly flag: RegExp; readonly script: boolean }> = [
+  { shell: /(?:^|[\\/])(?:powershell|pwsh)(?:\.exe)?$/iu, flag: /^-(?:c|command)$/iu, script: false },
+  { shell: /(?:^|[\\/])cmd(?:\.exe)?$/iu, flag: /^\/c$/iu, script: false },
+  // `sh -c script arg0 …`: only the script is the command; later words are its positional arguments.
+  { shell: /(?:^|[\\/])(?:ba|z|da|k)?sh(?:\.exe)?$/iu, flag: /^-[a-z]*c$/u, script: true },
+];
+
+function clip(value: string, limit = 2_000): string {
+  return clipApprovalBody(value, limit);
+}
+
+function integer(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+}
+
+function firstLine(value: string, limit = 160): string {
+  const line = value.split(/\r?\n/u, 1)[0] ?? '';
+  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
+}
+
+/** Splits Codex's shell-quoted argv display (POSIX quoting); bare backslashes stay literal for Windows paths. */
+function shellWords(value: string): string[] | undefined {
+  const words: string[] = [];
+  let current = '';
+  let inWord = false;
+  let quote: "'" | '"' | undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      else current += char;
+    } else if (quote === '"') {
+      const next = value[index + 1];
+      if (char === '"') quote = undefined;
+      else if (char === '\\' && next !== undefined && '"\\$`'.includes(next)) current += value[++index];
+      else current += char;
+    } else if (/\s/u.test(char)) {
+      if (inWord) words.push(current);
+      current = '';
+      inWord = false;
+    } else {
+      inWord = true;
+      if (char === "'" || char === '"') quote = char;
+      else current += char;
+    }
+  }
+  if (quote) return undefined;
+  if (inWord) words.push(current);
+  return words;
+}
+
+function commandActions(source: JsonObject): JsonObject[] {
+  return asArray(source.commandActions).flatMap((value): JsonObject[] => {
+    const action = asObject(value);
+    return action ? [action] : [];
+  });
+}
+
+/** The command the agent asked for, without the `powershell.exe -Command '…'` wrapper Codex reports. */
+function displayCommand(source: JsonObject): string {
+  const raw = providerTranscriptText(source.command);
+  const words = shellWords(raw);
+  if (!words) {
+    const parsed = new Set(commandActions(source).map((action) => asString(action.command)));
+    const [only] = parsed;
+    return parsed.size === 1 && only ? only : raw;
+  }
+  const wrapper = SHELL_WRAPPERS.find(({ shell }) => shell.test(words[0] ?? ''));
+  const flag = wrapper ? words.findIndex((word, index) => index > 0 && wrapper.flag.test(word)) : -1;
+  if (!wrapper || flag < 1 || flag >= words.length - 1) return raw;
+  return wrapper.script ? words[flag + 1]! : words.slice(flag + 1).join(' ');
+}
+
+/** Category and subject from Codex's best-effort parse (`read`, `listFiles`, `search`, `unknown`). */
+function commandShape(source: JsonObject, command: string): {
+  readonly category: ToolCategory;
+  readonly target?: string;
+  readonly query?: string;
+} {
+  const actions = commandActions(source);
+  const all = (type: string): boolean => actions.length > 0 && actions.every((action) => action.type === type);
+  if (all('read')) {
+    const targets = actions.flatMap((action) => asString(action.path) ?? asString(action.name) ?? []);
+    return { category: 'read', target: targets.join(', ') || firstLine(command) };
+  }
+  if (all('search')) {
+    const query = asString(actions[0]?.query);
+    const scope = asString(actions[0]?.path);
+    return {
+      category: 'search',
+      target: query ? (scope ? `${query} · ${scope}` : query) : scope ?? firstLine(command),
+      ...(query ? { query } : {}),
+    };
+  }
+  if (all('listFiles')) return { category: 'list', target: asString(actions[0]?.path) ?? firstLine(command) };
+  return { category: 'command', target: firstLine(command) };
+}
+
+function toolStatus(value: unknown, started: boolean): NonNullable<ToolPayload['status']> {
+  switch (value) {
+    case 'inProgress': return 'running';
+    case 'completed': return 'completed';
+    case 'failed': return 'failed';
+    case 'declined': return 'denied';
+    case 'interrupted': return 'interrupted';
+    default: return started ? 'running' : 'completed';
+  }
+}
+
+/** A schema-valid tool payload: strings clipped to their bounds, empty fields omitted. */
+function toolPayload(input: {
+  readonly callId: string;
+  readonly name: string;
+  readonly category: ToolCategory;
+  readonly started: boolean;
+  readonly status: unknown;
+  readonly target?: string;
+  readonly command?: string;
+  readonly cwd?: string;
+  readonly exitCode?: number;
+  readonly durationMs?: number;
+  readonly files?: NonNullable<ToolPayload['files']>;
+  readonly query?: string;
+  readonly server?: string;
+}): ToolPayload {
+  const payload: ToolPayload = {
+    v: 1,
+    type: 'tool',
+    callId: clip(input.callId),
+    name: clip(input.name),
+    category: input.category,
+    phase: input.started ? 'call' : 'result',
+    status: toolStatus(input.status, input.started),
+  };
+  if (input.target) payload.target = clip(input.target);
+  if (input.command) payload.command = clip(input.command, 8_000);
+  if (input.cwd) payload.cwd = clip(input.cwd);
+  if (input.exitCode !== undefined) payload.exitCode = input.exitCode;
+  if (input.durationMs !== undefined) payload.durationMs = input.durationMs;
+  if (input.files?.length) payload.files = input.files.slice(0, 200);
+  if (input.query) payload.query = clip(input.query);
+  if (input.server) payload.server = clip(input.server);
+  return payload;
+}
+
+interface FileChange {
+  readonly path: string;
+  readonly kind?: 'add' | 'update' | 'delete' | 'rename';
+  readonly movePath?: string;
+  readonly diff: string;
+}
+
+function fileChanges(item: JsonObject): FileChange[] {
+  return asArray(item.changes).flatMap((value): FileChange[] => {
+    const change = asObject(value);
+    const filePath = asString(change?.path);
+    if (!change || !filePath) return [];
+    const kind = asObject(change.kind);
+    const type = asString(kind?.type) ?? asString(change.kind);
+    const movePath = asString(kind?.move_path);
+    const resolved = type === 'add' || type === 'delete' ? type : type === 'update' ? (movePath ? 'rename' : 'update') : undefined;
+    return [{
+      path: filePath,
+      ...(resolved ? { kind: resolved } : {}),
+      ...(movePath ? { movePath } : {}),
+      diff: typeof change.diff === 'string' ? change.diff : '',
+    }];
+  });
+}
+
+/** Added content is the raw file and deleted content the old file; updates are `@@` hunks. */
+function diffLineCounts(change: FileChange): { readonly added: number; readonly removed: number } {
+  const lines = change.diff.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  if (change.kind === 'add') return { added: lines.length, removed: 0 };
+  if (change.kind === 'delete') return { added: 0, removed: lines.length };
+  let added = 0;
+  let removed = 0;
+  let inHunk = false;
+  for (const line of lines) {
+    if (line.startsWith('@@')) inHunk = true;
+    else if (inHunk && line.startsWith('+')) added += 1;
+    else if (inHunk && line.startsWith('-')) removed += 1;
+  }
+  return { added, removed };
+}
+
+function displayPath(filePath: string, root: string | undefined): string {
+  if (!root || !path.isAbsolute(filePath)) return filePath;
+  const relative = path.relative(root, filePath);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : filePath;
+}
+
+function fileChangeSummary(changes: readonly FileChange[], root: string | undefined): string {
+  const verbs = { add: 'Add', update: 'Edit', delete: 'Delete', rename: 'Move' } as const;
+  return changes.map((change) => change.kind === 'rename' && change.movePath
+    ? `Move ${displayPath(change.path, root)} → ${displayPath(change.movePath, root)}`
+    : `${verbs[change.kind ?? 'update']} ${displayPath(change.path, root)}`).join('\n');
+}
+
+function webSearchQuery(item: JsonObject): string | undefined {
+  const action = asObject(item.action);
+  return asString(item.query) ?? asString(action?.query)
+    ?? asArray(action?.queries).find((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
+function webSearchTarget(item: JsonObject, query: string | undefined): string | undefined {
+  const url = asString(asObject(item.action)?.url);
+  if (!url) return query;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function webSearchResultText(item: JsonObject, query: string | undefined): string {
+  const results = asArray(item.results).flatMap((value) => {
+    const result = asObject(value);
+    const title = asString(result?.title);
+    const url = asString(result?.url);
+    return title || url ? [{ title: title ?? url ?? '', url }] : [];
+  });
+  if (results.length) {
+    return results.map((result, index) => `${String(index + 1)}. ${result.title}${result.url && result.url !== result.title ? `\n   ${result.url}` : ''}`).join('\n');
+  }
+  const action = asObject(item.action);
+  const url = asString(action?.url);
+  if (action?.type === 'openPage' && url) return `Opened ${url}`;
+  if (action?.type === 'findInPage' && url) return `Searched ${url}${asString(action.pattern) ? ` for ${asString(action.pattern)}` : ''}`;
+  if (item.status === 'interrupted') return 'Web search interrupted.';
+  return query ? `Searched the web: ${query}` : 'Web search completed.';
+}
+
+function todoStatus(value: unknown): TodoItem['status'] {
+  return value === 'completed' ? 'completed' : value === 'inProgress' ? 'in_progress' : 'pending';
+}
+
 /** Structured Codex adapter requiring at least the observed 0.152.1 app-server schema. */
 export class CodexProviderAdapter implements AgentProviderAdapter {
   readonly providerId = 'codex';
@@ -422,6 +695,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly probeTimeoutMs: number;
   private readonly now: () => Date;
   private readonly idFactory: () => string;
+  private readonly deltaCoalescer: DeltaCoalescerOptions | undefined;
+  private readonly enableUpdatePlan: boolean;
   private readonly listeners = new Set<AgentProviderEventListener>();
   private readonly sessions = new Map<string, SessionState>();
   private readonly sessionIdByProviderId = new Map<string, string>();
@@ -449,6 +724,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.clientOptions = options.clientOptions;
     this.now = options.now ?? (() => new Date());
     this.idFactory = options.idFactory ?? randomUUID;
+    this.deltaCoalescer = options.deltaCoalescer;
+    this.enableUpdatePlan = options.enableUpdatePlan ?? true;
     if (this.connection) this.installConnectionHandlers(this.connection);
   }
 
@@ -553,6 +830,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
           displayName: asString(model?.displayName) ?? id,
           ...(asString(model?.description) ? { description: asString(model?.description) } : {}),
           supportsReasoning: asArray(model?.supportedReasoningEfforts).length > 0,
+          ...(asArray(model?.supportedReasoningEfforts).length ? {
+            reasoningEfforts: asArray(model?.supportedReasoningEfforts).flatMap((entry) => {
+              const effort = asString(asObject(entry)?.reasoningEffort);
+              return effort ? [effort] : [];
+            }),
+          } : {}),
           isDefault: model?.isDefault === true,
         });
       }
@@ -566,6 +849,134 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return models;
   }
 
+  async listCapabilities(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog> {
+    if (!path.isAbsolute(workspaceRoot)) throw new Error('An absolute workspace is required.');
+    await this.ensureConnection(signal);
+    const rpc = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal });
+    const [models, skills, plugins, mcp, configuration] = await Promise.allSettled([
+      this.listModels(signal), rpc('skills/list', { cwds: [workspaceRoot], forceReload: true }),
+      rpc('plugin/installed', { cwds: [workspaceRoot] }), rpc('mcpServerStatus/list', { limit: 100 }),
+      rpc('config/read', { cwd: workspaceRoot, includeLayers: false }),
+    ]);
+    const items: AgentCapabilityItem[] = [];
+    const issues: { section: 'models' | 'skills' | 'plugins' | 'mcp'; message: string }[] = [];
+    for (const [section, result] of [['models', models], ['skills', skills], ['plugins', plugins], ['mcp', mcp]] as const) {
+      if (result.status === 'rejected') issues.push({ section, message: `The installed Codex provider could not list ${section}. Refresh or update the provider.` });
+    }
+    const nativeConfigResult = configuration.status === 'fulfilled' ? asObject(configuration.value) : undefined;
+    const nativeConfig = asObject(nativeConfigResult?.config);
+    const configuredMcp = asObject(nativeConfig?.mcp_servers);
+    const origins = asObject(nativeConfigResult?.origins);
+    if (!nativeConfig) issues.push({ section: 'mcp', message: 'Workspace MCP settings could not be verified. Runtime status alone does not establish workspace enablement.' });
+    const nativeMcpItems = new Map<string, AgentCapabilityItem>();
+    for (const [name, raw] of Object.entries(configuredMcp ?? {})) {
+      const config = asObject(raw);
+      if (!config) continue;
+      const originKey = Object.keys(origins ?? {}).filter((key) => key === `mcp_servers.${name}` || key.startsWith(`mcp_servers.${name}.`) || key === 'mcp_servers').sort((a, b) => b.length - a.length)[0];
+      const configScope = asString(asObject(asObject(originKey ? origins?.[originKey] : undefined)?.name)?.type) ?? 'unknown';
+      const enabled = config.enabled !== false;
+      nativeMcpItems.set(name, { id: name, kind: 'mcp', name, enabled, status: enabled ? 'configured' : 'disabled', scope: configScope, actions: configScope === 'user' ? ['mcp-remove'] : [] });
+    }
+    if (skills.status === 'fulfilled') for (const entry of asArray(asObject(skills.value)?.data)) {
+      const group = asObject(entry);
+      if (asArray(group?.errors).length) issues.push({ section: 'skills', message: 'Some installed skills could not be read by Codex.' });
+      for (const raw of asArray(group?.skills)) {
+        const skill = asObject(raw);
+        const name = asString(skill?.name);
+        const source = asString(skill?.path);
+        if (!name || !source) continue;
+        items.push({ id: source, kind: 'skill', name, source, scope: asString(skill?.scope),
+          description: asString(skill?.description), enabled: skill?.enabled === true,
+          invocation: `$${name}`, actions: ['skill-enable', 'skill-disable'] });
+      }
+    }
+    if (plugins.status === 'fulfilled') {
+      const result = asObject(plugins.value);
+      if (asArray(result?.marketplaceLoadErrors).length) issues.push({ section: 'plugins', message: 'Some configured marketplaces could not be read.' });
+      for (const rawMarketplace of asArray(result?.marketplaces)) {
+        const marketplace = asObject(rawMarketplace);
+        for (const raw of asArray(marketplace?.plugins)) {
+          const plugin = asObject(raw);
+          const id = asString(plugin?.id);
+          if (!id || plugin?.installed !== true) continue;
+          items.push({ id, kind: 'plugin', name: asString(plugin?.name) ?? id,
+            description: asString(asObject(plugin?.interface)?.shortDescription),
+            source: asString(marketplace?.name), version: asString(plugin?.localVersion) ?? asString(plugin?.version),
+            enabled: plugin?.enabled === true, scope: 'user', actions: ['plugin-remove', 'plugin-enable', 'plugin-disable'] });
+        }
+      }
+    }
+    if (mcp.status === 'fulfilled') {
+      let result = asObject(mcp.value);
+      const cursors = new Set<string>();
+      for (let page = 0; page < 40; page += 1) {
+        for (const raw of asArray(result?.data)) {
+          const server = asObject(raw);
+          const name = asString(server?.name);
+          if (!name) continue;
+          const configured = nativeMcpItems.get(name);
+          if (configured) nativeMcpItems.set(name, { ...configured, status: configured.enabled ? asString(server?.runtimeStatus) ?? asString(server?.authStatus) ?? 'configured' : 'disabled' });
+          // Runtime-only entries belong to the app-server context, not necessarily this workspace.
+          else if (server?.pluginId) nativeMcpItems.set(name, { id: name, kind: 'mcp', name, enabled: server?.runtimeStatus !== 'disabled', status: asString(server?.runtimeStatus) ?? asString(server?.authStatus) ?? 'configured', source: asString(server?.pluginId), scope: 'plugin', actions: [] });
+        }
+        const cursor = asString(result?.nextCursor);
+        if (!cursor) break;
+        if (cursors.has(cursor) || page === 39) { issues.push({ section: 'mcp', message: 'The MCP catalog exceeds the discovery bound.' }); break; }
+        cursors.add(cursor);
+        try { result = asObject(await rpc('mcpServerStatus/list', { limit: 100, cursor })); }
+        catch { issues.push({ section: 'mcp', message: 'The remaining MCP servers could not be loaded.' }); break; }
+      }
+    }
+    items.push(...nativeMcpItems.values());
+    const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : value;
+    return { models: models.status === 'fulfilled' ? models.value : [], items, issues,
+      ...(nativeConfig ? { configurationRevision: createHash('sha256').update(JSON.stringify(canonical({ mcp: configuredMcp, plugins: nativeConfig.plugins, skills: nativeConfig.skills }))).digest('hex') } : {}),
+      actions: [
+        ...(plugins.status === 'fulfilled' ? ['plugin-install', 'plugin-remove', 'plugin-enable', 'plugin-disable', 'marketplace-add', 'marketplace-remove', 'marketplace-update'] as const : []),
+        ...(skills.status === 'fulfilled' ? ['skill-enable', 'skill-disable'] as const : []),
+        ...(nativeConfig ? ['mcp-add', 'mcp-remove'] as const : []),
+      ] };
+  }
+
+  async manageExtension(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void> {
+    if (command.scope !== 'user') throw new Error('Codex extension changes use the native user settings.');
+    await this.ensureConnection(signal);
+    const request = (method: string, params: JsonObject): Promise<unknown> => this.requireConnection().request(method, params, { signal });
+    const target = command.target;
+    switch (command.action) {
+      case 'skill-enable': case 'skill-disable':
+        await request('skills/config/write', { path: target, enabled: command.action === 'skill-enable' }); break;
+      case 'plugin-install': {
+        const split = target.lastIndexOf('@');
+        if (split < 1) throw new Error('Use plugin@marketplace.');
+        const marketplaceName = target.slice(split + 1);
+        const catalog = asObject(await request('plugin/list', { cwds: [workspaceRoot] }));
+        const marketplace = asArray(catalog?.marketplaces).map(asObject).find((entry) => entry?.name === marketplaceName);
+        const marketplacePath = asString(marketplace?.path);
+        await request('plugin/install', { pluginName: target.slice(0, split), ...(marketplacePath ? { marketplacePath } : { remoteMarketplaceName: marketplaceName }), installAttemptId: command.commandId }); break;
+      }
+      case 'plugin-remove': await request('plugin/uninstall', { pluginId: target }); break;
+      case 'plugin-enable': case 'plugin-disable':
+        if (!/^[A-Za-z0-9_:@/-]+$/u.test(target)) throw new Error('Invalid plugin identifier.');
+        await request('config/value/write', { keyPath: `plugins.${JSON.stringify(target)}.enabled`, value: command.action === 'plugin-enable', mergeStrategy: 'replace' }); break;
+      case 'marketplace-add': await request('marketplace/add', { source: command.source ?? target }); break;
+      case 'marketplace-remove': await request('marketplace/remove', { marketplaceName: target }); break;
+      case 'marketplace-update': {
+        const result = asObject(await request('marketplace/upgrade', { marketplaceName: target }));
+        if (asArray(result?.errors).length) throw new Error('The native marketplace refresh did not complete. Check provider settings.');
+        break;
+      }
+      case 'mcp-add': case 'mcp-remove': {
+        const descriptor = this.launchDescriptor;
+        if (!descriptor) throw new Error('Review the native executable before management.');
+        await this.verifyLaunchDescriptor(descriptor, signal);
+        await runNativeExtensionCommand(descriptor.executablePath, codexMcpArguments(command), workspaceRoot, buildProviderProcessEnvironment(descriptor.environmentVariableNames), signal);
+        break;
+      }
+      default: throw new Error('This operation is not supported by Codex.');
+    }
+  }
+
   async createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle> {
     this.assertSessionContext(context);
     this.assertActive();
@@ -573,7 +984,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      const config = orchestrationConfig(context);
+      const config = { ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
+        ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
+        ...(context.managedExecution ? { 'features.multi_agent': false } : {}),
+        ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
       const result = asObject(await this.requireConnection().request('thread/start', {
         cwd: context.workspaceRoot,
         runtimeWorkspaceRoots: [context.workspaceRoot],
@@ -612,7 +1026,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
-      const config = orchestrationConfig(context);
+      const config = { ...orchestrationConfig(context), ...(context.reasoningEffort ? { model_reasoning_effort: context.reasoningEffort } : {}),
+        ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
+        ...(context.managedExecution ? { 'features.multi_agent': false } : {}),
+        ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
       const result = asObject(await this.requireConnection().request('thread/resume', {
         threadId: context.providerSessionId,
         cwd: context.workspaceRoot,
@@ -648,17 +1065,38 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (!input.turnId.trim() || !input.commandId.trim()) throw new Error('Codex turn identity is incomplete.');
     const state = this.requireSession(input.sessionId, input.providerSessionId);
     if (state.activeTurn) throw new Error(`Codex session ${input.sessionId} already has an active turn.`);
+    const selectedSkills = input.context?.skills ?? [];
+    if (selectedSkills.length) {
+      const result = asObject(await this.requireConnection().request('skills/list', { cwds: [state.workspaceRoot], forceReload: true }, { signal }));
+      const available = asArray(result?.data).flatMap((group) => asArray(asObject(group)?.skills));
+      if (selectedSkills.some((selected) => selected.providerId !== 'codex' || !available.some((raw) => {
+        const skill = asObject(raw);
+        return skill?.enabled === true && skill.name === selected.name && skill.path === selected.id;
+      }))) throw new Error('A selected Codex skill is unavailable. Refresh the extension list and preserve the draft.');
+      if (state.activeTurn) throw new Error(`Codex session ${input.sessionId} already has an active turn.`);
+    }
     state.activeTurn = {
       localTurnId: input.turnId,
       commandId: input.commandId,
       startedEmitted: false,
     };
+    state.submittedCommandIds.add(input.commandId);
+    if (state.submittedCommandIds.size > MAX_SUBMITTED_COMMANDS) {
+      state.submittedCommandIds.delete(state.submittedCommandIds.values().next().value as string);
+    }
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
     try {
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
-        input: [{ type: 'text', text: input.prompt, text_elements: [] }],
+        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+        input: [
+          { type: 'text', text: promptWithChatContext(input.prompt, input.context), text_elements: [] },
+          ...selectedSkills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.id })),
+          ...(input.context?.attachments ?? []).filter((attachment) => attachment.kind === 'image').map((attachment) => ({
+            type: 'image', url: `data:${attachment.mimeType};base64,${attachment.data}`,
+          })),
+        ],
       }, { signal }));
       const turn = asObject(result?.turn);
       const providerTurnId = asString(turn?.id);
@@ -721,6 +1159,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   interrupt(sessionId: string, providerSessionId: string): Promise<void> {
     this.assertActive();
     const state = this.requireSession(sessionId, providerSessionId);
+    state.deltas.flushAll();
     const activeTurn = state.activeTurn;
     if (!activeTurn) {
       return Promise.reject(new Error(`Codex session ${sessionId} has no interruptible provider turn.`));
@@ -777,6 +1216,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       throw new Error('Codex approval does not belong to this session.');
     }
     this.pendingApprovals.delete(input.providerRequestId);
+    // Codex approvals carry only a decision: answers, plan mode and deny feedback have no channel.
     pending.resolve(this.approvalResponse(pending, input.decision));
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
   }
@@ -865,6 +1305,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const state = this.requireSession(sessionId, providerSessionId);
+    state.deltas.dispose();
     this.clearPreResponseLifecycle(state);
     if (state.activeTurn) {
       this.settlePendingInterrupt(
@@ -904,6 +1345,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       this.pendingApprovals.clear();
       for (const unregister of this.unregister.splice(0)) unregister();
       for (const state of this.sessions.values()) {
+        state.deltas.dispose();
         this.clearPreResponseLifecycle(state);
         if (!state.activeTurn) continue;
         this.settlePendingInterrupt(
@@ -1020,6 +1462,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         }
         this.pendingApprovals.clear();
         for (const state of this.sessions.values()) {
+          state.deltas.dispose();
           this.clearPreResponseLifecycle(state);
           if (state.activeTurn) {
             this.settlePendingInterrupt(state.activeTurn, new Error(event.message));
@@ -1051,6 +1494,19 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         (params, context) => this.handleApproval(kind, params, context),
       ));
     }
+    this.unregister.push(connection.onServerRequest('mcpServer/elicitation/request', async (value, context) => {
+      const params = asObject(value);
+      const schema = asObject(params?.requestedSchema);
+      const properties = asObject(schema?.properties);
+      // Codex uses an empty form for a single MCP tool approval. Data collection,
+      // URL authentication and native verification require a different UI contract.
+      if (params?.mode !== 'form' || asObject(params._meta)?.codex_approval_kind !== 'mcp_tool_call'
+        || schema?.type !== 'object' || !properties || Object.keys(properties).length !== 0
+        || (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.length !== 0))) {
+        throw new Error('This MCP form requires input that EZTerminal does not support yet.');
+      }
+      return this.handleApproval('mcp-tool', params, context);
+    }));
   }
 
   private handleApproval(kind: ApprovalKind, value: unknown, context: CodexServerRequestContext): Promise<unknown> {
@@ -1063,6 +1519,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const explicitId = asString(params.approvalId);
     const providerRequestId = `${kind}:${explicitId ?? this.rpcIdKey(context.id)}`;
     if (this.pendingApprovals.has(providerRequestId)) throw new Error('Codex repeated a pending approval id.');
+    const state = this.sessions.get(sessionId);
+    state?.deltas.flushAll();
+    const request = this.approvalRequest(kind, params, state);
     return new Promise<unknown>((resolve) => {
       const pending: PendingApproval = {
         providerRequestId,
@@ -1083,12 +1542,48 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         risk: kind === 'file-change' || kind === 'legacy-file-change' ? 'write' : 'danger',
         title: this.approvalTitle(kind),
         ...(detail ? { detail } : {}),
+        ...(request ? { request } : {}),
       });
       this.emit({ kind: 'session-state', sessionId, state: 'blocked' });
     });
   }
 
+  private approvalRequest(
+    kind: ApprovalKind,
+    params: JsonObject,
+    state: SessionState | undefined,
+  ): ApprovalRequest | undefined {
+    const callId = asString(params.itemId);
+    const reason = asString(params.reason);
+    const shared = {
+      v: 1 as const,
+      ...(callId ? { callId: clip(callId) } : {}),
+      ...(reason ? { reason: clip(reason) } : {}),
+    };
+    if (kind === 'command') {
+      const command = displayCommand(params);
+      const cwd = asString(params.cwd);
+      return command ? { ...shared, kind: 'command', command: clipApprovalBody(command), ...(cwd ? { cwd: clip(cwd) } : {}) } : undefined;
+    }
+    // Codex sends the patch on item/started; the approval request carries only the item id.
+    const started = kind === 'file-change' && callId ? state?.startedItems.get(callId) : undefined;
+    if (started?.item.type !== 'fileChange') return undefined;
+    return {
+      ...shared,
+      kind: 'file-change',
+      files: fileChanges(started.item).slice(0, 50).map((change) => ({
+        path: clip(change.path),
+        ...(change.kind ? { kind: change.kind } : {}),
+        ...(change.diff ? { diff: clipApprovalBody(change.diff) } : {}),
+      })),
+    };
+  }
+
   private approvalResponse(pending: PendingApproval, decision: 'allow' | 'deny'): unknown {
+    if (pending.kind === 'mcp-tool') {
+      // Omit persistent grant metadata: the user's choice applies only to this call.
+      return { action: decision === 'allow' ? 'accept' : 'decline', content: decision === 'allow' ? {} : null, _meta: null };
+    }
     if (pending.kind === 'legacy-command' || pending.kind === 'legacy-file-change') {
       return {
         decision: decision === 'allow'
@@ -1119,11 +1614,18 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return 'Apply file changes';
       case 'permissions':
         return 'Grant additional permissions';
+      case 'mcp-tool':
+        return 'Run MCP tool';
     }
   }
 
   private approvalDetail(kind: ApprovalKind, params: JsonObject): string {
-    if (kind === 'command') return boundedText(params.command, 4_000) || boundedText(params.reason, 4_000);
+    if (kind === 'mcp-tool') {
+      const argumentsText = JSON.stringify(asObject(params._meta)?.tool_params ?? {});
+      const detail = [boundedText(params.message, 2_000), `Server: ${boundedText(params.serverName, 200)}`, argumentsText].join('\n');
+      return detail.length > 6_000 ? `${detail.slice(0, 6_000)}\n[Additional tool arguments omitted]` : detail;
+    }
+    if (kind === 'command') return boundedText(displayCommand(params), 4_000) || boundedText(params.reason, 4_000);
     if (kind === 'legacy-command') return asArray(params.command).filter((value): value is string => typeof value === 'string').join(' ').slice(0, 4_000);
     return boundedText(params.reason, 4_000) || boundedText(params.grantRoot, 4_000);
   }
@@ -1169,16 +1671,23 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         this.handleTurnCompleted(state, asObject(params.turn));
         return;
       case 'item/started':
+        this.handleItem(state, asString(params.turnId), asObject(params.item), false, nonNegativeInteger(params.startedAtMs));
+        return;
       case 'item/completed':
-        this.handleItem(state, asString(params.turnId), asObject(params.item), method === 'item/completed');
+        this.handleItem(state, asString(params.turnId), asObject(params.item), true, nonNegativeInteger(params.completedAtMs));
+        return;
+      case 'turn/plan/updated':
+        this.handleTurnPlan(state, params);
         return;
       case 'item/agentMessage/delta':
         this.emitDelta(state, params, 'assistant-message');
         return;
       case 'item/reasoning/summaryTextDelta':
       case 'item/reasoning/textDelta':
-      case 'item/plan/delta':
         this.emitDelta(state, params, 'reasoning');
+        return;
+      case 'item/plan/delta':
+        this.emitDelta(state, params, 'reasoning', { v: 1, type: 'plan' });
         return;
       default:
         return;
@@ -1213,6 +1722,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     message: string,
     recoverable: boolean,
   ): void {
+    state?.deltas.flushAll();
     const active = state?.activeTurn;
     const matchingActive = active && providerTurnId && active.providerTurnId === providerTurnId
       ? active
@@ -1407,6 +1917,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (!turn) return;
     const providerTurnId = asString(turn?.id);
     if (!providerTurnId) return;
+    state.deltas.flushAll();
     const active = state.activeTurn;
     if (
       active
@@ -1427,6 +1938,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       this.handleItem(state, providerTurnId, asObject(itemValue), true);
     }
     const outcome = turnStatus(turn?.status);
+    this.settleStartedItems(state, providerTurnId, outcome === 'interrupted');
     const error = asObject(turn?.error);
     const summary = this.lastAssistantText(turn);
     const errorCode = this.codexErrorCode(error?.codexErrorInfo);
@@ -1458,6 +1970,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     providerTurnId: string | undefined,
     item: JsonObject | undefined,
     completed: boolean,
+    atMs?: number,
   ): void {
     const itemId = asString(item?.id);
     const itemType = asString(item?.type);
@@ -1465,18 +1978,28 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (itemType === 'collabAgentToolCall' || itemType === 'subAgentActivity') {
       this.emitNativeSubagents(state, item, completed);
     }
+    let durationMs: number | undefined;
     if (completed) {
       const key = `${providerTurnId}:${itemId}:${itemType}`;
       if (state.completedItemKeys.has(key)) return;
       state.completedItemKeys.add(key);
+      const startedAtMs = state.startedItems.get(itemId)?.startedAtMs;
+      state.startedItems.delete(itemId);
+      if (startedAtMs !== undefined && atMs !== undefined) durationMs = Math.max(0, atMs - startedAtMs);
+    } else if (itemType === 'reasoning' || TOOL_ITEM_TYPES.has(itemType)) {
+      state.startedItems.set(itemId, { providerTurnId, item, ...(atMs !== undefined ? { startedAtMs: atMs } : {}) });
+      if (state.startedItems.size > MAX_STARTED_ITEMS) {
+        state.startedItems.delete(state.startedItems.keys().next().value as string);
+      }
     }
     const transcript = this.transcriptFromItem(
       state.sessionId,
       providerTurnId,
       item,
-      ++state.nextTranscriptSequence,
+      this.nextSequence(state),
       this.isoNow(),
       !completed,
+      durationMs,
     );
     if (!transcript) {
       state.nextTranscriptSequence -= 1;
@@ -1485,30 +2008,93 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.emit({ kind: 'transcript', item: transcript });
   }
 
+  /** Closes the turn's in-flight items; on interrupt, open tool calls get an `interrupted` result. */
+  private settleStartedItems(state: SessionState, providerTurnId: string, interrupted: boolean): void {
+    state.planRevisions.delete(providerTurnId);
+    const open = [...state.startedItems.values()].filter((entry) => entry.providerTurnId === providerTurnId);
+    for (const entry of open) {
+      state.startedItems.delete(asString(entry.item.id) ?? '');
+      if (interrupted && TOOL_ITEM_TYPES.has(asString(entry.item.type) ?? '')) {
+        this.handleItem(state, providerTurnId, { ...entry.item, status: 'interrupted' }, true);
+      }
+    }
+  }
+
+  /** turn/plan/updated (the `update_plan` tool) becomes one todo notice per revision. */
+  private handleTurnPlan(state: SessionState, params: JsonObject): void {
+    const providerTurnId = asString(params.turnId);
+    if (!providerTurnId) return;
+    const items: TodoItem[] = asArray(params.plan).flatMap((value) => {
+      const step = asObject(value);
+      const text = asString(step?.step);
+      return text ? [{ text: clip(text), status: todoStatus(step?.status) }] : [];
+    }).slice(0, 100);
+    const explanation = asString(params.explanation);
+    if (!items.length && !explanation) return;
+    const revision = (state.planRevisions.get(providerTurnId) ?? 0) + 1;
+    state.planRevisions.set(providerTurnId, revision);
+    const checklist = items.map((item) => item.status === 'completed'
+      ? `- [x] ${item.text}`
+      : `- [ ] ${item.text}${item.status === 'in_progress' ? ' (in progress)' : ''}`);
+    const turnId = this.localTurnId(state.sessionId, providerTurnId);
+    this.emit({
+      kind: 'transcript',
+      item: {
+        id: opaqueId('codex_plan', state.sessionId, providerTurnId, String(revision)),
+        sessionId: state.sessionId,
+        ...(turnId ? { turnId } : {}),
+        sequence: this.nextSequence(state),
+        kind: 'notice',
+        text: [explanation, ...checklist].filter(Boolean).join('\n').slice(0, MAX_SEMANTIC_TEXT),
+        isDelta: false,
+        isSensitive: true,
+        payload: {
+          v: 1,
+          type: 'todo',
+          source: 'codex-plan',
+          items,
+          ...(explanation ? { explanation: clip(explanation) } : {}),
+        },
+        createdAt: this.isoNow(),
+      },
+    });
+  }
+
+  /** Buffered deltas flush first, so a streamed message never lands after a later item. */
+  private nextSequence(state: SessionState): number {
+    state.deltas.flushAll();
+    return ++state.nextTranscriptSequence;
+  }
+
   private emitDelta(
     state: SessionState,
     params: JsonObject,
     kind: 'assistant-message' | 'reasoning',
+    payload?: TranscriptPayload,
   ): void {
     const delta = providerTranscriptText(params.delta);
     const providerTurnId = asString(params.turnId);
     const providerItemId = asString(params.itemId);
     if (!delta || !providerTurnId || !providerItemId) return;
-    state.nextTranscriptSequence += 1;
-    this.emit({
-      kind: 'transcript',
-      item: {
-        id: opaqueId('codex_delta', state.providerSessionId, providerTurnId, providerItemId, String(state.nextTranscriptSequence)),
-        messageId: opaqueId('codex_message', state.sessionId, providerTurnId, providerItemId),
+    const messageId = opaqueId('codex_message', state.sessionId, providerTurnId, providerItemId);
+    const turnId = this.localTurnId(state.sessionId, providerTurnId);
+    const createdAt = this.isoNow();
+    // The sequence is taken at flush time so rows stay gapless and in emission order.
+    state.deltas.append(messageId, delta, (text) => {
+      const sequence = ++state.nextTranscriptSequence;
+      return {
+        id: opaqueId('codex_delta', state.providerSessionId, providerTurnId, providerItemId, String(sequence)),
+        messageId,
         sessionId: state.sessionId,
-        ...(this.localTurnId(state.sessionId, providerTurnId) ? { turnId: this.localTurnId(state.sessionId, providerTurnId) } : {}),
-        sequence: state.nextTranscriptSequence,
+        ...(turnId ? { turnId } : {}),
+        sequence,
         kind,
-        text: delta,
+        text,
         isDelta: true,
         isSensitive: true,
-        createdAt: this.isoNow(),
-      },
+        ...(payload ? { payload } : {}),
+        createdAt,
+      };
     });
   }
 
@@ -1519,6 +2105,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     sequence: number,
     createdAt: string,
     started: boolean,
+    durationMs?: number,
   ): DaemonTranscriptItem | undefined {
     const providerItemId = asString(item.id);
     const type = asString(item.type);
@@ -1526,12 +2113,16 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     let kind: DaemonTranscriptItem['kind'];
     let text = '';
     let isSensitive = false;
+    let payload: TranscriptPayload | undefined;
     switch (type) {
-      case 'userMessage':
+      case 'userMessage': {
         if (started) return undefined;
+        const clientId = asString(item.clientId);
+        if (clientId && this.sessions.get(sessionId)?.submittedCommandIds.has(clientId)) return undefined;
         kind = 'user-message';
         text = providerTranscriptText(item.content);
         break;
+      }
       case 'agentMessage':
         if (started) return undefined;
         kind = 'assistant-message';
@@ -1542,29 +2133,73 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind = 'reasoning';
         text = [...asArray(item.summary), ...asArray(item.content)]
           .filter((value): value is string => typeof value === 'string').join('\n');
+        // Codex streams no reasoning text; a timed row still shows the model thought.
+        if (durationMs !== undefined) payload = { v: 1, type: 'reasoning', durationMs };
         break;
       case 'plan':
         if (started) return undefined;
         kind = 'reasoning';
         text = providerTranscriptText(item.text);
+        payload = { v: 1, type: 'plan', ...(text.length <= 64_000 ? { markdown: text } : {}) };
         break;
-      case 'commandExecution':
+      case 'commandExecution': {
+        const command = displayCommand(item);
+        const exitCode = integer(item.exitCode);
         kind = started ? 'tool-call' : 'tool-result';
         text = started
-          ? `$ ${providerTranscriptText(item.command)}`
-          : providerTranscriptText(item.aggregatedOutput) || `Command ${asString(item.status) ?? 'completed'}.`;
+          ? `$ ${command}`
+          : providerTranscriptText(item.aggregatedOutput)
+            || (item.status !== 'declined' && exitCode !== undefined
+              ? `Exit code ${String(exitCode)}`
+              : `Command ${asString(item.status) ?? 'completed'}.`);
         isSensitive = true;
+        payload = toolPayload({
+          callId: providerItemId, name: 'commandExecution', ...commandShape(item, command), started, status: item.status,
+          command, cwd: asString(item.cwd), exitCode, durationMs: nonNegativeInteger(item.durationMs) ?? durationMs,
+        });
         break;
-      case 'fileChange':
+      }
+      case 'fileChange': {
+        const changes = fileChanges(item);
+        const summary = fileChangeSummary(changes, this.sessions.get(sessionId)?.workspaceRoot) || 'File changes updated.';
+        const status = asString(item.status);
         kind = started ? 'tool-call' : 'tool-result';
-        text = this.fileChangeText(item);
+        text = started
+          ? summary
+          : status === 'completed'
+            ? this.fileChangeRecord(item) ?? summary
+            : status === 'declined' || status === 'failed' || status === 'interrupted' ? `File changes ${status}.` : summary;
+        payload = toolPayload({
+          callId: providerItemId,
+          name: 'fileChange',
+          category: changes.length > 0 && changes.every((change) => change.kind === 'add') ? 'write' : 'edit',
+          started,
+          status,
+          target: changes.length === 1 ? changes[0]!.path : changes.length > 1 ? `${String(changes.length)} files` : undefined,
+          files: changes.map((change) => ({
+            path: clip(change.path),
+            ...(change.kind ? { kind: change.kind } : {}),
+            ...diffLineCounts(change),
+          })),
+          durationMs,
+        });
         break;
+      }
       case 'mcpToolCall':
-      case 'dynamicToolCall':
+      case 'dynamicToolCall': {
+        const tool = asString(item.tool) ?? 'tool';
+        const server = asString(item.server) ?? asString(item.namespace);
+        const body = providerTranscriptText(started ? item.arguments : item.result ?? item.output ?? item.error);
         kind = started ? 'tool-call' : 'tool-result';
         text = `${asString(item.server) ? `${asString(item.server)}/` : ''}${asString(item.tool) ?? 'tool'}: ${asString(item.status) ?? (started ? 'started' : 'completed')}`;
-        text += `\n${providerTranscriptText(started ? item.arguments : item.result ?? item.output ?? item.error)}`;
+        if (body) text += `\n${body}`;
+        payload = toolPayload({
+          callId: providerItemId, name: tool, category: 'mcp', started, status: item.status,
+          target: server ? `${server} / ${tool}` : tool, server,
+          durationMs: nonNegativeInteger(item.durationMs) ?? durationMs,
+        });
         break;
+      }
       case 'functionCallOutput':
         if (started) return undefined;
         kind = 'tool-result';
@@ -1578,14 +2213,26 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind = 'notice';
         text = `Sub-agent ${asString(item.kind) ?? 'activity'}.`;
         break;
-      case 'webSearch':
+      case 'webSearch': {
+        const query = webSearchQuery(item);
         kind = started ? 'tool-call' : 'tool-result';
-        text = providerTranscriptText(item);
+        text = started ? (query ? `Search the web: ${query}` : 'Search the web') : webSearchResultText(item, query);
+        payload = toolPayload({
+          callId: providerItemId, name: 'webSearch', category: 'web', started, status: item.status,
+          target: webSearchTarget(item, query), query, durationMs,
+        });
         break;
+      }
       case 'imageView':
       case 'imageGeneration':
         kind = started ? 'tool-call' : 'tool-result';
         text = providerTranscriptText(item);
+        if (type === 'imageView') {
+          payload = toolPayload({
+            callId: providerItemId, name: 'imageView', category: 'read', started, status: item.status,
+            target: asString(item.path), durationMs,
+          });
+        }
         break;
       case 'enteredReviewMode':
       case 'exitedReviewMode':
@@ -1607,7 +2254,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       default:
         return undefined;
     }
-    if (!text) return undefined;
+    if (!text && payload?.type !== 'reasoning') return undefined;
     isSensitive ||= kind === 'user-message'
       || kind === 'assistant-message'
       || kind === 'reasoning';
@@ -1622,6 +2269,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       text: text.slice(0, MAX_SEMANTIC_TEXT),
       isDelta: false,
       isSensitive,
+      ...(payload ? { payload } : {}),
       createdAt,
     };
   }
@@ -1670,8 +2318,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     });
   }
 
-  private fileChangeText(item: JsonObject): string {
-    return providerTranscriptText(item.changes) || 'File changes updated.';
+  private fileChangeRecord(item: JsonObject): string | undefined {
+    const changes = asArray(item.changes).flatMap(value => {
+      const change = asObject(value);
+      return change && typeof change.path === 'string' && typeof change.diff === 'string'
+        ? [{ path: change.path, patch: change.diff, coverage: 'patch' as const }] : [];
+    });
+    return encodeFileChanges(changes);
   }
 
   private commandIdFromTurn(turn: JsonObject): string | undefined {
@@ -1709,6 +2362,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       preResponseLifecycleOverflowed: false,
       completedItemKeys: new Set(),
       nativeStateByChild: new Map(),
+      deltas: new DeltaCoalescer((item) => this.emit({ kind: 'transcript', item }), this.deltaCoalescer),
+      startedItems: new Map(),
+      submittedCommandIds: new Set(),
+      planRevisions: new Map(),
     };
     this.sessions.set(context.sessionId, state);
     this.sessionIdByProviderId.set(providerSessionId, context.sessionId);
@@ -1760,6 +2417,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private assertSessionContext(context: ProviderSessionContext): void {
+    if (context.toolsDisabled) throw new Error('This Codex app-server does not expose a verified tool-free mode. Choose a provider that supports tool-free planning proposals.');
     if (!context.sessionId.trim() || !context.workspaceId.trim()) throw new Error('Codex session identity is incomplete.');
     if (!path.isAbsolute(context.workspaceRoot)) throw new Error('Codex workspace root must be absolute.');
   }

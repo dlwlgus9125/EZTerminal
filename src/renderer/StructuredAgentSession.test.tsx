@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +15,7 @@ import {
 } from './StructuredAgentSession';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
+import { encodeFileChanges } from '../shared/conversation-changes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,6 +54,13 @@ it('uses the completed provider message as authority without duplicating streame
   expect(coalesceStructuredAgentTranscript(items).map((item) => item.text)).toEqual(['Hello world!', 'TOKEN=secret']);
 });
 
+function pendingApproval(id: string): DaemonApproval {
+  return {
+    id, sessionId: 'skin-session', providerRequestId: `provider-${id}`, risk: 'write', title: 'Write the file?',
+    state: 'pending', revision: 1, createdAt: NOW, updatedAt: NOW,
+  };
+}
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -62,6 +70,16 @@ function render(node: ReactNode, locale: 'en' | 'ko' = 'en'): void {
       {node}
     </AppI18nProvider>,
   ));
+}
+
+/** Desktop keeps session actions and the skin choice in the header's overflow menu. */
+function openSessionMenu(): void {
+  if (!document.querySelector('[role="menu"]')) act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
+}
+
+function chooseSkin(skin: 'bubble' | 'cli'): void {
+  openSessionMenu();
+  act(() => document.querySelector<HTMLButtonElement>(`[data-testid="structured-agent-skin-${skin}"]`)!.click());
 }
 
 async function flush(): Promise<void> {
@@ -87,6 +105,7 @@ function setValue(control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectEl
 
 beforeEach(() => {
   clearSessionViewStates();
+  localStorage.removeItem('ezterminal.chat.skin');
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -99,6 +118,24 @@ afterEach(() => {
 });
 
 describe('StructuredAgentDraftPanel', () => {
+  it('saves the remaining draft when /resume immediately leaves the stage form', async () => {
+    const save = vi.fn();
+    const create = vi.fn(async () => ({ ok: true as const }));
+    function StageForm(): JSX.Element {
+      const [history, setHistory] = useState(false);
+      return history ? <p>History</p> : <StructuredAgentDraftPanel
+        providers={[{ id: 'codex', label: 'Codex', models: [] }]}
+        workspaces={[{ id: 'workspace-1', label: 'Workspace', kind: 'local' }]}
+        initialDraftText="/resume keep my question" onFormStateChange={save}
+        onOpenHistory={() => setHistory(true)} onCreate={create} />;
+    }
+    render(<StageForm />);
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    await flush();
+    expect(container.textContent).toBe('History');
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ draft: expect.objectContaining({ text: 'keep my question' }) }));
+    expect(create).not.toHaveBeenCalled();
+  });
   it('creates an empty Agent only on Create and preserves selection after a failure', async () => {
     const onCreate = vi.fn(async () => ({ ok: false as const, message: 'Provider unavailable' }));
     render(
@@ -184,7 +221,7 @@ describe('StructuredAgentTranscript', () => {
     render(<StructuredAgentTranscript providerLabel="Codex" items={[
       transcriptItem('reply', 1, 'assistant-message', 'Original reply TOKEN=secret', { isSensitive: true }),
     ]} />);
-    expect(container.querySelector('[data-kind="assistant-message"]')?.textContent).toContain('Original reply TOKEN=secret');
+    expect(container.querySelector('[data-kind="assistant"]')?.textContent).toContain('Original reply TOKEN=secret');
   });
 
   it('coalesces adjacent deltas and preserves original output and kind semantics', () => {
@@ -197,13 +234,19 @@ describe('StructuredAgentTranscript', () => {
     expect(coalesceStructuredAgentTranscript(items)).toHaveLength(3);
 
     render(<StructuredAgentTranscript items={items} providerLabel="Codex" />);
-    const assistant = container.querySelector('[data-kind="assistant-message"]');
+    const assistant = container.querySelector('[data-kind="assistant"]');
     expect(assistant?.textContent).toContain('Structured reply');
-    expect(assistant?.querySelector('[role="status"]')?.textContent).toContain('Streaming');
-    expect(container.querySelector('[data-kind="tool-result"]')?.textContent).toContain('TOKEN=secret');
+    // Without turn records a delta-only message is still streaming.
+    expect(assistant?.querySelector('[data-streaming]')).not.toBeNull();
+    // Tool output and reasoning live in one activity run; output stays verbatim.
+    const run = container.querySelector<HTMLButtonElement>('[data-kind="activity"] .chat-run__header')!;
+    act(() => run.click());
+    const lines = Array.from(container.querySelectorAll<HTMLButtonElement>('.chat-tool__line'));
+    act(() => lines.forEach((line) => { if (!line.disabled) line.click(); }));
+    expect(container.querySelector('[data-kind="activity"]')?.textContent).toContain('TOKEN=secret');
+    expect(container.querySelector('[data-kind="activity"]')?.textContent).toContain('Inspect constraints');
     expect(container.textContent).not.toContain('Sensitive output hidden');
-    expect(container.querySelector('[data-kind="reasoning"] details')).not.toBeNull();
-    expect(container.querySelector('ol')?.getAttribute('aria-label')).toBe('Agent transcript');
+    expect(container.querySelector('ol.chat-rows')?.getAttribute('aria-label')).toBe('Conversation');
   });
 
   it('renders approval state and delivers an explicit decision', async () => {
@@ -221,7 +264,7 @@ describe('StructuredAgentTranscript', () => {
     };
     render(
       <StructuredAgentTranscript
-        items={[transcriptItem('approval-1', 1, 'approval', approval.title)]}
+        items={[]}
         approvals={[approval]}
         providerLabel="Codex"
         onResolveApproval={onResolve}
@@ -253,8 +296,8 @@ describe('StructuredAgentTranscript', () => {
         onOpenRelatedSession={onOpen}
       />,
     );
-    const button = container.querySelector<HTMLButtonElement>('.structured-agent-message__child-link')!;
-    expect(button.textContent).toContain('Open related session');
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-kind="child"] button'))[0]!;
+    expect(button.textContent).toContain('Open Agent');
     act(() => button.click());
     expect(onOpen).toHaveBeenCalledWith('child-session');
   });
@@ -291,7 +334,8 @@ describe('StructuredAgentChildTrack', () => {
     expect(children).toHaveLength(2);
     expect(children[0]?.textContent).toContain('Accessibility review');
     expect(children[0]?.textContent).toContain('Codex');
-    expect(children[0]?.textContent).toContain('idle');
+    // The state reads in the UI language, not as the raw protocol value.
+    expect(children[0]?.textContent).toContain('Ready');
     expect(children[0]?.textContent).toContain('Managed');
     expect(children[1]?.textContent).toContain('Provider-owned');
     expect(children[1]?.textContent).toContain('Read only');
@@ -366,10 +410,14 @@ describe('StructuredAgentSessionPanel', () => {
     );
     expect(container.querySelector('[data-testid="structured-agent-child-track"]')?.textContent)
       .toContain('Reserved child projection');
-    const model = container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-live-model"]')!;
-    setValue(model, 'gpt-6');
+    const model = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-model"]')!;
+    expect(model.getAttribute('aria-label')).toContain('GPT-5');
+    act(() => model.click());
+    const option = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find((item) => item.textContent?.includes('GPT-6'))!;
+    act(() => option.click());
     await flush();
     expect(onChangeSettings).toHaveBeenCalledWith({ model: 'gpt-6', permissionPreset: 'standard' });
+    expect(model.getAttribute('aria-label')).toContain('GPT-6');
   });
 
   it('guards lifecycle actions, reports failure, and preserves a typed draft', async () => {
@@ -393,17 +441,22 @@ describe('StructuredAgentSessionPanel', () => {
     );
     const input = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
     setValue(input, 'Keep this draft');
+    openSessionMenu();
     expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
 
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-cancel"]')!.click());
-    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')?.getAttribute('aria-busy')).toBe('true');
+    // Stop lives in the composer: Esc (or the stop button once the draft is empty).
+    const escape = (): void => act(() => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    escape();
+    expect(container.querySelector('[data-testid="structured-agent-menu"]')?.getAttribute('aria-busy')).toBe('true');
+    openSessionMenu();
     expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')?.disabled).toBe(true);
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-cancel"]')!.click());
+    escape();
     await flush();
 
     expect(onCancel).toHaveBeenCalledOnce();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('Stop failed safely');
     expect(input.value).toBe('Keep this draft');
+    openSessionMenu();
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')!.click());
     await flush();
     expect(onDetach).toHaveBeenCalledOnce();
@@ -426,7 +479,10 @@ describe('StructuredAgentSessionPanel', () => {
         onDetach={async () => ({ ok: true })}
       />,
     );
-    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
+    openSessionMenu();
+    expect(container.querySelector('[data-testid="structured-agent-detach"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-stop"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')?.disabled).toBe(true);
     expect(container.querySelector('[data-testid="structured-agent-composer-disabled-reason"]')?.textContent)
       .toContain('owned by the provider');
@@ -473,4 +529,164 @@ it('uses Enter to send once on desktop, preserves IME/newlines, and requires Sen
   expect(onSend).toHaveBeenCalledOnce();
   act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
   await flush(); expect(onSend).toHaveBeenLastCalledWith('Mobile message');
+});
+
+describe('message-based chat skins', () => {
+  const workspace = { id: 'workspace-1', label: 'Main', kind: 'local' } as const;
+  const panel = (props: Partial<Parameters<typeof StructuredAgentSessionPanel>[0]> = {}) => <StructuredAgentSessionPanel
+    sessionId="skin-session" title="Same conversation" providerId="codex" providerLabel="Codex"
+    workspace={workspace} permissionPreset="standard" state="idle" items={[]}
+    onSend={async () => ({ ok: true })} {...props}
+  />;
+  const input = () => container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
+
+  it('takes a queued request only after acknowledgement, blocks concurrent sends and restores the parked attachment draft', async () => {
+    let acknowledge!: (value: { ok: true }) => void;
+    const onQueueAction = vi.fn(() => new Promise<{ ok: true }>(resolve => { acknowledge = resolve; }));
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const attachment = { id: 'a', name: 'notes.txt', mimeType: 'text/plain', kind: 'text' as const, data: 'Saved notes' };
+    render(panel({ state: 'working', queuedCount: 1, queueItems: [{ turnId: 'queued', revision: 4, text: 'Queued question' }], onQueueAction, onSend,
+      supportsMessageContext: true, draftState: { text: 'Original draft', attachments: [attachment], selectionStart: 3, selectionEnd: 3 } }));
+    act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent === 'Edit')!.click());
+    expect(input().value).toBe('Original draft');
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    expect(onSend).not.toHaveBeenCalled();
+    await act(async () => acknowledge({ ok: true }));
+    expect(input().value).toBe('Queued question');
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    await flush();
+    expect(onSend).toHaveBeenCalledWith('Queued question');
+    expect(input().value).toBe('Original draft');
+    expect(input().selectionStart).toBe(3);
+    expect(container.textContent).toContain('notes.txt');
+  });
+
+  it('quotes actual patch lines into the existing draft without sending and keeps review state across skins', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const items = [transcriptItem('patch', 2, 'tool-result', encodeFileChanges([{ path: 'src/a.ts', patch: '@@ -8 +8 @@\n-old\n+new', coverage: 'patch' }])!, { sessionId: 'skin-session' })];
+    render(panel({ items, onSend, skin: 'bubble' }));
+    setValue(input(), 'My question\n');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-review-changes"]')!.click());
+    await flush();
+    const patch = document.querySelector('[data-testid="conversation-change-review"]')!;
+    act(() => patch.querySelector<HTMLButtonElement>('[data-kind="add"]')!.click());
+    render(panel({ items, onSend, skin: 'cli' }));
+    expect(document.querySelector('[data-kind="add"][aria-pressed="true"]')).not.toBeNull();
+    act(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Quote selected lines')!.click());
+    await flush();
+    expect(input().value).toContain('My question'); expect(input().value).toContain('src/a.ts'); expect(input().value).toContain('+new');
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('changes only the presentation and preserves message, input, selection, tool and approval elements', () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onResolve = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ onSend, onResolveApproval: onResolve, approvals: [pendingApproval('approval')], items: [
+      transcriptItem('message-1', 1, 'user-message', 'Keep this conversation'),
+      transcriptItem('tool', 2, 'tool-result', 'Long output '.repeat(150)),
+    ] }));
+    const originalMessage = container.querySelector('[data-message-id="message-1"]');
+    const originalInput = input();
+    act(() => container.querySelector<HTMLButtonElement>('.chat-run__header')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('.chat-tool__line')!.click());
+    expect(container.querySelector('.chat-output__pre')?.textContent).toContain('Long output');
+    setValue(input(), 'Unsent draft');
+    act(() => input().setSelectionRange(2, 6));
+    chooseSkin('cli');
+    expect(container.querySelector('[data-testid="structured-agent-session"]')?.getAttribute('data-skin')).toBe('cli');
+    expect(input()).toBe(originalInput);
+    expect(input().value).toBe('Unsent draft');
+    expect([input().selectionStart, input().selectionEnd]).toEqual([2, 6]);
+    expect(container.querySelector('[data-message-id="message-1"]')).not.toBeNull();
+    expect(originalMessage).not.toBeNull();
+    // The expanded tool output survives the skin switch (shared disclosure state).
+    expect(container.querySelector('.chat-output__pre')?.textContent).toContain('Long output');
+    expect(container.querySelector('.chat-dock')).not.toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(localStorage.getItem('ezterminal.chat.skin')).toBe('cli');
+    chooseSkin('bubble');
+    expect(input()).toBe(originalInput);
+  });
+
+  it('retains logical message elements across final streaming chunks and replies with the first daemon item ID', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const items = [transcriptItem('first-chunk', 1, 'assistant-message', 'Hello ', { messageId: 'provider-message', isDelta: true })];
+    render(panel({ items, onSend, supportsMessageContext: true }));
+    const article = container.querySelector('[data-message-id="provider-message"]');
+    render(panel({ items: [...items, transcriptItem('last-chunk', 2, 'assistant-message', 'Hello world', { messageId: 'provider-message' })], onSend, supportsMessageContext: true }));
+    expect(container.querySelector('[data-message-id="provider-message"]')).toBe(article);
+    const reply = container.querySelector<HTMLButtonElement>('[data-message-id="provider-message"] button[aria-label="Reply"]')!;
+    act(() => reply.click());
+    setValue(input(), 'Explain this');
+    chooseSkin('cli');
+    expect(container.querySelector('.structured-agent-composer__reply')?.textContent).toContain('Hello world');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    await flush();
+    expect(onSend).toHaveBeenCalledWith('Explain this', { replyTo: { messageId: 'first-chunk', text: 'Hello world' } });
+  });
+
+  it('preserves a newer draft typed while the previous send is awaiting its receipt', async () => {
+    let resolve!: (result: { ok: true }) => void;
+    const onSend = vi.fn(() => new Promise<{ ok: true }>((done) => { resolve = done; }));
+    render(panel({ onSend }));
+    setValue(input(), 'First message');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    setValue(input(), 'Next unsent message');
+    await act(async () => resolve({ ok: true }));
+    expect(input().value).toBe('Next unsent message');
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('First message');
+  });
+
+  it('keeps attachments through skin changes and sends them in the same message context', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const attachment = { id: 'attachment-1', name: 'requirements.md', kind: 'text' as const, mimeType: 'text/markdown', data: 'Keep the existing terminal.' };
+    render(panel({ onSend, supportsMessageContext: true, draftState: { text: 'Read this', attachments: [attachment] } }));
+    chooseSkin('cli');
+    expect(container.querySelector('.structured-agent-composer__attachments')?.textContent).toContain(attachment.name);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    await flush();
+    expect(onSend).toHaveBeenCalledWith('Read this', { attachments: [attachment] });
+    expect(input().value).toBe('');
+    expect(container.querySelector('.structured-agent-composer__attachments')).toBeNull();
+  });
+
+  it('supports an offline draft while locking host settings, approval and transmission', () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onDraftChange = vi.fn();
+    const onResolve = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ disabled: true, allowDraftWhenDisabled: true, variant: 'mobile', sendDisabled: true,
+      sendDisabledReason: 'Offline — reconnect and send explicitly', onSend, onDraftChange,
+      onChangeSettings: async () => ({ ok: true }), onResolveApproval: onResolve,
+      approvals: [pendingApproval('approval')], items: [] }));
+    expect(input().disabled).toBe(false);
+    setValue(input(), 'Offline draft');
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'Offline draft' }));
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="structured-agent-live-permission"]')?.disabled).toBe(true);
+    const allow = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Allow')!;
+    expect(allow.disabled).toBe(true);
+    act(() => { allow.click(); container.querySelector<HTMLFormElement>('form')!.requestSubmit(); });
+    expect(onSend).not.toHaveBeenCalled(); expect(onResolve).not.toHaveBeenCalled();
+    render(panel({ disabled: true, allowDraftWhenDisabled: true, state: 'archived' }));
+    expect(input().disabled).toBe(true);
+  });
+
+  it('blocks repeated transmission of an uncertain send until explicit receipt reconciliation', async () => {
+    const onSend = vi.fn(async () => ({ ok: false as const, message: 'Receipt lost', deliveryUncertain: true }));
+    const onReconcileDelivery = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ onSend, onReconcileDelivery }));
+    setValue(input(), 'Keep exact request');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')!.click());
+    await flush();
+    expect(input().value).toBe('Keep exact request');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-send"]')?.disabled).toBe(true);
+    act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+    expect(onSend).toHaveBeenCalledOnce();
+    const check = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Check delivery')!;
+    act(() => check.click());
+    await flush();
+    expect(onReconcileDelivery).toHaveBeenCalledOnce();
+    expect(input().value).toBe('');
+  });
 });

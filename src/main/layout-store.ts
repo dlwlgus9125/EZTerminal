@@ -220,7 +220,7 @@ export class LayoutStore {
   }
 
   async getTheme(): Promise<ThemeName> {
-    return (await this.loadSettingsFile()).theme ?? 'matrix';
+    return (await this.loadSettingsFile()).theme ?? 'dark';
   }
 
   async setTheme(theme: ThemeName): Promise<void> {

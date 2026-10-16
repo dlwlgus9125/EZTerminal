@@ -64,7 +64,7 @@ describe('MobileStructuredAgentSession', () => {
       </AppI18nProvider>,
     ));
 
-    expect(container.querySelector('[data-kind="assistant-message"]')?.textContent)
+    expect(container.querySelector('[data-kind="assistant"]')?.textContent)
       .toContain('Ready for a direct follow-up.');
     const input = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
@@ -118,6 +118,6 @@ describe('MobileStructuredAgentSession', () => {
     expect(container.textContent).toContain('Ready for a direct follow-up.');
     expect(container.querySelector('[data-testid="structured-agent-composer-input"]')).toBeNull();
     expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
-    expect(container.querySelector('.structured-agent-approval__actions')).toBeNull();
+    expect(container.querySelector('.chat-dock')).toBeNull();
   });
 });

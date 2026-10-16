@@ -12,6 +12,7 @@ import type { OpenClawControlSnapshot } from '../shared/openclaw';
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
 const httpServers: Server[] = [];
+const stopWatchers: Array<() => Promise<void>> = [];
 const describeWindows = process.platform === 'win32' ? describe : describe.skip;
 const ACL_PROCESS_TIMEOUT_MS = 45_000;
 const ACL_TEST_TIMEOUT_MS = 60_000;
@@ -42,6 +43,7 @@ async function removeAllAccessRules(filePath: string): Promise<void> {
 }
 
 afterEach(async () => {
+  await Promise.all(stopWatchers.splice(0).map((stop) => stop()));
   await Promise.all(httpServers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) reject(error);
@@ -56,7 +58,107 @@ afterEach(async () => {
   }));
 });
 
-describeWindows('openclaw-supervisor.ps1', () => {
+
+async function fixture(options: { running?: boolean; task?: boolean; enabled?: boolean; failStart?: boolean; foreign?: boolean; slowStart?: boolean; installStarts?: boolean } = {}) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-launch-'));
+  temporaryDirectories.push(directory);
+  const marker = (name: string) => path.join(directory, name);
+  const exists = async (name: string) => fs.access(marker(name)).then(() => true, () => false);
+  for (const [name, value] of Object.entries(options)) {
+    if (value) await fs.writeFile(marker(name), '1');
+  }
+  const server = createServer((_request, response) => {
+    void exists('running').then((running) => {
+      response.writeHead(running ? 200 : 503, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ ok: running, status: running ? 'live' : 'starting' }));
+    });
+  });
+  httpServers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing fixture port');
+  await fs.writeFile(marker('openclaw.json'), JSON.stringify({ gateway: { port: address.port } }));
+  const cliPath = marker('openclaw.cmd');
+  await fs.writeFile(cliPath, [
+    '@echo off',
+    'echo %*>>"%~dp0calls.log"',
+    'if "%1 %2"=="gateway start" goto start',
+    'if "%1 %2"=="gateway stop" goto stop',
+    'if "%1 %2"=="gateway install" goto install',
+    'echo unexpected diagnostic or management RPC command 1>&2',
+    'exit /b 19',
+    ':start',
+    'if exist "%~dp0failStart" (echo fixture launch failed 1>&2 & exit /b 23)',
+    'if exist "%~dp0slowStart" (type nul >"%~dp0starting" & exit /b 0)',
+    'type nul >"%~dp0running"',
+    'exit /b 0',
+    ':stop',
+    'if exist "%~dp0running" del /q "%~dp0running"',
+    'if exist "%~dp0starting" del /q "%~dp0starting"',
+    'exit /b 0',
+    ':install',
+    'type nul >"%~dp0task"',
+    'if exist "%~dp0installStarts" type nul >"%~dp0running"',
+    'exit /b 0',
+  ].join('\r\n'));
+  const requestedAt = new Date().toISOString();
+  const intent = (action: 'start' | 'stop' | 'restart', generation = 1) => ({
+    schemaVersion: 1, intentId: `intent-${generation}`, generation,
+    desiredState: action === 'stop' ? 'stopped' : 'running', action, requestedAt,
+  });
+  const saveIntent = (action: 'start' | 'stop' | 'restart', generation = 1) =>
+    fs.writeFile(marker('intent.json'), JSON.stringify(intent(action, generation)));
+  const command = `
+    $fixtureRoot = ${quotePowerShellLiteral(directory)}
+    function Get-ScheduledTask {
+      [CmdletBinding()] param([string]$TaskName)
+      if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'task')) {
+        return [pscustomobject]@{ TaskName=$TaskName; State='Ready';
+          Settings=[pscustomobject]@{Enabled=(Test-Path -LiteralPath (Join-Path $fixtureRoot 'enabled'))};
+          Actions=@([pscustomobject]@{Execute=(Join-Path $fixtureRoot 'gateway.vbs');Arguments=''}) }
+      }
+    }
+    function Enable-ScheduledTask {
+      param([string]$TaskName)
+      [IO.File]::WriteAllText((Join-Path $fixtureRoot 'enabled'), '1')
+      Add-Content -LiteralPath (Join-Path $fixtureRoot 'calls.log') -Value 'task enable'
+    }
+    function Disable-ScheduledTask {
+      param([string]$TaskName)
+      Remove-Item -LiteralPath (Join-Path $fixtureRoot 'enabled') -ErrorAction SilentlyContinue
+      Add-Content -LiteralPath (Join-Path $fixtureRoot 'calls.log') -Value 'task disable'
+    }
+    function Get-NetTCPConnection {
+      [CmdletBinding()] param($LocalPort,$State)
+      if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'foreign')) { [pscustomobject]@{OwningProcess=999999} }
+    }
+    function Get-CimInstance {
+      [CmdletBinding()] param($ClassName,$Filter)
+      if ((Test-Path -LiteralPath (Join-Path $fixtureRoot 'running')) -or (Test-Path -LiteralPath (Join-Path $fixtureRoot 'starting'))) {
+        [pscustomobject]@{ProcessId=12345;CommandLine='node.exe C:\\fixture\\node_modules\\openclaw\\dist\\index.js gateway --port ${address.port}'}
+      }
+    }
+    & ${quotePowerShellLiteral(path.resolve('assets/openclaw-supervisor.ps1'))} -RunSupervisor -RunOnce -ReadyTimeoutSeconds 1 -StateDirectory ${quotePowerShellLiteral(directory)} -CliPath ${quotePowerShellLiteral(cliPath)}
+  `;
+  return {
+    directory, marker, exists, intent, saveIntent, port: address.port,
+    run: () => execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], {
+      windowsHide: true, timeout: 60_000, env: { ...process.env, OPENCLAW_STATE_DIR: directory },
+    }),
+    watch: () => {
+      const watcherCommand = command.replace('-RunOnce -ReadyTimeoutSeconds 1 ', '-HealthIntervalSeconds 1 -ReadyTimeoutSeconds 15 ');
+      const child = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', watcherCommand], {
+        windowsHide: true, env: { ...process.env, OPENCLAW_STATE_DIR: directory },
+      });
+      const closed = new Promise<void>((resolve) => { child.once('close', () => resolve()); });
+      stopWatchers.push(async () => { child.kill(); await closed; });
+    },
+    calls: async () => (await fs.readFile(marker('calls.log'), 'utf8').catch(() => '')).trim().split(/\r?\n/u).filter(Boolean),
+    runtime: async () => JSON.parse(await fs.readFile(marker('runtime.json'), 'utf8')) as OpenClawControlSnapshot,
+  };
+}
+
+describeWindows('openclaw-supervisor.ps1', { timeout: 30_000 }, () => {
   it('keeps the installed supervisor script readable after protecting the state directory', async () => {
     const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-acl-'));
     temporaryDirectories.push(stateDirectory);
@@ -119,437 +221,185 @@ describeWindows('openclaw-supervisor.ps1', () => {
     );
   }, ACL_TEST_TIMEOUT_MS);
 
-  it('forces the non-interactive gateway stop command', async () => {
-    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-stop-'));
-    temporaryDirectories.push(stateDirectory);
-    const cliPath = path.join(stateDirectory, 'fake-openclaw.cmd');
-    await fs.writeFile(cliPath, [
-      '@echo off',
-      'echo %*>>"%~dp0calls.log"',
-      'if "%1"=="doctor" echo --fix --non-interactive --session-sqlite --session-sqlite-all-agents',
-      'if "%1 %2"=="gateway status" echo --require-rpc',
-      'if "%1 %2"=="gateway restart" echo --safe --force',
-      'if "%1 %2"=="gateway start" echo --json',
-      'if "%1 %2"=="gateway stop" echo --force --json',
-      'if "%1 %2 %3"=="approvals set --help" echo --stdin --json',
-      'exit /b 0',
-    ].join('\r\n'));
-    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify({
-      schemaVersion: 1,
-      intentId: 'intent-stop-1',
-      generation: 1,
-      desiredState: 'stopped',
-      action: 'stop',
-      requestedAt: '2026-09-02T00:00:00.000Z',
-    }));
 
-    await execFileAsync('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      path.resolve('assets', 'openclaw-supervisor.ps1'),
-      '-RunSupervisor',
-      '-RunOnce',
-      '-StateDirectory',
-      stateDirectory,
-      '-CliPath',
-      cliPath,
-    ], { timeout: 30_000, windowsHide: true });
-
-    const calls = await fs.readFile(path.join(stateDirectory, 'calls.log'), 'utf8');
-    expect(calls.split(/\r?\n/u)).toContain('gateway stop --force --json');
-  }, 30_000);
-
-  it('accepts authenticated RPC readiness observed by the final deep diagnostic', async () => {
-    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-late-ready-'));
-    temporaryDirectories.push(stateDirectory);
-    const cliPath = path.join(stateDirectory, 'fake-openclaw.cmd');
-    await fs.writeFile(cliPath, [
-      '@echo off',
-      'echo %*>>"%~dp0calls.log"',
-      'if "%1 %2 %3"=="gateway status --deep" goto deep_status',
-      'if "%1"=="doctor" echo --fix --non-interactive --session-sqlite --session-sqlite-all-agents',
-      'if "%1 %2"=="gateway status" echo --require-rpc',
-      'if "%1 %2"=="gateway restart" echo --safe --force',
-      'if "%1 %2"=="gateway start" echo --json',
-      'if "%1 %2"=="gateway stop" echo --force --json',
-      'if "%1 %2 %3"=="approvals set --help" echo --stdin --json',
-      'exit /b 0',
-      ':deep_status',
-      'echo {"cli":{"version":"2026.8.1"},"service":{"runtime":{"status":"running","pid":1234}},"port":{"listeners":[]},"rpc":{"ok":true}}',
-      'exit /b 0',
-    ].join('\r\n'));
-    const intent = {
-      schemaVersion: 1,
-      intentId: 'intent-late-ready-1',
-      generation: 1,
-      desiredState: 'running',
-      action: 'start',
-      requestedAt: '2026-09-02T00:00:00.000Z',
-    } as const;
-    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify(intent));
-    await fs.writeFile(path.join(stateDirectory, 'runtime.json'), JSON.stringify({
-      ...intent,
-      status: { state: 'stopped', port: 18789 },
-      supervisorState: 'ready',
-      operation: {
-        intentId: intent.intentId,
-        generation: intent.generation,
-        action: intent.action,
-        phase: 'diagnosing',
-        attempt: 2,
-        maxAttempts: 3,
-        requestedAt: intent.requestedAt,
-      },
-      issue: null,
-      updatedAt: intent.requestedAt,
-    }));
-
-    await execFileAsync('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      path.resolve('assets', 'openclaw-supervisor.ps1'),
-      '-RunSupervisor',
-      '-RunOnce',
-      '-ReadyTimeoutSeconds',
-      '1',
-      '-StateDirectory',
-      stateDirectory,
-      '-CliPath',
-      cliPath,
-    ], { timeout: 30_000, windowsHide: true });
-
-    const runtime = JSON.parse(
-      await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8'),
-    ) as OpenClawControlSnapshot;
-    expect(runtime).toMatchObject({
-      intentId: intent.intentId,
-      generation: intent.generation,
-      desiredState: 'running',
-      status: { state: 'running', port: 18789, version: '2026.8.1' },
-      supervisorState: 'ready',
-      operation: null,
-      issue: null,
-    });
-  }, 30_000);
-
-  it('uses supported non-interactive migrations after a verified recovery backup', async () => {
-    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-migrate-'));
-    temporaryDirectories.push(stateDirectory);
-    const openClawStateDirectory = path.join(stateDirectory, 'openclaw-state');
-    await fs.mkdir(openClawStateDirectory);
-    await fs.writeFile(
-      path.join(openClawStateDirectory, 'exec-approvals.json'),
-      JSON.stringify({ version: 1, agents: {} }),
-    );
-    const cliPath = path.join(stateDirectory, 'fake-openclaw.cmd');
-    await fs.writeFile(cliPath, [
-      '@echo off',
-      'echo %*>>"%~dp0calls.log"',
-      'if "%1"=="doctor" echo --fix --non-interactive --session-sqlite --session-sqlite-all-agents',
-      'if "%1 %2"=="gateway status" echo --require-rpc',
-      'if "%1 %2"=="gateway restart" echo --safe --force',
-      'if "%1 %2"=="gateway start" echo --json',
-      'if "%1 %2"=="gateway stop" echo --force --json',
-      'if "%1 %2 %3"=="approvals set --help" echo --stdin --json',
-      'exit /b 0',
-    ].join('\r\n'));
-    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify({
-      schemaVersion: 1,
-      intentId: 'intent-migrate-1',
-      generation: 1,
-      desiredState: 'running',
-      action: 'start',
-      requestedAt: '2026-09-02T00:00:00.000Z',
-    }));
-
-    await execFileAsync('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      path.resolve('assets', 'openclaw-supervisor.ps1'),
-      '-RunSupervisor',
-      '-RunOnce',
-      '-ReadyTimeoutSeconds',
-      '1',
-      '-StateDirectory',
-      stateDirectory,
-      '-CliPath',
-      cliPath,
-    ], {
-      timeout: 60_000,
-      windowsHide: true,
-      env: { ...process.env, OPENCLAW_STATE_DIR: openClawStateDirectory },
-    });
-
-    const calls = (await fs.readFile(path.join(stateDirectory, 'calls.log'), 'utf8')).split(/\r?\n/u);
-    const sessionMigration = 'doctor --session-sqlite import --session-sqlite-all-agents --yes';
-    if (!calls.includes(sessionMigration)) {
-      const runtime = await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8')
-        .catch((error: unknown) => `unavailable: ${String(error)}`);
-      const diagnosticDirectory = path.join(stateDirectory, 'diagnostics');
-      const diagnostics = await fs.readdir(diagnosticDirectory)
-        .then(async (entries) => (await Promise.all(entries.map(async (entry) => fs.readFile(
-          path.join(diagnosticDirectory, entry),
-          'utf8',
-        )))).join('\n'))
-        .catch((error: unknown) => `unavailable: ${String(error)}`);
-      throw new Error([
-        `session migration was not invoked; calls=${JSON.stringify(calls)}`,
-        `runtime=${runtime}`,
-        `diagnostics=${diagnostics}`,
-      ].join('\n'));
-    }
-    expect(calls).toContain('approvals set --stdin --json');
-    expect(calls).toContain('approvals get --json');
-    await expect(fs.stat(path.join(openClawStateDirectory, 'exec-approvals.json'))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
-    const recoveryEntries = await fs.readdir(path.join(stateDirectory, 'recovery'), {
-      withFileTypes: true,
-    });
-    const completedBackup = recoveryEntries.find((entry) => entry.isDirectory());
-    expect(completedBackup).toBeDefined();
-    await expect(fs.readFile(path.join(
-      stateDirectory,
-      'recovery',
-      completedBackup?.name ?? '',
-      'exec-approvals.json',
-    ), 'utf8')).resolves.toContain('"version":1');
-  }, 60_000);
-
-  it('migrates legacy workspace setup state while the gateway is stopped, then starts it', async () => {
-    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-workspace-'));
-    temporaryDirectories.push(stateDirectory);
-    const openClawStateDirectory = path.join(stateDirectory, 'openclaw-state');
-    const workspaceDirectory = path.join(stateDirectory, 'agent-workspace');
-    const runningMarker = path.join(stateDirectory, 'gateway-running');
-    const legacyWorkspaceState = path.join(workspaceDirectory, 'openclaw-workspace-state.json');
-    await fs.mkdir(openClawStateDirectory);
-    await fs.mkdir(workspaceDirectory);
-    const legacyWorkspaceStateContents = JSON.stringify({ version: 1, setupCompletedAt: 1 });
-    await fs.writeFile(legacyWorkspaceState, legacyWorkspaceStateContents);
-
-    const healthServer = createServer((_request, response) => {
-      void fs.access(runningMarker).then(() => {
-        response.statusCode = 200;
-        response.end('ready');
-      }, () => {
-        response.statusCode = 503;
-        response.end('stopped');
-      });
-    });
-    httpServers.push(healthServer);
-    await new Promise<void>((resolve, reject) => {
-      healthServer.once('error', reject);
-      healthServer.listen(0, '127.0.0.1', resolve);
-    });
-    const address = healthServer.address();
-    if (!address || typeof address === 'string') throw new Error('test health server has no TCP port');
-    await fs.writeFile(path.join(openClawStateDirectory, 'openclaw.json'), JSON.stringify({
-      gateway: { port: address.port },
-    }));
-
-    const cliPath = path.join(stateDirectory, 'fake-openclaw.cmd');
-    const agentsJson = JSON.stringify([{ id: 'main', workspace: workspaceDirectory }]);
-    await fs.writeFile(cliPath, [
-      '@echo off',
-      'echo %*>>"%~dp0calls.log"',
-      'if "%1 %2 %3"=="agents list --help" goto agents_help',
-      'if "%1 %2 %3"=="agents list --json" goto agents_json',
-      'if "%1 %2"=="doctor --help" goto doctor_help',
-      'if "%1 %2"=="doctor --fix" goto doctor_fix',
-      'if "%1 %2 %3"=="gateway status --help" goto status_help',
-      'if "%1 %2 %3"=="gateway status --require-rpc" goto status_rpc',
-      'if "%1 %2 %3"=="gateway restart --help" goto restart_help',
-      'if "%1 %2 %3"=="gateway start --help" goto start_help',
-      'if "%1 %2"=="gateway start" goto gateway_start',
-      'if "%1 %2 %3"=="gateway stop --help" goto stop_help',
-      'if "%1 %2"=="gateway stop" goto gateway_stop',
-      'exit /b 0',
-      ':agents_help',
-      'echo --json',
-      'exit /b 0',
-      ':agents_json',
-      `echo ${agentsJson}`,
-      'exit /b 0',
-      ':doctor_help',
-      'echo --fix --non-interactive --session-sqlite --session-sqlite-all-agents',
-      'exit /b 0',
-      ':doctor_fix',
-      `if exist "${runningMarker}" exit /b 19`,
-      `del /q "${legacyWorkspaceState}"`,
-      'exit /b 0',
-      ':status_help',
-      'echo --require-rpc',
-      'exit /b 0',
-      ':status_rpc',
-      `if not exist "${runningMarker}" exit /b 1`,
-      'echo {"cli":{"version":"2026.8.1"},"rpc":{"ok":true}}',
-      'exit /b 0',
-      ':restart_help',
-      'echo --safe --force',
-      'exit /b 0',
-      ':start_help',
-      'echo --json',
-      'exit /b 0',
-      ':gateway_start',
-      `type nul >"${runningMarker}"`,
-      'exit /b 0',
-      ':stop_help',
-      'echo --force --json',
-      'exit /b 0',
-      ':gateway_stop',
-      `del /q "${runningMarker}" 2>nul`,
-      'exit /b 0',
-    ].join('\r\n'));
-    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify({
-      schemaVersion: 1,
-      intentId: 'intent-workspace-migrate-1',
-      generation: 1,
-      desiredState: 'running',
-      action: 'start',
-      requestedAt: '2026-09-02T00:00:00.000Z',
-    }));
-
-    await execFileAsync('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      path.resolve('assets', 'openclaw-supervisor.ps1'),
-      '-RunSupervisor',
-      '-RunOnce',
-      '-ReadyTimeoutSeconds',
-      '15',
-      '-StateDirectory',
-      stateDirectory,
-      '-CliPath',
-      cliPath,
-    ], {
-      timeout: 60_000,
-      windowsHide: true,
-      env: { ...process.env, OPENCLAW_STATE_DIR: openClawStateDirectory },
-    });
-
-    await expect(fs.stat(legacyWorkspaceState)).rejects.toMatchObject({ code: 'ENOENT' });
-    const calls = (await fs.readFile(path.join(stateDirectory, 'calls.log'), 'utf8')).split(/\r?\n/u);
-    const stopIndex = calls.indexOf('gateway stop --force --json');
-    const doctorIndex = calls.indexOf('doctor --fix --non-interactive --yes');
-    const startIndex = calls.indexOf('gateway start --json');
-    expect(calls).toContain('agents list --json');
-    expect(stopIndex).toBeGreaterThanOrEqual(0);
-    expect(doctorIndex).toBeGreaterThan(stopIndex);
-    expect(startIndex).toBeGreaterThan(doctorIndex);
-
-    const recoveryEntries = await fs.readdir(path.join(stateDirectory, 'recovery'), {
-      withFileTypes: true,
-    });
-    const completedBackup = recoveryEntries.find((entry) => entry.isDirectory());
-    expect(completedBackup).toBeDefined();
-    const manifest = JSON.parse(await fs.readFile(path.join(
-      stateDirectory,
-      'recovery',
-      completedBackup?.name ?? '',
-      'manifest.json',
-    ), 'utf8')) as { files: Array<{ source: string; destination: string }> };
-    const expectedBackupDestination = path.win32.join(
-      'workspace-state',
-      'agent-0',
-      'openclaw-workspace-state.json',
-    );
-    const backedUpWorkspaceState = manifest.files.find((entry) => (
-      path.win32.normalize(entry.destination).toLowerCase()
-        === expectedBackupDestination.toLowerCase()
-    ));
-    expect(
-      backedUpWorkspaceState,
-      `workspace backup missing from manifest: ${JSON.stringify(manifest.files)}`,
-    ).toBeDefined();
-    await expect(fs.readFile(path.join(
-      stateDirectory,
-      'recovery',
-      completedBackup?.name ?? '',
-      backedUpWorkspaceState?.destination ?? '',
-    ), 'utf8')).resolves.toBe(legacyWorkspaceStateContents);
-
-    const runtime = JSON.parse(
-      await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8'),
-    ) as OpenClawControlSnapshot;
-    expect(runtime).toMatchObject({
-      generation: 1,
-      desiredState: 'running',
-      status: { state: 'running', port: address.port, version: '2026.8.1' },
-      supervisorState: 'ready',
-      operation: null,
-      issue: null,
-    });
-  }, 60_000);
-
-  it('writes a truthful blocked snapshot for a critical missing CLI without mutating scheduled tasks', async () => {
-    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-supervisor-'));
-    temporaryDirectories.push(stateDirectory);
-    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify({
-      schemaVersion: 1,
-      intentId: 'intent-script-1',
-      generation: 7,
-      desiredState: 'running',
-      action: 'start',
-      requestedAt: '2026-09-01T00:00:00.000Z',
-    }));
-    await fs.writeFile(path.join(stateDirectory, 'runtime.json'), JSON.stringify({
-      schemaVersion: 1,
-      intentId: 'intent-script-old',
-      generation: 6,
-      status: { state: 'stopped', port: 18789 },
-      desiredState: 'stopped',
-      supervisorState: 'ready',
-      operation: null,
-      issue: null,
-      updatedAt: '2026-08-31T00:00:00.000Z',
-    }));
-    const scriptPath = path.resolve('assets', 'openclaw-supervisor.ps1');
-    const missingCliPath = path.join(stateDirectory, 'missing-openclaw.cmd');
-
-    await execFileAsync('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      scriptPath,
-      '-RunSupervisor',
-      '-RunOnce',
-      '-StateDirectory',
-      stateDirectory,
-      '-CliPath',
-      missingCliPath,
-    ], { timeout: 15_000, windowsHide: true });
-
-    const runtime = JSON.parse(
-      await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8'),
-    ) as OpenClawControlSnapshot;
-    expect(runtime).toMatchObject({
-      schemaVersion: 1,
-      intentId: 'intent-script-1',
-      generation: 7,
-      desiredState: 'running',
-      supervisorState: 'error',
-      operation: { phase: 'blocked', attempt: 0 },
-      issue: { code: 'cli-missing' },
-    });
+  it('keeps an HTTP-live gateway running when management RPC is unavailable', async () => {
+    const f = await fixture({ running: true, task: true, enabled: true });
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, operation: null, issue: null });
+    expect(await f.calls()).toEqual([]);
   });
+
+  it.each([false, true])('upgrades only the exact supervisor and waits for its exit (foreign=%s)', async (foreign) => {
+    const f = await fixture({ running: true });
+    const launcher = path.join(f.directory, `openclaw-supervisor.ps1${foreign ? '.other' : ''}`);
+    const command = `
+      $global:fixtureStopRequestedAt = $null
+      function Get-ScheduledTask {
+        [CmdletBinding()] param([string]$TaskName)
+        $stopped = $null -ne $global:fixtureStopRequestedAt -and ([DateTime]::UtcNow - $global:fixtureStopRequestedAt).TotalSeconds -ge 1
+        if ($stopped) { [IO.File]::WriteAllText(${quotePowerShellLiteral(f.marker('supervisor-exited'))}, '1') }
+        [pscustomobject]@{
+          Description='EZTerminal-owned OpenClaw desired-state supervisor v1';
+          State=$(if ($stopped) { 'Ready' } else { 'Running' });
+          Actions=@([pscustomobject]@{Execute='powershell.exe';Arguments=${quotePowerShellLiteral(`-File "${launcher}" -RunSupervisor`)}})
+        }
+      }
+      function Stop-ScheduledTask {
+        [CmdletBinding()] param([string]$TaskName)
+        $global:fixtureStopRequestedAt = [DateTime]::UtcNow
+        [IO.File]::WriteAllText(${quotePowerShellLiteral(f.marker('task-stopped'))}, $TaskName)
+      }
+      & ${quotePowerShellLiteral(path.resolve('assets/openclaw-supervisor.ps1'))} -PrepareUpgrade -StateDirectory ${quotePowerShellLiteral(f.directory)} -CliPath ${quotePowerShellLiteral(f.marker('openclaw.cmd'))}
+    `;
+    const result = execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      windowsHide: true, timeout: 15_000,
+    });
+    if (foreign) {
+      await expect(result).rejects.toMatchObject({ code: 1 });
+      expect(await f.exists('task-stopped')).toBe(false);
+    } else {
+      await expect(result).resolves.toMatchObject({ stdout: expect.stringContaining('"ok":true') });
+      expect(await f.exists('supervisor-exited')).toBe(true);
+      expect(await fs.readFile(f.marker('task-stopped'), 'utf8')).toBe('EZTerminal OpenClaw Supervisor');
+    }
+    expect(await f.calls()).toEqual([]);
+    expect(await f.exists('running')).toBe(true);
+  });
+
+  it('does not start twice when native registration already launched the gateway', async () => {
+    const f = await fixture({ installStarts: true });
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, operation: null, issue: null });
+    expect(await f.calls()).toEqual([`gateway install --json --port ${f.port}`, 'task enable']);
+  });
+
+  it('registers a missing task and starts without diagnostics or data migration', async () => {
+    const f = await fixture();
+    const legacy = '{"version":1,"agents":{}}';
+    await fs.writeFile(f.marker('exec-approvals.json'), legacy);
+    await fs.writeFile(f.marker('openclaw-workspace-state.json'), legacy);
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.calls()).toEqual([`gateway install --json --port ${f.port}`, 'task enable', 'gateway start --json']);
+    expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, operation: null, issue: null });
+    expect(await fs.readFile(f.marker('exec-approvals.json'), 'utf8')).toBe(legacy);
+    expect(await fs.readFile(f.marker('openclaw-workspace-state.json'), 'utf8')).toBe(legacy);
+    expect(await f.exists('recovery')).toBe(false);
+  });
+
+  it('enables a disabled task before starting and disables it before stopping', async () => {
+    const f = await fixture({ task: true });
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.calls()).toEqual(['task enable', 'gateway start --json']);
+    await f.saveIntent('stop', 2);
+    await f.run();
+    expect(await f.calls()).toEqual(['task enable', 'gateway start --json', 'task disable', 'gateway stop --force --json']);
+    expect(await f.runtime()).toMatchObject({ desiredState: 'stopped', status: { state: 'stopped' }, issue: null });
+    expect(await f.exists('enabled')).toBe(false);
+    await f.run(); // next login retains Stop, without starting the gateway
+    expect((await f.calls()).filter((call) => call === 'gateway start --json')).toHaveLength(1);
+    expect(await f.exists('running')).toBe(false);
+  });
+
+  it('restarts with stop/start once and restores only running intent after supervisor restart', async () => {
+    const f = await fixture({ task: true, enabled: true, running: true });
+    await f.saveIntent('restart');
+    await f.run();
+    expect(await f.calls()).toEqual(['gateway stop --force --json', 'gateway start --json']);
+    await f.run();
+    expect(await f.calls()).toEqual(['gateway stop --force --json', 'gateway start --json']);
+    await fs.unlink(f.marker('running')); // gateway disappeared while EZTerminal was closed
+    await f.run();
+    expect(await f.calls()).toEqual(['gateway stop --force --json', 'gateway start --json', 'gateway start --json']);
+    expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, issue: null });
+  });
+
+  it('discards a stale repairing operation at login and keeps a healthy process', async () => {
+    const f = await fixture({ task: true, enabled: true, running: true });
+    await f.saveIntent('start');
+    await fs.writeFile(f.marker('runtime.json'), JSON.stringify({
+      ...f.intent('start'), status: { state: 'stopped', port: f.port }, supervisorState: 'ready', issue: null,
+      operation: { ...f.intent('start'), phase: 'repairing', attempt: 3, maxAttempts: 3 },
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    }));
+    await f.run();
+    expect(await f.calls()).toEqual([]);
+    expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, operation: null, issue: null });
+  });
+
+  it('reports the real command failure after three launches without Doctor or reinstall', async () => {
+    const f = await fixture({ task: true, enabled: true, failStart: true });
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.calls()).toEqual(Array(3).fill('gateway start --json'));
+    const runtime = await f.runtime();
+    expect(runtime).toMatchObject({ status: { state: 'stopped' }, operation: { phase: 'blocked', attempt: 3 } });
+    expect(runtime.issue?.detail).toContain('fixture launch failed');
+    const diagnostic = JSON.parse(await fs.readFile(f.marker('diagnostics/last-command.json'), 'utf8'));
+    expect(diagnostic).toMatchObject({ exitCode: 23, timedOut: false });
+  }, 60_000);
+
+  it('leaves an unrelated port owner alone and reports the conflict', async () => {
+    const f = await fixture({ task: true, enabled: true, foreign: true });
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.calls()).toEqual([]);
+    expect(await f.runtime()).toMatchObject({ status: { state: 'unknown' }, issue: { code: 'port-conflict' } });
+  });
+
+  it('persists Stop in the native startup task even when an unrelated process owns the port', async () => {
+    const f = await fixture({ task: true, enabled: true, foreign: true });
+    await f.saveIntent('stop');
+    await f.run();
+    expect(await f.calls()).toEqual(['task disable']);
+    expect(await f.exists('enabled')).toBe(false);
+    expect(await f.runtime()).toMatchObject({ desiredState: 'stopped', issue: { code: 'port-conflict' } });
+  });
+
+  it('publishes separate heartbeat and observation times for reboot-safe state', async () => {
+    const f = await fixture({ task: true, enabled: true, running: true });
+    await f.saveIntent('start');
+    await f.run();
+    const first = await f.runtime();
+    expect(first.statusObservedAt).toBeTruthy();
+    expect(first.supervisorHeartbeatAt).toBeTruthy();
+    expect(first.supervisorInstanceId).toBeTruthy();
+    await f.run();
+    expect((await f.runtime()).supervisorInstanceId).not.toBe(first.supervisorInstanceId);
+  });
+
+  it('reports a missing CLI without issuing any lifecycle or repair commands', async () => {
+    const f = await fixture({ task: true, enabled: true });
+    await f.saveIntent('start');
+    await fs.unlink(f.marker('openclaw.cmd'));
+    await f.run();
+    expect(await f.calls()).toEqual([]);
+    expect(await f.runtime()).toMatchObject({ operation: { phase: 'blocked', attempt: 0 }, issue: { code: 'cli-missing' } });
+  });
+
+  it('automatically restarts an exited gateway and respects a later Stop in the same watcher', async () => {
+    const f = await fixture({ task: true, enabled: true });
+    await f.saveIntent('start');
+    f.watch();
+    await expect.poll(f.runtime, { timeout: 15_000 }).toMatchObject({ status: { state: 'running' }, operation: null });
+    await fs.unlink(f.marker('running'));
+    await expect.poll(f.calls, { timeout: 15_000 }).toEqual(['gateway start --json', 'gateway start --json']);
+    await expect.poll(f.runtime, { timeout: 15_000 }).toMatchObject({ status: { state: 'running' }, operation: null });
+    await f.saveIntent('stop', 2);
+    await expect.poll(f.runtime, { timeout: 15_000 }).toMatchObject({ generation: 2, status: { state: 'stopped' }, operation: null });
+    expect(await f.exists('enabled')).toBe(false);
+  }, 45_000);
+
+  it('accepts Stop while a slow gateway is still starting without waiting for its readiness timeout', async () => {
+    const f = await fixture({ task: true, enabled: true, slowStart: true });
+    await f.saveIntent('start');
+    f.watch();
+    await expect.poll(() => f.exists('starting'), { timeout: 15_000 }).toBe(true);
+    await f.saveIntent('stop', 2);
+    await expect.poll(f.runtime, { timeout: 10_000 }).toMatchObject({ generation: 2, status: { state: 'stopped' }, operation: null });
+    expect(await f.calls()).toEqual(['gateway start --json', 'task disable', 'gateway stop --force --json']);
+  }, 30_000);
 });

@@ -9,11 +9,12 @@ export function findMainGridPanel(
     preferred
     && api.getPanel(preferred.id) === preferred
     && preferred.api.location.type === 'grid'
+    && preferred.api.group?.api?.isVisible !== false
   ) {
     return preferred;
   }
-  if (api.activePanel?.api.location.type === 'grid') return api.activePanel;
-  return api.panels.find((panel) => panel.api.location.type === 'grid');
+  if (api.activePanel?.api.location.type === 'grid' && api.activePanel.api.group?.api?.isVisible !== false) return api.activePanel;
+  return api.panels.find((panel) => panel.api.location.type === 'grid' && panel.api.group?.api?.isVisible !== false);
 }
 
 /**

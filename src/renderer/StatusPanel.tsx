@@ -12,6 +12,8 @@ import {
   mergeSnapshot,
 } from './status-shared';
 import { useAppTranslation } from './i18n';
+import { Button } from './ui';
+import './status-panel.css';
 
 /** One-time local acknowledgement that packet metadata will be shown — never the packet data itself. */
 const PACKET_ACK_KEY = 'ezterminal.packetAckSeen';
@@ -392,28 +394,24 @@ export function StatusPanel({
         ) : (
           <div className="status-loading">{emptyMetricsLabel}</div>
         )}
-        <button
-          type="button"
-          className="btn status-packet-toggle"
+        <Button
+          size="sm"
+          variant="ghost"
+          className="status-packet-toggle"
           data-testid="status-packet-toggle"
           aria-pressed={packetOpen}
           onClick={handlePacketToggle}
         >
           {packetOpen ? t('monitor.hidePackets') : t('monitor.showPackets')}
-        </button>
+        </Button>
         {packetOpen && (
           <div className="status-packet-view" data-testid="status-packet-view">
             {packetAckPending ? (
               <div className="status-packet-ack">
                 <p>{t('monitor.packetPrivacy')}</p>
-                <button
-                  type="button"
-                  className="btn"
-                  data-testid="status-packet-ack-confirm"
-                  onClick={handlePacketAckConfirm}
-                >
+                <Button size="sm" data-testid="status-packet-ack-confirm" onClick={handlePacketAckConfirm}>
                   {t('common.confirm')}
-                </button>
+                </Button>
               </div>
             ) : (
               <>

@@ -1,0 +1,24 @@
+.mobile-v2__body { display: flex; flex-direction: column; gap: var(--ui-space-4); padding: var(--ui-space-4); }
+.mobile-v2__project-select { display: flex; flex-direction: column; gap: var(--ui-space-2); }
+.mobile-v2__project-select select { min-height: 48px; min-width: 0; width: 100%; color: var(--ui-text-primary); background: var(--ui-surface); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); }
+.mobile-v2__actions { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); }
+.mobile-v2__actions button, .mobile-v2 .mob-icon-btn, .mobile-v2 .mob-daemon-nav__row { min-height: 48px; min-width: 48px; }
+.mobile-v2 .mobile-page-header button, .mobile-v2 .mob-daemon-nav__head button, .mobile-v2-draft-status button, .mob-structured-agent__navigation button { min-height: 48px; min-width: 48px; }
+.mobile-v2 .planning-workspace[data-mobile] button, .mobile-v2 .planning-workspace[data-mobile] input, .mobile-v2 .planning-workspace[data-mobile] select { min-height: 48px; }
+.mobile-v2__actions svg { width: 18px; height: 18px; }
+.mobile-v2__project p, .mobile-v2__body li { overflow-wrap: anywhere; }
+.mobile-v2__summary { display: grid; grid-template-columns: 1fr auto; gap: var(--ui-space-2); }
+.mobile-v2__notice { color: var(--ui-text-secondary); border-left: 2px solid var(--ui-warning); padding-left: var(--ui-space-3); }
+.mobile-v2-draft-status { margin: 0; padding: var(--ui-space-2) var(--ui-space-3); font-size: var(--ui-font-size-sm); color: var(--ui-text-secondary); }
+.mobile-v2-draft-status[data-state='unavailable'] { color: var(--ui-warning); }
+.mobile-app-frame.mobile-app-frame--offline { display: flex; flex-direction: column; }
+.mobile-app-frame--offline .mobile-workspace-shell { flex: 1; height: auto; opacity: 1; }
+.mobile-offline-notice { order: -1; flex: none; max-height: 35vh; overflow: auto; padding: var(--ui-space-2) var(--ui-space-3); background: var(--ui-surface-raised); border-bottom: 1px solid var(--ui-border-strong); }
+.mobile-offline-notice summary { min-height: 48px; display: flex; align-items: center; gap: var(--ui-space-2); cursor: pointer; }
+.mobile-offline-notice .mobile-reconnect-card { width: auto; max-width: 100%; box-shadow: none; border: 0; padding: var(--ui-space-2) 0; }
+.mobile-offline-notice button { min-height: 48px; }
+.mobile-workflow-persistent { height: 100%; min-height: 0; }
+.mobile-workflow-persistent[hidden] { display: none; }
+.mobile-conversation-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.mobile-conversation-page > .conversation-start { flex: 1; min-height: 0; height: auto; }
+.mobile-conversation-page > .mobile-back-button { flex: none; padding: var(--ui-space-3); background: var(--ui-surface); color: var(--ui-text-primary); border: 0; text-align: start; }

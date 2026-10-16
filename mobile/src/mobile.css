@@ -702,6 +702,10 @@ body,
  * Android's system Back dismiss it before the underlying workspace. */
 .mobile-action-sheet-backdrop {
   position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   inset: 0;
   z-index: var(--ui-z-dialog);
   display: flex;
@@ -716,9 +720,13 @@ body,
 }
 
 .mobile-action-sheet {
+  width: 100%;
+  max-width: 720px;
   width: min(100%, 720px);
+  max-height: 82vh;
   max-height: min(82vh, 720px);
   overflow-y: auto;
+  padding: var(--ui-space-4) var(--ui-space-3);
   padding: var(--ui-space-4) max(var(--ui-space-3), env(safe-area-inset-right))
     max(var(--ui-space-4), env(safe-area-inset-bottom))
     max(var(--ui-space-3), env(safe-area-inset-left));
@@ -738,6 +746,13 @@ body,
   padding: 0;
   border: 0;
   border-radius: 0;
+}
+
+@supports not (padding: max(1px, 2px)) {
+  .mobile-action-sheet {
+    padding: var(--ui-space-4) var(--ui-space-3);
+  }
+  .mobile-action-sheet--fullscreen { padding: 0; }
 }
 
 .mobile-action-sheet-title {
@@ -1380,8 +1395,11 @@ body,
   min-height: 42px;
   gap: 8px;
   padding: 7px 10px;
+  /* WebView 74 drops the color-mix() line below and keeps this one. */
+  border: 1px solid var(--ui-border-focus-soft);
   border: 1px solid color-mix(in srgb, var(--ui-accent) 28%, var(--ui-border-subtle));
   border-radius: 8px;
+  background: var(--ui-surface-inset);
   background: color-mix(in srgb, var(--ui-accent) 6%, var(--ui-surface-inset));
   color: var(--ui-text-secondary);
   font: inherit;
@@ -1583,8 +1601,11 @@ body,
 }
 
 .mobile-collaboration-policy__warning {
+  /* WebView 74 drops the color-mix() line below and keeps this one. */
+  border: 1px solid var(--ui-warning-border);
   border: 1px solid color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-subtle));
   color: var(--ui-warning);
+  background: rgba(var(--ui-warning-rgb), 0.07);
   background: color-mix(in srgb, var(--ui-warning) 7%, transparent);
 }
 
@@ -1754,4 +1775,13 @@ body,
   gap: 8px;
   padding: 10px 0 max(4px, env(safe-area-inset-bottom));
   background: var(--ui-surface);
+}
+
+.mobile-openclaw-view .openclaw-control-details summary {
+  cursor: pointer;
+}
+.mobile-openclaw-view .openclaw-control-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }

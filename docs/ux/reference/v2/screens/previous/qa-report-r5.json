@@ -1,0 +1,2148 @@
+{
+  "packageVersion": "0.1-review",
+  "createdAt": "2026-10-13T02:07:39.406Z",
+  "scope": "Standalone planning reference only; no product e2e or performance benchmark",
+  "screens": [
+    {
+      "id": "D01",
+      "detail": "screens/detail/D01.png",
+      "wireframe": "screens/wireframe/D01.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D02",
+      "detail": "screens/detail/D02.png",
+      "wireframe": "screens/wireframe/D02.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D03",
+      "detail": "screens/detail/D03.png",
+      "wireframe": "screens/wireframe/D03.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D04",
+      "detail": "screens/detail/D04.png",
+      "wireframe": "screens/wireframe/D04.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D05",
+      "detail": "screens/detail/D05.png",
+      "wireframe": "screens/wireframe/D05.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D06",
+      "detail": "screens/detail/D06.png",
+      "wireframe": "screens/wireframe/D06.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D07",
+      "detail": "screens/detail/D07.png",
+      "wireframe": "screens/wireframe/D07.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D08",
+      "detail": "screens/detail/D08.png",
+      "wireframe": "screens/wireframe/D08.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D09",
+      "detail": "screens/detail/D09.png",
+      "wireframe": "screens/wireframe/D09.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D10",
+      "detail": "screens/detail/D10.png",
+      "wireframe": "screens/wireframe/D10.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D11",
+      "detail": "screens/detail/D11.png",
+      "wireframe": "screens/wireframe/D11.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D12",
+      "detail": "screens/detail/D12.png",
+      "wireframe": "screens/wireframe/D12.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D13",
+      "detail": "screens/detail/D13.png",
+      "wireframe": "screens/wireframe/D13.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D15",
+      "detail": "screens/detail/D15.png",
+      "wireframe": "screens/wireframe/D15.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D16",
+      "detail": "screens/detail/D16.png",
+      "wireframe": "screens/wireframe/D16.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D17",
+      "detail": "screens/detail/D17.png",
+      "wireframe": "screens/wireframe/D17.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D18",
+      "detail": "screens/detail/D18.png",
+      "wireframe": "screens/wireframe/D18.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D19",
+      "detail": "screens/detail/D19.png",
+      "wireframe": "screens/wireframe/D19.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D20",
+      "detail": "screens/detail/D20.png",
+      "wireframe": "screens/wireframe/D20.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D21",
+      "detail": "screens/detail/D21.png",
+      "wireframe": "screens/wireframe/D21.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D22",
+      "detail": "screens/detail/D22.png",
+      "wireframe": "screens/wireframe/D22.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D23",
+      "detail": "screens/detail/D23.png",
+      "wireframe": "screens/wireframe/D23.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D24",
+      "detail": "screens/detail/D24.png",
+      "wireframe": "screens/wireframe/D24.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D25",
+      "detail": "screens/detail/D25.png",
+      "wireframe": "screens/wireframe/D25.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D26",
+      "detail": "screens/detail/D26.png",
+      "wireframe": "screens/wireframe/D26.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D27",
+      "detail": "screens/detail/D27.png",
+      "wireframe": "screens/wireframe/D27.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D28",
+      "detail": "screens/detail/D28.png",
+      "wireframe": "screens/wireframe/D28.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D29",
+      "detail": "screens/detail/D29.png",
+      "wireframe": "screens/wireframe/D29.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D30",
+      "detail": "screens/detail/D30.png",
+      "wireframe": "screens/wireframe/D30.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D31",
+      "detail": "screens/detail/D31.png",
+      "wireframe": "screens/wireframe/D31.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D32",
+      "detail": "screens/detail/D32.png",
+      "wireframe": "screens/wireframe/D32.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D33",
+      "detail": "screens/detail/D33.png",
+      "wireframe": "screens/wireframe/D33.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D34",
+      "detail": "screens/detail/D34.png",
+      "wireframe": "screens/wireframe/D34.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D35",
+      "detail": "screens/detail/D35.png",
+      "wireframe": "screens/wireframe/D35.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D36",
+      "detail": "screens/detail/D36.png",
+      "wireframe": "screens/wireframe/D36.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D37",
+      "detail": "screens/detail/D37.png",
+      "wireframe": "screens/wireframe/D37.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D38",
+      "detail": "screens/detail/D38.png",
+      "wireframe": "screens/wireframe/D38.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D39",
+      "detail": "screens/detail/D39.png",
+      "wireframe": "screens/wireframe/D39.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D40",
+      "detail": "screens/detail/D40.png",
+      "wireframe": "screens/wireframe/D40.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D41",
+      "detail": "screens/detail/D41.png",
+      "wireframe": "screens/wireframe/D41.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D42",
+      "detail": "screens/detail/D42.png",
+      "wireframe": "screens/wireframe/D42.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D43",
+      "detail": "screens/detail/D43.png",
+      "wireframe": "screens/wireframe/D43.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "D44",
+      "detail": "screens/detail/D44.png",
+      "wireframe": "screens/wireframe/D44.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M01",
+      "detail": "screens/detail/M01.png",
+      "wireframe": "screens/wireframe/M01.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M02",
+      "detail": "screens/detail/M02.png",
+      "wireframe": "screens/wireframe/M02.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M03",
+      "detail": "screens/detail/M03.png",
+      "wireframe": "screens/wireframe/M03.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M04",
+      "detail": "screens/detail/M04.png",
+      "wireframe": "screens/wireframe/M04.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M05",
+      "detail": "screens/detail/M05.png",
+      "wireframe": "screens/wireframe/M05.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M06",
+      "detail": "screens/detail/M06.png",
+      "wireframe": "screens/wireframe/M06.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M07",
+      "detail": "screens/detail/M07.png",
+      "wireframe": "screens/wireframe/M07.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M08",
+      "detail": "screens/detail/M08.png",
+      "wireframe": "screens/wireframe/M08.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M09",
+      "detail": "screens/detail/M09.png",
+      "wireframe": "screens/wireframe/M09.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M10",
+      "detail": "screens/detail/M10.png",
+      "wireframe": "screens/wireframe/M10.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M11",
+      "detail": "screens/detail/M11.png",
+      "wireframe": "screens/wireframe/M11.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M12",
+      "detail": "screens/detail/M12.png",
+      "wireframe": "screens/wireframe/M12.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M13",
+      "detail": "screens/detail/M13.png",
+      "wireframe": "screens/wireframe/M13.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M14",
+      "detail": "screens/detail/M14.png",
+      "wireframe": "screens/wireframe/M14.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M15",
+      "detail": "screens/detail/M15.png",
+      "wireframe": "screens/wireframe/M15.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "id": "M16",
+      "detail": "screens/detail/M16.png",
+      "wireframe": "screens/wireframe/M16.png",
+      "heading": true,
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    }
+  ],
+  "states": [
+    {
+      "screen": "D01",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D01",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D02",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D02",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "D03",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D03",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D04",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D04",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D05",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D05",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D05",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "D06",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D06",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D07",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D07",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D08",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D08",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D09",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D09",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D10",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D10",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "D11",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D12",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D13",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "D13",
+      "state": "success",
+      "passed": true
+    },
+    {
+      "screen": "D15",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "D15",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D16",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D16",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "D16",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "D16",
+      "state": "replan",
+      "passed": true
+    },
+    {
+      "screen": "D17",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D17",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D17",
+      "state": "exhausted",
+      "passed": true
+    },
+    {
+      "screen": "D17",
+      "state": "provider",
+      "passed": true
+    },
+    {
+      "screen": "D18",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D18",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D18",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "D18",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "D19",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D19",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D19",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D20",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D20",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D21",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "D21",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D22",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D22",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D23",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D23",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D24",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D24",
+      "state": "success",
+      "passed": true
+    },
+    {
+      "screen": "D24",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "D25",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D26",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D26",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D27",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D28",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D29",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D29",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D30",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D30",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D31",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D31",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "D32",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D32",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D33",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "D33",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "D34",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D35",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D35",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "D36",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D36",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D36",
+      "state": "proposal",
+      "passed": true
+    },
+    {
+      "screen": "D37",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D37",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D38",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D39",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D41",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "D42",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "D43",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "D44",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "D44",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "M01",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "M02",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "M02",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "M03",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "M04",
+      "state": "working",
+      "passed": true
+    },
+    {
+      "screen": "M04",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "M04",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "M05",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "M05",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "M06",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "M07",
+      "state": "blocked",
+      "passed": true
+    },
+    {
+      "screen": "M07",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "M08",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "M08",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "M09",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "M10",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "M10",
+      "state": "conflict",
+      "passed": true
+    },
+    {
+      "screen": "M11",
+      "state": "offline",
+      "passed": true
+    },
+    {
+      "screen": "M11",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "M12",
+      "state": "stale",
+      "passed": true
+    },
+    {
+      "screen": "M13",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "M14",
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "screen": "M14",
+      "state": "error",
+      "passed": true
+    },
+    {
+      "screen": "M16",
+      "state": "offline",
+      "passed": true
+    }
+  ],
+  "responsive": [
+    {
+      "screen": "D15",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D17",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D19",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D24",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D36",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "M08",
+      "size": [
+        360,
+        640
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "M15",
+      "size": [
+        360,
+        640
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D05",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D10",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D11",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D16",
+      "size": [
+        1024,
+        720
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D20",
+      "size": [
+        1200,
+        800
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D18",
+      "size": [
+        1920,
+        1080
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D18",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D18",
+      "size": [
+        1024,
+        720
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D18",
+      "size": [
+        1200,
+        800
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D20",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D21",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "M04",
+      "size": [
+        360,
+        640
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "M06",
+      "size": [
+        360,
+        640
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "M07",
+      "size": [
+        412,
+        915
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "M15",
+      "size": [
+        800,
+        1280
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "delivery",
+      "size": [
+        1440,
+        1000
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "delivery",
+      "size": [
+        390,
+        844
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "quick-ready",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "replan-impact",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "retry-exhausted",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "profile-proposal",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "provider-choice",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "backup",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "offline-draft",
+      "size": {
+        "width": 360,
+        "height": 640
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "component-updated",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "policies",
+      "size": {
+        "width": 1440,
+        "height": 1000
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "policies",
+      "size": {
+        "width": 390,
+        "height": 844
+      },
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "flows/U01",
+      "size": [
+        390,
+        844
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "flows/U01",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "flows/U04",
+      "size": [
+        390,
+        844
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "flows/U04",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "ai/coordinator",
+      "size": [
+        1440,
+        1000
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "ai/coordinator",
+      "size": [
+        390,
+        844
+      ],
+      "overflow": {
+        "document": false,
+        "regions": []
+      }
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "size": [
+        800,
+        600
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "size": [
+        1024,
+        720
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "size": [
+        1440,
+        900
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "M04",
+      "skin": "terminal",
+      "size": [
+        360,
+        640
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "M04",
+      "skin": "terminal",
+      "size": [
+        390,
+        844
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "M04",
+      "skin": "terminal",
+      "size": [
+        412,
+        915
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "D05",
+      "skin": "terminal",
+      "size": [
+        1440,
+        900
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    },
+    {
+      "screen": "D16",
+      "skin": "terminal",
+      "size": [
+        1440,
+        900
+      ],
+      "overflow": {
+        "document": false,
+        "output": false
+      },
+      "promptVisible": true
+    }
+  ],
+  "interactions": [
+    "Role model capability blocks start; team mode and progression policy are independent; recovery restores simulated start.",
+    "Task retry keeps distinct attempt identity and evidence expiration exposes revalidation.",
+    "Failed candidate stays inspectable; adoption records selection without integration.",
+    "Release and recovery views expose missing evidence and preserve the previous successful integration.",
+    "All eight role prompts are visible in settings and Android exposes supported next-run model choices.",
+    "Seven delivery stages link inputs, role prompts, outputs, gates, recovery and matching desktop/mobile screens.",
+    "Quick-task card starts only after explicit action and preserves the reviewed scope.",
+    "Replan review distinguishes affected/dependent work from unrelated ongoing work and preserves old attempts.",
+    "Validation repair exhaustion shows initial attempt plus two additional attempts and a user decision gate.",
+    "Profiles support direct edits, AI proposal/reject/apply and versioned rollback while active attempts stay frozen.",
+    "Execution readiness validates only participating roles; inactive Android configuration does not block single AI.",
+    "Android reconnect preserves the unsent draft and requires a separate send action. Persistent device storage remains a product acceptance criterion.",
+    "Provider replacement is explicit with handoff; shared-component illustrations preserve overrides and frozen baselines.",
+    "All eight policy storyboards load eighteen detailed and wireframe scenes; policy confirmation remains separate from design approval.",
+    "Conversation, features, canvas, review and editor use one contextual navigation column.",
+    "Session switching restores separate drafts; artifact and skin changes preserve the selected conversation.",
+    "Narrow list drawer supports search, Escape and focus return; artifact return preserves input.",
+    "Narrow desktop panes switch with buttons and preserve the conversation draft.",
+    "Execution context and comparison preview bounds match their screen.",
+    "Desktop skin switch preserves draft and example send.",
+    "Selected scene change and undo.",
+    "Android selected scene property shows the entered text.",
+    "Design freeze stays in design; explicit simulated start opens task board.",
+    "Android Enter inserts a newline.",
+    "Review JSON round trip preserves notes and ignores imported implementation authorization.",
+    "Review note and status persist; JSON export never authorizes implementation; fresh profile remains pending.",
+    "Navigation revision preserves prior comments, resets changed Desktop reviews, and retains Android review status.",
+    "Revision 4 resets only revised screens and preserves unchanged revision 2 reviews.",
+    "All eight flow storyboards display 48 visit-specific steps and eight recovery scenes in detailed and wireframe views; images decode and detail links preserve context.",
+    "Repeated screen visits retain their own purpose; step deep links survive reload and Back; expanded previews support keyboard navigation, boundaries, Escape and focus return.",
+    "Flow display-mode switch retains focus; step links retain display mode; recovery links lead to the specified return step.",
+    "Eight role profiles expose their own prompt; profile browsing does not mutate settings or review; flow role links distinguish optional AI from manual terminal work.",
+    "D18: same transcript and draft across both skins; left-aligned output and inline prompt.",
+    "M04: same transcript and draft across both skins; left-aligned output and inline prompt.",
+    "Terminal skin retains artifact opening and IME guard; Android Enter keeps draft, explicit send submits only the example."
+  ],
+  "accessibility": [
+    {
+      "screen": "mobile-role-dialog",
+      "violations": []
+    },
+    {
+      "screen": "delivery-portal",
+      "violations": []
+    },
+    {
+      "screen": "quick-ready",
+      "violations": []
+    },
+    {
+      "screen": "replan-impact",
+      "violations": []
+    },
+    {
+      "screen": "retry-exhausted",
+      "violations": []
+    },
+    {
+      "screen": "profile-proposal",
+      "violations": []
+    },
+    {
+      "screen": "provider-choice",
+      "violations": []
+    },
+    {
+      "screen": "backup",
+      "violations": []
+    },
+    {
+      "screen": "offline-draft",
+      "violations": []
+    },
+    {
+      "screen": "component-updated",
+      "violations": []
+    },
+    {
+      "screen": "policy-portal-1440",
+      "violations": []
+    },
+    {
+      "screen": "policy-portal-390",
+      "violations": []
+    },
+    {
+      "screen": "flow-storyboard",
+      "violations": []
+    },
+    {
+      "screen": "flow-preview",
+      "violations": []
+    },
+    {
+      "screen": "flow-android",
+      "violations": []
+    },
+    {
+      "screen": "ai-operating",
+      "violations": []
+    },
+    {
+      "screen": "D05",
+      "violations": []
+    },
+    {
+      "screen": "D10",
+      "violations": []
+    },
+    {
+      "screen": "D15",
+      "violations": []
+    },
+    {
+      "screen": "D17",
+      "violations": []
+    },
+    {
+      "screen": "D18",
+      "violations": []
+    },
+    {
+      "screen": "D19",
+      "violations": []
+    },
+    {
+      "screen": "D20",
+      "violations": []
+    },
+    {
+      "screen": "D24",
+      "violations": []
+    },
+    {
+      "screen": "D36",
+      "violations": []
+    },
+    {
+      "screen": "D38",
+      "violations": []
+    },
+    {
+      "screen": "M04",
+      "violations": []
+    },
+    {
+      "screen": "M06",
+      "violations": []
+    },
+    {
+      "screen": "M07",
+      "violations": []
+    },
+    {
+      "screen": "M08",
+      "violations": []
+    },
+    {
+      "screen": "M15",
+      "violations": []
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "theme": "dark",
+      "violations": []
+    },
+    {
+      "screen": "M04",
+      "skin": "terminal",
+      "theme": "dark",
+      "violations": []
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "theme": "matrix",
+      "violations": []
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "theme": "light",
+      "violations": []
+    },
+    {
+      "screen": "D18",
+      "skin": "terminal",
+      "theme": "contrast",
+      "violations": []
+    }
+  ],
+  "issues": [],
+  "userReview": "pending",
+  "implementationApproved": false,
+  "policyScenes": [
+    {
+      "flow": "PF01",
+      "screen": "D18",
+      "variant": "quick-ready",
+      "image": "screens/policies/quick-ready.png",
+      "wireframe": "screens/policies/quick-ready-wireframe.png"
+    },
+    {
+      "flow": "PF01",
+      "screen": "D18",
+      "variant": "quick-running",
+      "image": "screens/policies/quick-running.png",
+      "wireframe": "screens/policies/quick-running-wireframe.png"
+    },
+    {
+      "flow": "PF02",
+      "screen": "D16",
+      "variant": "replan-impact",
+      "image": "screens/policies/replan-impact.png",
+      "wireframe": "screens/policies/replan-impact-wireframe.png"
+    },
+    {
+      "flow": "PF02",
+      "screen": "D16",
+      "variant": "replan-approved",
+      "image": "screens/policies/replan-approved.png",
+      "wireframe": "screens/policies/replan-approved-wireframe.png"
+    },
+    {
+      "flow": "PF03",
+      "screen": "D17",
+      "variant": "retry-active",
+      "image": "screens/policies/retry-active.png",
+      "wireframe": "screens/policies/retry-active-wireframe.png"
+    },
+    {
+      "flow": "PF03",
+      "screen": "D17",
+      "variant": "retry-exhausted",
+      "image": "screens/policies/retry-exhausted.png",
+      "wireframe": "screens/policies/retry-exhausted-wireframe.png"
+    },
+    {
+      "flow": "PF04",
+      "screen": "D36",
+      "variant": "profile-edit",
+      "image": "screens/policies/profile-edit.png",
+      "wireframe": "screens/policies/profile-edit-wireframe.png"
+    },
+    {
+      "flow": "PF04",
+      "screen": "D36",
+      "variant": "profile-proposal",
+      "image": "screens/policies/profile-proposal.png",
+      "wireframe": "screens/policies/profile-proposal-wireframe.png"
+    },
+    {
+      "flow": "PF04",
+      "screen": "D36",
+      "variant": "profile-applied",
+      "image": "screens/policies/profile-applied.png",
+      "wireframe": "screens/policies/profile-applied-wireframe.png"
+    },
+    {
+      "flow": "PF05",
+      "screen": "D17",
+      "variant": "provider-wait",
+      "image": "screens/policies/provider-wait.png",
+      "wireframe": "screens/policies/provider-wait-wireframe.png"
+    },
+    {
+      "flow": "PF05",
+      "screen": "D17",
+      "variant": "provider-choice",
+      "image": "screens/policies/provider-choice.png",
+      "wireframe": "screens/policies/provider-choice-wireframe.png"
+    },
+    {
+      "flow": "PF06",
+      "screen": "D25",
+      "variant": "backup",
+      "image": "screens/policies/backup.png",
+      "wireframe": "screens/policies/backup-wireframe.png"
+    },
+    {
+      "flow": "PF06",
+      "screen": "D44",
+      "variant": "restore",
+      "image": "screens/policies/restore.png",
+      "wireframe": "screens/policies/restore-wireframe.png"
+    },
+    {
+      "flow": "PF06",
+      "screen": "D38",
+      "variant": "retention",
+      "image": "screens/policies/retention.png",
+      "wireframe": "screens/policies/retention-wireframe.png"
+    },
+    {
+      "flow": "PF07",
+      "screen": "M04",
+      "variant": "offline-draft",
+      "image": "screens/policies/offline-draft.png",
+      "wireframe": "screens/policies/offline-draft-wireframe.png"
+    },
+    {
+      "flow": "PF07",
+      "screen": "M04",
+      "variant": "reconnected-draft",
+      "image": "screens/policies/reconnected-draft.png",
+      "wireframe": "screens/policies/reconnected-draft-wireframe.png"
+    },
+    {
+      "flow": "PF08",
+      "screen": "D10",
+      "variant": "component",
+      "image": "screens/policies/component.png",
+      "wireframe": "screens/policies/component-wireframe.png"
+    },
+    {
+      "flow": "PF08",
+      "screen": "D10",
+      "variant": "component-updated",
+      "image": "screens/policies/component-updated.png",
+      "wireframe": "screens/policies/component-updated-wireframe.png"
+    }
+  ],
+  "policyConfirmation": {
+    "policies": 11,
+    "confirmedAt": "2026-10-13",
+    "designApproved": false,
+    "implementationApproved": false
+  },
+  "galleryImages": 59,
+  "flowStoryboards": [
+    {
+      "journey": "U01",
+      "view": "detail",
+      "steps": 10,
+      "recovery": "D13",
+      "imagesDecoded": 11
+    },
+    {
+      "journey": "U01",
+      "view": "wireframe",
+      "steps": 10,
+      "recovery": "D13",
+      "imagesDecoded": 11
+    },
+    {
+      "journey": "U02",
+      "view": "detail",
+      "steps": 8,
+      "recovery": "D17",
+      "imagesDecoded": 9
+    },
+    {
+      "journey": "U02",
+      "view": "wireframe",
+      "steps": 8,
+      "recovery": "D17",
+      "imagesDecoded": 9
+    },
+    {
+      "journey": "U03",
+      "view": "detail",
+      "steps": 5,
+      "recovery": "D21",
+      "imagesDecoded": 6
+    },
+    {
+      "journey": "U03",
+      "view": "wireframe",
+      "steps": 5,
+      "recovery": "D21",
+      "imagesDecoded": 6
+    },
+    {
+      "journey": "U04",
+      "view": "detail",
+      "steps": 6,
+      "recovery": "M16",
+      "imagesDecoded": 7
+    },
+    {
+      "journey": "U04",
+      "view": "wireframe",
+      "steps": 6,
+      "recovery": "M16",
+      "imagesDecoded": 7
+    },
+    {
+      "journey": "U05",
+      "view": "detail",
+      "steps": 5,
+      "recovery": "D23",
+      "imagesDecoded": 6
+    },
+    {
+      "journey": "U05",
+      "view": "wireframe",
+      "steps": 5,
+      "recovery": "D23",
+      "imagesDecoded": 6
+    },
+    {
+      "journey": "U06",
+      "view": "detail",
+      "steps": 4,
+      "recovery": "D33",
+      "imagesDecoded": 5
+    },
+    {
+      "journey": "U06",
+      "view": "wireframe",
+      "steps": 4,
+      "recovery": "D33",
+      "imagesDecoded": 5
+    },
+    {
+      "journey": "U07",
+      "view": "detail",
+      "steps": 3,
+      "recovery": "M11",
+      "imagesDecoded": 4
+    },
+    {
+      "journey": "U07",
+      "view": "wireframe",
+      "steps": 3,
+      "recovery": "M11",
+      "imagesDecoded": 4
+    },
+    {
+      "journey": "U08",
+      "view": "detail",
+      "steps": 7,
+      "recovery": "D13",
+      "imagesDecoded": 8
+    },
+    {
+      "journey": "U08",
+      "view": "wireframe",
+      "steps": 7,
+      "recovery": "D13",
+      "imagesDecoded": 8
+    }
+  ],
+  "externalRequests": [],
+  "browserErrors": [],
+  "sourceHashes": {
+    "build.mjs": "97b721cb348bc8b62d6fbfe80048f1b81a4890c998c8a1ff4f3c81eaea270caf",
+    "policy-planning.mjs": "1480300246cf78cfe1254032bc4f155905a247273d6348af720ba8ce958107c8",
+    "policy-ui.js": "518a1464e547be3eac2b62dd33deda06daa953e5593c726dea3a4c36cda662d7",
+    "profile-ui.js": "0a3e789738501749499b59922a5677e8380b1739699185089495fe512762486e",
+    "build-policies.mjs": "e10bd726b91f5cfb2f552979c26bf1d4fc8bf0e53cea8b74b786adf88f36aba0",
+    "verify-policies.mjs": "fbaba8ae91b09e80cacaeb9bc62c16cbfd6a0211bde8ed58c9ff5b24df1edfb5",
+    "terminal-skin.js": "f8c0ef9deb00fb052a8f4b72fd767c7e7b4f15d4d9e8e8492a00cbb87856f74a",
+    "verify-terminal-skin.mjs": "c02b21d9ddb44cd79e41b3ba0ee1f60f9c511c50c85bf4c602eaf657f0d4e9ec",
+    "content.mjs": "9d21b2a8ce63951efe72f56b3ce0dd13002ba3f84f52b0761dc3eb258e11791e",
+    "ai-planning.mjs": "7961817fa20a5a7567f372d94ea27e06395c2fcbeb86f5ae877280b194bb1e83",
+    "delivery-planning.mjs": "62c6848e2ac9e0e62d00570d6e2ba76b7b059804178a40d5ffe9fa5a42318e5a",
+    "delivery-ui.js": "b0b3bd497821f2423e175732599fa91b685a4b08b22d99a5a9ea3276b4ff3b2e",
+    "build-delivery.mjs": "f5982a4320647a8342c83df2c56b989e20b367e0adc5276a3516dbbf62bd0755",
+    "prototype.js": "f63d22ea2d643930e5bb6efb8310e9b31e2838d11385b0580e7b3d7218c8241f",
+    "prototype.css": "575feb5bcddab7f15e442b0dc0f9ba93ba38dd2b39d74b7729a1189162a499e5",
+    "index.html": "ba6ce8742effd42cb82530e9d7b859b67bc8a561595bfe65e88e1b1bd9e360a4",
+    "data.js": "365fcec6b4a24ca524b5699bae13fbe2dd43b6c2ebb7911f9dc09648bf2c59db",
+    "catalog.json": "876e0cb66df6c2ffd237fe6141816fcae43764b4c93a12187585d8a0d02c87db"
+  },
+  "result": "passed"
+}

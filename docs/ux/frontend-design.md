@@ -18,8 +18,8 @@ UI 상태를 소유한다. Visual identity와 시각적 선택 기준은
 
 결정 우선순위는 다음과 같다.
 
-1. Desktop은 terminal-first authoring surface이고 Android는 remote-control-first
-   companion이다.
+1. Desktop은 대화·기획·실행을 연결하는 authoring workbench이고 Android는 같은 PC 작업을
+   조회·편집·명시적으로 제어하는 companion이다. 실제 터미널은 기존 의미와 수명을 유지한다.
 2. 같은 기능에는 하나의 상태 소유자만 두고 여러 효율적인 진입점만 허용한다.
 3. 선택, preview, insertion, drop과 navigation은 명시적 실행을 뜻하지 않는다.
 4. navigation 중 terminal controller, draft, scroll, xterm geometry, reconnect와
@@ -39,6 +39,11 @@ responsive behavior, 실제 상태와 접근성으로 적용하는 계약만 소
 비교용 visual intent, handoff README는 구현·QA 수용 기준이며 실제 runtime 상태,
 terminal semantics, 보안과 데이터 무결성이 예시 값보다 우선한다. 원본 raster와 고정
 handoff source는 production asset으로 삽입하거나 수정하지 않는다.
+
+2026-10-13 사용자 승인으로 [v2 r6 설계](reference/v2/APPROVAL.md)를 구현 기준으로 승격했다.
+아래 16절은 새 탐색과 채팅 스킨의 활성 계약이며, 기존 3절·5.1절의 탐색 배치를 바꾸는 범위에서
+우선한다. 나머지 입력·수명·접근성·외부 연결 계약은 유지한다. 전환 전 구현을 승인 완료 상태로
+간주하지 않으며 실제 구현·검증은 [진행 기록](../ezterminal-v2-implementation.md)에 남긴다.
 
 ## 3. Desktop application shell
 
@@ -65,7 +70,9 @@ Header는 제품 기능 기준으로 정확히 네 zone을 가진다.
 아니다. `n`은 0–10, 기본 7이고 동일한 Appearance setting을 연다. Theme, Files,
 Stats, Pairing, Settings와 OpenClaw를 독립 header button으로 되돌리지 않는다.
 
-Header는 60px, activity rail은 62px이며 rail action은 44px target을 유지한다. Pane
+Header는 44px(2026-10-15 크롬 축소), activity rail은 62px이며 rail action은 44px target을 유지한다.
+Header 아래의 작업 공간 탭과 배치 preset은 한 줄로 합치고, 적용한 preset 이름은 있을 때만 보인다.
+하단 status bar는 24px이다. Pane
 card는 12px radius와 인접 pane이 합쳐 만드는 14px gutter를 사용한다.
 
 ### 3.3 Activity Rail
@@ -318,8 +325,18 @@ theme 값은 [`ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)와
 
 Application chrome은 semantic `--ui-*` token을 사용하고 `--term-*`은 xterm, terminal
 output과 기존 custom theme compatibility로 제한한다. Custom theme의 persisted schema는
-유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Feature는
-theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
+유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Custom theme이
+`--term-*`을 생략하면 runtime이 그 `ui` palette와 xterm 배경으로 채우고, 명시한 값이 우선한다.
+Feature는 theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
+
+파생 role(hover·selected·status tint·glow·chat surface)은 built-in theme마다
+`ui-tokens.css`의 생성 영역에 고정되고 custom theme은 runtime이 같은 함수
+(`deriveUiTokens`)로 계산한다. 공유 foundation, primitive와 채팅 CSS는 Android WebView 74
+하한 때문에 `color-mix()`와 `:has()`를 쓰지 않는다. Android로 가는 그 밖의 sheet에서
+`color-mix()`는 같은 블록에 Chrome 74가 읽는 같은 속성의 대체 선언이 앞설 때만 쓴다.
+`ui-tokens.test.ts`가 두 규칙을 검사한다.
+Font token은 body, display(wordmark·Matrix heading), heading(기본은 body), terminal,
+mono(chat code, terminal font를 따름)로 나뉜다.
 
 ## 7. Component와 overlay 계약
 
@@ -360,13 +377,12 @@ locale은 결함이다.
   failure를 건강한 0으로 만들지 않고 visible할 때만 수집한다.
 - **Remote/Pairing:** bridge off, VPN 없음, service 없음, idle, busy와 active를 구분한다.
   QR expiry/redeem과 device roster에서 stale generation을 복원하지 않는다.
-- **OpenClaw:** physical status와 durable desired state를 함께 표시하고 missing CLI,
-  stopped, unreachable, recovery phase, blocked와 authenticated-RPC running을 구분한다.
-  lifecycle 요청을 오래 열린 spinner로 표현하지 않고 접수 뒤 supervisor phase와 최대
-  3회 attempt를 하나의 polite live region에서 갱신한다. 같은 활성 action만 disable하며
-  충돌 action은 새 generation으로 대체할 수 있게 유지한다. blocked card는 detail,
-  remediation과 diagnostic ID를 함께 제공한다. Chat의 external body는 pixel oracle에서
-  제외하지만 EZTerminal chrome과 상태는 포함한다.
+- **OpenClaw:** 실행 상태와 관리 RPC 연결 상태를 구분한다. 시작·중지·재시작과 다음
+  Windows 로그인 때의 자동 실행 여부를 먼저 보여 주며, RPC 연결 실패만으로 채팅 열기를
+  막거나 정상 실행을 실패로 표시하지 않는다. 실제 실행 오류와 재시도 안내는 화면에 남기고
+  supervisor 정보, 시도 횟수, 진단 ID·명령 출력·수동 복구 안내는 접힌 실행 상세에 둔다.
+  같은 활성 요청만 disable하며 충돌하는 중지 요청과 오래된 상태에서의 재시도는 허용한다.
+  Chat의 external body는 pixel oracle에서 제외하지만 EZTerminal chrome과 상태는 포함한다.
 - **Paste/Risky close:** 위험 이유를 유지하고 Cancel을 안전 focus로 둔다. 최종 상태
   비교가 실패하면 아무것도 실행하지 않는다.
 - **Explorer:** root, empty folder, non-repository와 Git unavailable을 구분하며 breadcrumb,
@@ -952,3 +968,169 @@ Reader visual matrix는 1200×800 dark English와 800×600 light Korean에서 �
 검토하고 creation baseline도 같은 두 viewport를 유지한다. Story는 layout·responsive·keyboard·
 axe evidence이며 임의 repository map의 사실성을 자동 증명하지 않는다. Snapshot은 실제
 reference와 side-by-side로 확인한 뒤에만 accepted baseline을 갱신한다.
+
+## 16. EZTerminal 2.0 r6 승인 계약
+
+### 16.1 정보 구조와 시작
+
+Windows 전역 진입은 프로젝트·받은 요청·도구·설정이다. 프로젝트 안의 개요·기획·디자인·대화·
+작업·검토·파일은 상단에서 전환하고, 왼쪽에는 현재 영역의 목록 한 칸만 둔다. 대화 영역에서
+다시 대화 목록 sidebar를 중첩하지 않는다. Project → Workspace → Session은 실행의 데이터
+맥락으로 유지하며 화면 깊이와 일치시킬 의무는 없다. 선택한 항목은 stable ID로 재사용한다.
+
+Android의 전역 진입은 프로젝트·대화·작업·터미널·더보기다. PC 제어는 홈/프로젝트 진입과
+더보기에서 명시적으로 시작한다. Desktop의 다중 pane을 축소 복제하지 않고 목록→내용→보조
+편집 sheet로 구성한다. 기존 persistent terminal layer와 Back·focus restoration 계약은 유지한다.
+
+제품 기획, 빠른 작업, 일반 대화, 실제 터미널을 직접 시작할 수 있다. 일반 대화와 터미널에
+기획 작성을 강제하지 않는다. 빠른 작업은 목적·대상·완료 조건을 담은 compact 시작 카드에서
+명시적으로 시작한다. 신규 default는 Dark·말풍선이며 기존 사용자의 보기·테마·세션·기록을
+이전 과정에서 덮어쓰지 않는다. 독립 로드맵 메뉴·간트차트·로드맵 저장 도메인은 추가하지 않는다.
+
+### 16.2 동일 채팅의 두 스킨
+
+말풍선과 CLI 스킨은 같은 Session/Turn/message ID·첨부·답장·도구 결과·승인·대기열을 렌더링한다.
+스킨은 기기별 보기 설정이며 전환이 provider·권한·실행 상태·저장소를 바꾸거나 새 세션을 만들지
+않는다. 실제 터미널은 별도 입력 대상이며 CLI 스킨 입력이 PTY로 전달되어서는 안 된다.
+
+스킨 전환 시 초안·커서/선택 범위·답장·첨부·펼친 도구·열린 산출물·승인 대상·대기 메시지를
+보존한다. transcript는 읽던 메시지 ID를 기준으로 위치를 복원하며 새 응답이 사용자의 입력
+focus를 빼앗지 않는다. 하단 composer는 대화 scroll과 분리한다. 첨부·복사·답장·참조·AI 설정·
+전송은 두 스킨 모두에 존재하고 실제 capability에 맞게 활성화한다.
+
+Desktop Enter 전송·Shift+Enter 줄바꿈·IME 조합 보호와 Android Enter 줄바꿈·버튼 전송을
+지킨다. 응답 중 후속 입력은 대기열과 현재 turn 중단을 구분한다. 전송 receipt 전에는 복구 가능한
+초안을 유지하며 결과가 불명확하면 호스트 기록과 대조하고 중복 전송하지 않는다. Android 오프라인은
+캐시 열람과 미전송 초안을 제공하며 재연결 자체로 전송하지 않는다.
+
+CLI 프롬프트 기호는 장식으로 처리하고 작성자·역할·상태는 의미 있는 텍스트로 읽힌다. 메시지별
+동작은 hover 없이도 keyboard/touch로 접근한다. 실제 terminal의 Ctrl+C·붙여넣기·IME·세션
+종료 의미는 변경하지 않는다.
+
+### 16.3 상태·반응형·AI 실행
+
+대화 완료, 첨부/답장 작성, 응답 중, 승인 대기, 결과 검토를 두 플랫폼과 두 스킨에서 제공한다.
+loading·empty·error·offline·stale·conflict·unsupported를 구분하고 원인과 복구 행동을 표시한다.
+PC의 대화·산출물 병치는 좁은 창에서 내용 전환으로 바꾸되 초안과 읽던 위치를 보존한다. Android는
+한 열과 명시적 결과 페이지 진입을 사용하고 keyboard·safe area 때문에 입력과 전송이 가려지지
+않아야 한다. 터치·대비·zoom·reduced motion 기준은 이 문서의 기존 플랫폼 계약을 따른다.
+
+역할별 AI 프로필은 편집·버전 복원과 AI 수정 제안 비교를 지원한다. 제안 적용은 명시적이며 진행 중
+attempt의 설정 snapshot은 바꾸지 않는다. 영향 작업과 후속 작업만 보류하고 무관 작업은 유지한다.
+검증 복구는 기본 추가 2회 후 사용자 판단을 기다리며 전체 시간 제한은 두지 않는다. provider 장애는
+영향 작업만 대기하고 사용자가 대체 대상을 선택한다. 상세 상태·명령 경계는
+[정책 계약](reference/v2/POLICY-CONTRACTS.md)을 따른다.
+
+### 16.4 구현 대응과 검증
+
+공통 transcript 계약은 기존 `StructuredAgentSession` 계열과 daemon event를 확장한다. W01은
+공통 상태·명령, W02/W03은 Windows/Android 표현·입력, W04는 기획, W05는 scene 편집,
+W06은 AI 실행, W07은 검토·통합, W08은 기존 도구·백업, W09는 종합 검증을 맡는다.
+Production primitive·Dockview·Monaco·runtime token을 사용하며 시안 HTML/CSS를 통째로 복사하지 않는다.
+
+[59개 화면 상태 명세](reference/v2/SCREENS.md), [채팅 상세 시안](reference/v2/CHAT-SKINS.md),
+[기존 기능 대응표](reference/v2/LEGACY-COVERAGE.md)를 입력으로 삼고 실제 story/state·E2E 증거를
+남긴다. 시안 데이터·가짜 AI 응답·자동 캡처를 실제 provider/PTY/Android 복구 검증으로 인정하지 않는다.
+고정 desktop handoff를 변경하지 않으며 새 구현 snapshot도 reference와 나란히 검토한 뒤에만 갱신한다.
+
+### 16.5 채팅 행·도크·입력창 · 2026-10-15 승인
+
+두 스킨은 같은 view-model(`src/renderer/chat/model`)이 만든 행을 렌더링한다. 행은 사용자,
+assistant 산문, 도구 실행 묶음, 계획, 질문, 작업 목록, 턴 변경 요약, 알림, 오류, 하위 Agent,
+턴 상태다. 도구 실행 묶음은 한 줄 요약("파일 2개 읽음, 명령 1개 실행함")으로 접히고 펼치면
+도구별 아이콘·동사·대상·종료 코드·시간과 상세를 보인다. CLI 스킨은 같은 행을 `⏺ 도구(대상)`,
+`⎿` 결과, `✻` 상태의 고정폭 출력으로 보인다. 진행 중인 턴 상태는 턴 아래, 끝난 턴의 소요 시간은
+턴 위에 둔다. 작업 목록 도구 호출은 별도 줄 대신 작업 행으로 보이며 연속 갱신은 한 행으로 합친다.
+
+대기 중인 승인·질문·계획은 입력창 위 도크가 맡고 접어서 입력할 수 있다. 도크 제목은 요청
+종류를 UI 언어로 말하고, 질문과 계획에는 접근 위험 표시를 붙이지 않는다. 승인 대상 도구 줄은
+실행 중이 아니라 승인 대기로 표시한다. 미완료 작업 목록은 별도 작업 도크로 고정한다.
+
+입력창은 8줄까지 자동으로 커지고 모델·추론 강도·권한 pill, 원형 전송/중지, `+` 메뉴를 가진다.
+응답 중 Esc는 중지, 빈 입력의 ↑/↓는 이전 입력을 불러온다. Ctrl+F는 해당 대화 패널 안에서만
+찾기를 열고, 가상화로 화면에 없는 행도 검색 대상이다. 긴 대화는 최근 기록부터 열고 위로
+스크롤하거나 `이전 메시지 불러오기`로 앞부분을 읽으며, 읽던 위치는 움직이지 않는다. 대화 탭은
+작업 중·승인 필요·안 읽은 완료·오류를 점으로 표시하고, 창이 비활성일 때 승인 대기·완료·실패를
+OS 알림으로 알린다. 링크는 OS 브라우저로 연다. 구 host나 payload 이전 대화도 텍스트 해석으로
+같은 행을 만든다.
+
+## 승인된 후속 계약 · 소프로젝트와 실행 흐름
+
+사용자가 요청한 [개선 계획](agent-workflow-plan.md)과 [r4 시안](reference/v2-agent-chat-r4/index.html)은
+프로젝트 아래 소프로젝트·일반 대화의 동등한 깊이, 프리셋/대화 생성, 편집 가능한 단계·실행 그래프와
+공통 채팅 연결을 다룬다. 소프로젝트는 기존 논의의 기획 단위와 같은 대상이다.
+
+2026-10-13 사용자가 r4를 승인했다. [승인 기록](reviews/2026-10-13-agent-workflow-r4-approval.md)에
+승인 범위와 원본 해시를 보존한다. 상세 flow/state/responsive는
+[r4 UX 보완 계약](reference/v2-agent-chat-r4/UI-CONTRACT.md)을 구현 기준으로 적용한다.
+프로젝트 아래 진입 구조와 단계 흐름에는 이 보완 계약을 적용하며, 나머지 활성 계약은 유지한다.
+설계 승인은 제품 구현 완료나 실제 provider·기기 검증 통과를 뜻하지 않는다.
+
+## 17. Agent 입력·탐색·통합 기록 후속 계약
+
+2026-10-14 사용자가 확정한 r5는 앞선 고정 시안을 보존하면서 다음 흐름을 확장한다.
+시각 정체성은 DESIGN.md, 정확한 색·서체·간격은 기존 runtime token을 따른다.
+
+프로젝트 탐색은 단일 sidebar로 유지한다. 프로젝트 바로 아래 일반 대화와 소프로젝트를
+같은 깊이에 놓고, 소프로젝트의 단계에서 실제 대화를 직접 연다. 펼침 화살표는 탐색만,
+이름 선택은 본문 열기를 수행한다. Workspace는 실행 위치이자 보조 정보이며 필수 탐색
+깊이가 아니다. 프로젝트 탐색의 reflow 기준은 1024 CSS px이고 그 미만은 동일 목록의
+overlay다. 선택 후 overlay만 닫으며 검색·펼침·스크롤을 복원한다. 본문에 두 번째 상시
+sidebar를 만들지 않는다. 최근순은 같은 항목의 보기 전환이다.
+
+입력창의 `+` 메뉴는 첨부·파일 참조·스킬·명령을 열고, 커서 위치 후보 목록을 제공한다.
+`@`는 작업 위치의 파일을 찾아 경로 토큰으로 넣는다. `/`는 앱 동작과 제공자
+명령·스킬을 구별하고 Codex `$`는 스킬을 찾는다. Claude 호출은 실제 `/name` 구문이다.
+선택은 토큰만 교체하며 즉시 전송하지 않는다. Enter는 열린 후보 선택, Escape는 닫기,
+Tab은 원래 focus 이동이다. IME 조합을 가로채지 않는다. Android 후보는 키보드 위
+입력창에 붙고 Enter는 줄바꿈이다. 조회 중·없음·검색 결과 없음·실패·이전 목록·비활성·
+미지원 상태를 구별하며, 키 입력마다 provider 조회를 반복하지 않는다.
+
+Sidebar의 대화 행은 기존 탭에서 본문과 입력창을 바로 연다. 대화 header·`/resume`의
+공통 선택기는 검색·선택만 담당하며, 선택하면 닫히고 같은 본문 화면으로 이동한다.
+기본 범위는 현재 프로젝트이고 전체 범위로 확장할 수 있다. 앱/CLI 출처, 제공자,
+보관 여부를 독립적으로 필터링하며 실제 소속과 시각을 표시한다. 목록은 본문 전체를
+읽지 않는다. 과거 CLI 기록도 공통 채팅 화면과 선택한 채팅 스킨으로 읽으며,
+읽기만으로 제공자 실행을 시작하지 않는다. 새 대화는 기본 제공자·작업 위치와 입력창을
+즉시 보여 주고 첫 전송에서 생성한다. 과거 대화의 첫 전송은 원래 제공자 세션을 검증해
+이어간다. 별도 생성 폼이나 두 번째 이어가기 확인은 없다. 실제 PTY는 메뉴의
+`터미널에서 이어가기`로만 연다. 지원 실패를 새 대화나 PTY 전환으로 숨기지 않는다.
+
+목록 맨 아래의 `대화 더 불러오기`와 본문 위의 `이전 메시지 불러오기`를 구분한다.
+Windows의 탭·분할과 Android의 목록→대화→Back 흐름에서 초안·첨부·답장·선택한 스킬과
+읽던 위치를 보존한다. 원래 기록과 이어진 앱 세션은 하나의 대화 ID와 목록 항목을 쓴다.
+재실행 시 연결이 확인된 옛 CLI 탭은 기록으로 복원하며, 연결을 확인할 수 없는 탭은 종료
+상태와 복구 동작을 보여 준다. 모바일 초안·최근 본문은 PC별 암호화 저장소에 보관한다.
+생성·이어가기·전송의 정확한 요청은 전송 전에 저장하고, 연결 복구만으로 재전송하지 않는다.
+응답 유실은 같은 화면의 명시적 재시도로 확인하며 그동안 작성한 새 초안을 덮어쓰지 않는다.
+앞선 검수 이력은 [r5 검수 기록](reviews/2026-10-14-agent-experience-r5.md)에 보존한다.
+기존 DESIGN·token 소유권과 고정 handoff는 유지한다. 단계 그래프는 사용자가 정의한 작업 흐름이며
+관리형 Agent의 부모/자식 관계를 채팅 track으로 표현하는 기존 계약과 별개다.
+
+### R7.1 대화 작업 공간 · 2026-10-14 승인
+
+승인한 반응형 시안의 원본과 검증 근거는 [R7.1 구현 기록](reviews/2026-10-14-conversation-r7-implementation.md)에 연결한다. 고정 handoff를 덮어쓰지 않는다.
+
+- 프로젝트 행의 새 대화와 새 터미널은 나란히 제공하고 해당 프로젝트의 실행 위치를 사용한다.
+  상단의 UI 작업 공간은 이 실행 권한과 별개다. 서로 다른 프로젝트의 대화·터미널을 함께
+  배치할 수 있으며 이름 변경, 탭 이동, 분할, 집중 보기, 저장·복원을 제공한다. 공간 전환은
+  패널을 숨기는 동작이고 세션 종료나 제공자 재실행이 아니다. 공간 닫기는 남은 공간으로
+  패널을 옮기며, 실제 종료는 기존 명시적 종료 동작을 따른다.
+- 두 채팅 스킨은 같은 transcript, 초안, 첨부, 대기열과 승인 상태를 사용한다. 말풍선은
+  사용자 메시지의 경계를, CLI는 연속된 출력과 간결한 역할 표시를 강조한다. 설정은
+  입력창 주변에 배치한다. 연속된 도구·추론 기록을 접어도 승인과 오류는 독립적으로 보인다.
+- 대기열은 호스트가 수락한 턴에서 읽는다. 삭제·편집·중단 후 실행은 해당 턴의 revision을
+  검사하며, 실행을 시작한 항목에 오래된 편집 명령을 적용하지 않는다. 편집은 호스트의
+  성공 응답 후 입력창으로 가져온다. 기존 초안은 별도로 보관하고 전송 후 복원한다.
+  응답을 확인하지 못한 명령은 성공으로 표시하거나 자동 재전송하지 않는다. 구 호스트는
+  capability가 없으면 대기열 수정 조작을 제공하지 않는다.
+- 변경 검토는 현재 대화에 속한 완료된 제공자 패치를 읽고 최근 변경 턴과 전체 대화를
+  구분한다. 부분 Edit/Write 기록은 전체 diff나 파일 줄 번호로 꾸미지 않는다. 확인함은
+  특정 기록에만 적용되고 후속 기록은 다시 미확인으로 표시된다. 줄 인용은 현재 초안에
+  들어가며 전송을 시작하지 않는다. 현재 프로젝트 파일은 별도 진입점으로 연다.
+- 검토 영역은 충분히 넓은 패널에서 옆에, 좁은 패널에서는 모달로, Android에서는 시트로
+  열린다. 판단은 개별 패널 크기를 기준으로 한다. Desktop의 좁은 패널에서도 Enter는
+  전송, Shift+Enter는 줄바꿈이고 Android의 Enter는 줄바꿈이다. 스킨·테마 변경은
+  초안·선택·스크롤·펼침 상태를 초기화하지 않는다.
+- 기본 테마 4종과 사용자 테마는 같은 semantic role을 적용한다. 실제 색상은 runtime
+  theme/token source가 소유하며 대비, 키보드 focus, reduced motion과 작은 화면을 검증한다.

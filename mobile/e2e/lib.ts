@@ -957,12 +957,12 @@ export async function evaluateWebView<T>(expression: string): Promise<T> {
   const client = await resolveWebViewCdp();
   const response = await sendWebViewCdp<{
     result?: { value?: T; objectId?: string };
-    exceptionDetails?: { text?: string; exception?: { objectId?: string } };
+    exceptionDetails?: { text?: string; exception?: { objectId?: string; description?: string } };
   }>('Runtime.evaluate', {
     expression, returnByValue: true, awaitPromise: true,
   }, client);
   let failure = response?.exceptionDetails
-    ? new Error(response.exceptionDetails.text ?? 'Android WebView evaluation failed')
+    ? new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text ?? 'Android WebView evaluation failed')
     : undefined;
   // A thrown evaluation can return two handles to the same exception, even
   // with returnByValue. Both remain inspector-owned until explicitly released.
@@ -2011,7 +2011,7 @@ export interface DesktopE2eSession {
  * WS client to connect first (the WS-triggered mint path only fires on first
  * `auth`). */
 export async function launchDesktop(
-  options: { readonly cwd?: string } = {},
+  options: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> } = {},
 ): Promise<DesktopE2eSession> {
   const profile = createOwnedDesktopProfile();
   const { userDataDir } = profile;
@@ -2020,6 +2020,7 @@ export async function launchDesktop(
   try {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+    Object.assign(env, options.env);
     env.EZTERMINAL_USER_DATA_DIR = userDataDir;
     env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
     env.EZTERMINAL_REMOTE_PORT = String(REMOTE_PORT);

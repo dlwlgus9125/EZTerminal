@@ -3,6 +3,8 @@ import { useDesktopAppearance } from './useDesktopAppearance';
 import { useTerminalPreferences } from './useTerminalPreferences';
 import { useProjectDocumentNavigation } from './useProjectDocumentNavigation';
 import { useCommandCenterCatalog, type AppQuickOpenRow } from './useCommandCenterCatalog';
+import { serializeWorkbench, WorkbenchViewsController } from './workbench-views';
+import { WorkbenchViewsBar } from './workbench/WorkbenchViewsBar';
 import {
   createContext,
   useCallback,
@@ -65,12 +67,18 @@ import {
   isStructuredAgentDockHistoryId,
   STRUCTURED_AGENT_DRAFT_PREFIX,
   structuredAgentSessionHistoryId,
+  structuredAgentSessionId,
   StructuredAgentDockPanel,
 } from './StructuredAgentDockPanel';
+import { ConversationHistoryDialog } from './ConversationHistoryPicker';
+import { ConversationDockPanel } from './ConversationDockPanel';
+import type { ConversationEntry } from '../shared/conversation-history';
 import { StructuredAgentCreateRecoveryRegistry } from './structured-agent-create-recovery';
+import { useStructuredAgentTabStatuses } from './structured-agent-tab-status';
 
 import { ProjectEditorPanel } from './ProjectEditorPanel';
 import { ProjectMapPanel, type ProjectMapEvidenceTarget } from './ProjectMapPanel';
+import { PlanningNavigationContext, PlanningWorkspaceDockPanel, type PlanningNavigation } from './PlanningWorkspaceDockPanel';
 
 import type { ProjectExplorerState } from './ProjectWorkspacePanel';
 
@@ -119,7 +127,7 @@ import {
 import { useAppUpdate } from './use-app-update';
 
 import { commandCenterShortcutMode } from './command-center-shortcut';
-import { useToast } from './ui';
+import { Button, useToast } from './ui';
 import {
   LazyFeature,
   createFeatureModuleLoader,
@@ -227,6 +235,8 @@ interface PaneApprovalContextValue {
 const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
 const AgentOrchestrationContext = createContext<AgentOrchestrationSnapshot>(EMPTY_AGENT_ORCHESTRATION_SNAPSHOT);
 interface StructuredAgentNavigationContextValue {
+  readonly continueCli?: (entry: ConversationEntry) => Promise<void>;
+  readonly openHistory: (projectId?: string) => void;
   readonly openTerminal: (workspaceId?: string, directory?: string) => Promise<{ readonly ok: true; } | { readonly ok: false; readonly message: string; }>;
   readonly launchCli: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
   readonly openSettings: () => void;
@@ -352,6 +362,8 @@ function AgentAwareTab(props: IDockviewPanelHeaderProps): JSX.Element {
 // pane's xterm re-fits: a visibility:hidden panel keeps its layout size, so xterm's
 // ResizeObserver does NOT fire on show — an explicit nudge is required (Codex B7).
 function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
+  const navigation = useContext(StructuredAgentNavigationContext);
+  const { i18n } = useAppTranslation();
   useEffect(() => {
     const disposable = props.api.onDidVisibilityChange((event) => {
       if (event.isVisible) {
@@ -386,6 +398,15 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
         }
       : undefined
   ), [projectId, projectRootId, projectWorkspaceId]);
+  if (props.params?.restoreState === 'ended' && !recoveryState?.sessionId && !props.params?.adoptSessionId) {
+    const ko = i18n.language.startsWith('ko');
+    return <section className="structured-agent-safe-mode" data-testid="restored-terminal-ended">
+      <h2>{ko ? '이전 터미널이 종료됐습니다' : 'The previous terminal has ended'}</h2>
+      <p>{ko ? '연결된 대화 기록을 확인할 수 없습니다. 이전 대화를 찾거나 새 터미널을 열 수 있습니다.' : 'No verified conversation is linked to this tab. Find its history or open a new terminal.'}</p>
+      <Button onClick={() => navigation?.openHistory(projectId)}>{ko ? '이전 대화 찾기' : 'Find previous conversation'}</Button>
+      <Button variant="ghost" onClick={() => props.api.updateParameters({ ...props.params, restoreState: undefined, lastSurface: 'terminal' })}>{ko ? '새 터미널 열기' : 'Open new terminal'}</Button>
+    </section>;
+  }
   return (
     <TerminalPane
       panelId={props.api.id}
@@ -473,6 +494,28 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const navigation = useContext(StructuredAgentNavigationContext);
   const createRecovery = useContext(StructuredAgentCreateRecoveryContext);
+  const reviewNavigation = useContext(ProjectReviewNavigationContext);
+  if (window.ezterminal.resolveConversation && !createRecovery?.registry.get(props.api.id)) return <ConversationDockPanel props={props}
+    onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings} onContinueCli={navigation?.continueCli}
+    onReviewChange={reviewNavigation ? async (entry, turnId, changedPath) => {
+      if (!entry.historyId) return;
+      let projectId = props.params?.projectId ?? entry.projectId;
+      let rootId = props.params?.rootId;
+      let workspaceId = props.params?.workspaceId;
+      if (!rootId || !workspaceId) {
+        const described = await window.ezterminalDesktop?.describeProjectWorkspace(entry.projectId);
+        if (!described?.ok) throw new Error('The original project is unavailable for file review.');
+        const normalize = (value: string) => value.replace(/\\/gu, '/').replace(/\/+$/u, '').toLowerCase();
+        const root = described.project.roots.find(root => entry.roots.some(path => normalize(path) === normalize(root.displayPath)));
+        if (!root) throw new Error('The recorded project root is unavailable.');
+        projectId = entry.projectId; rootId = root.rootId;
+        workspaceId = described.project.workspaces?.find(workspace => workspace.rootId === root.rootId)?.workspaceId ?? root.rootId;
+      }
+      reviewNavigation.openHistoryReview(projectId, rootId, workspaceId, entry.historyId, turnId, changedPath);
+    } : undefined}
+    renderLive={(sessionId, conversationId) => <StructuredAgentDockPanel key={sessionId} {...props}
+      params={{ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), conversationId }}
+      onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings} />} />;
   return isStructuredAgentDockHistoryId(historyId)
     ? (
         <StructuredAgentDockPanel
@@ -480,6 +523,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
           createRecoveryRegistry={createRecovery?.registry}
           persistCreateRecovery={createRecovery?.persistBeforeSend}
           onOpenSession={navigation?.openSession}
+          onOpenHistory={navigation?.openHistory}
           onOpenTerminal={navigation ? async (workspaceId, directory) => {
             const result = await navigation.openTerminal(workspaceId, directory);
             if (result.ok) props.api.close();
@@ -512,6 +556,7 @@ const components = {
   'agent-session': AgentSessionDockPanel,
   'project-editor': ProjectEditorPanel,
   'project-map': ProjectMapDockPanel,
+  'planning-workspace': PlanningWorkspaceDockPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -631,6 +676,8 @@ export function App(): JSX.Element {
   const sidebarReflow = useSidebarReflow();
   const projectWide = useSidebarReflow('(min-width: 1024px)');
   const apiRef = useRef<DockviewApi | null>(null);
+  const viewsRef = useRef<WorkbenchViewsController | null>(null);
+  const [workbenchViews, setWorkbenchViews] = useState<WorkbenchViewsController | null>(null);
   const structuredAgentCreateRecoveryRegistryRef = useRef<StructuredAgentCreateRecoveryRegistry | null>(null);
   if (structuredAgentCreateRecoveryRegistryRef.current === null) {
     structuredAgentCreateRecoveryRegistryRef.current = new StructuredAgentCreateRecoveryRegistry();
@@ -656,6 +703,12 @@ export function App(): JSX.Element {
   const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
     useState<AuxiliaryCloseDialogState | null>(null);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
+  const [, refreshConversationNavigation] = useState(0);
+  useEffect(() => {
+    const update = () => refreshConversationNavigation(value => value + 1);
+    window.addEventListener('ez:conversation-navigation', update);
+    return () => window.removeEventListener('ez:conversation-navigation', update);
+  }, []);
   const [panelSetRevision, setPanelSetRevision] = useState(0);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [projectWorkspaceStates, setProjectWorkspaceStates] = useState<Readonly<Record<string, ProjectExplorerState>>>({});
@@ -747,6 +800,8 @@ export function App(): JSX.Element {
       popoutBehaviorRef.current = null;
       dockWindowCoordinatorRef.current?.dispose();
       dockWindowCoordinatorRef.current = null;
+      viewsRef.current?.dispose();
+      viewsRef.current = null;
       workbenchCoordinator.detach();
       apiRef.current = null;
     },
@@ -1066,7 +1121,23 @@ export function App(): JSX.Element {
   // One adaptive sidebar owns every navigation destination. At >=1200px it
   // reflows the workspace; below that breakpoint the same shell overlays it.
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
-  const sidebarOverlayBelow = sidebarDestination === 'agents' && projectDrillActive ? 1024 : 1200;
+  const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox'>('projects');
+  const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
+  const openConversationHistory = useCallback((entry: ConversationEntry): void => {
+    const api = apiRef.current;
+    const windows = dockWindowCoordinatorRef.current;
+    if (!api || !windows) return;
+    const aliases = new Set([entry.conversationId, ...(entry.aliases ?? [])]);
+    const sessions = new Set([entry.linkedSessionId, ...(entry.sessionAliases ?? [])]);
+    const existing = api.panels.find(panel => aliases.has(String(panel.params?.conversationId ?? panel.params?.historyId ?? ''))
+      || sessions.has(structuredAgentSessionId(String(panel.params?.historyId ?? '')) ?? '__none__'));
+    if (existing) { existing.api.setActive(); windows.focusPanelWindow(existing); }
+    else windows.addPanel({ id: `agent-session-${entry.conversationId}`, component: 'agent-session', title: entry.title, renderer: 'always',
+      params: { historyId: entry.conversationId, conversationId: entry.conversationId, projectId: entry.projectId } }, { kind: 'main-tab' });
+    setConversationHistory(null);
+    if (window.innerWidth < 1024) setSidebarDestination(null);
+  }, []);
+  const sidebarOverlayBelow = sidebarDestination === 'agents' ? 1024 : 1200;
   const revealOpenedSession = useCallback((): void => {
     if (window.innerWidth < sidebarOverlayBelow) setSidebarDestination(null);
   }, [sidebarOverlayBelow]);
@@ -1098,7 +1169,6 @@ export function App(): JSX.Element {
     (update: OpenStateUpdate) => setSidebarOpen('openclaw', update),
     [setSidebarOpen],
   );
-  const setAgentsOpen = useCallback((update: OpenStateUpdate) => setSidebarOpen('agents', update), [setSidebarOpen]);
   useEffect(() => {
     window.ezterminal.setStatsPanelVisible(statsOpen);
   }, [statsOpen]);
@@ -1317,6 +1387,7 @@ export function App(): JSX.Element {
     return window.ezterminalDesktop?.onAgentSessionReveal((sessionId) => focusAgentSession(sessionId));
   }, [focusAgentSession]);
 
+  const structuredTabStatuses = useStructuredAgentTabStatuses();
   const agentTabStatuses = useMemo<ReadonlyMap<string, AgentTabPresentation>>(() => {
     const rank: Record<AgentStatus, number> = {
       blocked: 0,
@@ -1327,7 +1398,8 @@ export function App(): JSX.Element {
       unknown: 5,
       idle: 6,
     };
-    const result = new Map<string, AgentTabPresentation>();
+    // Structured Agent panels publish their own state; terminal Agent activity is added below.
+    const result = new Map<string, AgentTabPresentation>(structuredTabStatuses);
     for (const activity of agentSnapshot.items) {
       for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
         if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
@@ -1342,6 +1414,23 @@ export function App(): JSX.Element {
       }
     }
     return result;
+  }, [agentSnapshot, sessionPaneBindings, structuredTabStatuses]);
+  const terminalConversationChecks = useRef(new Map<string, { at: number; activityId: string; resolved: boolean }>());
+  useEffect(() => {
+    if (!window.ezterminal.resolveConversation) return;
+    for (const activity of agentSnapshot.items) for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
+      const panel = apiRef.current?.getPanel(binding.panelId);
+      if (!panel || panel.api !== binding.instanceToken || panel.api.component !== 'terminal') continue;
+      const previous = terminalConversationChecks.current.get(panel.id);
+      if (previous?.activityId === activity.id && (previous.resolved || Date.now() - previous.at < 5_000)) continue;
+      terminalConversationChecks.current.set(panel.id, { at: Date.now(), activityId: activity.id, resolved: false });
+      panel.api.updateParameters({ ...panel.params, lastSurface: 'agent-cli', ...(previous?.activityId !== activity.id ? { conversationId: undefined } : {}) });
+      void window.ezterminal.resolveConversation({ kind: 'terminal', id: activity.sessionId }).then(result => {
+        if (!result.ok || apiRef.current?.getPanel(panel.id)?.api !== binding.instanceToken || terminalConversationChecks.current.get(panel.id)?.activityId !== activity.id) return;
+        panel.api.updateParameters({ ...panel.params, lastSurface: 'agent-cli', conversationId: result.entry.conversationId });
+        terminalConversationChecks.current.set(panel.id, { at: Date.now(), activityId: activity.id, resolved: true });
+      }).catch(() => undefined);
+    }
   }, [agentSnapshot, sessionPaneBindings]);
 
   useEffect(() => {
@@ -1635,8 +1724,8 @@ export function App(): JSX.Element {
       id: `agent-session-${draftId}`,
       component: 'agent-session',
       title: project?.name
-        ? `${project.name} · ${korean ? '새 세션' : 'New session'}`
-        : korean ? '새 세션' : 'New session',
+        ? `${project.name} · ${korean ? '새 대화' : 'New conversation'}`
+        : korean ? '새 대화' : 'New conversation',
       renderer: 'always',
       params: {
         historyId: draftId,
@@ -1663,7 +1752,7 @@ export function App(): JSX.Element {
     const historyId = structuredAgentSessionHistoryId(sessionId);
     const panelId = `agent-session-${historyId}`;
     const title = input.title?.trim() || input.providerLabel?.trim() || 'Agent';
-    const existing = api.getPanel(panelId);
+    const existing = api.getPanel(panelId) ?? api.panels.find(panel => panel.params?.historyId === historyId);
     if (existing) {
       existing.api.setTitle(title);
       existing.api.setActive();
@@ -1681,8 +1770,22 @@ export function App(): JSX.Element {
     revealOpenedSession();
   }, [sessionMirroringCoordinator, revealOpenedSession]);
 
+  // A clicked notification for a structured Agent conversation opens it.
+  useEffect(() => window.ezterminalDesktop?.onStructuredAgentReveal?.((sessionId) => openStructuredAgentSession({ sessionId })),
+    [openStructuredAgentSession]);
+
   const structuredAgentNavigationValue = useMemo<StructuredAgentNavigationContextValue>(() => ({
+    continueCli: async entry => {
+      if (!entry.historyId || (entry.providerId !== 'codex' && entry.providerId !== 'claude')) throw new Error('This conversation has no CLI record.');
+      const prepared = await window.ezterminal.prepareAgentResume(entry.historyId);
+      if (!prepared?.canResume || prepared.missingRecordedRoots.length) throw new Error('Restore the recorded working folder before continuing in the terminal.');
+      const opened = workbenchCoordinator.openTerminal({ title: entry.title, cwd: prepared.recordedRoots[0],
+        agentBootstrap: { kind: 'resume', historyId: entry.historyId, provider: entry.providerId, cwd: prepared.recordedRoots[0],
+          rootChoice: 'recorded', revision: prepared.revision, initialPrompt: '' } });
+      if (!opened) throw new Error('The terminal could not be opened.');
+    },
     openSession: openStructuredAgentSession,
+    openHistory: (projectId) => setConversationHistory({ projectId }),
     openSettings: () => {
       setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
       setSidebarDestination('settings');
@@ -1792,6 +1895,7 @@ export function App(): JSX.Element {
   const showProjectWorkspace = useCallback((projectId: string): void => {
     window.focus();
     setActiveProjectId(projectId);
+    setAgentHubView('projects');
     setSidebarDestination('agents');
   }, []);
 
@@ -1875,6 +1979,32 @@ export function App(): JSX.Element {
     });
     revealOpenedSession();
   }, [workbenchCoordinator, revealOpenedSession]);
+
+  const openPlanningProject = useCallback((project: Pick<AgentProjectSummary, 'projectId' | 'name'>): void => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    const dockWindows = dockWindowCoordinatorRef.current;
+    const api = apiRef.current;
+    if (!dockWindows || !api) return;
+    const panelId = `planning-project-${project.projectId}`;
+    const existing = api.getPanel(panelId);
+    if (existing) { existing.api.setActive(); dockWindows.focusPanelWindow(existing); }
+    else dockWindows.addPanel({ id: panelId, component: 'planning-workspace', title: project.name, renderer: 'always', params: { projectId: project.projectId, projectName: project.name } }, { kind: 'main-tab' });
+    setActiveProjectId(null);
+    revealOpenedSession();
+  }, [sessionMirroringCoordinator, revealOpenedSession]);
+
+  const planningNavigation = useMemo<PlanningNavigation>(() => ({
+    openHistory: (projectId) => setConversationHistory({ projectId }),
+    openWorkflow: (projectId, name, subprojectId, nodeId) => {
+      openPlanningProject({ projectId, name });
+      apiRef.current?.getPanel(`planning-project-${projectId}`)?.api.updateParameters({ subprojectId, nodeId, workflowNavigationKey: crypto.randomUUID() });
+    },
+    openConversation: (sessionId, title) => openStructuredAgentSession({ sessionId, title }),
+    newConversation: (projectId, name) => openStructuredAgentDraft({ projectId, name }),
+    openFiles: showProjectWorkspace,
+    openTerminal: (projectId, projectName) => openProjectTerminal({ projectId, projectName, titleMode: 'generated' }),
+    openProjects: () => { setActiveProjectId(null); setAgentHubView('projects'); setSidebarDestination('agents'); },
+  }), [openStructuredAgentSession, openStructuredAgentDraft, showProjectWorkspace, openProjectTerminal, openPlanningProject]);
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, instanceToken: object, close: () => void): void => {
@@ -2136,11 +2266,12 @@ export function App(): JSX.Element {
         || sessionMirroringCoordinator.getSnapshot().replacementLocked
       ) return;
       try {
-        if (!applyWorkbenchLayoutPreset(api, preset)) return;
+        if (!applyWorkbenchLayoutPreset(api, preset, viewsRef.current?.panels.map(panel => panel.id))) return;
         const name = preset === 'two-by-one'
           ? t('workspace.layoutTwoByOne')
           : preset === 'one-plus-two'
             ? t('workspace.layoutOnePlusTwo')
+            : preset === 'rows' ? (i18n.language.startsWith('ko') ? '위아래' : 'Rows')
             : t('workspace.layoutSingle');
         setAppliedPreset(name);
         scheduleSave();
@@ -2149,7 +2280,7 @@ export function App(): JSX.Element {
         console.error('[renderer] could not apply workspace layout:', error);
       }
     },
-    [focusActivePane, scheduleSave, sessionMirroringCoordinator, t],
+    [focusActivePane, scheduleSave, sessionMirroringCoordinator, t, i18n],
   );
 
   const refreshPresets = useCallback(async (): Promise<void> => {
@@ -2166,7 +2297,7 @@ export function App(): JSX.Element {
     const api = apiRef.current;
     const name = draft.trim();
     if (!api || !name) return;
-    const ok = await window.ezterminal.savePreset(name, api.toJSON());
+    const ok = await window.ezterminal.savePreset(name, serializeWorkbench(api));
     if (ok) {
       setSavingPreset(false);
       await refreshPresets();
@@ -2505,6 +2636,10 @@ export function App(): JSX.Element {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
+      viewsRef.current?.dispose();
+      const views = new WorkbenchViewsController(api, scheduleSave);
+      viewsRef.current = views;
+      setWorkbenchViews(views);
       dockWindowCoordinatorRef.current?.dispose();
       const dockWindows = new DockWindowCoordinator(api);
       dockWindowCoordinatorRef.current = dockWindows;
@@ -2553,6 +2688,8 @@ export function App(): JSX.Element {
         attachment.enableLayoutPersistence();
         scheduleSave(); // persist the restored/initial state
         setLayoutReady(true);
+        const host = document.querySelector<HTMLElement>('.dock-host');
+        if (host) views.observe(host);
         const recoveredActivePanelId = peekRendererRecoveryActivePanelId();
         if (recoveredActivePanelId) api.getPanel(recoveredActivePanelId)?.api.setActive();
         scheduleRendererRecoveryCheckpoint();
@@ -2700,7 +2837,7 @@ export function App(): JSX.Element {
 
   const sidebarTitle: Record<SidebarDestination, string> = {
     explorer: t('rail.explorer'),
-    agents: t('rail.agents'),
+    agents: agentHubView === 'inbox' ? (i18n.language.startsWith('ko') ? '받은 요청' : 'Inbox') : (i18n.language.startsWith('ko') ? '프로젝트' : 'Projects'),
     monitor: t('rail.monitor'),
     remote: t('rail.remote'),
     openclaw: 'OpenClaw',
@@ -2731,6 +2868,7 @@ export function App(): JSX.Element {
       <LazyFeature
         loader={DESKTOP_FEATURE_LOADERS.agents}
         componentProps={{
+          view: agentHubView,
           snapshot: agentSnapshot,
           coordinationSnapshot: agentCoordinationSnapshot,
           orchestrationSnapshot: agentOrchestrationSnapshot,
@@ -2747,6 +2885,10 @@ export function App(): JSX.Element {
           onOpenHistorySession: openAgentHistorySession,
           onOpenHistoryReview: (session, project) => void openHistoryReview(session, project),
           onOpenProjectDocument: openProjectDocument,
+          onOpenPlanningProject: openPlanningProject,
+          onOpenWorkflowProject: (project, subprojectId, nodeId) => planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, nodeId),
+          onOpenConversationHistory: openConversationHistory,
+          onOpenHistory: projectId => setConversationHistory({ projectId: projectId ?? activeProjectId ?? undefined }),
           onOpenProjectMap: openProjectMap,
           activeProjectId,
           onActiveProjectIdChange: setActiveProjectId,
@@ -2758,6 +2900,8 @@ export function App(): JSX.Element {
           onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
           onOpenStructuredAgentSession: openStructuredAgentSession,
+          activeConversationSessionId: activePanelId ? structuredAgentSessionId(String(apiRef.current?.getPanel(activePanelId)?.params?.historyId ?? '')) ?? undefined : undefined,
+          activeConversationId: activePanelId ? apiRef.current?.getPanel(activePanelId)?.params?.conversationId : undefined,
           onCreateWorkspaceSession: (_projectId, workspaceId) => {
             void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {
               if (!result.ok) pushToast({ title: result.message, variant: 'danger' });
@@ -2869,7 +3013,7 @@ export function App(): JSX.Element {
         effectIntensity={uiPreferences.effectIntensity}
         onNewTerminal={() => { addTab(); revealOpenedSession(); }}
         onNewSession={() => openStructuredAgentDraft()}
-        onOpenAttention={() => setAgentsOpen((open) => !open)}
+        onOpenAttention={() => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); }}
         onOpenCommandCenter={() => openQuickOpen('all')}
         onOpenEffectSettings={() => {
           setSettingsCategoryRequest((current) => ({
@@ -2930,12 +3074,16 @@ export function App(): JSX.Element {
 
       <div className="workbench-body">
         <ActivityRail
+          projectNavigation
+          inboxActive={agentHubView === 'inbox'}
+          onOpenInbox={() => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); }}
           active={sidebarDestination}
           attentionCount={attentionCount}
           updateAvailable={appUpdateAvailable}
           openclawVisible={openclawVisible}
           onIntent={(destination) => preloadOnIntent(DESKTOP_FEATURE_LOADERS[destination])}
           onSelect={(destination) => {
+            if (destination === 'agents') { setAgentHubView('projects'); setActiveProjectId(null); setSidebarDestination('agents'); return; }
             if (destination === 'settings' && sidebarDestination !== 'settings') {
               setSettingsCategoryRequest((current) => ({
                 category: 'general',
@@ -2967,13 +3115,17 @@ export function App(): JSX.Element {
         >
           {/* Names the layout and puts splitting one click away. The other
               entry points stay; this is the one that is always visible. */}
-          <WorkspaceBar
-            presetName={appliedPreset}
-            paneCount={paneCount}
-            onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
-            onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
-            onApplySingle={() => applyLayoutPreset('single')}
-          />
+          <div className="workbench-bar">
+            {workbenchViews && <WorkbenchViewsBar controller={workbenchViews} />}
+            <WorkspaceBar
+              presetName={appliedPreset}
+              paneCount={paneCount}
+              onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
+              onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
+              onApplySingle={() => applyLayoutPreset('single')}
+              onApplyRows={() => applyLayoutPreset('rows')}
+            />
+          </div>
           <SessionBindingContext.Provider value={sessionBindingValue}>
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
@@ -2981,6 +3133,7 @@ export function App(): JSX.Element {
                 <AgentOrchestrationContext.Provider value={agentOrchestrationSnapshot}>
                 <StructuredAgentCreateRecoveryContext.Provider value={structuredAgentCreateRecoveryValue}>
                 <StructuredAgentNavigationContext.Provider value={structuredAgentNavigationValue}>
+                <PlanningNavigationContext.Provider value={planningNavigation}>
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
                     <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
@@ -3007,6 +3160,7 @@ export function App(): JSX.Element {
                     </QuickCommandShelfContext.Provider>
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
+                </PlanningNavigationContext.Provider>
                 </StructuredAgentNavigationContext.Provider>
                 </StructuredAgentCreateRecoveryContext.Provider>
                 </AgentOrchestrationContext.Provider>
@@ -3085,6 +3239,19 @@ export function App(): JSX.Element {
         effectIntensity={uiPreferences.effectIntensity}
       />
 
+      {conversationHistory && <ConversationHistoryDialog open onOpenChange={open => { if (!open) setConversationHistory(null); }}
+        onOpenConversation={openConversationHistory}
+        client={window.ezterminal} currentProjectId={conversationHistory.projectId} initialConversationId={conversationHistory.conversationId}
+        onOpenSession={input => { openStructuredAgentSession(input); setConversationHistory(null); }}
+        onOpenCliHistory={async entry => {
+          if (!entry.historyId || (entry.providerId !== 'codex' && entry.providerId !== 'claude')) return;
+          const project: AgentProjectSummary = { projectId: entry.projectId, name: entry.projectTitle, primaryRoot: entry.roots[0] ?? '',
+            additionalRoots: entry.roots.slice(1), pinned: false, saved: false, sessionCount: 1, providers: [entry.providerId], lastActiveAt: entry.updatedAt };
+          await openAgentHistorySession({ historyId: entry.historyId, projectId: entry.projectId, provider: entry.providerId, title: entry.title,
+            preview: entry.preview, createdAt: entry.createdAt, updatedAt: entry.updatedAt, roots: entry.roots, source: 'native' }, project);
+          setConversationHistory(null);
+          revealOpenedSession();
+        }} />}
       {quickOpenMode && (
         <QuickOpenModal
           ownerDocument={quickOpenOwnerDocument}

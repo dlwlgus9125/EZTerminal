@@ -345,6 +345,37 @@ export function seedUiThemeColors(theme: ThemeDefinition, fallback: UiThemeColor
   };
 }
 
+/** The inverse of {@link seedUiThemeColors}: terminal-chrome roles (`--term-*`) for a
+ * custom theme whose `cssVars` leave some out. Legacy chrome (dock tabs, find bar,
+ * context menus, PTY chips) still reads `--term-*`; without this a custom theme that
+ * only supplies `ui` keeps the `:root` dark values there while the rest follows it.
+ * The terminal background comes from the xterm canvas so the frame matches it.
+ * Callers spread the theme's explicit `cssVars` over the result. */
+export function seedTerminalCssVars(ui: UiThemeColors, xterm: ThemeDefinition['xterm']): Readonly<Record<string, string>> {
+  const hover = deriveUiTokens(ui, { glow: false })['--ui-surface-hover'];
+  const accent = cssColorToRgbChannels(ui.accent);
+  const selection = xterm.selectionBackground ?? (accent ? `rgba(${accent}, 0.28)` : undefined);
+  return {
+    '--term-bg': xterm.background ?? ui.canvas,
+    '--term-bg-raised': ui.surfaceRaised,
+    '--term-bg-inset': ui.surfaceInset,
+    ...(hover ? { '--term-bg-hover': hover } : {}),
+    // The built-in chrome border is the subtle one; "faint" sits between it and the surface.
+    '--term-border': ui.borderSubtle,
+    '--term-border-faint': mixHex(ui.borderSubtle, ui.surface, 0.5),
+    '--term-fg': ui.textPrimary,
+    '--term-fg-bright': ui.textPrimary,
+    '--term-fg-dim': ui.textSecondary,
+    '--term-fg-faint': ui.textMuted,
+    '--term-green': ui.success,
+    '--term-red': ui.danger,
+    '--term-amber': ui.warning,
+    '--term-cyan': ui.info,
+    '--term-blue': ui.info,
+    ...(selection ? { '--term-selection': selection } : {}),
+  };
+}
+
 export function uiThemeColorsToCssVars(ui: UiThemeColors): Readonly<Record<string, string>> {
   const vars = Object.fromEntries(
     (Object.keys(UI_CSS_VAR_NAMES) as (keyof UiThemeColors)[]).map((role) => [UI_CSS_VAR_NAMES[role], ui[role]]),
@@ -355,6 +386,61 @@ export function uiThemeColorsToCssVars(ui: UiThemeColors): Readonly<Record<strin
     if (channels) channelVars[`--ui-${role}-rgb`] = channels;
   }
   return { ...vars, ...channelVars };
+}
+
+export interface DerivedUiTokenOptions {
+  /** Phosphor bloom; Light and High Contrast opt out. */
+  readonly glow: boolean;
+  /** Decorative mid border. Built-ins declare one; custom themes fall back to borderSubtle. */
+  readonly borderMid?: string;
+}
+
+/** sRGB mix identical to `color-mix(in srgb, a <amount>, b)` for opaque inputs. */
+function mixHex(a: string, b: string, amount: number): string {
+  const from = parseCssColor(b);
+  const to = parseCssColor(a);
+  if (!from || !to) return a;
+  return toHex(interpolate(opaque(from), opaque(to), amount));
+}
+
+function alpha(color: string, amount: number): string {
+  const channels = cssColorToRgbChannels(color) ?? '0, 0, 0';
+  return `rgba(${channels}, ${amount})`;
+}
+
+/**
+ * Interaction, status-tint and chat roles precomputed from the seventeen
+ * semantic colours. They used to be `color-mix()` declarations, which Android
+ * WebView 74 (Chrome 74) cannot evaluate; a custom property holding one turns
+ * every consumer invalid there. Built-in themes mirror these values in
+ * ui-tokens.css (pinned by ui-tokens.test.ts); custom themes get them from
+ * theme-runtime.ts.
+ */
+export function deriveUiTokens(ui: UiThemeColors, options: DerivedUiTokenOptions): Readonly<Record<string, string>> {
+  const borderMid = options.borderMid ?? ui.borderSubtle;
+  const glow = (amount: number): string => (options.glow ? alpha(ui.accent, amount) : 'rgba(0, 0, 0, 0)');
+  return {
+    '--ui-surface-hover': mixHex(ui.accent, ui.surface, 0.08),
+    '--ui-surface-active': mixHex(ui.accent, ui.surface, 0.14),
+    '--ui-surface-selected': mixHex(ui.accent, ui.surface, 0.18),
+    '--ui-accent-muted': mixHex(ui.accent, ui.surface, 0.16),
+    '--ui-accent-hover': mixHex(ui.accent, ui.textPrimary, 0.88),
+    '--ui-info-muted': mixHex(ui.info, ui.surface, 0.14),
+    '--ui-success-muted': mixHex(ui.success, ui.surface, 0.14),
+    '--ui-warning-muted': mixHex(ui.warning, ui.surface, 0.14),
+    '--ui-danger-muted': mixHex(ui.danger, ui.surface, 0.14),
+    '--ui-danger-soft': mixHex(ui.danger, ui.surface, 0.22),
+    '--ui-warning-border': mixHex(ui.warning, borderMid, 0.55),
+    '--ui-danger-border': mixHex(ui.danger, borderMid, 0.55),
+    '--ui-warning-ring': alpha(ui.warning, 0.35),
+    '--ui-danger-ring': alpha(ui.danger, 0.35),
+    '--ui-glow-text': `0 0 12px ${glow(0.5)}`,
+    '--ui-glow-box': `0 0 0 1px ${glow(0.25)}, 0 0 28px ${glow(0.18)}`,
+    '--ui-chat-user-bubble': mixHex(ui.textPrimary, ui.surface, 0.06),
+    '--ui-chat-inline-code': mixHex(ui.textPrimary, ui.surface, 0.09),
+    '--ui-chat-diff-add': mixHex(ui.success, ui.surfaceInset, 0.14),
+    '--ui-chat-diff-remove': mixHex(ui.danger, ui.surfaceInset, 0.14),
+  };
 }
 
 /** Produce an effective palette without mutating the registered/source theme.

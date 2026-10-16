@@ -1,0 +1,79 @@
+{
+  "generatedAt": "2026-10-13T10:33:50.045Z",
+  "kind": "design-reference-only",
+  "productValidation": false,
+  "approved": false,
+  "passed": true,
+  "checks": [
+    {
+      "name": "source to chat is zero-turn and preserves unsaved document and chat draft",
+      "passed": true
+    },
+    {
+      "name": "proposal comparison is explicit and does not execute a task",
+      "passed": true
+    },
+    {
+      "name": "stale proposals cannot overwrite a newer source",
+      "passed": true
+    },
+    {
+      "name": "unsaved source blocks apply and execution preparation",
+      "passed": true
+    },
+    {
+      "name": "a general conversation remains independent of stage references",
+      "passed": true
+    },
+    {
+      "name": "frozen task settings also block command-menu changes",
+      "passed": true
+    },
+    {
+      "name": "complete connected journey desktop",
+      "passed": true
+    },
+    {
+      "name": "complete connected journey mobile",
+      "passed": true
+    },
+    {
+      "name": "journey accessibility flow-planning/desktop",
+      "passed": true
+    },
+    {
+      "name": "journey accessibility flow-plan-chat/desktop",
+      "passed": true
+    },
+    {
+      "name": "journey accessibility flow-proposal/desktop",
+      "passed": true
+    },
+    {
+      "name": "journey accessibility flow-design/mobile",
+      "passed": true
+    },
+    {
+      "name": "journey accessibility flow-task-chat/mobile",
+      "passed": true
+    },
+    {
+      "name": "journey accessibility flow-review/mobile",
+      "passed": true
+    },
+    {
+      "name": "journey performs no external requests and reports no runtime errors",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "externalRequests": [],
+  "captures": [
+    "journey-flow-planning-desktop-dark.png",
+    "journey-flow-plan-chat-desktop-dark.png",
+    "journey-flow-proposal-desktop-light.png",
+    "journey-flow-design-mobile-dark.png",
+    "journey-flow-task-chat-mobile-dark.png",
+    "journey-flow-review-mobile-dark.png"
+  ]
+}

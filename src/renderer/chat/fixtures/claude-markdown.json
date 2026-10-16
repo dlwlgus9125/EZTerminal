@@ -1,0 +1,58 @@
+{
+  "provider": "claude",
+  "scenario": "markdown",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Explain what a TypeScript union type is. Include a short markdown table with two rows, one TypeScript code block and one bash code block. Keep it under 200 words. Do not use any tools.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_5bd46cedbb07766edc2c50b1",
+      "messageId": "claude_msg:msg_011Cg3Kck7WMT3X7CbNz2UYR:0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "A **union type** lets one value be one of several types. You write it with the `|` operator. TypeScript then only lets you use members that every type in the union shares. To use anything more specific, you first narrow the type with a check such as `typeof`, `in`, or a discriminant property.\n\n| Union | Allowed values |\n|-------|----------------|\n| `string \\| number` | `\"hello\"`, `42` |\n| `\"on\" \\| \"off\"` | Only the literals `\"on\"` or `\"off\"` |\n\n```typescript\ntype Id = string | number;\n\nfunction formatId(id: Id): string {\n  if (typeof id === \"number\") {\n    return id.toFixed(0); // narrowed to number\n  }\n  return id.toUpperCase(); // narrowed to string\n}\n\nformatId(7);      // \"7\"\nformatId(\"abc\");  // \"ABC\"\n```\n\nUnions are useful for function parameters that accept more than one input shape. They're also good for modeling states like `\"loading\" | \"success\" | \"error\"`, and for expressing nullable values such as `User | null`.\n\nTo type-check a file:\n\n```bash\nnpx tsc --noEmit union-demo.ts\n```",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "claude_58ff5a1dc5000dd775a6a8e9",
+      "messageId": "claude_msg:msg_011Cg3Kck7WMT3X7CbNz2UYR:0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "A **union type** lets one value be one of several types. You write it with the `|` operator. TypeScript then only lets you use members that every type in the union shares. To use anything more specific, you first narrow the type with a check such as `typeof`, `in`, or a discriminant property.\n\n| Union | Allowed values |\n|-------|----------------|\n| `string \\| number` | `\"hello\"`, `42` |\n| `\"on\" \\| \"off\"` | Only the literals `\"on\"` or `\"off\"` |\n\n```typescript\ntype Id = string | number;\n\nfunction formatId(id: Id): string {\n  if (typeof id === \"number\") {\n    return id.toFixed(0); // narrowed to number\n  }\n  return id.toUpperCase(); // narrowed to string\n}\n\nformatId(7);      // \"7\"\nformatId(\"abc\");  // \"ABC\"\n```\n\nUnions are useful for function parameters that accept more than one input shape. They're also good for modeling states like `\"loading\" | \"success\" | \"error\"`, and for expressing nullable values such as `User | null`.\n\nTo type-check a file:\n\n```bash\nnpx tsc --noEmit union-demo.ts\n```",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude completed the turn.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 4,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

@@ -64,12 +64,13 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     endOnClose = true,
     apiKeySource = 'ANTHROPIC_API_KEY',
     account?: Record<string, unknown>,
+    emitInitialization = true,
   ) {
     this.input = input;
     this.inputOptions = options;
     this.endOnClose = endOnClose;
     this.account = account;
-    this.emit({
+    if (emitInitialization) this.emit({
       type: 'system',
       subtype: 'init',
       uuid: 'provider-init',
@@ -138,8 +139,11 @@ function makeAdapter(options: {
   readonly endOnClose?: boolean;
   readonly apiKeySource?: string;
   readonly account?: Record<string, unknown>;
+  readonly emitInitialization?: boolean;
   readonly shutdownTimeoutMs?: number;
   readonly historyReader?: NonNullable<ConstructorParameters<typeof ClaudeProviderAdapter>[0]>['historyReader'];
+  readonly now?: () => Date;
+  readonly enableTaskTools?: boolean;
 } = {}): {
   readonly adapter: ClaudeProviderAdapter;
   readonly query: FakeClaudeQuery;
@@ -159,14 +163,19 @@ function makeAdapter(options: {
         options.endOnClose,
         options.apiKeySource,
         options.account,
+        options.emitInitialization,
       );
       return fakeQuery;
     },
+    extensionCommand: async () => '[]',
     historyReader: options.historyReader,
     initializationTimeoutMs: 100,
     operationTimeoutMs: 100,
     shutdownTimeoutMs: options.shutdownTimeoutMs ?? 20,
-    now: () => new Date('2026-09-04T00:00:00.000Z'),
+    now: options.now ?? (() => new Date('2026-09-04T00:00:00.000Z')),
+    // Deltas flush only at boundaries, as in replay, so assertions see deterministic rows.
+    deltaCoalescer: { schedule: () => undefined, cancel: () => undefined },
+    ...(options.enableTaskTools === undefined ? {} : { enableTaskTools: options.enableTaskTools }),
   });
   adapter.subscribe((event) => events.push(event));
   return {
@@ -374,7 +383,36 @@ describe('Claude provider review and enablement', () => {
     })).toBeNull();
   });
 
-  it('fails before SDK process creation when the reviewed CLI version drifts', async () => {
+  it('launches a CLI that auto-updated after review within the supported range', async () => {
+    const reviewedExecutable = await realpath(process.execPath);
+    const queryFactory = vi.fn(() => {
+      throw new Error('query reached');
+    });
+    const adapter = new ClaudeProviderAdapter({
+      enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
+      queryFactory,
+      readExecutableVersion: async () => '2.1.289',
+    });
+    adapter.setLaunchDescriptor({
+      providerId: 'claude',
+      protocol: 'claude-agent-sdk',
+      executablePath: reviewedExecutable,
+      executableVersion: CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION,
+      argv: [
+        '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json',
+        '--permission-prompt-tool', 'stdio',
+      ],
+      environmentVariableNames: [
+        'PATH', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'ANTHROPIC_API_KEY',
+      ],
+      reviewDigest: 'a'.repeat(64),
+    });
+
+    await adapter.createSession(context).catch(() => undefined);
+    expect(queryFactory).toHaveBeenCalled();
+  });
+
+  it('fails before SDK process creation when the CLI updates outside the supported range', async () => {
     const reviewedExecutable = await realpath(process.execPath);
     const queryFactory = vi.fn(() => {
       throw new Error('query must not start');
@@ -382,7 +420,7 @@ describe('Claude provider review and enablement', () => {
     const adapter = new ClaudeProviderAdapter({
       enablementStore: new MemoryClaudeProviderEnablementStore(enabledPolicy),
       queryFactory,
-      readExecutableVersion: async () => '2.1.261',
+      readExecutableVersion: async () => '3.0.0',
     });
     adapter.setLaunchDescriptor({
       providerId: 'claude',
@@ -439,6 +477,20 @@ describe('Claude provider review and enablement', () => {
 });
 
 describe('ClaudeProviderAdapter sessions', () => {
+  it('removes the complete tool catalog for planning and carries the exact managed reasoning and environment', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan', toolsDisabled: true, managedExecution: true,
+      reasoningEffort: 'high', environment: { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } });
+    expect(fixture.query.inputOptions).toMatchObject({ tools: [], disallowedTools: ['*'], settingSources: [], mcpServers: {}, plugins: [], agents: {},
+      permissionMode: 'plan', effort: 'high', env: { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } });
+    await expect(fixture.query.inputOptions.canUseTool!('Bash', { command: 'echo unsafe' }, { signal: new AbortController().signal, toolUseID: 'blocked', requestId: 'request-blocked' })).resolves.toMatchObject({ behavior: 'deny' });
+    await fixture.adapter.dispose();
+    const worker = makeAdapter();
+    await worker.adapter.createSession({ ...context, managedExecution: true, reasoningEffort: 'high', environment: { PORT: '4002' } });
+    expect(worker.query.inputOptions).toMatchObject({ disallowedTools: ['Agent', 'Task'], effort: 'high', env: { PORT: '4002' } });
+    expect(worker.query.inputOptions).not.toHaveProperty('tools');
+    await worker.adapter.dispose();
+  });
   it('creates and resumes through the SDK using an absolute executable and allowlisted environment', async () => {
     const created = makeAdapter();
     const handle = await created.adapter.createSession(context);
@@ -591,6 +643,27 @@ describe('ClaudeProviderAdapter sessions', () => {
     await approved.adapter.dispose();
   });
 
+  it('opens an approved native subscription session from zero-turn control evidence before system/init', async () => {
+    const fixture = makeAdapter({ emitInitialization: false, policy: { ...enabledPolicy, authenticationPath: 'existing-claude-ai-login', anthropicThirdPartyApproval: true }, account: { apiProvider: 'firstParty', subscriptionType: 'pro' } });
+    await expect(fixture.adapter.createSession(context)).resolves.toMatchObject({ providerSessionId });
+    expect(fixture.events.some(event => event.kind === 'turn-started' || event.kind === 'transcript')).toBe(false);
+    await fixture.adapter.dispose();
+  });
+
+  it('fails closed on ambiguous zero-turn auth and rechecks a conflicting later init source', async () => {
+    const policy = { ...enabledPolicy, authenticationPath: 'existing-claude-ai-login' as const, anthropicThirdPartyApproval: true };
+    const ambiguous = makeAdapter({ emitInitialization: false, policy, account: { apiProvider: 'firstParty' } });
+    await expect(ambiguous.adapter.createSession(context)).rejects.toMatchObject({ code: 'CLAUDE_AUTHENTICATION_FAILED' });
+    await ambiguous.adapter.dispose();
+    const fixture = makeAdapter({ emitInitialization: false, policy, account: { apiProvider: 'firstParty', subscriptionType: 'pro' } });
+    await fixture.adapter.createSession(context);
+    fixture.query.emit({ type: 'system', subtype: 'init', apiKeySource: 'ANTHROPIC_API_KEY' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'session-state', state: 'failed' }));
+    expect(fixture.query.inputOptions.abortController?.signal.aborted).toBe(true);
+    await fixture.adapter.dispose();
+  });
+
   it('lists SDK models and applies model and permission settings', async () => {
     const fixture = makeAdapter();
     await start(fixture);
@@ -612,6 +685,25 @@ describe('ClaudeProviderAdapter sessions', () => {
     })).resolves.toMatchObject({ model: 'opus', permissionPreset: 'full-access' });
     expect(fixture.query.models).toEqual(['opus']);
     expect(fixture.query.permissionModes).toEqual(['bypassPermissions']);
+    await fixture.adapter.dispose();
+  });
+
+  it('sends SDK image blocks and quoted reply context', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({
+      sessionId: context.sessionId, providerSessionId, turnId: 'turn-context', commandId: 'command-context', prompt: 'Review',
+      context: {
+        replyTo: { messageId: 'earlier', text: 'Prior answer' },
+        attachments: [{ id: 'a', name: 'screen.png', kind: 'image', mimeType: 'image/png', data: 'YWJj' }],
+      },
+    });
+    const submitted = await inputIterator.next();
+    expect(submitted.value?.message.content).toEqual([
+      { type: 'text', text: expect.stringContaining('Prior answer') },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } },
+    ]);
     await fixture.adapter.dispose();
   });
 
@@ -674,8 +766,8 @@ describe('ClaudeProviderAdapter sessions', () => {
     const transcript = fixture.events
       .filter((event): event is Extract<AgentProviderEvent, { kind: 'transcript' }> => event.kind === 'transcript')
       .map((event) => event.item);
+    // The runtime already persisted the submitted prompt; the adapter does not echo it.
     expect(transcript.map((item) => item.kind)).toEqual([
-      'user-message',
       'reasoning',
       'assistant-message',
       'tool-call',
@@ -685,10 +777,18 @@ describe('ClaudeProviderAdapter sessions', () => {
     expect(JSON.stringify(transcript)).toContain('ANTHROPIC_API_KEY=secret');
     expect(transcript.find((item) => item.kind === 'tool-result')?.text).toBe('ANTHROPIC_API_KEY=secret');
     expect(transcript.find((item) => item.kind === 'tool-call')?.text).toContain('src/main.ts');
+    expect(transcript.find((item) => item.kind === 'reasoning')?.payload).toEqual({ v: 1, type: 'reasoning' });
+    expect(transcript.find((item) => item.kind === 'assistant-message')?.messageId).toBe('claude_msg:provider-turn-1:1');
+    expect(transcript.find((item) => item.kind === 'tool-call')?.payload).toEqual({
+      v: 1, type: 'tool', callId: 'tool-1', name: 'Read', category: 'read', phase: 'call', status: 'running', target: 'src/main.ts',
+    });
+    expect(transcript.find((item) => item.kind === 'tool-result')?.payload).toEqual({
+      v: 1, type: 'tool', callId: 'tool-1', name: 'Read', category: 'read', phase: 'result', status: 'completed',
+    });
     await fixture.adapter.dispose();
   });
 
-  it('bridges permission prompts without putting raw tool input in events', async () => {
+  it('bridges permission prompts with a structured request built from the tool input only', async () => {
     const fixture = makeAdapter();
     await start(fixture);
     await fixture.adapter.submit({
@@ -711,15 +811,19 @@ describe('ClaudeProviderAdapter sessions', () => {
       },
     );
 
+    // Approval detail is local and archive-redacted (docs/design/agent-collaboration.md),
+    // so the command is shown; the SDK's own title/description strings are not used.
     await vi.waitFor(() => {
       expect(fixture.events).toContainEqual(expect.objectContaining({
         kind: 'approval-requested',
         providerRequestId: 'approval-1',
         risk: 'danger',
-        title: 'Claude requests Bash',
+        title: 'Run command',
+        detail: 'curl -H "x-api-key: sk-ant-secret" example.test',
+        request: { v: 1, callId: 'tool-secret', kind: 'command', command: 'curl -H "x-api-key: sk-ant-secret" example.test' },
       }));
     });
-    expect(JSON.stringify(fixture.events)).not.toContain('sk-ant-secret');
+    expect(JSON.stringify(fixture.events)).not.toContain('Run command containing');
     expect(JSON.stringify(fixture.events)).not.toContain('ANTHROPIC_API_KEY=secret');
 
     await fixture.adapter.resolveApproval({
@@ -809,6 +913,221 @@ describe('ClaudeProviderAdapter sessions', () => {
     });
     expect(fixture.query.interruptCount).toBe(1);
     await fixture.adapter.dispose();
+  });
+
+  it('ends a user-interrupted turn as interrupted without a provider failure (claude-interrupt L29-L32)', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({
+      sessionId: context.sessionId, providerSessionId, turnId: 'turn-stop', commandId: 'command-stop', prompt: 'Write an essay',
+    });
+    const clientUuid = (await inputIterator.next()).value!.uuid as string;
+    fixture.query.interruptReceipt = { still_queued: [] };
+    await fixture.adapter.interrupt(context.sessionId, providerSessionId);
+    fixture.query.emit({
+      type: 'user', uuid: 'synthetic-interrupt', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] },
+    });
+    fixture.query.emit({
+      type: 'result', subtype: 'error_during_execution', uuid: 'aborted-result', session_id: providerSessionId,
+      user_message_uuid: clientUuid, user_message_uuids: [clientUuid], is_error: true, terminal_reason: 'aborted_streaming',
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null'],
+    });
+    fixture.query.emit({ type: 'command_lifecycle', command_uuid: clientUuid, state: 'cancelled', uuid: 'lifecycle', session_id: providerSessionId });
+    // Messages are handled in order, so this marker proves the result was processed.
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker' });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
+    });
+    expect(fixture.events.filter((event) => event.kind === 'session-state').at(-1)).toMatchObject({ state: 'interrupted' });
+    expect(fixture.events.filter((event) => event.kind === 'turn-finished')).toEqual([
+      expect.objectContaining({ turnId: 'turn-stop', outcome: 'interrupted' }),
+    ]);
+    expect(fixture.events.filter((event) => event.kind === 'provider-error')).toEqual([]);
+    expect(fixture.events).not.toContainEqual(expect.objectContaining({ kind: 'session-state', state: 'failed' }));
+    await fixture.adapter.dispose();
+  });
+
+  it('streams text deltas under the final block messageId and flushes them before any other row', async () => {
+    let clock = Date.parse('2026-09-04T00:00:00.000Z');
+    const fixture = makeAdapter({ now: () => new Date(clock) });
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-stream', commandId: 'command-stream', prompt: 'Explain' });
+    const clientUuid = (await inputIterator.next()).value!.uuid as string;
+    const stream = (event: Record<string, unknown>, extra: Record<string, unknown> = {}): void => {
+      fixture.query.emit({ type: 'stream_event', event, parent_tool_use_id: null, uuid: `stream-${String(clock)}`, session_id: providerSessionId, ...extra });
+    };
+    fixture.query.emit({ type: 'command_lifecycle', command_uuid: clientUuid, state: 'started', uuid: 'started', session_id: providerSessionId });
+    stream({ type: 'message_start', message: { id: 'msg_1' } }, { user_message_uuid: clientUuid, user_message_uuids: [clientUuid] });
+    stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+    stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '' } });
+    // Let the block start be consumed at the old clock before time passes.
+    await new Promise((resolve) => setImmediate(resolve));
+    clock += 1_500;
+    fixture.query.emit({ type: 'assistant', uuid: 'a-0', session_id: providerSessionId, parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'thinking', thinking: '' }] } });
+    stream({ type: 'content_block_stop', index: 0 });
+    stream({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+    stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Hello' } });
+    stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '\n\n' } });
+    // A tool result interleaving with a streaming block must not overtake the buffered text.
+    fixture.query.emit({ type: 'user', uuid: 'r-0', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_earlier', content: 'ok' }] } });
+    stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'world' } });
+    fixture.query.emit({ type: 'assistant', uuid: 'a-1', session_id: providerSessionId, parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'text', text: 'Hello\n\nworld' }] } });
+    stream({ type: 'content_block_stop', index: 1 });
+    stream({ type: 'message_stop' });
+    fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'result', session_id: providerSessionId, user_message_uuid: clientUuid, is_error: false });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-stream', outcome: 'completed' }));
+    });
+    const transcript = fixture.events
+      .filter((event): event is Extract<AgentProviderEvent, { kind: 'transcript' }> => event.kind === 'transcript')
+      .map((event) => event.item);
+    expect(transcript.map(({ kind, text, isDelta, messageId, turnId }) => ({ kind, text, isDelta, messageId, turnId }))).toEqual([
+      { kind: 'reasoning', text: '', isDelta: false, messageId: undefined, turnId: 'turn-stream' },
+      { kind: 'assistant-message', text: 'Hello\n\n', isDelta: true, messageId: 'claude_msg:msg_1:1', turnId: 'turn-stream' },
+      { kind: 'tool-result', text: 'ok', isDelta: false, messageId: undefined, turnId: 'turn-stream' },
+      { kind: 'assistant-message', text: 'world', isDelta: true, messageId: 'claude_msg:msg_1:1', turnId: 'turn-stream' },
+      { kind: 'assistant-message', text: 'Hello\n\nworld', isDelta: false, messageId: 'claude_msg:msg_1:1', turnId: 'turn-stream' },
+    ]);
+    expect(transcript[0]?.payload).toEqual({ v: 1, type: 'reasoning', durationMs: 1_500 });
+    expect(new Set(transcript.map((item) => item.id)).size).toBe(transcript.length);
+    await fixture.adapter.dispose();
+  });
+
+  it('keeps late text of an interrupted turn on that turn while the next one is queued', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-a', commandId: 'command-a', prompt: 'First' });
+    const uuidA = (await inputIterator.next()).value!.uuid as string;
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-b', commandId: 'command-b', prompt: 'Second' });
+    const uuidB = (await inputIterator.next()).value!.uuid as string;
+    fixture.query.emit({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_a' } }, parent_tool_use_id: null,
+      uuid: 's-a', session_id: providerSessionId, user_message_uuid: uuidA, user_message_uuids: [uuidA] });
+    fixture.query.emit({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } }, parent_tool_use_id: null, uuid: 's-b', session_id: providerSessionId });
+    fixture.query.emit({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Part' } }, parent_tool_use_id: null, uuid: 's-c', session_id: providerSessionId });
+    await vi.waitFor(() => expect(fixture.events.some((event) => event.kind === 'turn-started' && event.turnId === 'turn-b')).toBe(true));
+    await new Promise((resolve) => setImmediate(resolve));
+    fixture.query.interruptReceipt = { still_queued: [uuidB] };
+    await fixture.adapter.interrupt(context.sessionId, providerSessionId);
+    fixture.query.emit({ type: 'assistant', uuid: 'late', session_id: providerSessionId, parent_tool_use_id: null, message: { id: 'msg_a', content: [{ type: 'text', text: 'Partial' }] } });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker' });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
+    });
+    const texts = fixture.events
+      .filter((event): event is Extract<AgentProviderEvent, { kind: 'transcript' }> => event.kind === 'transcript')
+      .map(({ item }) => ({ text: item.text, turnId: item.turnId, isDelta: item.isDelta }));
+    expect(texts).toEqual([
+      { text: 'Part', turnId: 'turn-a', isDelta: true },
+      { text: 'Partial', turnId: 'turn-a', isDelta: false },
+    ]);
+    expect(fixture.events.filter((event) => event.kind === 'turn-finished')).toEqual([
+      expect.objectContaining({ turnId: 'turn-a', outcome: 'interrupted' }),
+    ]);
+    await fixture.adapter.dispose();
+  });
+
+  it('answers questions, approves plans in the chosen mode and denies with feedback', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-ask', commandId: 'command-ask', prompt: 'Ask' });
+    const canUseTool = fixture.query.inputOptions.canUseTool!;
+    const ask = (tool: string, input: Record<string, unknown>, id: string): ReturnType<typeof canUseTool> => canUseTool(tool, input, {
+      signal: new AbortController().signal, toolUseID: `toolu_${id}`, requestId: id,
+    });
+    const questionInput = { questions: [{ question: 'Formal or casual?', header: 'Tone', multiSelect: false,
+      options: [{ label: 'Formal', description: 'Polite' }, { label: 'Casual' }] }] };
+    const question = ask('AskUserQuestion', questionInput, 'q');
+    const plan = ask('ExitPlanMode', { plan: '# Plan\n- step', planFilePath: 'C:\\plans\\p.md' }, 'p');
+    const write = ask('Write', { file_path: 'C:\\repo\\notes.md', content: 'one\ntwo\n' }, 'w');
+
+    await vi.waitFor(() => expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(3));
+    expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toEqual([
+      expect.objectContaining({ providerRequestId: 'q', risk: 'read', title: 'Answer a question', detail: 'Formal or casual?',
+        request: { v: 1, callId: 'toolu_q', kind: 'question', questions: [{ question: 'Formal or casual?', header: 'Tone', multiSelect: false,
+          options: [{ label: 'Formal', description: 'Polite' }, { label: 'Casual' }] }] } }),
+      expect.objectContaining({ providerRequestId: 'p', risk: 'write', title: 'Approve plan', detail: '# Plan',
+        request: { v: 1, callId: 'toolu_p', kind: 'plan', markdown: '# Plan\n- step', filePath: 'C:\\plans\\p.md' } }),
+      expect.objectContaining({ providerRequestId: 'w', risk: 'write', title: 'Edit notes.md', detail: 'C:\\repo\\notes.md',
+        request: { v: 1, callId: 'toolu_w', kind: 'file-change', files: [{ path: 'C:\\repo\\notes.md', diff: '@@\n+one\n+two' }] } }),
+    ]);
+
+    const decide = (providerRequestId: string, decision: 'allow' | 'deny', response: NonNullable<Parameters<typeof fixture.adapter.resolveApproval>[0]['response']>) =>
+      fixture.adapter.resolveApproval({ sessionId: context.sessionId, providerSessionId, providerRequestId, decision, response });
+    await decide('q', 'allow', { kind: 'answers', answers: { 'Formal or casual?': 'Casual' } });
+    await decide('p', 'allow', { kind: 'plan', mode: 'full-access' });
+    await decide('w', 'deny', { kind: 'feedback', message: 'Put it under docs/ instead.' });
+
+    await expect(question).resolves.toEqual({ behavior: 'allow', toolUseID: 'toolu_q',
+      updatedInput: { ...questionInput, answers: { 'Formal or casual?': 'Casual' } } });
+    await expect(plan).resolves.toMatchObject({ behavior: 'allow', updatedInput: { plan: '# Plan\n- step' } });
+    await expect(write).resolves.toEqual({ behavior: 'deny', message: 'Put it under docs/ instead.', toolUseID: 'toolu_w' });
+    expect(fixture.query.permissionModes).toEqual(['bypassPermissions']);
+    await expect(fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId })).resolves.toMatchObject({ permissionPreset: 'full-access' });
+    await fixture.adapter.dispose();
+  });
+
+  it('tracks TodoWrite lists and MultiEdit file counts in structured payloads', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-todo', commandId: 'command-todo', prompt: 'Track' });
+    fixture.query.emit({ type: 'assistant', uuid: 'a-todo', session_id: providerSessionId, parent_tool_use_id: null, message: { id: 'msg_t', content: [
+      { type: 'tool_use', id: 'toolu_todo', name: 'TodoWrite', input: { todos: [
+        { content: 'Read', status: 'completed', activeForm: 'Reading' },
+        { content: 'Edit', status: 'in_progress', activeForm: 'Editing' },
+      ] } },
+      { type: 'tool_use', id: 'toolu_multi', name: 'MultiEdit', input: { file_path: 'C:\\repo\\a.ts', edits: [
+        { old_string: 'a', new_string: 'b\nc' },
+        { old_string: 'd\ne', new_string: 'f' },
+      ] } },
+    ] } });
+    fixture.query.emit({ type: 'user', uuid: 'u-multi', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_multi', content: 'Applied 2 edits' }] } });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker' });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
+    });
+    const transcript = fixture.events
+      .filter((event): event is Extract<AgentProviderEvent, { kind: 'transcript' }> => event.kind === 'transcript')
+      .map((event) => event.item);
+    expect(transcript.find((item) => item.kind === 'notice')).toMatchObject({
+      text: '- [x] Read\n- [ ] Edit (in progress)',
+      payload: { v: 1, type: 'todo', source: 'claude-todowrite', items: [
+        { text: 'Read', status: 'completed', active: 'Reading' },
+        { text: 'Edit', status: 'in_progress', active: 'Editing' },
+      ] },
+    });
+    expect(transcript.find((item) => item.kind === 'tool-result')?.payload).toEqual({
+      v: 1, type: 'tool', callId: 'toolu_multi', name: 'MultiEdit', category: 'edit', phase: 'result', status: 'completed',
+      files: [{ path: 'C:\\repo\\a.ts', kind: 'update', added: 3, removed: 3 }],
+    });
+    await fixture.adapter.dispose();
+  });
+
+  it('streams and exposes task tools only to tool-enabled sessions', async () => {
+    const conversation = makeAdapter();
+    await start(conversation);
+    expect(conversation.query.inputOptions).toMatchObject({ includePartialMessages: true, env: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } });
+    await conversation.adapter.dispose();
+
+    const planning = makeAdapter();
+    await planning.adapter.createSession({ ...context, toolsDisabled: true });
+    expect(planning.query.inputOptions.includePartialMessages).toBe(false);
+    expect(planning.query.inputOptions.env).not.toHaveProperty('CLAUDE_CODE_ENABLE_TODO_TOOLS');
+    await planning.adapter.dispose();
+
+    const optedOut = makeAdapter({ enableTaskTools: false });
+    await start(optedOut);
+    expect(optedOut.query.inputOptions.env).not.toHaveProperty('CLAUDE_CODE_ENABLE_TODO_TOOLS');
+    await optedOut.adapter.dispose();
   });
 
   it('reconciles deterministic submitted UUIDs from provider history', async () => {
@@ -930,8 +1249,21 @@ describe('ClaudeProviderAdapter sessions', () => {
     releaseReturn();
     await deactivating;
     await expect(listing).resolves.toEqual([
-      expect.objectContaining({ id: 'default', displayName: 'Claude' }),
+      expect.objectContaining({ id: 'sonnet', displayName: 'Claude Sonnet' }),
     ]);
+    await fixture.adapter.dispose();
+  });
+});
+
+describe('Claude zero-turn capabilities', () => {
+  it('loads native settings and closes an ephemeral query with no prompt or transcript', async () => {
+    const fixture = makeAdapter();
+    const catalog = await fixture.adapter.listCapabilities(context.workspaceRoot);
+    expect(catalog.models[0]?.id).toBe('sonnet');
+    expect(fixture.query.inputOptions).toMatchObject({ persistSession: false, settingSources: ['user', 'project', 'local'], cwd: context.workspaceRoot });
+    expect(await fixture.query.input[Symbol.asyncIterator]().next()).toEqual({ done: true, value: undefined });
+    expect(fixture.query.closeCount).toBe(1);
+    expect(fixture.events).toEqual([]);
     await fixture.adapter.dispose();
   });
 });

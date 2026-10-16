@@ -16,6 +16,7 @@ const features = [
   'Element.replaceChildren',
   'WeakRef',
   'AggregateError',
+  'Promise.allSettled',
   'Blob.text',
   'Blob.arrayBuffer',
   'File.text',
@@ -31,6 +32,7 @@ const fallbackImplementationMarkers = [
   'Blob read failed',
   'Array.prototype.at called on null or undefined',
   'ezterminal-webview74-inert',
+  'Promise.allSettled requires an iterable',
 ];
 
 function createOutput({
@@ -65,7 +67,7 @@ function createOutput({
   // A custom `.at()` method used to make the old regex-only verifier reject a
   // compatible bundle. It is now accepted because the bootstrap contract
   // supplies Array/String fallbacks before this chunk is evaluated.
-  writeFileSync(path.join(root, 'assets', 'main.js'), 'router.at("/health");new WeakRef(window);node.replaceChildren()');
+  writeFileSync(path.join(root, 'assets', 'main.js'), 'router.at("/health");new WeakRef(window);node.replaceChildren();Promise.allSettled([])');
   writeFileSync(
     path.join(root, '.vite', 'manifest.json'),
     JSON.stringify({
@@ -104,9 +106,9 @@ describe('WebView 74 build verifier', () => {
     expect(result.stdout).toContain('WebView 74 compatibility verified');
   });
 
-  it('rejects a bundle whose compatibility signature omits a required fallback', () => {
+  it.each(['WeakRef', 'Promise.allSettled'])('rejects a bundle whose compatibility signature omits %s', (missingFeature) => {
     const result = verify(createOutput({
-      advertisedFeatures: features.filter((feature) => feature !== 'WeakRef'),
+      advertisedFeatures: features.filter((feature) => feature !== missingFeature),
     }));
 
     expect(result.status).not.toBe(0);
@@ -119,6 +121,14 @@ describe('WebView 74 build verifier', () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('emitted fallback implementations');
     expect(result.stderr).toContain('WeakRef target must be an object');
+    expect(result.stderr).toContain('Promise.allSettled requires an iterable');
+  });
+
+  it('rejects an advertised allSettled contract without its fallback implementation', () => {
+    const result = verify(createOutput({ emittedImplementationMarkers: fallbackImplementationMarkers.filter(marker => marker !== 'Promise.allSettled requires an iterable') }));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('emitted fallback implementations');
+    expect(result.stderr).toContain('Promise.allSettled requires an iterable');
   });
 
   it('rejects fallback bodies without the complete runtime postcondition', () => {

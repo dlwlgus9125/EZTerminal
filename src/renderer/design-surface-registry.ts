@@ -20,10 +20,10 @@ export const DESKTOP_DESTINATION_STORIES = {
   settings: { storyId: 'compositions-desktop-handoff--settings', readySelector: '[data-testid="settings-panel"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 export const MOBILE_PRIMARY_STORIES = {
-  home: { storyId: 'compositions-mobile-workbench-shell--hub-english', readySelector: '[data-testid="mobile-home-view"]' },
+  home: { storyId: 'workbench-mobile-v2--projects', readySelector: '[data-testid="mobile-projects-navigator"]' },
   terminal: { storyId: 'compositions-mobile-workbench-shell--terminal-english', readySelector: '[data-testid="mobile-workspace"]' },
-  pc: { storyId: 'compositions-mobile-active-surfaces--pc-control-unavailable', readySelector: '[data-testid="mobile-pc-control"]' },
-  agents: { storyId: 'compositions-mobile-active-surfaces--agents', readySelector: '[data-testid="mobile-agent-view"]' },
+  tasks: { storyId: 'workbench-mobile-v2--tasks', readySelector: '[data-testid="mobile-tasks-navigator"]' },
+  agents: { storyId: 'workbench-mobile-v2--conversations', readySelector: '[data-testid="mobile-daemon-navigator"]' },
   more: { storyId: 'compositions-mobile-active-surfaces--more-sheet', readySelector: '[data-testid="mobile-more-sheet"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 

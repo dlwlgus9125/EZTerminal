@@ -12,6 +12,7 @@ import { rendererCapabilities, type CapabilityAccess } from '../capability-acces
 import { useAppTranslation } from '../i18n';
 import { RemoteDeviceRoster } from './RemoteDeviceRoster';
 import { RemoteTopology } from './RemoteTopology';
+import '../remote-panel.css';
 
 export type RemotePanelDesktopApi = Pick<
   EzTerminalDesktopApi,
@@ -242,11 +243,11 @@ export function RemotePanel({
   return (
     <div className="remote-panel" data-testid="remote-panel">
       {/* The link, drawn as a link, before the same facts appear as rows. */}
-      <RemoteTopology status={status} />
+      <RemoteTopology status={status} capabilities={capabilities} currentTime={currentTime} />
       <div className="remote-panel__grid">
         <button
           type="button"
-          className="remote-pairing-card"
+          className="remote-card remote-pairing-card"
           disabled={!pairingAvailable}
           title={pairingAvailable ? undefined : t('pairing.unavailable')}
           onClick={() => {
@@ -260,7 +261,7 @@ export function RemotePanel({
           <b>{t('pairing.card')}</b>
           <span>{pairingAvailable ? t('pairing.cardHint') : t('pairing.unavailable')}</span>
         </button>
-        <RemoteDesktopStatusCard capabilities={capabilities} currentTime={currentTime} />
+        <RemoteDesktopStatusCard status={status} />
       </div>
       <ConnectionInfoPanel capabilities={capabilities} />
       <RemoteDeviceRoster desktopApi={desktopApi} resourceProfile={resourceProfile} />

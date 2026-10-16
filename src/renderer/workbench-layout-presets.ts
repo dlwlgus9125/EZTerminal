@@ -1,6 +1,6 @@
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 
-export type WorkbenchLayoutPreset = 'two-by-one' | 'one-plus-two' | 'single';
+export type WorkbenchLayoutPreset = 'two-by-one' | 'one-plus-two' | 'single' | 'rows';
 
 function moveInto(panel: IDockviewPanel, reference: IDockviewPanel): void {
   if (panel.api.group.id === reference.api.group.id) return;
@@ -14,13 +14,15 @@ function moveInto(panel: IDockviewPanel, reference: IDockviewPanel): void {
 export function applyWorkbenchLayoutPreset(
   api: DockviewApi,
   preset: WorkbenchLayoutPreset,
+  panelIds?: readonly string[],
 ): boolean {
-  const active = api.activePanel ?? api.panels[0];
+  const panels = api.panels.filter(panel => panel.api.location?.type !== 'popout' && (!panelIds || panelIds.includes(panel.id)));
+  const active = panels.find(panel => panel.id === api.activePanel?.id) ?? panels[0];
   if (!active) return false;
 
   if (preset === 'single') {
     if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-    for (const panel of api.panels) {
+    for (const panel of panels) {
       if (panel.id !== active.id) moveInto(panel, active);
     }
     active.api.setActive();
@@ -28,7 +30,7 @@ export function applyWorkbenchLayoutPreset(
   }
 
   if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-  const rest = api.panels.filter((panel) => panel.id !== active.id);
+  const rest = panels.filter((panel) => panel.id !== active.id);
   if (rest.length === 0) {
     active.api.setActive();
     return true;
@@ -39,7 +41,7 @@ export function applyWorkbenchLayoutPreset(
   for (const panel of rest) moveInto(panel, active);
 
   const rightTop = rest[0];
-  rightTop.api.moveTo({ group: active.api.group, position: 'right', skipSetActive: true });
+  rightTop.api.moveTo({ group: active.api.group, position: preset === 'rows' ? 'bottom' : 'right', skipSetActive: true });
 
   if (preset === 'one-plus-two' && rest.length > 1) {
     const rightBottom = rest[1];

@@ -1,0 +1,2 @@
+const path=require('node:path');
+module.exports={testDir:__dirname,testMatch:['prototype.spec.cjs','terminal.spec.cjs'],timeout:90000,workers:1,reporter:[['list'],['json',{outputFile:path.join(__dirname,'evidence','terminal','qa-report.json')}]],outputDir:path.join(__dirname,'evidence','terminal','test-results'),use:{baseURL:'http://127.0.0.1:4317',browserName:'chromium',headless:true,viewport:{width:1440,height:900}}};

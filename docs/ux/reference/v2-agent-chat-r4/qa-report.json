@@ -1,0 +1,746 @@
+{
+  "kind": "design-reference-only",
+  "smoke": false,
+  "generatedAt": "2026-10-13T12:21:08.800Z",
+  "productValidation": false,
+  "physicalAndroidIME": false,
+  "performanceMeasurement": false,
+  "approved": false,
+  "passed": true,
+  "checks": [
+    {
+      "name": "cold conversation is usable with zero simulated turns",
+      "passed": true
+    },
+    {
+      "name": "selection, draft, attachment and caret survive skin and manager navigation",
+      "passed": true
+    },
+    {
+      "name": "first send carries selected skills and attachments",
+      "passed": true
+    },
+    {
+      "name": "keyboard picker and Escape restore focus without sending",
+      "passed": true
+    },
+    {
+      "name": "IME Enter and Android Enter do not send",
+      "passed": true
+    },
+    {
+      "name": "question answer and approval decisions are distinct",
+      "passed": true
+    },
+    {
+      "name": "queue editing, stop and explicit resume preserve the conversation",
+      "passed": true
+    },
+    {
+      "name": "queued messages retain skill and attachment context",
+      "passed": true
+    },
+    {
+      "name": "conversation switching preserves independent drafts",
+      "passed": true
+    },
+    {
+      "name": "mid-draft command preserves surrounding text and changes options without a turn",
+      "passed": true
+    },
+    {
+      "name": "disabled selected skill blocks sending until removed",
+      "passed": true
+    },
+    {
+      "name": "unsupported reasoning keeps basic conversation available",
+      "passed": true
+    },
+    {
+      "name": "MCP failed connection recovers and respects scope filtering",
+      "passed": true
+    },
+    {
+      "name": "source validation, explicit install, return to original draft",
+      "passed": true
+    },
+    {
+      "name": "remote management explicitly identifies the PC and preserves provider isolation",
+      "passed": true
+    },
+    {
+      "name": "plugin removal requires confirmation and preserves history",
+      "passed": true
+    },
+    {
+      "name": "MCP validation and authentication are separate actions",
+      "passed": true
+    },
+    {
+      "name": "offline reconnect and uncertain delivery never resend",
+      "passed": true
+    },
+    {
+      "name": "review notes persist without creating approval",
+      "passed": true
+    },
+    {
+      "name": "Claude skill invocation label and basic settings are available before a turn",
+      "passed": true
+    },
+    {
+      "name": "pending action is visible when reopening a conversation",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-home",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-empty",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-new",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-compose",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-graph",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-parallel",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-stage",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-chat",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-general",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-assistant",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-running",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-approval",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/work-invalid",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-home",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-empty",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-list",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-new",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-from-chat",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-linked",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-quick",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-rework",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plans-archived",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-overview",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-planning",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-plan-chat",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-proposal",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-design",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-design-chat",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-tasks",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-task-chat",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-review",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-review-chat",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/flow-stale",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/welcome",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/loading",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/skills",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/compose",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/streaming",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/question",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/approval",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/queue",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/interrupted",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/history",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/installed",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/marketplace",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/plugin",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/install",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/install-failed",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/mcp",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/mcp-auth",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/mcp-failed",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/conflict",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/restart",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/offline",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/uncertain",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/unavailable",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/unsupported",
+      "passed": true
+    },
+    {
+      "name": "screen desktop/empty",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-home",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-empty",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-new",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-compose",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-graph",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-parallel",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-stage",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-chat",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-general",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-assistant",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-running",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-approval",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/work-invalid",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-home",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-empty",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-list",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-new",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-from-chat",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-linked",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-quick",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-rework",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plans-archived",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-overview",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-planning",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-plan-chat",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-proposal",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-design",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-design-chat",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-tasks",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-task-chat",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-review",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-review-chat",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/flow-stale",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/welcome",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/loading",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/skills",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/compose",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/streaming",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/question",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/approval",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/queue",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/interrupted",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/history",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/installed",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/marketplace",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/plugin",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/install",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/install-failed",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/mcp",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/mcp-auth",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/mcp-failed",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/conflict",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/restart",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/offline",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/uncertain",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/unavailable",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/unsupported",
+      "passed": true
+    },
+    {
+      "name": "screen mobile/empty",
+      "passed": true
+    },
+    {
+      "name": "accessibility desktop/welcome/dark",
+      "passed": true
+    },
+    {
+      "name": "accessibility desktop/skills/dark",
+      "passed": true
+    },
+    {
+      "name": "accessibility mobile/question/dark",
+      "passed": true
+    },
+    {
+      "name": "accessibility desktop/installed/dark",
+      "passed": true
+    },
+    {
+      "name": "accessibility mobile/mcp/dark",
+      "passed": true
+    },
+    {
+      "name": "accessibility mobile/install/dark",
+      "passed": true
+    },
+    {
+      "name": "accessibility desktop/approval/light",
+      "passed": true
+    },
+    {
+      "name": "accessibility mobile/welcome/high-contrast",
+      "passed": true
+    },
+    {
+      "name": "accessibility desktop/compose/matrix",
+      "passed": true
+    },
+    {
+      "name": "responsive 1024",
+      "passed": true
+    },
+    {
+      "name": "responsive 800",
+      "passed": true
+    },
+    {
+      "name": "responsive 360",
+      "passed": true
+    },
+    {
+      "name": "no runtime errors or external requests",
+      "passed": true
+    }
+  ],
+  "captures": [
+    "desktop-welcome.png",
+    "mobile-welcome.png",
+    "desktop-work-home.png",
+    "desktop-work-empty.png",
+    "desktop-work-new.png",
+    "desktop-work-compose.png",
+    "desktop-work-graph.png",
+    "desktop-work-parallel.png",
+    "desktop-work-stage.png",
+    "desktop-work-chat.png",
+    "desktop-work-general.png",
+    "desktop-work-assistant.png",
+    "desktop-work-running.png",
+    "desktop-work-approval.png",
+    "desktop-work-invalid.png",
+    "desktop-plans-home.png",
+    "desktop-plans-empty.png",
+    "desktop-plans-list.png",
+    "desktop-plans-new.png",
+    "desktop-plans-from-chat.png",
+    "desktop-plans-linked.png",
+    "desktop-plans-quick.png",
+    "desktop-plans-rework.png",
+    "desktop-plans-archived.png",
+    "desktop-flow-overview.png",
+    "desktop-flow-planning.png",
+    "desktop-flow-plan-chat.png",
+    "desktop-flow-proposal.png",
+    "desktop-flow-design.png",
+    "desktop-flow-design-chat.png",
+    "desktop-flow-tasks.png",
+    "desktop-flow-task-chat.png",
+    "desktop-flow-review.png",
+    "desktop-flow-review-chat.png",
+    "desktop-flow-stale.png",
+    "desktop-welcome.png",
+    "desktop-loading.png",
+    "desktop-skills.png",
+    "desktop-compose.png",
+    "desktop-streaming.png",
+    "desktop-question.png",
+    "desktop-approval.png",
+    "desktop-queue.png",
+    "desktop-interrupted.png",
+    "desktop-history.png",
+    "desktop-installed.png",
+    "desktop-marketplace.png",
+    "desktop-plugin.png",
+    "desktop-install.png",
+    "desktop-install-failed.png",
+    "desktop-mcp.png",
+    "desktop-mcp-auth.png",
+    "desktop-mcp-failed.png",
+    "desktop-conflict.png",
+    "desktop-restart.png",
+    "desktop-offline.png",
+    "desktop-uncertain.png",
+    "desktop-unavailable.png",
+    "desktop-unsupported.png",
+    "desktop-empty.png",
+    "mobile-work-home.png",
+    "mobile-work-empty.png",
+    "mobile-work-new.png",
+    "mobile-work-compose.png",
+    "mobile-work-graph.png",
+    "mobile-work-parallel.png",
+    "mobile-work-stage.png",
+    "mobile-work-chat.png",
+    "mobile-work-general.png",
+    "mobile-work-assistant.png",
+    "mobile-work-running.png",
+    "mobile-work-approval.png",
+    "mobile-work-invalid.png",
+    "mobile-plans-home.png",
+    "mobile-plans-empty.png",
+    "mobile-plans-list.png",
+    "mobile-plans-new.png",
+    "mobile-plans-from-chat.png",
+    "mobile-plans-linked.png",
+    "mobile-plans-quick.png",
+    "mobile-plans-rework.png",
+    "mobile-plans-archived.png",
+    "mobile-flow-overview.png",
+    "mobile-flow-planning.png",
+    "mobile-flow-plan-chat.png",
+    "mobile-flow-proposal.png",
+    "mobile-flow-design.png",
+    "mobile-flow-design-chat.png",
+    "mobile-flow-tasks.png",
+    "mobile-flow-task-chat.png",
+    "mobile-flow-review.png",
+    "mobile-flow-review-chat.png",
+    "mobile-flow-stale.png",
+    "mobile-welcome.png",
+    "mobile-loading.png",
+    "mobile-skills.png",
+    "mobile-compose.png",
+    "mobile-streaming.png",
+    "mobile-question.png",
+    "mobile-approval.png",
+    "mobile-queue.png",
+    "mobile-interrupted.png",
+    "mobile-history.png",
+    "mobile-installed.png",
+    "mobile-marketplace.png",
+    "mobile-plugin.png",
+    "mobile-install.png",
+    "mobile-install-failed.png",
+    "mobile-mcp.png",
+    "mobile-mcp-auth.png",
+    "mobile-mcp-failed.png",
+    "mobile-conflict.png",
+    "mobile-restart.png",
+    "mobile-offline.png",
+    "mobile-uncertain.png",
+    "mobile-unavailable.png",
+    "mobile-unsupported.png",
+    "mobile-empty.png",
+    "desktop-welcome-dark-ko.png",
+    "desktop-skills-dark-ko.png",
+    "mobile-question-dark-ko.png",
+    "desktop-installed-dark-ko.png",
+    "mobile-mcp-dark-ko.png",
+    "mobile-install-dark-ko.png",
+    "desktop-approval-light-ko.png",
+    "mobile-welcome-high-contrast-en.png",
+    "desktop-compose-matrix-ko.png",
+    "responsive-1024-cli-en.png",
+    "responsive-800-cli-en.png",
+    "responsive-360-cli-en.png"
+  ],
+  "errors": [],
+  "externalRequests": []
+}

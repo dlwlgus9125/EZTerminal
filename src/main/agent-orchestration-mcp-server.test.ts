@@ -6,6 +6,9 @@ import type {
   DaemonSnapshot,
 } from '../shared/daemon-protocol';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
+import { WorkflowAuthority } from './workflow-authority';
+import { LocalMutationIngress } from './local-mutation-ingress';
+import { createWorkflowGraph } from '../shared/workflow';
 
 const NOW = '2026-09-04T00:00:00.000Z';
 const servers: AgentOrchestrationMcpServer[] = [];
@@ -167,6 +170,89 @@ afterEach(async () => {
 });
 
 describe('AgentOrchestrationMcpServer', () => {
+  it.each([
+    { label: 'native Codex request metadata', meta: { threadId: 'native-thread', progressToken: 1 } },
+    { label: 'string progress metadata', meta: { progressToken: 'native-progress' } },
+    { label: 'empty request metadata', meta: {} },
+    { label: 'no request metadata', meta: undefined },
+  ])('reads workflows with $label without passing metadata to workflow authority', async ({ meta }) => {
+    const read = vi.fn(async () => ({ ok: true as const, snapshot: { projectId: 'project-1' } }));
+    const service = { previewForSession: () => undefined } as unknown as import('./workflow-service').WorkflowService;
+    const workflow = { read } as unknown as WorkflowAuthority;
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => snapshot(), execute: vi.fn() }, workflow: () => ({ service, authority: workflow }), workflowAllowed: () => true });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    const result = await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', {
+      name: 'workflow_read', arguments: {}, ...(meta === undefined ? {} : { _meta: meta }),
+    }));
+    expect(result).toMatchObject({ status: 200, value: { result: { content: [{ text: '{"ok":true,"snapshot":{"projectId":"project-1"},"preview":null}' }] } } });
+    expect(read.mock.calls).toEqual([['project-1']]);
+  });
+  it('rejects malformed tool-call metadata and extra envelope fields before dispatch', async () => {
+    const read = vi.fn();
+    const service = { previewForSession: () => undefined } as unknown as import('./workflow-service').WorkflowService;
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => snapshot(), execute: vi.fn() }, workflow: () => ({ service, authority: { read } as unknown as WorkflowAuthority }), workflowAllowed: () => true });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    for (const invalid of [
+      { _meta: null }, { _meta: [] }, { _meta: 'metadata' },
+      { _meta: { progressToken: null } }, { _meta: { progressToken: true } },
+      { _meta: { progressToken: {} } }, { _meta: { progressToken: 1.5 } },
+      { _meta: {}, projectId: 'project-2' },
+    ]) {
+      expect(await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', {
+        name: 'workflow_read', arguments: {}, ...invalid,
+      }))).toMatchObject({ value: { error: { code: -32602 } } });
+    }
+    expect(read).not.toHaveBeenCalled();
+  });
+  it('keeps workflow arguments strict and the session principal authoritative when metadata is present', async () => {
+    const execute = vi.fn(async () => ({ ok: false as const, error: 'conflict', message: 'revision conflict' }));
+    const service = {} as unknown as import('./workflow-service').WorkflowService;
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => snapshot(), execute: vi.fn() }, workflow: () => ({ service, authority: { execute } as unknown as WorkflowAuthority }), workflowAllowed: () => true });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    const command = { type: 'subproject.update', commandId: 'command-1', projectId: 'project-1', hostId: 'host-1', subprojectId: 'subproject-1', expectedRevision: 2, payload: { title: 'Edited' } };
+    const meta = { progressToken: 1, threadId: 'forged-thread', principal: { kind: 'desktop', id: 'forged-owner' }, commandId: 'forged-command', expectedRevision: 99, projectId: 'project-2' };
+    for (const args of [
+      { ...command, _meta: {} }, { ...command, principal: meta.principal },
+      { ...command, projectId: 'project-2' }, { ...command, expectedRevision: undefined },
+      { ...command, commandId: undefined }, { ...command, payload: { title: 'Edited', bypass: true } },
+    ]) {
+      expect(await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', {
+        name: 'workflow_command', arguments: args, _meta: meta,
+      }))).toMatchObject({ value: { result: { isError: true } } });
+    }
+    expect(execute).not.toHaveBeenCalled();
+    expect(await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/call', {
+      name: 'workflow_command', arguments: command, _meta: meta,
+    }))).toMatchObject({ value: { result: { isError: true, content: [{ text: '{"ok":false,"error":"conflict","message":"revision conflict"}' }] } } });
+    expect(execute.mock.calls).toEqual([[command, { kind: 'ai', id: 'session:lead-1', sessionId: 'lead-1' }]]);
+  });
+  it('offers workflow tools on a zero-turn ordinary session and fences preview edits during shutdown', async () => {
+    const base = snapshot(); const current = { ...base, runtime: { ...base.runtime, orchestrationToolsEnabled: false } };
+    let allowed = true;
+    const editPreview = vi.fn(async () => ({ ok: true as const, preview: null }));
+    const service = { editPreview, previewForSession: () => undefined } as unknown as import('./workflow-service').WorkflowService;
+    const ingress = new LocalMutationIngress('workflow test');
+    const workflow = new WorkflowAuthority({ service, ready: Promise.resolve(), ingress, available: () => true });
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => current, execute: vi.fn() }, workflow: () => ({ service, authority: workflow }), workflowAllowed: () => allowed });
+    servers.push(server); await server.start(); const descriptor = server.descriptorForSession('lead-1');
+    const listed = await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/list'));
+    expect(JSON.stringify(listed.value)).toContain('preview_workflow'); expect(JSON.stringify(listed.value)).not.toContain('spawn_agent');
+    const args = { commandId: 'preview-edit', previewId: 'preview', expectedRevision: 0, graph: createWorkflowGraph('research', 'preview') };
+    expect(await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/call', { name: 'preview_workflow', arguments: args }))).toMatchObject({ value: { result: { content: [{ text: '{"ok":true,"preview":null}' }] } } });
+    expect(editPreview).toHaveBeenCalledOnce();
+    await ingress.closeAndDrain();
+    expect(await post(descriptor.endpoint, descriptor.bearerToken, rpc(3, 'tools/call', { name: 'preview_workflow', arguments: args }))).toMatchObject({ value: { result: { isError: true } } });
+    expect(editPreview).toHaveBeenCalledOnce();
+    allowed = false;
+    const blocked = await post(descriptor.endpoint, descriptor.bearerToken, rpc(4, 'tools/list'));
+    expect(JSON.stringify(blocked.value)).not.toContain('preview_workflow');
+  });
   it('binds only a capability endpoint and negotiates stateless MCP', async () => {
     const authority = {
       getSnapshot: () => snapshot(),

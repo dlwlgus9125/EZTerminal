@@ -1,3 +1,4 @@
+import { OpenClawConnectionStatus, OpenClawControlStatus } from '../../src/renderer/OpenClawControlStatus';
 import { Browser } from '@capacitor/browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -407,39 +408,8 @@ export function MobileOpenClawView({
                   {t('mobile.openClaw.port', { port: status.port })}
                 </div>
 
-                {control && (
-                  <div
-                    className="openclaw-control-card"
-                    data-testid="mobile-openclaw-control"
-                    data-phase={control.operation?.phase ?? 'idle'}
-                    aria-live="polite"
-                  >
-                    <div className="openclaw-control-grid">
-                      <span>{t('openClaw.desiredState')}</span>
-                      <strong>{t(`openClaw.desired.${control.desiredState}`)}</strong>
-                      <span>{t('openClaw.supervisor')}</span>
-                      <strong>{t(`openClaw.supervisorState.${control.supervisorState}`)}</strong>
-                    </div>
-                    {control.operation && (
-                      <div className="openclaw-control-progress" role="status">
-                        <span>{t(`openClaw.phase.${control.operation.phase}`)}</span>
-                        {control.operation.attempt > 0 && (
-                          <span>{t('openClaw.attempt', {
-                            attempt: control.operation.attempt,
-                            max: control.operation.maxAttempts,
-                          })}</span>
-                        )}
-                      </div>
-                    )}
-                    {control.issue && (
-                      <div className="openclaw-control-issue" role="alert">
-                        <strong>{control.issue.detail}</strong>
-                        <span>{control.issue.remediation}</span>
-                        <code>{control.issue.diagnosticId}</code>
-                      </div>
-                    )}
-                  </div>
-                )}
+                <OpenClawConnectionStatus status={status} />
+                {control && <OpenClawControlStatus control={control} testId="mobile-openclaw-control" />}
 
                 {status.state === 'not-installed' && (
                   <div className="openclaw-guidance" data-testid="openclaw-guidance">

@@ -1,0 +1,434 @@
+/* Chat markdown (ChatMarkdown, CodeBlock). Ships to Android WebView 74: no
+   color-mix(), :has(), flexbox gap, inset shorthand, aspect-ratio or logical
+   inset/margin longhands. Only --ui-* tokens.
+
+   Syntax colours: highlighter.ts emits `var(--ui-code-token-<role>, <semantic
+   default>)` for keyword, function, string, string-expression, constant,
+   comment, parameter, punctuation, link, inserted, deleted and changed, plus
+   --ui-code-foreground. A theme overrides any of them by defining the
+   variable at any level; nothing here needs to change. */
+
+.chat-md {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-body);
+  font-size: var(--ui-font-size-md);
+  line-height: var(--ui-line-height-relaxed);
+  min-width: 0;
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* [data-variant] lifts block spacing over host resets such as
+   `.structured-agent p { margin: 0 }`. */
+.chat-md[data-variant] > :first-child {
+  margin-top: 0;
+}
+
+.chat-md[data-variant] > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-md[data-variant] p {
+  margin: 0 0 var(--ui-space-3);
+}
+
+.chat-md[data-variant] h1,
+.chat-md[data-variant] h2,
+.chat-md[data-variant] h3,
+.chat-md[data-variant] h4,
+.chat-md[data-variant] h5,
+.chat-md[data-variant] h6 {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-heading);
+  font-weight: 600;
+  letter-spacing: var(--ui-letter-spacing-heading);
+  line-height: var(--ui-line-height-tight);
+  margin: var(--ui-space-4) 0 var(--ui-space-2);
+}
+
+.chat-md h1 {
+  font-size: 1.29em;
+}
+
+.chat-md h2 {
+  font-size: 1.14em;
+}
+
+.chat-md h3 {
+  font-size: 1.07em;
+}
+
+.chat-md h4,
+.chat-md h5,
+.chat-md h6 {
+  font-size: 1em;
+}
+
+.chat-md ul,
+.chat-md ol {
+  margin: 0 0 var(--ui-space-3);
+  padding: 0 0 0 1.5em;
+}
+
+.chat-md li {
+  margin: var(--ui-space-1) 0 0;
+}
+
+.chat-md li:first-child {
+  margin-top: 0;
+}
+
+.chat-md li > ul,
+.chat-md li > ol {
+  margin: var(--ui-space-1) 0 0;
+}
+
+.chat-md li > p {
+  margin: 0 0 var(--ui-space-2);
+}
+
+.chat-md li > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-md li::marker {
+  color: var(--ui-text-secondary);
+}
+
+.chat-md .contains-task-list {
+  list-style: none;
+  padding-left: 0.25em;
+}
+
+.chat-md .chat-md__task {
+  accent-color: var(--ui-accent);
+  margin: 0 var(--ui-space-2) 0 0;
+  vertical-align: -0.125em;
+}
+
+.chat-md blockquote {
+  border-left: 2px solid var(--ui-border-strong);
+  color: var(--ui-text-secondary);
+  margin: 0 0 var(--ui-space-3);
+  padding: 0 0 0 var(--ui-space-3);
+}
+
+.chat-md blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-md hr {
+  border: 0;
+  border-top: 1px solid var(--ui-border-subtle);
+  margin: var(--ui-space-4) 0;
+}
+
+.chat-md strong {
+  font-weight: 600;
+}
+
+.chat-md__link,
+.chat-md__file-link {
+  color: var(--ui-chat-link, var(--ui-accent));
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.chat-md a.chat-md__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.chat-md__link[aria-disabled='true'] {
+  cursor: default;
+}
+
+.chat-md__file-link {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  white-space: normal;
+}
+
+.chat-md__link:focus-visible,
+.chat-md__file-link:focus-visible {
+  border-radius: var(--ui-radius-sm);
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.chat-md__inline-code {
+  background: var(--ui-chat-inline-code);
+  border-radius: var(--ui-radius-md);
+  font-family: var(--ui-font-mono);
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+  padding: 0.1em 0.35em;
+}
+
+.chat-md__file-link .chat-md__inline-code {
+  color: inherit;
+}
+
+.chat-md__blocked-image {
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
+  display: inline-block;
+  font-size: var(--ui-font-size-xs);
+  padding: var(--ui-space-1) var(--ui-space-2);
+}
+
+.chat-md__table {
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  margin: 0 0 var(--ui-space-3);
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.chat-md__table:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.chat-md__table table {
+  border-collapse: collapse;
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height-normal);
+  min-width: 100%;
+}
+
+.chat-md__table th,
+.chat-md__table td {
+  border-bottom: 1px solid var(--ui-border-subtle);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-md__table th + th,
+.chat-md__table td + td {
+  border-left: 1px solid var(--ui-border-subtle);
+}
+
+.chat-md__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.chat-md__table thead th {
+  background: var(--ui-surface-raised);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Streaming: words revealed by the latest delta fade in by opacity only. */
+.chat-md__fade {
+  animation: chat-md-fade-in 300ms var(--ui-ease-standard) backwards;
+}
+
+@keyframes chat-md-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-md__fade {
+    animation: none;
+  }
+}
+
+/* Code blocks. */
+.chat-md-code {
+  background: var(--ui-chat-code-bg, var(--ui-surface-inset));
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  margin: 0 0 var(--ui-space-3);
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-md-code__header {
+  align-items: center;
+  background: var(--ui-surface);
+  border-bottom: 1px solid var(--ui-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  min-height: 2rem;
+  padding: 0 var(--ui-space-1) 0 var(--ui-space-3);
+}
+
+.chat-md-code__language {
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-md-code__actions {
+  align-items: center;
+  display: flex;
+  flex: none;
+}
+
+.chat-md-code__actions > * + * {
+  margin-left: var(--ui-space-1);
+}
+
+@media (pointer: fine) {
+  .chat-md-code .chat-md-code__header .chat-md-code__action {
+    inline-size: 1.625rem;
+    min-block-size: 1.625rem;
+  }
+}
+
+.chat-md-code .chat-md-code__header .chat-md-code__action[aria-pressed='true'] {
+  background: var(--ui-surface-selected);
+  color: var(--ui-text-primary);
+}
+
+.chat-md-code__pre {
+  color: var(--ui-code-foreground, var(--ui-text-primary));
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-sm);
+  /* Terminal fonts such as Cascadia Code draw `>=` as one glyph; code shows
+     the characters a copy would paste. */
+  font-variant-ligatures: none;
+  line-height: var(--ui-line-height-normal);
+  margin: 0;
+  overflow-x: auto;
+  padding: var(--ui-space-3);
+  tab-size: 4;
+  white-space: pre;
+}
+
+.chat-md-code[data-wrap='true'] .chat-md-code__pre {
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-md-code__pre code {
+  background: none;
+  font: inherit;
+  padding: 0;
+}
+
+.chat-md-code__pre:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+
+/* Language-less blocks: no header, a copy button that floats in on hover or
+   focus and stays visible where there is no hover. */
+.chat-md-code > .chat-md-code__float.ez-ui-icon-button {
+  background: var(--ui-surface-raised);
+  border-color: var(--ui-border-subtle);
+  opacity: 0;
+  position: absolute;
+  right: var(--ui-space-1);
+  top: var(--ui-space-1);
+  transition: opacity var(--ui-motion-fast) var(--ui-ease-standard);
+}
+
+.chat-md-code > .chat-md-code__float.ez-ui-icon-button:hover {
+  background: var(--ui-surface-hover);
+}
+
+.chat-md-code--bare:hover > .chat-md-code__float.ez-ui-icon-button,
+.chat-md-code--bare:focus-within > .chat-md-code__float.ez-ui-icon-button {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chat-md-code > .chat-md-code__float.ez-ui-icon-button {
+    opacity: 1;
+  }
+
+  .chat-md-code--bare .chat-md-code__pre {
+    padding-right: calc(var(--ui-control-height-sm) + var(--ui-space-2));
+  }
+}
+
+/* CLI skin: one monospace column, square edges, tighter rhythm. Hangul in
+   an English UI falls through the mono face to the body face. */
+.chat-md[data-variant='cli'] {
+  font-family: var(--ui-font-mono), var(--ui-font-body);
+  font-size: var(--ui-font-size-sm);
+  font-variant-ligatures: none;
+  line-height: var(--ui-line-height-normal);
+}
+
+/* Under lang=ko the generic monospace resolves to a full-width Korean face,
+   which breaks Korean sentences apart (DESIGN.md Typography). Prose keeps the
+   body face; inline code and code blocks stay monospaced. */
+:lang(ko) .chat-md[data-variant='cli'] {
+  font-family: var(--ui-font-body);
+}
+
+.chat-md[data-variant='cli'] h1,
+.chat-md[data-variant='cli'] h2,
+.chat-md[data-variant='cli'] h3,
+.chat-md[data-variant='cli'] h4,
+.chat-md[data-variant='cli'] h5,
+.chat-md[data-variant='cli'] h6 {
+  font-family: inherit;
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: var(--ui-space-3) 0 var(--ui-space-1);
+}
+
+.chat-md[data-variant='cli'] p,
+.chat-md[data-variant='cli'] ul,
+.chat-md[data-variant='cli'] ol,
+.chat-md[data-variant='cli'] blockquote,
+.chat-md[data-variant='cli'] .chat-md__table,
+.chat-md[data-variant='cli'] .chat-md-code {
+  margin-bottom: var(--ui-space-2);
+}
+
+.chat-md[data-variant='cli'] ul:not(.contains-task-list) {
+  list-style-type: disc;
+  list-style-type: '\203A  ';
+}
+
+.chat-md[data-variant='cli'] li {
+  margin-top: 0;
+}
+
+.chat-md[data-variant='cli'] .chat-md__inline-code {
+  border-radius: 0;
+  font-size: 1em;
+  padding: 0 0.25em;
+}
+
+.chat-md[data-variant='cli'] .chat-md__table,
+.chat-md[data-variant='cli'] .chat-md-code {
+  border-radius: 0;
+}
+
+.chat-md[data-variant='cli'] .chat-md-code {
+  border-width: 0 0 0 2px;
+  border-color: var(--ui-border-strong);
+}
+
+.chat-md[data-variant='cli'] .chat-md-code__header {
+  min-height: 1.75rem;
+}
+
+.chat-md[data-variant='cli'] .chat-md-code__pre {
+  padding: var(--ui-space-2) var(--ui-space-3);
+}

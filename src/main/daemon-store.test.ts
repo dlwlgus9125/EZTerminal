@@ -205,6 +205,10 @@ describe('DaemonStore', () => {
       'command_outbox',
       'heartbeats',
       'migration_receipts',
+      'planning_execution_attempt_refs',
+      'planning_execution_projects',
+      'planning_execution_receipts',
+      'planning_execution_runs',
       'projects',
       'providers',
       'revisioned_events',
@@ -505,7 +509,7 @@ describe('DaemonStore', () => {
     await old.appendTranscriptBatch([{ id: 'legacy', sessionId: 'terminal-1', kind: 'tool-result', text: 'TOKEN=old-secret', isDelta: false, isSensitive: true }]);
     await old.close();
     const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
-    database.exec('ALTER TABLE transcript_items DROP COLUMN message_id; PRAGMA user_version = 3;');
+    database.exec('ALTER TABLE transcript_items DROP COLUMN payload_json; ALTER TABLE approvals DROP COLUMN request_json; ALTER TABLE agents DROP COLUMN reasoning_effort; ALTER TABLE transcript_items DROP COLUMN context_json; ALTER TABLE transcript_items DROP COLUMN message_id; PRAGMA user_version = 3;');
     database.close();
     const migrated = new DaemonStore(directory);
     await migrated.init();
@@ -516,6 +520,54 @@ describe('DaemonStore', () => {
     await restarted.init();
     expect(restarted.getTranscript('terminal-1')[1]).toMatchObject({ messageId: 'provider-message', text: 'TOKEN=new-secret' });
     await restarted.close();
+  });
+
+  it('migrates v6 to v7 and round-trips transcript payloads, approval requests and reasoning effort', async () => {
+    const directory = makeDirectory();
+    const old = new DaemonStore(directory);
+    await old.init();
+    await old.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation('terminal-1', 'terminal')] });
+    await old.appendTranscriptBatch([{ id: 'legacy', sessionId: 'terminal-1', kind: 'tool-call', text: 'Read\n{}', isDelta: false, isSensitive: false }]);
+    await old.close();
+    const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
+    for (const statement of [
+      'ALTER TABLE transcript_items DROP COLUMN payload_json',
+      'ALTER TABLE approvals DROP COLUMN request_json',
+      'ALTER TABLE agents DROP COLUMN reasoning_effort',
+      'PRAGMA user_version = 6',
+    ]) database.prepare(statement).run();
+    database.close();
+
+    const migrated = new DaemonStore(directory);
+    await migrated.init();
+    expect(migrated.getTranscript('terminal-1')[0]).toMatchObject({ id: 'legacy', text: 'Read\n{}' });
+    expect(migrated.getTranscript('terminal-1')[0]).not.toHaveProperty('payload');
+    expect(migrated.getSnapshot().capabilities).toEqual(expect.arrayContaining(['transcript-payload-v1', 'approval-request-v1', 'approval-response-v1', 'agent-effort-v1']));
+    const payload = { v: 1, type: 'tool', callId: 'toolu_1', name: 'Read', category: 'read', phase: 'call', status: 'running', target: 'README.md' } as const;
+    await migrated.appendTranscriptBatch([{ id: 'call', sessionId: 'terminal-1', kind: 'tool-call', text: 'Read\n{"file_path":"README.md"}', isDelta: false, isSensitive: false, payload }]);
+    await migrated.close();
+
+    const restarted = new DaemonStore(directory);
+    await restarted.init();
+    expect(restarted.getTranscript('terminal-1')[1]).toMatchObject({ id: 'call', payload });
+    await restarted.close();
+  });
+
+  it('drops an unreadable stored payload instead of failing the transcript read', async () => {
+    const directory = makeDirectory();
+    const store = new DaemonStore(directory);
+    await store.init();
+    await store.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation('terminal-1', 'terminal')] });
+    await store.appendTranscriptBatch([{ id: 'item', sessionId: 'terminal-1', kind: 'tool-result', text: 'ok', isDelta: false, isSensitive: false }]);
+    await store.close();
+    const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
+    database.prepare("UPDATE transcript_items SET payload_json = '{\"v\":99,\"type\":\"future\"}' WHERE id = 'item'").run();
+    database.close();
+    const reopened = new DaemonStore(directory);
+    await reopened.init();
+    expect(reopened.getTranscript('terminal-1')[0]).toMatchObject({ id: 'item', text: 'ok' });
+    expect(reopened.getTranscript('terminal-1')[0]).not.toHaveProperty('payload');
+    await reopened.close();
   });
 
   it('makes stable transcript ids idempotent without consuming sequence numbers', async () => {
@@ -583,6 +635,47 @@ describe('DaemonStore', () => {
       value: { ...pending.value, state: 'denied', resolvedAt: FIXED_TIME },
     }] })).rejects.toThrow(/cannot transition from allowed to denied/);
     expect(store.getRevision()).toBe(revision);
+    await store.close();
+  });
+
+  it('keeps an approval request while pending, hides it after resolution, and drops a malformed one', async () => {
+    const store = new DaemonStore(makeDirectory());
+    await store.init();
+    await store.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation()] });
+    const request = { v: 1, kind: 'command', command: 'pnpm test', cwd: 'C:\\repo', callId: 'toolu_1' } as const;
+    const pending = {
+      id: 'approval-request', sessionId: 'session-1', providerRequestId: 'provider-request', risk: 'danger' as const,
+      title: 'Run command', state: 'pending' as const, request,
+    };
+    await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: pending }] });
+    expect(store.getSnapshot().approvals[0]).toMatchObject({ id: 'approval-request', request });
+
+    // The runtime rebuilds the value without `request` when it resolves; the store keeps it.
+    const { request: _omitted, ...withoutRequest } = pending;
+    await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...withoutRequest, state: 'allowed', resolvedAt: FIXED_TIME } }] });
+    expect(store.getSnapshot().approvals[0]).toMatchObject({ state: 'allowed' });
+    expect(store.getSnapshot().approvals[0]).not.toHaveProperty('request');
+
+    await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: {
+      ...pending, id: 'approval-malformed', providerRequestId: 'provider-request-2',
+      request: { ...request, unexpected: true } as unknown as typeof request,
+    } }] });
+    const malformed = store.getSnapshot().approvals.find((approval) => approval.id === 'approval-malformed');
+    expect(malformed).toMatchObject({ state: 'pending', title: 'Run command' });
+    expect(malformed).not.toHaveProperty('request');
+    await store.close();
+  });
+
+  it('stores a transcript item even when its payload is malformed', async () => {
+    const store = new DaemonStore(makeDirectory());
+    await store.init();
+    await store.applySystemCommit({ mutations: [projectMutation(), workspaceMutation(), sessionMutation('terminal-1', 'terminal')] });
+    await store.appendTranscriptBatch([{
+      id: 'tool', sessionId: 'terminal-1', kind: 'tool-call', text: 'Read\n{}', isDelta: false, isSensitive: false,
+      payload: { v: 1, type: 'tool', callId: 'x', name: 'Read', category: 'read', phase: 'call', extra: 1 } as never,
+    }]);
+    expect(store.getTranscript('terminal-1')[0]).toMatchObject({ id: 'tool', text: 'Read\n{}' });
+    expect(store.getTranscript('terminal-1')[0]).not.toHaveProperty('payload');
     await store.close();
   });
 
@@ -841,7 +934,11 @@ describe('DaemonStore', () => {
       DROP INDEX turns_fifo_queue;
       DROP INDEX transcript_items_turn_kind;
       ALTER TABLE turns DROP COLUMN enqueue_sequence;
+      ALTER TABLE transcript_items DROP COLUMN payload_json;
+      ALTER TABLE approvals DROP COLUMN request_json;
+      ALTER TABLE agents DROP COLUMN reasoning_effort;
       ALTER TABLE transcript_items DROP COLUMN message_id;
+      ALTER TABLE transcript_items DROP COLUMN context_json;
       UPDATE providers SET review_digest = NULL;
       PRAGMA user_version = 1;
     `);

@@ -133,7 +133,7 @@ export async function canonicalAgentDirectory(value: string): Promise<string | n
   }
 }
 
-function projectIdForRoot(primaryRoot: string): string {
+export function projectIdForRoot(primaryRoot: string): string {
   return createHash('sha256').update(pathKey(primaryRoot)).digest('hex').slice(0, 24);
 }
 

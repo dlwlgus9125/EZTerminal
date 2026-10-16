@@ -4,6 +4,17 @@
  * Windows path ACL changes cannot revoke a handle opened during file creation,
  * so confidential callers must also encrypt content before calling writeAtomic.
  * RemoteTokenStore does so with Electron safeStorage in production.
+ *
+ * Two Windows ACL modes:
+ * - per file (default): every read and write applies and re-verifies the file's
+ *   own DACL, one PowerShell run each. RemoteTokenStore keeps this.
+ * - protected directory (`protectedDirectoryAcl`): the directory gets one
+ *   protected, inheritable current-user + SYSTEM DACL; files created in it
+ *   inherit that DACL, so reads and writes run no PowerShell. It gives up
+ *   per-file re-verification on read. Draft stores use it: the directory DACL
+ *   stops other principals creating or replacing files, and their content is
+ *   DPAPI user-scope ciphertext. A cold PowerShell costs seconds, and drafts
+ *   are saved while the user types.
  */
 import { execFile, type ExecFileOptions } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -46,7 +57,49 @@ foreach ($rule in $verified.GetAccessRules($true, $true, [System.Security.Princi
 if (-not $seenCurrent -or -not $seenSystem) { throw 'Required ACL principal is missing' }
 `.trim();
 
-export type WindowsAclRunner = (filePath: string) => Promise<void>;
+const WINDOWS_DIRECTORY_ACL_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$target = $env:EZTERMINAL_SECURE_DIRECTORY
+if ([string]::IsNullOrWhiteSpace($target)) { throw 'Missing secure directory path' }
+$item = Get-Item -LiteralPath $target -Force
+if (-not $item.PSIsContainer) { throw 'Secure target must be a directory' }
+if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Secure directory must not be a link' }
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$allow = [System.Security.AccessControl.AccessControlType]::Allow
+$full = [System.Security.AccessControl.FileSystemRights]::FullControl
+$inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+$propagation = [System.Security.AccessControl.PropagationFlags]::None
+$replacement = New-Object System.Security.AccessControl.DirectorySecurity
+$replacement.SetAccessRuleProtection($true, $false)
+$replacement.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($current, $full, $inherit, $propagation, $allow)))
+$replacement.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system, $full, $inherit, $propagation, $allow)))
+[System.IO.Directory]::SetAccessControl($target, $replacement)
+$accessSections = [System.Security.AccessControl.AccessControlSections]::Access
+$verified = [System.IO.Directory]::GetAccessControl($target, $accessSections)
+if (-not $verified.AreAccessRulesProtected) { throw 'ACL inheritance is still enabled' }
+$allowedSids = @($current.Value, $system.Value)
+$seenCurrent = $false
+$seenSystem = $false
+foreach ($rule in $verified.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+  $sid = $rule.IdentityReference.Value
+  if ($allowedSids -notcontains $sid) { throw "Unexpected ACL principal: $sid" }
+  if ($rule.IsInherited) { throw 'Inherited ACL rule remains' }
+  if ($rule.AccessControlType -ne $allow) { throw 'Deny ACL rule remains' }
+  if (($rule.FileSystemRights -band $full) -ne $full) { throw "Insufficient ACL rights for $sid" }
+  if (($rule.InheritanceFlags -band $inherit) -ne $inherit) { throw "ACL rule for $sid is not inherited by files" }
+  if ($sid -eq $current.Value) { $seenCurrent = $true }
+  if ($sid -eq $system.Value) { $seenSystem = $true }
+}
+if (-not $seenCurrent -or -not $seenSystem) { throw 'Required ACL principal is missing' }
+`.trim();
+
+/**
+ * `read`: the file already exists and is about to be read or removed. `write`: the file
+ * was just created or replaced. The per-file runner treats both the same.
+ */
+export type WindowsAclIntent = 'read' | 'write';
+export type WindowsAclRunner = (filePath: string, intent?: WindowsAclIntent) => Promise<void>;
 
 /** Apply and verify a current-user + SYSTEM DACL without invoking a shell. */
 export function applyAndVerifyWindowsAcl(
@@ -74,6 +127,87 @@ export function applyAndVerifyWindowsAcl(
       },
     );
   });
+}
+
+/**
+ * Give a directory a protected, inheritable current-user + SYSTEM DACL and verify it.
+ * Setting it also re-derives the inherited ACEs of files already inside.
+ */
+export function applyAndVerifyWindowsDirectoryAcl(
+  directoryPath: string,
+  execute: typeof execFile = execFile,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const options: ExecFileOptions = {
+      windowsHide: true,
+      shell: false,
+      timeout: 15_000,
+      maxBuffer: 64 * 1024,
+      env: {
+        ...process.env,
+        EZTERMINAL_SECURE_DIRECTORY: directoryPath,
+      },
+    };
+    execute(
+      'powershell.exe',
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_DIRECTORY_ACL_SCRIPT],
+      options,
+      (error) => {
+        if (error) reject(new Error('Unable to apply and verify the secure directory ACL.', { cause: error }));
+        else resolve();
+      },
+    );
+  });
+}
+
+export interface ProtectedDirectoryAcl {
+  /** Protects the directory with one PowerShell run; a failure is not kept, so the next call tries again. */
+  prepare(): Promise<void>;
+  /**
+   * SecureAtomicFile runner for files in the directory: they inherit its DACL, so no per-file
+   * run. Writes wait for the protection; reads of existing ciphertext do not.
+   */
+  readonly windowsAcl: WindowsAclRunner;
+}
+
+/** The protected-directory ACL mode described at the top of this file. */
+export function protectedDirectoryAcl(
+  directory: string,
+  options: { readonly platform?: NodeJS.Platform; readonly harden?: (directory: string) => Promise<void> } = {},
+): ProtectedDirectoryAcl {
+  const platform = options.platform ?? process.platform;
+  const harden = options.harden ?? applyAndVerifyWindowsDirectoryAcl;
+  const key = (value: string): string => {
+    const resolved = path.resolve(value);
+    return platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved;
+  };
+  let ready: Promise<void> | null = null;
+  const prepare = (): Promise<void> => {
+    if (platform !== 'win32') return Promise.resolve();
+    ready ??= fs.mkdir(directory, { recursive: true })
+      .then(() => harden(directory))
+      .catch((error: unknown) => {
+        ready = null;
+        throw error;
+      });
+    return ready;
+  };
+  return {
+    prepare,
+    windowsAcl: async (filePath, intent = 'write') => {
+      if (key(path.dirname(filePath)) !== key(directory)) {
+        throw new Error('Secure file is outside its protected directory.');
+      }
+      const protection = prepare();
+      // A file that already exists keeps its DACL and its DPAPI ciphertext; only files this
+      // process creates need the inheritable directory DACL in place first.
+      if (intent === 'read') {
+        void protection.catch(() => undefined);
+        return;
+      }
+      await protection;
+    },
+  };
 }
 
 export interface SecureAtomicFileOptions {
@@ -107,7 +241,8 @@ export class SecureAtomicFile {
   constructor(dir: string, name: string, options: SecureAtomicFileOptions = {}) {
     this.target = path.join(dir, name);
     this.platform = options.platform ?? process.platform;
-    this.windowsAcl = options.windowsAcl ?? applyAndVerifyWindowsAcl;
+    // Wrapped: the default's second parameter is its process runner, not an intent.
+    this.windowsAcl = options.windowsAcl ?? ((filePath) => applyAndVerifyWindowsAcl(filePath));
     this.maxBytes = options.maxBytes !== undefined
       && Number.isFinite(options.maxBytes)
       && options.maxBytes > 0
@@ -143,7 +278,7 @@ export class SecureAtomicFile {
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Remote token path must be a regular file.');
 
     if (this.platform === 'win32') {
-      await this.windowsAcl(this.target);
+      await this.windowsAcl(this.target, 'read');
       const verified = await fs.lstat(this.target);
       if (!verified.isFile() || verified.isSymbolicLink()) throw new Error('Remote token path changed during ACL verification.');
     }
@@ -188,7 +323,7 @@ export class SecureAtomicFile {
         // Harden the empty staging path before content is written. Callers that
         // require confidentiality on Windows must still pass ciphertext: a
         // DACL update cannot revoke a handle another principal already opened.
-        await this.windowsAcl(tmp);
+        await this.windowsAcl(tmp, 'write');
         await this.assertHandlePathIdentity(handle, tmp, opened);
       }
       await handle.writeFile(data, 'utf8');
@@ -238,7 +373,7 @@ export class SecureAtomicFile {
     const stat = await lstatIfPresent(filePath);
     if (!stat) return;
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Remote token temporary path must be a regular file.');
-    await this.protectRequired(filePath);
+    await this.protectRequired(filePath, 'read');
     await fs.unlink(filePath);
   }
 
@@ -251,7 +386,7 @@ export class SecureAtomicFile {
     const stat = await lstatIfPresent(filePath);
     if (!stat) return;
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Secure path must be a regular file.');
-    await this.protectRequired(filePath);
+    await this.protectRequired(filePath, 'read');
   }
 
   private async assertHandlePathIdentity(
@@ -284,9 +419,9 @@ export class SecureAtomicFile {
     }
   }
 
-  private async protectRequired(filePath: string): Promise<void> {
+  private async protectRequired(filePath: string, intent: WindowsAclIntent = 'write'): Promise<void> {
     if (this.platform === 'win32') {
-      await this.windowsAcl(filePath);
+      await this.windowsAcl(filePath, intent);
       const stat = await fs.lstat(filePath);
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Secure path changed during ACL verification.');
       return;

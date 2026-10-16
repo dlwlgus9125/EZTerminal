@@ -1,8 +1,12 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { parseApprovalRequest } from '../shared/approval-request';
+import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
+import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type {
   AgentProviderEvent,
   ProviderSessionContext,
@@ -219,6 +223,65 @@ async function pendingTurnFixture(
 }
 
 describe('CodexProviderAdapter', () => {
+  it('revalidates selected skill identities and sends native skill input on the first turn', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async (method) => {
+      if (method === 'skills/list') return { data: [{ skills: [{ name: 'review', path: 'C:/skills/review/SKILL.md', enabled: true }] }] };
+      if (method === 'turn/start') return { turn: { id: 'native-turn' } };
+      return {};
+    };
+    await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: '$review Inspect', context: { skills: [{ providerId: 'codex', id: 'C:/skills/review/SKILL.md', name: 'review', invocation: '$review' }] } });
+    expect(connection.requests.find((entry) => entry.method === 'turn/start')?.params).toMatchObject({ input: [{ type: 'text', text: '$review Inspect' }, { type: 'skill', name: 'review', path: 'C:/skills/review/SKILL.md' }] });
+    await adapter.dispose();
+  });
+
+  it('does not submit a turn when a selected skill is removed or disabled', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async () => ({ data: [{ skills: [{ name: 'review', path: 'C:/skills/review/SKILL.md', enabled: false }] }] });
+    await expect(adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: '$review Inspect', context: { skills: [{ providerId: 'codex', id: 'C:/skills/review/SKILL.md', name: 'review', invocation: '$review' }] } })).rejects.toThrow('unavailable');
+    expect(connection.requests.some((entry) => entry.method === 'turn/start')).toBe(false);
+    await adapter.dispose();
+  });
+  it('discovers skills, installed plugins, models and MCP without a thread or turn', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'model/list') return { data: [{ id: 'native-model', displayName: 'Native model' }] };
+      if (method === 'skills/list') return { data: [{ skills: [{ name: 'review', path: 'C:/skills/review/SKILL.md', enabled: true, scope: 'user' }] }] };
+      if (method === 'plugin/installed') return { marketplaces: [{ name: 'local', plugins: [{ id: 'off@local', name: 'Off plugin', installed: true, enabled: false }] }] };
+      if (method === 'mcpServerStatus/list') return { data: [{ name: 'docs', authStatus: 'notLoggedIn' }] };
+      if (method === 'config/read') return { config: { mcp_servers: { docs: { command: 'docs' }, off: { command: 'off', enabled: false } } }, origins: { mcp_servers: { name: { type: 'user' } } } };
+      throw new Error(`Forbidden zero-turn method: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const result = await adapter.listCapabilities(process.cwd());
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'skill', invocation: '$review', enabled: true }),
+      expect.objectContaining({ kind: 'plugin', id: 'off@local', enabled: false }),
+      expect.objectContaining({ kind: 'mcp', id: 'docs' }),
+      expect.objectContaining({ kind: 'mcp', id: 'off', enabled: false, status: 'disabled' }),
+    ]));
+    expect(result.issues).toEqual([]);
+    expect(connection.requests.map((entry) => entry.method).sort()).toEqual(['config/read', 'mcpServerStatus/list', 'model/list', 'plugin/installed', 'skills/list']);
+    expect(connection.requests.find((entry) => entry.method === 'config/read')?.params).toEqual({ cwd: process.cwd(), includeLayers: false });
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+  it('rejects unsupported tool-free planning before connecting while preserving managed execution settings', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = new CodexProviderAdapter({ connection });
+    await expect(adapter.createSession(context({ toolsDisabled: true, permissionPreset: 'plan' }))).rejects.toThrow(/verified tool-free/u);
+    await expect(adapter.resumeSession({ ...context({ toolsDisabled: true }), providerSessionId: 'old' })).rejects.toThrow(/verified tool-free/u);
+    expect(connection.requests).toEqual([]);
+    connection.requestImpl = async () => ({ thread: { id: 'managed-thread' }, model: 'gpt-5.6-sol' });
+    await adapter.createSession(context({ managedExecution: true, reasoningEffort: 'high', environment: { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } }));
+    expect(connection.requests[0]?.params).toMatchObject({ config: { model_reasoning_effort: 'high', 'features.multi_agent': false,
+      'shell_environment_policy.set': { EZTERMINAL_RUN_ID: 'R', PORT: '4001' } } });
+    await adapter.dispose();
+  });
   it('probes the minimum supported executable without starting app-server', async () => {
     const connection = new FakeCodexConnection();
     const resolveExecutable = vi.fn(async () => 'C:\\Tools\\codex.exe');
@@ -448,7 +511,7 @@ describe('CodexProviderAdapter', () => {
           }
         : {
             data: [
-              { id: 'id-a', model: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', hidden: false, supportedReasoningEfforts: [{}], isDefault: true },
+              { id: 'id-a', model: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'high' }], isDefault: true },
               { id: 'hidden', model: 'hidden', hidden: true },
             ],
             nextCursor: 'page-2',
@@ -456,7 +519,7 @@ describe('CodexProviderAdapter', () => {
     };
     const adapter = new CodexProviderAdapter({ connection });
     await expect(adapter.listModels()).resolves.toEqual([
-      { id: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', supportsReasoning: true, isDefault: true },
+      { id: 'gpt-a', displayName: 'GPT A', description: 'Reasoning', supportsReasoning: true, reasoningEfforts: ['high'], isDefault: true },
       { id: 'gpt-b', displayName: 'GPT B', supportsReasoning: false, isDefault: false },
     ]);
     expect(connection.requests).toHaveLength(2);
@@ -529,6 +592,24 @@ describe('CodexProviderAdapter', () => {
         excludeTurns: true,
       },
     });
+    await adapter.dispose();
+  });
+
+  it('sends real image inputs and quoted file context to Codex', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    connection.requestImpl = async () => ({ turn: { id: 'provider-turn-context' } });
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-context', commandId: 'command-context', prompt: 'Review',
+      context: { attachments: [
+        { id: 'image', name: 'screen.png', kind: 'image', mimeType: 'image/png', data: 'YWJj' },
+        { id: 'text', name: 'notes.txt', kind: 'text', mimeType: 'text/plain', data: 'Requirements' },
+      ] },
+    });
+    expect(connection.requests.at(-1)).toMatchObject({ params: { input: [
+      { type: 'text', text: expect.stringContaining('Requirements') },
+      { type: 'image', url: 'data:image/png;base64,YWJj' },
+    ] } });
     await adapter.dispose();
   });
 
@@ -704,6 +785,36 @@ describe('CodexProviderAdapter', () => {
     await expect(legacyApproval).resolves.toEqual({
       decision: { denied: { rejection: 'Denied by the user in EZTerminal.' } },
     });
+    await adapter.dispose();
+  });
+
+  it('round-trips native MCP tool approval without persisting a permission grant', async () => {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe(event => events.push(event));
+    const params = { threadId: 'thread-1', turnId: 'provider-turn', serverName: 'ezterminal_orchestration', mode: 'form',
+      _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'], tool_params: { commandId: 'preview-1' } },
+      message: 'Allow the MCP server to run preview_workflow?', requestedSchema: { type: 'object', properties: {} } };
+    const approval = connection.serverRequest('mcpServer/elicitation/request', 'mcp-1', params);
+    await Promise.resolve();
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'approval-requested', providerRequestId: 'mcp-tool:s:mcp-1', title: 'Run MCP tool', detail: expect.stringContaining('preview_workflow') }));
+    await expect(adapter.resolveApproval({ sessionId: 'other-session', providerSessionId: 'thread-1', providerRequestId: 'mcp-tool:s:mcp-1', decision: 'allow' })).rejects.toThrow('does not belong');
+    await adapter.resolveApproval({ sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'mcp-tool:s:mcp-1', decision: 'allow' });
+    await expect(approval).resolves.toEqual({ action: 'accept', content: {}, _meta: null });
+    const denied = connection.serverRequest('mcpServer/elicitation/request', 'mcp-2', params);
+    await adapter.resolveApproval({ sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'mcp-tool:s:mcp-2', decision: 'deny' });
+    await expect(denied).resolves.toEqual({ action: 'decline', content: null, _meta: null });
+    const closed = connection.serverRequest('mcpServer/elicitation/request', 'mcp-3', params);
+    await adapter.dispose();
+    await expect(closed).resolves.toEqual({ action: 'decline', content: null, _meta: null });
+  });
+
+  it('rejects unsupported MCP forms instead of treating data collection as binary approval', async () => {
+    const connection = new FakeCodexConnection(); const adapter = await attachedAdapter(connection);
+    const params = { threadId: 'thread-1', serverName: 'external', mode: 'form', _meta: { codex_approval_kind: 'mcp_tool_call' }, requestedSchema: { type: 'object', properties: { token: { type: 'string' } } } };
+    await expect(connection.serverRequest('mcpServer/elicitation/request', 'form-1', params)).rejects.toThrow('MCP form');
+    await expect(connection.serverRequest('mcpServer/elicitation/request', 'form-2', { ...params, mode: 'url' })).rejects.toThrow('MCP form');
     await adapter.dispose();
   });
 
@@ -1442,6 +1553,19 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('publishes reviewable patches only for completed file changes during reconciliation', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async () => ({ thread: { id: 'thread-1', turns: [{ id: 'turn-1', status: 'inProgress', items:
+      ['completed', 'inProgress', 'failed', 'declined'].map(status => ({ id: status, type: 'fileChange', status, changes: [{ path: `${status}.ts`, diff: '@@ -1 +1 @@\n-old\n+new' }] })),
+    }] } });
+    const adapter = new CodexProviderAdapter({ connection });
+    try {
+      const result = await adapter.reconcile({ sessionId: 'session-1', providerSessionId: 'thread-1', unsettledCommands: [] });
+      expect(result.transcriptItems?.filter(item => item.text.startsWith('{"type":"ezterminal.file-changes.v1"'))).toHaveLength(1);
+      expect(result.transcriptItems?.[0].text).toContain('completed.ts');
+    } finally { await adapter.dispose(); }
+  });
+
   it('surfaces an unexpected app-server exit for every attached session and disposes once', async () => {
     const connection = new FakeCodexConnection();
     const adapter = await attachedAdapter(connection);
@@ -1459,5 +1583,298 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
     expect(connection.disposed).toBe(true);
     await expect(adapter.listModels()).rejects.toThrow(/disposed/);
+  });
+});
+
+describe('CodexProviderAdapter structured transcript', () => {
+  const workspaceRoot = path.resolve('/codex-workspace');
+  const inWorkspace = (...parts: string[]): string => path.join(workspaceRoot, ...parts);
+  const powershell = String.raw`"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command`;
+
+  async function startedTurn(options: Partial<CodexProviderAdapterOptions> = {}) {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      if (method === 'turn/start') return { turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } };
+      if (method === 'turn/interrupt') return {};
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({
+      connection,
+      now: () => new Date('2026-09-04T03:00:00.000Z'),
+      // Deltas flush only at item boundaries, never on a timer.
+      deltaCoalescer: { schedule: () => undefined, cancel: () => undefined },
+      ...options,
+    });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await adapter.createSession(context({ workspaceRoot }));
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-turn-1', commandId: 'command-1', prompt: 'Work',
+    });
+    const notify = (method: string, params: Record<string, unknown>): Promise<void> => connection.emitNotification(
+      method,
+      { threadId: 'thread-1', turnId: 'provider-turn-1', ...params },
+    );
+    const transcript = (): DaemonTranscriptItem[] => events.flatMap((event) => event.kind === 'transcript' ? [event.item] : []);
+    return { adapter, connection, events, notify, transcript };
+  }
+
+  function expectValidPayloads(items: readonly DaemonTranscriptItem[]): void {
+    for (const item of items) {
+      if (item.payload !== undefined) expect(parseTranscriptPayload(item.payload), `${item.id} payload`).toBeDefined();
+    }
+  }
+
+  it('coalesces streamed deltas into one row per message and flushes before later items and on interrupt', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    for (const delta of ['Hel', 'lo', ' world']) await notify('item/agentMessage/delta', { itemId: 'msg-1', delta });
+    await notify('item/commandExecution/outputDelta', { itemId: 'exec-1', delta: 'streamed output' });
+    expect(transcript()).toEqual([]);
+    await notify('item/started', {
+      startedAtMs: 10, item: { id: 'exec-1', type: 'commandExecution', command: 'pwd', status: 'inProgress', commandActions: [] },
+    });
+    await notify('item/plan/delta', { itemId: 'plan-1', delta: '- step one' });
+    await notify('item/plan/delta', { itemId: 'plan-1', delta: '\n- step two' });
+    await adapter.interrupt('session-1', 'thread-1');
+    expect(transcript()).toMatchObject([
+      { sequence: 1, turnId: 'local-turn-1', kind: 'assistant-message', text: 'Hello world', isDelta: true },
+      { sequence: 2, turnId: 'local-turn-1', kind: 'tool-call', text: '$ pwd' },
+      { sequence: 3, turnId: 'local-turn-1', kind: 'reasoning', text: '- step one\n- step two', isDelta: true, payload: { v: 1, type: 'plan' } },
+    ]);
+    expectValidPayloads(transcript());
+    await adapter.dispose();
+  });
+
+  it('drops the echo of a prompt this adapter submitted but keeps other user messages', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    await notify('item/completed', {
+      completedAtMs: 1, item: { id: 'user-1', type: 'userMessage', clientId: 'command-1', content: [{ type: 'text', text: 'Work' }] },
+    });
+    await notify('item/completed', {
+      completedAtMs: 2, item: { id: 'user-2', type: 'userMessage', clientId: 'elsewhere', content: [{ type: 'text', text: 'From elsewhere' }] },
+    });
+    expect(transcript()).toHaveLength(1);
+    expect(transcript()[0]).toMatchObject({ kind: 'user-message', text: 'From elsewhere' });
+    await adapter.dispose();
+  });
+
+  it('unwraps the shell wrapper, keeps the exit code, and classifies commands from their parsed actions', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const commands = [
+      {
+        id: 'search', status: 'failed', exitCode: 1,
+        command: String.raw`${powershell} "rg -n --hidden -g '"'!.git'"' '\\bgreet\\b' ."`,
+        commandActions: [{ type: 'search', command: 'rg', query: 'greet', path: 'src' }],
+      },
+      { id: 'list', status: 'completed', exitCode: 0, aggregatedOutput: 'a\nb\n', command: `/bin/bash -lc 'ls -la' bash`,
+        commandActions: [{ type: 'listFiles', command: 'ls -la', path: null }] },
+      { id: 'cmd', status: 'completed', exitCode: 0, aggregatedOutput: 'x', command: 'cmd.exe /c dir /b', commandActions: [] },
+      // Unbalanced quoting falls back to Codex's own parse of the command.
+      { id: 'read', status: 'declined', command: `${powershell} 'Get-Content a.txt`,
+        commandActions: [{ type: 'read', command: 'Get-Content a.txt', name: 'a.txt', path: inWorkspace('a.txt') }] },
+    ];
+    for (const command of commands) {
+      await notify('item/started', { startedAtMs: 1, item: { ...command, type: 'commandExecution', status: 'inProgress', exitCode: null } });
+      await notify('item/completed', { completedAtMs: 2, item: { ...command, type: 'commandExecution', cwd: workspaceRoot, durationMs: 7 } });
+    }
+    expect(transcript().map((item) => [item.kind, item.text])).toEqual([
+      ['tool-call', String.raw`$ rg -n --hidden -g '!.git' '\bgreet\b' .`],
+      ['tool-result', 'Exit code 1'],
+      ['tool-call', '$ ls -la'],
+      ['tool-result', 'a\nb\n'],
+      ['tool-call', '$ dir /b'],
+      ['tool-result', 'x'],
+      ['tool-call', '$ Get-Content a.txt'],
+      ['tool-result', 'Command declined.'],
+    ]);
+    expect(transcript().filter((item) => item.kind === 'tool-result').map((item) => item.payload)).toEqual([
+      { v: 1, type: 'tool', callId: 'search', name: 'commandExecution', category: 'search', phase: 'result', status: 'failed',
+        target: 'greet · src', query: 'greet', command: String.raw`rg -n --hidden -g '!.git' '\bgreet\b' .`, cwd: workspaceRoot,
+        exitCode: 1, durationMs: 7 },
+      { v: 1, type: 'tool', callId: 'list', name: 'commandExecution', category: 'list', phase: 'result', status: 'completed',
+        target: 'ls -la', command: 'ls -la', cwd: workspaceRoot, exitCode: 0, durationMs: 7 },
+      { v: 1, type: 'tool', callId: 'cmd', name: 'commandExecution', category: 'command', phase: 'result', status: 'completed',
+        target: 'dir /b', command: 'dir /b', cwd: workspaceRoot, exitCode: 0, durationMs: 7 },
+      { v: 1, type: 'tool', callId: 'read', name: 'commandExecution', category: 'read', phase: 'result', status: 'denied',
+        target: inWorkspace('a.txt'), command: 'Get-Content a.txt', cwd: workspaceRoot, durationMs: 7 },
+    ]);
+    expect(transcript()[0]?.payload).toMatchObject({ phase: 'call', status: 'running' });
+    expectValidPayloads(transcript());
+    await adapter.dispose();
+  });
+
+  it('clips oversized command payloads to their schema bounds', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    await notify('item/started', {
+      startedAtMs: 1, item: { id: 'long', type: 'commandExecution', command: `echo ${'x'.repeat(10_000)}`, status: 'inProgress', cwd: 'C:\\'.repeat(1_500) },
+    });
+    const payload = transcript()[0]?.payload;
+    expect(payload?.type === 'tool' ? [payload.command?.length, payload.cwd?.length, payload.target?.length] : undefined).toEqual([8_000, 2_000, 160]);
+    expectValidPayloads(transcript());
+    await adapter.dispose();
+  });
+
+  it('describes file changes with per-file kinds and line counts', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const item = {
+      id: 'patch-1', type: 'fileChange', changes: [
+        { path: inWorkspace('notes.md'), kind: { type: 'add' }, diff: 'one\ntwo\n' },
+        { path: inWorkspace('src', 'old.ts'), kind: { type: 'update', move_path: inWorkspace('src', 'new.ts') }, diff: '@@ -1,2 +1,2 @@\n-a\n+b\n c\n' },
+        { path: inWorkspace('gone.txt'), kind: { type: 'delete' }, diff: 'x\n' },
+      ],
+    };
+    await notify('item/started', { startedAtMs: 1, item: { ...item, status: 'inProgress' } });
+    await notify('item/completed', { completedAtMs: 4, item: { ...item, status: 'declined' } });
+    expect(transcript().map((entry) => entry.text)).toEqual([
+      `Add notes.md\nMove ${path.join('src', 'old.ts')} → ${path.join('src', 'new.ts')}\nDelete gone.txt`,
+      'File changes declined.',
+    ]);
+    expect(transcript()[1]?.payload).toEqual({
+      v: 1, type: 'tool', callId: 'patch-1', name: 'fileChange', category: 'edit', phase: 'result', status: 'denied',
+      target: '3 files', durationMs: 3, files: [
+        { path: inWorkspace('notes.md'), kind: 'add', added: 2, removed: 0 },
+        { path: inWorkspace('src', 'old.ts'), kind: 'rename', added: 1, removed: 1 },
+        { path: inWorkspace('gone.txt'), kind: 'delete', added: 0, removed: 1 },
+      ],
+    });
+    expectValidPayloads(transcript());
+    await adapter.dispose();
+  });
+
+  it('closes open tool calls as interrupted when the turn is interrupted', async () => {
+    const { adapter, connection, events, notify, transcript } = await startedTurn();
+    await notify('item/started', {
+      startedAtMs: 100, item: { id: 'exec-1', type: 'commandExecution', command: 'sleep 60', status: 'inProgress', commandActions: [] },
+    });
+    await notify('item/started', { startedAtMs: 101, item: { id: 'ws-1', type: 'webSearch', query: '', action: null, results: null } });
+    await notify('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Partial' });
+    await connection.emitNotification('turn/completed', {
+      threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'interrupted', items: [] },
+    });
+    expect(transcript().map((item) => [item.kind, item.text, item.payload?.type === 'tool' ? item.payload.status : undefined])).toEqual([
+      ['tool-call', '$ sleep 60', 'running'],
+      ['tool-call', 'Search the web', 'running'],
+      ['assistant-message', 'Partial', undefined],
+      ['tool-result', 'Command interrupted.', 'interrupted'],
+      ['tool-result', 'Web search interrupted.', 'interrupted'],
+    ]);
+    const finished = events.findIndex((event) => event.kind === 'turn-finished');
+    expect(finished).toBeGreaterThan(events.findLastIndex((event) => event.kind === 'transcript' && event.item.kind === 'tool-result'));
+    const rows = transcript().length;
+    await notify('item/completed', {
+      completedAtMs: 200, item: { id: 'exec-1', type: 'commandExecution', command: 'sleep 60', status: 'failed', exitCode: 1 },
+    });
+    expect(transcript()).toHaveLength(rows);
+    await adapter.dispose();
+  });
+
+  it('times empty reasoning only when both lifecycle edges were seen', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    await notify('item/started', { startedAtMs: 1_000, item: { id: 'rs-1', type: 'reasoning', summary: [], content: [] } });
+    await notify('item/completed', { completedAtMs: 4_500, item: { id: 'rs-1', type: 'reasoning', summary: [], content: [] } });
+    await notify('item/completed', { completedAtMs: 5_000, item: { id: 'rs-2', type: 'reasoning', summary: [], content: [] } });
+    expect(transcript()).toEqual([
+      expect.objectContaining({ kind: 'reasoning', text: '', isDelta: false, payload: { v: 1, type: 'reasoning', durationMs: 3_500 } }),
+    ]);
+    await notify('item/completed', { completedAtMs: 6_000, item: { id: 'plan-1', type: 'plan', text: '- one\n- two' } });
+    expect(transcript().at(-1)).toMatchObject({ kind: 'reasoning', text: '- one\n- two', payload: { v: 1, type: 'plan', markdown: '- one\n- two' } });
+    await adapter.dispose();
+  });
+
+  it('enables update_plan and turns each plan revision into a todo notice', async () => {
+    const { adapter, connection, notify, transcript } = await startedTurn();
+    expect(connection.requests[0]).toMatchObject({ method: 'thread/start', params: { config: { 'tools.update_plan': { enabled: true } } } });
+    await notify('turn/plan/updated', { explanation: null, plan: [
+      { step: 'Read', status: 'completed' }, { step: 'Write', status: 'inProgress' }, { step: 'Ship', status: 'pending' },
+    ] });
+    await notify('turn/plan/updated', { explanation: 'All done', plan: [
+      { step: 'Read', status: 'completed' }, { step: 'Write', status: 'completed' }, { step: 'Ship', status: 'completed' },
+    ] });
+    const [first, second] = transcript();
+    expect(first).toMatchObject({
+      turnId: 'local-turn-1', kind: 'notice', text: '- [x] Read\n- [ ] Write (in progress)\n- [ ] Ship',
+      payload: { v: 1, type: 'todo', source: 'codex-plan', items: [
+        { text: 'Read', status: 'completed' }, { text: 'Write', status: 'in_progress' }, { text: 'Ship', status: 'pending' },
+      ] },
+    });
+    expect(second).toMatchObject({ text: 'All done\n- [x] Read\n- [x] Write\n- [x] Ship', payload: { explanation: 'All done' } });
+    expect(first?.id).not.toBe(second?.id);
+    expectValidPayloads(transcript());
+    await adapter.dispose();
+
+    const disabled = await startedTurn({ enableUpdatePlan: false });
+    expect(Object.keys((disabled.connection.requests[0]?.params as { config: object }).config)).not.toContain('tools.update_plan');
+    await disabled.adapter.dispose();
+  });
+
+  it('describes approvals with the unwrapped command and the file diff from the started item', async () => {
+    const { adapter, connection, events, notify } = await startedTurn();
+    const approvals = (): Extract<AgentProviderEvent, { kind: 'approval-requested' }>[] => events.flatMap((event) => (
+      event.kind === 'approval-requested' ? [event] : []
+    ));
+    const command = connection.serverRequest('item/commandExecution/requestApproval', 7, {
+      threadId: 'thread-1', turnId: 'provider-turn-1', itemId: 'exec-9', startedAtMs: 1, reason: 'Outside the workspace',
+      command: String.raw`${powershell} "Remove-Item -LiteralPath '..\\x.txt'"`, cwd: workspaceRoot,
+    });
+    expect(approvals()[0]).toMatchObject({
+      title: 'Run command', detail: String.raw`Remove-Item -LiteralPath '..\x.txt'`,
+      request: { v: 1, kind: 'command', callId: 'exec-9', command: String.raw`Remove-Item -LiteralPath '..\x.txt'`, cwd: workspaceRoot, reason: 'Outside the workspace' },
+    });
+    await adapter.resolveApproval({
+      sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'command:n:7', decision: 'deny',
+      response: { kind: 'feedback', message: 'Use the recycle bin' },
+    });
+    await expect(command).resolves.toEqual({ decision: 'decline' });
+
+    await notify('item/started', { startedAtMs: 1, item: { id: 'patch-1', type: 'fileChange', status: 'inProgress', changes: [
+      { path: inWorkspace('notes.md'), kind: { type: 'add' }, diff: 'hello\n' },
+    ] } });
+    const fileChange = connection.serverRequest('item/fileChange/requestApproval', 8, {
+      threadId: 'thread-1', turnId: 'provider-turn-1', itemId: 'patch-1', startedAtMs: 2, reason: null, grantRoot: null,
+    });
+    expect(approvals()[1]).toMatchObject({
+      title: 'Apply file changes', risk: 'write',
+      request: { v: 1, kind: 'file-change', callId: 'patch-1', files: [{ path: inWorkspace('notes.md'), kind: 'add', diff: 'hello\n' }] },
+    });
+    await adapter.resolveApproval({ sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'file-change:n:8', decision: 'allow' });
+    await expect(fileChange).resolves.toEqual({ decision: 'accept' });
+    for (const approval of approvals()) expect(parseApprovalRequest(approval.request)).toBeDefined();
+    await adapter.dispose();
+  });
+
+  it('maps MCP calls and web searches to structured payloads with readable results', async () => {
+    const { adapter, notify, transcript } = await startedTurn();
+    const mcp = { id: 'mcp-1', type: 'mcpToolCall', server: 'github', tool: 'search_issues', arguments: { q: 'bug' } };
+    await notify('item/started', { startedAtMs: 1, item: { ...mcp, status: 'inProgress' } });
+    await notify('item/completed', { completedAtMs: 2, item: { ...mcp, status: 'completed', durationMs: 42, result: { content: [] } } });
+    await notify('item/started', { startedAtMs: 3, item: { id: 'ws-1', type: 'webSearch', query: '', action: null, results: null } });
+    await notify('item/completed', { completedAtMs: 9, item: {
+      id: 'ws-1', type: 'webSearch', query: 'node lts', action: { type: 'search', query: null, queries: ['node lts'] },
+      results: [
+        { type: 'text_result', title: 'Node.js Releases', url: 'https://nodejs.org/en/about/previous-releases' },
+        { type: 'text_result', title: 'EOL', url: 'https://nodejs.org/en/about/eol' },
+      ],
+    } });
+    await notify('item/completed', { completedAtMs: 10, item: {
+      id: 'ws-2', type: 'webSearch', query: '', action: { type: 'openPage', url: 'https://example.com/docs/page' }, results: null,
+    } });
+    const items = transcript();
+    expect(items.map((item) => item.payload?.type === 'tool' ? [item.payload.category, item.payload.phase, item.payload.status, item.payload.target] : undefined)).toEqual([
+      ['mcp', 'call', 'running', 'github / search_issues'],
+      ['mcp', 'result', 'completed', 'github / search_issues'],
+      ['web', 'call', 'running', undefined],
+      ['web', 'result', 'completed', 'node lts'],
+      ['web', 'result', 'completed', 'example.com/docs/page'],
+    ]);
+    expect(items[1]?.payload).toMatchObject({ name: 'search_issues', server: 'github', durationMs: 42 });
+    expect(items.slice(2).map((item) => item.text)).toEqual([
+      'Search the web',
+      '1. Node.js Releases\n   https://nodejs.org/en/about/previous-releases\n2. EOL\n   https://nodejs.org/en/about/eol',
+      'Opened https://example.com/docs/page',
+    ]);
+    expect(items[3]?.payload).toMatchObject({ query: 'node lts', durationMs: 6 });
+    expectValidPayloads(items);
+    await adapter.dispose();
   });
 });

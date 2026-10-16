@@ -1,0 +1,204 @@
+{
+  "provider": "codex",
+  "scenario": "edit-create",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-e4d57edb1b88c9222a2f8688f2e6d174",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "In src/app.ts rename the function `greet` to `greetUser` and update its call site, then create a new file notes.md containing exactly one line: `Renamed greet to greetUser.` Do nothing else.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_d86cfd621bf2997ac2904481",
+      "messageId": "codex_message_89d64f4d5eb5b677c95f7047",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll rename the function and its call site, then create `notes.md` with the exact line you specified.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_efedbc40fa9afbdc2d517a10",
+      "messageId": "codex_message_89d64f4d5eb5b677c95f7047",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll rename the function and its call site, then create `notes.md` with the exact line you specified.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_6220a896387de8050a7ced30",
+      "messageId": "codex_message_02f161e1507c5bfaec556a82",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ Get-Content -LiteralPath src/app.ts",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-2f7bb1b1-1a44-4d4f-8d8b-f64099b15d36",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content -LiteralPath src/app.ts",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_73ce9e30c137f4ade1622670",
+      "messageId": "codex_message_02f161e1507c5bfaec556a82",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "export function greet(name: string): string {\r\n  return `Hello, ${name}!`;\r\n}\r\n\r\nexport function main(): void {\r\n  console.log(greet('world'));\r\n}\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-2f7bb1b1-1a44-4d4f-8d8b-f64099b15d36",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "result",
+        "status": "completed",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content -LiteralPath src/app.ts",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 743
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_19f6e9d1359e17db21128474",
+      "messageId": "codex_message_9f38b49a44712cfb06880747",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Add <WORKSPACE>\\notes.md\nEdit <WORKSPACE>\\src\\app.ts",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-dc6ae40a-db05-4268-aac3-8dcf1f2ab678",
+        "name": "fileChange",
+        "category": "edit",
+        "phase": "call",
+        "status": "running",
+        "target": "2 files",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\notes.md",
+            "kind": "add",
+            "added": 1,
+            "removed": 0
+          },
+          {
+            "path": "<WORKSPACE>\\src\\app.ts",
+            "kind": "update",
+            "added": 2,
+            "removed": 2
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_a02b12ddbbbd2fccf2b410ec",
+      "messageId": "codex_message_9f38b49a44712cfb06880747",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\notes.md\",\"patch\":\"Renamed greet to greetUser.\\n\",\"coverage\":\"patch\"},{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"@@ -1,2 +1,2 @@\\n-export function greet(name: string): string {\\n+export function greetUser(name: string): string {\\n   return `Hello, ${name}!`;\\n@@ -5,3 +5,3 @@\\n export function main(): void {\\n-  console.log(greet('world'));\\n+  console.log(greetUser('world'));\\n }\\n\",\"coverage\":\"patch\"}]}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-dc6ae40a-db05-4268-aac3-8dcf1f2ab678",
+        "name": "fileChange",
+        "category": "edit",
+        "phase": "result",
+        "status": "completed",
+        "target": "2 files",
+        "durationMs": 2451,
+        "files": [
+          {
+            "path": "<WORKSPACE>\\notes.md",
+            "kind": "add",
+            "added": 1,
+            "removed": 0
+          },
+          {
+            "path": "<WORKSPACE>\\src\\app.ts",
+            "kind": "update",
+            "added": 2,
+            "removed": 2
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_delta_4d68780477f8a4a7fbf3618e",
+      "messageId": "codex_message_a1122b012772b67c64bf2fb7",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "Renamed `greet` to `greetUser` and updated its call site in `src/app.ts`. Created `notes.md` containing exactly one line: `Renamed greet to greetUser.`",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_item_09c0d303dc722c7f4140f9fd",
+      "messageId": "codex_message_a1122b012772b67c64bf2fb7",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "Renamed `greet` to `greetUser` and updated its call site in `src/app.ts`. Created `notes.md` containing exactly one line: `Renamed greet to greetUser.`",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "turn-summary-040581292d8faa01f655b0c9c7d04124",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Renamed `greet` to `greetUser` and updated its call site in `src/app.ts`. Created `notes.md` containing exactly one line: `Renamed greet to greetUser.`",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 10,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

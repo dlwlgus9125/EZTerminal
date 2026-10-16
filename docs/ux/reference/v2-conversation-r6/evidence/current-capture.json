@@ -1,0 +1,207 @@
+[
+  {
+    "name": "current-desktop-chat",
+    "story": "agents-structured-session--bubble-compose",
+    "errors": [],
+    "viewport": [
+      1440,
+      900
+    ],
+    "documentWidth": 1440,
+    "header": {
+      "x": 200,
+      "y": 16,
+      "width": 1040,
+      "height": 123.984375,
+      "top": 16,
+      "right": 1240,
+      "bottom": 139.984375,
+      "left": 200
+    },
+    "composer": {
+      "x": 310,
+      "y": 547.8125,
+      "width": 820,
+      "height": 228.1875,
+      "top": 547.8125,
+      "right": 1130,
+      "bottom": 776,
+      "left": 310
+    },
+    "transcript": {
+      "x": 200,
+      "y": 139.984375,
+      "width": 1040,
+      "height": 407.828125,
+      "top": 139.984375,
+      "right": 1240,
+      "bottom": 547.8125,
+      "left": 200
+    },
+    "content": "CODEX\nImplement structured Agent session UI\n\nagent/orchestration-v2-s2-agent-ui · Worktree\n\nSTATUS:\nIDLE\nConversation skin\nBubbles\nCLI\nModel\nGPT-5.6 Codex\nGPT-5.5 Codex\nPermission preset\nPlan\nStandard\nFull access\nYOU\n09:30\n\nKeep the chat features and show this conversation with a CLI skin.\n\nCopy\nReply\nUse as draft\nTOOL RESULT\n09:30\nTool result\nCODEX\n09:30\n\nThe conversation uses the same messages in both skins.\n\nAttachments, replies and explicit approval remain available.\n\nCopy\nReply\nThe conversation uses the same messages in both skins.\nchat-requirements.md\nMessage Agent\nEnter to send · Shift+Enter for a new line\nSkills\nCommands\nAttach image or text\n@\nSend"
+  },
+  {
+    "name": "current-desktop-streaming",
+    "story": "agents-structured-session--streaming",
+    "errors": [],
+    "viewport": [
+      1440,
+      900
+    ],
+    "documentWidth": 1440,
+    "header": {
+      "x": 200,
+      "y": 16,
+      "width": 1040,
+      "height": 123.984375,
+      "top": 16,
+      "right": 1240,
+      "bottom": 139.984375,
+      "left": 200
+    },
+    "composer": {
+      "x": 310,
+      "y": 637.8125,
+      "width": 820,
+      "height": 138.1875,
+      "top": 637.8125,
+      "right": 1130,
+      "bottom": 776,
+      "left": 310
+    },
+    "transcript": {
+      "x": 200,
+      "y": 139.984375,
+      "width": 1040,
+      "height": 497.828125,
+      "top": 139.984375,
+      "right": 1240,
+      "bottom": 637.8125,
+      "left": 200
+    },
+    "content": "CODEX\nImplement structured Agent session UI\n\nagent/orchestration-v2-s2-agent-ui · Worktree\n\nSTATUS:\nWORKING\nConversation skin\nBubbles\nCLI\nModel\nGPT-5.6 Codex\nGPT-5.5 Codex\nPermission preset\nPlan\nStandard\nFull access\nYOU\n09:30\n\nBuild the structured Agent experience and keep the old PTY history intact.\n\nCopy\nUse as draft\nREASONING\n09:30\nReasoning\nCODEX\n09:30\n\nI added the semantic transcript, approval cards, and a FIFO composer.\n\nSTREAMING\nCopy\nMessage Agent\n2 queued\nSkills\nCommands\nAttach image or text\n@\nInterrupt & Send\nQueue message"
+  },
+  {
+    "name": "current-desktop-approval",
+    "story": "agents-structured-session--approval",
+    "errors": [],
+    "viewport": [
+      1440,
+      900
+    ],
+    "documentWidth": 1440,
+    "header": {
+      "x": 200,
+      "y": 16,
+      "width": 1040,
+      "height": 123.984375,
+      "top": 16,
+      "right": 1240,
+      "bottom": 139.984375,
+      "left": 200
+    },
+    "composer": {
+      "x": 310,
+      "y": 637.8125,
+      "width": 820,
+      "height": 138.1875,
+      "top": 637.8125,
+      "right": 1130,
+      "bottom": 776,
+      "left": 310
+    },
+    "transcript": {
+      "x": 200,
+      "y": 139.984375,
+      "width": 1040,
+      "height": 497.828125,
+      "top": 139.984375,
+      "right": 1240,
+      "bottom": 637.8125,
+      "left": 200
+    },
+    "content": "CODEX\nImplement structured Agent session UI\n\nagent/orchestration-v2-s2-agent-ui · Worktree\n\nSTATUS:\nBLOCKED\nConversation skin\nBubbles\nCLI\nModel\nGPT-5.6 Codex\nGPT-5.5 Codex\nPermission preset\nPlan\nStandard\nFull access\nYOU\n09:30\n\nApply the renderer changes.\n\nCopy\nUse as draft\nTOOL CALL\n09:30\nTool call\nAPPROVAL REQUIRED\n09:30\nAllow write to src/renderer/AgentPanel.tsx?\n\nThe Agent wants to update one file in the selected worktree.\n\nPENDING\nDeny\nAllow\nMessage Agent\nEnter to send · Shift+Enter for a new line\nSkills\nCommands\nAttach image or text\n@\nSend"
+  },
+  {
+    "name": "current-mobile-chat",
+    "story": "agents-structured-session--mobile-bubble-compose",
+    "errors": [],
+    "viewport": [
+      390,
+      844
+    ],
+    "documentWidth": 390,
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 390,
+      "height": 191.984375,
+      "top": 0,
+      "right": 390,
+      "bottom": 191.984375,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 546.421875,
+      "width": 390,
+      "height": 297.578125,
+      "top": 546.421875,
+      "right": 390,
+      "bottom": 844,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 191.984375,
+      "width": 390,
+      "height": 354.4375,
+      "top": 191.984375,
+      "right": 390,
+      "bottom": 546.421875,
+      "left": 0
+    },
+    "content": "CODEX\nImplement structured Agent session UI\n\nagent/orchestration-v2-s2-agent-ui · Worktree\n\n상태:\nIDLE\n대화 스킨\n말풍선\nCLI\nModel\nGPT-5.6 Codex\nGPT-5.5 Codex\n권한 프리셋\nPlan\nStandard\nFull access\n나\n09:30\n\nKeep the chat features and show this conversation with a CLI skin.\n\n복사\n답장\n입력에 가져오기\n도구 결과\n09:30\n도구 결과\nCODEX\n09:30\n\nThe conversation uses the same messages in both skins.\n\nAttachments, replies and explicit approval remain available.\n\n복사\n답장\nThe conversation uses the same messages in both skins.\nchat-requirements.md\nAgent에게 메시지\n전송 버튼으로 보내기\n스킬\n명령\n@\nSend"
+  },
+  {
+    "name": "current-navigation",
+    "story": "production-navigation-conversation-workbench--desktop-native-preview",
+    "errors": [],
+    "viewport": [
+      1440,
+      900
+    ],
+    "documentWidth": 1440,
+    "header": {
+      "x": 360,
+      "y": 0,
+      "width": 1080,
+      "height": 131.78125,
+      "top": 0,
+      "right": 1440,
+      "bottom": 131.78125,
+      "left": 360
+    },
+    "composer": {
+      "x": 490,
+      "y": 768.21875,
+      "width": 820,
+      "height": 131.78125,
+      "top": 768.21875,
+      "right": 1310,
+      "bottom": 900,
+      "left": 490
+    },
+    "transcript": {
+      "x": 360,
+      "y": 147.78125,
+      "width": 1080,
+      "height": 620.4375,
+      "top": 147.78125,
+      "right": 1440,
+      "bottom": 768.21875,
+      "left": 360
+    },
+    "content": "프로젝트\n이전 대화\n프로젝트별\n최근순\n보관 포함\nEZTerminal\n프로젝트\n명령과 스킬 입력 UX\nCodex · 10월 14일\n어제 CLI에서 확인한 배포 조건\nClaude CLI · 10월 14일\n결제 검토\n소프로젝트\n로그인 개선\n소프로젝트\nCLAUDE\n어제 CLI에서 확인한 배포 조건\n\nEZTerminal · Local\n\n상태:\n기록 · 전송하면 이어집니다\n···\n이전 대화\n대화 스킨\n말풍선\nCLI\nModel\nProvider 기본값\n권한 프리셋\nPlan\nStandard\nFull access\n나\n00:42\n\n이전에 CLI에서 진행한 검토를 앱에서 계속하고 싶어요.\n\n복사\n답장\n입력에 가져오기\nCLAUDE\n00:42\n\n대화의 원래 내용과 작업 폴더를 확인했습니다. 다음 단계는 Android 연결이 복구될 때 입력 중인 초안이 유지되는지 확인하는 것입니다.\n\n복사\n답장\nAgent에게 메시지\nEnter 전송 · Shift+Enter 줄바꿈\n스킬\n명령\n이미지·텍스트 첨부\n@\nSend"
+  }
+]

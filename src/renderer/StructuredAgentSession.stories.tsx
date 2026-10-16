@@ -3,6 +3,7 @@ import { fn } from 'storybook/test';
 import type { ReactNode } from 'react';
 
 import type { DaemonApproval, DaemonTranscriptItem } from '../shared/daemon-protocol';
+import { encodeFileChanges } from '../shared/conversation-changes';
 import {
   StructuredAgentChildTrack,
   StructuredAgentDraftPanel,
@@ -10,6 +11,7 @@ import {
   type StructuredAgentSessionPanelProps,
 } from './StructuredAgentSession';
 import { AppI18nProvider } from './i18n';
+import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import './index.css';
 import './structured-agent.css';
 import './session-start.css';
@@ -212,3 +214,58 @@ export const ChildAgentsAndLifecycle: Story = {
 
 export const NotStarted: Story = { args: { title: 'Codex', awaitingFirstMessage: true } };
 export const MobileNotStarted: Story = { args: { title: 'Codex', awaitingFirstMessage: true, variant: 'mobile' } };
+
+const skinConversation: DaemonTranscriptItem[] = [
+  item('skin-user', 1, 'user-message', 'Keep the chat features and show this conversation with a CLI skin.'),
+  item('skin-tool', 2, 'tool-result', 'Checked message identity, attachments, composer state and approval actions.'),
+  item('skin-agent', 3, 'assistant-message', 'The conversation uses the same messages in both skins.\n\nAttachments, replies and explicit approval remain available.'),
+];
+const composeDraft = {
+  text: 'Make the input area a little more compact.',
+  replyTo: { messageId: 'skin-agent', text: 'The conversation uses the same messages in both skins.' },
+  attachments: [{ id: 'reference-1', name: 'chat-requirements.md', mimeType: 'text/markdown', kind: 'text' as const,
+    data: '# Chat requirements\nKeep the existing terminal and use one conversation in both skins.' }],
+};
+
+export const BubbleConversation: Story = { args: { items: skinConversation, skin: 'bubble', supportsMessageContext: true } };
+export const CliConversation: Story = { args: { items: skinConversation, skin: 'cli', supportsMessageContext: true } };
+export const BubbleCompose: Story = { args: { items: skinConversation, skin: 'bubble', supportsMessageContext: true, draftState: composeDraft } };
+export const CliCompose: Story = { args: { ...BubbleCompose.args, skin: 'cli' } };
+export const DraftStorageConflict: Story = { args: { ...CliCompose.args, sendDisabled: true,
+  recoveryControl: <ChatRecoveryNotice controller={null} view={{ status: 'conflict', draft: composeDraft,
+    conflict: { version: 1, scope: { projectId: 'project', sessionId: 'agent-session-demo' }, revision: 3, updatedAt: NOW,
+      state: { draft: { text: 'The draft changed in another window. Keep the reply and attachments visible in both skins.' } } } }} />,
+} };
+export const CliStreaming: Story = { args: { ...Streaming.args, skin: 'cli', supportsMessageContext: true } };
+export const CliApproval: Story = { args: { ...Approval.args, skin: 'cli', supportsMessageContext: true } };
+export const DeliveryUncertain: Story = { args: {
+  items: skinConversation, skin: 'cli', draftState: composeDraft, supportsMessageContext: true,
+  deliveryUncertain: true, onReconcileDelivery: fn(async () => ({ ok: false as const, message: 'The host receipt is still unavailable.', deliveryUncertain: true })),
+} };
+export const MobileCliCompose: Story = {
+  args: { ...CliCompose.args, variant: 'mobile' },
+  parameters: { layout: 'fullscreen' },
+  render: (args) => <AppI18nProvider locale="ko" languages={['ko']}>
+    <div style={{ width: 'min(100vw, 390px)', height: 'min(100vh, 844px)' }}><StructuredAgentSessionPanel {...args} /></div>
+  </AppI18nProvider>,
+};
+export const MobileBubbleCompose: Story = { ...MobileCliCompose, args: { ...MobileCliCompose.args, skin: 'bubble' } };
+export const MobileOfflineDraft: Story = { ...MobileCliCompose, args: {
+  ...MobileCliCompose.args, disabled: true, allowDraftWhenDisabled: true, sendDisabled: true,
+  sendDisabledReason: '오프라인입니다. 초안은 기기에 보관되며 다시 연결한 뒤 직접 전송하세요.',
+} };
+
+export const ChangeReview: Story = {
+  args: { ...BubbleCompose.args, title: '대화 화면 개선', items: [
+    item('review-user', 1, 'user-message', '입력창의 포커스 표시를 개선해 주세요.'),
+    item('review-patch', 2, 'tool-result', encodeFileChanges([{ path: 'src/renderer/conversation.css', coverage: 'patch', patch: '@@ -12,3 +12,3 @@\n .composer:focus-within {\n-  border-color: var(--ui-border);\n+  border-color: var(--ui-focus);\n }' }])!),
+    item('review-answer', 3, 'assistant-message', '입력 중인 영역이 분명하게 보이도록 포커스 색상을 적용했습니다. 변경 검토에서 패치를 확인할 수 있습니다.'),
+  ] },
+  render: args => <AppI18nProvider locale="ko" languages={['ko']}><div style={{ width: '100vw', height: '100vh' }}><StructuredAgentSessionPanel {...args} /></div></AppI18nProvider>,
+  parameters: { layout: 'fullscreen' },
+};
+export const MobileChangeReview: Story = { ...ChangeReview, args: { ...ChangeReview.args, variant: 'mobile' } };
+export const QueuedRequests: Story = { ...ChangeReview, args: { ...ChangeReview.args, state: 'working', queuedCount: 2, queueItems: [
+  { turnId: 'queue-a', revision: 4, text: '모바일에서도 Enter는 줄바꿈으로 유지해 주세요.' },
+  { turnId: 'queue-b', revision: 5, text: '라이트 테마의 포커스도 확인해 주세요.' },
+], onQueueAction: fn(async () => ({ ok: true as const })) } };

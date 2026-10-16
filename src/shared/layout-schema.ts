@@ -24,6 +24,7 @@
  *    root must never reach fromJSON at all.
  */
 import { z } from 'zod';
+import { WorkbenchViewsSchema } from './workbench-views';
 import {
   MAX_EFFECT_INTENSITY,
   MIN_EFFECT_INTENSITY,
@@ -35,6 +36,7 @@ import {
 import { isDetachablePanelComponent } from './desktop-window';
 
 export const LAYOUT_SCHEMA_VERSION = 1 as const;
+export const CONVERSATION_LAYOUT_SCHEMA_VERSION = 2 as const;
 
 /** Upper bound on restorable panels (gate B5 — bounded input from disk/renderer). */
 export const MAX_PANELS = 64;
@@ -87,6 +89,9 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
     renderer: z.literal('always').optional(),
     params: z.strictObject({
       projectSession: ProjectSessionParamsSchema.optional(),
+      lastSurface: z.enum(['terminal', 'agent-cli']).optional(),
+      conversationId: z.string().min(1).max(160).optional(),
+      restoreState: z.literal('ended').optional(),
     }).optional(),
   }),
   PanelBaseSchema.extend({
@@ -99,6 +104,7 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
     renderer: z.literal('always').optional(),
     params: z.strictObject({
       historyId: z.string().min(1).max(128),
+      conversationId: z.string().min(1).max(160).optional(),
       provider: z.enum(['codex', 'claude']).optional(),
       projectId: z.string().min(1).max(128).optional(),
       rootId: z.string().min(1).max(128).optional(),
@@ -114,6 +120,15 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
     contentComponent: z.literal('project-map'),
     renderer: z.literal('onlyWhenVisible').optional(),
     params: ProjectMapParamsSchema,
+  }),
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('planning-workspace'),
+    renderer: z.literal('always').optional(),
+    params: z.strictObject({
+      projectId: z.string().min(1).max(160),
+      projectName: z.string().min(1).max(300),
+      section: z.enum(['overview', 'planning', 'design', 'chat', 'tasks', 'review']).optional(),
+    }),
   }),
 ]);
 
@@ -160,6 +175,7 @@ const PopoutGroupSchema = z.object({
 );
 
 const LayoutSchema = z.object({
+  workbenchViews: WorkbenchViewsSchema.optional(),
   grid: GridSchema,
   panels: z.record(z.string(), PanelSchema),
   activeGroup: z.string().optional(),
@@ -167,7 +183,7 @@ const LayoutSchema = z.object({
 });
 
 export const LayoutEnvelopeSchema = z.object({
-  schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   savedAt: z.string(),
   layout: LayoutSchema,
 });
@@ -256,7 +272,7 @@ export const SettingsSchema = z.object({
   schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
   startup: StartupPrefSchema,
   // Optional + schemaVersion stays 1: settings.json files written before E1
-  // still parse with theme absent; layout-store defaults absence to 'matrix'.
+  // still parse with theme absent; new installations default to 'dark'.
   theme: ThemeNameSchema.optional(),
   // UI scale (v0.2.0 D1) — integer percent, absent defaults to 100 in layout-store.
   uiScale: z.number().int().min(80).max(150).optional(),
@@ -582,7 +598,7 @@ export function collectSerializedPanelIdOccurrences(root: unknown): string[] {
 /** SAVE path: wrap a raw api.toJSON() result into a validated envelope. */
 export function buildLayoutEnvelope(rawLayout: unknown, savedAt: string): LayoutEnvelope | null {
   return validateLayoutEnvelope({
-    schemaVersion: LAYOUT_SCHEMA_VERSION,
+    schemaVersion: CONVERSATION_LAYOUT_SCHEMA_VERSION,
     savedAt,
     layout: rawLayout,
   });

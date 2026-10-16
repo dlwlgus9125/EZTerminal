@@ -1,0 +1,217 @@
+{
+  "provider": "claude",
+  "scenario": "web",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Use the WebSearch tool to find the current Node.js LTS major version and answer in one sentence. Do not use any other tool.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_685fcba28f73d2f720fe48a8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "claude_c8e36d8b56d3a49b7fcb4c24",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "ToolSearch\n{\n  \"query\": \"select:WebSearch\",\n  \"max_results\": 1\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01N6MVjrg69otpoukFaamMxM",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "call",
+        "status": "running"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "claude_7fd5d45e7224a2a4d13799b9",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "WebSearch",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01N6MVjrg69otpoukFaamMxM",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "result",
+        "status": "completed"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "claude_999cfbc701c2cd01568b7166",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "WebSearch\n{\n  \"query\": \"Node.js current LTS version October 2026\",\n  \"mode\": \"standard\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01K5qfWbQxHc5KWgLcdvwaxW",
+        "name": "WebSearch",
+        "category": "web",
+        "phase": "call",
+        "status": "running",
+        "target": "Node.js current LTS version October 2026"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "claude_274718e2c053a28433072f19",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "claude_ee7501ba675ea8400ec7270d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "Web search results for query: \"Node.js current LTS version October 2026\"\n\nLinks: [{\"title\":\"Future Node.js Releases\",\"url\":\"https://academy.zerotomastery.io/courses/1206554/lectures/65459509\"},{\"title\":\"nodejs downloads 2026 node 24 adoption\",\"url\":\"https://nodesource.com/blog/nodejs-downloads-2026-node-24-adoption\"},{\"title\":\"One Node.js release a year from 2027: what the Node 27 LTS change means for your upgrade cadence\",\"url\":\"https://ecorpit.com/nodejs-one-release-per-year-node-27-lts-upgrade-cadence-2026/\"},{\"title\":\"05 07 node 24\",\"url\":\"https://www.clever.cloud/developers/changelog/2025/05-07-node-24/\"},{\"title\":\"Node.js development company: 5 dates that decide your 2026 backend\",\"url\":\"https://ecorpit.com/nodejs-development-company/\"},{\"title\":\"Latest Stable\",\"url\":\"https://versionlog.com/nodejs/\"},{\"title\":\"Hire Node.js developers in 2026: Node 20 is dead and the release model changes in October\",\"url\":\"https://ecorpit.com/hire-nodejs-developers/\"},{\"title\":\"www.issoh.co.jp\",\"url\":\"https://www.issoh.co.jp/tech/details/17906/\"},{\"title\":\"endoflife.date\",\"url\":\"https://endoflife.date/nodejs\"}]\n\nBased on the search results, here's what's happening with Node.js LTS versions in October 2026:\n\nNode.js 26 is scheduled to transition to LTS in October 2026, making it the current LTS version at that time. Node.js 26 becomes the long-lived target once it enters LTS in October.\n\nAdditionally, as of October 2026, all future Node releases will be LTS releases, marking a significant change to Node.js's release strategy. Starting with Node.js 27, the project moves to one major release a year: a single Current release each April, promoted to Long-Term Support (LTS) each October, with every release now becoming LTS and the odd/even split retired.\n\nSo in October 2026, **Node.js 26 becomes the LTS version**, and from that point forward, the entire release model changes to make every Node.js release an LTS release.\n\n\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01K5qfWbQxHc5KWgLcdvwaxW",
+        "name": "WebSearch",
+        "category": "web",
+        "phase": "result",
+        "status": "completed"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "claude_45399f03daaf327a1a245d9e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "claude_28d275187ced3bc2ae058952",
+      "messageId": "claude_msg:msg_011Cg3Kee6A5pNyNAEgUujZe:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "As of today (October 15, 2026), the current active Node.js LTS major version is still **24**, and Node.js 26 is scheduled to become LTS later this month; the search results only say \"October 2026\" and don't give the exact date.\n\nI had to use ToolSearch once first, because WebSearch couldn't be called until it was loaded; after that I used only WebSearch.\n\nSources:\n- [endoflife.date – Node.js](https://endoflife.date/nodejs)\n- [NodeSource – Node.js downloads 2026: Node 24 adoption](https://nodesource.com/blog/nodejs-downloads-2026-node-24-adoption)\n- [ecorpit – One Node.js release a year from 2027](https://ecorpit.com/nodejs-one-release-per-year-node-27-lts-upgrade-cadence-2026/)\n- [ecorpit – Hire Node.js developers in 2026](https://ecorpit.com/hire-nodejs-developers/)",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "claude_e7c990f0e6d718c9a63f7015",
+      "messageId": "claude_msg:msg_011Cg3Kee6A5pNyNAEgUujZe:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "As of today (October 15, 2026), the current active Node.js LTS major version is still **24**, and Node.js 26 is scheduled to become LTS later this month; the search results only say \"October 2026\" and don't give the exact date.\n\nI had to use ToolSearch once first, because WebSearch couldn't be called until it was loaded; after that I used only WebSearch.\n\nSources:\n- [endoflife.date – Node.js](https://endoflife.date/nodejs)\n- [NodeSource – Node.js downloads 2026: Node 24 adoption](https://nodesource.com/blog/nodejs-downloads-2026-node-24-adoption)\n- [ecorpit – One Node.js release a year from 2027](https://ecorpit.com/nodejs-one-release-per-year-node-27-lts-upgrade-cadence-2026/)\n- [ecorpit – Hire Node.js developers in 2026](https://ecorpit.com/hire-nodejs-developers/)",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude completed the turn.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 11,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-a4fd19f9a2a2ac6a64c83202b10bfb19",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "c5694f6a-eb66-4503-9a8f-5c0acbe12722",
+      "risk": "read",
+      "title": "Use WebSearch",
+      "detail": "Node.js current LTS version October 2026",
+      "request": {
+        "v": 1,
+        "callId": "toolu_01K5qfWbQxHc5KWgLcdvwaxW",
+        "kind": "tool",
+        "toolName": "WebSearch",
+        "target": "Node.js current LTS version October 2026",
+        "input": "{\n  \"query\": \"Node.js current LTS version October 2026\",\n  \"mode\": \"standard\"\n}"
+      },
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "toolName": "WebSearch",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "query": "Node.js current LTS version October 2026",
+          "mode": "standard"
+        },
+        "toolUseID": "toolu_01K5qfWbQxHc5KWgLcdvwaxW"
+      }
+    }
+  ]
+}

@@ -3,7 +3,9 @@ import type { ThemeMod } from '../shared/theme-schema';
 import { EFFECT_CATALOG, applyEffects, resolveActiveEffects, type EffectId } from './effects';
 import {
   cssColorToRgbChannels,
+  deriveUiTokens,
   resolveProviderIdentityColors,
+  seedTerminalCssVars,
   seedUiThemeColors,
   uiThemeColorsToCssVars,
 } from './theme-contrast';
@@ -84,8 +86,13 @@ export function applyThemeVarsAndEffects(
   } else {
     const providerColors = theme.ui ? resolveProviderIdentityColors(theme.ui) : null;
     const effectiveVars = {
+      // Terminal-chrome roles the theme left out follow its ui palette; explicit cssVars win.
+      ...(theme.ui ? seedTerminalCssVars(theme.ui, theme.xterm) : {}),
       ...theme.cssVars,
       ...(theme.ui ? uiThemeColorsToCssVars(theme.ui) : {}),
+      // Built-ins carry these in ui-tokens.css; a custom theme only exists here.
+      // Custom themes keep the accent glow they inherited from :root before.
+      ...(theme.ui ? deriveUiTokens(theme.ui, { glow: true }) : {}),
       ...(providerColors ? {
         '--ui-agent-codex': providerColors.codex,
         '--ui-agent-claude': providerColors.claude,

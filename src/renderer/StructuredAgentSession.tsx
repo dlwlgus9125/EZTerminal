@@ -1,24 +1,42 @@
+import type { ApprovalResponse } from '../shared/approval-request';
+import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
+import { ChatProvider } from './chat/ChatContext';
+import { ChatTranscript } from './chat/ChatTranscript';
+import { useChatLocale } from './chat/copy';
+import { ApprovalDock } from './chat/dock/ApprovalDock';
+import { TaskDock } from './chat/dock/TaskDock';
+import { ConversationChangeReview } from './ConversationChangeReview';
 import {
+  Activity,
   AlertTriangle,
   Archive,
+  FileDiff,
+  History,
+  MoreHorizontal,
+  ArrowUp,
+  AtSign,
   Bot,
-  Check,
-  ChevronRight,
-  Circle,
-  Clock3,
-  Code2,
-  FileCheck2,
-  LoaderCircle,
-  Send,
+  Cpu,
+  Gauge,
+  NotebookPen,
   ShieldAlert,
+  ShieldCheck,
+  LoaderCircle,
+  Plus,
+  Sparkles,
+  SquareSlash,
+  Clock3,
+  Paperclip,
+  Reply,
   Square,
   Unlink2,
-  Wrench,
+  X,
 } from 'lucide-react';
 import {
   memo,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,22 +44,41 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { insertCompletion } from './agent-completion';
+import { useAgentCompletion, type CapabilityDiscoveryState, type ComposerFileSearch } from './use-agent-completion';
 
 import type {
   DaemonApproval,
   DaemonTranscriptItem,
+  DaemonTurn,
   ManagedAgentState,
   PermissionPreset,
   WorkspaceKind,
 } from '../shared/daemon-protocol';
-import { ProgressiveSafeMarkdown } from './ProgressiveSafeMarkdown';
+import {
+  CHAT_ATTACHMENT_ACCEPT, CHAT_IMAGE_MIME_TYPES, MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENT_BYTES,
+  validateChatMessageContext,
+  type ChatAttachment, type ChatMessageContext, type ChatReplyReference, type ChatSkillReference,
+} from '../shared/chat-message';
+import {
+  captureTranscriptAnchor, restoreTranscriptAnchor, readChatSkin, writeChatSkin, subscribeChatSkin,
+  type ChatComposerDraft, type ChatSkin, type TranscriptAnchor,
+} from './chat-view-state';
 import { useAppTranslation } from './i18n';
+import { useAgentStateLabel } from './agent-state-label';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
-import { Button, Field, Select } from './ui';
+import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, Select } from './ui';
+import { conversationFileChanges } from '../shared/conversation-changes';
+import { SettingPill } from './chat/composer/SettingPill';
+import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
+import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
+import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
 
 export type StructuredAgentUiResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly message: string };
+  | { readonly ok: false; readonly message: string; readonly deliveryUncertain?: boolean };
+
+export type { ChatComposerDraft, ChatSkin } from './chat-view-state';
 
 export interface StructuredAgentModelOption {
   readonly id: string;
@@ -64,11 +101,22 @@ export interface StructuredAgentWorkspaceOption {
 }
 
 export interface StructuredAgentDraftInput {
+  /** Composer text carried into the empty conversation; must not submit a turn. */
+  readonly draftText?: string;
+  readonly draftSkills?: readonly ChatSkillReference[];
   readonly providerId: string;
   readonly model?: string;
   readonly workspaceId: string;
   readonly permissionPreset: PermissionPreset;
   readonly initialPrompt?: string;
+}
+
+export interface StructuredAgentDraftFormState {
+  readonly draft: ChatComposerDraft;
+  readonly providerId: string;
+  readonly model?: string;
+  readonly workspaceId: string;
+  readonly permissionPreset: PermissionPreset;
 }
 
 interface StructuredAgentCopy {
@@ -144,10 +192,40 @@ interface StructuredAgentCopy {
   readonly providerOwnedReadOnly: string;
   readonly archivedReadOnly: string;
   readonly endedReadOnly: string;
+  readonly skin: string;
+  readonly bubbleSkin: string;
+  readonly cliSkin: string;
+  readonly conversationMenu: string;
+  readonly previousConversations: string;
+  readonly heartbeatMenu: string;
+  readonly heartbeatOn: string;
+  readonly changedFiles: (count: number) => string;
+  readonly close: string;
+  readonly copyMessage: string;
+  readonly copied: string;
+  readonly copyFailed: string;
+  readonly replyMessage: string;
+  readonly reuseMessage: string;
+  readonly removeReply: string;
+  readonly attach: string;
+  readonly attachmentUnsupported: string;
+  readonly removeAttachment: string;
+  readonly attachmentError: string;
+  readonly addReference: string;
+  readonly uncertain: string;
+  readonly reconcile: string;
 }
 
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   en: {
+    skin: 'Conversation skin', bubbleSkin: 'Bubbles', cliSkin: 'CLI',
+    conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat',
+    changedFiles: (count) => `${count} ${count === 1 ? 'file' : 'files'} changed`, close: 'Close',
+    copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
+    replyMessage: 'Reply', reuseMessage: 'Use as draft', removeReply: 'Remove reply',
+    attach: 'Attach image or text', attachmentUnsupported: 'Attachments and replies require a compatible connected host.',
+    removeAttachment: 'Remove attachment', attachmentError: 'This file could not be attached. Choose a supported image or a small text file.',
+    addReference: 'Insert reference', uncertain: 'Delivery is unconfirmed. Check the host receipt before sending again.', reconcile: 'Check delivery',
     desktopSendHint: 'Enter to send · Shift+Enter for a new line',
     mobileSendHint: 'Use Send to send a message',
     newSession: 'New Agent session',
@@ -222,6 +300,14 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     endedReadOnly: 'This session has ended. Its transcript remains available, but new messages are disabled.',
   },
   ko: {
+    skin: '대화 스킨', bubbleSkin: '말풍선', cliSkin: 'CLI',
+    conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트',
+    changedFiles: (count) => `파일 ${count}개 변경`, close: '닫기',
+    copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
+    replyMessage: '답장', reuseMessage: '입력에 가져오기', removeReply: '답장 취소',
+    attach: '이미지·텍스트 첨부', attachmentUnsupported: '첨부와 답장은 지원하는 호스트에 연결해야 사용할 수 있습니다.',
+    removeAttachment: '첨부 제거', attachmentError: '파일을 첨부하지 못했습니다. 지원하는 이미지나 작은 텍스트 파일을 선택하세요.',
+    addReference: '참조 입력', uncertain: '전송 결과를 확인 중입니다. 호스트 기록을 대조한 뒤 다시 보내세요.', reconcile: '전송 결과 확인',
     desktopSendHint: 'Enter 전송 · Shift+Enter 줄바꿈',
     mobileSendHint: '전송 버튼으로 보내기',
     newSession: '새 Agent 세션',
@@ -321,6 +407,12 @@ function permissionCopy(copy: StructuredAgentCopy, preset: PermissionPreset): {
 }
 
 export interface StructuredAgentDraftPanelProps {
+  readonly initialFormState?: StructuredAgentDraftFormState;
+  readonly onFormStateChange?: (state: StructuredAgentDraftFormState) => void;
+  readonly onOpenHistory?: () => void;
+  readonly capabilityClient?: AgentCapabilitiesClient;
+  readonly initialDraftText?: string;
+  readonly initialDraftSkills?: readonly ChatSkillReference[];
   readonly providers: readonly StructuredAgentProviderOption[];
   readonly workspaces: readonly StructuredAgentWorkspaceOption[];
   readonly initialProviderId?: string;
@@ -346,6 +438,12 @@ export interface StructuredAgentDraftPanelProps {
 }
 
 export function StructuredAgentDraftPanel({
+  initialFormState,
+  onFormStateChange,
+  capabilityClient,
+  onOpenHistory,
+  initialDraftText = '',
+  initialDraftSkills,
   providers,
   workspaces,
   initialProviderId,
@@ -367,23 +465,53 @@ export function StructuredAgentDraftPanel({
 }: StructuredAgentDraftPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const promptId = useId();
+  const { i18n } = useAppTranslation();
   const draftTitleId = useId();
   const permissionName = useId();
   const firstProvider = providers.find((provider) => !provider.disabled)?.id ?? '';
   const hasReadyProvider = firstProvider.length > 0;
-  const [providerId, setProviderId] = useState(initialProviderId ?? firstProvider);
-  const [model, setModel] = useState(initialModel);
+  const restoredForm = deliveryRecovery ? undefined : initialFormState;
+  const [providerId, setProviderId] = useState(restoredForm?.providerId ?? initialProviderId ?? firstProvider);
+  const [model, setModel] = useState(restoredForm ? restoredForm.model ?? '' : initialModel);
   const [internalWorkspaceId, setInternalWorkspaceId] = useState(
-    initialWorkspaceId ?? workspaces[0]?.id ?? '',
+    restoredForm?.workspaceId ?? initialWorkspaceId ?? workspaces[0]?.id ?? '',
   );
   const workspaceId = selectedWorkspaceId ?? internalWorkspaceId;
-  const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(initialPermissionPreset);
+  const [catalog, setCatalog] = useState<AgentCapabilityCatalog>();
+  const [discovery, setDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
+  const [draftText, setDraftText] = useState(restoredForm?.draft.text ?? initialDraftText);
+  const [draftSkills, setDraftSkills] = useState<readonly ChatSkillReference[]>(restoredForm?.draft.skills ?? initialDraftSkills ?? []);
+  const draftInputRef = useRef<HTMLTextAreaElement>(null);
+  const [draftSelection, setDraftSelection] = useState<[number, number]>([
+    restoredForm?.draft.selectionStart ?? draftText.length,
+    restoredForm?.draft.selectionEnd ?? draftText.length,
+  ]);
+  const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(restoredForm?.permissionPreset ?? initialPermissionPreset);
+  const formStateCallback = useRef(onFormStateChange);
+  formStateCallback.current = onFormStateChange;
+  useEffect(() => {
+    formStateCallback.current?.({ providerId, model: model || undefined, workspaceId, permissionPreset,
+      draft: { text: draftText, skills: draftSkills, selectionStart: draftSelection[0], selectionEnd: draftSelection[1] } });
+  }, [providerId, model, workspaceId, permissionPreset, draftText, draftSkills, draftSelection]);
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const selectedProvider = providers.find((provider) => provider.id === providerId);
-  const models = selectedProvider?.models ?? [];
+  const updateDraftInput = (next: ChatComposerDraft): void => {
+    setDraftText(next.text); setDraftSkills(next.skills ?? []);
+    setDraftSelection([next.selectionStart ?? next.text.length, next.selectionEnd ?? next.text.length]);
+    // An app action may unmount this form in the same event. Preserve its draft
+    // before navigation instead of waiting for the next committed render.
+    formStateCallback.current?.({ providerId, model: model || undefined, workspaceId, permissionPreset, draft: next });
+  };
+  useLayoutEffect(() => { draftInputRef.current?.setSelectionRange(...draftSelection); }, [draftSelection]);
+  const draftValue = { text: draftText, skills: draftSkills, selectionStart: draftSelection[0], selectionEnd: draftSelection[1] };
+  const completion = useAgentCompletion({ value: draftValue, onChange: updateDraftInput, inputRef: draftInputRef,
+    catalog: catalog?.providerId === providerId && catalog.workspaceId === workspaceId ? catalog : undefined,
+    discovery, onOpenHistory, disabled: loading || submitting || deliveryRecovery, mobile: variant === 'mobile' });
+  const models = catalog?.providerId === providerId && catalog.workspaceId === workspaceId && catalog.models.length
+    ? catalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : selectedProvider?.models ?? [];
   const hasUsableProvider = deliveryRecovery ? providerId.length > 0 : hasReadyProvider;
   const hasUsableWorkspace = deliveryRecovery
     ? workspaceId.length > 0
@@ -417,11 +545,15 @@ export function StructuredAgentDraftPanel({
     setModel(initialModel);
     if (selectedWorkspaceId === undefined) setInternalWorkspaceId(initialWorkspaceId ?? '');
     setPermissionPreset(initialPermissionPreset);
+    setDraftText(initialDraftText);
+    setDraftSkills(initialDraftSkills ?? []);
   }, [
     deliveryRecovery,
     initialModel,
     initialPermissionPreset,
     initialPrompt,
+    initialDraftText,
+    initialDraftSkills,
     initialProviderId,
     initialWorkspaceId,
     selectedWorkspaceId,
@@ -443,6 +575,7 @@ export function StructuredAgentDraftPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+    if (completion.composing.current || completion.runAppCommand()) return;
     setAttempted(true);
     setSubmitError(null);
     if (!providerId || !hasUsableProvider || !hasUsableWorkspace || submittingRef.current || loading) return;
@@ -454,6 +587,8 @@ export function StructuredAgentDraftPanel({
       ...(model ? { model } : {}),
       workspaceId,
       permissionPreset,
+      ...(draftText ? { draftText } : {}),
+      ...(draftSkills.length ? { draftSkills: draftSkills.filter((skill) => draftText.includes(skill.invocation)) } : {}),
       ...(deliveryRecovery && initialPrompt ? { initialPrompt } : {}),
     }).catch((): StructuredAgentUiResult => ({
       ok: false,
@@ -492,6 +627,7 @@ export function StructuredAgentDraftPanel({
       )}
 
       <form className="structured-agent-draft-form" onSubmit={(event) => void submit(event)} noValidate>
+        {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
         <div className="structured-agent-draft-form__grid">
           <Field
             label={copy.provider}
@@ -603,6 +739,14 @@ export function StructuredAgentDraftPanel({
         </fieldset>
         </details>
 
+        <div className="structured-agent-draft-input">
+          {completion.menu}
+          <Field label={copy.message} id={`${promptId}-draft`}><textarea {...completion.inputProps} ref={draftInputRef} id={`${promptId}-draft`} className="structured-agent-textarea" rows={2}
+            value={draftText} readOnly={deliveryRecovery} maxLength={65_536} onKeyDown={event => { completion.keyDown(event); }}
+            onChange={event => updateDraftInput({ ...draftValue, text: event.target.value, selectionStart: event.target.selectionStart, selectionEnd: event.target.selectionEnd })}
+            onSelect={event => { const input = event.currentTarget; if (draftSelection[0] !== input.selectionStart || draftSelection[1] !== input.selectionEnd) setDraftSelection([input.selectionStart, input.selectionEnd]); }} /></Field>
+          <div>{completion.buttons}</div>
+        </div>
         {deliveryRecovery && initialPrompt && <Field id={promptId} label={copy.firstPrompt}>
           <textarea id={promptId} className="structured-agent-textarea" rows={3} value={initialPrompt} readOnly data-testid="structured-agent-recovery-prompt" />
         </Field>}
@@ -624,304 +768,130 @@ export function StructuredAgentDraftPanel({
           </Button>
         </div>
       </form>
+      {capabilityClient && !selectedProvider?.disabled && workspaceId && (providerId === 'codex' || providerId === 'claude') && <AgentCapabilitiesPanel
+        client={capabilityClient} providerId={providerId} workspaceId={workspaceId} remote={variant === 'mobile'}
+        disabled={loading || submitting || deliveryRecovery} onCatalog={setCatalog} onDiscoveryState={setDiscovery}
+        onInsert={(item) => { updateDraftInput(insertCompletion(draftValue, item.invocation ?? '', undefined,
+          item.kind === 'skill' && item.invocation ? { providerId, id: item.id, name: item.name, invocation: item.invocation } : undefined)); draftInputRef.current?.focus(); }}
+      />}
     </section>
   );
-}
-
-interface DisplayTranscriptItem extends DaemonTranscriptItem {
-  readonly sourceIds: readonly string[];
 }
 
 /** Coalesces adjacent streaming chunks without changing authoritative ordering. */
 export function coalesceStructuredAgentTranscript(
   items: readonly DaemonTranscriptItem[],
-): readonly DisplayTranscriptItem[] {
-  const ordered = items.slice().sort((left, right) => left.sequence - right.sequence);
-  const result: DisplayTranscriptItem[] = [];
-  const messageIndexes = new Map<string, number>();
-  for (const item of ordered) {
-    const messageKey = item.messageId ? `${item.sessionId}:${item.turnId ?? ''}:${item.kind}:${item.messageId}` : undefined;
-    const messageIndex = messageKey === undefined ? undefined : messageIndexes.get(messageKey);
-    if (messageIndex !== undefined) {
-      const current = result[messageIndex];
-      result[messageIndex] = {
-        ...item,
-        text: item.isDelta ? `${current.text}${item.text}` : item.text,
-        sourceIds: [...current.sourceIds, item.id],
-      };
-      continue;
-    }
-    if (messageKey) messageIndexes.set(messageKey, result.length);
-    const previous = result.at(-1);
-    const sameLogicalItem = previous && previous.id === item.id;
-    const adjacentDelta = previous
-      && !item.messageId && !previous.messageId
-      && item.isDelta
-      && previous.isDelta
-      && previous.kind === item.kind
-      && previous.turnId === item.turnId
-      && previous.sessionId === item.sessionId;
-    if (sameLogicalItem) {
-      if (item.isDelta) {
-        result[result.length - 1] = {
-          ...item,
-          text: `${previous.text}${item.text}`,
-          sourceIds: [...previous.sourceIds, item.id],
-        };
-      } else {
-        result[result.length - 1] = { ...item, sourceIds: previous.sourceIds };
-      }
-    } else if (adjacentDelta) {
-      result[result.length - 1] = {
-        ...previous,
-        sequence: item.sequence,
-        text: `${previous.text}${item.text}`,
-        sourceIds: [...previous.sourceIds, item.id],
-      };
-    } else {
-      result.push({ ...item, sourceIds: [item.id] });
-    }
-  }
-  return result;
+): readonly (DaemonTranscriptItem & { readonly sourceIds: readonly string[] })[] {
+  return coalesceTranscript(items);
 }
 
-const APPROVAL_STATE_ICON = {
-  pending: Clock3,
-  allowed: Check,
-  denied: Square,
-  expired: Circle,
-} as const;
-
 export interface StructuredAgentTranscriptProps {
+  readonly beforeMessages?: ReactNode;
   readonly stateKey?: string;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
+  /** Turn records enable "Working for 12s" and settle tools of finished turns. */
+  readonly turns?: readonly DaemonTurn[];
   readonly providerLabel: string;
+  readonly skin?: ChatSkin;
+  readonly workspaceRoot?: string;
   readonly loading?: boolean;
   readonly error?: string | null;
   readonly onRetry?: () => void;
   readonly onResolveApproval?: (
     approvalId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ) => Promise<StructuredAgentUiResult>;
+  /** Host accepts answers, plan mode and deny feedback (`approval-response-v1`). */
+  readonly approvalResponses?: boolean;
   readonly onOpenRelatedSession?: (sessionId: string) => void;
+  readonly onOpenLink?: (url: string) => void;
+  readonly onReviewChanges?: () => void;
+  /** Older messages exist above the loaded window. */
+  readonly hasEarlier?: boolean;
+  readonly loadingEarlier?: boolean;
+  readonly onLoadEarlier?: () => void;
+  readonly controlsDisabled?: boolean;
+  readonly onReply?: (reply: ChatReplyReference) => void;
+  readonly onReuse?: (text: string) => void;
 }
 
+/**
+ * The conversation, its pending approval and the agent's task list. Rows come
+ * from the shared chat view-model so both skins present the same content.
+ */
 export const StructuredAgentTranscript = memo(function StructuredAgentTranscript({
+  beforeMessages,
   stateKey,
   items,
   approvals = [],
+  turns,
   providerLabel,
+  skin,
+  workspaceRoot,
   loading = false,
   error = null,
   onRetry,
   onResolveApproval,
+  approvalResponses = false,
   onOpenRelatedSession,
+  onOpenLink,
+  onReviewChanges,
+  hasEarlier = false,
+  loadingEarlier = false,
+  onLoadEarlier,
+  controlsDisabled = false,
+  onReply,
+  onReuse,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const savedScroll = useRef(stateKey ? readSessionViewState<{ top: number; follow: boolean }>(stateKey) : undefined);
-  const followTailRef = useRef(savedScroll.current?.follow ?? true);
-  const displayItems = useMemo(() => {
-    const representedApprovals = new Set(
-      items.filter((item) => item.kind === 'approval').map((item) => item.id),
-    );
-    const lastSequence = items.reduce((maximum, item) => Math.max(maximum, item.sequence), 0);
-    const synthesized = approvals
-      .filter((approval) => !representedApprovals.has(approval.id))
-      .map((approval, index): DaemonTranscriptItem => ({
-        id: approval.id,
-        sessionId: approval.sessionId,
-        ...(approval.turnId ? { turnId: approval.turnId } : {}),
-        sequence: lastSequence + index + 1,
-        kind: 'approval',
-        text: approval.title,
-        isDelta: false,
-        isSensitive: false,
-        createdAt: approval.createdAt,
-      }));
-    return coalesceStructuredAgentTranscript([...items, ...synthesized]);
-  }, [approvals, items]);
-  const approvalById = useMemo(
-    () => new Map(approvals.map((approval) => [approval.id, approval])),
-    [approvals],
-  );
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || displayItems.length === 0) return;
-    if (savedScroll.current) {
-      viewport.scrollTop = savedScroll.current.follow ? viewport.scrollHeight : savedScroll.current.top;
-      savedScroll.current = undefined;
-    } else if (followTailRef.current) viewport.scrollTop = viewport.scrollHeight;
-  }, [displayItems]);
-
-  const resolveApproval = async (approvalId: string, decision: 'allow' | 'deny'): Promise<void> => {
-    if (!onResolveApproval || resolvingId) return;
-    setResolvingId(approvalId);
-    setApprovalError(null);
-    const result = await onResolveApproval(approvalId, decision).catch((): StructuredAgentUiResult => ({
-      ok: false,
-      message: 'The approval could not be delivered.',
-    }));
-    setResolvingId(null);
-    if (!result.ok) setApprovalError(result.message);
-  };
-
+  const locale = useChatLocale();
+  const model = useMemo(() => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }), [items, approvals, turns]);
+  const [dockCollapsed, setDockCollapsed] = useState(false);
+  const pendingId = model.pending?.approval.id;
+  useEffect(() => setDockCollapsed(false), [pendingId]);
+  const unfinishedTodo = model.todo && model.todo.some((item) => item.status !== 'completed') ? model.todo : undefined;
   return (
-    <div
-      ref={viewportRef}
-      className="structured-agent-transcript"
-      data-testid="structured-agent-transcript"
-      onScroll={(event) => {
-        const target = event.currentTarget;
-        followTailRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-        if (stateKey) saveSessionViewState(stateKey, { top: target.scrollTop, follow: followTailRef.current });
-      }}
+    <ChatProvider
+      skin={skin ?? readChatSkin()}
+      locale={locale}
+      stateKey={stateKey}
+      {...(workspaceRoot ? { workspaceRoot } : {})}
+      {...(onReply ? { onReply } : {})}
+      {...(onReuse ? { onReuse } : {})}
+      {...(onOpenLink ? { onOpenLink } : {})}
+      {...(onOpenRelatedSession ? { onOpenRelated: onOpenRelatedSession } : {})}
+      {...(onReviewChanges ? { onReviewChanges } : {})}
     >
-      {error && (
-        <div className="structured-agent__banner structured-agent__banner--error" role="alert">
-          <AlertTriangle aria-hidden="true" />
-          <span>{error}</span>
-          {onRetry && <Button variant="ghost" size="sm" onClick={onRetry}>{copy.retry}</Button>}
-        </div>
+      <ChatTranscript
+        model={model}
+        providerLabel={providerLabel || copy.assistant}
+        stateKey={stateKey}
+        loading={loading}
+        error={error}
+        onRetry={onRetry}
+        before={beforeMessages}
+        emptyLabel={copy.transcriptEmpty}
+        loadingLabel={copy.transcriptLoading}
+        retryLabel={copy.retry}
+        {...(hasEarlier && onLoadEarlier ? { earlier: { loading: loadingEarlier, onLoad: onLoadEarlier } } : {})}
+      />
+      {unfinishedTodo && <TaskDock items={unfinishedTodo} />}
+      {model.pending && onResolveApproval && (
+        <ApprovalDock
+          pending={model.pending}
+          pendingCount={model.pendingCount}
+          canRespond={approvalResponses}
+          disabled={controlsDisabled}
+          collapsed={dockCollapsed}
+          onCollapsedChange={setDockCollapsed}
+          onResolve={(approvalId, decision, response) => (response
+            ? onResolveApproval(approvalId, decision, response)
+            : onResolveApproval(approvalId, decision))}
+        />
       )}
-      {loading && displayItems.length === 0 && (
-        <p className="structured-agent-transcript__state" role="status">
-          <LoaderCircle className="structured-agent__spinner" aria-hidden="true" />
-          {copy.transcriptLoading}
-        </p>
-      )}
-      {!loading && !error && displayItems.length === 0 && (
-        <p className="structured-agent-transcript__state" data-testid="structured-agent-empty">
-          <Bot aria-hidden="true" />
-          {copy.transcriptEmpty}
-        </p>
-      )}
-      {displayItems.length > 0 && (
-        <ol className="structured-agent-transcript__list" aria-label={copy.transcript}>
-          {displayItems.map((item, index) => {
-            const content = item.text;
-            const isAssistant = item.kind === 'assistant-message';
-            const approval = item.kind === 'approval' ? approvalById.get(item.id) : undefined;
-            const ApprovalIcon = approval ? APPROVAL_STATE_ICON[approval.state] : ShieldAlert;
-            const label = item.kind === 'user-message'
-              ? copy.you
-              : item.kind === 'assistant-message'
-                ? providerLabel || copy.assistant
-                : item.kind === 'reasoning'
-                  ? copy.reasoning
-                  : item.kind === 'tool-call'
-                    ? copy.toolCall
-                    : item.kind === 'tool-result'
-                      ? copy.toolResult
-                      : item.kind === 'approval'
-                        ? copy.approval
-                        : item.kind === 'child-summary'
-                          ? copy.childSummary
-                          : item.kind === 'error'
-                            ? copy.error
-                            : copy.notice;
-            return (
-              <li key={`${item.id}-${item.sequence}`} className="structured-agent-transcript__item">
-                <article
-                  className="structured-agent-message"
-                  data-kind={item.kind}
-                  data-streaming={item.isDelta || undefined}
-                  aria-label={label}
-                  aria-live={item.isDelta ? 'polite' : undefined}
-                  aria-atomic={item.isDelta ? 'false' : undefined}
-                  {...(item.kind === 'error' ? { role: 'alert' } : {})}
-                >
-                  <header className="structured-agent-message__header">
-                    <span className="structured-agent-message__kind">
-                      {item.kind === 'tool-call' ? <Wrench aria-hidden="true" />
-                        : item.kind === 'tool-result' ? <FileCheck2 aria-hidden="true" />
-                          : item.kind === 'reasoning' ? <Code2 aria-hidden="true" />
-                            : item.kind === 'approval' ? <ApprovalIcon aria-hidden="true" />
-                              : item.kind === 'error' ? <AlertTriangle aria-hidden="true" />
-                                : <Bot aria-hidden="true" />}
-                      {label}
-                    </span>
-                    <time dateTime={item.createdAt}>{item.createdAt.slice(11, 16)}</time>
-                  </header>
-
-                  {item.kind === 'reasoning' ? (
-                    <details className="structured-agent-message__reasoning" open={item.isDelta}>
-                      <summary>{copy.reasoning}</summary>
-                      <p>{content}</p>
-                    </details>
-                  ) : item.kind === 'tool-call' || item.kind === 'tool-result' ? (
-                    content.length > 1200 ? <details className="structured-agent-message__reasoning">
-                      <summary>{label}</summary>
-                      <pre className="structured-agent-message__tool"><code>{content}</code></pre>
-                    </details> : <pre className="structured-agent-message__tool"><code>{content}</code></pre>
-                  ) : item.kind === 'approval' ? (
-                    <div className="structured-agent-approval" data-risk={approval?.risk ?? 'write'}>
-                      <strong>{approval?.title ?? content}</strong>
-                      {approval?.detail && <p>{approval.detail}</p>}
-                      <span className="structured-agent-approval__state">
-                        {approval?.state === 'allowed' ? copy.allowed
-                          : approval?.state === 'denied' ? copy.denied
-                            : approval?.state === 'expired' ? copy.expired
-                              : copy.pending}
-                      </span>
-                      {(!approval || approval.state === 'pending') && onResolveApproval && (
-                        <div className="structured-agent-approval__actions">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={resolvingId !== null}
-                            onClick={() => void resolveApproval(approval?.id ?? item.id, 'deny')}
-                          >
-                            {copy.deny}
-                          </Button>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            disabled={resolvingId !== null && resolvingId !== (approval?.id ?? item.id)}
-                            loading={resolvingId === (approval?.id ?? item.id)}
-                            onClick={() => void resolveApproval(approval?.id ?? item.id, 'allow')}
-                          >
-                            {copy.allow}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <ProgressiveSafeMarkdown
-                      className="structured-agent-message__markdown"
-                      markdown={content}
-                      priority={index}
-                    />
-                  )}
-
-                  {item.relatedSessionId && onOpenRelatedSession && (
-                    <Button
-                      className="structured-agent-message__child-link"
-                      variant="ghost"
-                      size="sm"
-                      trailingIcon={<ChevronRight />}
-                      onClick={() => onOpenRelatedSession(item.relatedSessionId!)}
-                    >
-                      {copy.openRelated}
-                    </Button>
-                  )}
-                  {isAssistant && item.isDelta && (
-                    <span className="structured-agent-message__streaming" role="status" aria-live="polite">
-                      <span aria-hidden="true" />{copy.streaming}
-                    </span>
-                  )}
-                </article>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      {approvalError && <p className="structured-agent__form-error" role="alert">{approvalError}</p>}
-    </div>
+    </ChatProvider>
   );
 });
 
@@ -944,50 +914,50 @@ export function StructuredAgentChildTrack({
   onSelectSession,
 }: StructuredAgentChildTrackProps): JSX.Element | null {
   const copy = useStructuredAgentCopy();
+  const stateLabel = useAgentStateLabel();
   if (items.length === 0) return null;
 
+  // One row of chips above the composer: state dot, name and state. Provider and ownership
+  // stay in the accessible name and tooltip; attention states carry the visual weight.
   return (
-    <nav className="structured-agent-children" aria-label={copy.childTrack}>
-      <div className="structured-agent-children__heading">
-        <span>{copy.childTrack}</span>
-        <span aria-label={`${items.length} ${copy.childTrack}`}>{items.length}</span>
-      </div>
+    <nav className="structured-agent-children" aria-label={`${copy.childTrack} ${items.length}`}>
+      <span className="structured-agent-children__heading" aria-hidden="true">{copy.childTrack}</span>
       <ul className="structured-agent-children__list">
-        {items.map((item) => (
-          <li key={item.sessionId}>
-            <button
-              type="button"
-              className="structured-agent-child"
-              data-owner={item.owner}
-              data-state={item.state}
-              aria-label={`${copy.openRelated}: ${item.title}`}
-              onClick={() => onSelectSession(item.sessionId)}
-              data-testid="structured-agent-child"
-            >
-              <span className="structured-agent-child__identity">
-                <strong>{item.title}</strong>
-                <small>{item.providerLabel}</small>
-              </span>
-              <span className="structured-agent-child__meta">
-                <span className="structured-agent-state" data-state={item.state}>
-                  <span aria-hidden="true" />
-                  <span className="ez-ui-visually-hidden">{copy.status}: </span>{item.state}
-                </span>
-                <span className="structured-agent-child__owner">
-                  {item.owner === 'provider-native' ? copy.providerOwned : copy.managed}
-                  {item.owner === 'provider-native' && <> · {copy.readOnly}</>}
-                </span>
-              </span>
-              <ChevronRight aria-hidden="true" />
-            </button>
-          </li>
-        ))}
+        {items.map((item) => {
+          const ownership = item.owner === 'provider-native' ? `${copy.providerOwned} · ${copy.readOnly}` : copy.managed;
+          const details = `${item.title} · ${stateLabel(item.state)} · ${item.providerLabel} · ${ownership}`;
+          return (
+            <li key={item.sessionId}>
+              <button
+                type="button"
+                className="structured-agent-child"
+                data-owner={item.owner}
+                data-state={item.state}
+                title={details}
+                aria-label={`${copy.openRelated}: ${details}`}
+                onClick={() => onSelectSession(item.sessionId)}
+                data-testid="structured-agent-child"
+              >
+                <span className="structured-agent-state" data-state={item.state}><span aria-hidden="true" /></span>
+                <span className="structured-agent-child__title">{item.title}</span>
+                <span className="structured-agent-child__status">{stateLabel(item.state)}</span>
+                <span className="ez-ui-visually-hidden"> · {item.providerLabel} · {ownership}</span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );
 }
 
 export interface StructuredAgentComposerProps {
+  readonly toolbar?: ReactNode;
+  readonly queueItems?: readonly ConversationQueueItem[];
+  readonly onQueueAction?: (item: ConversationQueueItem, action: ConversationQueueAction) => Promise<StructuredAgentUiResult>;
+  readonly capabilityCatalog?: AgentCapabilityCatalog;
+  readonly capabilityDiscovery?: CapabilityDiscoveryState;
+  readonly onOpenHistory?: () => void;
   readonly stateKey?: string;
   readonly busy: boolean;
   readonly queuedCount?: number;
@@ -995,13 +965,36 @@ export interface StructuredAgentComposerProps {
   readonly disabledReason?: string;
   readonly initialDraft?: string;
   readonly autoFocus?: boolean;
-  readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
-  readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
+  readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  readonly onInterruptAndSend?: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  readonly draftState?: ChatComposerDraft;
+  readonly onDraftChange?: (draft: ChatComposerDraft) => void;
+  readonly sendDisabled?: boolean;
+  readonly sendDisabledReason?: string;
+  readonly supportsMessageContext?: boolean;
+  readonly deliveryUncertain?: boolean;
+  readonly onReconcileDelivery?: () => Promise<StructuredAgentUiResult>;
+  readonly draftAction?: { readonly id: number; readonly text?: string; readonly insert?: string; readonly skill?: ChatSkillReference; readonly replyTo?: ChatReplyReference };
   readonly variant?: 'desktop' | 'mobile';
+  /** `@` file mentions; absent where the workspace cannot be searched (Android). */
+  readonly fileSearch?: ComposerFileSearch;
+  /** Earlier prompts of this conversation, oldest first, for ↑ recall. */
+  readonly recentPrompts?: readonly string[];
+  /** Present while the turn can be stopped: Esc, or the stop button when the draft is empty. */
+  readonly onStop?: () => void;
+  readonly stopping?: boolean;
+  /** Resolves a dropped file to a workspace path so it can be mentioned instead of uploaded. */
+  readonly pathForDrop?: (file: File) => string | null;
 }
 
 /** Owns the draft below the transcript so streamed items never disturb typing. */
 export const StructuredAgentComposer = memo(function StructuredAgentComposer({
+  toolbar,
+  queueItems = [],
+  onQueueAction,
+  capabilityCatalog,
+  capabilityDiscovery,
+  onOpenHistory,
   stateKey,
   busy,
   queuedCount = 0,
@@ -1011,81 +1004,427 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   autoFocus = false,
   onSend,
   onInterruptAndSend,
+  draftState,
+  onDraftChange,
+  sendDisabled = false,
+  sendDisabledReason,
+  supportsMessageContext = false,
+  deliveryUncertain = false,
+  onReconcileDelivery,
+  draftAction,
   variant = 'desktop',
+  fileSearch,
+  recentPrompts = [],
+  onStop,
+  stopping = false,
+  pathForDrop,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
+  const { i18n } = useAppTranslation();
+  const ko = i18n.language.startsWith('ko');
+  const [queueBusy, setQueueBusy] = useState(false);
+  const queueBusyRef = useRef(false);
   const composerId = useId();
   const disabledReasonId = `${composerId}-disabled-reason`;
-  const [draft, setDraft] = useState(() => stateKey ? readSessionViewState<string>(stateKey) ?? initialDraft : initialDraft);
-  useEffect(() => { if (stateKey) saveSessionViewState(stateKey, draft); }, [draft, stateKey]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState<ChatComposerDraft>(() => {
+    const saved = stateKey ? readSessionViewState<ChatComposerDraft | string>(stateKey) : undefined;
+    return draftState ?? (typeof saved === 'string' ? { text: saved } : saved) ?? { text: initialDraft };
+  });
+  const valueRef = useRef(value);
+  const draft = value.text;
+  const attachments = value.attachments ?? [];
+  const updateDraft = (next: ChatComposerDraft): void => {
+    valueRef.current = next;
+    setValue(next);
+    if (stateKey) saveSessionViewState(stateKey, next);
+    onDraftChange?.(next);
+  };
+  const completion = useAgentCompletion({ value, onChange: updateDraft, inputRef, catalog: capabilityCatalog,
+    discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile', ...(fileSearch ? { fileSearch } : {}) });
+  const [dragging, setDragging] = useState(false);
+  const recall = useRef<number | undefined>(undefined);
+  // Grow with the text up to eight lines, then scroll inside the box.
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+  }, [value.text]);
+  useEffect(() => {
+    if (draftState && JSON.stringify(draftState) !== JSON.stringify(valueRef.current)) {
+      valueRef.current = draftState;
+      setValue(draftState);
+      if (stateKey) saveSessionViewState(stateKey, draftState);
+    }
+  }, [draftState, stateKey]);
+  useLayoutEffect(() => {
+    if (value.selectionStart !== undefined && inputRef.current) {
+      inputRef.current.setSelectionRange(value.selectionStart, value.selectionEnd ?? value.selectionStart);
+    }
+  }, [value.selectionStart, value.selectionEnd]);
+  useEffect(() => {
+    if (!draftAction || disabled) return;
+    const next = { ...valueRef.current, ...(draftAction.text !== undefined ? { text: draftAction.text } : {}),
+      ...(draftAction.insert ? insertCompletion(valueRef.current, draftAction.insert, undefined, draftAction.skill) : {}),
+      ...(draftAction.skill ? { skills: [...(valueRef.current.skills ?? []).filter((skill) => skill.id !== draftAction.skill!.id), draftAction.skill] } : {}),
+      ...(draftAction.replyTo ? { replyTo: draftAction.replyTo } : {}) };
+    updateDraft(draftAction.insert ? next : { ...next, selectionStart: next.text.length, selectionEnd: next.text.length });
+    inputRef.current?.focus();
+    // The action ID is issued only by an explicit transcript action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftAction?.id]);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uncertain, setUncertain] = useState(deliveryUncertain);
+  const [readingFiles, setReadingFiles] = useState(false);
+  const sentDraft = useRef<ChatComposerDraft | null>(null);
+  useEffect(() => setUncertain(deliveryUncertain), [deliveryUncertain]);
+
+  const confirmDelivery = (): void => {
+    const sent = sentDraft.current;
+    if (sent && valueRef.current.text === sent.text
+      && JSON.stringify(valueRef.current.attachments) === JSON.stringify(sent.attachments)
+      && JSON.stringify(valueRef.current.skills) === JSON.stringify(sent.skills)
+      && JSON.stringify(valueRef.current.replyTo) === JSON.stringify(sent.replyTo)) {
+      updateDraft(valueRef.current.parkedDraft ?? { text: '', selectionStart: 0, selectionEnd: 0 });
+    }
+    sentDraft.current = null;
+    setAttempted(false);
+    setUncertain(false);
+  };
 
   const deliver = async (mode: 'send' | 'interrupt'): Promise<void> => {
+    if (disabled || completion.composing.current) return;
+    if (completion.runAppCommand()) return;
     setAttempted(true);
     setError(null);
     const prompt = draft.trim();
-    if (!prompt || disabled || submittingRef.current) return;
+    if ((!prompt && attachments.length === 0) || disabled || sendDisabled || queueBusy || uncertain || readingFiles || queueBusyRef.current || submittingRef.current) return;
+    if ((attachments.length > 0 || value.replyTo) && !supportsMessageContext) { setError(copy.attachmentUnsupported); return; }
     const action = mode === 'interrupt' ? onInterruptAndSend : onSend;
     if (!action) return;
     submittingRef.current = true;
+    sentDraft.current = valueRef.current;
     setSubmitting(mode);
-    const result = await action(prompt).catch((): StructuredAgentUiResult => ({
+    const skills = value.skills?.filter((skill) => prompt.includes(skill.invocation));
+    const context: ChatMessageContext | undefined = attachments.length > 0 || value.replyTo || skills?.length
+      ? { ...(attachments.length > 0 ? { attachments: [...attachments] } : {}), ...(value.replyTo ? { replyTo: value.replyTo } : {}), ...(skills?.length ? { skills } : {}) }
+      : undefined;
+    const result = await (context ? action(prompt, context) : action(prompt)).catch((): StructuredAgentUiResult => ({
       ok: false,
-      message: 'The message could not be delivered.',
+      message: copy.uncertain,
+      deliveryUncertain: true,
     }));
     submittingRef.current = false;
     setSubmitting(null);
     if (result.ok) {
-      setDraft('');
-      setAttempted(false);
+      confirmDelivery();
     } else {
       setError(result.message);
+      setUncertain(result.deliveryUncertain === true);
     }
   };
 
+  const attachFiles = async (files: FileList | null): Promise<void> => {
+    if (!files || disabled || !supportsMessageContext) return;
+    setReadingFiles(true);
+    setError(null);
+    try {
+      if (files.length + (valueRef.current.attachments?.length ?? 0) > MAX_CHAT_ATTACHMENTS) throw new Error('Too many files');
+      const additions: ChatAttachment[] = [];
+      for (const file of Array.from(files)) {
+        const image = (CHAT_IMAGE_MIME_TYPES as readonly string[]).includes(file.type);
+        if (file.size > MAX_CHAT_ATTACHMENT_BYTES
+          || (!image && !file.type.startsWith('text/') && !/\.(?:txt|md|json|csv|log|ts|tsx|js|jsx|css|html|py|yaml|yml|toml|xml)$/iu.test(file.name))) throw new Error('Unsupported file');
+        const data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result ?? ''));
+          reader.onerror = () => reject(reader.error);
+          if (image) reader.readAsDataURL(file); else reader.readAsText(file);
+        });
+        additions.push({ id: crypto.randomUUID(), name: file.name, mimeType: image ? file.type : (file.type || 'text/plain'),
+          kind: image ? 'image' : 'text', data: image ? data.slice(data.indexOf(',') + 1) : data });
+      }
+      const combined = [...(valueRef.current.attachments ?? []), ...additions];
+      if (validateChatMessageContext({ attachments: combined, ...(valueRef.current.replyTo ? { replyTo: valueRef.current.replyTo } : {}) })) throw new Error('Invalid attachment context');
+      updateDraft({ ...valueRef.current, attachments: combined });
+    } catch { setError(copy.attachmentError); }
+    finally { setReadingFiles(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
+  };
+
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (variant === 'mobile' || event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (completion.keyDown(event)) return;
+    if (completion.composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Escape' && onStop && !stopping) {
+      event.preventDefault();
+      onStop();
+      return;
+    }
+    const input = event.currentTarget;
+    const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+    if (event.key === 'ArrowUp' && recentPrompts.length > 0 && (valueRef.current.text === '' || (recall.current !== undefined && atStart))) {
+      event.preventDefault();
+      const index = recall.current === undefined ? recentPrompts.length - 1 : Math.max(0, recall.current - 1);
+      recall.current = index;
+      const text = recentPrompts[index] ?? '';
+      updateDraft({ ...valueRef.current, text, selectionStart: 0, selectionEnd: 0 });
+      return;
+    }
+    if (event.key === 'ArrowDown' && recall.current !== undefined && input.selectionStart === valueRef.current.text.length) {
+      event.preventDefault();
+      const index = recall.current + 1;
+      recall.current = index < recentPrompts.length ? index : undefined;
+      const text = recall.current === undefined ? '' : recentPrompts[recall.current] ?? '';
+      updateDraft({ ...valueRef.current, text, selectionStart: text.length, selectionEnd: text.length });
+      return;
+    }
+    if (variant === 'mobile' || event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
+    recall.current = undefined;
     void deliver('send');
   };
 
+  const mentionPaths = (paths: readonly string[]): void => {
+    if (!paths.length) return;
+    const current = valueRef.current;
+    const position = current.selectionEnd ?? current.text.length;
+    const before = current.text.slice(0, position);
+    const insertion = `${before && !/\s$/u.test(before) ? ' ' : ''}${paths.map((path) => `@${path.includes(' ') ? `"${path}"` : path}`).join(' ')} `;
+    const text = `${before}${insertion}${current.text.slice(position)}`;
+    updateDraft({ ...current, text, selectionStart: position + insertion.length, selectionEnd: position + insertion.length });
+    inputRef.current?.focus();
+  };
+
+  /** Starts an `@` mention at the caret so the file picker opens. */
+  const insertMention = (): void => {
+    const current = valueRef.current;
+    const position = current.selectionEnd ?? current.text.length;
+    const before = current.text.slice(0, position);
+    const lead = before && !/\s$/u.test(before) ? ' ' : '';
+    const text = `${before}${lead}@${current.text.slice(position)}`;
+    const caret = position + lead.length + 1;
+    updateDraft({ ...current, text, selectionStart: caret, selectionEnd: caret });
+    inputRef.current?.focus();
+  };
+
+  const takeFiles = (files: FileList | File[]): void => {
+    const list = Array.from(files);
+    const images = list.filter((file) => (CHAT_IMAGE_MIME_TYPES as readonly string[]).includes(file.type));
+    const others = list.filter((file) => !images.includes(file));
+    const mentioned: string[] = [];
+    const uploads: File[] = [...images];
+    for (const file of others) {
+      const path = pathForDrop?.(file);
+      if (path) mentioned.push(path); else uploads.push(file);
+    }
+    mentionPaths(mentioned);
+    if (uploads.length) {
+      const transfer = new DataTransfer();
+      uploads.forEach((file) => transfer.items.add(file));
+      void attachFiles(transfer.files);
+    }
+  };
+
+  const hasDraft = draft.trim().length > 0 || attachments.length > 0;
+  const sendBlocked = disabled || sendDisabled || queueBusy || uncertain || readingFiles || !hasDraft || submitting !== null;
+  // onStop is offered only while the turn can be stopped, including while it waits for approval.
+  const showStop = !hasDraft && onStop !== undefined;
+
   return (
     <form
-      className="structured-agent-composer"
+      className="structured-agent-composer chat-composer"
       data-variant={variant}
       data-busy={busy || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void deliver('send');
       }}
+      onDragOver={(event) => {
+        if (disabled || !Array.from(event.dataTransfer.types).includes('Files')) return;
+        event.preventDefault();
+        if (!dragging) setDragging(true);
+      }}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.files.length) return;
+        event.preventDefault();
+        setDragging(false);
+        if (!disabled) takeFiles(event.dataTransfer.files);
+      }}
     >
-      <Field
-        id={composerId}
-        label={copy.message}
-        labelHidden
-        error={attempted && !draft.trim() ? copy.required : undefined}
-      >
-        <textarea
+      {queuedCount > 0 && <section className="conversation-queue chat-queue" aria-label={ko ? '대기 중인 요청' : 'Queued requests'}>
+        <p className="chat-queue__title"><Clock3 aria-hidden="true" />{ko ? '다음에 보낼 요청' : 'Up next'} <span>{queuedCount}</span></p>
+        {queueItems.length === 0 && <p className="chat-queue__loading">{ko ? '요청 내용을 불러오는 중…' : 'Loading accepted requests…'}</p>}
+        <ol>{queueItems.map(item => <li key={item.turnId} className="chat-queue__item">
+          <p>{item.text}</p>
+          {!!item.context?.attachments?.length && <small>{ko ? '첨부' : 'Attachments'} {item.context.attachments.length}</small>}
+          {onQueueAction && <div className="conversation-queue__actions">{(['run-next', 'take', 'remove'] as const).map(action => <Button key={action} type="button" variant="ghost" size="sm"
+            disabled={disabled || sendDisabled || queueBusy || submitting !== null || uncertain || (action === 'take' && !!value.parkedDraft)} onClick={() => {
+              if (queueBusyRef.current || submittingRef.current) return;
+              queueBusyRef.current = true; setQueueBusy(true); setError(null);
+              void onQueueAction(item, action).then(result => {
+                if (!result.ok) { setError(result.message); return; }
+                if (action === 'take') {
+                  const current = valueRef.current;
+                  updateDraft({ text: item.text, attachments: item.context?.attachments, replyTo: item.context?.replyTo, skills: item.context?.skills,
+                    selectionStart: item.text.length, selectionEnd: item.text.length,
+                    ...(current.text || current.attachments?.length || current.replyTo ? { parkedDraft: current } : {}) });
+                  inputRef.current?.focus();
+                }
+              }).catch(() => setError(ko ? '결과를 확인하지 못했습니다. 대기열 상태를 새로 확인하세요.' : 'The result is unknown. Refresh the queue before trying again.')).finally(() => { queueBusyRef.current = false; setQueueBusy(false); });
+            }}>{action === 'take' ? (ko ? '편집' : 'Edit') : action === 'remove' ? (ko ? '삭제' : 'Remove') : (ko ? '중단하고 지금 보내기' : 'Interrupt and run now')}</Button>)}</div>}
+        </li>)}</ol>
+      </section>}
+      {value.parkedDraft && <div className="structured-agent-composer__parked" role="status">
+        <span>{ko ? '기존 초안을 보관했습니다. 이 요청을 보내면 복원합니다.' : 'Previous draft saved. It will return after you send this request.'}</span>
+        <Button type="button" variant="ghost" size="sm" disabled={queueBusy || submitting !== null || uncertain} onClick={() => {
+          const { parkedDraft, ...current } = valueRef.current;
+          if (parkedDraft) updateDraft({ ...parkedDraft, parkedDraft: current });
+        }}>{ko ? '초안 전환' : 'Switch draft'}</Button>
+      </div>}
+      {completion.menu}
+      <div className="chat-composer__box" data-dragging={dragging || undefined} data-disabled={disabled || undefined}>
+        {value.replyTo && <div className="structured-agent-composer__reply">
+          <Reply aria-hidden="true" /><blockquote>{value.replyTo.text}</blockquote>
+          <Button variant="ghost" size="sm" disabled={disabled} aria-label={copy.removeReply}
+            onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><X /></Button>
+        </div>}
+        {attachments.length > 0 && <ul className="structured-agent-composer__attachments">
+          {attachments.map((attachment) => <li key={attachment.id} data-kind={attachment.kind}>
+            {attachment.kind === 'image'
+              ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
+              : <Paperclip aria-hidden="true" />}
+            <span>{attachment.name}</span>
+            <Button variant="ghost" size="sm" disabled={disabled} aria-label={`${copy.removeAttachment}: ${attachment.name}`}
+              onClick={() => updateDraft({ ...valueRef.current, attachments: (valueRef.current.attachments ?? []).filter((entry) => entry.id !== attachment.id) })}><X /></Button>
+          </li>)}
+        </ul>}
+        <div className="structured-agent-composer__input-row"><span className="structured-agent-composer__prompt" aria-hidden="true">›</span>
+        <Field
           id={composerId}
-          autoFocus={autoFocus}
-          className="structured-agent-textarea structured-agent-textarea--composer"
-          rows={2}
-          maxLength={65_536}
-          value={draft}
-          placeholder={copy.messagePlaceholder}
-          disabled={disabled}
-          aria-describedby={disabledReason ? disabledReasonId : undefined}
-          onKeyDown={keyDown}
-          onChange={(event) => {
-            setDraft(event.currentTarget.value);
-            setError(null);
-          }}
-          data-testid="structured-agent-composer-input"
-        />
-      </Field>
+          label={copy.message}
+          labelHidden
+          error={attempted && !draft.trim() && attachments.length === 0 ? copy.required : undefined}
+        >
+          <textarea
+            {...completion.inputProps}
+            id={composerId}
+            ref={inputRef}
+            autoFocus={autoFocus}
+            className="structured-agent-textarea structured-agent-textarea--composer chat-composer__input"
+            rows={1}
+            maxLength={65_536}
+            value={draft}
+            placeholder={busy
+              ? (ko ? '다음에 보낼 메시지를 입력하세요 (Esc로 중단)' : 'Queue a follow-up (Esc to stop)')
+              : fileSearch
+                ? (ko ? '무엇이든 요청하세요 · @ 파일 참조 · / 명령' : 'Ask anything · @ to mention files · / for commands')
+                : copy.messagePlaceholder}
+            disabled={disabled}
+            aria-describedby={disabledReason ? disabledReasonId : undefined}
+            onKeyDown={keyDown}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.files);
+              if (!files.length || disabled) return;
+              event.preventDefault();
+              takeFiles(files);
+            }}
+            onChange={(event) => {
+              recall.current = undefined;
+              updateDraft({ ...valueRef.current, text: event.currentTarget.value, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd });
+              setError(null);
+            }}
+            onSelect={(event) => {
+              const input = event.currentTarget;
+              if (valueRef.current.selectionStart !== input.selectionStart || valueRef.current.selectionEnd !== input.selectionEnd) {
+                updateDraft({ ...valueRef.current, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
+              }
+            }}
+            data-testid="structured-agent-composer-input"
+          />
+        </Field>
+        </div>
+        <div className="chat-composer__bar">
+          <input ref={fileInputRef} type="file" multiple accept={CHAT_ATTACHMENT_ACCEPT}
+            hidden onChange={(event) => void attachFiles(event.currentTarget.files)} />
+          <Menu
+            label={ko ? '추가' : 'Add'}
+            placement="top-start"
+            trigger={<button type="button" className="chat-composer__plus" disabled={disabled} aria-label={ko ? '추가' : 'Add'} title={ko ? '추가' : 'Add'}><Plus aria-hidden="true" /></button>}
+          >
+            <MenuItem icon={Paperclip} disabled={!supportsMessageContext || readingFiles} onSelect={() => fileInputRef.current?.click()}>
+              {supportsMessageContext ? copy.attach : copy.attachmentUnsupported}
+            </MenuItem>
+            {fileSearch && <MenuItem icon={AtSign} onSelect={insertMention}>
+              {ko ? '파일 참조' : 'Mention a file'}
+            </MenuItem>}
+            <MenuItem icon={Sparkles} onSelect={() => completion.openManual('skills')}>{ko ? '스킬' : 'Skills'}</MenuItem>
+            <MenuItem icon={SquareSlash} onSelect={() => completion.openManual('commands')}>{ko ? '명령' : 'Commands'}</MenuItem>
+          </Menu>
+          {toolbar && <div className="conversation-composer-toolbar chat-composer__settings">{toolbar}</div>}
+          <span className="chat-composer__spacer" />
+          {busy && onInterruptAndSend && hasDraft && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={sendBlocked}
+              loading={submitting === 'interrupt'}
+              loadingLabel={copy.sending}
+              onClick={() => void deliver('interrupt')}
+              data-testid="structured-agent-interrupt-send"
+            >
+              {copy.interruptSend}
+            </Button>
+          )}
+          {/* With a draft the round button sends; stopping stays one click away. */}
+          {!showStop && onStop !== undefined && (
+            <button
+              type="button"
+              className="chat-icon-action chat-composer__stop"
+              disabled={disabled || stopping}
+              aria-label={ko ? '중단' : 'Stop'}
+              title={ko ? '중단 (Esc)' : 'Stop (Esc)'}
+              onClick={() => onStop()}
+              data-testid="structured-agent-stop"
+            >
+              {stopping ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+            </button>
+          )}
+          {showStop ? (
+            <button
+              type="button"
+              className="chat-composer__send"
+              data-kind="stop"
+              disabled={disabled || stopping}
+              aria-label={ko ? '중단' : 'Stop'}
+              title={ko ? '중단 (Esc)' : 'Stop (Esc)'}
+              onClick={() => onStop?.()}
+              data-testid="structured-agent-stop"
+            >
+              {stopping ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="chat-composer__send"
+              data-kind={busy ? 'queue' : 'send'}
+              disabled={sendBlocked}
+              aria-label={busy ? copy.queue : copy.send}
+              title={busy ? copy.queue : copy.send}
+              data-testid="structured-agent-send"
+            >
+              {submitting === 'send' ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+              <span className="ez-ui-visually-hidden">{busy ? copy.queue : copy.send}</span>
+            </button>
+          )}
+        </div>
+        {dragging && <div className="chat-composer__drop" aria-hidden="true">{ko ? '놓아서 첨부하기 — 파일은 경로로, 이미지는 첨부로 추가됩니다' : 'Drop to attach — files are added as paths, images as attachments'}</div>}
+      </div>
       {disabledReason && (
         <p
           id={disabledReasonId}
@@ -1096,45 +1435,31 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           {disabledReason}
         </p>
       )}
-      <div className="structured-agent-composer__meta">
-        <span aria-live="polite">
-          {queuedCount > 0 ? formatTemplate(copy.queued, { count: queuedCount }) : busy ? copy.busyHint : variant === 'mobile' ? copy.mobileSendHint : copy.desktopSendHint}
-        </span>
-        <div className="structured-agent-composer__actions">
-          {busy && onInterruptAndSend && (
-            <Button
-              type="button"
-              variant="danger"
-              size="sm"
-              disabled={disabled || !draft.trim() || submitting !== null}
-              loading={submitting === 'interrupt'}
-              loadingLabel={copy.sending}
-              onClick={() => void deliver('interrupt')}
-              data-testid="structured-agent-interrupt-send"
-            >
-              {copy.interruptSend}
-            </Button>
-          )}
-          <Button
-            type="submit"
-            variant="primary"
-            size="sm"
-            disabled={disabled || !draft.trim() || submitting !== null}
-            loading={submitting === 'send'}
-            loadingLabel={copy.sending}
-            leadingIcon={<Send />}
-            data-testid="structured-agent-send"
-          >
-            {busy ? copy.queue : copy.send}
-          </Button>
-        </div>
-      </div>
+      {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
+      {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}
+      {uncertain && <div className="structured-agent__banner" role="status"><span>{copy.uncertain}</span>
+        {onReconcileDelivery && <Button type="button" variant="ghost" size="sm" disabled={disabled || sendDisabled || submitting !== null}
+          onClick={() => { setSubmitting('send'); void onReconcileDelivery().then((result) => {
+            if (result.ok) confirmDelivery(); else { setError(result.message); setUncertain(result.deliveryUncertain !== false); }
+          }, () => setError(copy.uncertain)).finally(() => setSubmitting(null)); }}>{copy.reconcile}</Button>}
+      </div>}
       {error && <p className="structured-agent__form-error" role="alert">{error}</p>}
     </form>
   );
 });
 
 export interface StructuredAgentSessionPanelProps {
+  readonly onOpenProjectFiles?: () => void;
+  readonly queueItems?: readonly ConversationQueueItem[];
+  readonly onQueueAction?: StructuredAgentComposerProps['onQueueAction'];
+  /** null discovers workspace capabilities before a runtime session exists. */
+  readonly capabilitySessionId?: string | null;
+  readonly beforeMessages?: ReactNode;
+  readonly headerActions?: ReactNode;
+  readonly statusLabel?: string;
+  readonly onOpenHistory?: () => void;
+  readonly capabilityClient?: AgentCapabilitiesClient;
+  readonly workflowContext?: ReactNode;
   readonly viewStateKey?: string;
   readonly sessionId: string;
   readonly title: string;
@@ -1149,25 +1474,54 @@ export interface StructuredAgentSessionPanelProps {
   readonly queuedCount?: number;
   readonly items: readonly DaemonTranscriptItem[];
   readonly approvals?: readonly DaemonApproval[];
+  /** Turn records for live "Working for…" status and settling tools of finished turns. */
+  readonly turns?: readonly DaemonTurn[];
+  /** Host accepts answers, plan mode and deny feedback (`approval-response-v1`). */
+  readonly approvalResponses?: boolean;
+  /** Opens an http(s) link from chat in the system browser. */
+  readonly onOpenLink?: (url: string) => void;
+  readonly hasEarlier?: boolean;
+  readonly loadingEarlier?: boolean;
+  readonly onLoadEarlier?: () => void;
   readonly transcriptLoading?: boolean;
   readonly transcriptError?: string | null;
   readonly disabled?: boolean;
+  readonly allowDraftWhenDisabled?: boolean;
+  readonly skin?: ChatSkin;
+  readonly onSkinChange?: (skin: ChatSkin) => void;
+  readonly draftState?: ChatComposerDraft;
+  readonly onDraftChange?: (draft: ChatComposerDraft) => void;
+  readonly sendDisabled?: boolean;
+  readonly sendDisabledReason?: string;
+  readonly supportsMessageContext?: boolean;
+  readonly deliveryUncertain?: boolean;
+  readonly onReconcileDelivery?: () => Promise<StructuredAgentUiResult>;
   /** Transcript-only history surface; unavailable mutation controls are omitted. */
   readonly historyOnly?: boolean;
   /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
   readonly heartbeatControl?: ReactNode;
+  /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
+  readonly heartbeatActive?: boolean;
+  readonly recoveryControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
-  readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
-  readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
+  readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  readonly onInterruptAndSend?: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
   readonly onChangeSettings?: (settings: {
     readonly model?: string;
     readonly permissionPreset: PermissionPreset;
+    readonly reasoningEffort?: string;
   }) => Promise<StructuredAgentUiResult>;
+  /** Current reasoning effort; the effort pill appears only when the host accepts it. */
+  readonly reasoningEffort?: string;
+  readonly effortSupported?: boolean;
+  readonly fileSearch?: ComposerFileSearch;
+  readonly pathForDrop?: (file: File) => string | null;
   readonly onResolveApproval?: (
     approvalId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ) => Promise<StructuredAgentUiResult>;
   readonly onOpenRelatedSession?: (sessionId: string) => void;
   readonly onCancel?: () => Promise<StructuredAgentUiResult>;
@@ -1200,6 +1554,16 @@ const TERMINAL_AGENT_STATES = new Set<ManagedAgentState>([
 type StructuredAgentLifecycleAction = 'cancel' | 'archive' | 'detach';
 
 export function StructuredAgentSessionPanel({
+  onOpenProjectFiles,
+  queueItems,
+  onQueueAction,
+  capabilitySessionId,
+  beforeMessages,
+  headerActions,
+  statusLabel,
+  capabilityClient,
+  onOpenHistory,
+  workflowContext,
   sessionId,
   viewStateKey,
   title,
@@ -1214,13 +1578,35 @@ export function StructuredAgentSessionPanel({
   awaitingFirstMessage = false,
   items,
   approvals = [],
+  turns,
+  approvalResponses = false,
+  onOpenLink,
+  hasEarlier = false,
+  loadingEarlier = false,
+  onLoadEarlier,
+  reasoningEffort,
+  effortSupported = false,
+  fileSearch,
+  pathForDrop,
   transcriptLoading = false,
   transcriptError = null,
   disabled = false,
+  allowDraftWhenDisabled = false,
+  skin,
+  onSkinChange,
+  draftState,
+  onDraftChange,
+  sendDisabled = false,
+  sendDisabledReason,
+  supportsMessageContext = false,
+  deliveryUncertain,
+  onReconcileDelivery,
   historyOnly = false,
   owner = 'managed',
   childTrack,
   heartbeatControl,
+  heartbeatActive = false,
+  recoveryControl,
   onRetryTranscript,
   onSend,
   onInterruptAndSend,
@@ -1233,9 +1619,89 @@ export function StructuredAgentSessionPanel({
   variant = 'desktop',
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
+  const { i18n } = useAppTranslation();
+  const stateLabel = useAgentStateLabel();
+  const [capabilityCatalog, setCapabilityCatalog] = useState<AgentCapabilityCatalog>();
+  const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
+  const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
+  useEffect(() => { setCapabilityCatalog(undefined); setSelectedCapabilities([]); }, [sessionId, providerId, workspace.id]);
+  const availableModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
+    ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : modelOptions;
+  const sendWithCapabilities = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
+    if (context?.skills?.some((skill) => skill.providerId !== providerId)) return { ok: false, message: 'The selected skills belong to another provider. Remove or select them again.' };
+    const selected = [...selectedCapabilities.filter((item) => item.invocation && prompt.includes(item.invocation)),
+      ...(context?.skills ?? []).map((skill) => ({ ...skill, kind: 'skill' as const, enabled: true, actions: [] }))];
+    if (capabilityClient && selected.length && (providerId === 'codex' || providerId === 'claude')) {
+      try {
+        const result = await capabilityClient.list({ providerId, workspaceId: workspace.id, sessionId: capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId });
+        if (!result.ok) return { ok: false, message: result.message };
+        setCapabilityCatalog(result.value);
+        const missing = selected.filter((item) => !result.value.items.some((current) => current.id === item.id && current.kind === item.kind && current.enabled));
+        if (missing.length) return { ok: false, message: `Selected extensions are no longer available: ${missing.map((item) => item.name).join(', ')}. Remove or select them again.` };
+      } catch { return { ok: false, message: 'Selected extensions could not be verified. Your draft is preserved; reconnect and retry.' }; }
+    }
+    return context ? send(prompt, context) : send(prompt);
+  };
   const titleId = useId();
+  const panelRef = useRef<HTMLElement>(null);
+  const [wideReview, setWideReview] = useState(false);
+  const [reviewAside, setReviewAside] = useState(false);
+  const [reviewRequest, setReviewRequest] = useState(0);
+  const [heartbeatOpen, setHeartbeatOpen] = useState(false);
+  // Files, not change records: two edits of one file count once, as in the turn's change card.
+  const changeCount = useMemo(() => new Set(conversationFileChanges(items, sessionId).map((change) => change.path.toLowerCase())).size, [items, sessionId]);
+  useLayoutEffect(() => {
+    const element = panelRef.current;
+    if (!element) return;
+    const measure = (): void => {
+      const { width, height } = element.getBoundingClientRect();
+      element.dataset.compact = width < 600 ? 'true' : 'false';
+      element.dataset.short = height < 480 ? 'true' : 'false';
+      setWideReview(width >= 1280);
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
+  const [preferredSkin, setPreferredSkin] = useState<ChatSkin>(readChatSkin);
+  const activeSkin = skin ?? preferredSkin;
+  const skinTransition = useRef<{ anchor?: TranscriptAnchor; selection?: [number, number]; focused: boolean } | null>(null);
+  const [draftAction, setDraftAction] = useState<(NonNullable<StructuredAgentComposerProps['draftAction']> & { sessionId: string }) | undefined>();
+  const actionSequence = useRef(0);
+  const captureSkinView = (): void => {
+    const viewport = panelRef.current?.querySelector<HTMLElement>('.chat-viewport__scroll');
+    const input = panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]');
+    skinTransition.current = {
+      ...(viewport ? { anchor: captureTranscriptAnchor(viewport) } : {}),
+      ...(input ? { selection: [input.selectionStart, input.selectionEnd] } : {}),
+      focused: document.activeElement === input,
+    };
+  };
+  useEffect(() => subscribeChatSkin((next) => { captureSkinView(); setPreferredSkin(next); }), []);
+  useLayoutEffect(() => {
+    const saved = skinTransition.current;
+    if (!saved) return;
+    const viewport = panelRef.current?.querySelector<HTMLElement>('.chat-viewport__scroll');
+    const input = panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]');
+    if (viewport && saved.anchor) restoreTranscriptAnchor(viewport, saved.anchor);
+    if (input && saved.selection) { input.setSelectionRange(...saved.selection); if (saved.focused) input.focus({ preventScroll: true }); }
+    skinTransition.current = null;
+  }, [activeSkin]);
   const [selectedModel, setSelectedModel] = useState(model ?? '');
   const [selectedPermission, setSelectedPermission] = useState(permissionPreset);
+  const [selectedEffort, setSelectedEffort] = useState(reasoningEffort ?? '');
+  useEffect(() => setSelectedEffort(reasoningEffort ?? ''), [reasoningEffort]);
+  const recentPrompts = useMemo(() => {
+    const prompts: string[] = [];
+    for (const item of items) {
+      if (item.kind !== 'user-message' || item.isDelta) continue;
+      const text = item.text.trim();
+      if (text && prompts.at(-1) !== text) prompts.push(text);
+    }
+    return prompts.slice(-50);
+  }, [items]);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [lifecycleBusy, setLifecycleBusy] = useState<StructuredAgentLifecycleAction | null>(null);
@@ -1262,7 +1728,7 @@ export function StructuredAgentSessionPanel({
       : lifecycleBusy === 'detach'
         ? copy.detachingSession
         : undefined;
-  const composerDisabled = disabled || composerDisabledReason !== undefined;
+  const composerDisabled = (disabled && !allowDraftWhenDisabled) || composerDisabledReason !== undefined;
 
   useEffect(() => setSelectedModel(model ?? ''), [model]);
   useEffect(() => setSelectedPermission(permissionPreset), [permissionPreset]);
@@ -1280,17 +1746,20 @@ export function StructuredAgentSessionPanel({
     }
   }, [canArchive, canCancel, canDetach, lifecycleBusy]);
 
-  const updateSettings = async (nextModel: string, nextPermission: PermissionPreset): Promise<void> => {
+  const updateSettings = async (nextModel: string, nextPermission: PermissionPreset, nextEffort = selectedEffort): Promise<void> => {
     const previousModel = selectedModel;
     const previousPermission = selectedPermission;
+    const previousEffort = selectedEffort;
     setSelectedModel(nextModel);
     setSelectedPermission(nextPermission);
+    setSelectedEffort(nextEffort);
     setSettingsError(null);
     if (!onChangeSettings) return;
     setSettingsBusy(true);
     const result = await onChangeSettings({
       ...(nextModel ? { model: nextModel } : {}),
       permissionPreset: nextPermission,
+      ...(nextEffort && nextEffort !== previousEffort ? { reasoningEffort: nextEffort } : {}),
     }).catch((): StructuredAgentUiResult => ({
       ok: false,
       message: 'The session settings could not be updated.',
@@ -1299,9 +1768,21 @@ export function StructuredAgentSessionPanel({
     if (!result.ok) {
       setSelectedModel(previousModel);
       setSelectedPermission(previousPermission);
+      setSelectedEffort(previousEffort);
       setSettingsError(result.message);
     }
   };
+  const effortOptions = providerId === 'claude'
+    ? (['low', 'medium', 'high', 'xhigh', 'max'] as const)
+    : (['minimal', 'low', 'medium', 'high', 'xhigh'] as const);
+  const effortLabel = (value: string): string => ({
+    minimal: i18n.language.startsWith('ko') ? '최소' : 'Minimal',
+    low: i18n.language.startsWith('ko') ? '낮음' : 'Low',
+    medium: i18n.language.startsWith('ko') ? '보통' : 'Medium',
+    high: i18n.language.startsWith('ko') ? '높음' : 'High',
+    xhigh: i18n.language.startsWith('ko') ? '매우 높음' : 'Extra high',
+    max: i18n.language.startsWith('ko') ? '최대' : 'Max',
+  } as Record<string, string>)[value] ?? value;
 
   const runLifecycle = async (
     action: StructuredAgentLifecycleAction,
@@ -1320,36 +1801,8 @@ export function StructuredAgentSessionPanel({
     }
   };
 
-  return (
-    <section
-      className="structured-agent structured-agent--live"
-      data-variant={variant}
-      data-session-id={sessionId}
-      data-provider={providerId}
-      data-state={state}
-      data-history-only={historyOnly || undefined}
-      data-testid="structured-agent-session"
-      aria-labelledby={titleId}
-    >
-      <header className="structured-agent-session-header">
-        <div className="structured-agent-session-header__identity">
-          <span className="structured-agent__eyebrow">{providerLabel}</span>
-          <h1 id={titleId}>{title}</h1>
-          <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
-        </div>
-        <div className="structured-agent-session-header__status">
-          <span className="structured-agent-state" data-state={state}>
-            <span aria-hidden="true" />
-            <span className="ez-ui-visually-hidden">{copy.status}: </span>{awaitingFirstMessage ? copy.notStarted : state}
-          </span>
-          {owner === 'provider-native' && (
-            <span className="structured-agent-session-header__owner">
-              {copy.providerOwned} · {copy.readOnly}
-            </span>
-          )}
-        </div>
-        <div className="structured-agent-session-controls">
-          <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
+  const settingsControls = (
+<div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
             {settingsReadOnly ? (
               <>
                 <span className="structured-agent-session-setting" data-testid="structured-agent-live-model-value">
@@ -1363,116 +1816,253 @@ export function StructuredAgentSessionPanel({
               </>
             ) : (
               <>
-                <Field label={copy.model} labelHidden>
-                  <Select
-                    uiSize="sm"
-                    value={selectedModel}
-                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                    aria-label={copy.model}
-                    onChange={(event) => void updateSettings(event.currentTarget.value, selectedPermission)}
-                    data-testid="structured-agent-live-model"
-                  >
-                    {!model && <option value="">{copy.providerDefault}</option>}
-                    {modelOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                  </Select>
-                </Field>
-                <Field label={copy.permission} labelHidden>
-                  <Select
-                    uiSize="sm"
-                    value={selectedPermission}
-                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                    aria-label={copy.permission}
-                    onChange={(event) => void updateSettings(
-                      selectedModel,
-                      event.currentTarget.value as PermissionPreset,
-                    )}
-                    data-testid="structured-agent-live-permission"
-                  >
-                    {PERMISSION_ORDER.map((preset) => (
-                      <option key={preset} value={preset}>{permissionCopy(copy, preset).label}</option>
-                    ))}
-                  </Select>
-                </Field>
+                <SettingPill
+                  label={copy.model}
+                  icon={Cpu}
+                  value={selectedModel}
+                  placeholder={copy.providerDefault}
+                  options={availableModels.map((option) => ({ value: option.id, label: option.label }))}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onChange={(next) => void updateSettings(next, selectedPermission)}
+                  testId="structured-agent-live-model"
+                />
+                {effortSupported && (
+                  <SettingPill
+                    label={i18n.language.startsWith('ko') ? '추론 강도' : 'Reasoning effort'}
+                    icon={Gauge}
+                    value={selectedEffort}
+                    placeholder={i18n.language.startsWith('ko') ? '기본 강도' : 'Default effort'}
+                    options={effortOptions.map((value) => ({ value, label: effortLabel(value) }))}
+                    disabled={disabled || settingsBusy}
+                    onChange={(next) => void updateSettings(selectedModel, selectedPermission, next)}
+                    testId="structured-agent-live-effort"
+                  />
+                )}
+                <SettingPill
+                  label={copy.permission}
+                  icon={selectedPermission === 'full-access' ? ShieldAlert : selectedPermission === 'plan' ? NotebookPen : ShieldCheck}
+                  value={selectedPermission}
+                  options={PERMISSION_ORDER.map((preset) => ({ value: preset, label: permissionCopy(copy, preset).label, description: permissionCopy(copy, preset).hint }))}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onChange={(next) => void updateSettings(selectedModel, next)}
+                  testId="structured-agent-live-permission"
+                />
               </>
             )}
           </div>
-          {hasLifecycleActions && (
-            <div
-              className="structured-agent-session-lifecycle"
-              role="group"
-              aria-label={copy.lifecycle}
-              aria-busy={lifecycleBusy !== null || undefined}
-              data-testid="structured-agent-lifecycle"
-            >
-              {canDetach && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<Unlink2 />}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  loading={lifecycleBusy === 'detach'}
-                  loadingLabel={copy.detachingSession}
-                  onClick={() => void runLifecycle('detach', onDetach)}
-                  data-testid="structured-agent-detach"
-                >
-                  {copy.detachSession}
-                </Button>
-              )}
-              {canArchive && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<Archive />}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  loading={lifecycleBusy === 'archive'}
-                  loadingLabel={copy.archivingSession}
-                  onClick={() => void runLifecycle('archive', onArchive)}
-                  data-testid="structured-agent-archive"
-                >
-                  {copy.archiveSession}
-                </Button>
-              )}
-              {canCancel && (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  leadingIcon={<Square />}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  loading={lifecycleBusy === 'cancel'}
-                  loadingLabel={copy.stoppingAgent}
-                  onClick={() => void runLifecycle('cancel', onCancel)}
-                  data-testid="structured-agent-cancel"
-                >
-                  {copy.stopAgent}
-                </Button>
-              )}
-            </div>
+  );
+
+  const capabilitiesPanel = !historyOnly && !providerOwned && capabilityClient && (providerId === 'codex' || providerId === 'claude') ? <AgentCapabilitiesPanel compact={variant !== 'mobile'}
+        client={capabilityClient} providerId={providerId} workspaceId={workspace.id} sessionId={capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId} remote={variant === 'mobile'}
+        onCatalog={setCapabilityCatalog} onDiscoveryState={setCapabilityDiscovery} disabled={composerDisabled}
+        onInsert={(item) => { setSelectedCapabilities((current) => [...current.filter((entry) => entry.id !== item.id), item]); setDraftAction({ id: ++actionSequence.current, sessionId, insert: item.invocation, ...(item.kind === 'skill' && item.invocation ? { skill: { providerId, id: item.id, name: item.name, invocation: item.invocation } } : {}) }); }}
+      /> : null;
+
+  return (
+    <section
+      ref={panelRef}
+      className="structured-agent structured-agent--live"
+      data-variant={variant}
+      data-session-id={sessionId}
+      data-provider={providerId}
+      data-state={state}
+      data-skin={activeSkin}
+      data-review-aside={reviewAside || undefined}
+      data-history-only={historyOnly || undefined}
+      data-testid="structured-agent-session"
+      aria-labelledby={titleId}
+    >
+      <header className="structured-agent-session-header">
+        <div className="structured-agent-session-header__identity">
+          <span className="structured-agent__eyebrow">{providerLabel}</span>
+          <h1 id={titleId}>{title}</h1>
+          <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
+        </div>
+        <div className="structured-agent-session-header__status">
+          <span className="structured-agent-state" data-state={state}>
+            <span aria-hidden="true" />
+            <span className="ez-ui-visually-hidden">{copy.status}: </span>{statusLabel ?? (awaitingFirstMessage ? copy.notStarted : stateLabel(state))}
+          </span>
+          {owner === 'provider-native' && (
+            <span className="structured-agent-session-header__owner">
+              {copy.providerOwned} · {copy.readOnly}
+            </span>
           )}
         </div>
+        {/* Desktop: one-row header with an overflow menu. Android keeps its inline controls. */}
+        {variant === 'mobile' ? (
+          <div className="structured-agent-session-controls">
+            {headerActions}
+            {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
+            <Field label={copy.skin} labelHidden>
+              <Select uiSize="sm" value={activeSkin} aria-label={copy.skin} data-testid="structured-agent-skin"
+                onPointerDown={captureSkinView}
+                onChange={(event) => { captureSkinView(); const next = event.currentTarget.value as ChatSkin; setPreferredSkin(next); writeChatSkin(next); onSkinChange?.(next); }}>
+                <option value="bubble">{copy.bubbleSkin}</option><option value="cli">{copy.cliSkin}</option>
+              </Select>
+            </Field>
+            {historyOnly && settingsControls}
+            {hasLifecycleActions && (
+              <div
+                className="structured-agent-session-lifecycle"
+                role="group"
+                aria-label={copy.lifecycle}
+                aria-busy={lifecycleBusy !== null || undefined}
+                data-testid="structured-agent-lifecycle"
+              >
+                {canDetach && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={<Unlink2 />}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    loading={lifecycleBusy === 'detach'}
+                    loadingLabel={copy.detachingSession}
+                    onClick={() => void runLifecycle('detach', onDetach)}
+                    data-testid="structured-agent-detach"
+                  >
+                    {copy.detachSession}
+                  </Button>
+                )}
+                {canArchive && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={<Archive />}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    loading={lifecycleBusy === 'archive'}
+                    loadingLabel={copy.archivingSession}
+                    onClick={() => void runLifecycle('archive', onArchive)}
+                    data-testid="structured-agent-archive"
+                  >
+                    {copy.archiveSession}
+                  </Button>
+                )}
+                {canCancel && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    leadingIcon={<Square />}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    loading={lifecycleBusy === 'cancel'}
+                    loadingLabel={copy.stoppingAgent}
+                    onClick={() => void runLifecycle('cancel', onCancel)}
+                    data-testid="structured-agent-cancel"
+                  >
+                    {copy.stopAgent}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="structured-agent-session-controls">
+            {headerActions}
+            {heartbeatActive && (
+              <button type="button" className="chat-header-chip" onClick={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-chip">
+                <Activity aria-hidden="true" />{copy.heartbeatOn}
+              </button>
+            )}
+            {changeCount > 0 && (
+              <Button type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
+                {copy.changedFiles(changeCount)}
+              </Button>
+            )}
+            {capabilitiesPanel}
+            {historyOnly && settingsControls}
+            <Menu
+              label={copy.conversationMenu}
+              placement="bottom-end"
+              trigger={(
+                <button type="button" className="chat-icon-action chat-header-more" aria-label={copy.conversationMenu} title={copy.conversationMenu}
+                  aria-busy={lifecycleBusy !== null || undefined} data-testid="structured-agent-menu">
+                  <MoreHorizontal aria-hidden="true" />
+                </button>
+              )}
+            >
+              {onOpenHistory && <MenuItem icon={History} onSelect={onOpenHistory}>{copy.previousConversations}</MenuItem>}
+              <MenuLabel>{copy.skin}</MenuLabel>
+              {(['bubble', 'cli'] as const).map((skin) => (
+                <MenuRadioItem key={skin} checked={activeSkin === skin} data-testid={`structured-agent-skin-${skin}`}
+                  onSelect={() => { captureSkinView(); setPreferredSkin(skin); writeChatSkin(skin); onSkinChange?.(skin); }}>
+                  {skin === 'bubble' ? copy.bubbleSkin : copy.cliSkin}
+                </MenuRadioItem>
+              ))}
+              {heartbeatControl !== undefined && <MenuSeparator />}
+              {heartbeatControl !== undefined && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
+              {hasLifecycleActions && (canDetach || canArchive) && <MenuSeparator />}
+              {!historyOnly && canDetach && (
+                <MenuItem icon={Unlink2} disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onSelect={() => void runLifecycle('detach', onDetach)} data-testid="structured-agent-detach">
+                  {copy.detachSession}
+                </MenuItem>
+              )}
+              {!historyOnly && canArchive && (
+                <MenuItem icon={Archive} disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  onSelect={() => void runLifecycle('archive', onArchive)} data-testid="structured-agent-archive">
+                  {copy.archiveSession}
+                </MenuItem>
+              )}
+            </Menu>
+          </div>
+        )}
         {settingsError && <p className="structured-agent__form-error" role="alert">{settingsError}</p>}
         {lifecycleError && <p className="structured-agent__form-error" role="alert">{lifecycleError}</p>}
       </header>
 
+      {variant === 'mobile' && capabilitiesPanel}
+      <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
+        onAsideChange={setReviewAside}
+        openRequest={reviewRequest}
+        hideTrigger={variant !== 'mobile'}
+        onOpenProjectFiles={onOpenProjectFiles}
+        onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />
+      {workflowContext}
       <StructuredAgentTranscript
+        beforeMessages={beforeMessages}
         key={`transcript:${viewStateKey ?? sessionId}`}
         stateKey={viewStateKey ? `${viewStateKey}:transcript` : variant === 'desktop' ? `desktop-agent-transcript:${sessionId}` : undefined}
         items={items}
         approvals={approvals}
+        {...(turns ? { turns } : {})}
+        skin={activeSkin}
+        workspaceRoot={workspace.path}
+        approvalResponses={approvalResponses}
+        {...(onOpenLink ? { onOpenLink } : {})}
+        onReviewChanges={() => setReviewRequest((request) => request + 1)}
+        hasEarlier={hasEarlier}
+        loadingEarlier={loadingEarlier}
+        {...(onLoadEarlier ? { onLoadEarlier } : {})}
         providerLabel={providerLabel}
         loading={transcriptLoading}
         error={transcriptError}
         onRetry={onRetryTranscript}
         onResolveApproval={historyOnly ? undefined : onResolveApproval}
+        controlsDisabled={disabled}
+        onReply={!historyOnly && !composerDisabled && supportsMessageContext ? (replyTo) => setDraftAction({ id: ++actionSequence.current, sessionId, replyTo }) : undefined}
+        onReuse={!historyOnly && !composerDisabled ? (text) => setDraftAction({ id: ++actionSequence.current, sessionId, text }) : undefined}
         onOpenRelatedSession={onOpenRelatedSession}
       />
       {childTrack !== undefined && (
-        <section className="structured-agent-child-track" aria-label={copy.childTrack} data-testid="structured-agent-child-track">
+        <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
           {childTrack}
         </section>
       )}
-      {heartbeatControl}
+      {variant === 'mobile' && heartbeatControl}
+      {variant !== 'mobile' && heartbeatControl !== undefined && (
+        <Dialog open={heartbeatOpen} onOpenChange={setHeartbeatOpen} title={copy.heartbeatOn} ownerDocument={panelRef.current?.ownerDocument} closeLabel={copy.close}>
+          {heartbeatControl}
+        </Dialog>
+      )}
+      {recoveryControl}
       {!historyOnly && (
         <StructuredAgentComposer
+          toolbar={settingsControls}
+          queueItems={queueItems}
+          onQueueAction={onQueueAction}
+          capabilityCatalog={capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id ? capabilityCatalog : undefined}
+          capabilityDiscovery={capabilityDiscovery}
+          onOpenHistory={onOpenHistory}
           key={`composer:${viewStateKey ?? sessionId}`}
           stateKey={viewStateKey ? `${viewStateKey}:composer` : variant === 'desktop' ? `desktop-agent-composer:${sessionId}` : undefined}
           busy={busy}
@@ -1480,9 +2070,22 @@ export function StructuredAgentSessionPanel({
           queuedCount={queuedCount}
           disabled={composerDisabled || lifecycleBusy !== null}
           disabledReason={composerDisabledReason ?? lifecycleDisabledReason}
-          onSend={onSend}
-          onInterruptAndSend={onInterruptAndSend}
+          sendDisabled={disabled || sendDisabled}
+          sendDisabledReason={sendDisabledReason}
+          supportsMessageContext={supportsMessageContext}
+          draftState={draftState}
+          onDraftChange={onDraftChange}
+          deliveryUncertain={deliveryUncertain}
+          onReconcileDelivery={onReconcileDelivery}
+          draftAction={draftAction?.sessionId === sessionId ? draftAction : undefined}
+          onSend={(prompt, context) => sendWithCapabilities(prompt, context, onSend)}
+          onInterruptAndSend={onInterruptAndSend ? (prompt, context) => sendWithCapabilities(prompt, context, onInterruptAndSend) : undefined}
           variant={variant}
+          recentPrompts={recentPrompts}
+          {...(canCancel ? { onStop: () => void runLifecycle('cancel', onCancel) } : {})}
+          stopping={lifecycleBusy === 'cancel'}
+          {...(fileSearch ? { fileSearch } : {})}
+          {...(pathForDrop ? { pathForDrop } : {})}
         />
       )}
     </section>

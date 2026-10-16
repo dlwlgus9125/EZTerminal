@@ -5,6 +5,8 @@ import {
 import type { LayoutEnvelope } from './layout-schema';
 import { validateLayoutEnvelope } from './layout-schema';
 import { isSessionSurfaceId } from './session-surface';
+import { ChatComposerDraftSchema } from './chat-state';
+import type { ChatComposerDraft } from './chat-message';
 
 export const RENDERER_RECOVERY_VERSION = 1 as const;
 export const RENDERER_RECOVERY_MAX_PANES = 64;
@@ -36,6 +38,7 @@ export interface RendererRecoveryStructuredAgentCreate {
   readonly sessionId: string;
   readonly phase: 'sending' | 'delivery-uncertain';
   readonly command: DaemonCommandEnvelope<'agent.create'>;
+  readonly composerDraft?: ChatComposerDraft;
 }
 
 export interface RendererRecoveryCheckpoint {
@@ -82,7 +85,7 @@ function structuredAgentCreateFromValue(
 ): RendererRecoveryStructuredAgentCreate | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  const keys = Object.keys(candidate).sort();
+  const keys = Object.keys(candidate).filter(key => key !== 'composerDraft').sort();
   if (
     keys.length !== 5
     || keys[0] !== 'command'
@@ -120,11 +123,15 @@ function structuredAgentCreateFromValue(
     || command.issuedAt.length > 128
   ) return null;
 
+  const composer = candidate.composerDraft === undefined ? undefined : ChatComposerDraftSchema.safeParse(candidate.composerDraft);
+  if (composer && (!composer.success || composer.data.skills?.some(skill => skill.providerId !== command.payload.providerId))) return null;
+
   return Object.freeze({
     panelId: candidate.panelId,
     historyId: candidate.historyId,
     sessionId: candidate.sessionId,
     phase: candidate.phase,
+    ...(composer?.success ? { composerDraft: Object.freeze(composer.data) } : {}),
     command: Object.freeze({
       ...command,
       principal: Object.freeze({ ...command.principal }),

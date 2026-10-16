@@ -16,6 +16,19 @@ function requester(
 }
 
 describe('CodexHistoryAdapter', () => {
+  it('imports full message bodies without preview truncation and keeps source identities stable', async () => {
+    const text = `  ${'한글 historical text '.repeat(2_000)}  `;
+    const request = vi.fn(async (): Promise<unknown> => ({ data: [{ id: 'saved-turn', status: 'completed', items: [
+      { id: 'saved-user', type: 'userMessage', content: [{ type: 'text', text }] },
+      { id: 'saved-assistant', type: 'agentMessage', text },
+    ] }], nextCursor: null }));
+    const adapter = new CodexHistoryAdapter(requester(request));
+    const preview = await adapter.readTranscript('saved-provider-thread');
+    const imported = await adapter.readTranscriptForAdoption('saved-provider-thread');
+    expect(imported.turns[0].entries.map(item => item.type === 'message' ? item.markdown : '')).toEqual([text, text]);
+    expect(preview.turns[0].entries[0]).toMatchObject({ id: imported.turns[0].entries[0].id, markdown: text.slice(0, 20_000) });
+    expect(adapter.resolveProviderSessionId('saved-provider-thread')).toBe('saved-provider-thread');
+  });
   it('lists one state-DB-only page without reading rollout workspace roots', async () => {
     const base = mkdtempSync(path.join(os.tmpdir(), 'ez-codex-history-'));
     const primary = path.join(base, 'primary');

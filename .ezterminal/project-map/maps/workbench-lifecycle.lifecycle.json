@@ -22,33 +22,69 @@
       "id": "crash-safe-startup",
       "title": "Crash-safe startup",
       "summary": "Existing SQLite and consent material is contained, migrated, reconciled, and replayed before structured clients or providers can observe ready state.",
-      "focusIds": ["persisted-material", "verifying-store", "authority-ready", "start-verification", "verification-ready"]
+      "focusIds": [
+        "persisted-material",
+        "verifying-store",
+        "authority-ready",
+        "start-verification",
+        "verification-ready"
+      ]
     },
     {
       "id": "safe-mode-fallback",
       "title": "Terminal-only safe mode",
       "summary": "Unsafe, future, corrupt, or unverified database state disables structured Agent mutation for the process lifetime while preserving legacy terminal access.",
-      "focusIds": ["verifying-store", "terminal-only-safe-mode", "verification-failed"]
+      "focusIds": [
+        "verifying-store",
+        "terminal-only-safe-mode",
+        "verification-failed"
+      ]
     },
     {
       "id": "optional-window-lifetime",
       "title": "Optional window lifetime",
       "summary": "With keep-running enabled, closing the workbench hides the window while the Electron-main authority continues to own work.",
-      "focusIds": ["authority-ready", "background-running", "hide-window", "reopen-window"]
+      "focusIds": [
+        "authority-ready",
+        "background-running",
+        "hide-window",
+        "reopen-window"
+      ]
     },
     {
       "id": "ordered-shutdown",
       "title": "Ordered shutdown",
       "summary": "Quit closes authority, main startup, and local mutation ingress, then dependency-orders Agent, OpenClaw, desktop, and SQLite cleanup behind their accepted work.",
-      "focusIds": ["authority-ready", "terminal-only-safe-mode", "draining-authority", "closed", "drain-and-close"]
+      "focusIds": [
+        "authority-ready",
+        "terminal-only-safe-mode",
+        "draining-authority",
+        "closed",
+        "drain-and-close"
+      ]
     }
   ],
   "phases": [
-    { "id": "durable-input", "label": "Durable input" },
-    { "id": "startup", "label": "Startup and recovery" },
-    { "id": "active", "label": "Active authority" },
-    { "id": "fallback", "label": "Fail-closed fallback" },
-    { "id": "shutdown", "label": "Ordered shutdown" }
+    {
+      "id": "durable-input",
+      "label": "Durable input"
+    },
+    {
+      "id": "startup",
+      "label": "Startup and recovery"
+    },
+    {
+      "id": "active",
+      "label": "Active authority"
+    },
+    {
+      "id": "fallback",
+      "label": "Fail-closed fallback"
+    },
+    {
+      "id": "shutdown",
+      "label": "Ordered shutdown"
+    }
   ],
   "states": [
     {
@@ -88,16 +124,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 610,
-          "endLine": 695,
+          "startLine": 683,
+          "endLine": 768,
           "lineDigest": "sha256:553d740f99709fd3be92e2000da2f830413ad7136f3bd5033b9a434adb37cd95",
           "claim": "Initialization validates containment and existing database material, rejects future schemas, and requires a verified migration or legacy backup before mutation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 698,
-          "endLine": 735,
+          "startLine": 771,
+          "endLine": 808,
           "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
           "claim": "The store opens with strict SQLite options, enables WAL and full synchronization, migrates, recovers uncertain commands, then marks itself ready."
         },
@@ -122,24 +158,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1834,
-          "endLine": 1944,
+          "startLine": 1938,
+          "endLine": 2048,
           "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
           "claim": "Main marks prior-process legacy terminals interrupted, recovers pending consent, and synchronizes Projects before the ordered MCP, Agent, and automation startup publishes ready availability and binds the exact shutdown barrier."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 337,
-          "endLine": 355,
+          "startLine": 373,
+          "endLine": 391,
           "lineDigest": "sha256:d3a345787b078d0f1879d601daa0ddbc9b4ebf9fbf168f73cb1649a33a4ebee2",
           "claim": "Agent startup restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, reconciles unsettled work, and rearms durable timeouts."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1413,
-          "endLine": 1446,
+          "startLine": 1517,
+          "endLine": 1550,
           "lineDigest": "sha256:4aa5ef82af26651b2557828ce4eca703a91ab92700f343749c0170c62f888d58",
           "claim": "The Project-operation FIFO rejects new work after shutdown begins, preserves its exact accepted prefix, and serializes both successful and failed predecessors."
         }
@@ -172,8 +208,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1935,
-          "endLine": 1943,
+          "startLine": 2039,
+          "endLine": 2047,
           "lineDigest": "sha256:3af45fffdc9e0a0cb7de49d6d5a9d989d64a1e1bd62f11f4f154a16dc7c4e3e9",
           "claim": "Main reports structured authority failure as a terminal-preserving safe mode rather than failing the entire desktop runtime."
         }
@@ -186,14 +222,16 @@
       "kind": "steady",
       "phase": "active",
       "order": 1,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-runtime.ts",
-        "startLine": 56,
-        "endLine": 88,
-        "lineDigest": "sha256:fed39a694258567d637f8ab9729a65029828db5cf9ac9b0336daacce595e8930",
-        "claim": "The main-window close policy hides only when keepRunning is enabled; opening restores, shows, and focuses the same authority client window."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-runtime.ts",
+          "startLine": 56,
+          "endLine": 88,
+          "lineDigest": "sha256:fed39a694258567d637f8ab9729a65029828db5cf9ac9b0336daacce595e8930",
+          "claim": "The main-window close policy hides only when keepRunning is enabled; opening restores, shows, and focuses the same authority client window."
+        }
+      ]
     },
     {
       "id": "draining-authority",
@@ -248,16 +286,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2203,
-          "endLine": 2353,
+          "startLine": 2437,
+          "endLine": 2587,
           "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
           "claim": "Main closes ingress first and dependency-orders service disposal; DaemonStore waits exact authority and writer drains, while OpenClaw cleanup follows the startup barrier."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/openclaw-lifecycle-coordinator.ts",
-          "startLine": 667,
-          "endLine": 685,
+          "startLine": 686,
+          "endLine": 704,
           "lineDigest": "sha256:1e71db1162647795cc761cb1f8abb20ee2be3e34b6662ac0706d0f442fa254b6",
           "claim": "OpenClaw disposal closes publication synchronously, awaits initialization and pending bootstrap recovery, then flushes both atomic control files."
         }
@@ -272,14 +310,16 @@
       "label": "inspect exact material",
       "kind": "primary",
       "event": "app starts",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-store.ts",
-        "startLine": 587,
-        "endLine": 607,
-        "lineDigest": "sha256:ab7c115ed1aef1694fe596607ce70a22db79d78cca505d9e191c16eed88c6375",
-        "claim": "DaemonStore serializes initialization, latches a structured failure, and never exposes a partially initialized database."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store.ts",
+          "startLine": 660,
+          "endLine": 680,
+          "lineDigest": "sha256:ab7c115ed1aef1694fe596607ce70a22db79d78cca505d9e191c16eed88c6375",
+          "claim": "DaemonStore serializes initialization, latches a structured failure, and never exposes a partially initialized database."
+        }
+      ]
     },
     {
       "id": "verification-ready",
@@ -288,14 +328,16 @@
       "label": "publish ready authority",
       "kind": "primary",
       "event": "recovery succeeds",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/main.ts",
-        "startLine": 1834,
-        "endLine": 1944,
-        "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
-        "claim": "Successful database, prior-process legacy terminal recovery, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 1938,
+          "endLine": 2048,
+          "lineDigest": "sha256:0719eae8522a9dbdeb1bf8457a0dcd2aff6e91d073ad6169f5171c8bdd33cd96",
+          "claim": "Successful database, prior-process legacy terminal recovery, consent recovery, and Project synchronization gate the ordered start and ready publication of every structured Agent runtime."
+        }
+      ]
     },
     {
       "id": "verification-failed",
@@ -304,14 +346,16 @@
       "label": "latch safe mode",
       "kind": "error",
       "event": "verification fails",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/main.ts",
-        "startLine": 1928,
-        "endLine": 1943,
-        "lineDigest": "sha256:3d781ac239406fc6562df5790dbc60b6ad32f0d3c342c06d302931b722aa1e08",
-        "claim": "Any rejected structured-authority preflight or startup becomes one process-lifetime safe-mode availability record and is logged while legacy terminals remain enabled."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 2032,
+          "endLine": 2047,
+          "lineDigest": "sha256:3d781ac239406fc6562df5790dbc60b6ad32f0d3c342c06d302931b722aa1e08",
+          "claim": "Any rejected structured-authority preflight or startup becomes one process-lifetime safe-mode availability record and is logged while legacy terminals remain enabled."
+        }
+      ]
     },
     {
       "id": "hide-window",
@@ -320,14 +364,16 @@
       "label": "hide workbench",
       "kind": "secondary",
       "event": "close with keep-running",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-runtime.ts",
-        "startLine": 71,
-        "endLine": 78,
-        "lineDigest": "sha256:657f70d521fa1b77865235acdf330a8aab3e465ba76944572a51ab265f809eaa",
-        "claim": "Closing the main window hides it only when keepRunning is true; otherwise the same event requests application Quit."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-runtime.ts",
+          "startLine": 71,
+          "endLine": 78,
+          "lineDigest": "sha256:657f70d521fa1b77865235acdf330a8aab3e465ba76944572a51ab265f809eaa",
+          "claim": "Closing the main window hides it only when keepRunning is true; otherwise the same event requests application Quit."
+        }
+      ]
     },
     {
       "id": "reopen-window",
@@ -336,14 +382,16 @@
       "label": "restore workbench",
       "kind": "secondary",
       "event": "user reopens app",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-runtime.ts",
-        "startLine": 80,
-        "endLine": 88,
-        "lineDigest": "sha256:ca75bd6b688c16b2b87578b70e34f8d986548e93ef226f82e12c2c3c0d520f4b",
-        "claim": "Reopening creates a missing window or restores, shows, and focuses the existing renderer client."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-runtime.ts",
+          "startLine": 80,
+          "endLine": 88,
+          "lineDigest": "sha256:ca75bd6b688c16b2b87578b70e34f8d986548e93ef226f82e12c2c3c0d520f4b",
+          "claim": "Reopening creates a missing window or restores, shows, and focuses the existing renderer client."
+        }
+      ]
     },
     {
       "id": "quit-ready",
@@ -352,14 +400,16 @@
       "label": "close ingress",
       "kind": "primary",
       "event": "explicit Quit",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/main.ts",
-        "startLine": 2213,
-        "endLine": 2253,
-        "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
-        "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 2447,
+          "endLine": 2487,
+          "lineDigest": "sha256:6444af2844e8bc49695ffc3fa83d30b14b51f27291d69973ab8998e0037c2f6f",
+          "claim": "The first Quit task synchronously closes Project, main-startup, local-Agent, and Project-Map ingress before their dependent drains run."
+        }
+      ]
     },
     {
       "id": "quit-background",
@@ -368,14 +418,16 @@
       "label": "stop background work",
       "kind": "primary",
       "event": "explicit Quit",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-runtime.ts",
-        "startLine": 91,
-        "endLine": 97,
-        "lineDigest": "sha256:e71274cbd1f080240c1290b41918f7c7b870cae22b951525d72aba12c4022aab",
-        "claim": "Explicit Quit requests application shutdown, whose process owner stops all registered daemon resources exactly once."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-runtime.ts",
+          "startLine": 91,
+          "endLine": 97,
+          "lineDigest": "sha256:e71274cbd1f080240c1290b41918f7c7b870cae22b951525d72aba12c4022aab",
+          "claim": "Explicit Quit requests application shutdown, whose process owner stops all registered daemon resources exactly once."
+        }
+      ]
     },
     {
       "id": "quit-safe-mode",
@@ -384,14 +436,16 @@
       "label": "release providers only",
       "kind": "primary",
       "event": "explicit Quit",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/daemon-authority-shutdown.ts",
-        "startLine": 3,
-        "endLine": 12,
-        "lineDigest": "sha256:cb1dca4ae03d85e5bd38c0a0a9000e625b9cbcd7206125dde161b00393a06ee2",
-        "claim": "When no writable authority exists, safe-mode shutdown selects process-loss cleanup so it releases providers without attempting structured database writes."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-shutdown.ts",
+          "startLine": 3,
+          "endLine": 12,
+          "lineDigest": "sha256:cb1dca4ae03d85e5bd38c0a0a9000e625b9cbcd7206125dde161b00393a06ee2",
+          "claim": "When no writable authority exists, safe-mode shutdown selects process-loss cleanup so it releases providers without attempting structured database writes."
+        }
+      ]
     },
     {
       "id": "drain-and-close",
@@ -420,8 +474,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2203,
-          "endLine": 2353,
+          "startLine": 2437,
+          "endLine": 2587,
           "lineDigest": "sha256:feea99243caf03e5df2a434e53950f1d7b7328e69712c77da1d81940e9fffb49",
           "claim": "Main closes ingress first, drains main startup and local mutations, and orders OpenClaw and desktop cleanup while DaemonStore awaits the exact authority and concurrent writer barrier."
         }

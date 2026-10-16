@@ -1,0 +1,18 @@
+{
+  "status": "proposal-ready-for-review",
+  "approved": false,
+  "captured_at": "2026-10-14",
+  "scope": "Responsive interactive conversation proposal; no product implementation changes",
+  "design_context": {"required":true,"frontend_artifact":"docs/ux/frontend-design.md","design_systems":["DESIGN.md"],"profile":"google-alpha-0.4.0-ezpowers-1","tokens":["src/renderer/themes.ts","src/renderer/styles/ui-tokens.css"],"production_components":["src/renderer/StructuredAgentSession.tsx","src/renderer/ProjectConversationTree.tsx","src/renderer/ConversationHistoryPicker.tsx"],"prototype":"docs/ux/reference/v2-conversation-r6/site/dist/index.html"},
+  "directions_considered": [
+    {"name":"기존 카드 다듬기","tradeoff":"비용은 작지만 도구·답변의 같은 시각적 무게와 좁은 모바일 본문을 유지한다."},
+    {"name":"대화 중심 작업 공간","selected":true,"tradeoff":"본문 위계를 단순화하고 실행 기록을 접으며 검토는 보조 pane으로 분리한다. 기존 데이터 계약을 유지하며 presentation 분해가 필요하다."},
+    {"name":"IDE 중심 화면","tradeoff":"항상 보이는 파일·diff·로그가 코드 검토에는 유리하지만 일반 대화와 모바일에 과도한 구조를 만든다."}
+  ],
+  "states":["completed","working","approval","error","offline","empty","loading","uncertain","conflict","stopped"],
+  "responsive":{"sidebar_overlay_below":1024,"review_overlay_below":1280,"single_column_below":600,"minimum_width":320,"touch_target":44,"composer":"Transcript scrolls independently; safe-area padding"},
+  "interaction_contract":["Desktop Enter sends, Shift+Enter inserts newline; composition never sends. Mobile Enter inserts newline.","Sending during a turn queues a draft; interrupt-and-send is explicit.","Offline and uncertain delivery preserve draft. Reconnecting never sends automatically.","Skin, theme, inspector and conversation changes preserve draft, attachments, quote, tools and scroll.","Approval names command and scope; decision remains as a receipt.","Review exposes file, diff and line reference. No actual file changes.","Dialogs trap focus and restore it; Escape closes; focus is visible.","Concise state announcements only; transcript is not a live region."],
+  "implementation_boundaries":{"existing":"Message identity, drafts, attachment, reply, approval, queue and lifecycle remain owned by existing stores.","presentation":"Turn grouping, concise header, composer toolbar, responsive inspector and delivery notices.","requires_capability":"Diff payloads, per-line review context and detailed progress need validated provider/daemon events.","prototype":"Browser-local fixtures; no provider, filesystem write, Git or backend connection."},
+  "visual_evidence":"evidence/current-capture.json",
+  "sources":["https://www.onorca.dev/docs/agents/native-chat","https://learn.chatgpt.com/docs/code-review?surface=app","https://learn.chatgpt.com/docs/reference/commands","https://learn.chatgpt.com/docs/projects"]
+}

@@ -4,42 +4,7 @@
    The structured block/table engine is unchanged; only its skin is.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Self-hosted font faces so the packaged renderer renders them: its build-time
-   CSP is `font-src 'self'` (see vite.renderer.config.ts), which blocks remote
-   Google Fonts, and offline builds can't reach them anyway. Vite fingerprints +
-   emits these woff2 from ./fonts into the bundle, served from 'self'. Latin
-   subset only. Share Tech Mono / VT323 are Matrix theme faces (E1+), declared
-   unconditionally but only referenced under [data-theme='matrix'], so the other
-   built-in themes never fetch them. JetBrains Mono / Fira Code are body-font
-   picker entries (fonts.ts FONT_CATALOG), selectable independent of theme. */
-@font-face {
-  font-family: 'Share Tech Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/share-tech-mono-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'VT323';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/vt323-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/jetbrains-mono-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Fira Code';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('./fonts/fira-code-latin.woff2') format('woff2');
-}
+/* Font faces live in styles/ui-tokens.css (imported through ui/styles.css). */
 
 :root {
   color-scheme: dark;
@@ -49,19 +14,19 @@
   --term-font: 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 
   /* Console surfaces, near-black with subtly layered depth. */
-  --term-bg: #0c0c0c; /* the console background */
-  --term-bg-raised: #151515; /* command line / input strip */
-  --term-bg-inset: #0a0a0a; /* table body, deepest plane */
+  --term-bg: #1b1a18; /* the console background */
+  --term-bg-raised: #22211f; /* command line / input strip */
+  --term-bg-inset: #161513; /* table body, deepest plane */
   --term-bg-hover: rgba(255, 255, 255, 0.04);
 
   /* Hairline separators — block chrome stays thin, never card-like. */
-  --term-border: #242424;
-  --term-border-faint: #1a1a1a;
+  --term-border: #363430;
+  --term-border-faint: #2b2a27;
 
   /* Foreground ramp. */
   --term-fg: #cccccc; /* default text */
   --term-fg-bright: #f2f2f2; /* command text, emphasis */
-  --term-fg-dim: #7f7f7f; /* metadata, counts */
+  --term-fg-dim: #8c8c8c; /* metadata, counts */
   --term-fg-faint: #565656; /* chrome glyphs, loading */
 
   /* Classic terminal accents. */
@@ -71,7 +36,7 @@
   --term-cyan: #56b6c2; /* table headers, paths */
   --term-blue: #4d9fff; /* running / focus */
 
-  --term-selection: rgba(45, 211, 152, 0.22);
+  --term-selection: rgba(122, 167, 255, 0.28);
 
   /* Semantic aliases used by the Agent history workbench. They resolve
      through the active terminal theme instead of introducing fixed colors. */
@@ -98,12 +63,12 @@
    CSS can't import that file, so keep the two in sync by hand. */
 [data-theme='light'] {
   color-scheme: light;
-  --term-bg: #f5f5f5;
+  --term-bg: #faf9f6;
   --term-bg-raised: #ffffff;
-  --term-bg-inset: #ececec;
+  --term-bg-inset: #f2f0eb;
   --term-bg-hover: rgba(0, 0, 0, 0.05);
-  --term-border: #d0d0d0;
-  --term-border-faint: #e2e2e2;
+  --term-border: #e4e1da;
+  --term-border-faint: #eeebe5;
   --term-fg: #1c1c1c;
   --term-fg-bright: #000000;
   --term-fg-dim: #5f5f5f;
@@ -113,7 +78,7 @@
   --term-amber: #9a6a00;
   --term-cyan: #0f7c8c;
   --term-blue: #1857c4;
-  --term-selection: rgba(14, 138, 75, 0.18);
+  --term-selection: rgba(47, 95, 208, 0.18);
 }
 
 [data-theme='high-contrast'] {
@@ -142,13 +107,13 @@
   color-scheme: dark;
   --term-font: 'Share Tech Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
-  --term-bg: #010301;
-  --term-bg-raised: #071109;
-  --term-bg-inset: #020402;
+  --term-bg: #020604;
+  --term-bg-raised: #07110b;
+  --term-bg-inset: #010402;
   --term-bg-hover: rgba(41, 211, 152, 0.08);
 
-  --term-border: #3c8d61;
-  --term-border-faint: #1d5035;
+  --term-border: #2c6a47;
+  --term-border-faint: #163322;
 
   --term-fg: #8af7bd;
   --term-fg-bright: #d5ffe7;
@@ -775,15 +740,14 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  background: var(--term-bg-raised);
-  border-left: 1px solid var(--term-border);
+  background: var(--ui-surface-raised);
+  border-left: 1px solid var(--ui-border-subtle);
   box-shadow: -6px 0 18px rgba(0, 0, 0, 0.35);
 }
 
 .status-section {
-  padding: 0.6rem 0.85rem;
-  border-bottom: 1px solid var(--term-border-faint);
+  padding: var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 /* Shared section heading for every sidebar destination: a dim, wide-tracked
@@ -798,24 +762,22 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .status-metric {
-  font-size: 0.82rem;
-  color: var(--term-fg-bright);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .status-loading {
-  font-size: 0.75rem;
-  color: var(--term-fg-faint);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-muted);
 }
 
+/* Freshness is a quiet line above the instruments, not a box of its own. */
 .status-freshness {
   display: grid;
   gap: var(--ui-space-1);
-  margin: 0 0.6rem 0.6rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-inset);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 .status-freshness-error {
@@ -836,61 +798,8 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   animation-play-state: paused;
 }
 
-/* Monitor sections read as instrument cards. Scoped by the section test ids so
-   the Settings panel, which shares the .status-section class for its
-   categories, keeps its plain full-width layout. */
-.status-section[data-testid^='status-section-'] {
-  margin: 0 0.6rem 0.6rem;
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--ui-border-mid);
-  border-bottom: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-raised);
-}
-
-/* The pairing token is read off the screen and typed into a phone, so it gets
-   display sizing and wide tracking rather than inline-code sizing. */
-.pairing-token {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--ui-space-2);
-  margin-block: var(--ui-space-2);
-  padding: var(--ui-space-3);
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-inset);
-}
-
-.pairing-token-label {
-  inline-size: 100%;
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-2xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.pairing-token-value {
-  flex: 1 1 auto;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-  color: var(--ui-text-primary);
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-xl);
-  letter-spacing: 0.22em;
-  text-shadow: var(--ui-glow-text);
-}
-
-/* Plain ws:// is a standing condition of the 1.0 contract, not a transient
-   notice, so it keeps a persistent amber strip rather than a toast. */
-[data-testid='pairing-ws-warning'] {
-  margin-block-end: var(--ui-space-3);
-  padding: var(--ui-space-2) var(--ui-space-3);
-  border: 1px dashed color-mix(in srgb, var(--ui-warning) 60%, var(--ui-border-mid));
-  border-radius: var(--ui-radius-md);
-  color: var(--ui-warning);
-  background: var(--ui-warning-muted);
-}
+/* Monitor sections are plain sections divided by rules, like every sidebar body;
+   only the scope keeps a frame, because it is the instrument. */
 
 /* == BOOT SEQUENCE ==
    Sits above every other layer, including the destructive-confirmation tier,
@@ -1044,9 +953,9 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .file-breadcrumb {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ui-space-1);
   padding: var(--ui-space-2) var(--ui-space-3);
-  border-bottom: 1px solid var(--ui-border-mid);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 .file-breadcrumb-row {
@@ -1120,90 +1029,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   border-color: var(--ui-accent);
   color: var(--ui-text-primary);
   background: var(--ui-surface-inset);
-}
-
-/* Channels the gateway is bridging, folded out of the sessions it reports. */
-.openclaw-channels {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.openclaw-channel {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-  padding: 9px 11px;
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface-inset);
-  font-size: var(--ui-font-size-12);
-}
-
-.openclaw-channel-dot {
-  inline-size: 7px;
-  block-size: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--ui-text-dim);
-}
-
-/* Lit only while a run is actually in flight on that channel. */
-.openclaw-channel-dot[data-live='true'] {
-  background: var(--ui-accent);
-  box-shadow: 0 0 6px var(--ui-accent);
-}
-
-.openclaw-channel-name {
-  min-inline-size: 0;
-  overflow: hidden;
-  color: var(--ui-text-primary);
-  font-family: var(--ui-font-terminal);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.openclaw-channel-meta {
-  color: var(--ui-text-muted);
-}
-
-.openclaw-channel-time {
-  margin-inline-start: auto;
-  color: var(--ui-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Three live gateway numbers, read at a glance above the session list. */
-.openclaw-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--ui-space-2);
-}
-
-.openclaw-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--ui-space-2);
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-inset);
-  text-align: center;
-}
-
-.openclaw-metric-value {
-  color: var(--ui-text-primary);
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-lg);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.openclaw-metric-label {
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-2xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 /* Trailing slot of a pane group's header: where the active pane is. Renders
@@ -1311,744 +1136,15 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   cursor: default;
 }
 
-/* Devices the bridge has seen this run. */
-.remote-devices {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.remote-device {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-  padding: 9px 11px;
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface-inset);
-  font-size: var(--ui-font-size-12);
-}
-
-.remote-device-icon {
-  inline-size: 14px;
-  block-size: 14px;
-  flex: 0 0 auto;
-  color: var(--ui-info);
-}
-
-.remote-device-name {
-  min-inline-size: 0;
-  overflow: hidden;
-  color: var(--ui-text-primary);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.remote-device-state {
-  margin-inline-start: auto;
-  color: var(--ui-text-dim);
-}
-
-.remote-device-state[data-connected='true'] {
-  color: var(--ui-accent);
-}
-
-/* == REMOTE TOPOLOGY == the link drawn spatially, so "who is attached to me,
-   over what" is a glance rather than a read of label/value rows. */
-.remote-topology {
-  margin: var(--ui-space-3);
-  padding: var(--ui-space-4) var(--ui-space-3);
-  border: 1px solid var(--ui-border-mid);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-inset);
-}
-
-.remote-topology-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ui-space-2);
-}
-
-.remote-topology-node {
-  inline-size: 6.5rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  text-align: center;
-  color: var(--ui-text-primary);
-  font-size: var(--ui-font-size-12);
-}
-
-.remote-topology-node[data-idle='true'] {
-  opacity: 0.6;
-}
-
-.remote-topology-meta {
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-3xs);
-  overflow-wrap: anywhere;
-}
-
-.remote-topology-glyph {
-  display: grid;
-  place-items: center;
-  inline-size: 3.5rem;
-  block-size: 2.75rem;
-  border: 2px solid currentcolor;
-  border-radius: var(--ui-radius-md);
-}
-
-.remote-topology-glyph--host {
-  color: var(--ui-accent);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--ui-accent) 30%, transparent);
-}
-
-.remote-topology-glyph--peer {
-  inline-size: 1.875rem;
-  block-size: 3.125rem;
-  border-radius: var(--ui-radius-md);
-  color: var(--ui-info);
-}
-
-.remote-topology-link {
-  position: relative;
-  flex: 1 1 auto;
-  block-size: 2.75rem;
-}
-
-/* Dashed because the transport is a hop, not a wire. */
-.remote-topology-wire {
-  position: absolute;
-  inset-inline: 0;
-  inset-block-start: 50%;
-  block-size: 2px;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--ui-border-focus-soft) 0 8px,
-    transparent 8px 15px
-  );
-}
-
-.remote-topology-link[data-connected='true'] .remote-topology-wire {
-  background: repeating-linear-gradient(90deg, var(--ui-accent) 0 8px, transparent 8px 15px);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent) 40%, transparent);
-}
-
-.remote-topology-wire-label,
-.remote-topology-wire-rtt {
-  position: absolute;
-  inset-inline-start: 50%;
-  transform: translateX(-50%);
-  padding-inline: 6px;
-  background: var(--ui-surface-inset);
-  font-size: var(--ui-font-size-3xs);
-}
-
-.remote-topology-wire-label {
-  inset-block-start: 2px;
-  color: var(--ui-warning);
-}
-
-.remote-topology-wire-rtt {
-  inset-block-end: 0;
-  color: var(--ui-text-dim);
-}
-
-/* == MONITOR SCOPE == an instrument, not a chart. The grid is the graticule and
-   the sweep edge marks "now", so the trace reads as something being measured
-   rather than a summary that happens to be drawn. */
-.status-scope-card {
-  background: var(--ui-surface-inset);
-}
-
-.status-scope-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--ui-space-2);
-  margin-block-end: var(--ui-space-2);
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-12);
-}
-
-.status-scope-readout {
-  font-variant-numeric: tabular-nums;
-}
-
-.status-scope-readout--cpu {
-  color: var(--ui-accent);
-}
-
-.status-scope-readout--mem {
-  color: var(--ui-info);
-}
-
-.status-scope {
-  position: relative;
-  block-size: 96px;
-  overflow: hidden;
-  border-radius: var(--ui-radius-md);
-  background:
-    repeating-linear-gradient(
-      0deg,
-      transparent 0 23px,
-      color-mix(in srgb, var(--ui-accent) 8%, transparent) 23px 24px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 23px,
-      color-mix(in srgb, var(--ui-accent) 8%, transparent) 23px 24px
-    );
-}
-
-.status-scope-trace {
-  position: absolute;
-  inset: 0;
-  inline-size: 100%;
-  block-size: 100%;
-}
-
-.status-scope-cpu {
-  stroke: var(--ui-accent);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ui-accent) 80%, transparent));
-}
-
-.status-scope-mem {
-  stroke: var(--ui-info);
-  opacity: 0.7;
-}
-
-/* The leading edge of the sweep — where the next sample lands. */
-.status-scope-sweep {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: 0;
-  inline-size: 34px;
-  border-inline-end: 2px solid color-mix(in srgb, var(--ui-accent) 60%, transparent);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--ui-accent) 12%, transparent)
-  );
-}
-
-.status-waterfall-title {
-  margin-block: var(--ui-space-3) var(--ui-space-2);
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-2xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.status-waterfall {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-2xs);
-  color: var(--ui-text-secondary);
-}
-
-.status-waterfall-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-}
-
-.status-waterfall-time {
-  flex: 0 0 auto;
-  inline-size: 3.5rem;
-  color: var(--ui-text-dim);
-}
-
-.status-waterfall-bar {
-  flex: 0 0 auto;
-  block-size: 12px;
-  min-inline-size: 2px;
-  border-radius: 1px;
-  background: var(--ui-accent);
-  transition: inline-size 0.6s ease;
-}
-
-/* A second that stands out against the rest of the window, not against a fixed
-   byte count — a busy link and an idle one need different definitions. */
-.status-waterfall-bar[data-spike='true'] {
-  background: var(--ui-warning);
-}
-
-.status-waterfall-rate {
-  margin-inline-start: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Connections read as addressable rows, matching the pane/card language. */
-.status-conn-table tr,
-.status-section[data-testid='status-section-conns'] .status-conn-row {
-  border-radius: var(--ui-radius-md);
-}
-
-.status-polling-note {
-  margin: 0;
-  padding: 0 0.85rem 0.9rem;
-  color: var(--ui-text-dim);
-  font-size: var(--ui-font-size-2xs);
-  line-height: var(--ui-line-height-normal);
-}
-
-/* The scope grid sits behind the trace at the same 24px pitch the handoff
-   specifies, so the sparkline reads as an instrument rather than a decoration. */
-.sparkline {
-  display: block;
-  width: 100%;
-  height: 40px;
-  margin-top: 0.3rem;
-  padding: 2px 0;
-  border-radius: var(--ui-radius-md);
-  color: var(--ui-accent);
-  background-color: var(--ui-surface-inset);
-  background-image:
-    repeating-linear-gradient(
-      to right,
-      color-mix(in srgb, var(--ui-accent) 9%, transparent) 0 1px,
-      transparent 1px 24px
-    ),
-    repeating-linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--ui-accent) 9%, transparent) 0 1px,
-      transparent 1px 24px
-    );
-  filter: drop-shadow(0 0 4px color-mix(in srgb, currentcolor 55%, transparent));
-}
-
-.status-disk-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.status-disk-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.72rem;
-  color: var(--term-fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.status-disk-bar {
-  height: 5px;
-  margin-top: 0.15rem;
-  background: var(--term-bg-inset);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-/* Load bars share the accent so the whole panel reads as one instrument. Blue
-   is reserved for the memory trace, which is the one series that needs to stay
-   distinguishable from CPU on the shared scope. */
-.status-disk-bar-fill {
-  height: 100%;
-  background: var(--ui-accent);
-}
-
-.status-core-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.3rem 0.6rem;
-  margin-top: 0.5rem;
-}
-
-.status-core-grid--compact {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.2rem 0.35rem;
-}
-
-.status-core-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.68rem;
-  color: var(--term-fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.status-mem-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-top: 0.5rem;
-}
-
-.status-net-sparks {
-  display: flex;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
-}
-
-.status-net-sparks .sparkline {
-  flex: 1 1 50%;
-  margin-top: 0;
-}
-
-.status-net-sparks .sparkline:last-child {
-  color: var(--term-blue);
-}
-
-.status-proc-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.status-proc-table th {
-  text-align: left;
-  padding: 0.15rem 0.25rem;
-  color: var(--term-cyan);
-  font-weight: 600;
-}
-
-.status-proc-table td {
-  padding: 0.15rem 0.25rem;
-  color: var(--term-fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 0;
-}
-
-.status-packet-toggle {
-  margin-top: 0.5rem;
-  width: 100%;
-}
-
-.status-packet-view {
-  margin-top: 0.5rem;
-}
-
-.status-packet-ack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--term-fg-dim);
-}
-
-.status-packet-status {
-  font-size: 0.72rem;
-  color: var(--term-amber);
-}
-
-.status-packet-status a {
-  color: var(--term-blue);
-}
-
-/* Settings drawer (v0.2.0 M2; theme/font selects + import added in
-   theme-effects-font M3) — same .status-drawer/.status-section shell as
-   StatusPanel/ConnectionInfoPanel above; the rules below are the drawer's own
-   additions. */
+/* Checkbox/radio rows shared by the settings panel and the agent provider settings;
+   the settings panel's own rules live in settings-panel.css. */
 .settings-radio-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  color: var(--term-fg);
+  gap: var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-primary);
   cursor: pointer;
-}
-
-.settings-scale-stepper {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.settings-theme-import {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin-top: 0.4rem;
-}
-
-.settings-theme-import-error {
-  font-size: 0.72rem;
-  color: var(--term-red);
-}
-
-.settings-scale-value {
-  min-width: 3.2em;
-  text-align: center;
-  font-size: 0.82rem;
-  color: var(--term-fg-bright);
-  font-variant-numeric: tabular-nums;
-}
-
-.settings-scrollback-input {
-  width: 6rem;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.78rem;
-  font-family: inherit;
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-border);
-  border-radius: 3px;
-  color: var(--term-fg);
-}
-
-.settings-scrollback-input:focus {
-  outline: none;
-  border-color: var(--term-green);
-}
-
-/* crt-rollbar line params (rollbar-params) — nested beneath the crt-rollbar
-   toggle in the Effects section (desktop SettingsPanel + mobile
-   MobileSettingsView both use these two classes). */
-.settings-rollbar-params {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin: 0.3rem 0 0.5rem 1.4rem;
-}
-
-.settings-rollbar-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--term-fg);
-}
-
-.settings-rollbar-row span {
-  min-width: 8.5em;
-}
-
-.settings-rollbar-row input[type='range'] {
-  flex: 1;
-}
-
-.openclaw-state-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.openclaw-state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--term-fg-faint);
-}
-
-.openclaw-state-running .openclaw-state-dot {
-  background: var(--term-green);
-}
-
-.openclaw-state-starting .openclaw-state-dot {
-  background: var(--term-amber);
-}
-
-.openclaw-state-stopped .openclaw-state-dot {
-  background: var(--term-fg-dim);
-}
-
-.openclaw-state-not-installed .openclaw-state-dot,
-.openclaw-state-unknown .openclaw-state-dot {
-  background: var(--term-red);
-}
-
-.openclaw-state-detail {
-  margin-top: 0.25rem;
-  font-size: 0.72rem;
-  color: var(--term-fg-dim);
-}
-
-.openclaw-state-path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.openclaw-guidance-text {
-  margin: 0 0 0.4rem;
-  font-size: 0.78rem;
-  color: var(--term-fg);
-}
-
-.openclaw-guidance-cmd {
-  display: block;
-  margin-bottom: 0.4rem;
-  padding: 0.3rem 0.5rem;
-  background: var(--term-bg-inset);
-  border-radius: 3px;
-  font-size: 0.75rem;
-  color: var(--term-fg-bright);
-}
-
-.openclaw-guidance-link {
-  font-size: 0.75rem;
-  color: var(--term-blue);
-}
-
-.openclaw-lifecycle-buttons {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.openclaw-lifecycle-buttons .btn {
-  flex: 1;
-}
-
-.openclaw-control-card {
-  border-inline-start: 2px solid var(--term-blue);
-}
-
-.openclaw-control-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.35rem 0.75rem;
-  font-size: 0.74rem;
-  color: var(--term-fg-dim);
-}
-
-.openclaw-control-grid strong {
-  color: var(--term-fg-bright);
-  font-weight: 600;
-  text-align: end;
-}
-
-.openclaw-control-progress,
-.openclaw-control-issue {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-top: 0.6rem;
-  padding: 0.5rem;
-  border-radius: 4px;
-  background: var(--term-bg-inset);
-  font-size: 0.73rem;
-}
-
-.openclaw-control-progress {
-  color: var(--term-amber);
-}
-
-.openclaw-control-issue {
-  border: 1px solid var(--term-red);
-  color: var(--term-fg);
-}
-
-.openclaw-control-issue strong {
-  color: var(--term-red);
-}
-
-.openclaw-control-issue code {
-  overflow-wrap: anywhere;
-  color: var(--term-fg-dim);
-}
-
-.openclaw-chat-btn {
-  width: 100%;
-  margin-top: 0.5rem;
-}
-
-.openclaw-error-inline {
-  margin-top: 0.4rem;
-  font-size: 0.72rem;
-  color: var(--term-red);
-}
-
-.openclaw-sessions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.openclaw-session-row {
-  padding: 0.4rem 0.5rem;
-  background: var(--term-bg-inset);
-  border-radius: 3px;
-}
-
-.openclaw-session-key {
-  font-size: 0.78rem;
-  color: var(--term-fg-bright);
-}
-
-.openclaw-session-updated {
-  margin-top: 0.15rem;
-  font-size: 0.68rem;
-  color: var(--term-fg-faint);
-}
-
-.openclaw-log-view {
-  height: 220px;
-  overflow-y: auto;
-  padding: 0.4rem;
-  background: var(--term-bg-inset);
-  border-radius: 3px;
-  font-family: var(--term-font, monospace);
-  font-size: 0.68rem;
-  line-height: 1.4;
-}
-
-.openclaw-log-line {
-  display: flex;
-  gap: 0.4rem;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.openclaw-log-time {
-  flex: 0 0 auto;
-  color: var(--term-fg-faint);
-}
-
-.openclaw-log-level {
-  flex: 0 0 auto;
-  font-weight: 600;
-}
-
-.openclaw-log-message {
-  color: var(--term-fg);
-}
-
-.openclaw-log-level-info .openclaw-log-level,
-.openclaw-log-level-debug .openclaw-log-level {
-  color: var(--term-cyan);
-}
-
-.openclaw-log-level-warn .openclaw-log-level {
-  color: var(--term-amber);
-}
-
-.openclaw-log-level-error .openclaw-log-level {
-  color: var(--term-red);
-}
-
-.openclaw-log-resume {
-  width: 100%;
-  margin-top: 0.4rem;
-}
-
-.openclaw-config-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin-bottom: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--term-fg);
-}
-
-.openclaw-restart-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem;
-  margin-top: 0.4rem;
-  padding: 0.4rem 0.5rem;
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-amber);
-  border-radius: 3px;
-  font-size: 0.72rem;
-  color: var(--term-fg);
 }
 
 .openclaw-autostart-row {
@@ -2106,32 +1202,32 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  background: var(--term-bg-raised);
-  border-right: 1px solid var(--term-border);
-  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.35);
+  background: var(--ui-surface-raised);
+  border-right: 1px solid var(--ui-border-subtle);
+  box-shadow: var(--ui-shadow-raised);
 }
 
 .file-path-input:focus {
   outline: none;
-  border-color: var(--term-green);
+  border-color: var(--ui-accent);
 }
 
 .file-error {
-  padding: 0.4rem 0.6rem;
-  font-size: 0.75rem;
-  color: var(--term-red);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-danger);
 }
 
 .file-binary-notice {
-  padding: 0.4rem 0.6rem;
-  font-size: 0.75rem;
-  color: var(--term-amber);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-warning);
 }
 
 .file-loading {
-  padding: 0.35rem 0.6rem;
-  font-size: 0.75rem;
-  color: var(--term-fg-faint);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-muted);
 }
 
 .file-list {
@@ -2144,31 +1240,31 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.6rem;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-3);
   border: 0;
   background: transparent;
   font-family: inherit;
-  font-size: 0.8rem;
+  font-size: var(--ui-font-size-sm);
   text-align: left;
-  color: var(--term-fg);
+  color: var(--ui-text-secondary);
   cursor: pointer;
 }
 
 .file-entry:hover,
 .file-entry:focus-visible {
-  background: var(--term-bg-inset);
-  color: var(--term-fg-bright);
+  background: var(--ui-surface-hover);
+  color: var(--ui-text-primary);
 }
 
 .file-entry:focus-visible {
-  outline: 2px solid var(--term-blue);
+  outline: 2px solid var(--ui-focus);
   outline-offset: -2px;
 }
 
 .file-entry-icon {
   flex: 0 0 auto;
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
 }
 
 .file-entry-name {
@@ -2180,8 +1276,8 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 .file-entry-size {
   flex: 0 0 auto;
-  font-size: 0.72rem;
-  color: var(--term-fg-faint);
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2197,10 +1293,10 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   z-index: 160;
   display: flex;
   flex-direction: column;
-  background: var(--term-bg-raised);
-  border: 1px solid var(--term-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-overlay);
 }
 
 .file-viewer-overlay--pending {
@@ -2220,20 +1316,20 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .file-viewer-truncated {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.72rem;
-  color: var(--term-amber);
-  border-bottom: 1px solid var(--term-border-faint);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-warning);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 .file-viewer-content {
   flex: 1 1 auto;
   margin: 0;
-  padding: 0.75rem;
+  padding: var(--ui-space-3);
   overflow: auto;
   font-family: inherit;
-  font-size: 0.8rem;
-  color: var(--term-fg);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2242,34 +1338,33 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .file-context-menu {
   position: fixed;
   z-index: 165;
-  min-width: 190px;
-  padding: 0.35rem;
-  background: var(--term-bg-raised);
-  border: 1px solid var(--term-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  min-width: 11.875rem;
+  padding: var(--ui-space-1);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  box-shadow: var(--ui-shadow-raised);
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.125rem;
 }
 .file-context-menu-item {
   text-align: left;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.78rem;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
   font-family: inherit;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 3px;
-  color: var(--term-fg);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-primary);
   cursor: pointer;
 }
 .file-context-menu-item:hover,
 .file-context-menu-item:focus-visible {
-  border-color: var(--term-green);
-  color: var(--term-fg-bright);
+  background: var(--ui-surface-hover);
 }
 .file-context-menu-item:focus-visible {
-  outline: 2px solid var(--term-blue);
+  outline: 2px solid var(--ui-focus);
   outline-offset: -2px;
 }
 
@@ -2416,28 +1511,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 .crash-banner .btn {
   margin-left: auto;
-}
-
-.remote-control-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex: 0 0 auto;
-  min-height: 38px;
-  padding: 0.35rem 0.85rem;
-  border-bottom: 1px solid var(--term-amber);
-  color: var(--term-fg-bright);
-  background: #342708;
-  font-size: 0.78rem;
-}
-
-.remote-control-banner .btn {
-  margin-left: auto;
-}
-
-.remote-control-banner .btn:focus-visible {
-  outline: 2px solid var(--term-fg-bright);
-  outline-offset: 2px;
 }
 
 /* ── block list — newest at bottom, input pinned below (Warp-like) ────────── */
@@ -2615,44 +1688,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.settings-ssh-forward-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.settings-ssh-forward-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.55rem;
-  min-width: 0;
-  padding: 0.4rem;
-  border: 1px solid var(--term-border-faint);
-  border-radius: 3px;
-  background: var(--term-bg-inset);
-}
-
-.settings-ssh-forward-detail {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  font-size: 0.72rem;
-  color: var(--term-fg-dim);
-}
-
-.settings-ssh-forward-detail code,
-.settings-ssh-forward-detail span,
-.settings-ssh-forward-detail small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-ssh-forward-detail code {
-  color: var(--term-fg-bright);
 }
 
 .file-source-line {
@@ -3008,54 +2043,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   overflow-wrap: anywhere;
 }
 
-/* == PAIRING == the action card and the modal it opens. */
-.remote-panel__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: 9px;
-  align-items: stretch;
-}
-
-.remote-pairing-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 12px 10px;
-  border: 1px solid var(--ui-border-focus-soft);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-accent-muted);
-  color: var(--ui-text-secondary);
-  font: inherit;
-  text-align: center;
-  cursor: pointer;
-}
-
-.remote-pairing-card:hover:not(:disabled) {
-  box-shadow: var(--ui-glow-box);
-}
-
-.remote-pairing-card:disabled {
-  border-color: var(--ui-border-subtle);
-  background: var(--ui-surface-inset);
-  cursor: not-allowed;
-}
-
-.remote-pairing-card:disabled b {
-  color: var(--ui-text-muted);
-}
-
-.remote-pairing-card b {
-  color: var(--ui-focus);
-  font-size: var(--ui-font-size-sm);
-}
-
-.remote-pairing-card span {
-  color: var(--ui-text-muted);
-  font-size: var(--ui-font-size-xs);
-}
-
+/* == PAIRING == the QR dialog the pairing card opens. */
 .pairing-qr {
   display: flex;
   flex-wrap: wrap;
@@ -3149,7 +2137,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .file-entry-change {
   margin-inline-start: auto;
   flex: none;
-  padding: 1px 6px;
+  padding: 1px var(--ui-space-1);
   border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-info);
@@ -3170,7 +2158,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 /* A size column and a change tag would otherwise both claim the right edge. */
 .file-entry-change + .file-entry-size {
-  margin-inline-start: 8px;
+  margin-inline-start: var(--ui-space-2);
 }
 
 .file-entry--parent .file-entry-name {
@@ -3228,14 +2216,15 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   gap: 6px;
 }
 
+/* Inset like the hub body above it; the rule still spans the full width. */
 .agent-hub-footer {
   flex: none;
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-space-3) 0;
   border-top: 1px solid var(--ui-border-subtle);
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--ui-space-2);
 }
 
 .agent-hub-footer__safe-mode {
@@ -4556,45 +3545,17 @@ button.agent-work-activity:focus-visible {
   font-weight: 700;
 }
 
-.agent-integration-list,
-.settings-agent-profile {
-  display: grid;
-  gap: 8px;
-}
-
-.agent-integration-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--term-border-faint);
-}
-
-.agent-integration-copy {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-  color: var(--term-fg-dim);
-  font-size: 11px;
-}
-
-.agent-integration-copy strong {
-  color: var(--term-fg-bright);
-  font-size: 12px;
-}
-
 .settings-agent-warning,
 .settings-agent-message {
-  color: var(--term-amber);
-  font-size: 11px;
-  line-height: 1.4;
+  color: var(--ui-warning);
+  font-size: var(--ui-font-size-2xs);
+  line-height: var(--ui-line-height-normal);
 }
 
 .settings-agent-subtitle {
-  margin: 12px 0 6px;
-  color: var(--term-fg);
-  font-size: 11px;
+  margin: var(--ui-space-3) 0 var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -4612,23 +3573,27 @@ button.agent-work-activity:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ui-space-2);
 }
 
 .settings-agent-profile {
-  margin-bottom: 8px;
-  padding: 8px;
-  border: 1px solid var(--term-border-faint);
-  background: var(--term-bg-inset);
+  display: grid;
+  gap: var(--ui-space-2);
+  margin-bottom: var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
 }
 
 .settings-agent-profile input[type='text'],
 .settings-agent-profile > input {
   min-width: 0;
-  padding: 5px 6px;
-  border: 1px solid var(--term-border);
-  background: var(--term-bg);
-  color: var(--term-fg);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
   font: inherit;
 }
 
@@ -8708,3 +7673,4 @@ button.agent-work-activity:focus-visible {
     animation: none !important;
   }
 }
+

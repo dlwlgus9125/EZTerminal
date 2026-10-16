@@ -1,0 +1,179 @@
+{
+  "provider": "codex",
+  "scenario": "plan-mode",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-a141bfffd71060d62af69687244bf9f2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Plan how to add a `farewell(name)` function next to `greet` in src/app.ts. Keep the plan to three short bullet points. Do not implement it.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_b3ee5abd8394cb9b9a310e90",
+      "messageId": "codex_message_808cbd251b16ce3333248cc2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll inspect `greet` and the project’s checks, then give a three-point plan.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_8f354273d441f4efee506c7b",
+      "messageId": "codex_message_808cbd251b16ce3333248cc2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll inspect `greet` and the project’s checks, then give a three-point plan.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_69b5185279014b4c808160a4",
+      "messageId": "codex_message_8a3a5095db35328f3b517c9b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ Get-Location; rg --files -g AGENTS.md -g app.ts -g package.json -g '*test*' -g '*spec*'",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-917712c3-2cd9-497a-a8a3-7ea8757be281",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "call",
+        "status": "running",
+        "target": "Get-Location; rg --files -g AGENTS.md -g app.ts -g package.json -g '*test*' -g '*spec*'",
+        "command": "Get-Location; rg --files -g AGENTS.md -g app.ts -g package.json -g '*test*' -g '*spec*'",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_fe7062f20723da25857b8d30",
+      "messageId": "codex_message_8a3a5095db35328f3b517c9b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "<HOME>\\Documents\\WindowsPowerShell\\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� �� ��\r\n���ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.\r\n��ġ ��:1 ����:1\r\n+ . '<HOME>\\Documents\\WindowsPowerShell\\profile.ps1'\r\n+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException\r\n    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1\r\n \r\n\r\npackage.json\nsrc\\app.ts\nPath                                                                                                                   \r\n----                                                                                                                   \r\n<SCRATCH>\\provi...\r\n\r\n\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-917712c3-2cd9-497a-a8a3-7ea8757be281",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "result",
+        "status": "completed",
+        "target": "Get-Location; rg --files -g AGENTS.md -g app.ts -g package.json -g '*test*' -g '*spec*'",
+        "command": "Get-Location; rg --files -g AGENTS.md -g app.ts -g package.json -g '*test*' -g '*spec*'",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 1028
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_3778ad444dafe1eaf83d02d1",
+      "messageId": "codex_message_6cfc6b76cb5c091036f052bd",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ Get-Content src/app.ts, package.json",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-b4e5622e-66ab-4f3e-ba12-33df933a573c",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "call",
+        "status": "running",
+        "target": "Get-Content src/app.ts, package.json",
+        "command": "Get-Content src/app.ts, package.json",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_71ae941004bb677f0c8b13bb",
+      "messageId": "codex_message_6cfc6b76cb5c091036f052bd",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "export function greet(name: string): string {\r\n  return `Hello, ${name}!`;\r\n}\r\n\r\nexport function main(): void {\r\n  console.log(greet('world'));\r\n}\r\n{\r\n  \"name\": \"demo-app\",\r\n  \"version\": \"0.0.1\",\r\n  \"private\": true,\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"start\": \"node src/app.ts\"\r\n  }\r\n}\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-b4e5622e-66ab-4f3e-ba12-33df933a573c",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "result",
+        "status": "completed",
+        "target": "Get-Content src/app.ts, package.json",
+        "command": "Get-Content src/app.ts, package.json",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 603
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_delta_e783b535c3c07c22a2fbcaab",
+      "messageId": "codex_message_0ab275c25f85fb8a78a2fcd6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "- Add exported `farewell(name: string): string` immediately after `greet` in `src/app.ts`.\n- Return `Goodbye, ${name}!`, matching `greet`’s formatting; keep existing behavior unchanged.\n- Verify `farewell('world')` returns `Goodbye, world!` and `greet('world')` still returns `Hello, world!`.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "plan"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_item_b726b69e5f82828fba57bfa4",
+      "messageId": "codex_message_0ab275c25f85fb8a78a2fcd6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "- Add exported `farewell(name: string): string` immediately after `greet` in `src/app.ts`.\n- Return `Goodbye, ${name}!`, matching `greet`’s formatting; keep existing behavior unchanged.\n- Verify `farewell('world')` returns `Goodbye, world!` and `greet('world')` still returns `Hello, world!`.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "plan",
+        "markdown": "- Add exported `farewell(name: string): string` immediately after `greet` in `src/app.ts`.\n- Return `Goodbye, ${name}!`, matching `greet`’s formatting; keep existing behavior unchanged.\n- Verify `farewell('world')` returns `Goodbye, world!` and `greet('world')` still returns `Hello, world!`.\n"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

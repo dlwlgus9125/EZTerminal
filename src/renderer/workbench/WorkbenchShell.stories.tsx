@@ -17,6 +17,7 @@ interface WorkbenchShellStoryProps {
   readonly initialDestination: SidebarDestination | null;
   readonly locale: "en" | "ko";
   readonly panelState: PanelState;
+  readonly projectNavigation?: boolean;
 }
 
 const COPY = {
@@ -100,6 +101,7 @@ function WorkbenchShellStory({
   initialDestination,
   locale,
   panelState,
+  projectNavigation = false,
 }: WorkbenchShellStoryProps): JSX.Element {
   const [destination, setDestination] = useState<SidebarDestination | null>(
     initialDestination,
@@ -133,6 +135,7 @@ function WorkbenchShellStory({
             active={destination}
             attentionCount={3}
             openclawVisible
+            projectNavigation={projectNavigation}
             onSelect={(next) =>
               setDestination((current) => (current === next ? null : next))
             }
@@ -190,6 +193,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const SidebarOpen: Story = {};
+
+export const ToolsNavigation: Story = {
+  args: { projectNavigation: true },
+};
 
 export const SidebarOpenKorean: Story = {
   args: { locale: "ko" },

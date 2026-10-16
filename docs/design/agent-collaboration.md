@@ -94,6 +94,28 @@ Desktop은 초기화 원인, DB 보존/격리 상태, 스키마 버전, 다음 �
 직렬화 경계에서 제거한다. 앱 대화 생성은 비활성화하고 UI retry loop를 만들지 않는다.
 일반 Terminal과 CLI 실행 진입은 유지한다.
 
+## 구조화 transcript와 승인 상세
+
+schema v7은 `transcript_items.payload_json`, `approvals.request_json`, `agents.reasoning_effort`를
+추가한다. migration은 단방향이며 v7 DB는 이전 2.0.0 설치판이 열지 못한다.
+
+- [`src/shared/transcript-payload.ts`](../../src/shared/transcript-payload.ts)의 payload(tool, todo,
+  reasoning, plan)는 메타데이터다. 본문은 계속 `text`가 소유한다. 관대한 parser가 실패하면 payload를
+  버리고 text만으로 렌더링하므로, 구 host와 payload 이전 대화도 같은 채팅 행으로 해석된다.
+- protocol version은 올리지 않고 snapshot capability로 확장한다: `transcript-payload-v1`,
+  `approval-request-v1`, `approval-response-v1`, `agent-effort-v1`. client는 `approval-response-v1`이
+  있을 때만 `permission.resolve.response`(answers, plan, feedback)를 보낸다.
+- 승인 `request`([`approval-request.ts`](../../src/shared/approval-request.ts))는 명령, diff, 질문과
+  계획 같은 도구 입력을 64KB 상한으로 담는다. snapshot은 대기 중인 승인에만 request를 노출하므로
+  백업 archive에는 포함되지 않는다. 민감도(`isSensitive`)는 메타데이터다. 기록과 미리보기는 민감 행을
+  보여 주고, archive는 민감 행의 본문, 첨부와 payload를 비운다.
+- Claude는 대화 세션에서 partial message를 스트리밍한다. 두 adapter의 DeltaCoalescer가 delta를 약
+  80ms 또는 2KB 단위로 묶어 기록하고, 블록의 최종 메시지가 같은 `messageId`로 delta를 대체한다.
+  non-delta row, 승인 요청과 turn 종료 전에는 항상 flush한다.
+- 계획 승인 응답의 mode는 agent의 `permissionPreset`을 바꾸고 provider도 같은 mode로 전환한다.
+- Desktop은 긴 transcript를 꼬리부터 읽고 이전 페이지는 요청할 때 읽는다. `transcript.appended`는
+  snapshot을 다시 읽지 않는다.
+
 ## Provider adapter
 
 모든 구조화 provider는 다음 deep interface를 구현한다.
@@ -201,6 +223,13 @@ checkpoint에 exact command를 확인 저장한 뒤 전송한다. 미확정 crea
 명시적 앱 종료는 Cancel을 기본값으로 유지하면서 메모리 복구 정보의 폐기와 다음 실행의 중복 생성 위험을
 함께 경고한다. 메모리 checkpoint의 동시 미확정 create 상한은 64개이며, 상한을 넘는 새 create는 기존
 레코드를 잘라내지 않고 persistence와 daemon 전송 전에 fail closed한다.
+
+Desktop 채팅·기획·워크플로 초안은 Electron safeStorage(Windows DPAPI 사용자 범위)로 암호화해
+user data의 전용 디렉터리(`chat-state`, `planning-drafts`, `workflow-drafts`)에 저장한다. Windows에서는
+그 디렉터리에 현재 사용자와 SYSTEM만 허용하는 보호·상속 DACL을 시작 시 한 번 적용·검증하고, 안에서 만든
+파일은 이를 상속한다. 입력 중 저장마다 PowerShell로 파일 DACL을 다시 검증하지 않는 대신 디렉터리 DACL이
+다른 principal의 파일 생성·교체를 막고, 내용은 DPAPI 암호문으로 기밀성과 무결성을 지킨다. 원격 토큰 등
+다른 비밀은 파일별 DACL 검증을 유지하며 `guard:secure-storage`가 이 경계를 고정한다.
 
 Desktop quit, daemon restart와 Android reconnect를 거쳐도 prompt가 중복 제출되거나 process가 orphan되지
 않아야 한다. 복구할 수 없는 turn은 성공이나 실행 중으로 가장하지 않고 interrupted 또는

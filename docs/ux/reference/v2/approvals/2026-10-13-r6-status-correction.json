@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "approval-status-editorial-correction",
+  "recordedAt": "2026-10-13T05:38:42.801865+00:00",
+  "approvalId": "ezterminal-v2-r6-2026-10-13",
+  "approvalStatement": "정리할내용 정리하고 나머지단계 모두 진행해줘",
+  "scopeChanged": false,
+  "implementationCompletion": "not-asserted",
+  "individualScreenReviews": "not-asserted",
+  "previousManifest": {
+    "path": "docs/ux/reference/v2/approvals/2026-10-13-r6-final.json",
+    "sha256": "e33bfb0f840dc119ab8a75114caa75643b13fa826003806ed923775aa2e42f32"
+  },
+  "reason": "Three historical r4 review-pending statements now explicitly distinguish the later r6 approval. These hand-authored contracts are not overwritten by build.mjs. Existing approval manifests remain immutable.",
+  "files": [
+    {
+      "path": "docs/ux/reference/v2/POLICY-CONTRACTS.md",
+      "previousSha256": "2fa59b26cbe39cc8921bb550ba9f75f1ff32c92dda06d5eebcf0960357686c37",
+      "sha256": "2ba49a8840b8dca37bfb07d3a0e0395a1dbc52d57bc312f0d6a892fc8fc6f622",
+      "bytes": 16270
+    },
+    {
+      "path": "docs/ux/reference/v2/DELIVERY-DESIGN.md",
+      "previousSha256": "df5e9cf69edd474a1ac1aeb4d8708bf91c2d704ce7a3ea292bf020f9709a92b4",
+      "sha256": "3138e3614cb49a1392d39b38b9a5831808fa4acd3cc1ab150cbfef97592e6146",
+      "bytes": 12660
+    },
+    {
+      "path": "docs/ux/reference/v2/VISUAL-REVIEW.md",
+      "previousSha256": "82df671765edbd8e4105e71666bba1cd506a7e0457bf2d7756f5f485a2460dc4",
+      "sha256": "2380e86b310ca951fefbc6d4a5977dea10ae34a4cf89506a96ebb004849b3488",
+      "bytes": 17790
+    }
+  ],
+  "qaEvidence": "Previous design visual QA is historical; this correction is text-only. No renewed full design QA is asserted."
+}

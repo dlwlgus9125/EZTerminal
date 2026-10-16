@@ -3,7 +3,8 @@
   z-index: var(--ui-z-sticky);
   container-name: workbench-header;
   container-type: inline-size;
-  min-height: 60px;
+  /* 44px: the workspace below is what the user came for (frontend-design 3.2). */
+  min-height: 44px;
   flex: 0 0 auto;
   display: grid;
   /* The Command Center zone is the elastic one so its search field can centre
@@ -11,7 +12,7 @@
   grid-template-columns: auto minmax(var(--ui-control-height-lg), 1fr) auto auto;
   align-items: center;
   gap: var(--ui-space-2);
-  padding: var(--ui-space-2) var(--ui-space-3);
+  padding: var(--ui-space-1) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-border-mid);
   color: var(--ui-text-primary);
   background: linear-gradient(
@@ -39,8 +40,8 @@
   justify-self: end;
   display: flex;
   min-block-size: 44px;
-  margin: calc(-1 * var(--ui-space-2)) calc(-1 * var(--ui-space-3))
-    calc(-1 * var(--ui-space-2)) 0;
+  margin: calc(-1 * var(--ui-space-1)) calc(-1 * var(--ui-space-3))
+    calc(-1 * var(--ui-space-1)) 0;
   -webkit-app-region: no-drag;
 }
 
@@ -109,7 +110,7 @@
    box-shadow rather than a transform, so nothing here becomes a containing
    block for anything positioned. */
 .workbench-new-terminal {
-  min-block-size: 2.25rem;
+  min-block-size: 2rem;
   animation: workbench-pulse 3s ease-in-out infinite;
 }
 
@@ -145,7 +146,7 @@
   border: 1px solid var(--ui-border-mid);
   border-radius: var(--ui-radius-md);
   color: var(--ui-text-dim);
-  font-family: var(--ui-font-heading);
+  font-family: var(--ui-font-display);
   font-size: var(--ui-font-size-13);
   line-height: var(--ui-line-height-tight);
   white-space: nowrap;
@@ -165,7 +166,7 @@
   min-inline-size: 0;
   max-inline-size: 37.5rem;
   margin-inline: auto;
-  block-size: var(--ui-control-height-lg);
+  block-size: var(--ui-control-height-md);
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -183,7 +184,6 @@
 
 .workbench-command-field:hover {
   border-color: var(--ui-border-strong);
-  box-shadow: var(--ui-glow-box);
 }
 
 .workbench-command-field:focus-visible {
@@ -235,14 +235,14 @@
   gap: var(--ui-space-2);
   margin: 0;
   color: var(--ui-text-primary);
-  font: 400 var(--ui-font-size-26)/1 var(--ui-font-heading);
-  letter-spacing: var(--ui-letter-spacing-heading);
+  font: 400 var(--ui-font-size-20)/1 var(--ui-font-display);
+  letter-spacing: var(--ui-letter-spacing-display);
   white-space: nowrap;
 }
 
 /* 6px bars rising 10/17/24px, expressed in rem so the mark tracks UI scale. */
 .workbench-brand-mark__signal {
-  block-size: 1.5rem;
+  block-size: 1.125rem;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: flex-end;
@@ -564,7 +564,9 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   min-width: 0;
   min-height: 0;
   display: flex;
-  overflow: hidden;
+  /* clip, not hidden: hidden still lets focus and scrollIntoView scroll the whole shell
+     when panel content (or a hidden dockview panel) overflows the dock host. */
+  overflow: clip;
 }
 
 .workbench-body > .dock-host {
@@ -573,12 +575,12 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   min-height: 0;
 }
 
-/* == STATUS BAR == a fixed 30px strip under the whole shell. Fixed height on
+/* == STATUS BAR == a fixed 24px strip under the whole shell. Fixed height on
    purpose: global state reported here never reflows the workspace, which is
    what a banner does. */
 .workbench-status-bar {
   flex: 0 0 auto;
-  block-size: 30px;
+  block-size: 24px;
   z-index: var(--ui-z-sticky);
   display: flex;
   align-items: center;
@@ -659,6 +661,13 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   padding: var(--ui-space-3) var(--ui-space-1);
   border-inline-end: 1px solid var(--ui-border-mid);
   background: var(--ui-canvas);
+}
+
+/* A rail menu belongs above the adjacent sidebar. Its own dropdown z-index
+   cannot escape the rail's sticky stacking context, so lift that context only
+   while the menu is open; dialogs retain their higher shared layer. */
+.activity-rail:has([aria-haspopup='menu'][aria-expanded='true']) {
+  z-index: var(--ui-z-dropdown);
 }
 
 /* The rail is the one place the 44px touch tier applies on desktop regardless
@@ -811,153 +820,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   min-height: auto;
   padding: var(--ui-space-2) var(--ui-space-3);
   border-color: var(--ui-border-subtle);
-}
-
-.remote-panel > .status-drawer {
-  min-height: auto;
-}
-
-.remote-panel {
-  display: grid;
-  align-content: start;
-}
-
-.remote-desktop-card .status-section-title {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-2);
-}
-
-.remote-desktop-card .status-metric {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--ui-space-2);
-}
-
-.remote-desktop-card .status-metric strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ui-text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.remote-desktop-disconnect {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ui-space-1);
-  margin-top: var(--ui-space-2);
-}
-
-.settings-workbench {
-  display: grid !important;
-  grid-template-columns: minmax(116px, 0.42fr) minmax(0, 1fr);
-  overflow: hidden !important;
-  font-family: var(--ui-font-body);
-}
-
-.settings-category-nav {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ui-space-1);
-  padding: var(--ui-space-2);
-  border-inline-end: 1px solid var(--ui-border-subtle);
-  background: var(--ui-surface-inset);
-}
-
-.settings-category-button {
-  min-height: var(--ui-control-height-md);
-  padding: var(--ui-space-2);
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-4);
-  color: var(--ui-text-secondary);
-  background: transparent;
-  text-align: start;
-  font: inherit;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ui-space-2);
-}
-
-.settings-category-button:hover {
-  color: var(--ui-text-primary);
-  background: var(--ui-surface-hover);
-}
-
-.settings-category-button[aria-current='page'] {
-  color: var(--ui-accent);
-  border-color: var(--ui-border-strong);
-  background: var(--ui-surface-selected);
-}
-
-.settings-category-button:focus-visible {
-  outline: 2px solid var(--ui-focus);
-  outline-offset: 2px;
-}
-
-.settings-category-content {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.settings-field-row {
-  display: grid;
-  gap: var(--ui-space-2);
-  margin-top: var(--ui-space-3);
-  color: var(--ui-text-secondary);
-}
-
-.settings-effect-intensity {
-  display: grid;
-  gap: var(--ui-space-2);
-  margin-block: var(--ui-space-4);
-  color: var(--ui-text-secondary);
-}
-
-.settings-effect-intensity__heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--ui-space-2);
-}
-
-.settings-effect-intensity__heading output {
-  color: var(--ui-info);
-  font-family: var(--ui-font-heading);
-  font-variant-numeric: tabular-nums;
-}
-
-.settings-effect-intensity input[type='range'] {
-  inline-size: 100%;
-  accent-color: var(--ui-accent);
-}
-
-.settings-effect-intensity__description {
-  color: var(--ui-text-muted);
-  font-size: var(--ui-font-size-12);
-  line-height: var(--ui-line-height-normal);
-}
-
-.settings-category-content [hidden] {
-  display: none !important;
-}
-
-.settings-diagnostic-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  gap: var(--ui-space-2);
-  align-items: baseline;
-}
-
-.settings-diagnostic-grid code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--ui-text-primary);
 }
 
 .app-update-card {
@@ -1209,3 +1071,28 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     background: Canvas;
   }
 }
+/* One row above the panels: workspace (view) tabs on the left, layout presets on the right. */
+.workbench-bar { display: flex; flex: 0 0 auto; align-items: center; gap: var(--ui-space-2); min-width: 0; min-height: 2.25rem; padding: 0 var(--ui-space-2); border-bottom: 1px solid var(--ui-border-subtle); background: var(--ui-surface); }
+.workbench-bar > .workbench-views { flex: 1 1 auto; padding: 0; border-bottom: 0; background: transparent; }
+.workbench-bar > .workspace-bar { flex: 0 0 auto; block-size: auto; padding-inline: 0; }
+.workbench-bar { container-type: inline-size; container-name: workbench-bar; }
+/* The workspace tabs keep their place; the presets give way first. */
+.workbench-bar .workbench-views__tabs { flex: 0 1 auto; min-width: 7rem; }
+@container workbench-bar (max-width: 46rem) {
+  .workbench-bar .workspace-bar__chip { gap: 0; padding: 4px 8px; font-size: 0; }
+  .workbench-bar .workspace-bar__chip svg { inline-size: 14px; block-size: 14px; }
+}
+.workbench-views { display: flex; flex: 0 0 auto; align-items: center; gap: var(--ui-space-1); min-width: 0; padding: var(--ui-space-1) var(--ui-space-2); border-bottom: 1px solid var(--ui-border-subtle); background: var(--ui-surface); }
+.workbench-views__tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; gap: var(--ui-space-1); }
+.workbench-views__tab { display: flex; flex: 0 0 auto; border-radius: var(--ui-radius-md); border: 1px solid transparent; }
+.workbench-views__tab[data-active='true'] { background: var(--ui-surface-raised); border-color: var(--ui-border-strong); }
+.workbench-views button, .workbench-views select, .workbench-views input { min-height: var(--ui-control-height-sm); padding: var(--ui-space-1) var(--ui-space-2); border: 0; border-radius: var(--ui-radius-md); background: transparent; color: var(--ui-text-secondary); font: inherit; font-size: var(--ui-font-size-xs); }
+.workbench-views select { max-width: 12rem; background: var(--ui-surface); }
+.workbench-views input { max-width: 10rem; background: var(--ui-surface-inset); }
+.workbench-views button { cursor: pointer; white-space: nowrap; }
+.workbench-views button[aria-selected='true'] { color: var(--ui-text-primary); font-weight: 600; }
+.workbench-views button:hover { background: var(--ui-surface-hover); }
+.workbench-views button:focus-visible, .workbench-views select:focus-visible, .workbench-views input:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.workbench-views svg { width: 1rem; height: 1rem; vertical-align: middle; }
+.ez-dock .dv-groupview.dv-active-group { box-shadow: inset 0 0 0 1px var(--ui-pane-active-border); }
+@media (max-width: 599px) { .workbench-views { flex-wrap: wrap; } .workbench-views__tabs { flex-basis: calc(100% - 3rem); } }

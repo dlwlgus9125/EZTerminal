@@ -1,3 +1,4 @@
+import { toggleWorkbenchTool } from './workbench-navigation';
 import {
   createRegisteredE2eTempDir,
   expect,
@@ -23,7 +24,7 @@ test.beforeEach(() => {
 });
 
 async function openDrawerAtFixture(window: Page): Promise<void> {
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   const pathInput = window.getByTestId('file-path-input');
   await expect(pathInput).not.toHaveValue('');
   await pathInput.fill(fixtureDir);
@@ -55,7 +56,7 @@ test('file explorer browses folders-first, includes dotfiles, and previews text'
   await window.getByTestId('viewer-close').click();
   await expect(window.getByTestId('file-viewer-overlay')).toHaveCount(0);
 
-  await window.getByTestId('btn-toggle-files').click();
+  await toggleWorkbenchTool(window, 'btn-toggle-files');
   await expect(window.getByTestId('file-explorer-panel')).toHaveCount(0);
   await app.close();
 });

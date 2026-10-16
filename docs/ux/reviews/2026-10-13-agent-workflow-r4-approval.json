@@ -1,0 +1,43 @@
+{
+    "schemaVersion":  1,
+    "id":  "ezterminal-agent-workflow-r4-2026-10-13",
+    "status":  "approved-for-implementation",
+    "approvedBy":  "user",
+    "approvedOn":  "2026-10-13",
+    "recordedAt":  "2026-10-13T12:42:25.7030303Z",
+    "timestampMeaning":  "Record creation time; exact user-message time unavailable",
+    "statements":  [
+                       "승인",
+                       "각 구현은 멀티에이전트로하고 이 세션은 검수를 한다"
+                   ],
+    "scope":  "Approved r4 plan and prototype: zero-turn capabilities, native extensions, project sibling subprojects/general chats, editable executable workflow, stage conversations, AI draft edits and undo, immutable runs, desktop and Android",
+    "implementationMode":  "Implementation agents; root session reviews and validates",
+    "individualScreenReviews":  "not-asserted",
+    "productImplementationComplete":  false,
+    "historicalPrototypeChecks":  245,
+    "hashAlgorithm":  "SHA-256",
+    "files":  [
+                  {
+                      "path":  "docs/ux/reference/v2-agent-chat-r4/manifest.json",
+                      "sha256":  "d47db1dfbc9204f1c40fb71d3adca485e30a6eec2f3b573145d1fb0164190787"
+                  },
+                  {
+                      "path":  "docs/ux/reviews/r4-approved/agent-workflow-plan.md",
+                      "sha256":  "130fcf81279700d3eb6de4accfa6f07e526227ffad26f3d081fc99cc2bf8a301"
+                  },
+                  {
+                      "path":  "docs/ux/reviews/r4-approved/frontend-design.md",
+                      "sha256":  "25ffaeee2f43b4cefcd737052bb8ef303216ce5f076324cd0afb0f7b3353cf8a"
+                  },
+                  {
+                      "path":  "docs/ux/reviews/r4-approved/reviewed-manifest.json",
+                      "sha256":  "d47db1dfbc9204f1c40fb71d3adca485e30a6eec2f3b573145d1fb0164190787"
+                  }
+              ],
+    "referenceArtifacts":  "docs/ux/reviews/r4-approved/reviewed-manifest.json",
+    "exclusions":  [
+                       "Performance benchmarks",
+                       "Commit, push, deployment",
+                       "External native-app EZTerminal workflow skill access"
+                   ]
+}

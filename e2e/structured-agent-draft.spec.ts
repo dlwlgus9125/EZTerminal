@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { createRegisteredE2eTempDir, expect, test } from './test';
@@ -10,10 +10,12 @@ import {
   type DaemonSnapshot,
 } from '../src/shared/daemon-protocol';
 import { launchApp } from './launch-app';
-import { readXtermBuffer } from './xterm-buffer';
 
 const FAKE_CODEX_DIR = path.resolve(__dirname, 'fixtures', 'fake-codex');
 const FAKE_CODEX_VERSION_FILE = 'ezterminal-e2e-codex-version.txt';
+const evidenceDirectory = path.resolve('artifacts/conversation-ux/windows');
+mkdirSync(evidenceDirectory, { recursive: true });
+
 
 function fakeCodexEnvironment(versionDirectory: string): Record<string, string> {
   const key = Object.keys(process.env).find((candidate) => candidate.toLowerCase() === 'path')
@@ -37,7 +39,8 @@ function structuredAgentState(snapshot: DaemonSnapshot): {
   };
 }
 
-test('New Terminal opens immediately and an older Codex CLI starts without app-chat setup', async () => {
+test('New Terminal opens immediately and an older Codex CLI starts without app-chat setup', async ({ browserName }, testInfo) => {
+  void browserName;
   const userDataDir = createRegisteredE2eTempDir('ezterm-terminal-first-e2e-');
   writeFileSync(path.join(userDataDir, FAKE_CODEX_VERSION_FILE), '0.1.0', 'utf8');
   const app = await launchApp(userDataDir, fakeCodexEnvironment(userDataDir));
@@ -53,17 +56,17 @@ test('New Terminal opens immediately and an older Codex CLI starts without app-c
     expect(launchers.find((entry) => entry.launcherId === 'codex')).toMatchObject({ installed: true });
     const inspection = await window.evaluate(() => globalThis.window.ezterminal.inspectDaemonProvider('codex'));
     expect(inspection.ok && inspection.value.probe.available).toBe(false);
-    await window.getByTestId('btn-new-session').click();
-    await window.getByTestId('new-session-terminal').click();
-    await window.getByTestId('new-session-project').selectOption('direct');
-    await window.getByRole('textbox', { name: 'Host folder path' }).fill(userDataDir);
-    await window.getByTestId('session-cli-launcher').selectOption('codex');
-    await window.getByTestId('session-cli-model').selectOption('custom');
-    await window.getByTestId('session-cli-model-name').fill('chosen-cli-model');
-    await window.getByTestId('session-cli-start').click();
-    const terminal = window.locator('[data-testid="pane"]:visible').getByTestId('pty-block');
-    await expect(terminal).toBeVisible();
-    await expect.poll(() => readXtermBuffer(terminal), { timeout: 20000 }).toContain('CLI-MODEL:chosen-cli-model');
+    const command = window.locator('[data-testid="pane"]:visible').getByTestId('cmd-input');
+    await command.fill('codex --model chosen-cli-model');
+    await command.press('Enter');
+    const terminal = window.locator('[data-testid="pane"]:visible');
+    await expect(terminal).toContainText('CLI-MODEL:chosen-cli-model', { timeout: 20_000 });
+  } catch (error) {
+    const window = await app.firstWindow();
+    await window.screenshot({ path: path.join(evidenceDirectory, 'terminal.png') });
+    await testInfo.attach('terminal', { path: path.join(evidenceDirectory, 'terminal.png'), contentType: 'image/png' });
+    console.log((await window.locator('body').innerText()).slice(-5000));
+    throw error;
   } finally { await app.close(); }
 });
 
@@ -78,14 +81,13 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
     ));
     expect(before).not.toBeNull();
 
-    await window.getByTestId('btn-toggle-agents').click();
+    await window.getByTestId('rail-agents').click();
     await window.getByTestId('agent-new-run').click();
 
-    await expect(window.getByTestId('new-session-agent')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('new-session-conversation')).toHaveCount(0);
-    const draft = window.getByTestId('structured-agent-draft');
+    await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
+    const draft = window.getByTestId('conversation-start');
     await expect(draft).toBeVisible();
-    await expect(draft.getByTestId('structured-agent-first-prompt')).toHaveCount(0);
+    await expect(draft.getByTestId('structured-agent-composer-input')).toBeVisible();
 
     const after = await window.evaluate(async () => (
       globalThis.window.ezterminal.getDaemonSnapshot()
@@ -100,7 +102,8 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
   }
 });
 
-test('New Agent keeps a newer compatible Codex ready while Claude consent is pending', async () => {
+test('New Agent keeps a newer compatible Codex ready while Claude consent is pending', async ({ browserName }, testInfo) => {
+  void browserName;
   const userDataDir = createRegisteredE2eTempDir('ezterm-codex-upgrade-e2e-');
   const versionFile = path.join(userDataDir, FAKE_CODEX_VERSION_FILE);
   writeFileSync(versionFile, '0.152.1', 'utf8');
@@ -192,14 +195,13 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(codexCard.getByTestId('provider-enable-codex')).toHaveCount(0);
     await window.getByTestId('btn-toggle-settings').click();
 
-    await window.getByTestId('btn-toggle-agents').click();
+    await window.getByTestId('rail-agents').click();
     await window.getByTestId('agent-new-run').click();
 
-    await expect(window.getByTestId('new-session-agent')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('new-session-conversation')).toHaveCount(0);
-    const draft = window.getByTestId('structured-agent-draft');
+    await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
+    const draft = window.getByTestId('conversation-start');
     await expect(draft).toBeVisible();
-    const provider = draft.getByTestId('structured-agent-provider');
+    const provider = draft.getByRole('combobox', { name: 'Conversation AI' });
     await expect(
       provider,
       `Codex enable receipt: ${JSON.stringify(receipt)}`,
@@ -207,32 +209,36 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(provider.locator('option[value="codex"]')).toHaveText('Codex');
     await expect(provider.locator('option[value="codex"]')).toBeEnabled();
 
-    const project = window.getByTestId('new-session-project');
-    await project.selectOption(restoredSnapshot!.workspaces[0].projectId);
-    const workspace = window.getByTestId('new-session-workspace');
+    const workspace = draft.getByRole('combobox', { name: 'Conversation workspace' });
     await workspace.selectOption(restoredSnapshot!.workspaces[0].id);
     await expect(workspace).not.toHaveValue('');
-    const send = draft.getByTestId('structured-agent-create');
-    await expect(send).toBeEnabled();
-    await send.click();
-
     const session = window.getByTestId('structured-agent-session');
     await expect(session).toBeVisible();
     await expect(session).toHaveAttribute('data-provider', 'codex');
+    await expect(session).toContainText('Write your first message');
+    const empty = await window.evaluate(async () => {
+      const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
+      return snapshot?.agents;
+    });
+    expect(empty).toEqual([]);
+    const composer = session.getByTestId('structured-agent-composer-input');
+    await composer.fill('$fixture-rev');
+    await expect(session.getByRole('option', { name: /\$fixture-review/ })).toBeVisible();
+    await composer.press('Enter');
+    await expect(composer).toHaveValue('$fixture-review ');
+    expect((await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot()))?.turns).toEqual([]);
+    // Previous conversations live in the header's session menu.
+    await session.getByTestId('structured-agent-menu').click();
+    await session.getByRole('menuitem', { name: 'Previous conversations', exact: true }).click();
+    await expect(window.getByTestId('conversation-history-dialog')).toBeVisible();
+    await window.getByRole('button', { name: 'Close previous conversations', exact: true }).click();
+    await expect(composer).toHaveValue('$fixture-review ');
+    await composer.fill('$fixture-review Verify the ready provider.');
+    await window.screenshot({ path: path.join(evidenceDirectory, 'new-conversation.png') });
+    await composer.press('Enter');
+    await expect(window.getByTestId('conversation-start')).toHaveCount(0, { timeout: 30_000 });
     const sessionId = await session.getAttribute('data-session-id');
     expect(sessionId).toBeTruthy();
-    await expect(session).toContainText('Not started');
-    const empty = await window.evaluate(async (id) => {
-      const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
-      return { agent: snapshot?.agents.find((agent) => agent.sessionId === id), turns: snapshot?.turns.filter((turn) => turn.sessionId === id) };
-    }, sessionId!);
-    expect(empty.agent).toMatchObject({ state: 'idle', queuedTurnCount: 0 });
-    expect(empty.agent?.providerSessionId).toBeUndefined();
-    expect(empty.turns).toEqual([]);
-    const composer = session.getByTestId('structured-agent-composer-input');
-    await expect(composer).toBeFocused();
-    await composer.fill('Verify the ready provider.');
-    await composer.press('Enter');
     await expect.poll(async () => window.evaluate(async (createdSessionId) => {
       const snapshot = await globalThis.window.ezterminal.getDaemonSnapshot();
       const agent = snapshot?.agents.find((candidate) => candidate.sessionId === createdSessionId);
@@ -249,6 +255,16 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
       agentState: 'idle',
       turnState: 'completed',
     });
+    expect(JSON.parse(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8'))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'skill', name: 'fixture-review', path: 'C:\\fixture\\skills\\review\\SKILL.md' }),
+    ]));
+    await window.screenshot({ path: path.join(evidenceDirectory, 'after-first-send.png') });
+    await testInfo.attach('after-first-send', { path: path.join(evidenceDirectory, 'after-first-send.png'), contentType: 'image/png' });
+  } catch (error) {
+    const window = await app.firstWindow();
+    await window.screenshot({ path: path.join(evidenceDirectory, 'first-send-error.png') });
+    console.log((await window.locator('body').innerText()).slice(-8000));
+    throw error;
   } finally {
     await app.close();
   }
@@ -281,12 +297,13 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
       const window = await app.firstWindow();
       await window.setViewportSize({ width: 1440, height: 900 });
       await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
-      await window.getByTestId('btn-toggle-agents').click();
+      await window.getByTestId('rail-agents').click();
       const registered = await window.evaluate(async () => (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items);
       const projectId = registered.find((entry) => entry.name === 'Session UX fixture')?.projectId;
       expect(projectId, JSON.stringify(registered)).toBeTruthy();
       const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
-      await window.getByTestId(`agent-project-new-chat-${projectId}`).click();
+      await window.getByRole('button', { name: 'Manage Session UX fixture', exact: true }).click();
+      await window.getByRole('menuitem', { name: 'New Terminal', exact: true }).click();
       await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
       const pane = window.locator('[data-testid="pane"]:visible');
       await expect(pane).toHaveCount(1);
@@ -295,20 +312,22 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
       expect(sessionId).toBeTruthy();
       const sessions = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
       expect(sessions).toHaveLength(before.length + 1);
+      const sessionTitle = await window.evaluate(async id => (await globalThis.window.ezterminal.getDaemonSnapshot())?.sessions.find(item => item.id === id)?.title, sessionId!);
+      expect(sessionTitle).toBeTruthy();
       // Project terminal identity is canonical, even when TEMP uses a DOS 8.3 alias.
       expect(path.resolve(sessions.find((session) => session.sessionId === sessionId)!.cwd)).toBe(realpathSync.native(projectRoot));
       await pane.getByTestId('cmd-input').fill('echo preserved-draft');
       await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
       await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`)).toHaveCount(0);
-      const group = window.locator('.daemon-agent-project').filter({ has: window.getByTestId(`agent-project-open-${projectId}`) });
-      await group.locator('summary').click();
-      const row = group.locator(`button.daemon-agent-session[data-session-id="${sessionId}"]`);
+      const projectRow = window.getByTestId(`agent-project-open-${projectId}`);
+      if (await projectRow.getAttribute('aria-expanded') !== 'true') await projectRow.getByRole('button', { name: 'Expand: Session UX fixture', exact: true }).click();
+      const row = window.getByTestId('project-conversation-tree').getByRole('treeitem', { name: `${sessionTitle} · Terminal`, exact: true });
       await expect(row).toBeVisible();
       await row.click();
       const reopened = window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`);
       await expect(reopened).toBeVisible();
       await expect(reopened.getByTestId('cmd-input')).toHaveValue('echo preserved-draft');
-      await row.locator('..').getByTestId('session-end').click();
+      await row.getByTestId('session-end').click();
       await expect(window.getByTestId('session-end-dialog')).toBeVisible();
       await window.getByTestId('session-end-confirm').click();
       await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).some((session) => session.sessionId === sessionId)).toBe(false);

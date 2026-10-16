@@ -28,6 +28,7 @@ const ANDROID_COMMANDS = new Set<DaemonCommandType>([
   'agent.submit',
   'agent.interrupt-and-submit',
   'agent.interrupt',
+  'agent.queue',
   'agent.set-settings',
   'agent.cancel',
   'agent.archive',
@@ -70,6 +71,7 @@ function getTargetSessionId(command: DaemonCommand): string | undefined {
     case 'agent.submit':
     case 'agent.interrupt-and-submit':
     case 'agent.interrupt':
+    case 'agent.queue':
     case 'agent.set-settings':
     case 'agent.cancel':
     case 'agent.archive':

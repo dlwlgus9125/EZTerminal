@@ -16,16 +16,15 @@ import {
   type AgentOrchestrationSnapshot,
 } from '../../src/shared/agent-orchestration';
 import { countAgentAttention } from '../../src/shared/agent-attention';
-import { observationalIntervalMs } from '../../src/shared/resource-profile';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import { formatCwd } from '../../src/renderer/format-cwd';
-import { startAsyncPoll } from '../../src/renderer/async-poller';
 import { formatEndpointHost } from './mobile-endpoint';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { e2eLog } from './e2e-telemetry';
-import { MobileHomeView, type HomeSessionRow } from './MobileHomeView';
+import type { HomeSessionRow } from './MobileHomeView';
+import { MobilePlanningNavigator } from './MobilePlanningNavigator';
 import { MobileMoreSheet } from './MobileMoreSheet';
 import { MobilePageHeader } from './MobilePageHeader';
 import { MobileSessionSheet } from './MobileSessionSheet';
@@ -57,6 +56,7 @@ import {
   type UncertainAgentCreate,
 } from './mobile-agent-create-recovery-store';
 import type { MobileWorkspaceTerminalResult } from './workspace-terminal';
+import { MobileOfflineChatCacheStore, type MobileOfflineChatCache } from './mobile-offline-chat-cache';
 import { usePageVisible } from './use-page-visible';
 import {
   createInitialAppUpdateSnapshot,
@@ -110,7 +110,6 @@ const MOBILE_PRELOAD_LOADERS: readonly PreloadableFeature[] = Object.freeze(
 
 /** Slow enough to be invisible on a battery, fast enough that a finished run
  * stops claiming to be live before the user looks twice. */
-const ACTIVE_RUN_POLL_MS = 4_000;
 
 let mobileSurfaceSequence = 0;
 function nextMobileSurfaceId(): string {
@@ -160,6 +159,7 @@ export function MobileWorkspace({
   onDisconnect,
   appUpdateController = UNAVAILABLE_APP_UPDATE_CONTROLLER,
   agentCreateRecoveryStore,
+  offlineChatCache = null,
 }: {
   transport: WsEzTerminalTransport;
   /** Capacitor activity, independent of WebView visibility quirks. */
@@ -171,6 +171,7 @@ export function MobileWorkspace({
   readonly appUpdateController?: MobileAppUpdateController;
   /** Injectable Android Keystore-backed escrow; MobileWorkspace owns its lifecycle. */
   readonly agentCreateRecoveryStore?: MobileAgentCreateRecoveryStoreLike;
+  readonly offlineChatCache?: MobileOfflineChatCache | null;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences: uiPreferences } = useMobileUiPreferences();
@@ -180,11 +181,16 @@ export function MobileWorkspace({
   const tabsStateRef = useRef(tabsState);
   tabsStateRef.current = tabsState;
   const [tab, setTab] = useState<MobileShellTab>('terminal');
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [workflowNavigationTarget, setWorkflowNavigationTarget] = useState<{ subprojectId: string; nodeId?: string; key: string }>();
   const [restoreAuthority, setRestoreAuthority] = useState<string | null>(null);
   const restoredAuthorityRef = useRef<string | null>(null);
   const userNavigatedRef = useRef(false);
   const lastWorkTabRef = useRef<'terminal' | 'agents'>('terminal');
   const [activeAgentSessionId, setActiveAgentSessionId] = useState<string | null>(null);
+  const [newConversationRequest, setNewConversationRequest] = useState(0);
+  const [conversationHistoryRequest, setConversationHistoryRequest] = useState<{ readonly conversationId?: string; readonly projectId?: string; readonly key: string }>();
+  const conversationHistoryReturnTab = useRef<'home' | 'tasks'>('home');
   const [terminalOpenError, setTerminalOpenError] = useState(false);
   const terminalOpeningRef = useRef(false);
   const [subPage, setSubPage] = useState<MobileSubPage | null>(null);
@@ -199,8 +205,8 @@ export function MobileWorkspace({
     EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   );
   const [daemonRuntimeState, setDaemonRuntimeState] = useState<DaemonRuntimeViewState>({
-    status: 'loading',
-    snapshot: null,
+    status: offlineChatCache ? 'recovering' : 'loading',
+    snapshot: offlineChatCache?.snapshot ?? null,
   });
   const recoveryStoreRef = useRef<MobileAgentCreateRecoveryStoreLike | null>(null);
   if (recoveryStoreRef.current === null) {
@@ -219,7 +225,6 @@ export function MobileWorkspace({
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
   const updateAvailable = isAppUpdateAvailable(appUpdateController.snapshot);
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
-  const [activeRuns, setActiveRuns] = useState<ReadonlyMap<string, string>>(new Map());
   const [agentBootstraps, setAgentBootstraps] = useState<
     ReadonlyMap<string, AgentTerminalBootstrap>
   >(new Map());
@@ -284,11 +289,11 @@ export function MobileWorkspace({
 
   const prepareAgentCreateRecovery = useCallback<
     MobileAgentCreateRecoveryController['prepare']
-  >(async (command) => {
+  >(async (command, draft) => {
     const authorityFingerprint = agentCreateRecoveryAuthorityRef.current;
     if (agentCreateRecoveryStateRef.current.status !== 'ready' || !authorityFingerprint) return false;
     try {
-      const recovery = mobileAgentCreateRecoveryFromCommand(command);
+      const recovery = mobileAgentCreateRecoveryFromCommand(command, draft);
       await recoveryStoreRef.current!.save(recovery, authorityFingerprint);
       if (agentCreateRecoveryAuthorityRef.current !== authorityFingerprint) return false;
       updateAgentCreateRecoveryState({ status: 'ready', recovery });
@@ -470,35 +475,6 @@ export function MobileWorkspace({
     };
   }, [connected, transport]);
 
-  // Which sessions are actually executing something. `listRuns` is the one
-  // authority for that, and it is edge-triggered nowhere — a run can also end,
-  // which nothing announces — so this looks again while the Home tab is up and
-  // stops entirely when it is not.
-  useEffect(() => {
-    if (!connected || !pageVisible || tab !== 'home') {
-      setActiveRuns(new Map());
-      return undefined;
-    }
-    let alive = true;
-    const read = async (): Promise<void> => {
-      await transport.listRuns().then((runs) => {
-        if (!alive) return;
-        setActiveRuns(new Map(runs.map((run) => [run.sessionId, run.commandText])));
-      }).catch(() => undefined);
-    };
-    const stopPoll = startAsyncPoll({
-      task: read,
-      intervalMs: () => observationalIntervalMs(
-        ACTIVE_RUN_POLL_MS,
-        uiPreferences.resourceProfile,
-      ),
-    });
-    return () => {
-      alive = false;
-      stopPoll();
-    };
-  }, [connected, pageVisible, tab, transport, uiPreferences.resourceProfile]);
-
   useEffect(() => {
     let alive = true;
     const apply = (snapshot: AgentActivitySnapshot): void => {
@@ -522,7 +498,20 @@ export function MobileWorkspace({
   useEffect(() => {
     let alive = true;
     const unsubscribe = transport.onDaemonRuntimeState((state) => {
-      if (alive) setDaemonRuntimeState(state);
+      if (alive) setDaemonRuntimeState((previous) => {
+        // Authentication precedes the first daemon seed after a cold offline
+        // restore. Keep the mounted project and its active editor through that
+        // loading gap; an authoritative snapshot (including an empty one)
+        // still replaces the cache immediately.
+        const awaitingSeed = state.status === 'loading' || state.status === 'recovering';
+        return !state.snapshot && previous.snapshot && (!transport.isAuthed || awaitingSeed)
+          ? { ...state, status: 'recovering', snapshot: previous.snapshot } : state;
+      });
+      if (state.snapshot && state.status === 'ready' && transport.isAuthed) {
+        void transport.getRemoteToken().then(mobileAgentCreateAuthorityFingerprint)
+          .then((authority) => new MobileOfflineChatCacheStore().saveSnapshot(authority, state.snapshot!))
+          .catch(() => undefined);
+      }
     });
     transport.setDaemonEventsSubscribed(true);
     return () => {
@@ -531,6 +520,18 @@ export function MobileWorkspace({
       transport.setDaemonEventsSubscribed(false);
     };
   }, [transport]);
+
+  useEffect(() => {
+    if (!offlineChatCache || transport.isAuthed) return;
+    setDaemonRuntimeState((previous) => previous.snapshot ? previous
+      : { status: 'recovering', snapshot: offlineChatCache.snapshot });
+    if (userNavigatedRef.current) return;
+    const saved = readWorkspaceRestore(offlineChatCache.authorityFingerprint);
+    if (saved?.activeAgentSessionId && offlineChatCache.snapshot.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)) {
+      setActiveAgentSessionId(saved.activeAgentSessionId);
+      setTab('agents');
+    }
+  }, [offlineChatCache, transport]);
 
   useEffect(() => {
     let alive = true;
@@ -805,8 +806,8 @@ export function MobileWorkspace({
         if (cancelled) return;
         const agentId = snapshot?.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)
           ? saved.activeAgentSessionId : null;
-        setActiveAgentSessionId(agentId);
         if (!userNavigatedRef.current && !agentCreateRecoveryStateRef.current.recovery) {
+          setActiveAgentSessionId(agentId);
           setTab(saved.destination === 'agents' && agentId ? 'agents' : 'terminal');
         }
       }
@@ -817,14 +818,16 @@ export function MobileWorkspace({
 
   useEffect(() => {
     if (tab === 'terminal' || tab === 'agents') lastWorkTabRef.current = tab;
-    if (!restoreAuthority || !connected) return;
-    writeWorkspaceRestore(restoreAuthority, {
-      terminalSessionIds: tabsState.tabs.map((entry) => entry.sessionId),
-      activeTerminalSessionId: tabsState.activeSessionId,
+    const authority = restoreAuthority ?? offlineChatCache?.authorityFingerprint;
+    if (!authority) return;
+    const previous = connected ? null : readWorkspaceRestore(authority);
+    writeWorkspaceRestore(authority, {
+      terminalSessionIds: connected ? tabsState.tabs.map((entry) => entry.sessionId) : previous?.terminalSessionIds ?? [],
+      activeTerminalSessionId: connected ? tabsState.activeSessionId : previous?.activeTerminalSessionId ?? null,
       activeAgentSessionId,
       destination: lastWorkTabRef.current,
     });
-  }, [restoreAuthority, connected, tabsState, tab, activeAgentSessionId]);
+  }, [restoreAuthority, offlineChatCache?.authorityFingerprint, connected, tabsState, tab, activeAgentSessionId]);
 
   // File-explorer drawer's "open terminal here" (M4): a fresh tab whose
   // session starts in `dirPath` — mirrors `quickNewTab`, cwd threaded through.
@@ -1043,27 +1046,6 @@ export function MobileWorkspace({
         </div>
       </div>
     );
-  } else if (tab === 'home') {
-    page = (
-      <MobileHomeView
-        connected={connected}
-        connectionUrl={connectionUrl}
-        desktopControlSupported={transport.supportsDesktopControl}
-        sessions={sessionRows}
-        activeSessionId={tabsState.activeSessionId}
-        agentSnapshot={userFacingAgentSnapshot}
-        activeRuns={activeRuns}
-        roundTripMs={roundTripMs}
-        agentAttention={agentAttention}
-        openclawVisible={effectiveOpenClawVisible}
-        openclawState={openclawState?.state}
-        onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-pc')}
-        onOpenSession={openSessionFromList}
-        onOpenTerminal={() => selectTab('terminal')}
-        onOpenAgents={() => selectTab('agents')}
-        onOpenClaw={() => openSubPage('openclaw', 'shell-tab-home')}
-      />
-    );
   } else if (tab === 'agents') {
     page = (
       <LazyFeature
@@ -1073,6 +1055,7 @@ export function MobileWorkspace({
           coordinationSnapshot: agentCoordinationSnapshot,
           orchestrationSnapshot: agentOrchestrationSnapshot,
           daemonRuntimeState,
+          structuredTranscripts: offlineChatCache?.transcripts,
           disconnected: !connected,
           onBack: () => selectTab('terminal'),
           onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),
@@ -1089,6 +1072,19 @@ export function MobileWorkspace({
           },
           agentCreateRecovery,
           initialSessionId: activeAgentSessionId,
+          newSessionRequest: newConversationRequest,
+          onNewSessionRequestConsumed: () => setNewConversationRequest(0),
+          historyRequest: conversationHistoryRequest,
+          onHistoryRequestConsumed: () => setConversationHistoryRequest(undefined),
+          onHistoryRequestClosed: () => selectTab(conversationHistoryReturnTab.current),
+          projectId: selectedProjectId,
+          onOpenWorkflow: (projectId: string, subprojectId: string, nodeId?: string) => {
+            setSelectedProjectId(projectId);
+            setWorkflowNavigationTarget({ subprojectId, nodeId, key: crypto.randomUUID() });
+            selectTab('home');
+          },
+          onProjectFilterChange: setSelectedProjectId,
+          flatConversations: true,
           onActiveSessionChange: setActiveAgentSessionId,
           transport,
           onFocusSession: (sessionId) => {
@@ -1120,7 +1116,31 @@ export function MobileWorkspace({
         tabRootActive={tab !== 'terminal'}
         onRequestRoot={closeSubPage}
         onRequestTabRoot={() => setTab('terminal')}
-        page={page}
+        page={<>
+          <div hidden={subPage !== null || tab !== 'home' && tab !== 'tasks'} className="mobile-workflow-persistent">
+            <MobilePlanningNavigator state={daemonRuntimeState} transport={transport} connected={connected}
+              active={subPage === null && (tab === 'home' || tab === 'tasks')}
+              navigationTarget={workflowNavigationTarget}
+              mode={tab === 'tasks' ? 'tasks' : 'projects'} projectId={selectedProjectId}
+              onSelectProject={setSelectedProjectId}
+              onOpenChat={sessionId => { setActiveAgentSessionId(sessionId ?? null); if (!sessionId) setNewConversationRequest(Date.now()); selectTab('agents'); }}
+              onOpenConversationHistory={entry => {
+                conversationHistoryReturnTab.current = tab === 'tasks' ? 'tasks' : 'home';
+                setConversationHistoryRequest({ conversationId: entry.conversationId, projectId: entry.projectId, key: crypto.randomUUID() });
+                selectTab('agents');
+              }}
+              onOpenHistory={projectId => {
+                conversationHistoryReturnTab.current = tab === 'tasks' ? 'tasks' : 'home';
+                setConversationHistoryRequest({ projectId, key: crypto.randomUUID() });
+                selectTab('agents');
+              }}
+              onOpenFiles={() => openSubPage('files', 'shell-tab-home')}
+              onOpenTerminal={workspaceId => { if (workspaceId) return createWorkspaceTerminal(workspaceId); selectTab('terminal'); }}
+              onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-home')}
+            />
+          </div>
+          {page}
+        </>}
         navigation={immersive ? undefined : (
           <MobileTabBar
             tab={tab}
@@ -1148,7 +1168,7 @@ export function MobileWorkspace({
                 type="button"
                 className="mob-icon-btn"
                 onClick={() => selectTab('home')}
-                aria-label={t('mobile.tabs.home')}
+                aria-label={t('agentHub.projects.title')}
                 data-testid="workspace-hub-btn"
               >
                 <Home aria-hidden="true" />
@@ -1250,6 +1270,7 @@ export function MobileWorkspace({
                 updateAvailable={updateAvailable}
                 returnFocusRef={sheetReturnFocusRef}
                 onClose={() => setSheet(null)}
+                onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-more')}
                 onOpenSessions={() => openSubPage('sessions', 'shell-tab-more')}
                 onOpenFiles={() => openSubPage('files', 'shell-tab-more')}
                 onOpenStats={() => openSubPage('stats', 'shell-tab-more')}

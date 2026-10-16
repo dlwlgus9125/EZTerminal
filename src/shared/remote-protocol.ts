@@ -1,3 +1,4 @@
+import type { ConversationQuery, ConversationPage, ConversationReadResult, HistoryResumePreparationRequest, HistoryResumePreparation, HistoryResumeRequest, HistoryResumeResult } from './conversation-history';
 /**
  * Remote-control WS wire protocol (mobile remote-control M0) — a single
  * WebSocket connection multiplexes every interaction: auth, host-authorized
@@ -15,7 +16,7 @@
  * isolate this so a later swap to a binary WS frame (header + raw bytes) only
  * touches this module, not the bridge or transport call sites.
  *
- * Authentication requires the exact protocol version. Desktop and Android may
+ * Authentication requires an explicitly supported protocol version. Desktop and Android may
  * be installed independently, so a missing or unsupported version fails
  * closed with a distinct incompatibility response instead of masquerading as
  * a bad token or an endless transient reconnect.
@@ -87,6 +88,14 @@ import type {
   OpenClawStatus,
 } from './openclaw';
 import type { QuickCommand } from './quick-command';
+import type { PlanningCommand, PlanningReadResult, PlanningMutationResult } from './planning';
+import type { WorkflowCommand, WorkflowResult, WorkflowPreviewRequest, WorkflowPreviewResult, WorkflowNavigationResult } from './workflow';
+import type { AgentCapabilitiesRequest, AgentExtensionCommand, AgentCapabilitiesClient } from './agent-capabilities';
+import type { PlanningRunRequest, PlanningRunResult } from './planning-run';
+import type { PlanningAiRequest, PlanningAiResult } from './planning-ai';
+import type { PlanningAssetRequest, PlanningAssetResult } from './planning-asset';
+import type { ProjectArchiveRequest, ProjectArchiveResult } from './project-archive';
+import type { PlanningResultQuery, PlanningResultQueryResult } from './planning-result';
 import type {
   SessionSurfaceCloseDecision,
   SessionSurfaceCloseEntry,
@@ -125,6 +134,12 @@ export type RemoteCapability =
  * control snapshots and lifecycle receipts; v10 adds Lead orchestration; v11
  * added remote Project coordination writes; v12 replaces the collaboration
  * projection with the revisioned DaemonRuntime command/snapshot/event surface.
+ * v13 adds project planning; hosts retain v12 terminal/session compatibility
+ * and reject planning operations from clients that did not negotiate v13.
+ * v14 adds workflows and Agent capabilities. v15 adds unified conversation
+ * history, host-only native adoption, and compact workflow navigation.
+ * Explicit v12–v14 auth-ok replies retain read/PTY paths; authentication
+ * failure never triggers automatic version downgrade or mutation replay.
  */
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
@@ -136,13 +151,30 @@ export const REMOTE_PROTOCOL_VERSION_OPENCLAW_CONTROL = 9 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION = 10 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION_WRITE = 11 as const;
 export const REMOTE_PROTOCOL_VERSION_DAEMON_RUNTIME = 12 as const;
-export const REMOTE_PROTOCOL_VERSION = 12 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+export const REMOTE_PROTOCOL_VERSION_PLANNING = 13 as const;
+export const REMOTE_PROTOCOL_VERSION_WORKFLOW = 14 as const;
+export const REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES = 14 as const;
+export const REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY = 15 as const;
+export const REMOTE_PROTOCOL_VERSION_CONVERSATION_IDENTITY = 16 as const;
+export const REMOTE_PROTOCOL_VERSION = 16 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [12];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [16, 15, 14, 13, 12];
+/** An older host can accept this first auth without understanding the optional offer. */
+export const REMOTE_PROTOCOL_AUTH_BASELINE = 12 as const;
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
+}
+
+/** One authenticated offer, never a second lower-version attempt after failure. */
+export function negotiateRemoteProtocol(requested: unknown, offered: unknown): RemoteProtocolVersion | null {
+  if (!isRemoteProtocolVersion(requested)) return null;
+  if (offered === undefined) return requested;
+  if (!Array.isArray(offered) || offered.length < 1 || offered.length > 16
+    || offered.some(value => !Number.isSafeInteger(value) || value < 1 || value > 65_535)
+    || new Set(offered).size !== offered.length || !offered.includes(requested)) return null;
+  return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.find(version => offered.includes(version)) ?? null;
 }
 
 /** Copy-safe identity shown in About/Diagnostics and release evidence. */
@@ -212,6 +244,8 @@ export interface AuthMessage {
   readonly kind: 'auth';
   readonly token: string;
   readonly protocolVersion: RemoteProtocolVersion;
+  /** A new host selects its highest shared version; an older host keeps protocolVersion. */
+  readonly supportedProtocolVersions?: readonly RemoteProtocolVersion[];
   readonly clientVersion: string;
   readonly buildSha?: string;
   /** Required to advertise/use desktop control in protocol v2. */
@@ -485,6 +519,78 @@ export interface DaemonCommandRequest {
   readonly kind: 'daemon-command';
   readonly requestId: string;
   readonly command: DaemonCommand;
+}
+
+export interface PlanningReadRequest {
+  readonly kind: 'planning-read';
+  readonly requestId: string;
+  readonly projectId: string;
+  readonly subprojectId?: string;
+}
+
+export type WorkflowRequest =
+  | { readonly kind: 'workflow-navigation'; readonly requestId: string; readonly projectId: string }
+  | { readonly kind: 'workflow-preview'; readonly requestId: string; readonly request: WorkflowPreviewRequest }
+  | { readonly kind: 'workflow-read'; readonly requestId: string; readonly projectId: string }
+  | { readonly kind: 'workflow-execute'; readonly requestId: string; readonly command: WorkflowCommand };
+export type WorkflowReply = { readonly kind: 'workflow-read-reply' | 'workflow-execute-reply'; readonly requestId: string; readonly result: WorkflowResult }
+  | { readonly kind: 'workflow-navigation-reply'; readonly requestId: string; readonly result: WorkflowNavigationResult }
+  | { readonly kind: 'workflow-preview-reply'; readonly requestId: string; readonly result: WorkflowPreviewResult };
+export type AgentCapabilitiesWireRequest =
+  | { readonly kind: 'agent-capabilities-list'; readonly requestId: string; readonly request: AgentCapabilitiesRequest }
+  | { readonly kind: 'agent-capabilities-manage'; readonly requestId: string; readonly command: AgentExtensionCommand };
+export type AgentCapabilitiesWireReply =
+  | { readonly kind: 'agent-capabilities-list-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentCapabilitiesClient['list']>> }
+  | { readonly kind: 'agent-capabilities-manage-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentCapabilitiesClient['manage']>> };
+
+export type PlanningExtensionRequest =
+  | { readonly kind: 'planning-ai-request'; readonly requestId: string; readonly request: PlanningAiRequest }
+  | { readonly kind: 'planning-asset-request'; readonly requestId: string; readonly request: PlanningAssetRequest }
+  | { readonly kind: 'project-archive-request'; readonly requestId: string; readonly request: ProjectArchiveRequest };
+export type PlanningExtensionReply =
+  | { readonly kind: 'planning-ai-reply'; readonly requestId: string; readonly result: PlanningAiResult }
+  | { readonly kind: 'planning-asset-reply'; readonly requestId: string; readonly result: PlanningAssetResult }
+  | { readonly kind: 'project-archive-reply'; readonly requestId: string; readonly result: ProjectArchiveResult };
+
+export interface PlanningRunReadRequest {
+  readonly kind: 'planning-run-read';
+  readonly subprojectId?: string;
+  readonly requestId: string;
+  readonly projectId: string;
+}
+export interface PlanningResultRequest {
+  readonly kind: 'planning-result-read'; readonly requestId: string; readonly query: PlanningResultQuery;
+}
+export interface PlanningResultReply {
+  readonly kind: 'planning-result-reply'; readonly requestId: string; readonly result: PlanningResultQueryResult;
+}
+export interface PlanningRunExecuteRequest {
+  readonly kind: 'planning-run-execute';
+  readonly requestId: string;
+  readonly command: PlanningRunRequest;
+}
+export interface PlanningRunReply {
+  readonly kind: 'planning-run-reply';
+  readonly requestId: string;
+  readonly result: PlanningRunResult;
+}
+
+export interface PlanningExecuteRequest {
+  readonly kind: 'planning-execute';
+  readonly requestId: string;
+  readonly command: PlanningCommand;
+}
+
+export interface PlanningReadReply {
+  readonly kind: 'planning-read-reply';
+  readonly requestId: string;
+  readonly result: PlanningReadResult;
+}
+
+export interface PlanningExecuteReply {
+  readonly kind: 'planning-execute-reply';
+  readonly requestId: string;
+  readonly result: PlanningMutationResult;
 }
 
 export interface DaemonEventsSubscribeRequest {
@@ -825,7 +931,23 @@ export interface QuickCommandsListRequest {
   readonly requestId: string;
 }
 
+export type ConversationHistoryRequest =
+  | { readonly kind: 'conversation-history-resolve'; readonly requestId: string; readonly ref: import('./conversation-history').ConversationRef }
+  | { readonly kind: 'conversation-history-list'; readonly requestId: string; readonly query: ConversationQuery }
+  | { readonly kind: 'conversation-history-read'; readonly requestId: string; readonly conversationId: string; readonly cursor?: string; readonly limit?: number }
+  | { readonly kind: 'conversation-history-prepare'; readonly requestId: string; readonly request: HistoryResumePreparationRequest }
+  | { readonly kind: 'conversation-history-resume'; readonly requestId: string; readonly request: HistoryResumeRequest };
+export type ConversationHistoryReply =
+  | { readonly kind: 'conversation-history-resolve-reply'; readonly requestId: string; readonly result: import('./conversation-history').ConversationResolveResult }
+  | { readonly kind: 'conversation-history-list-reply'; readonly requestId: string; readonly result: ConversationPage }
+  | { readonly kind: 'conversation-history-read-reply'; readonly requestId: string; readonly result: ConversationReadResult }
+  | { readonly kind: 'conversation-history-prepare-reply'; readonly requestId: string; readonly result: HistoryResumePreparation }
+  | { readonly kind: 'conversation-history-resume-reply'; readonly requestId: string; readonly result: HistoryResumeResult };
+
 export type ClientToServerMessage =
+  | ConversationHistoryRequest
+  | WorkflowRequest
+  | AgentCapabilitiesWireRequest
   | AuthMessage
   | ListSessionsMessage
   | ListRunsMessage
@@ -853,6 +975,12 @@ export type ClientToServerMessage =
   | DaemonSnapshotRequest
   | DaemonTranscriptRequest
   | DaemonCommandRequest
+  | PlanningReadRequest
+  | PlanningExecuteRequest
+  | PlanningRunReadRequest
+  | PlanningResultRequest
+  | PlanningRunExecuteRequest
+  | PlanningExtensionRequest
   | DaemonEventsSubscribeRequest
   | DaemonEventsUnsubscribeRequest
   | AgentSeenRequest
@@ -1508,6 +1636,9 @@ export interface WorktreeReplyMessage {
 }
 
 export type ServerToClientMessage =
+  | ConversationHistoryReply
+  | WorkflowReply
+  | AgentCapabilitiesWireReply
   | AuthOkMessage
   | AuthFailMessage
   | SessionListMessage
@@ -1536,6 +1667,11 @@ export type ServerToClientMessage =
   | DaemonSnapshotMessage
   | DaemonTranscriptMessage
   | DaemonCommandReply
+  | PlanningReadReply
+  | PlanningExecuteReply
+  | PlanningRunReply
+  | PlanningResultReply
+  | PlanningExtensionReply
   | DaemonEventMessage
   | AgentSeenReply
   | ManagedMergeDecisionReply

@@ -35,6 +35,7 @@
     "out/",
     ".vite/",
     "dist/",
+    "artifacts/",
     "playwright-report/",
     "test-results/",
     "mobile/"

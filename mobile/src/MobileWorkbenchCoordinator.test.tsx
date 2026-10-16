@@ -166,6 +166,32 @@ describe('MobileWorkbenchCoordinator', () => {
     expect(onRequestRoot).toHaveBeenCalledTimes(1);
   });
 
+  it('hides a kept-alive page shell while the terminal is the active layer', () => {
+    // MobileWorkspace always passes a page (its planning navigator stays mounted behind
+    // `hidden`), so on the Terminal tab an empty shell would otherwise cover the terminal.
+    act(() => root.render(
+      <MobileWorkbenchCoordinator
+        terminal={<div data-testid="terminal-destination">terminal</div>}
+        page={<div hidden data-testid="kept-alive-navigator">navigator</div>}
+        terminalActive
+      />,
+    ));
+
+    const shell = host.querySelector<HTMLElement>('[data-testid="mobile-page-shell"]');
+    expect(shell?.hidden).toBe(true);
+    expect(host.querySelector('[data-testid="kept-alive-navigator"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
+
+    act(() => root.render(
+      <MobileWorkbenchCoordinator
+        terminal={<div data-testid="terminal-destination">terminal</div>}
+        page={<div data-testid="kept-alive-navigator">navigator</div>}
+        terminalActive={false}
+      />,
+    ));
+    expect(host.querySelector<HTMLElement>('[data-testid="mobile-page-shell"]')?.hidden).toBe(false);
+  });
+
   it('preserves terminal DOM identity and makes it inert under an auxiliary page', () => {
     const render = (page?: JSX.Element): void => {
       act(() => root.render(

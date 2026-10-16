@@ -1,6 +1,7 @@
 import { test, expect } from './test';
 
 import { launchApp } from './launch-app';
+import { toggleWorkbenchTool } from './workbench-navigation';
 
 test('narrow status panel isolates focus and restores terminal use without reflow', async () => {
   const app = await launchApp();
@@ -12,7 +13,7 @@ test('narrow status panel isolates focus and restores terminal use without reflo
 
   const panel = window.getByTestId('status-panel');
   const sidebar = window.getByTestId('workbench-sidebar');
-  const toggle = window.getByTestId('btn-toggle-stats');
+  const toggle = window.getByTestId('rail-tools');
   const pane = window.getByTestId('pane');
   await expect(panel).toHaveCount(0);
   await expect(pane).toBeVisible();
@@ -27,7 +28,7 @@ test('narrow status panel isolates focus and restores terminal use without reflo
     before = second;
   }).toPass({ timeout: 10_000 });
 
-  await toggle.click();
+  await toggleWorkbenchTool(window, 'btn-toggle-stats');
   await expect(panel).toBeVisible();
   await expect(sidebar).toHaveAttribute('role', 'dialog');
   await expect(sidebar).toHaveAttribute('aria-modal', 'true');

@@ -15,7 +15,7 @@ import './workbench/mobile-shell-story.css';
 
 interface OpenClawRecoveryStoryProps {
   readonly surface: 'desktop' | 'mobile';
-  readonly phase: 'repairing' | 'blocked';
+  readonly phase: 'starting' | 'blocked';
   readonly locale: 'en' | 'ko';
 }
 
@@ -41,9 +41,9 @@ function recoverySnapshot(phase: OpenClawRecoveryStoryProps['phase']): OpenClawC
     },
     issue: blocked
       ? {
-          code: 'repair-exhausted',
-          detail: 'OpenClaw did not become RPC-ready after three safe recovery attempts.',
-          remediation: 'Review the diagnostic ID and press Start to begin a new recovery request.',
+          code: 'gateway-unhealthy',
+          detail: 'OpenClaw start failed: the Windows task could not launch the gateway.',
+          remediation: 'Review the execution details, then retry Start.',
           diagnosticId: 'story-diag-7d3e2a',
         }
       : null,
@@ -140,7 +140,7 @@ const meta = {
   parameters: { layout: 'centered' },
   argTypes: {
     surface: { control: 'inline-radio', options: ['desktop', 'mobile'] },
-    phase: { control: 'inline-radio', options: ['repairing', 'blocked'] },
+    phase: { control: 'inline-radio', options: ['starting', 'blocked'] },
     locale: { control: 'inline-radio', options: ['en', 'ko'] },
   },
 } satisfies Meta<typeof OpenClawRecoveryStory>;
@@ -148,7 +148,22 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const DesktopRepairing: Story = { args: { surface: 'desktop', phase: 'repairing', locale: 'ko' } };
+export const DesktopStarting: Story = { args: { surface: 'desktop', phase: 'starting', locale: 'ko' } };
 export const DesktopBlocked: Story = { args: { surface: 'desktop', phase: 'blocked', locale: 'ko' } };
-export const MobileRepairing: Story = { args: { surface: 'mobile', phase: 'repairing', locale: 'ko' } };
+export const MobileStarting: Story = { args: { surface: 'mobile', phase: 'starting', locale: 'ko' } };
 export const MobileBlocked: Story = { args: { surface: 'mobile', phase: 'blocked', locale: 'ko' } };
+
+export const DesktopManagementUnavailable: Story = {
+  args: { surface: 'desktop', phase: 'blocked', locale: 'ko' },
+  render: () => {
+    const control: OpenClawControlSnapshot = {
+      ...recoverySnapshot('starting'),
+      status: { state: 'running', port: 18789, connectionState: 'unavailable' },
+      operation: null,
+      issue: null,
+    };
+    return <AppI18nProvider locale="ko" languages={['ko']}>
+      <OpenClawPanel capabilities={desktopCapabilities(control)} onOpenChat={() => undefined} />
+    </AppI18nProvider>;
+  },
+};

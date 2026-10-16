@@ -1,7 +1,7 @@
 # EZTerminal-owned OpenClaw desired-state supervisor (schema v1).
 # This script intentionally uses only Windows PowerShell 5.1 built-ins and the
-# official OpenClaw CLI. It never installs/updates OpenClaw, resets data,
-# generates tokens, weakens authentication, or invokes doctor --force.
+# official OpenClaw lifecycle CLI. It never runs Doctor, imports data, updates
+# the package, generates tokens, or changes authentication.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
@@ -14,23 +14,28 @@ param(
   [switch]$RunSupervisor,
   [switch]$RemoveTask,
   [switch]$RepairStateAcl,
+  [switch]$PrepareUpgrade,
   [switch]$RunOnce,
 
   [ValidateRange(1, 300)]
-  [int]$ReadyTimeoutSeconds = 60
+  [int]$ReadyTimeoutSeconds = 120,
+  [ValidateRange(1, 300)]
+  [int]$HealthIntervalSeconds = 15
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $TaskName = 'EZTerminal OpenClaw Supervisor'
-$TaskDescription = 'EZTerminal-owned OpenClaw desired-state supervisor v1'
+$TaskDescription = 'EZTerminal-owned OpenClaw desired-state supervisor v2'
 $LegacyTaskName = 'OpenClaw Gateway Watchdog'
 $SchemaVersion = 1
 $MaxAttempts = 3
 $LifecycleCommandTimeoutSeconds = 90
-$QuickHealthSeconds = 15
-$DeepHealthSeconds = 300
+$QuickHealthSeconds = $HealthIntervalSeconds
+$SupervisorInstanceId = [Guid]::NewGuid().ToString('N')
+$script:ActiveGeneration = 0
+$script:LastHeartbeat = [DateTime]::MinValue
 $StateDirectory = [IO.Path]::GetFullPath($StateDirectory)
 $stateDirectoryRoot = [IO.Path]::GetPathRoot($StateDirectory).TrimEnd('\')
 $normalizedStateDirectory = $StateDirectory.TrimEnd('\')
@@ -42,7 +47,6 @@ if ([string]::IsNullOrWhiteSpace($normalizedStateDirectory) -or
 }
 $IntentPath = Join-Path $StateDirectory 'intent.json'
 $RuntimePath = Join-Path $StateDirectory 'runtime.json'
-$BackupRoot = Join-Path $StateDirectory 'recovery'
 $LegacyMarkerPath = Join-Path $StateDirectory 'legacy-watchdog.pending.json'
 
 function New-DiagnosticId {
@@ -211,6 +215,9 @@ function Write-Runtime {
     operation = $operation
     issue = $Issue
     updatedAt = [DateTime]::UtcNow.ToString('o')
+    statusObservedAt = [DateTime]::UtcNow.ToString('o')
+    supervisorHeartbeatAt = [DateTime]::UtcNow.ToString('o')
+    supervisorInstanceId = $SupervisorInstanceId
   }
   Write-AtomicJson -Path $RuntimePath -Value $runtime
 }
@@ -250,8 +257,13 @@ function Invoke-BoundedProcess {
       $start.RedirectStandardInput = $stdinPath
     }
     $process = Start-Process @start
+    # Keep the process handle alive: Windows PowerShell otherwise loses the
+    # exit code when HasExited/Refresh observes a short-lived cmd shim first.
+    $null = $process.Handle
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
     while (-not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+      Update-SupervisorHeartbeat
+      if ($script:ActiveGeneration -gt 0 -and -not (Test-CurrentGeneration -Generation $script:ActiveGeneration)) { break }
       Start-Sleep -Milliseconds 200
       $process.Refresh()
     }
@@ -269,7 +281,7 @@ function Invoke-BoundedProcess {
       timedOut = $timedOut
     }
   } catch {
-    return [ordered]@{ code = -1; stdout = ''; stderr = 'process launch failed'; timedOut = $false }
+    return [ordered]@{ code = -1; stdout = ''; stderr = (Protect-CommandText -Text $_.Exception.Message); timedOut = $false }
   } finally {
     Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
@@ -288,252 +300,251 @@ function Invoke-OpenClaw {
     -TimeoutSeconds $TimeoutSeconds -StandardInput $StandardInput
 }
 
-function Test-StartupReady {
-  param([int]$Port)
-  try {
-    $response = Invoke-WebRequest -UseBasicParsing -Method Get `
-      -Uri "http://127.0.0.1:$Port/startupz" -TimeoutSec 5
-    return [int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 300
-  } catch {
-    return $false
-  }
+
+function Protect-CommandText {
+  param([string]$Text)
+  $safe = $Text -replace '(?i)(bearer\s+)[^\s"\x27]+', '$1[redacted]'
+  $safe = $safe -replace '(?i)((?:token|api[_-]?key|password|secret)["\x27\s:=]+)[^\s,"\x27}\]]+', '$1[redacted]'
+  if ($safe.Length -gt 8192) { $safe = $safe.Substring($safe.Length - 8192) }
+  return $safe.Trim()
 }
 
-function Get-AuthenticatedStatus {
-  param([int]$Port)
-  $result = Invoke-OpenClaw -Arguments @('gateway', 'status', '--require-rpc', '--json') -TimeoutSeconds 30
-  if ($result.code -ne 0) {
-    return [ordered]@{ ready = $false; status = (New-Status -State 'stopped' -Port $Port); raw = $null }
-  }
-  try {
-    $parsed = $result.stdout | ConvertFrom-Json
-    if ($parsed.rpc.ok -ne $true) {
-      return [ordered]@{ ready = $false; status = (New-Status -State 'unknown' -Port $Port); raw = $parsed }
-    }
-    return [ordered]@{
-      ready = $true
-      status = (New-Status -State 'running' -Port $Port -Version ([string]$parsed.cli.version))
-      raw = $parsed
-    }
-  } catch {
-    return [ordered]@{ ready = $false; status = (New-Status -State 'unknown' -Port $Port); raw = $null }
-  }
+function Update-SupervisorHeartbeat {
+  if (([DateTime]::UtcNow - $script:LastHeartbeat).TotalSeconds -lt 5) { return }
+  $runtime = Read-JsonFile -Path $RuntimePath
+  if ($null -eq $runtime -or -not $runtime.PSObject.Properties['supervisorInstanceId'] -or
+      [string]$runtime.supervisorInstanceId -ne $SupervisorInstanceId) { return }
+  $runtime.supervisorHeartbeatAt = [DateTime]::UtcNow.ToString('o')
+  Write-AtomicJson -Path $RuntimePath -Value $runtime
+  $script:LastHeartbeat = [DateTime]::UtcNow
 }
 
-function Wait-GatewayReady {
-  param($Intent, [int]$Port, [int]$TimeoutSeconds = 60)
-  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-  while ([DateTime]::UtcNow -lt $deadline) {
-    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) {
-      return [ordered]@{ ready = $false; superseded = $true; status = (New-Status -State 'unknown' -Port $Port) }
-    }
-    if (Test-StartupReady -Port $Port) {
-      $first = Get-AuthenticatedStatus -Port $Port
-      if ($first.ready) {
-        Start-Sleep -Seconds 5
-        if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) {
-          return [ordered]@{ ready = $false; superseded = $true; status = $first.status }
-        }
-        if (Test-StartupReady -Port $Port) {
-          $second = Get-AuthenticatedStatus -Port $Port
-          if ($second.ready) {
-            return [ordered]@{ ready = $true; superseded = $false; status = $second.status }
-          }
-        }
-      }
-    }
-    Start-Sleep -Milliseconds 2500
+function Invoke-GatewayCommand {
+  param([string[]]$Arguments)
+  $result = Invoke-OpenClaw -Arguments $Arguments -TimeoutSeconds $LifecycleCommandTimeoutSeconds
+  $directory = Join-Path $StateDirectory 'diagnostics'
+  [IO.Directory]::CreateDirectory($directory) | Out-Null
+  $record = [ordered]@{
+    arguments = $Arguments; exitCode = $result.code; timedOut = $result.timedOut
+    stdout = Protect-CommandText -Text $result.stdout
+    stderr = Protect-CommandText -Text $result.stderr
+    at = [DateTime]::UtcNow.ToString('o')
   }
-  $state = if (Test-StartupReady -Port $Port) { 'unknown' } else { 'stopped' }
-  return [ordered]@{ ready = $false; superseded = $false; status = (New-Status -State $state -Port $Port) }
+  Write-AtomicJson -Path (Join-Path $directory 'last-command.json') -Value $record
+  return $result
 }
 
-function Test-StablyStopped {
-  param($Intent, [int]$Port)
-  if (Test-StartupReady -Port $Port) { return $false }
-  Start-Sleep -Seconds 5
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-  return -not (Test-StartupReady -Port $Port)
+function New-CommandIssue {
+  param($Result, [string]$Action)
+  $output = Protect-CommandText -Text ($Result.stderr + "`n" + $Result.stdout)
+  if ([string]::IsNullOrWhiteSpace($output)) { $output = "Exit code $($Result.code)." }
+  return New-Issue -Code 'gateway-unhealthy' -Detail "OpenClaw $Action failed: $output" `
+    -Remediation 'Review the command output in details, correct the reported cause, then retry. Manual repair: openclaw doctor --fix.'
 }
 
-function Test-CliCapabilities {
-  if (-not (Test-Path -LiteralPath $CliPath -PathType Leaf)) {
-    return New-Issue -Code 'cli-missing' `
-      -Detail 'The OpenClaw CLI is missing or cannot be opened.' `
-      -Remediation 'Install a compatible OpenClaw CLI and press Start again.'
+function Get-GatewayTaskName {
+  if (-not [string]::IsNullOrWhiteSpace($env:OPENCLAW_WINDOWS_TASK_NAME)) { return $env:OPENCLAW_WINDOWS_TASK_NAME }
+  if (-not [string]::IsNullOrWhiteSpace($env:OPENCLAW_PROFILE) -and $env:OPENCLAW_PROFILE -ne 'default') {
+    return "OpenClaw Gateway ($($env:OPENCLAW_PROFILE))"
   }
-  $doctor = Invoke-OpenClaw -Arguments @('doctor', '--help') -TimeoutSeconds 30
-  $status = Invoke-OpenClaw -Arguments @('gateway', 'status', '--help') -TimeoutSeconds 30
-  $restart = Invoke-OpenClaw -Arguments @('gateway', 'restart', '--help') -TimeoutSeconds 30
-  $start = Invoke-OpenClaw -Arguments @('gateway', 'start', '--help') -TimeoutSeconds 30
-  $stop = Invoke-OpenClaw -Arguments @('gateway', 'stop', '--help') -TimeoutSeconds 30
-  if ($doctor.code -ne 0 -or $doctor.stdout -notmatch '--fix' -or $doctor.stdout -notmatch '--non-interactive' -or
-      $status.code -ne 0 -or $status.stdout -notmatch '--require-rpc' -or
-      $restart.code -ne 0 -or $restart.stdout -notmatch '--safe' -or $restart.stdout -notmatch '--force' -or
-      $start.code -ne 0 -or $start.stdout -notmatch '--json' -or
-      $stop.code -ne 0 -or $stop.stdout -notmatch '--force' -or $stop.stdout -notmatch '--json') {
-    return New-Issue -Code 'cli-incompatible' `
-      -Detail 'The installed OpenClaw CLI does not provide the required safe lifecycle commands.' `
-      -Remediation 'Install a compatible OpenClaw release, then press Start again.'
+  return 'OpenClaw Gateway'
+}
+
+function Test-GatewayTaskOwned {
+  param($Task)
+  if ($null -eq $Task) { return $false }
+  $actions = @($Task.Actions)
+  if ($actions.Count -ne 1) { return $false }
+  $root = Get-OpenClawStateRoot
+  foreach ($name in @('gateway.vbs', 'gateway.cmd')) {
+    $launcher = [IO.Path]::GetFullPath((Join-Path $root $name))
+    if ([string]$actions[0].Execute -eq $launcher) { return $true }
+    # WScript/cmd tasks must name the exact launcher, not a matching substring.
+    $arguments = [string]$actions[0].Arguments
+    if ([string]$actions[0].Execute -match '(?i)(?:^|\\)(?:wscript|cscript|cmd)(?:\.exe)?$' -and
+        ($arguments -eq "`"$launcher`"" -or $arguments -eq $launcher -or
+         $arguments -eq "/c `"$launcher`"")) { return $true }
   }
+  return $false
+}
+
+function Set-GatewayAutostart {
+  param([bool]$Enabled, [int]$Port)
+  $name = Get-GatewayTaskName
+  $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+  if ($null -eq $task -and $Enabled) {
+    $install = Invoke-GatewayCommand -Arguments @('gateway', 'install', '--json', '--port', [string]$Port)
+    if ($install.code -ne 0) { return New-CommandIssue -Result $install -Action 'registration' }
+    $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+      return New-Issue -Code 'supervisor-failed' -Detail 'OpenClaw did not register its Windows startup task.' `
+        -Remediation 'Check Windows task registration permissions and retry Start.'
+    }
+  }
+  if ($null -eq $task) { return $null }
+  if (-not (Test-GatewayTaskOwned -Task $task)) {
+    return New-Issue -Code 'watchdog-conflict' -Detail "The task '$name' belongs to a different launcher." `
+      -Remediation 'Review the conflicting task. EZTerminal has left it unchanged.'
+  }
+  if ($Enabled -and -not $task.Settings.Enabled) { Enable-ScheduledTask -TaskName $name | Out-Null }
+  if (-not $Enabled -and $task.Settings.Enabled) { Disable-ScheduledTask -TaskName $name | Out-Null }
   return $null
 }
 
-function Test-OwnedWorkspaceAttestation {
-  param([string]$Path)
-  $stream = $null
+function Get-GatewayObservation {
+  param([int]$Port)
   try {
-    $expected = [Text.Encoding]::UTF8.GetBytes("openclaw-workspace-attestation:v1`n")
-    $buffer = New-Object byte[] $expected.Length
-    $stream = [IO.File]::Open(
-      $Path,
-      [IO.FileMode]::Open,
-      [IO.FileAccess]::Read,
-      [IO.FileShare]::Read
-    )
-    if ($stream.Read($buffer, 0, $buffer.Length) -ne $expected.Length) { return $false }
-    for ($index = 0; $index -lt $expected.Length; $index++) {
-      if ($buffer[$index] -ne $expected[$index]) { return $false }
+    $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/healthz" -TimeoutSec 3
+    $body = $health.Content | ConvertFrom-Json
+    if ([int]$health.StatusCode -ge 200 -and [int]$health.StatusCode -lt 300 -and $body.ok -eq $true) {
+      $ready = $false
+      try {
+        $startup = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/startupz" -TimeoutSec 3
+        $ready = [int]$startup.StatusCode -ge 200 -and [int]$startup.StatusCode -lt 300
+      } catch {
+        # Older gateways have liveness but no separate startup endpoint.
+        if ($null -ne $_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { $ready = $true }
+      }
+      return @{ ready = $ready; alive = $true; absent = $false; issue = $null
+        status = (New-Status -State $(if ($ready) { 'running' } else { 'starting' }) -Port $Port) }
     }
-    return $true
+  } catch { }
+  # A refused socket is not proof of process exit during cold startup.
+  try {
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
+    $owned = @($processes | Where-Object {
+      $command = [string]$_.CommandLine
+      $command -match '(?i)openclaw(?:[\\/]|\.(?:mjs|cjs|js))' -and
+      $command -match '(?i)(?:^|\s)gateway(?:\s|$)' -and
+      ($command -match "(?:^|\s)--port(?:=|\s+)`"?$Port(?:`"|\s|$)" -or
+        ($Port -eq 18789 -and $command -notmatch '(?:^|\s)--port(?:=|\s+)'))
+    })
+    foreach ($listener in $listeners) {
+      if (@($owned | Where-Object { [int64]$_.ProcessId -eq [int64]$listener.OwningProcess }).Count -eq 0) {
+        return @{ ready = $false; alive = $false; absent = $false
+          status = (New-Status -State 'unknown' -Port $Port)
+          issue = (New-Issue -Code 'port-conflict' -Detail "Another application is listening on port $Port." `
+            -Remediation 'Stop that application or choose a different OpenClaw port, then retry Start.') }
+      }
+    }
+    $task = Get-ScheduledTask -TaskName (Get-GatewayTaskName) -ErrorAction SilentlyContinue
+    $taskActive = (Test-GatewayTaskOwned -Task $task) -and [string]$task.State -in @('Running', 'Queued', '4', '2')
+    $absent = $owned.Count -eq 0 -and $listeners.Count -eq 0 -and -not $taskActive
+    return @{ ready = $false; alive = -not $absent; absent = $absent; issue = $null
+      status = (New-Status -State $(if ($absent) { 'stopped' } else { 'starting' }) -Port $Port) }
   } catch {
-    # OpenClaw also fails closed when an owned-looking marker cannot be read.
-    return $true
-  } finally {
-    if ($null -ne $stream) { $stream.Dispose() }
+    return @{ ready = $false; alive = $false; absent = $false
+      status = (New-Status -State 'unknown' -Port $Port)
+      issue = (New-Issue -Code 'permission-denied' -Detail 'Windows could not inspect the OpenClaw process.' `
+        -Remediation 'Check process inspection permissions and retry. No process was stopped.') }
   }
 }
 
-function Get-LegacyWorkspaceStateSources {
-  $agents = Invoke-OpenClaw -Arguments @('agents', 'list', '--json') -TimeoutSeconds 30
-  $agentEntries = @()
-  if ($agents.code -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$agents.stdout)) {
-    try {
-      $agentEntries = @($agents.stdout | ConvertFrom-Json)
-    } catch {
-      $agentEntries = @()
-    }
-  }
-
-  $sources = New-Object Collections.Generic.List[object]
-  $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-  function Add-LegacyWorkspaceSource {
-    param([string]$Source, [string]$Destination)
-    try {
-      $fullSource = [IO.Path]::GetFullPath($Source)
-      if (-not (Test-Path -LiteralPath $fullSource -PathType Leaf)) { return }
-      if ($seen.Add($fullSource)) {
-        $sources.Add([ordered]@{ source = $fullSource; destination = $Destination })
-      }
-    } catch {
-      # Invalid or inaccessible candidates are left for OpenClaw diagnostics.
-    }
-  }
-
-  $workspacePaths = New-Object Collections.Generic.List[string]
-  foreach ($agent in $agentEntries) {
-    $workspaceText = [string]$agent.workspace
-    if ([string]::IsNullOrWhiteSpace($workspaceText)) { continue }
-    try {
-      $workspacePath = [IO.Path]::GetFullPath(
-        [Environment]::ExpandEnvironmentVariables($workspaceText)
-      )
-      if (-not $workspacePaths.Contains($workspacePath)) { $workspacePaths.Add($workspacePath) }
-    } catch {
-      continue
-    }
-  }
-  if ($workspacePaths.Count -eq 0) {
-    $workspacePaths.Add([IO.Path]::GetFullPath((Join-Path (Get-OpenClawStateRoot) 'workspace')))
-  }
-
-  $workspaceIndex = 0
-  foreach ($workspacePath in $workspacePaths) {
-    $prefix = "workspace-state\agent-$workspaceIndex"
-    $currentSetup = Join-Path $workspacePath 'openclaw-workspace-state.json'
-    $legacySetup = Join-Path $workspacePath '.openclaw\workspace-state.json'
-    Add-LegacyWorkspaceSource -Source $currentSetup `
-      -Destination (Join-Path $prefix 'openclaw-workspace-state.json')
-    Add-LegacyWorkspaceSource -Source "$currentSetup.doctor-importing" `
-      -Destination (Join-Path $prefix 'openclaw-workspace-state.json.doctor-importing')
-    Add-LegacyWorkspaceSource -Source $legacySetup `
-      -Destination (Join-Path $prefix 'workspace-state.json')
-    Add-LegacyWorkspaceSource -Source "$legacySetup.doctor-importing" `
-      -Destination (Join-Path $prefix 'workspace-state.json.doctor-importing')
-
-    foreach ($sibling in @("$workspacePath.attested", "$workspacePath.attested.doctor-importing")) {
-      if (Test-OwnedWorkspaceAttestation -Path $sibling) {
-        Add-LegacyWorkspaceSource -Source $sibling `
-          -Destination (Join-Path $prefix (Split-Path -Leaf $sibling))
-      }
-    }
-    $workspaceIndex++
-  }
-
-  $attestationRoots = @(
-    (Get-OpenClawStateRoot),
-    ([IO.Path]::GetFullPath((Join-Path $HOME '.clawdbot')))
-  ) | Select-Object -Unique
-  $rootIndex = 0
-  foreach ($root in $attestationRoots) {
-    $attestationDirectory = Join-Path $root 'workspace-attestations'
-    $entries = @(
-      Get-ChildItem -LiteralPath $attestationDirectory -Filter '*.attested' -File -ErrorAction SilentlyContinue
-      Get-ChildItem -LiteralPath $attestationDirectory -Filter '*.attested.doctor-importing' -File -ErrorAction SilentlyContinue
-    )
-    foreach ($entry in $entries) {
-      if ($entry.Name -notmatch '^[a-f0-9]{64}\.attested(?:\.doctor-importing)?$') { continue }
-      Add-LegacyWorkspaceSource -Source $entry.FullName `
-        -Destination (Join-Path "workspace-state\attestations-$rootIndex" $entry.Name)
-    }
-    $rootIndex++
-  }
-  return $sources
+function Wait-GatewayState {
+  param($Intent, [int]$Port, [bool]$Running)
+  $deadline = [DateTime]::UtcNow.AddSeconds($ReadyTimeoutSeconds)
+  do {
+    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $null }
+    Update-SupervisorHeartbeat
+    $observed = Get-GatewayObservation -Port $Port
+    if ($null -ne $observed.issue -or ($Running -and $observed.ready) -or (-not $Running -and $observed.absent)) { return $observed }
+    Start-Sleep -Milliseconds 500
+  } while ([DateTime]::UtcNow -lt $deadline)
+  return $observed
 }
 
-function Get-StringsRecursively {
-  param($Value)
-  $found = New-Object Collections.Generic.List[string]
-  function Visit($Current) {
-    if ($Current -is [string]) {
-      if ($Current.EndsWith('.jsonl', [StringComparison]::OrdinalIgnoreCase)) { $found.Add($Current) }
+function Invoke-Reconcile {
+  param($Intent, [bool]$ExplicitRestart = $false)
+  $port = Get-GatewayPort
+  $script:ActiveGeneration = [int64]$Intent.generation
+  $observed = Get-GatewayObservation -Port $port
+  if (-not (Test-Path -LiteralPath $CliPath -PathType Leaf)) {
+    $issue = New-Issue -Code 'cli-missing' -Detail 'The OpenClaw CLI cannot be found.' -Remediation 'Install OpenClaw, then retry Start.'
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 0 -Status $observed.status -Issue $issue
+    return
+  }
+  $running = [string]$Intent.desiredState -eq 'running'
+  Write-Runtime -Intent $Intent -Phase $(if ($running) { 'starting' } else { 'stopping' }) -Attempt 0 -Status $observed.status
+  # Stop must disable future native launches even if another process owns the port.
+  if ($running -and $null -ne $observed.issue) {
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 0 -Status $observed.status -Issue $observed.issue
+    return
+  }
+  $registration = Set-GatewayAutostart -Enabled $running -Port $port
+  if (-not (Test-CurrentGeneration -Generation $script:ActiveGeneration)) { return }
+  if ($null -ne $registration) {
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 0 -Status $observed.status -Issue $registration
+    return
+  }
+  # Registration can also start the native task on some CLI versions.
+  $observed = Get-GatewayObservation -Port $port
+  if ($null -ne $observed.issue) {
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 0 -Status $observed.status -Issue $observed.issue
+    return
+  }
+  if ($ExplicitRestart -and -not $observed.absent) {
+    Write-Runtime -Intent $Intent -Phase 'restarting' -Attempt 1 -Status $observed.status
+    $stop = Invoke-GatewayCommand -Arguments @('gateway', 'stop', '--force', '--json')
+    if (-not (Test-CurrentGeneration -Generation $script:ActiveGeneration)) { return }
+    $observed = Wait-GatewayState -Intent $Intent -Port $port -Running $false
+    if ($null -eq $observed) { return }
+    if (-not $observed.absent) {
+      $issue = New-CommandIssue -Result $stop -Action 'stop before restart'
+      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 -Status $observed.status -Issue $issue
       return
     }
-    if ($null -eq $Current) { return }
-    if ($Current -is [Collections.IEnumerable] -and -not ($Current -is [string])) {
-      foreach ($item in $Current) { Visit $item }
+  }
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    if (-not (Test-CurrentGeneration -Generation $script:ActiveGeneration)) { return }
+    if (($running -and $observed.ready) -or (-not $running -and $observed.absent)) {
+      Write-Runtime -Intent $Intent -Phase 'idle' -Attempt 0 -Status $observed.status -Terminal
+      Complete-LegacyWatchdogMigration
       return
     }
-    foreach ($property in $Current.PSObject.Properties) { Visit $property.Value }
+    $phase = if ($running) { 'starting' } else { 'stopping' }
+    Write-Runtime -Intent $Intent -Phase $phase -Attempt $attempt -Status $observed.status
+    # An existing process gets startup time, never a duplicate start or Doctor.
+    $result = @{ code = 0; stdout = ''; stderr = ''; timedOut = $false }
+    if (-not $running) {
+      $result = Invoke-GatewayCommand -Arguments @('gateway', 'stop', '--force', '--json')
+    } elseif ($observed.absent) {
+      $result = Invoke-GatewayCommand -Arguments @('gateway', 'start', '--json')
+    }
+    if (-not (Test-CurrentGeneration -Generation $script:ActiveGeneration)) { return }
+    $observed = Get-GatewayObservation -Port $port
+    if ($result.code -eq 0 -or ($running -and -not $observed.absent)) {
+      $observed = Wait-GatewayState -Intent $Intent -Port $port -Running $running
+    }
+    if ($null -eq $observed) { return }
+    if (($running -and $observed.ready) -or (-not $running -and $observed.absent)) {
+      Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt -Status $observed.status -Terminal
+      Complete-LegacyWatchdogMigration
+      return
+    }
+    if ($null -ne $observed.issue) {
+      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $attempt -Status $observed.status -Issue $observed.issue
+      return
+    }
+    if ($running -and -not $observed.absent) {
+      $issue = New-Issue -Code 'gateway-unhealthy' -Detail 'OpenClaw is running but its HTTP server has not finished starting.' `
+        -Remediation 'Review the OpenClaw log or press Restart. Management RPC does not trigger a restart.'
+      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $attempt -Status $observed.status -Issue $issue
+      return
+    }
+    if ($attempt -lt $MaxAttempts) {
+      $retryAt = [DateTime]::UtcNow.AddSeconds($(if ($attempt -eq 1) { 5 } else { 15 }))
+      while ([DateTime]::UtcNow -lt $retryAt) {
+        if (-not (Test-CurrentGeneration -Generation $script:ActiveGeneration)) { return }
+        Update-SupervisorHeartbeat
+        Start-Sleep -Milliseconds 200
+      }
+    }
   }
-  Visit $Value
-  return $found
+  if ($result.code -eq 0) { $result.stderr = 'The command exited successfully but the requested process state was not reached.' }
+  Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $MaxAttempts -Status $observed.status `
+    -Issue (New-CommandIssue -Result $result -Action $phase)
 }
-
-function Copy-VerifiedFile {
-  param(
-    [string]$Source,
-    [string]$Destination,
-    [string]$DestinationRoot,
-    [Collections.Generic.List[object]]$Manifest
-  )
-  if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { return }
-  [IO.Directory]::CreateDirectory((Split-Path -Parent $Destination)) | Out-Null
-  Copy-Item -LiteralPath $Source -Destination $Destination -Force
-  $sourceInfo = Get-Item -LiteralPath $Source
-  $destinationInfo = Get-Item -LiteralPath $Destination
-  if ($sourceInfo.Length -ne $destinationInfo.Length) { throw 'backup length verification failed' }
-  $sourceHash = Get-FileSha256 -Path $Source
-  $destinationHash = Get-FileSha256 -Path $Destination
-  if ($sourceHash -ne $destinationHash) { throw 'backup hash verification failed' }
-  $Manifest.Add([ordered]@{
-    source = $Source
-    destination = $Destination.Substring($DestinationRoot.TrimEnd('\').Length).TrimStart('\')
-    bytes = $sourceInfo.Length
-    sha256 = $sourceHash
-  })
-}
-
 function Protect-BackupAcl {
   param([string]$Directory)
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -566,319 +577,6 @@ function Repair-StateDirectoryAcl {
   }
 }
 
-function New-RecoveryBackup {
-  param($Intent, [object[]]$AdditionalFiles = @())
-  [IO.Directory]::CreateDirectory($BackupRoot) | Out-Null
-  $generationMarker = Join-Path $BackupRoot ("generation-{0}.json" -f [int64]$Intent.generation)
-  if (Test-Path -LiteralPath $generationMarker -PathType Leaf) { return $true }
-  $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
-  $partial = Join-Path $BackupRoot ("$stamp-g$($Intent.generation).partial")
-  $complete = $partial.Substring(0, $partial.Length - '.partial'.Length)
-  [IO.Directory]::CreateDirectory($partial) | Out-Null
-  $manifest = New-Object Collections.Generic.List[object]
-  try {
-    # Establish the restricted inheritable ACL before any sensitive child is
-    # created. Existing-child ACL propagation differs across Windows images.
-    Protect-BackupAcl -Directory $partial
-    $stateRoot = Get-OpenClawStateRoot
-    Copy-VerifiedFile -Source (Join-Path $stateRoot 'openclaw.json') `
-      -Destination (Join-Path $partial 'openclaw.json') -DestinationRoot $partial -Manifest $manifest
-    Copy-VerifiedFile -Source (Join-Path $stateRoot 'exec-approvals.json') `
-      -Destination (Join-Path $partial 'exec-approvals.json') -DestinationRoot $partial -Manifest $manifest
-    Copy-VerifiedFile -Source (Join-Path $stateRoot 'gateway.cmd') `
-      -Destination (Join-Path $partial 'service\gateway.cmd') -DestinationRoot $partial -Manifest $manifest
-    Copy-VerifiedFile -Source (Join-Path $stateRoot 'gateway.vbs') `
-      -Destination (Join-Path $partial 'service\gateway.vbs') -DestinationRoot $partial -Manifest $manifest
-
-    foreach ($additional in @($AdditionalFiles)) {
-      $relativeDestination = [string]$additional.destination
-      if ([string]::IsNullOrWhiteSpace($relativeDestination)) {
-        throw 'recovery backup received an invalid additional destination'
-      }
-      $additionalDestination = [IO.Path]::GetFullPath((Join-Path $partial $relativeDestination))
-      $partialPrefix = $partial.TrimEnd('\') + '\'
-      if (-not $additionalDestination.StartsWith(
-          $partialPrefix,
-          [StringComparison]::OrdinalIgnoreCase
-        )) {
-        throw 'recovery backup additional destination escaped its root'
-      }
-      Copy-VerifiedFile -Source ([string]$additional.source) `
-        -Destination $additionalDestination -DestinationRoot $partial -Manifest $manifest
-    }
-
-    $taskQuery = Invoke-BoundedProcess `
-      -FilePath (Join-Path $env:SystemRoot 'System32\schtasks.exe') `
-      -Arguments @('/Query', '/TN', 'OpenClaw Gateway', '/XML') `
-      -TimeoutSeconds 15
-    $taskXml = [string]$taskQuery.stdout
-    if ($taskQuery.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($taskXml)) {
-      [IO.Directory]::CreateDirectory((Join-Path $partial 'service')) | Out-Null
-      $taskBackupPath = Join-Path $partial 'service\OpenClaw-Gateway.xml'
-      [IO.File]::WriteAllText($taskBackupPath, $taskXml, (New-Object Text.UTF8Encoding($false)))
-      $taskBackupInfo = Get-Item -LiteralPath $taskBackupPath
-      $manifest.Add([ordered]@{
-        source = 'scheduled-task:OpenClaw Gateway'
-        destination = 'service\OpenClaw-Gateway.xml'
-        bytes = $taskBackupInfo.Length
-        sha256 = Get-FileSha256 -Path $taskBackupPath
-      })
-    }
-
-    $sessionStores = Get-ChildItem -LiteralPath (Join-Path $stateRoot 'agents') `
-      -Filter 'sessions.json' -File -Recurse -ErrorAction SilentlyContinue
-    foreach ($store in $sessionStores) {
-      $sessionsDirectory = $store.Directory.FullName
-      $agentDirectory = Split-Path -Parent $sessionsDirectory
-      $agentName = Split-Path -Leaf $agentDirectory
-      $destinationDirectory = Join-Path $partial ("agents\$agentName\sessions")
-      Copy-VerifiedFile -Source $store.FullName `
-        -Destination (Join-Path $destinationDirectory 'sessions.json') `
-        -DestinationRoot $partial -Manifest $manifest
-      $parsed = Read-JsonFile -Path $store.FullName
-      foreach ($reference in (Get-StringsRecursively -Value $parsed | Select-Object -Unique)) {
-        try {
-          $candidate = if ([IO.Path]::IsPathRooted($reference)) {
-            [IO.Path]::GetFullPath($reference)
-          } else {
-            [IO.Path]::GetFullPath((Join-Path $sessionsDirectory $reference))
-          }
-          $rootPrefix = $stateRoot.TrimEnd('\') + '\'
-          if (-not $candidate.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
-          $stateRelativePath = $candidate.Substring($rootPrefix.Length)
-          Copy-VerifiedFile -Source $candidate `
-            -Destination (Join-Path $partial (Join-Path 'referenced' $stateRelativePath)) `
-            -DestinationRoot $partial -Manifest $manifest
-        } catch {
-          # Invalid references are doctor diagnostics, not backup escape hatches.
-        }
-      }
-    }
-    if ($manifest.Count -eq 0) { throw 'no OpenClaw data was available to back up' }
-    Write-AtomicJson -Path (Join-Path $partial 'manifest.json') -Value ([ordered]@{
-      schemaVersion = 1
-      generation = [int64]$Intent.generation
-      createdAt = [DateTime]::UtcNow.ToString('o')
-      files = $manifest
-    })
-    Move-Item -LiteralPath $partial -Destination $complete
-    Write-AtomicJson -Path $generationMarker -Value ([ordered]@{ path = $complete; verified = $true })
-    Get-ChildItem -LiteralPath $BackupRoot -Directory -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -notlike '*.partial' } |
-      Sort-Object Name -Descending |
-      Select-Object -Skip 3 |
-      ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
-    return $true
-  } catch {
-    $failure = $_
-    try {
-      Save-Diagnostic -Intent $Intent -Attempt 0 `
-        -Text ("recovery backup failed: {0}: {1}" -f `
-          $failure.Exception.GetType().FullName, $failure.Exception.Message)
-    } catch {
-      # Preserve the primary backup failure even if local diagnostics cannot be written.
-    }
-    return $false
-  }
-}
-
-function Save-Diagnostic {
-  param($Intent, [int]$Attempt, [string]$Text)
-  $directory = Join-Path $StateDirectory 'diagnostics'
-  [IO.Directory]::CreateDirectory($directory) | Out-Null
-  $safe = $Text
-  if ($safe.Length -gt 1048576) { $safe = $safe.Substring($safe.Length - 1048576) }
-  $path = Join-Path $directory ("g{0}-a{1}-{2}.json" -f $Intent.generation, $Attempt, (New-DiagnosticId))
-  [IO.File]::WriteAllText($path, $safe, (New-Object Text.UTF8Encoding($false)))
-}
-
-function Diagnose-CriticalIssue {
-  param($Intent, [int]$Attempt, [int]$Port)
-  $diagnostic = Invoke-OpenClaw -Arguments @('gateway', 'status', '--deep', '--json') -TimeoutSeconds 45
-  if (-not [string]::IsNullOrWhiteSpace($diagnostic.stdout)) {
-    Save-Diagnostic -Intent $Intent -Attempt $Attempt -Text $diagnostic.stdout
-  }
-  try {
-    $parsed = $diagnostic.stdout | ConvertFrom-Json
-    if ($parsed.rpc.ok -eq $true) {
-      return [ordered]@{
-        ready = $true
-        status = (New-Status -State 'running' -Port $Port -Version ([string]$parsed.cli.version))
-        issue = $null
-      }
-    }
-    $listeners = @($parsed.port.listeners)
-    if ($parsed.rpc.ok -ne $true -and $listeners.Count -gt 0) {
-      $knownOpenClaw = $false
-      $gatewayPid = try { [int64]$parsed.service.runtime.pid } catch { 0 }
-      foreach ($listener in $listeners) {
-        $description = "$(($listener.processName)) $(($listener.command))"
-        $listenerPid = try { [int64]$listener.pid } catch { -1 }
-        if ($description -match '(?i)openclaw' -or ($gatewayPid -gt 0 -and $listenerPid -eq $gatewayPid)) {
-          $knownOpenClaw = $true
-        }
-      }
-      if (-not $knownOpenClaw) {
-        return [ordered]@{
-          ready = $false
-          status = $null
-          issue = (New-Issue -Code 'port-conflict' `
-            -Detail "Another application owns the configured OpenClaw gateway port $Port." `
-            -Remediation 'Stop or reconfigure that application, then press Start again.')
-        }
-      }
-    }
-  } catch {
-    # Unparseable diagnostics remain local evidence; safe repair can still run.
-  }
-  return [ordered]@{ ready = $false; status = $null; issue = $null }
-}
-
-function Invoke-LegacyExecApprovalsMigration {
-  param($Intent)
-  $legacyPath = Join-Path (Get-OpenClawStateRoot) 'exec-approvals.json'
-  if (-not (Test-Path -LiteralPath $legacyPath -PathType Leaf)) { return $true }
-
-  $stagedPath = Join-Path $StateDirectory `
-    ("exec-approvals-g{0}-{1}.json" -f [int64]$Intent.generation, (New-DiagnosticId))
-  $moved = $false
-  $imported = $false
-  try {
-    $sourceInfo = Get-Item -LiteralPath $legacyPath
-    if ($sourceInfo.Length -gt 4194304) { throw 'legacy exec approvals exceed the migration limit' }
-    $sourceHash = Get-FileSha256 -Path $legacyPath
-    Move-Item -LiteralPath $legacyPath -Destination $stagedPath
-    $moved = $true
-    if ((Get-FileSha256 -Path $stagedPath) -ne $sourceHash) {
-      throw 'legacy exec approvals staging verification failed'
-    }
-
-    $raw = [IO.File]::ReadAllText($stagedPath)
-    $set = Invoke-OpenClaw -Arguments @('approvals', 'set', '--stdin', '--json') `
-      -TimeoutSeconds 60 -StandardInput $raw
-    if ($set.code -ne 0) { return $false }
-    $verify = Invoke-OpenClaw -Arguments @('approvals', 'get', '--json') -TimeoutSeconds 60
-    if ($verify.code -ne 0) { return $false }
-
-    $imported = $true
-    Remove-Item -LiteralPath $stagedPath -Force -ErrorAction SilentlyContinue
-    return $true
-  } catch {
-    return $false
-  } finally {
-    if (-not $imported -and $moved -and
-        (Test-Path -LiteralPath $stagedPath -PathType Leaf) -and
-        -not (Test-Path -LiteralPath $legacyPath)) {
-      Move-Item -LiteralPath $stagedPath -Destination $legacyPath -ErrorAction SilentlyContinue
-    }
-  }
-}
-
-function Invoke-TargetedStateMigrations {
-  param($Intent)
-  # OpenClaw 2026.8.1 can skip Doctor-owned migrations in a non-interactive
-  # task. Its dedicated session importer and approvals CLI remain supported.
-  $sessions = Invoke-OpenClaw `
-    -Arguments @('doctor', '--session-sqlite', 'import', '--session-sqlite-all-agents', '--yes') `
-    -TimeoutSeconds 300
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-  $approvals = Invoke-LegacyExecApprovalsMigration -Intent $Intent
-  return $sessions.code -eq 0 -and $approvals
-}
-
-function Invoke-LegacyWorkspaceStateMigration {
-  param($Intent, [int]$Port, [object[]]$Sources)
-  if (@($Sources).Count -eq 0) { return $true }
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-
-  Write-Runtime -Intent $Intent -Phase 'backing-up' -Attempt 1 -Status (
-    New-Status -State 'unknown' -Port $Port
-  )
-  if (-not (New-RecoveryBackup -Intent $Intent -AdditionalFiles $Sources)) {
-    $backupIssue = New-Issue -Code 'backup-failed' `
-      -Detail 'EZTerminal could not back up legacy OpenClaw workspace state before migration.' `
-      -Remediation 'Free disk space or repair folder permissions, then press Start again.'
-    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 `
-      -Status (New-Status -State 'unknown' -Port $Port) -Issue $backupIssue
-    return $false
-  }
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-
-  Write-Runtime -Intent $Intent -Phase 'stopping' -Attempt 1 `
-    -Status (New-Status -State 'unknown' -Port $Port)
-  Invoke-OpenClaw -Arguments @('gateway', 'stop', '--force', '--json') `
-    -TimeoutSeconds $LifecycleCommandTimeoutSeconds | Out-Null
-  if (-not (Test-StablyStopped -Intent $Intent -Port $Port)) {
-    $stopIssue = New-Issue -Code 'unsafe-repair-required' `
-      -Detail 'OpenClaw workspace migration requires the gateway to release its state database.' `
-      -Remediation 'Close the identified OpenClaw gateway process, then press Start again.'
-    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 `
-      -Status (New-Status -State 'unknown' -Port $Port) -Issue $stopIssue
-    return $false
-  }
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-
-  Write-Runtime -Intent $Intent -Phase 'repairing' -Attempt 1 `
-    -Status (New-Status -State 'stopped' -Port $Port)
-  $doctor = Invoke-OpenClaw `
-    -Arguments @('doctor', '--fix', '--non-interactive', '--yes') `
-    -TimeoutSeconds 300
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-
-  $remaining = New-Object Collections.Generic.List[string]
-  foreach ($source in @($Sources)) {
-    $sourcePath = [string]$source.source
-    foreach ($candidate in @($sourcePath, "$sourcePath.doctor-importing")) {
-      if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and
-          -not $remaining.Contains($candidate)) {
-        $remaining.Add($candidate)
-      }
-    }
-  }
-  foreach ($source in @(Get-LegacyWorkspaceStateSources)) {
-    $sourcePath = [string]$source.source
-    if (-not $remaining.Contains($sourcePath)) { $remaining.Add($sourcePath) }
-  }
-  if ($remaining.Count -gt 0) {
-    Save-Diagnostic -Intent $Intent -Attempt 1 -Text (
-      "legacy workspace migration incomplete; exit={0}; remaining={1}`n{2}`n{3}" -f `
-        $doctor.code, $remaining.Count, $doctor.stdout, $doctor.stderr
-    )
-    $migrationIssue = New-Issue -Code 'unsafe-repair-required' `
-      -Detail 'OpenClaw did not safely finish the required workspace state migration.' `
-      -Remediation 'Review the diagnostic ID and recovery backup, then press Start again.'
-    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 `
-      -Status (New-Status -State 'stopped' -Port $Port) -Issue $migrationIssue
-    return $false
-  }
-  return $true
-}
-
-function Invoke-SafeRepair {
-  param($Intent, [int]$Attempt, [int]$Port)
-  if ($Attempt -eq 1) {
-    Invoke-TargetedStateMigrations -Intent $Intent | Out-Null
-    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-  }
-  $doctor = Invoke-OpenClaw -Arguments @('doctor', '--fix', '--non-interactive', '--yes') -TimeoutSeconds 300
-  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
-  if ($Attempt -ge 2) {
-    $install = Invoke-OpenClaw `
-      -Arguments @('gateway', 'install', '--force', '--json', '--port', [string]$Port) `
-      -TimeoutSeconds 90
-    if ($install.code -ne 0 -and $doctor.code -ne 0) { return $false }
-  }
-  return $doctor.code -eq 0 -or $Attempt -ge 2
-}
-
-function Invoke-RestartCommand {
-  $safe = Invoke-OpenClaw -Arguments @('gateway', 'restart', '--safe', '--json') `
-    -TimeoutSeconds $LifecycleCommandTimeoutSeconds
-  if ($safe.code -eq 0) { return $safe }
-  return Invoke-OpenClaw -Arguments @('gateway', 'restart', '--force', '--json') `
-    -TimeoutSeconds $LifecycleCommandTimeoutSeconds
-}
-
 function Complete-LegacyWatchdogMigration {
   if (-not (Test-Path -LiteralPath $LegacyMarkerPath -PathType Leaf)) { return }
   try {
@@ -890,111 +588,16 @@ function Complete-LegacyWatchdogMigration {
   }
 }
 
-function Invoke-Reconcile {
-  param($Intent, [int]$ResumeAttempt = 0)
-  $port = Get-GatewayPort
-  $initialStatus = New-Status -State 'unknown' -Port $port
-  $capabilityIssue = Test-CliCapabilities
-  if ($null -ne $capabilityIssue) {
-    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $ResumeAttempt `
-      -Status $initialStatus -Issue $capabilityIssue
-    return
-  }
-
-  if ([string]$Intent.action -eq 'stop') {
-    for ($attempt = [Math]::Max(1, $ResumeAttempt + 1); $attempt -le $MaxAttempts; $attempt++) {
-      if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
-      Write-Runtime -Intent $Intent -Phase 'stopping' -Attempt $attempt -Status $initialStatus
-      Invoke-OpenClaw -Arguments @('gateway', 'stop', '--force', '--json') `
-        -TimeoutSeconds $LifecycleCommandTimeoutSeconds | Out-Null
-      if (Test-StablyStopped -Intent $Intent -Port $port) {
-        Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt `
-          -Status (New-Status -State 'stopped' -Port $port) -Terminal
-        Complete-LegacyWatchdogMigration
-        return
-      }
-    }
-    $issue = New-Issue -Code 'repair-exhausted' `
-      -Detail 'OpenClaw could not be stopped after three verified attempts.' `
-      -Remediation 'Close the identified OpenClaw process and press Stop again.'
-    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $MaxAttempts `
-      -Status (New-Status -State 'unknown' -Port $port) -Issue $issue
-    return
-  }
-
-  $legacyWorkspaceSources = @(Get-LegacyWorkspaceStateSources)
-  if ($legacyWorkspaceSources.Count -gt 0) {
-    if (-not (Invoke-LegacyWorkspaceStateMigration `
-        -Intent $Intent -Port $port -Sources $legacyWorkspaceSources)) {
-      return
-    }
-    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
-  }
-
-  for ($attempt = [Math]::Max(1, $ResumeAttempt + 1); $attempt -le $MaxAttempts; $attempt++) {
-    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
-    $phase = if ([string]$Intent.action -eq 'restart' -and $attempt -eq 1) { 'restarting' } else { 'starting' }
-    Write-Runtime -Intent $Intent -Phase $phase -Attempt $attempt -Status $initialStatus
-    if ([string]$Intent.action -eq 'restart' -and $attempt -eq 1) {
-      Invoke-RestartCommand | Out-Null
-    } else {
-      Invoke-OpenClaw -Arguments @('gateway', 'start', '--json') `
-        -TimeoutSeconds $LifecycleCommandTimeoutSeconds | Out-Null
-    }
-    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
-
-    Write-Runtime -Intent $Intent -Phase 'verifying' -Attempt $attempt -Status $initialStatus
-    $ready = Wait-GatewayReady -Intent $Intent -Port $port -TimeoutSeconds $ReadyTimeoutSeconds
-    if ($ready.superseded) { return }
-    if ($ready.ready) {
-      Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt -Status $ready.status -Terminal
-      Complete-LegacyWatchdogMigration
-      return
-    }
-
-    Write-Runtime -Intent $Intent -Phase 'diagnosing' -Attempt $attempt -Status $ready.status
-    $diagnosis = Diagnose-CriticalIssue -Intent $Intent -Attempt $attempt -Port $port
-    if ($diagnosis.ready) {
-      Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt -Status $diagnosis.status -Terminal
-      Complete-LegacyWatchdogMigration
-      return
-    }
-    if ($null -ne $diagnosis.issue) {
-      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $attempt `
-        -Status $ready.status -Issue $diagnosis.issue
-      return
-    }
-    if ($attempt -eq $MaxAttempts) { break }
-
-    Write-Runtime -Intent $Intent -Phase 'backing-up' -Attempt $attempt -Status $ready.status
-    if (-not (New-RecoveryBackup -Intent $Intent)) {
-      $backupIssue = New-Issue -Code 'backup-failed' `
-        -Detail 'EZTerminal could not create and verify a safe OpenClaw recovery backup.' `
-        -Remediation 'Free disk space or repair folder permissions, then press Start again.'
-      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $attempt `
-        -Status $ready.status -Issue $backupIssue
-      return
-    }
-
-    Write-Runtime -Intent $Intent -Phase 'repairing' -Attempt $attempt -Status $ready.status
-    Invoke-SafeRepair -Intent $Intent -Attempt $attempt -Port $port | Out-Null
-  }
-
-  $issue = New-Issue -Code 'repair-exhausted' `
-    -Detail 'OpenClaw did not become RPC-ready after three safe recovery attempts.' `
-    -Remediation 'Review the diagnostic ID and recovery backup, then press Start for a new request.'
-  Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $MaxAttempts `
-    -Status (New-Status -State 'stopped' -Port $port) -Issue $issue
-}
-
 function Test-OwnedTask {
   param($Task)
-  if ($null -eq $Task -or [string]$Task.Description -ne $TaskDescription) { return $false }
+  if ($null -eq $Task -or [string]$Task.Description -notin @($TaskDescription, 'EZTerminal-owned OpenClaw desired-state supervisor v1')) { return $false }
   $actions = @($Task.Actions)
   $ownedScriptPath = [IO.Path]::GetFullPath((Join-Path $StateDirectory 'openclaw-supervisor.ps1'))
-  return $actions.Count -eq 1 -and
-    [string]$actions[0].Execute -match '(?i)powershell.exe$' -and
-    [string]$actions[0].Arguments -like "*$ownedScriptPath*"
+  if ($actions.Count -ne 1 -or [string]$actions[0].Execute -notmatch '(?i)(?:^|\\)powershell\.exe$') { return $false }
+  $match = [regex]::Match([string]$actions[0].Arguments, '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|(\S+))')
+  if (-not $match.Success) { return $false }
+  $launcher = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+  return [IO.Path]::GetFullPath($launcher) -eq $ownedScriptPath
 }
 
 function Prepare-LegacyWatchdogMigration {
@@ -1054,9 +657,16 @@ function Install-SupervisorTask {
 
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -RunSupervisor -StateDirectory `"$StateDirectory`" -CliPath `"$CliPath`""
+    if ($null -ne $existing -and [string]$existing.Description -eq $TaskDescription -and
+        [string]$existing.Actions[0].Execute -eq $powerShell -and
+        [string]$existing.Actions[0].Arguments -eq $arguments) {
+      if (-not $existing.Settings.Enabled) { Enable-ScheduledTask -TaskName $TaskName | Out-Null }
+      return $null
+    }
     $action = New-ScheduledTaskAction -Execute $powerShell -Argument $arguments
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
+      -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
       -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval ([TimeSpan]::FromMinutes(1))
     $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
     $task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings `
@@ -1093,98 +703,103 @@ function Remove-SupervisorTask {
   }
 }
 
-function Run-SupervisorLoop {
-  [IO.Directory]::CreateDirectory($StateDirectory) | Out-Null
-  $lastQuickCheck = [DateTime]::MinValue
-  $lastDeepCheck = [DateTime]::MinValue
-  while ($true) {
-    try {
-      $intent = Get-Intent
-      if ($null -eq $intent) {
-        if ($RunOnce) { return }
-        Start-Sleep -Seconds 1
-        continue
-      }
-      $runtime = Read-JsonFile -Path $RuntimePath
-      $runtimeGeneration = if ($null -ne $runtime -and $null -ne $runtime.generation) {
-        [int64]$runtime.generation
-      } else { 0 }
-      $blocked = $null -ne $runtime -and $null -ne $runtime.issue -and
-        $null -ne $runtime.operation -and [string]$runtime.operation.phase -eq 'blocked' -and
-        [int64]$runtime.operation.generation -eq [int64]$intent.generation
-      $needsReconcile = $null -eq $runtime -or
-        $runtimeGeneration -ne [int64]$intent.generation -or
-        [string]$runtime.desiredState -ne [string]$intent.desiredState -or
-        ($null -ne $runtime.operation -and -not $blocked)
-      if ($needsReconcile) {
-        $resumeAttempt = if ($null -ne $runtime -and $null -ne $runtime.operation -and
-          [int64]$runtime.operation.generation -eq [int64]$intent.generation) {
-          [int]$runtime.operation.attempt
-        } else { 0 }
-        Invoke-Reconcile -Intent $intent -ResumeAttempt $resumeAttempt
-        $lastQuickCheck = [DateTime]::UtcNow
-        $lastDeepCheck = [DateTime]::UtcNow
-        if ($RunOnce) { return }
-        continue
-      }
-      if ($blocked) {
-        if ($RunOnce) { return }
-        Start-Sleep -Seconds 1
-        continue
-      }
 
-      $now = [DateTime]::UtcNow
-      $port = Get-GatewayPort
-      if (($now - $lastQuickCheck).TotalSeconds -ge $QuickHealthSeconds) {
-        $lastQuickCheck = $now
-        $startupReady = Test-StartupReady -Port $port
-        if (([string]$intent.desiredState -eq 'running' -and -not $startupReady) -or
-            ([string]$intent.desiredState -eq 'stopped' -and $startupReady)) {
-          Invoke-Reconcile -Intent $intent
-          if ($RunOnce) { return }
-          continue
-        }
-      }
-      if ([string]$intent.desiredState -eq 'running' -and
-          ($now - $lastDeepCheck).TotalSeconds -ge $DeepHealthSeconds) {
-        $lastDeepCheck = $now
-        $deep = Get-AuthenticatedStatus -Port $port
-        if (-not $deep.ready) {
-          Invoke-Reconcile -Intent $intent
-          if ($RunOnce) { return }
-          continue
-        }
-        Write-Runtime -Intent $intent -Phase 'idle' -Attempt 0 -Status $deep.status -Terminal
-      }
-    } catch {
-      # Task Scheduler restarts the process if this loop itself crashes; a
-      # transient iteration error must not reset persisted operation attempts.
+function Prepare-SupervisorUpgrade {
+  try {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $task) { return $null }
+    if (-not (Test-OwnedTask -Task $task)) {
+      return New-Issue -Code 'watchdog-conflict' -Detail 'The supervisor task belongs to a different launcher.' -Remediation 'Review the task before updating it.'
     }
-    if ($RunOnce) { return }
-    Start-Sleep -Seconds 1
+    # Do not interrupt a Doctor/data import admitted by the previous release.
+    $deadline = [DateTime]::UtcNow.AddSeconds(330)
+    do {
+      $runtime = Read-JsonFile -Path $RuntimePath
+      $maintenance = $null -ne $runtime -and $null -ne $runtime.operation -and
+        [string]$runtime.operation.phase -in @('repairing', 'backing-up') -and [string]$task.State -eq 'Running'
+      if (-not $maintenance) { break }
+      if ([DateTime]::UtcNow -ge $deadline) {
+        return New-Issue -Code 'supervisor-failed' -Detail 'An earlier OpenClaw data repair is still active.' `
+          -Remediation 'Allow that repair to finish, then retry Start. It has not been interrupted.'
+      }
+      Start-Sleep -Seconds 1
+      $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    } while ($true)
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    $exitDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+      $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      if ($null -eq $task -or [string]$task.State -notin @('Running', 'Queued', '4', '2')) { return $null }
+      Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $exitDeadline)
+    return New-Issue -Code 'supervisor-failed' -Detail 'The previous OpenClaw supervisor has not exited yet.' `
+      -Remediation 'Retry Start once the previous supervisor has stopped. The gateway has not been restarted.'
+  } catch {
+    return New-Issue -Code 'supervisor-failed' -Detail 'The previous OpenClaw supervisor could not be replaced.' -Remediation 'Check task permissions and retry Start.'
   }
 }
 
+function Run-SupervisorLoop {
+  [IO.Directory]::CreateDirectory($StateDirectory) | Out-Null
+  # A file lock works across Windows sessions and is released after a crash.
+  try { $lock = [IO.File]::Open((Join-Path $StateDirectory 'supervisor.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+  catch { return }
+  try {
+    $first = $true
+    $lastCheck = [DateTime]::MinValue
+    while ($true) {
+      $intent = Get-Intent
+      if ($null -ne $intent) {
+        try {
+          $runtime = Read-JsonFile -Path $RuntimePath
+          $newRequest = $null -eq $runtime -or [int64]$runtime.generation -ne [int64]$intent.generation
+          if ($first -or $newRequest) {
+            # A restart is an edge, not a durable instruction to stop every boot.
+            Invoke-Reconcile -Intent $intent -ExplicitRestart ($newRequest -and [string]$intent.action -eq 'restart')
+            $lastCheck = [DateTime]::UtcNow
+            $first = $false
+          } elseif (([DateTime]::UtcNow - $lastCheck).TotalSeconds -ge $QuickHealthSeconds) {
+            $lastCheck = [DateTime]::UtcNow
+            $observed = Get-GatewayObservation -Port (Get-GatewayPort)
+            $blocked = $null -ne $runtime.operation -and [string]$runtime.operation.phase -eq 'blocked'
+            if (([string]$intent.desiredState -eq 'running' -and $observed.ready) -or
+                ([string]$intent.desiredState -eq 'stopped' -and $observed.absent)) {
+              Write-Runtime -Intent $intent -Phase 'idle' -Attempt 0 -Status $observed.status -Terminal
+            } elseif (-not $blocked -and $null -eq $observed.issue) {
+              Invoke-Reconcile -Intent $intent
+            } elseif ($null -ne $observed.issue) {
+              Write-Runtime -Intent $intent -Phase 'blocked' -Attempt 0 -Status $observed.status -Issue $observed.issue
+            }
+          }
+          Update-SupervisorHeartbeat
+        } catch {
+          $issue = New-Issue -Code 'supervisor-failed' -Detail (Protect-CommandText -Text $_.Exception.Message) `
+            -Remediation 'Review the Windows execution error and retry the requested action.'
+          Write-Runtime -Intent $intent -Phase 'blocked' -Attempt 0 -Status (New-Status -State 'unknown' -Port (Get-GatewayPort)) -Issue $issue
+          $first = $false
+        }
+      }
+      if ($RunOnce) { return }
+      Start-Sleep -Milliseconds 500
+    }
+  } finally { $lock.Dispose() }
+}
+
+if ($PrepareUpgrade) {
+  $issue = Prepare-SupervisorUpgrade
+  Write-CommandResult -Ok ($null -eq $issue) -Issue $issue -ExitCode $(if ($null -eq $issue) { 0 } else { 1 })
+}
 if ($RepairStateAcl) {
   $issue = Repair-StateDirectoryAcl
   Write-CommandResult -Ok ($null -eq $issue) -Issue $issue -ExitCode $(if ($null -eq $issue) { 0 } else { 1 })
 }
-
 if ($InstallTask) {
   $issue = Install-SupervisorTask
   Write-CommandResult -Ok ($null -eq $issue) -Issue $issue -ExitCode $(if ($null -eq $issue) { 0 } else { 1 })
 }
-
 if ($RemoveTask) {
   $issue = Remove-SupervisorTask
   Write-CommandResult -Ok ($null -eq $issue) -Issue $issue -ExitCode $(if ($null -eq $issue) { 0 } else { 1 })
 }
-
-if ($RunSupervisor) {
-  Run-SupervisorLoop
-  exit 0
-}
-
-Write-CommandResult -Ok $false `
-  -Issue (New-Issue -Code 'supervisor-failed' -Detail 'No supervisor mode was selected.' -Remediation 'Start OpenClaw from EZTerminal.') `
-  -ExitCode 2
+if ($RunSupervisor) { Run-SupervisorLoop; exit 0 }
+Write-CommandResult -Ok $false -Issue (New-Issue -Code 'supervisor-failed' -Detail 'No supervisor mode was selected.' -Remediation 'Start OpenClaw from EZTerminal.') -ExitCode 2

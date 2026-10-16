@@ -1,4 +1,5 @@
 import { isAgentLaunchModel } from '../shared/agent-history';
+import { ConversationRefSchema, ConversationQuerySchema, HistoryResumePreparationRequestSchema, HistoryResumeRequestSchema } from '../shared/conversation-history';
 
 import { MAX_GUARDED_DESTROY_RUN_IDS, type RendererControl } from '../shared/ipc';
 import {
@@ -12,6 +13,14 @@ import {
   type RemoteClientIdentity,
 } from '../shared/remote-protocol';
 import { parseDaemonCommand } from '../shared/daemon-protocol';
+import { PlanningCommandSchema } from '../shared/planning';
+import { WorkflowCommandSchema, WorkflowPreviewRequestSchema } from '../shared/workflow';
+import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema } from '../shared/agent-capabilities';
+import { PlanningRunRequestSchema } from '../shared/planning-run';
+import { PlanningAiRequestSchema } from '../shared/planning-ai';
+import { PlanningAssetRequestSchema } from '../shared/planning-asset';
+import { ProjectArchiveRequestSchema } from '../shared/project-archive';
+import { PlanningResultQuerySchema } from '../shared/planning-result';
 
 import {
   isSessionSurfaceCloseDecisions,
@@ -354,6 +363,51 @@ export function isDispatchableClientMessage(value: unknown): value is Dispatchab
         && (value.limit as number) >= 1
         && (value.limit as number) <= 2_000
       );
+    case 'planning-run-execute':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= 256
+        && PlanningRunRequestSchema.safeParse(value.command).success;
+    case 'planning-ai-request':
+    case 'planning-asset-request':
+    case 'project-archive-request':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && (value.kind === 'planning-ai-request' ? PlanningAiRequestSchema : value.kind === 'planning-asset-request' ? PlanningAssetRequestSchema : ProjectArchiveRequestSchema).safeParse(value.request).success;
+    case 'planning-result-read':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && PlanningResultQuerySchema.safeParse(value.query).success;
+    case 'workflow-preview':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH && WorkflowPreviewRequestSchema.safeParse(value.request).success;
+    case 'conversation-history-resolve':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && ConversationRefSchema.safeParse(value.ref).success;
+    case 'conversation-history-list':
+    case 'conversation-history-prepare':
+    case 'conversation-history-resume':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && (value.kind === 'conversation-history-list' ? ConversationQuerySchema.safeParse(value.query)
+          : value.kind === 'conversation-history-prepare' ? HistoryResumePreparationRequestSchema.safeParse(value.request) : HistoryResumeRequestSchema.safeParse(value.request)).success;
+    case 'conversation-history-read':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.conversationId === 'string' && /^conversation_[a-zA-Z0-9_-]{1,140}$/u.test(value.conversationId)
+        && (value.cursor === undefined || typeof value.cursor === 'string' && value.cursor.length <= 65_536)
+        && (value.limit === undefined || typeof value.limit === 'number' && Number.isInteger(value.limit) && value.limit >= 1 && value.limit <= 100);
+    case 'workflow-execute':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH && WorkflowCommandSchema.safeParse(value.command).success;
+    case 'agent-capabilities-list':
+    case 'agent-capabilities-manage':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && (value.kind === 'agent-capabilities-list' ? AgentCapabilitiesRequestSchema.safeParse(value.request) : AgentExtensionCommandSchema.safeParse(value.command)).success;
+    case 'workflow-read':
+    case 'workflow-navigation':
+    case 'planning-run-read':
+    case 'planning-read':
+      return typeof value.requestId === 'string' && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(value.projectId)
+        && (value.subprojectId === undefined || typeof value.subprojectId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(value.subprojectId));
+    case 'planning-execute':
+      return typeof value.requestId === 'string' && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && PlanningCommandSchema.safeParse(value.command).success;
     case 'daemon-command':
       if (
         typeof value.requestId !== 'string'

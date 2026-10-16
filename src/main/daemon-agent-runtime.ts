@@ -1,4 +1,6 @@
+import type { ApprovalResponse } from '../shared/approval-request';
 import { createHash } from 'node:crypto';
+import { validateChatMessageContext, type ChatMessageContext, type ChatReplyReference } from '../shared/chat-message';
 
 import {
   DAEMON_HARD_LIMITS,
@@ -37,6 +39,8 @@ import {
 } from './daemon-store';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
+import path from 'node:path';
+import type { HistoryResumeResult } from '../shared/conversation-history';
 
 type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.create'
@@ -44,6 +48,7 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.submit'
   | 'agent.interrupt-and-submit'
   | 'agent.interrupt'
+  | 'agent.queue'
   | 'agent.set-settings'
   | 'agent.cancel'
   | 'agent.archive'
@@ -55,6 +60,10 @@ type AgentCommandType = Extract<DaemonCommandType,
 >;
 
 export interface DaemonAgentRuntimeOptions {
+  /** Host task binding must commit before a prepared turn reaches a provider. */
+  readonly beforeProviderDispatch?: (turn: DaemonTurn) => Promise<boolean | void>;
+  readonly canDispatchTurn?: (turn: DaemonTurn) => boolean;
+  readonly preparedSessionSettings?: (sessionId: string) => Pick<ProviderSessionContext, 'reasoningEffort' | 'environment' | 'managedExecution' | 'toolsDisabled'> | undefined;
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
   readonly applySystemCommit: (
@@ -74,12 +83,31 @@ export interface DaemonAgentRuntimeOptions {
     sessionId: string,
   ) => ProviderSessionContext['orchestration'] | undefined;
   readonly revokeOrchestrationForSession?: (sessionId: string) => void;
+  readonly workflowToolsForSession?: (sessionId: string) => boolean;
+  readonly conversationWritable?: (projectId: string, sessionId: string) => Promise<boolean>;
+  readonly conversationContext?: (projectId: string, sessionId: string) => Promise<ChatMessageContext['workflow']>;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly shutdownStepTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
+}
+
+/** Only the host history resolver may construct an adoption; no renderer command accepts this ID. */
+export interface NativeHistoryAdoption {
+  readonly sessionId: string;
+  readonly workspaceId: string;
+  readonly providerId: 'codex' | 'claude';
+  readonly providerSessionId: string;
+  readonly historyId: string;
+  readonly rootPath: string;
+  readonly title: string;
+  readonly sourceUpdatedAt: number;
+  readonly model?: string;
+  readonly permissionPreset: DaemonAgent['permissionPreset'];
+  readonly transcript: readonly DaemonTranscriptItemInput[];
+  readonly requestReceipt?: { readonly id: string; readonly fingerprint: string };
 }
 
 interface ChildRelationPlan {
@@ -172,6 +200,9 @@ function agentInput(
   const model = Object.prototype.hasOwnProperty.call(patch, 'model')
     ? patch.model
     : agent.model;
+  const reasoningEffort = Object.prototype.hasOwnProperty.call(patch, 'reasoningEffort')
+    ? patch.reasoningEffort
+    : agent.reasoningEffort;
   const currentTurnId = Object.prototype.hasOwnProperty.call(patch, 'currentTurnId')
     ? patch.currentTurnId
     : agent.currentTurnId;
@@ -180,6 +211,7 @@ function agentInput(
     providerId: patch.providerId ?? agent.providerId,
     ...(providerSessionId ? { providerSessionId } : {}),
     ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     permissionPreset: patch.permissionPreset ?? agent.permissionPreset,
     state: patch.state ?? agent.state,
     ...(currentTurnId ? { currentTurnId } : {}),
@@ -240,6 +272,8 @@ function transcriptInput(item: DaemonTranscriptItem): DaemonTranscriptItemInput 
     isDelta: item.isDelta,
     isSensitive: item.isSensitive,
     ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}),
+    ...(item.context ? { context: item.context } : {}),
+    ...(item.payload ? { payload: item.payload } : {}),
     createdAt: item.createdAt,
   };
 }
@@ -290,6 +324,7 @@ export class DaemonAgentRuntime {
   private readonly providerLifecycleOperations = new Map<string, Promise<void>>();
   private readonly providerLifecycleGenerations = new Map<string, number>();
   private readonly providerHandleOperations = new Map<string, Promise<void>>();
+  private readonly attachedProviderSessions = new Set<string>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
@@ -317,6 +352,7 @@ export class DaemonAgentRuntime {
         this.runCommand(() => this.submit(command, context, true))
       ),
       'agent.interrupt': (command, context) => this.runCommand(() => this.interrupt(command, context)),
+      'agent.queue': (command, context) => this.runCommand(() => this.manageQueue(command, context)),
       'agent.set-settings': (command, context) => this.runCommand(() => this.setSettings(command, context)),
       'agent.cancel': (command, context) => this.runCommand(() => this.cancel(command, context)),
       'agent.archive': (command, context) => this.runCommand(() => this.archive(command, context)),
@@ -546,6 +582,43 @@ export class DaemonAgentRuntime {
     }
   }
 
+  /** Atomic native ownership claim + transcript import. Existing agent.resume checks stay intact. */
+  async adoptNativeHistory(input: NativeHistoryAdoption): Promise<HistoryResumeResult> {
+    if (this.disposed || this.lifecycleAbortController.signal.aborted) return { ok: false, reason: 'unavailable', message: 'The Agent runtime is stopping.' };
+    const receipt = await this.options.applySystemTransition<HistoryResumeResult>(({ snapshot }) => {
+      const fail = (reason: 'not-found' | 'root-mismatch' | 'provider-unavailable' | 'conflict', message: string) => ({
+        commit: {}, value: { ok: false as const, reason, message },
+      });
+      const workspace = findActiveDaemonWorkspace(snapshot, input.workspaceId);
+      if (!workspace) return fail('not-found', 'The target workspace is unavailable.');
+      const key = (value: string) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+      if (key(workspace.rootPath) !== key(input.rootPath)) return fail('root-mismatch', 'Resume in the workspace where this conversation was recorded.');
+      const owner = snapshot.agents.find(agent => agent.providerId === input.providerId && agent.providerSessionId === input.providerSessionId);
+      if (owner) return { commit: {}, value: { ok: true, sessionId: owner.sessionId, alreadyLinked: true } };
+      if (snapshot.sessions.some(session => session.id === input.sessionId)) return fail('conflict', 'This imported conversation already has a different owner.');
+      const provider = this.options.providers.enabledAdapter(snapshot, input.providerId);
+      if (!provider.ok) return fail('provider-unavailable', provider.message);
+      return { value: { ok: true, sessionId: input.sessionId, alreadyLinked: false }, commit: { mutations: [
+        { kind: 'session.upsert', value: { id: input.sessionId, projectId: workspace.projectId, workspaceId: workspace.id,
+          kind: 'agent', title: input.title, state: 'starting', source: 'structured' } },
+        { kind: 'agent.upsert', value: { sessionId: input.sessionId, providerId: input.providerId, providerSessionId: input.providerSessionId,
+          ...(input.model ? { model: input.model } : {}), permissionPreset: input.permissionPreset, state: 'starting', queuedTurnCount: 0,
+          orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled } },
+        ...this.transcriptMutations(input.transcript),
+        { kind: 'migration-receipt.record', value: { id: stableId('native-history', input.historyId), source: 'native-history-adoption',
+          fingerprint: stableId('native-history-source', input.providerId, input.providerSessionId), detail: {
+            historyId: input.historyId, providerId: input.providerId, providerSessionId: input.providerSessionId,
+            sessionId: input.sessionId, workspaceId: workspace.id, rootPath: input.rootPath, sourceUpdatedAt: input.sourceUpdatedAt,
+          } } },
+        ...(input.requestReceipt ? [{ kind: 'migration-receipt.record' as const, value: { ...input.requestReceipt, source: 'history-resume-request', detail: { sessionId: input.sessionId } } }] : []),
+      ] } };
+    });
+    const result = receipt?.value ?? { ok: false as const, reason: 'unavailable' as const, message: 'History adoption could not be committed.' };
+    if (result.ok && !result.alreadyLinked) this.runProviderHandleBackground('attach imported history', input.providerId, input.providerSessionId,
+      () => this.rehydrateSession(input.sessionId));
+    return result;
+  }
+
   private async create(
     command: DaemonCommand,
     context: DaemonCommandExecutionContext,
@@ -583,7 +656,7 @@ export class DaemonAgentRuntime {
         permissionPreset: command.payload.permissionPreset,
         state: command.payload.initialPrompt ? 'queued' : 'idle',
         queuedTurnCount: command.payload.initialPrompt ? 1 : 0,
-        orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled,
+        orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled && !this.options.preparedSessionSettings?.(command.payload.sessionId),
       } },
     ];
     if (command.payload.initialPrompt) mutations.push(
@@ -688,6 +761,26 @@ export class DaemonAgentRuntime {
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled,
       } },
     ];
+    // A continuation keeps the entire visible conversation, even when the provider excludes
+    // old turns from resume responses. Read every bounded page and preserve delta message identity.
+    let afterSequence = 0;
+    mutations.push({ kind: 'migration-receipt.record', value: { id: stableId('history-continuation', command.payload.sessionId), source: 'history-continuation',
+      fingerprint: stableId('history-continuation', sourceSession.id, command.payload.sessionId),
+      detail: { sourceSessionId: sourceSession.id, sessionId: command.payload.sessionId, projectId: sourceSession.projectId } } });
+    for (;;) {
+      const items = this.options.readTranscript(sourceSession.id, afterSequence, 500);
+      if (items.length === 0) break;
+      mutations.push(...this.transcriptMutations(items.map(item => ({
+        id: stableId('history-message', command.payload.sessionId, item.id), sessionId: command.payload.sessionId,
+        messageId: item.messageId ?? item.id,
+        kind: item.kind, text: item.text, isDelta: item.isDelta, isSensitive: item.isSensitive, createdAt: item.createdAt,
+        ...(item.context ? { context: item.context } : {}), ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}),
+        ...(item.payload ? { payload: item.payload } : {}),
+      }))));
+      const next = items.at(-1)!.sequence;
+      if (next <= afterSequence) return commandError('invalid-state', 'The source transcript cursor did not advance.');
+      afterSequence = next;
+    }
     if (relation?.ok) {
       mutations.push({ kind: 'agent-relation.upsert', value: {
         id: stableId('relation', relation.value.treeId, command.payload.sessionId),
@@ -724,15 +817,40 @@ export class DaemonAgentRuntime {
   ): Promise<DaemonCommandExecutionResult> {
     const expected = interruptFirst ? 'agent.interrupt-and-submit' : 'agent.submit';
     if (command.type !== expected) return commandError('invalid-command', `Unexpected ${expected} command.`);
+    if (this.options.preparedSessionSettings?.(command.payload.sessionId)
+      && command.principal.id !== 'planning-runtime' && command.principal.id !== 'planning-result-runtime' && command.principal.id !== 'planning-ai-runtime') {
+      return commandError('invalid-state', 'This conversation belongs to a frozen execution attempt. Use a new task or the execution retry controls for additional instructions.');
+    }
     const snapshot = context.snapshot;
     const session = snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
     const agent = snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
     if (!session || !agent || session.kind !== 'agent') {
       return commandError('not-found', 'Agent Session was not found.');
     }
+    if (this.options.conversationWritable && !await this.options.conversationWritable(session.projectId, session.id)) {
+      return commandError('invalid-state', 'This stage or subproject is archived. Restore it or explicitly unlink the conversation before sending.');
+    }
     const workspace = findActiveDaemonWorkspace(snapshot, session.workspaceId, session.projectId);
     if (!workspace) {
       return commandError('not-found', 'Active Workspace was not found.');
+    }
+    const suppliedContext = command.payload.context;
+    if (suppliedContext?.workflow) return commandError('invalid-command', 'Stage reference snapshots are resolved by the host, not supplied by a client.');
+    let messageContext = suppliedContext;
+    try {
+      const workflow = await this.options.conversationContext?.(session.projectId, session.id);
+      if (workflow) messageContext = { ...suppliedContext, workflow };
+    } catch (error) { return commandError('invalid-state', error instanceof Error ? error.message : 'The saved stage references are unavailable.'); }
+    const contextError = messageContext && validateChatMessageContext(messageContext);
+    if (contextError) return commandError('invalid-command', contextError);
+    if (messageContext) {
+      const protocol = snapshot.providers.find((entry) => entry.id === agent.providerId)?.protocol;
+      if (protocol !== 'codex-app-server' && protocol !== 'claude-agent-sdk') {
+        return commandError('invalid-command', 'This provider does not support message attachments or replies.');
+      }
+      if (messageContext.replyTo && !this.isValidReply(session.id, messageContext.replyTo)) {
+        return commandError('invalid-command', 'The quoted message is unavailable or does not match this conversation.');
+      }
     }
     if (['archived', 'done', 'interrupted', 'error'].includes(agent.state)) {
       return commandError('invalid-state', 'Agent Session is not available for a new turn.');
@@ -773,6 +891,8 @@ export class DaemonAgentRuntime {
         command.commandId,
         command.payload.prompt,
         now,
+        messageContext,
+        messageContext?.replyTo ? this.replyAnchorIsSensitive(session.id, messageContext.replyTo) : false,
       )]),
     );
     return {
@@ -791,6 +911,45 @@ export class DaemonAgentRuntime {
     };
   }
 
+  /** Runs under the same command/store gate as dispatch, so a taken turn cannot start. */
+  private async manageQueue(command: DaemonCommand, context: DaemonCommandExecutionContext): Promise<DaemonCommandExecutionResult> {
+    if (command.type !== 'agent.queue') return commandError('invalid-command', 'Unexpected queue command.');
+    const { sessionId, turnId, turnRevision, action } = command.payload;
+    const snapshot = context.snapshot;
+    const session = snapshot.sessions.find(item => item.id === sessionId);
+    const agent = snapshot.agents.find(item => item.sessionId === sessionId);
+    const turn = snapshot.turns.find(item => item.id === turnId && item.sessionId === sessionId);
+    if (!session || !agent || !turn) return commandError('not-found', 'The queued request was not found.');
+    if (TERMINAL_SESSION_STATES.has(session.state) || TERMINAL_AGENT_STATES.has(agent.state)
+      || snapshot.projects.find(item => item.id === session.projectId)?.archivedAt
+      || snapshot.workspaces.find(item => item.id === session.workspaceId)?.archivedAt) return commandError('invalid-state', 'This conversation is not writable.');
+    if (this.options.conversationWritable && !await this.options.conversationWritable(session.projectId, sessionId)) return commandError('invalid-state', 'This conversation is read-only.');
+    if (turn.state !== 'queued' || turn.revision !== turnRevision) return commandError('invalid-state', 'This request has changed or already started. Refresh the queue.');
+    const queued = snapshot.turns.filter(item => item.sessionId === sessionId && item.state === 'queued');
+    const mutations: DaemonStoreMutation[] = [];
+    const current = snapshot.turns.find(item => item.id === agent.currentTurnId && ACTIVE_TURN_STATES.has(item.state));
+    let afterInterrupt: (() => void) | undefined;
+    if (action === 'run-next') {
+      if (agent.state === 'delivery-uncertain') return commandError('invalid-state', 'Resolve the current delivery before interrupting again.');
+      const interrupt = this.interruptActiveTurn(snapshot, sessionId);
+      if (!interrupt.ok) return interrupt;
+      afterInterrupt = interrupt.afterCommit;
+      // Rotate existing FIFO positions, keeping every other request in order.
+      const ordered = queued.slice().sort((a, b) => (a.enqueueSequence ?? a.revision) - (b.enqueueSequence ?? b.revision));
+      const positions = ordered.map(item => item.enqueueSequence ?? item.revision);
+      [turn, ...ordered.filter(item => item.id !== turnId)].forEach((item, index) => {
+        mutations.push({ kind: 'turn.queue-position', turnId: item.id, sessionId, position: positions[index] });
+      });
+      mutations.push(...(interrupt.commit?.mutations ?? []));
+    } else {
+      mutations.push({ kind: 'turn.upsert', value: turnInput(turn, { state: 'interrupted', finishedAt: this.isoNow(), errorCode: action === 'take' ? 'queue-taken' : 'queue-removed' }) });
+      mutations.push({ kind: 'agent.upsert', value: agentInput(agent, { queuedTurnCount: queued.length - 1, ...(!current ? { state: queued.length > 1 ? 'queued' : 'idle' } : {}) }) });
+    }
+    return { ok: true, commit: { mutations }, afterCommit: () => {
+      if (afterInterrupt) afterInterrupt(); else this.queuePump();
+    } };
+  }
+
   private async interrupt(
     command: DaemonCommand,
     context: DaemonCommandExecutionContext,
@@ -804,21 +963,29 @@ export class DaemonAgentRuntime {
     context: DaemonCommandExecutionContext,
   ): Promise<DaemonCommandExecutionResult> {
     if (command.type !== 'agent.set-settings') return commandError('invalid-command', 'Unexpected Agent settings command.');
+    if (this.options.preparedSessionSettings?.(command.payload.sessionId)) {
+      return commandError('invalid-state', 'Prepared execution settings are immutable. Prepare a new run to change the provider, model, or permissions.');
+    }
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
     if (!agent) return commandError('not-found', 'Agent Session was not found.');
     if (TERMINAL_AGENT_STATES.has(agent.state)) return commandError('invalid-state', 'Agent Session has ended.');
-    if (agent.currentTurnId) return commandError('invalid-state', 'Change Agent settings between turns.');
+    // Effort is read at the next submit, so it may change while a turn runs.
+    const effortOnly = command.payload.reasoningEffort !== undefined
+      && command.payload.model === undefined && command.payload.permissionPreset === undefined;
+    if (agent.currentTurnId && !effortOnly) return commandError('invalid-state', 'Change Agent settings between turns.');
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const nextModel = command.payload.model ?? agent.model;
     const nextPermissionPreset = command.payload.permissionPreset ?? agent.permissionPreset;
+    const nextEffort = command.payload.reasoningEffort ?? agent.reasoningEffort;
     return {
       ok: true,
       commit: { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
         ...(nextModel ? { model: nextModel } : {}),
+        ...(nextEffort ? { reasoningEffort: nextEffort } : {}),
         permissionPreset: nextPermissionPreset,
       }) }] },
-      afterCommit: () => agent.providerSessionId ? this.runBackground(
+      afterCommit: () => !effortOnly && agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId) ? this.runBackground(
         `update Agent settings ${agent.sessionId}`,
         () => this.applyProviderSettings(
           agent.sessionId,
@@ -1140,6 +1307,10 @@ export class DaemonAgentRuntime {
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const resolvedAt = this.isoNow();
+    // Approving a plan leaves plan mode for the mode the user chose; the provider switches with it.
+    const planMode = command.payload.decision === 'allow' && command.payload.response?.kind === 'plan'
+      ? command.payload.response.mode
+      : undefined;
     return { ok: true, commit: { mutations: [
       { kind: 'approval.upsert', value: this.resolvedApprovalInput(
         approval,
@@ -1150,7 +1321,7 @@ export class DaemonAgentRuntime {
         kind: 'turn.upsert' as const,
         value: turnInput(turn, { state: 'working' }),
       }] : []),
-      { kind: 'agent.upsert', value: agentInput(agent, { state: 'working' }) },
+      { kind: 'agent.upsert', value: agentInput(agent, { state: 'working', ...(planMode ? { permissionPreset: planMode } : {}) }) },
       { kind: 'session.upsert', value: sessionInput(session, 'running') },
     ] }, afterCommit: () => this.runBackground(
       `resolve approval ${approval.id}`,
@@ -1160,6 +1331,7 @@ export class DaemonAgentRuntime {
         agent.providerSessionId!,
         approval.providerRequestId,
         command.payload.decision,
+        command.payload.response,
       ),
     ) };
   }
@@ -1254,6 +1426,7 @@ export class DaemonAgentRuntime {
       } }] },
       afterCommit: () => {
         this.advanceProviderLifecycle(current.id);
+        for (const target of providerSessions) this.attachedProviderSessions.delete(target.sessionId);
         for (const sessionId of orchestrationSessionIds) {
           try {
             this.options.revokeOrchestrationForSession?.(sessionId);
@@ -1343,13 +1516,14 @@ export class DaemonAgentRuntime {
     permissionPreset: DaemonAgent['permissionPreset'],
     orchestrationEnabled: boolean,
   ): ProviderSessionContext {
-    const orchestration = orchestrationEnabled
+    const orchestration = orchestrationEnabled || this.options.workflowToolsForSession?.(sessionId)
       ? this.options.orchestrationForSession?.(sessionId)
       : undefined;
     return {
       sessionId,
       workspaceId,
       workspaceRoot,
+      ...this.options.preparedSessionSettings?.(sessionId),
       ...(model ? { model } : {}),
       permissionPreset,
       ...(orchestration ? { orchestration } : {}),
@@ -1362,6 +1536,8 @@ export class DaemonAgentRuntime {
     commandId: string,
     text: string,
     createdAt: string,
+    context?: ChatMessageContext,
+    isSensitive = false,
   ): DaemonTranscriptItemInput {
     return {
       id: stableId('message', commandId, 'user'),
@@ -1370,8 +1546,9 @@ export class DaemonAgentRuntime {
       kind: 'user-message',
       text,
       isDelta: false,
-      isSensitive: false,
+      isSensitive,
       createdAt,
+      ...(context ? { context } : {}),
     };
   }
 
@@ -1402,6 +1579,9 @@ export class DaemonAgentRuntime {
       });
   }
 
+  /** Wake existing queued work after a host-owned execution gate is released. */
+  wakeQueuedTurns(): void { this.queuePump(); }
+
   private async pumpQueuedTurns(): Promise<void> {
     while (!this.disposed) {
       let claim: {
@@ -1419,7 +1599,7 @@ export class DaemonAgentRuntime {
         const activeCount = snapshot.turns.filter((turn) => ACTIVE_TURN_STATES.has(turn.state)).length;
         if (activeCount >= DAEMON_HARD_LIMITS.concurrentManagedTurns) return undefined;
         const queued = snapshot.turns
-          .filter((turn) => turn.state === 'queued')
+          .filter((turn) => turn.state === 'queued' && this.options.canDispatchTurn?.(turn) !== false)
           .sort((left, right) => (
             (left.enqueueSequence ?? Number.MAX_SAFE_INTEGER) - (right.enqueueSequence ?? Number.MAX_SAFE_INTEGER)
             || left.createdAt.localeCompare(right.createdAt)
@@ -1515,7 +1695,22 @@ export class DaemonAgentRuntime {
       };
       const provider = this.options.providers.enabledAdapter(dispatchSnapshot, selected.agent.providerId);
       if (!provider.ok) return;
+      if (this.options.conversationWritable && !await this.options.conversationWritable(selected.session.projectId, selected.session.id)) {
+        await this.transition(snapshot => {
+          const turn = snapshot.turns.find(entry => entry.id === selected.turn.id);
+          const agent = snapshot.agents.find(entry => entry.sessionId === selected.session.id);
+          const session = snapshot.sessions.find(entry => entry.id === selected.session.id);
+          if (!turn || turn.state !== 'submitting' || !agent || !session) return undefined;
+          return { mutations: [
+            { kind: 'turn.upsert', value: turnInput(turn, { state: 'failed', errorCode: 'stage-archived', finishedAt: this.isoNow() }) },
+            { kind: 'agent.upsert', value: agentInput(agent, { state: 'idle', currentTurnId: undefined }) },
+            { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+          ] };
+        });
+        continue;
+      }
       let providerSessionId = selected.agent.providerSessionId;
+      let promptSent = false;
       try {
         if (!providerSessionId) {
           const handle = await provider.value.createSession(this.sessionContext(
@@ -1546,14 +1741,37 @@ export class DaemonAgentRuntime {
             continue;
           }
           providerSessionId = handle.providerSessionId;
+          this.attachedProviderSessions.add(selected.session.id);
+        }
+        await this.providerHandleOperations.get(JSON.stringify([selected.agent.providerId, providerSessionId]));
+        if (!this.attachedProviderSessions.has(selected.session.id)) await this.rehydrateSession(selected.session.id);
+        if (!this.attachedProviderSessions.has(selected.session.id)) throw new Error('The original provider session could not be attached. Retry after checking its state.');
+        if (this.disposed) return;
+        if (await this.options.beforeProviderDispatch?.(selected.turn) === false) {
+          await this.transition((snapshot) => {
+            const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
+            const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
+            const session = snapshot.sessions.find((entry) => entry.id === selected.turn.sessionId);
+            if (!turn || turn.state !== 'submitting' || !agent || agent.currentTurnId !== turn.id || !session) return undefined;
+            return { mutations: [
+              { kind: 'turn.upsert', value: turnInput(turn, { state: 'queued', startedAt: undefined }) },
+              { kind: 'agent.upsert', value: agentInput(agent, { state: 'queued', currentTurnId: undefined, queuedTurnCount: agent.queuedTurnCount + 1 }) },
+              { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+            ] };
+          });
+          continue;
         }
         if (this.disposed) return;
+        promptSent = true;
         await provider.value.submit({
           sessionId: selected.turn.sessionId,
           providerSessionId,
           turnId: selected.turn.id,
           commandId: selected.turn.commandId,
           prompt: selected.prompt,
+          context: this.contextForTurn(selected.turn),
+          reasoningEffort: this.options.preparedSessionSettings?.(selected.turn.sessionId)?.reasoningEffort
+            ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
         }, this.lifecycleAbortController.signal);
         let shouldArmTimeout = false;
         await this.transition((snapshot) => {
@@ -1576,6 +1794,36 @@ export class DaemonAgentRuntime {
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Provider delivery could not be confirmed.';
+        if (!promptSent) {
+          // The session could not start or attach, so the prompt never left: fail the turn
+          // now (with the provider's reason) instead of waiting out an uncertain delivery.
+          const code = typeof (error as { code?: unknown } | null)?.code === 'string'
+            ? (error as { code: string }).code
+            : 'provider-start-failed';
+          await this.transition((snapshot) => {
+            const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
+            const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
+            const session = snapshot.sessions.find((entry) => entry.id === selected.turn.sessionId);
+            if (!turn || !agent || !session || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
+              return undefined;
+            }
+            return { mutations: [
+              { kind: 'turn.upsert', value: turnInput(turn, { state: 'failed', errorCode: code, finishedAt: this.isoNow() }) },
+              { kind: 'agent.upsert', value: agentInput(agent, { state: 'idle', currentTurnId: undefined }) },
+              { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+              ...this.transcriptMutations([{
+                id: stableId('start-error', selected.turn.id, detail),
+                sessionId: selected.turn.sessionId,
+                turnId: selected.turn.id,
+                kind: 'error',
+                text: detail,
+                isDelta: false,
+                isSensitive: false,
+              }]),
+            ] };
+          });
+          continue;
+        }
         let markedUncertain = false;
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
@@ -1863,6 +2111,7 @@ export class DaemonAgentRuntime {
             risk: event.risk,
             title: event.title,
             ...(event.detail ? { detail: event.detail } : {}),
+            ...(event.request ? { request: event.request } : {}),
             state: stale ? 'expired' : 'pending',
             ...(stale ? { resolvedAt: now } : {}),
           } },
@@ -2189,6 +2438,9 @@ export class DaemonAgentRuntime {
     delayMs = DAEMON_HARD_LIMITS.backgroundTurnMs,
   ): void {
     this.clearTurnTimeout(turnId);
+    // User-started planning runs end at a review/integration boundary, not an elapsed-time cap.
+    // Provider/tool liveness and explicit cancellation remain independently enforced.
+    if (this.options.preparedSessionSettings?.(sessionId)) return;
     const timer = this.setTimer(() => {
       this.turnTimers.delete(turnId);
       this.eventTail = this.eventTail
@@ -2508,6 +2760,65 @@ export class DaemonAgentRuntime {
     });
   }
 
+  private contextForTurn(turn: DaemonTurn): ChatMessageContext | undefined {
+    let afterSequence = 0;
+    for (;;) {
+      const page = this.options.readTranscript(turn.sessionId, afterSequence, 2_000);
+      const message = page.find((item) => item.turnId === turn.id && item.kind === 'user-message');
+      if (message) return message.context;
+      if (page.length < 2_000) {
+        const command = this.options.findCommand?.(turn.commandId);
+        return (command?.type === 'agent.submit' || command?.type === 'agent.interrupt-and-submit') && command.payload.sessionId === turn.sessionId ? command.payload.context : undefined;
+      }
+      const next = page.at(-1)?.sequence;
+      if (next === undefined || next <= afterSequence) return undefined;
+      afterSequence = next;
+    }
+  }
+
+  /** A reply that quotes a sensitive message carries that text, so it inherits the flag. */
+  private replyAnchorIsSensitive(sessionId: string, reply: ChatReplyReference): boolean {
+    let afterSequence = 0;
+    for (;;) {
+      const page = this.options.readTranscript(sessionId, afterSequence, 2_000);
+      const anchor = page.find((item) => item.id === reply.messageId || item.messageId === reply.messageId
+        || item.id === stableId('history-message', sessionId, reply.messageId));
+      if (anchor) return anchor.isSensitive;
+      const next = page.at(-1)?.sequence;
+      if (page.length < 2_000 || next === undefined || next <= afterSequence) return false;
+      afterSequence = next;
+    }
+  }
+
+  private isValidReply(sessionId: string, reply: ChatReplyReference): boolean {
+    let anchor: DaemonTranscriptItem | undefined;
+    let text = '';
+    let afterSequence = 0;
+    for (;;) {
+      const page = this.options.readTranscript(sessionId, afterSequence, 2_000);
+      for (const item of page) {
+        if (!anchor) {
+          if (item.id !== reply.messageId && item.messageId !== reply.messageId && item.id !== stableId('history-message', sessionId, reply.messageId)) continue;
+          if (!['user-message', 'assistant-message'].includes(item.kind)) return false;
+          anchor = item;
+          text = item.text;
+        } else if (anchor.messageId) {
+          if (item.messageId !== anchor.messageId || item.turnId !== anchor.turnId || item.kind !== anchor.kind) continue;
+          text = item.isDelta ? text + item.text : item.text;
+        } else {
+          if (item.kind !== anchor.kind || item.turnId !== anchor.turnId || item.messageId || !item.isDelta) {
+            return text.startsWith(reply.text);
+          }
+          text += item.text;
+        }
+      }
+      if (page.length < 2_000) return Boolean(anchor && text.startsWith(reply.text));
+      const next = page.at(-1)?.sequence;
+      if (next === undefined || next <= afterSequence) return false;
+      afterSequence = next;
+    }
+  }
+
   private promptForTurn(turn: DaemonTurn): string | undefined {
     const command = this.options.findCommand?.(turn.commandId);
     if (command?.type === 'agent.create' && command.payload.sessionId === turn.sessionId) {
@@ -2540,6 +2851,7 @@ export class DaemonAgentRuntime {
         || !session
         || TERMINAL_AGENT_STATES.has(agent.state)
         || TERMINAL_SESSION_STATES.has(session.state)
+        || !agent.currentTurnId && agent.queuedTurnCount === 0
       ) continue;
       await this.rehydrateSession(agent.sessionId);
     }
@@ -2550,6 +2862,7 @@ export class DaemonAgentRuntime {
     for (const agent of snapshot.agents) {
       if (!this.isCurrentProviderEnable(providerId, lifecycleGeneration)) return;
       if (agent.providerId !== providerId || !agent.providerSessionId) continue;
+      if (agent.state === 'idle' && !agent.currentTurnId && !snapshot.turns.some(turn => turn.sessionId === agent.sessionId && turn.state === 'queued')) continue;
       const session = snapshot.sessions.find((entry) => entry.id === agent.sessionId);
       if (
         !session
@@ -2629,7 +2942,7 @@ export class DaemonAgentRuntime {
       });
       if (!attached) {
         await this.disposeProviderSession(provider.value, sessionId, handle.providerSessionId);
-      }
+      } else this.attachedProviderSessions.add(sessionId);
     } catch (error) {
       if (!isCurrent()) return;
       await this.markSessionDeliveryUncertain(
@@ -2747,6 +3060,7 @@ export class DaemonAgentRuntime {
     providerSessionId: string,
     providerRequestId: string,
     decision: 'allow' | 'deny',
+    response?: ApprovalResponse,
   ): Promise<void> {
     const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
     if (!provider.ok) {
@@ -2754,7 +3068,7 @@ export class DaemonAgentRuntime {
       return;
     }
     try {
-      await provider.value.resolveApproval({ sessionId, providerSessionId, providerRequestId, decision });
+      await provider.value.resolveApproval({ sessionId, providerSessionId, providerRequestId, decision, ...(response ? { response } : {}) });
     } catch (error) {
       await this.markSessionDeliveryUncertain(
         sessionId,
@@ -2769,6 +3083,7 @@ export class DaemonAgentRuntime {
     sessionId: string,
     providerSessionId: string,
   ): Promise<void> {
+    this.attachedProviderSessions.delete(sessionId);
     try {
       await provider.disposeSession(sessionId, providerSessionId);
     } catch (error) {
@@ -2804,7 +3119,9 @@ export class DaemonAgentRuntime {
     let batch: DaemonTranscriptItemInput[] = [];
     let bytes = 0;
     for (const item of expanded) {
-      const itemBytes = Buffer.byteLength(item.text, 'utf8');
+      const itemBytes = Buffer.byteLength(item.text, 'utf8')
+        + (item.context ? Buffer.byteLength(JSON.stringify(item.context), 'utf8') : 0)
+        + (item.payload ? Buffer.byteLength(JSON.stringify(item.payload), 'utf8') : 0);
       if (batch.length >= MAX_TRANSCRIPT_BATCH_ITEMS || bytes + itemBytes > MAX_TRANSCRIPT_BATCH_UTF8_BYTES) {
         batches.push(batch);
         batch = [];

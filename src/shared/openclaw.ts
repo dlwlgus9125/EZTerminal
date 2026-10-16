@@ -24,6 +24,8 @@ export interface OpenClawStatus {
   /** From the WS `status` RPC's `runtimeVersion` — only present while `running`. */
   readonly version?: string;
   readonly port: number;
+  /** Management RPC is optional for process liveness and opening the Control UI. */
+  readonly connectionState?: 'checking' | 'connected' | 'unavailable';
 }
 
 export interface OpenClawEndpoint {
@@ -184,6 +186,10 @@ export interface OpenClawControlSnapshot {
   readonly operation: OpenClawControlOperation | null;
   readonly issue: OpenClawControlIssue | null;
   readonly updatedAt: string;
+  /** Heartbeats must never make an old physical observation look fresh. */
+  readonly statusObservedAt?: string;
+  readonly supervisorHeartbeatAt?: string;
+  readonly supervisorInstanceId?: string;
 }
 
 export interface OpenClawChatSurfaceSnapshot {

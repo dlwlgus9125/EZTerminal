@@ -32,7 +32,7 @@ interface UseDesktopAppearanceOptions {
 }
 
 export function useDesktopAppearance({ t }: UseDesktopAppearanceOptions) {
-  const [theme, setThemeState] = useState<ThemeName>('matrix');
+  const [theme, setThemeState] = useState<ThemeName>('dark');
   const [availableThemes, setAvailableThemes] = useState<ThemeDefinition[]>(() => listThemes());
   // Guards the initial getTheme() fetch against a click that lands before its IPC
   // round-trip resolves — without this, a fast click could be silently overwritten

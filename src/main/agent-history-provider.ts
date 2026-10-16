@@ -70,6 +70,10 @@ export interface AgentHistoryProviderAdapter {
    */
   listSessions(query: ProviderSessionQuery): Promise<ProviderHistorySessionPage>;
   readTranscript(privateId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage>;
+  /** Import owns full visible message text; preview limits must not truncate persisted history. */
+  readTranscriptForAdoption?(privateId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage>;
+  /** Some adapters index a file path rather than a provider conversation UUID. */
+  resolveProviderSessionId?(privateId: string): string | null;
   /**
    * Reads one completed turn's structured changes. When `turnId` is omitted,
    * the provider's latest completed turn is used. The opaque turn id is the

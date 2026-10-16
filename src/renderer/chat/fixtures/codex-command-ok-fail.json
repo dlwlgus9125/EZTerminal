@@ -1,0 +1,198 @@
+{
+  "provider": "codex",
+  "scenario": "command-ok-fail",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-a14f5e0994555a16d78c4c269bd039d4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Run `node --version`, then run `node -e \"process.exit(3)\"` as two separate shell commands. Report both results in one sentence. Do not run anything else.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_0f2d0c12b2b8ff01a426aa62",
+      "messageId": "codex_message_4275066a11d7ba9e46e604cd",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll run the two commands in order and report their results.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_f7324b8cced329606ad341a6",
+      "messageId": "codex_message_4275066a11d7ba9e46e604cd",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll run the two commands in order and report their results.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_78ba124370b67eb26b924ed4",
+      "messageId": "codex_message_224b4fc59af8ec86cbf4caec",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ node --version",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-fbf65082-54b8-49c8-bcc1-b21361edee3d",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "call",
+        "status": "running",
+        "target": "node --version",
+        "command": "node --version",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_e02bd87781c2be020107e58f",
+      "messageId": "codex_message_224b4fc59af8ec86cbf4caec",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "v24.14.0\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-fbf65082-54b8-49c8-bcc1-b21361edee3d",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "result",
+        "status": "completed",
+        "target": "node --version",
+        "command": "node --version",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 564
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_5839efd297f323ec8fd19a49",
+      "messageId": "codex_message_2bf389904cd0106f5de5336e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ node -e \"process.exit(3)\"",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-ecfe13cf-de2a-48df-b46b-4eb343b4cccd",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "call",
+        "status": "running",
+        "target": "node -e \"process.exit(3)\"",
+        "command": "node -e \"process.exit(3)\"",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_3c544d7b58d4a3fccd570cbc",
+      "messageId": "codex_message_2bf389904cd0106f5de5336e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "Exit code 1",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-ecfe13cf-de2a-48df-b46b-4eb343b4cccd",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "result",
+        "status": "failed",
+        "target": "node -e \"process.exit(3)\"",
+        "command": "node -e \"process.exit(3)\"",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 1,
+        "durationMs": 544
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_item_8ff27622beaa10efccb3b774",
+      "messageId": "codex_message_47e883a95ed77463c177ccb8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_delta_0f0e7534e5466f79bad16416",
+      "messageId": "codex_message_82ee247ea615a28c6685c3b7",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "`node --version` printed `v24.14.0` and exited with code 0; `node -e \"process.exit(3)\"` produced no output, and the shell tool reported exit code 1.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "codex_item_b8a8cc63862feadca909c64c",
+      "messageId": "codex_message_82ee247ea615a28c6685c3b7",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "`node --version` printed `v24.14.0` and exited with code 0; `node -e \"process.exit(3)\"` produced no output, and the shell tool reported exit code 1.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "turn-summary-311de6d1bcac45e18696eff3fa902e44",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "`node --version` printed `v24.14.0` and exited with code 0; `node -e \"process.exit(3)\"` produced no output, and the shell tool reported exit code 1.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 11,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

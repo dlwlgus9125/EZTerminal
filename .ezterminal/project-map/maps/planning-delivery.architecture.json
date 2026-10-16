@@ -1,0 +1,660 @@
+{
+  "schemaVersion": 2,
+  "id": "planning-delivery",
+  "type": "architecture",
+  "title": "Planning-to-delivery ownership",
+  "summary": "Typed project and subproject planning, encrypted drafts and frozen workflow graphs share the existing execution ledger, isolated provider attempts, independent review and verified integration.",
+  "contentLocale": "en",
+  "layoutIntent": {
+    "density": "balanced",
+    "emphasisIds": [
+      "planning-workspace",
+      "authenticated-planning",
+      "planning-store",
+      "run-preparation",
+      "execution-ledger",
+      "managed-attempts",
+      "result-review",
+      "integration-candidate"
+    ]
+  },
+  "chapters": [
+    {
+      "id": "planning-and-recovery",
+      "title": "Planning and durable input",
+      "summary": "Shared chat skins and scene/document editors preserve device drafts before authenticated host mutation.",
+      "focusIds": [
+        "planning-workspace",
+        "conversation-skins",
+        "encrypted-recovery",
+        "authenticated-planning",
+        "planning-store"
+      ]
+    },
+    {
+      "id": "ai-proposals",
+      "title": "Scoped AI proposals",
+      "summary": "Explicit role/model selection freezes inherited instructions and reference values; host scope checks precede user acceptance.",
+      "focusIds": [
+        "planning-workspace",
+        "tool-free-proposals",
+        "planning-store"
+      ]
+    },
+    {
+      "id": "frozen-execution",
+      "title": "Frozen provider execution",
+      "summary": "The approved baseline and exact role/model settings feed one SQLite execution ledger and managed attempt workspaces.",
+      "focusIds": [
+        "planning-store",
+        "run-preparation",
+        "execution-ledger",
+        "managed-attempts"
+      ]
+    },
+    {
+      "id": "review-and-preservation",
+      "title": "Review, integration, and preservation",
+      "summary": "Exact result evidence gates integration; failed and interrupted attempts remain available, and portable restoration creates a separate project.",
+      "focusIds": [
+        "managed-attempts",
+        "result-review",
+        "integration-candidate",
+        "project-archive"
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "surfaces",
+      "label": "Shared user surfaces"
+    },
+    {
+      "id": "planning-authority",
+      "label": "Planning and recovery authority"
+    },
+    {
+      "id": "execution-authority",
+      "label": "Frozen execution authority"
+    },
+    {
+      "id": "delivery-authority",
+      "label": "Result and preservation authority"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "planning-workspace",
+      "label": "Planning and scene workspace",
+      "detail": "Documents, flows, tasks, roles, scenes, and AI proposal review use typed saved entities and explicit actions.",
+      "kind": "surface",
+      "group": "surfaces",
+      "rank": 0,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
+          "startLine": 1231,
+          "endLine": 1247,
+          "lineDigest": "sha256:d066361a5a960e39b184d5a77779313788bdc1730ccb9e7182db8851351b58d8",
+          "claim": "The planning view selects AI proposal review or typed structure/flow editing with explicit patch callbacks."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
+          "startLine": 1529,
+          "endLine": 1570,
+          "lineDigest": "sha256:fff0ba977cf7cf21c2733420e9db679b11cd1d816f9e77636e20cd21949fbc97",
+          "claim": "The scene editor receives controlled entity drafts, write/readonly gates, assets, AI access, and typed operations from the planning workspace."
+        }
+      ]
+    },
+    {
+      "id": "conversation-skins",
+      "label": "Shared bubble and CLI chat",
+      "detail": "Both skins share one conversation. Draft handoff preserves input when history opens; command execution stays in the existing terminal path.",
+      "kind": "surface",
+      "group": "surfaces",
+      "rank": 0,
+      "order": 1,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/StructuredAgentSession.tsx",
+          "startLine": 1864,
+          "endLine": 1982,
+          "lineDigest": "sha256:1f9dddd3b7041f9a5403332120590e280c2c17e470f2b924b831f144056bd26b",
+          "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/StructuredAgentSession.tsx",
+          "startLine": 501,
+          "endLine": 512,
+          "lineDigest": "sha256:3dfb280a860ff96e8649251a3ecddcb51ea1d56045a81ae5c2293b1e683cb1a2",
+          "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ConversationChangeReview.tsx",
+          "startLine": 1,
+          "endLine": 69,
+          "lineDigest": "sha256:cd5e84c621303872cf509d3d96a3dd996ac184c5d57834e1c55384d0f68109da",
+          "claim": "Both skins review only completed non-sensitive records from the selected session. Quotes enter the existing draft without submission; fragment records do not invent file line numbers."
+        }
+      ]
+    },
+    {
+      "id": "authenticated-planning",
+      "label": "Authenticated planning ingress",
+      "detail": "Desktop surface identity and Android identity reach one host authority; legacy planning uses v13 and subproject workflow operations require v14.",
+      "kind": "boundary",
+      "group": "planning-authority",
+      "rank": 1,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-authority.ts",
+          "startLine": 16,
+          "endLine": 48,
+          "lineDigest": "sha256:1172c38dce7f56cd28e247d07ce99f2e5ff721dfd773b2c58890f264e5347055",
+          "claim": "Planning reads/writes validate explicit subproject ownership and archive state before entering the existing readiness, trusted actor and local mutation boundaries."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1786,
+          "endLine": 1870,
+          "lineDigest": "sha256:864c59ad553d205cc6edb06458a3266fd5ecb9ce1ce9d3cbce72c920257291f1",
+          "claim": "Authenticated v14-or-later clients use workflow/capability handlers, v13 retains planning, and explicit subproject writes remain bound to the authenticated Android principal."
+        }
+      ]
+    },
+    {
+      "id": "planning-store",
+      "label": "Project planning and baselines",
+      "detail": "Explicit subprojects own independent planning files, immutable baselines and undo; legacy planning remains bound to its default subproject.",
+      "kind": "store",
+      "group": "planning-authority",
+      "rank": 2,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-service.ts",
+          "startLine": 132,
+          "endLine": 165,
+          "lineDigest": "sha256:985d9173ccf021f8135005e3b72d49c4cef6ac5574e368ca2b10782fbb0b4cd9",
+          "claim": "Planning commands route to explicit subproject stores, compare revision, deduplicate exact command identity and save mutation plus receipt atomically."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-service.ts",
+          "startLine": 294,
+          "endLine": 344,
+          "lineDigest": "sha256:bc7d06ffd5a9060600ea28e674ac2d644a2ca01604d6f916494f904c992188e9",
+          "claim": "Baseline freezing validates the selected task subset and its references before hashing copied content; branch and undo retain immutable prior baselines."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-service.ts",
+          "startLine": 488,
+          "endLine": 509,
+          "lineDigest": "sha256:d32871b3cb543b2f215362669dc24b57a95dd6a3f18a13d88bce1831c6b755f3",
+          "claim": "The writer fsyncs a private temporary file, checks the expected disk hash and project boundary, then atomically renames."
+        }
+      ]
+    },
+    {
+      "id": "tool-free-proposals",
+      "label": "Scoped tool-free proposals",
+      "detail": "The host freezes inherited role instructions and references, validates one selected entity, and applies only after explicit review.",
+      "kind": "service",
+      "group": "planning-authority",
+      "rank": 2,
+      "order": 1,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-ai-service.ts",
+          "startLine": 110,
+          "endLine": 145,
+          "lineDigest": "sha256:aeb7c231a73e9d5c32a0f47f3312bcd69406e6cc98555464f86a2718651b24b7",
+          "claim": "AI proposals resolve explicit subproject planning, validate model/revision/inherited role and references, and encrypt the exact prompt before dispatch."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-ai-scope.ts",
+          "startLine": 31,
+          "endLine": 69,
+          "lineDigest": "sha256:d5b7fa617c8f251aacec0a6ad403ec78fffd1a0170f6b6a84b46bbdc3db47849",
+          "claim": "Proposal validation preserves entity identity/version and confines selected-element edits to properties and layout while checking full planning references."
+        }
+      ]
+    },
+    {
+      "id": "encrypted-recovery",
+      "label": "Device encrypted recovery",
+      "detail": "Drafts and exact pending commands survive restart with project/session identity and compare-and-swap; this is not transcript authority.",
+      "kind": "store",
+      "group": "planning-authority",
+      "rank": 1,
+      "order": 1,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/chat-state-store.ts",
+          "startLine": 22,
+          "endLine": 74,
+          "lineDigest": "sha256:82fdce9218ffdfa805f9d2a2bcbcbc8478bb5ac2456dec16ad5c96cfdd071aa0",
+          "claim": "Chat recovery requires authorized project/session scope, encryption availability, strict state validation, and the current recovery revision before an atomic encrypted write."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-draft-store.ts",
+          "startLine": 20,
+          "endLine": 45,
+          "lineDigest": "sha256:8b647c541a5f67ab61a4ff16d83e64623eab07552c00237edf9e7a8ccc80c2de",
+          "claim": "Encrypted recovery compares project/subproject scope and CAS revision before saving unsent entity edits or pending host requests."
+        }
+      ]
+    },
+    {
+      "id": "run-preparation",
+      "label": "Frozen execution preparation",
+      "detail": "Explicit preparation resolves the approved baseline, task graph, allowed paths, exact models, inherited roles, and independent reviewer.",
+      "kind": "service",
+      "group": "execution-authority",
+      "rank": 3,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 135,
+          "endLine": 255,
+          "lineDigest": "sha256:00f8de809f39d7579d967a103c1a23df4f9b6977eeb0fc85946e9a6ea7ecb9d7",
+          "claim": "Only user execution commands freeze a graph and scoped planning baseline into the existing ledger; exact durable command fingerprints prevent preparation or run replay under changed inputs."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-preparation.ts",
+          "startLine": 30,
+          "endLine": 79,
+          "lineDigest": "sha256:1a48d939874812ebe94ec45e4b6c29e9bb3e08564d68d95834d61a6f5a6e0ec8",
+          "claim": "Parent-to-leaf instructions and context values are frozen with exact provider/model/reasoning and read/write limits."
+        }
+      ]
+    },
+    {
+      "id": "execution-ledger",
+      "label": "SQLite execution ledger",
+      "detail": "The existing daemon database owns preparation, attempts, gates, artifact evidence, and revisioned command receipts.",
+      "kind": "store",
+      "group": "execution-authority",
+      "rank": 4,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-execution-store.ts",
+          "startLine": 142,
+          "endLine": 210,
+          "lineDigest": "sha256:9db6212d02876728b5c9c442b07f19d4b6d1ff380b052eda52475ce5c35df81c",
+          "claim": "SQLite savepoints persist command identity, revisions and projected run state together; workflow activations are projected through the same durable execution ledger."
+        }
+      ]
+    },
+    {
+      "id": "managed-attempts",
+      "label": "Managed provider attempts",
+      "detail": "Host scheduling creates isolated worktrees and environment leases, then sends frozen prompts through the existing provider runtime.",
+      "kind": "runtime",
+      "group": "execution-authority",
+      "rank": 5,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 413,
+          "endLine": 475,
+          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 467,
+          "endLine": 514,
+          "lineDigest": "sha256:de70c51e0908e0531cf6cf7510f8e55e25336db4d4fd001fcfc2acac457b8929",
+          "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
+        }
+      ]
+    },
+    {
+      "id": "result-review",
+      "label": "Captured result and review",
+      "detail": "Host checks and a separate read-only reviewer bind findings to the exact baseline, artifact IDs, and validation plan.",
+      "kind": "service",
+      "group": "delivery-authority",
+      "rank": 6,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts",
+          "startLine": 183,
+          "endLine": 234,
+          "lineDigest": "sha256:e85853d244838efd9d4323329ba294e5b75a8d0c02b43ba564a3676c4beb26a9",
+          "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts",
+          "startLine": 238,
+          "endLine": 261,
+          "lineDigest": "sha256:011cc8f6af790cc002a125dcb86c110c0d44f9ab2f76e6f19dadca1bb63eb323",
+          "claim": "The reviewer output must identify the same baseline and artifact set; missing inspection evidence is recorded as not run."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts",
+          "startLine": 390,
+          "endLine": 450,
+          "lineDigest": "sha256:1ff7fccb937c261bc88a5ca296cd7e8a7f04361e00f16a9c2791690eb6214439",
+          "claim": "User-attested device evidence is bound to the exact current attempt or integration candidate and a durable command identity; attempt evidence triggers a new independent review generation."
+        }
+      ]
+    },
+    {
+      "id": "integration-candidate",
+      "label": "Verified integration candidate",
+      "detail": "Only accepted artifacts are combined and checked; adoption compares the last successful ref and preserves the original checkout.",
+      "kind": "service",
+      "group": "delivery-authority",
+      "rank": 7,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts",
+          "startLine": 464,
+          "endLine": 511,
+          "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
+          "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-repository.ts",
+          "startLine": 347,
+          "endLine": 356,
+          "lineDigest": "sha256:86403cd971203f1fd8fdcad0e5550a5be1e6419bbb83e1c0f24be06f2b510906",
+          "claim": "Adoption requires a clean candidate and updates its dedicated integration ref only from the expected previous successful commit."
+        }
+      ]
+    },
+    {
+      "id": "project-archive",
+      "label": "Portable archive and restore",
+      "detail": "Export preserves planning/history evidence. Restore targets a new owned directory and retains historical execution without live permissions.",
+      "kind": "service",
+      "group": "delivery-authority",
+      "rank": 7,
+      "order": 1,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-archive-service.ts",
+          "startLine": 147,
+          "endLine": 172,
+          "lineDigest": "sha256:c387a523175b690c670faeb2f1762926466f3aae199c626228cb13ae62d6d5c6",
+          "claim": "Export persists a command intent and fingerprints its destination before producing the project archive."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-archive-service.ts",
+          "startLine": 303,
+          "endLine": 367,
+          "lineDigest": "sha256:e0202d101eb4f585e452cac42d7cdeea796ea5aef7e2cdecde0b946ceae435c6",
+          "claim": "Restore imports scoped planning and the workflow registry into a new project, retains session links as historical only, and rejects changed partial restores."
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "primary-1",
+      "from": "planning-workspace",
+      "to": "authenticated-planning",
+      "label": "typed user actions",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-authority.ts",
+          "startLine": 16,
+          "endLine": 48,
+          "lineDigest": "sha256:1172c38dce7f56cd28e247d07ce99f2e5ff721dfd773b2c58890f264e5347055",
+          "claim": "Planning reads/writes validate explicit subproject ownership and archive state before entering the existing readiness, trusted actor and local mutation boundaries."
+        }
+      ]
+    },
+    {
+      "id": "primary-2",
+      "from": "authenticated-planning",
+      "to": "planning-store",
+      "label": "revisioned atomic edits",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-service.ts",
+          "startLine": 132,
+          "endLine": 165,
+          "lineDigest": "sha256:985d9173ccf021f8135005e3b72d49c4cef6ac5574e368ca2b10782fbb0b4cd9",
+          "claim": "Planning commands route to explicit subproject stores, compare revision, deduplicate exact command identity and save mutation plus receipt atomically."
+        }
+      ]
+    },
+    {
+      "id": "primary-3",
+      "from": "planning-store",
+      "to": "run-preparation",
+      "label": "freeze approved input",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 135,
+          "endLine": 255,
+          "lineDigest": "sha256:00f8de809f39d7579d967a103c1a23df4f9b6977eeb0fc85946e9a6ea7ecb9d7",
+          "claim": "Only user execution commands freeze a graph and scoped planning baseline into the existing ledger; exact durable command fingerprints prevent preparation or run replay under changed inputs."
+        }
+      ]
+    },
+    {
+      "id": "primary-4",
+      "from": "run-preparation",
+      "to": "execution-ledger",
+      "label": "durable preparation",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-execution-store.ts",
+          "startLine": 142,
+          "endLine": 210,
+          "lineDigest": "sha256:9db6212d02876728b5c9c442b07f19d4b6d1ff380b052eda52475ce5c35df81c",
+          "claim": "SQLite savepoints persist command identity, revisions and projected run state together; workflow activations are projected through the same durable execution ledger."
+        }
+      ]
+    },
+    {
+      "id": "primary-5",
+      "from": "execution-ledger",
+      "to": "managed-attempts",
+      "label": "admit ready tasks",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-run-service.ts",
+          "startLine": 413,
+          "endLine": 475,
+          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
+        }
+      ]
+    },
+    {
+      "id": "primary-6",
+      "from": "managed-attempts",
+      "to": "result-review",
+      "label": "capture exact outcome",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts",
+          "startLine": 183,
+          "endLine": 234,
+          "lineDigest": "sha256:e85853d244838efd9d4323329ba294e5b75a8d0c02b43ba564a3676c4beb26a9",
+          "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
+        }
+      ]
+    },
+    {
+      "id": "primary-7",
+      "from": "result-review",
+      "to": "integration-candidate",
+      "label": "accept and validate",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-result-service.ts",
+          "startLine": 464,
+          "endLine": 511,
+          "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
+          "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
+        }
+      ]
+    },
+    {
+      "id": "proposal-request",
+      "from": "planning-workspace",
+      "to": "tool-free-proposals",
+      "label": "explicit generation and review",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-ai-service.ts",
+          "startLine": 110,
+          "endLine": 145,
+          "lineDigest": "sha256:aeb7c231a73e9d5c32a0f47f3312bcd69406e6cc98555464f86a2718651b24b7",
+          "claim": "AI proposals resolve explicit subproject planning, validate model/revision/inherited role and references, and encrypt the exact prompt before dispatch."
+        }
+      ]
+    },
+    {
+      "id": "proposal-apply",
+      "from": "tool-free-proposals",
+      "to": "planning-store",
+      "label": "user accepts scoped patch",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/planning-ai-service.ts",
+          "startLine": 197,
+          "endLine": 220,
+          "lineDigest": "sha256:2da3262717a04359057b019059c597a39138d6290e12617fe335e9e80dbfc3c0",
+          "claim": "Proposal application targets the original explicit subproject and revision; profile and entity writes still require user apply."
+        }
+      ]
+    },
+    {
+      "id": "planning-recovery",
+      "from": "planning-workspace",
+      "to": "encrypted-recovery",
+      "label": "save drafts and pending requests",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/chat-state-store.ts",
+          "startLine": 22,
+          "endLine": 74,
+          "lineDigest": "sha256:82fdce9218ffdfa805f9d2a2bcbcbc8478bb5ac2456dec16ad5c96cfdd071aa0",
+          "claim": "Chat recovery requires authorized project/session scope, encryption availability, strict state validation, and the current recovery revision before an atomic encrypted write."
+        }
+      ]
+    },
+    {
+      "id": "chat-recovery",
+      "from": "conversation-skins",
+      "to": "encrypted-recovery",
+      "label": "same-session draft recovery",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/chat-state-store.ts",
+          "startLine": 22,
+          "endLine": 74,
+          "lineDigest": "sha256:82fdce9218ffdfa805f9d2a2bcbcbc8478bb5ac2456dec16ad5c96cfdd071aa0",
+          "claim": "Chat recovery requires authorized project/session scope, encryption availability, strict state validation, and the current recovery revision before an atomic encrypted write."
+        }
+      ]
+    },
+    {
+      "id": "archive-planning",
+      "from": "planning-store",
+      "to": "project-archive",
+      "label": "portable snapshot and history",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-archive-service.ts",
+          "startLine": 147,
+          "endLine": 172,
+          "lineDigest": "sha256:c387a523175b690c670faeb2f1762926466f3aae199c626228cb13ae62d6d5c6",
+          "claim": "Export persists a command intent and fingerprints its destination before producing the project archive."
+        }
+      ]
+    },
+    {
+      "id": "archive-results",
+      "from": "result-review",
+      "to": "project-archive",
+      "label": "historical artifacts and evidence",
+      "kind": "secondary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-archive-service.ts",
+          "startLine": 173,
+          "endLine": 220,
+          "lineDigest": "sha256:bb2b8fc39f693804b372963f4300f0c894995a88ec61799a31a3840bf2f986ca",
+          "claim": "Portable export adds workflow registry and every subproject planning snapshot to prior execution/receipt/history evidence, preserving redaction and exclusion of live authority."
+        }
+      ]
+    }
+  ],
+  "mainPath": [
+    "planning-workspace",
+    "authenticated-planning",
+    "planning-store",
+    "run-preparation",
+    "execution-ledger",
+    "managed-attempts",
+    "result-review",
+    "integration-candidate"
+  ]
+}

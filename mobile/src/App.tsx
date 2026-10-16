@@ -1,10 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Device } from '@capacitor/device';
+import './mobile-v2.css';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
 import { ConnectionCredentialStore, type StoredConnection } from './connection-credential-store';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
+import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
+import { MobileOfflineChatCacheStore, type MobileOfflineChatCache } from './mobile-offline-chat-cache';
 import {
   classifyConnectionHealth,
   type ConnectionHealthSnapshot,
@@ -68,6 +71,7 @@ export function App(): JSX.Element {
   const [transport, setTransport] = useState<WsEzTerminalTransport | null>(null);
   const [authed, setAuthed] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
+  const [offlineChatCache, setOfflineChatCache] = useState<MobileOfflineChatCache | null>(null);
   const [connectionState, setConnectionState] = useState<RemoteConnectionState>('disconnected');
   const [connectionHealth, setConnectionHealth] = useState<ConnectionHealthSnapshot | null>(null);
   const [connectionClock, setConnectionClock] = useState(() => Date.now());
@@ -164,6 +168,7 @@ export function App(): JSX.Element {
       clearConnectTimeout();
       setConnectFailed(false);
       setHasConnected(false);
+      setOfflineChatCache(null);
       setConnectionState('connecting');
       setConnectionHealth(null);
       setDiagnosticCopyState(null);
@@ -191,6 +196,15 @@ export function App(): JSX.Element {
       // here deliberately (not a hole anywhere else in the mobile codebase).
       (window as unknown as { ezterminal: WsEzTerminalTransport }).ezterminal = t;
       setTransport(t);
+      // A previously authenticated PC can be browsed while its transport retries.
+      // This restores encrypted read state only; it never dispatches a command.
+      void mobileAgentCreateAuthorityFingerprint(token)
+        .then((authority) => new MobileOfflineChatCacheStore().load(authority))
+        .then((cached) => {
+          if (!cached || transportRef.current !== t) return;
+          setOfflineChatCache(cached);
+          setHasConnected(true);
+        }).catch(() => undefined);
 
       connectTimeoutRef.current = setTimeout(() => {
         connectTimeoutRef.current = null;
@@ -261,6 +275,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (authed || !hasConnected) return;
+    if (document.activeElement?.closest('.mob-structured-agent')) return;
     (document.activeElement as HTMLElement | null)?.blur();
   }, [authed, hasConnected]);
 
@@ -277,6 +292,7 @@ export function App(): JSX.Element {
     setTransport(null);
     setAuthed(false);
     setHasConnected(false);
+    setOfflineChatCache(null);
     setConnectionState('disconnected');
     setConnectionHealth(null);
     setDiagnosticCopyState(null);
@@ -353,13 +369,14 @@ export function App(): JSX.Element {
     ? null
     : Math.max(0, Math.ceil((connectionHealth.nextRetryAt - connectionClock) / 1000));
   return (
-    <div className="mobile-app-frame" data-app-active={appActive ? 'true' : 'false'}>
+    <div className={`mobile-app-frame${authed ? '' : ' mobile-app-frame--offline'}`} data-app-active={appActive ? 'true' : 'false'}>
       <div className={authed ? 'mobile-workspace-shell' : 'mobile-workspace-shell mobile-workspace-shell--reconnecting'}>
         <Suspense
           fallback={<div className="status-loading mobile-workspace-loading" role="status">{t('common.loading')}</div>}
         >
           <MobileWorkspace
             transport={transport}
+            offlineChatCache={offlineChatCache}
             appActive={appActive}
             connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
             roundTripMs={connectionHealth?.roundTripMs ?? null}
@@ -369,7 +386,8 @@ export function App(): JSX.Element {
         </Suspense>
       </div>
       {!authed && (
-        <div className="mobile-reconnect-scrim" data-testid="mobile-reconnect-scrim">
+        <details className="mobile-offline-notice" data-testid="mobile-reconnect-scrim">
+          <summary aria-live="polite">{connectionVerdict?.label ?? t('mobile.connect.reconnecting')}</summary>
           <div
             className={`mobile-reconnect-card mobile-reconnect-card--${connectionVerdict?.kind ?? 'reconnecting'}`}
             aria-labelledby="mobile-connection-health-title"
@@ -413,7 +431,7 @@ export function App(): JSX.Element {
               </span>
             )}
           </div>
-        </div>
+        </details>
       )}
       {localizedCredentialWarning && (
         <div className="credential-warning" role="status" data-testid="credential-warning">

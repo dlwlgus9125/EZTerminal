@@ -1,0 +1,1033 @@
+# EZTerminal 적응형 Workbench UI/UX 계약
+
+> 문서 상태: **활성 규범 계약**
+>
+> 이 문서는 현재 Electron desktop과 Android client의 정보 구조, navigation, layout,
+> 상태, responsive behavior와 접근성 계약이다. Visual identity와 미학적 판단은 루트
+> [`DESIGN.md`](../../DESIGN.md)가 소유한다. 화면 구현, Storybook, 접근성 검사와 시각
+> 스냅샷은 두 계약에 동의해야 한다. 코드와 문서가 어긋나면 회귀인지 의도된 변경인지
+> 먼저 결정하며, 코드를 이유로 문서를 자동 수정하지 않는다.
+
+## 1. 범위와 우선순위
+
+이 문서는 정보 구조, navigation, layout, responsive behavior, 접근성, localization과
+UI 상태를 소유한다. Visual identity와 시각적 선택 기준은
+[`DESIGN.md`](../../DESIGN.md), 정확한 runtime 값은 theme와 token source가 소유한다.
+셸 실행, IPC, pairing, 원격 protocol, process lifecycle은
+[`architecture.md`](../architecture.md)와 `docs/design/` 계약이 소유한다.
+
+결정 우선순위는 다음과 같다.
+
+1. Desktop은 대화·기획·실행을 연결하는 authoring workbench이고 Android는 같은 PC 작업을
+   조회·편집·명시적으로 제어하는 companion이다. 실제 터미널은 기존 의미와 수명을 유지한다.
+2. 같은 기능에는 하나의 상태 소유자만 두고 여러 효율적인 진입점만 허용한다.
+3. 선택, preview, insertion, drop과 navigation은 명시적 실행을 뜻하지 않는다.
+4. navigation 중 terminal controller, draft, scroll, xterm geometry, reconnect와
+   selection을 보존한다.
+5. Matrix/CRT 정체성보다 가독성, truthful state와 reduced motion을 우선한다.
+6. keyboard, pointer, touch와 assistive technology가 같은 작업을 끝낼 수 있어야 한다.
+7. 한국어와 영어를 동등한 제품 언어로 취급한다.
+
+## 2. 시각 방향과 소스 권한
+
+Visual identity, color·typography·elevation·shape 판단과 금지 패턴의 유일한 prose
+source는 루트 [`DESIGN.md`](../../DESIGN.md)다. 이 문서는 그 방향을 화면 anatomy,
+responsive behavior, 실제 상태와 접근성으로 적용하는 계약만 소유한다.
+
+추출된 reference와 story mapping은
+`docs/ux/reference/desktop-handoff/manifest.json`이 고정한다. Package 2 prototype은
+비교용 visual intent, handoff README는 구현·QA 수용 기준이며 실제 runtime 상태,
+terminal semantics, 보안과 데이터 무결성이 예시 값보다 우선한다. 원본 raster와 고정
+handoff source는 production asset으로 삽입하거나 수정하지 않는다.
+
+2026-10-13 사용자 승인으로 [v2 r6 설계](reference/v2/APPROVAL.md)를 구현 기준으로 승격했다.
+아래 16절은 새 탐색과 채팅 스킨의 활성 계약이며, 기존 3절·5.1절의 탐색 배치를 바꾸는 범위에서
+우선한다. 나머지 입력·수명·접근성·외부 연결 계약은 유지한다. 전환 전 구현을 승인 완료 상태로
+간주하지 않으며 실제 구현·검증은 [진행 기록](../ezterminal-v2-implementation.md)에 남긴다.
+
+## 3. Desktop application shell
+
+### 3.1 Layout anatomy
+
+1200px 이상에서는 header, activity rail, 하나의 `SidebarShell`, Dockview workspace와
+status/feedback 영역을 사용한다. Sidebar는 280–440px, 기본 320px이며 resize 결과를
+저장한다. 1200px 미만에서는 terminal 위의 단일 overlay와 scrim으로 바뀐다.
+
+지원 desktop viewport는 800×600, 1024×720, 1200×800, 1440×900과 1920 reference다.
+100%와 150% UI scale 모두에서 document-level horizontal scroll, terminal overlap과
+접근 불가능한 primary action이 없어야 한다.
+
+### 3.2 Header: exactly four zones
+
+Header는 제품 기능 기준으로 정확히 네 zone을 가진다.
+
+1. **New Session** — signal mark와 전체 wordmark, 즉시 Terminal 생성과 명시적 Agent 시작 action
+2. **Command Center** — 실제 shortcut을 표시하는 넓은 anchor field
+3. **Workspace** — Split, Layout과 Presets
+4. **Agent Attention** — attention count와 focus/open action
+
+`FX·NEON n`은 zone 4의 compact appearance utility이며 다섯 번째 navigation zone이
+아니다. `n`은 0–10, 기본 7이고 동일한 Appearance setting을 연다. Theme, Files,
+Stats, Pairing, Settings와 OpenClaw를 독립 header button으로 되돌리지 않는다.
+
+Header는 60px, activity rail은 62px이며 rail action은 44px target을 유지한다. Pane
+card는 12px radius와 인접 pane이 합쳐 만드는 14px gutter를 사용한다.
+
+### 3.3 Activity Rail
+
+위에서 아래 순서는 고정한다.
+
+1. Projects
+2. Monitor
+3. Remote
+4. Explorer
+5. OpenClaw — integration이 사용 가능할 때만
+
+Settings는 아래에 고정한다. 각 action은 Lucide icon, tooltip, localized accessible
+name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 두 번째 rail을
+만들지 않는다.
+
+### 3.4 Sidebar destinations
+
+- Explorer는 file navigation, breadcrumb와 preview 진입점을 소유한다.
+- Projects는 Attention 다음 Project → Workspace → Session 탐색과 생성·재열기·기록을
+  소유한다. Agent와 일반 Terminal을 같은 목록에서 구분하며 중복 Active/Recent 목록은
+  authoritative session 탐색이 불가능한 호환 경로에서만 유지한다.
+- Monitor는 system stats와 packet/traffic을 합친다. producer는 실제로 visible할 때만
+  poll/capture한다.
+- Remote는 pairing, remote access, device roster, PC Control 상태와 SSH forwarding을
+  합친다.
+- OpenClaw는 lifecycle/config/session/log navigation을 제공하고 chat은 Dockview panel의
+  실제 `WebContentsView` 구현을 사용한다.
+- Settings는 3.6의 category를 같은 shell에서 연다.
+
+각 destination은 loading, empty/unavailable, error/offline과 success 상태를 정의한다.
+Overlay를 닫으면 rail item 또는 Command Center result로 focus를 돌린다.
+세션을 열거나 생성하여 작업 영역으로 이동하면 좁은 화면의 overlay를 닫아 새 작업을
+가리지 않는다.
+Optional destination은 첫 사용 전까지 별도 module로 유지할 수 있다. rail focus,
+pointer enter/down은 사용자 intent이므로 preload할 수 있지만 click 동작과 accessible
+name은 바꾸지 않는다. 로드 중에는 동일한 SidebarShell 안에 status를 보여 주고 실패하면
+localized Retry와 Close를 함께 제공한다. terminal workspace, draft와 navigation은 이
+오류 경계 밖에서 계속 사용할 수 있어야 한다.
+
+### 3.5 Workspace와 composer
+
+Workspace pane, tab, draft, PTY와 hidden panel은 layout 전환 중 살아 있어야 한다.
+1+2, 2×1과 single preset은 active/MRU pane을 기준으로 한 non-destructive Dockview
+transaction이며 overflow pane을 tab으로 유지한다.
+
+Tab drag는 panel 하나를 이동하고 tab bar의 빈 header drag는 group 전체를 이동한다.
+앱의 다른 group에 drop하면 tab 합치기 또는 edge pane 분할이 되고, 모든 EZTerminal 창
+밖에 drop하면 별도 auxiliary window가 된다. Auxiliary window 안에서 시작한 split은 같은
+창의 nested grid에 남으며, 전역 New Tab과 background/session entry는 auxiliary focus와
+무관하게 main workspace의 tab으로 열린다. Drag를 쓰기 어려운 keyboard/touch 사용자는
+tab context menu의 `새 창으로 이동`과 `메인 창으로 이동`을 사용한다. 분리·합침은 같은
+panel instance를 이동하며 session, draft, selection과 실행 중 command를 재생성하지 않는다.
+
+Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 선택한 Project와
+checkout/worktree를 소유하는 Workspace에 빈 draft tab을 즉시 열며 modal을 추가하지 않는다.
+draft는 Terminal/Agent 두 종류만 보여 준다. Terminal의 `실행할 프로그램`에서 일반 셸,
+설치된 Codex CLI, Claude Code와 사용자 실행기를 고른다. 내장 CLI를 선택하면 모델이 바로
+나타나며 `CLI 기본 모델`은 기존 CLI 설정을 유지하고 `모델 직접 지정`은 그 실행에만 적용한다.
+모델 지정 지원을 알리지 않는 이전 호스트에서는 기본 CLI 실행을 유지한다.
+Agent는 앱 대화창을 뜻하며 provider와 작업 위치를 선택한다. model과
+`Plan`/`Standard`/`Full access` 권한은 접힌 `세션 설정` 안에 둔다.
+`Agent 만들기`는 첫 prompt 없이 빈 세션을 저장하고 대화창을 연다. `시작 전` 상태에서
+메시지를 보내야 provider session과 첫 turn을 시작한다. Desktop은 composer에 focus하며
+Enter 전송, Shift+Enter 줄바꿈, IME 조합 중 Enter 무시를 지킨다. Android는 키보드 Enter로
+줄바꿈하고 전송 버튼으로 시작한다. 빈 세션도 재시작·다시 열기·설정 변경·보관이 가능하다.
+선택·취소만으로 entity나 process를 남기지 않는다. 사용할 수 없는 작업 폴더에서는 생성을
+비활성화하고 main이 제출 직전에 접근 상태를 다시 검증한다. 전역 `새 세션`도 같은 draft를 열되 location을 선택할 수 있다.
+
+명시적으로 프로젝트에서 연 terminal tab은 프로젝트 이름과 항상 보이는 compact Badge를
+함께 표시한다. active Agent가 있으면 `Codex`, `Claude` 또는 설정된 generic Agent 이름을,
+Agent가 없거나 완료·오류 상태이면 localized `Terminal`을 표시한다. 같은 프로젝트와 같은
+현재 Badge를 가진 자동 제목은 `Project`, `Project 2` 순서로 번호를 붙인다. 사용자가 정한
+제목은 이후 Agent 상태가 바뀌어도 덮어쓰지 않고 번호 계산에서도 제외한다. 빈 제목으로
+확정하면 자동 제목으로 돌아간다. 기존 Agent status dot과 full-title tooltip/accessibility
+name은 유지한다.
+
+Active pane composer는 48px 높이, 최대 820px이고 작은 폭에서는 document overflow
+없이 줄어든다. terminal-specific keyboard, paste와 close safety를 app chrome shortcut이
+가로채지 않는다.
+
+선택된 terminal text의 context-menu Copy와 keyboard alias는 main, split, auxiliary
+window에서 같은 동작이어야 한다. 성공과 실패 toast는 action을 시작한 document에
+표시하고 선택 내용은 feedback에 노출하지 않는다. 선택 없는 `Ctrl+C`의 PTY/Codex 의미는
+복사 편의를 위해 바꾸지 않는다. Transport와 selection snapshot의 상세 계약은
+[`terminal-clipboard.md`](../design/terminal-clipboard.md)가 소유한다.
+
+### 3.6 Settings information architecture
+
+Settings category는 다음 여섯 개다.
+
+1. General
+2. Appearance
+3. Terminal & Safety
+4. Agents
+5. Integrations
+6. About & Diagnostics
+
+General은 언어·density·resource profile, Appearance는 theme·font·CRT, Terminal &
+Safety는 terminal behavior와 paste/clipboard/close 안전 설정을 소유한다. Agents는
+structured Agent provider 설정과 별도로 구분된 terminal activity hook을 소유하고,
+Pairing과 OpenClaw는 Integrations에 둔다. version과 diagnostic metadata는 About &
+Diagnostics에 둔다.
+
+Structured Agent provider 설정은 Codex와 Claude를 같은 compact provider row family로
+보여 주되 단순 toggle로 축약하지 않는다. 각 row는 `설치 확인`에서 발견한 executable path,
+version, 고정 argv, 전달되는 환경 변수의 **이름만**, 지원 capability와 provider 공지를
+검토한 뒤에만 `활성화`할 수 있다. 검토 정보가 바뀌어 digest가 맞지 않으면 실행하지 않고
+다시 검토하게 한다. 활성화된 row에는 `Ready` 또는 구체적인 복구 가능한 오류와 `비활성화`를
+표시한다. 설치 없음, 확인 중, 확인 실패, 검토 대기, 활성화 중, 활성, 비활성화 중 상태는 text와
+control 상태로 구분하며 이전 성공 상태를 loading으로 가장하지 않는다.
+
+Claude row는 활성화 전에 API key environment, 기존 CLI environment, 기존 claude.ai login의
+세 인증 경로 중 하나를 고르게 한다. credential/token/cookie 값을 입력하거나 표시하는 필드는
+만들지 않는다. 약관 확인과 상용 사용 승인 확인은 활성화 시 필수이고, 기존 claude.ai login은
+Anthropic의 third-party 사용 사전 승인을 받았다는 별도 확인이 있어야 한다. 이 조건은 inline
+설명과 공식 문서 link를 함께 제공하고 checkbox 하나로 합치지 않는다. 비활성화는 이 비밀 없는
+동의 기록과 daemon provider 상태를 모두 비활성화하되 기존 CLI 로그인을 삭제하지 않는다.
+
+기존 terminal activity hook은 `터미널 상태 연동` subsection으로 분리하여 structured provider를
+켜는 기능으로 오해하지 않게 한다. provider setup은 keyboard로 row → 세부 검토 → 인증 경로 →
+필수 확인 → primary action 순서로 이동하고, 펼쳐진 상세 영역은 heading/fieldset/status semantics를
+사용한다. 좁은 drawer에서는 metadata label/value를 한 열로 쌓고 path와 argv는 줄바꿈하되 document
+수평 overflow를 만들지 않는다. 관련 Storybook Settings fixture는 설치 없음·검토 대기·Claude
+승인 조건·Ready·오류 상태를 고정 입력으로 제공하고 component test는 stale review, 중복 제출,
+조건부 승인 checkbox와 credential 비노출을 검증한다.
+
+### 3.7 Resource profile
+
+Resource profile은 기능을 제거하는 mode가 아니라 optional 화면의 preload와 관찰용
+refresh 비용을 선택하는 device-local 설정이다.
+
+| 선택 | Optional 화면 | 관찰 refresh | UX 계약 |
+| --- | --- | --- | --- |
+| Balanced (기본) | idle 시 preload | 표준 주기 | 일반적인 반응성과 자원 사용의 균형 |
+| Low resource | focus/pointer intent에서 preload | 허용 목록만 2배 주기 | 기능·알림·안전 검사는 유지 |
+| High responsiveness | 설정 복원 직후 preload | 표준 주기 | 첫 진입 지연을 우선 |
+
+선택은 즉시 저장되고 다음 refresh 예약부터 적용한다. 이미 불러온 module은 강제로
+unload하지 않으므로 Low resource 선택 시 완전한 메모리 회수는 다음 앱 시작부터라는
+안내를 표시한다. 어느 선택도 timeout, reconnect/liveness, command cancellation,
+backpressure, capture lease나 위험한 pane 닫기 확인을 느리게 해서는 안 된다.
+
+### 3.8 Windows close와 tray
+
+Windows main 창의 native close와 frameless close action은 기본적으로 명시적 Quit과 같은
+종료 경로를 사용해 terminal·Agent session을 정리한다. General의 `계속 실행`을 켠 경우에만
+창을 숨기고 user-level daemon과 tray를 유지하며, tray click과 Open은 같은 main 창을 restore하고
+focus한다. `시작 시 실행`은 별도 상태지만 첫 schedule/heartbeat 활성화에서 두 설정을 함께 켤지
+설명하고 동의를 받는다. 취소하거나 OS 등록이 실패하면 automation도 활성화하지 않는다. File
+메뉴와 tray의 `Quit…`은 설정과 무관하게 모든 session을 중단한다는 확인을 사용하며 Cancel이
+기본 action이다. 숨김과 종료를 같은 label이나 icon으로 표현하지 않는다.
+
+### 4.5 Command Center and duplicate entry policy
+
+> 이 section 번호는 고정 desktop handoff 계약이 참조하므로 유지한다.
+
+Command Center는 keyboard-first global entry surface이며 기존 기능을 검색하거나
+navigation한다. 기능 상태를 복제하지 않는다.
+
+| Capability | Primary home | Additional entry |
+| --- | --- | --- |
+| Theme | Settings → Appearance | Command Center action |
+| Files | Explorer | Command Center file search |
+| Split/Layout/Presets | Workspace menu | Command Center action |
+| Quick Commands | Composer shelf | Command Center manager/search |
+| Agents/Monitor/Remote/OpenClaw/Settings | Activity Rail | Command Center navigation |
+
+하나의 maintained implementation만 사용하며 labelled modal, keyboard navigation,
+active result, focus trap, stale search cancellation과 focus restoration을 제공한다.
+`Ctrl/Cmd+K`는 non-editable app UI에서만 열리고 xterm, composer, input, textarea와
+contenteditable은 원래 key 의미를 유지한다. `Ctrl/Cmd+Shift+P`는 global alias다.
+
+## 5. Android application shell
+
+### 5.1 Navigation
+
+인증 후 persistent navigation은 Home, Terminal, PC, Agents, More의 다섯 item이다.
+PC는 capture를 자동 시작하는 tab이 아니라 명시적 Start action이다. 600dp부터 같은
+순서의 72px left rail로 바뀌며 Settings를 아래에 둔다.
+
+인증 후 마지막 작업을 복원하고, 복원할 작업이 없으면 Terminal에서 시작한다. Android의 빈
+Terminal은 한 번 누르는 `새 터미널` 동작을 제공한다. Desktop은 기존 startup layout/preset
+설정을 존중하고 빈 layout에서는 기본 shell을 연다. Android는 인증 host별로 열린 terminal ID,
+활성 terminal/Agent ID와 마지막 작업 화면만 device-local에 저장하고 host에 재접속한다.
+원문·prompt·credential·draft를 이 view 기록에 넣지 않는다. 사라진 세션은 다시 만들지 않으며
+저장이 실패해도 새 Terminal은 사용할 수 있다. 사용자가 이미 이동했으면 늦은 복원이 화면을
+빼앗지 않는다. Back은 하위 화면을 닫은 뒤 Terminal root로 돌아가며 Home은 명시적인 목적지다.
+
+
+Home은 PC Control availability/start, connection, 최근 세션, 첫 Agent attention과
+조건부 OpenClaw shortcut을 보여 준다. Home 자체는 capture/input이나 live stats를
+시작하지 않는다.
+
+### 5.2 Persistent terminal layer
+
+`MobileWorkbenchCoordinator`는 항상 mounted인 TerminalLayer, 현재 page, navigation과
+sheet/dialog host를 형제로 구성한다. Terminal이 선택되지 않았을 때 layer는 inert하고
+`aria-hidden`이지만 `display:none`이나 unmount를 사용하지 않는다. draft, controller,
+xterm geometry, scroll, selection, output과 reconnect 상태를 유지한다.
+
+Android Back 순서는 다음과 같다.
+
+1. top sheet/dialog
+2. destination 내부 subpage 또는 preview
+3. full-screen destination에서 invoker/tab root로 복귀
+4. root에서 platform delegate
+
+명시적 close는 history layer를 한 번만 소비하고 ghost entry를 남기지 않는다.
+
+### 5.3 Page와 설정
+
+일반 destination은 Back, localized title, optional status와 destination action으로 된
+하나의 page-header composition을 사용한다. PC Control만 immersive chrome을 사용한다.
+Terminal header는 Back, session sheet와 New만 유지한다.
+
+Mobile Settings는 General, Appearance, Terminal & Input, Integrations,
+Connection & About의 index/subpage 구조다. 기존 setting key와 theme format을
+변경하지 않는다. General의 resource profile은 Android 기기에만 저장하고 desktop으로
+동기화하지 않는다. desktop과 같은 세 label, 설명과 Low resource 재시작 안내를
+사용한다.
+
+### 5.4 Pairing과 연결 상태
+
+Connection 화면은 manual URL/token과 QR scanner를 제공한다. 자동 network discovery,
+다중 profile 또는 deep link는 제공하지 않는다.
+
+- QR code는 memory-only, single-use이며 5분 후 만료한다.
+- 성공하면 같은 Android secure credential store에 장기 token을 저장하고 code를 즉시
+  폐기한다.
+- camera permission은 scanner를 열 때만 요청하며 frame은 기기에서 decode하고 저장·전송
+  하지 않는다. 모든 exit path에서 stream을 release한다.
+- camera 거부 또는 미지원 기기는 동일한 수동 입력 경로를 사용한다.
+- credential loading, connecting, VPN warning, auth rejection, protocol incompatibility,
+  secure-storage warning과 success는 안정된 geometry와 inline recovery를 유지한다.
+
+### 5.5 Responsive와 safe area
+
+지원 viewport는 360×800, 412×915, 600×960과 915×412다. 모든 touch target은 최소
+44×44 CSS px이고 user zoom을 허용한다. document는 가로로 scroll하지 않으며 tab과
+accessory strip만 내부 scroll할 수 있다. Safe-area inset은 mobile root가 한 번만
+소유한다.
+
+## 6. Design tokens와 typography
+
+Token과 typography의 사용 판단은 [`DESIGN.md`](../../DESIGN.md), 정확한 role·scale·
+theme 값은 [`ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)와
+[`themes.ts`](../../src/renderer/themes.ts)가 소유한다. 이 문서는 값을 다시 열거하지
+않는다.
+
+Application chrome은 semantic `--ui-*` token을 사용하고 `--term-*`은 xterm, terminal
+output과 기존 custom theme compatibility로 제한한다. Custom theme의 persisted schema는
+유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Feature는
+theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
+
+## 7. Component와 overlay 계약
+
+Button, IconButton, Dialog, ActionSheet, Menu, Popover, Tabs, Toast, Tooltip, FormControls와
+Feedback primitives를 repository `ui/`에서 공유한다. 새 feature가 focus trap, Escape,
+outside click, disabled, loading과 live-region 의미를 복제하지 않는다.
+
+- 한 modal layer만 top layer로 상호작용하고 background는 inert/aria-hidden 처리한다.
+- 닫기는 안전한 경우 Escape/Android Back을 지원하고 stable invoker로 focus를 돌린다.
+- 위험 action은 명시적 label과 안전한 초기 focus를 사용한다.
+- Toast는 action의 유일한 오류 설명이 될 수 없으며, 복구 가능한 오류는 originating
+  surface에 남는다.
+- loading, empty, offline, permission denied, unsupported와 stale data를 같은 skeleton
+  또는 0 값으로 표현하지 않는다.
+
+## 8. Localization과 접근성
+
+지원 locale은 Korean과 English이며 effective locale은 desktop menu, renderer와 mobile
+UI에 하나의 결정 규칙으로 적용된다. provider·protocol·product name은 번역하지 않되
+문장과 accessible label 안에서 자연스럽게 조합한다. 하드코딩 product string과 혼합
+locale은 결함이다.
+
+- 본문 text contrast는 최소 4.5:1, component boundary와 focus indicator는 최소 3:1이다.
+- 의미를 color, glow, animation이나 icon 하나에만 의존하지 않는다.
+- keyboard focus order는 visual order를 따르고 모든 action은 visible focus를 가진다.
+- reduced motion은 boot, ticker, pulse, rollbar와 decorative transition을 중지한다.
+  terminal output, remote video와 사용자가 요청한 외부 content는 decorative motion으로
+  취급하지 않는다.
+- status 변화는 필요한 경우 하나의 polite live region을 사용하고 fps, cursor, timer
+  tick을 반복 announce하지 않는다.
+- 200% text zoom과 screen reader label에서도 primary flow를 완료할 수 있어야 한다.
+
+## 9. 주요 상태 계약
+
+- **Boot:** 실제 phase만 표시하고 reduced motion 또는 disabled preference에서 즉시
+  skip한다. skip 입력을 PTY로 누출하지 않고 timer를 정리한다.
+- **Monitor:** 마지막 실제 sample과 collection scope를 표시한다. unsupported/capture
+  failure를 건강한 0으로 만들지 않고 visible할 때만 수집한다.
+- **Remote/Pairing:** bridge off, VPN 없음, service 없음, idle, busy와 active를 구분한다.
+  QR expiry/redeem과 device roster에서 stale generation을 복원하지 않는다.
+- **OpenClaw:** 실행 상태와 관리 RPC 연결 상태를 구분한다. 시작·중지·재시작과 다음
+  Windows 로그인 때의 자동 실행 여부를 먼저 보여 주며, RPC 연결 실패만으로 채팅 열기를
+  막거나 정상 실행을 실패로 표시하지 않는다. 실제 실행 오류와 재시도 안내는 화면에 남기고
+  supervisor 정보, 시도 횟수, 진단 ID·명령 출력·수동 복구 안내는 접힌 실행 상세에 둔다.
+  같은 활성 요청만 disable하며 충돌하는 중지 요청과 오래된 상태에서의 재시도는 허용한다.
+  Chat의 external body는 pixel oracle에서 제외하지만 EZTerminal chrome과 상태는 포함한다.
+- **Paste/Risky close:** 위험 이유를 유지하고 Cancel을 안전 focus로 둔다. 최종 상태
+  비교가 실패하면 아무것도 실행하지 않는다.
+- **Explorer:** root, empty folder, non-repository와 Git unavailable을 구분하며 breadcrumb,
+  full path, Up과 folders-first ordering을 유지한다.
+- **PC Control:** unavailable, starting, active, reconnecting, busy와 error를 구분한다.
+  input mode, monitor, sticky modifier와 controller 상태는 color 외의 표현을 가진다.
+
+## 10. Agent UI 계약
+
+제품의 기본 작업은 Terminal이며 Agent는 선택 기능이다. Desktop header의 주 버튼과 일반
+`새 세션` 동작은 기본 폴더의 Terminal을 바로 연다. Project 행에서는 main checkout,
+Explorer와 Android Workspace에서는 선택한 정확한 작업 폴더로 바로 연다. 별도의 종류
+선택을 요구하지 않는다. 명시적인 Agent 생성은 Agent draft를 연다. 공통 draft 자체의 기본 종류는 Terminal이며
+CLI 프로그램과 모델은 Terminal에서 선택한다. Agent의 실행 방식 하위 선택은 두지 않는다.
+전역 Agent draft는 실행 위치를 비워 두고, 문맥 Agent draft는 선택한 위치를 유지한다.
+선택·취소만으로 entity나 process를 만들지 않으며 실행 버튼에서만 생성한다.
+
+CLI 설치 탐색은 앱 대화 SDK 버전·인증·hook 준비와 분리한다. 이전 Codex/Claude CLI도
+설치되어 있으면 Terminal에서 실행할 수 있다. 앱 대화가 준비되지 않았으면 짧은 안내와
+`Agent 설정`을 제공한다. CLI는 Terminal 종류에서 실행한다. 실제 실행 권한과 위험 작업 승인은 유지한다.
+
+Settings → Agents는 Terminal CLI 설치 및 선택적 상태 연동을 먼저 보여 주고, `앱에서 대화`와
+`자동화`는 접힌 별도 영역으로 제공한다. 알림·승인·사용자 CLI는 상세 옵션에 둔다.
+사용하지 않는 provider는 중립적인 `사용 안 함` 상태이며 준비 오류를 반복 경고하지 않는다.
+각 기능은 상태 한 줄과 다음 동작을 제공하고 원인·버전·경로·프로토콜은 상세에서 확인한다.
+대화 설정은 `설정`으로 검토를 펼친 뒤 `확인 후 사용`으로 활성화한다. 별도 검토 완료
+체크박스를 요구하지 않으며 Claude의 필요한 동의는 같은 화면에서 받고 한 번 제출한다.
+검토 도중 실행 identity가 바뀌면 새 identity를 다시 확인한다. 수명 설정은 General이 소유한다.
+
+Agent의 사용자 메시지, 답변, 명령 인자와 도구 결과는 원문을 표시하고 host session history에도
+원문을 보관한다. 민감 표시가 있다는 이유로 내용을 숨기지 않는다. 긴 도구 출력은 펼칠 수
+있고, 같은 provider message의 delta와 완료 event는 한 메시지로 표시한다. 진단 로그의
+sanitization은 별도 경계다. 이전에 내용이 삭제·요약되어 저장된 기록은 복구를 가장하지 않는다.
+
+Location은 saved/observed project와 직접 host folder를 제공한다. 선택 또는 취소만으로
+project를 쓰지 않으며 성공한 direct-directory launch만 unpinned observed project가
+된다. Codex/Claude는 primary/additional roots를 받고 generic launcher는 primary만 사용하며
+무시되는 root 수를 실행 전에 알린다.
+
+History row, desktop history panel과 Android sheet는 provider text label과 3px start rail을
+사용한다. Codex는 dark/matrix `#48d7c8`, light `#006b64`, high contrast `#00ffff`를,
+Claude는 각각 `#e58a6b`, `#9a3f28`, `#ff9b7a`를 기준으로 contrast 보정한다. Provider
+의미를 color에만 의존하지 않고 live status surface는 provider-neutral로 유지한다.
+
+### 10.1 Desktop rail 우선순위와 프로젝트 세션 기록
+
+Desktop Activity Rail의 상단 순서는 Projects, Monitor, Remote, Files(Explorer), OpenClaw다.
+Files는 네 번째 위치를 유지하며 OpenClaw가 숨겨져도 앞선 세 destination의 순서는
+압축하지 않는다. Settings는 계속 하단에 고정한다. keyboard focus 순서는 이 시각 순서와
+같고 tooltip, localized accessible name과 selected state 계약은 3.3을 따른다.
+
+프로젝트의 이전 CLI transcript 기록은 프로젝트 행의 disclosure/accordion으로 펼치지 않는다. 검토한
+방향은 (1) 기존 인라인 accordion 유지, (2) 프로젝트 `…` 메뉴의 **Session history**가
+Agent sidebar 내부 전용 하위 화면을 여는 방식, (3) 같은 메뉴에서 modal을 여는 방식이다.
+사용자가 선택한 방향은 2다. 프로젝트 목록의 밀도를 유지하면서도 기록 탐색에 전체
+sidebar 높이를 쓸 수 있고, modal focus layer를 추가하지 않는 대신 목록으로 돌아가는
+명시적인 Back action이 필요하다.
+
+Session history 메뉴 항목은 프로젝트별 단일 진입점이다. 하위 화면은 프로젝트 이름,
+Back, provider-labelled session row와 pagination을 제공한다. loading/long-running은 기존
+목록을 지우지 않고 busy 상태를 표시하며, empty, load error와 retry를 서로 구분한다.
+세션 선택은 기존 read-only history panel을 열고, change review action도 기존 동일한
+handler를 사용한다. Back, session row, retry와 더 보기는 keyboard와 pointer로 동일하게
+동작하고 icon-only action은 localized accessible name을 가진다. offline과 permission은
+로컬 history 읽기에 별도 의미가 없어 not applicable이며, validation과 cancellation도
+사용자 입력이나 장기 mutation이 없으므로 not applicable이다.
+
+새 asset, dependency, font 또는 token은 추가하지 않는다. repository `Menu`, `MenuItem`,
+`IconButton`, Lucide icon과 기존 `agent-history-*` component/token을 재사용한다. normative
+외부 mock은 없으며 실제 component test가 rail DOM 순서, accordion 부재, menu 진입,
+Back, loading/empty/error/pagination을 검증한다. Storybook/visual lane은 repository에 이미
+구성된 기존 Agent surface snapshot을 oracle로 사용하고, 이 계약과 불일치할 때 snapshot을
+자동으로 정답 취급하지 않는다. 미해결 제품 결정은 없다.
+
+### 10.2 Project, Workspace, Session과 관리 머지
+
+Projects의 기본 정보 구조는 Project → Workspace → Session이다. Project는 저장소와 사용자의
+지속적인 작업 맥락, Workspace는 local checkout 또는 managed worktree, Session은 Agent,
+Terminal, Diff/Review, opt-in Browser, Script/Service tab을 소유한다. 기존 독립 terminal은
+호환되는 Local workspace 아래에 비파괴적으로 등록한다. 별도의 `협업 설정` destination이나
+Project별 enable/profile/limit form은 만들지 않는다.
+
+모든 실행 중 Agent row/card는 provider, model, permission preset, workspace와 현재
+`starting/working/blocked/done/idle/error/unknown` 상태를 함께 표시한다. session tab을 닫는
+동작은 layout만 바꾸며 실행이나 history를 종료하지 않는다. Cancel은 현재 turn, Archive는
+실행을 종료한 뒤 기본 목록에서 숨김, Detach는 parent edge만 제거하고 최상위 session으로
+승격하는 서로 다른 action이다.
+
+Desktop project 행의 `세션` disclosure와 Android drill-down은 같은 daemon identity로
+일반 Terminal과 Agent를 보여 준다. CLI가 실행 중인 Terminal은 감지된 provider와 상태를
+표시한다. 저장된 PTY 기록만으로 실행 중이라고 간주하지 않고 live session 목록과 대조한다.
+종료된 Terminal은 재접속 대신 `같은 위치에서 새 터미널`을 제공한다. 이전 CLI transcript와
+지원되는 resume는 Desktop 프로젝트 메뉴와 Android의 `프로젝트 관리 · CLI 기록`에서 연다.
+
+Tab의 `×`/`화면 닫기`와 auxiliary window 닫기는 보기만 제거하고 실행을 유지한다. 같은
+session을 다시 열면 완료된 block을 포함한 기존 output을 재연결하고 process-local draft,
+scroll, 사용자 tab 이름과 project identity를 복원한다. 명시적 view detach는 crash 복구 유예와
+구별하며, 화면 없이도 host 작업이 계속 실행된다. 기존 SSH late-attach 제한은 유지한다.
+Agent follow-up draft와 transcript scroll도 session별로 유지하며 Android 연결 사이에 공유하지
+않는다. 이 presentation state는 일반 layout이나 plaintext storage에 저장하지 않는다.
+Terminal의 `세션 종료`는 별도 action이며 Cancel 초기 focus와 실행 중 작업 수를 보여 준 뒤
+최신 run set을 확인하고 guarded termination한다. 관찰 실패·상태 변경이면 종료하지 않는다.
+Agent의 현재 turn 중단과 종료·보관은 별도 action이다. 앱 메인 창의 quit/tray 정책은 그대로다.
+
+관리 merge queue는 source→target, Agent alias, immutable request revision, validation
+상태와 warning/error를 한 card에서 읽을 수 있어야 한다. Candidate review는 정확한
+target/candidate pair를 열고, stale revision이면 diff나 승인 action을 계속 사용하지
+않는다. 정상 validation은 Approve/Deny를 제공한다. 실패 validation의 Override는 desktop
+전용이며 이유 입력과 두 단계 확인을 요구한다. `다음 1회 자동 머지`는 participant,
+workspace, target과 만료 시간을 먼저 보여 주고 영구 설정처럼 표현하지 않는다.
+
+Android Agents는 같은 daemon snapshot에서 status, live transcript, direct conversation,
+approval, stop, archive와 detach를 제공한다. provider 설치, browser host와 validation override처럼
+Desktop host에서만 가능한 action은 이유와 복구 위치를 설명하고 가짜 control을 만들지 않는다.
+Mobile merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
+revision 의미를 유지한다.
+
+Android Agent draft는 선택만으로 어떤 entity나 terminal surface도 만들지 않는다.
+`Agent 만들기`에서 최신 daemon snapshot으로 active Project·Workspace와 ready provider를
+검증한 뒤 첫 prompt가 없는 `agent.create`를 제출한다. 성공 receipt 뒤에는 빈 idle 세션을
+즉시 열고 같은 session id의 authoritative snapshot이 이를 대체한다. 첫 메시지는 별도
+`agent.submit`으로 전송한다. 이전 버전의 prompt 포함 생성 명령은 복구와 자동화를 위해
+계속 지원한다. revision conflict는 동일한 논리 session id와 title을 유지한 채 제한 횟수만
+새 command id로 재시도한다. 생성 결과를 확인할 수 없으면 provider, model, permission,
+Workspace를 잠그고 같은 idempotency command를 먼저 조회·재전송한다. 이전 복구 명령에
+prompt가 있으면 읽기 전용으로 표시한다. 자동으로 다른 초안이나 중복 세션을 만들지 않는다.
+
+Android는 각 `agent.create`를 전송하기 전에 exact command를 Keystore-backed secure storage에
+기록하고 read-back까지 확인한다. 앱 프로세스가 다시 시작되면 이 한 건을 잠긴 draft로 복원한 뒤
+최신 daemon snapshot에서 기존 session을 먼저 대조한다. secure storage가 loading 또는 unavailable이면
+Agent 생성만 비활성화하고 이유와 `Retry`를 제공하며 Terminal 선택과 생성은 유지한다. 복구 레코드와
+secure key는 현재 인증 bearer의 SHA-256 fingerprint에 결속하므로 다른 Desktop의 미확정 command를
+현재 연결에 노출하거나 재전송하지 않는다. raw bearer, prompt, command의 plaintext/localStorage
+fallback은 두지 않는다. 레코드가 유효하지 않으면 일반 unavailable과 구분해 설명하고, `복구 기록 폐기`는
+이전 command가 이미 도달했을 때 중복될 수 있음을 알리는 alert dialog와 안전한 Cancel 초기 focus를
+거친다. 해독할 수 없는 현재 authority 레코드도 같은 확인을 거친 뒤 해당 raw secure-storage key만
+제거할 수 있어야 한다. draft가 이미 열린 뒤 유효한 복구 레코드의 loading이 끝나도 뒤로 갔다 다시
+열도록 요구하지 않고, 같은 화면에서 exact provider·model·permission·Project·Workspace·prompt를
+동기화해 잠근다. Desktop은 같은 경계에서 main-process의 memory-only
+renderer checkpoint 저장 완료를 기다리며, 미확정 생성이 있는 tab·window·layout 교체를 우발적으로
+닫지 않는다. keep-running 창 닫기는 process와 checkpoint를 유지한 채 숨기지만, quit-on-close는 복구
+경로를 잃으므로 차단한다. 명시적 Quit은 Cancel을 기본값으로 두고 복구 정보 폐기와 중복 생성 위험을
+추가로 설명한다. 첫 prompt는 durable Dockview layout에 직렬화하지 않는다.
+
+Terminal은 provider 상태와 무관하지만 선택한 Workspace의 최신 active 상태와 rootPath를 host에서
+다시 검증한 뒤 기존 mobile terminal surface 생성 경로를 사용한다. 기존 Terminal tab의 빠른 `+`는
+기본 위치 terminal shortcut으로 유지한다. provider 설치와 Claude 요구 사항 동의는 Desktop
+Settings → Agents에서만 수행하며 mobile draft는 해당 복구 위치를 설명한다. full-screen draft와
+생성된 Agent session은 공통 mobile history layer를 사용해 UI Back, browser Back과 Android Back이
+한 단계만 닫히도록 하고, 닫은 뒤 Agents header의 `+`로 focus를 돌려준다.
+
+Button은 raw terminal Git 명령을 전송하지 않고 main의 관리 merge operation만 호출한다.
+preparing/validating/merging 중에는 중복 action을 막고 현재 단계 label을 유지한다. 성공,
+deny, conflict, stale, failed와 interrupted는 서로 다른 text 상태이며 color만으로 구분하지
+않는다. 상세 process·보안 계약은
+[`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
+
+### 10.3 관리형 Agent tree와 직접 대화
+
+Host에서 한 번 `오케스트레이션 도구 사용`을 켜면 새로 만들거나 resume한 모든 Agent session에
+session-scoped orchestration MCP가 연결된다. Project별 협업 enable/profile/path/limit UI와 별도
+run graph는 없다. provider-native subagent도 같은 track에 표시하지만 provider-owned/read-only로
+명확히 구분한다.
+
+Agent transcript와 composer 사이에는 direct child를 보여 주는 compact track을 둔다. child가
+없으면 렌더링하지 않는다. 항목은 provider, 상태, 경과 시간, attention과 bounded result summary를
+보여 주며 click은 같은 child Agent tab을 열거나 재사용한다. 같은 Workspace child는 자동으로
+tab을 열지 않고 cross-workspace child만 새 작업 맥락을 알리기 위해 자동 open할 수 있다. parent에는
+child transcript를 복사하지 않고 bounded summary event와 session link만 전달한다.
+
+관리형 child는 parent와 동일한 완전한 Agent session이다. 사용자는 child tab에서 직접 prompt를
+보내고 model과 permission preset을 바꾸며 Interrupt+Send, Cancel, Archive, Detach를 사용할 수 있다.
+busy session의 일반 Send는 FIFO이고 Interrupt+Send만 현재 turn을 중단한다. tree는 재귀와
+cross-provider를 지원하되 host hard cap인 동시 managed turn 4, tree node 16, depth 4, tree당
+10분 내 child 생성 12, background turn 2시간을 숨기지 않는다. 동시성 초과는 queue, 다른 cap은
+구조화된 오류로 거부한다.
+
+write Agent는 dedicated managed worktree를 사용할 수 있고 diff/review와 명시적 merge는 기존
+Project surface에 남는다. runnable writer의 scope 충돌, stale source revision, validation 실패를
+자동 merge로 우회하지 않는다. Production Storybook은 draft, active/queued/attention, direct child
+conversation, native subagent, archived/detached와 permission states를 실제 component adapter로
+검증한다. 고정 desktop handoff 원본은 snapshot 대상으로 사용하지 않는다. 실행·저장·권한의 상세
+계약은 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
+
+## 11. PC Control UI 계약
+
+Mobile page는 explicit Start 뒤에만 video/input을 연다. Active 화면은 video를 가리는
+상시 toolbar를 두지 않고, 화면 가장자리에 최소 touch target을 만족하는 session handle을
+항상 남긴다. Handle은 세로로 이동하고 좌우 edge에 붙으며 위치를 기기에 저장한다.
+Handle의 상태 표시는 active와 reconnecting을 color뿐 아니라 shape와 accessible name으로
+구분한다.
+
+Handle은 하나의 session ActionSheet를 연다. Sheet의 순서는 input mode, view/monitor,
+quality, keyboard·clipboard tools, 접힌 connection details, Disconnect다. Precision pointer가
+기본이며 Direct touch는 host capability가 있을 때만 활성화한다. Fit은 zoom과 pan을 모두
+초기화한다. Quality는 Balanced, Clarity, Responsiveness를 제공하고 지원하지 않는 구형
+host에서는 update 필요 상태를 정직하게 표시한다. Connection details에는 stream 크기,
+fps/latency, loss, bitrate, decoder drop과 실제 capture/encoder backend만 표시한다.
+
+Precision pointer의 한 손가락 이동은 cursor, tap/double tap은 click/double click,
+double-tap 후 drag와 long-press drag는 button hold다. 두 손가락은 pan/pinch zoom,
+두 손가락 double tap은 2×와 Fit 전환, 세 손가락 이동은 wheel이다. Direct touch는 remote
+absolute 좌표를 사용한다. OS에 이미 연결된 Bluetooth mouse는 별도 설정 없이 active video
+surface의 hover, left/right/middle button, drag와 horizontal/vertical wheel을 같은 input
+contract로 보낸다. Precision pointer에서는 상대 이동, Direct touch에서는 절대 좌표를
+사용한다. Pointer cancel, focus 이탈, reconnect, background, mode 변경과 close에서는 눌린
+button/key/modifier를 먼저 release한다.
+
+Zoom과 pan은 local transform으로 즉시 반응하고 안정된 viewport를 host ROI로 보낸다.
+Host가 적용한 revision과 source region을 확인하기 전에는 zoom 상태의 Direct touch 입력을
+잠시 막아 영상과 absolute 좌표가 어긋나지 않게 한다. Adaptive-region capability가 없는
+host에는 기존 full-frame viewport만 보내며 local Fit/입력 계약을 유지한다.
+
+Keyboard action은 IME input과 가로 scroll 가능한 accessory를 열고 Ctrl/Alt/Shift/Win의
+sticky 상태, Escape/Tab/Enter/Delete/arrow와 F1–F12를 gesture 없이 제공한다. Clipboard는
+자동 동기화하지 않고 명시적 Send/Copy만 사용한다. Android Back은 sheet, keyboard,
+remote page 순서로 닫고 기존 mounted terminal로 돌아간다. Background 전환은 input과
+session을 정리한 뒤 자동 재개하지 않으며 사용자가 Resume을 선택한다.
+
+OS에 이미 연결된 Bluetooth keyboard는 별도 toggle 없이 session이 active가 될 때 video
+surface focus를 받아 문자·숫자·기호, modifier 조합, navigation/edit와 F1–F12의 물리 key
+transition을 remote layout/IME로 보낸다. Android가 소비하는 system key와 host가 지원하지
+않는 key는 가로채지 않는다. Video surface 밖의 session handle, ActionSheet, keyboard
+accessory, reconnect/close UI와 background에서는 물리 key나 mouse event를 remote input으로
+보내지 않으며, sheet를 닫으면 active video surface로 focus를 복구한다. 이 동작은 기존
+touch gesture와 명시적으로 여는 IME input을 대체하지 않는다.
+
+Desktop banner와 tray는 active controller가 있을 때만 나타나며 device와 local
+Disconnect를 제공한다. 시작 시 terminal focus를 훔치지 않고 release 뒤 즉시 사라진다.
+Native 오류 remediation은 Remote panel에 남기고 stale active banner를 유지하지 않는다.
+
+Production Storybook은 Ready, Active handle, 열린 Session sheet, Keyboard accessory,
+Reconnecting과 Unavailable을 deterministic adapter로 포함한다. 고정 desktop handoff
+snapshot은 이 mobile 계약 변경의 갱신 대상이 아니다.
+
+## 12. 시각·접근성 검증
+
+시각적 합격 기준은 [`DESIGN.md`](../../DESIGN.md), 화면·상태·responsive 합격 기준은 이
+문서가 소유한다. 두 문서의 내용을 snapshot 설명에 복사하지 않는다.
+
+`DesktopHandoff.stories.tsx`는 manifest의 14개 표면에 실제 product component와
+deterministic adapter를 사용한다. 각 handoff story는 axe와 1920 reference를 가지며
+Korean/English product content를 검증한다.
+
+Pairwise visual matrix는 다음을 포함한다.
+
+- 800×600/1024×720 overlay와 1200×800/1440×900 reflow
+- 100%/150% scale의 shell, sidebar와 dialog
+- Matrix, Light, Dark, High Contrast
+- reduced-motion boot, ticker, pulse, rollbar와 transition
+- mobile 360×800, 412×915, 600×960과 landscape 핵심 화면
+
+Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, external content,
+보안 또는 truthful-data 차이만 manifest 예외로 기록한다. 문서 정리만을 이유로 snapshot을
+갱신하지 않는다.
+
+## 근거 소스
+
+- [`src/renderer/App.tsx`](../../src/renderer/App.tsx)
+- [`src/renderer/dock-window-coordinator.ts`](../../src/renderer/dock-window-coordinator.ts)
+- [`src/renderer/dockview-popouts.ts`](../../src/renderer/dockview-popouts.ts)
+- [`src/renderer/WorkspaceTab.tsx`](../../src/renderer/WorkspaceTab.tsx)
+- [`src/renderer/workbench/`](../../src/renderer/workbench/)
+- [`src/renderer/ui/`](../../src/renderer/ui/)
+- [`src/renderer/styles/ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)
+- [`src/renderer/i18n/resources.ts`](../../src/renderer/i18n/resources.ts)
+- [`src/renderer/feature-loader.tsx`](../../src/renderer/feature-loader.tsx)
+- [`src/shared/resource-profile.ts`](../../src/shared/resource-profile.ts)
+- [`mobile/src/MobileWorkbenchCoordinator.tsx`](../../mobile/src/MobileWorkbenchCoordinator.tsx)
+- [`mobile/src/MobileSettingsView.tsx`](../../mobile/src/MobileSettingsView.tsx)
+- [`mobile/src/MobileTabBar.tsx`](../../mobile/src/MobileTabBar.tsx)
+- [`mobile/src/mobile-shell.css`](../../mobile/src/mobile-shell.css)
+- [`docs/ux/reference/desktop-handoff/manifest.json`](reference/desktop-handoff/manifest.json)
+
+## 검증
+
+- [`scripts/guard-desktop-handoff.mjs`](../../scripts/guard-desktop-handoff.mjs)
+- [`src/renderer/workbench/DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)
+- [`e2e/workbench-shell.spec.ts`](../../e2e/workbench-shell.spec.ts)
+- [`e2e/popout-window.spec.ts`](../../e2e/popout-window.spec.ts)
+- [`visual/storybook.visual.spec.ts`](../../visual/storybook.visual.spec.ts)
+- [`test/desktop-handoff-guard.test.ts`](../../test/desktop-handoff-guard.test.ts)
+- [`mobile/src/MobileWorkbenchCoordinator.test.tsx`](../../mobile/src/MobileWorkbenchCoordinator.test.tsx)
+- [`mobile/src/MobileUiPreferencesProvider.test.tsx`](../../mobile/src/MobileUiPreferencesProvider.test.tsx)
+
+이전 전체 규격과 완료 addendum은
+[`docs/archive/design/frontend-design.md`](../archive/design/frontend-design.md)에 보존한다.
+
+## 13. Agent Project 통합 작업 공간
+
+이 절은 Agent Project의 유일한 canonical UX 계약이며, 이전의 Code/Changes/Working
+tree 목적지, 별도 CodeFile/CodeDiff editor, preview tab, 코드 질문 흐름에 관한
+결정을 모두 대체한다.
+
+### 13.1 제품 표면, 사용자와 목표
+
+대상은 EZTerminal Electron desktop에서 Agent Project를 열어 프로젝트 파일과 실행
+중인 PTY를 함께 다루는 사용자다. 프로젝트 진입 직후 별도 학습이나 중간 화면 없이
+파일 트리가 보여야 하고, 한 번의 파일 선택으로 중앙 작업 영역에서 실제 파일 전체를
+읽을 수 있어야 한다. 변경은 별도 문서가 아니라 같은 파일에 적용되는 inline 비교
+렌즈다. 이번 범위는 read-only 탐색이며 편집·저장, LSP, stage, revert, commit,
+모바일 구현은 포함하지 않는다.
+
+### 13.2 검토한 방향과 선택
+
+1. **Agent sidebar를 Project Explorer로 승격 — 선택.** 기존 project 진입과 sidebar
+   shell을 재사용하면서 프로젝트 진입 즉시 tree를 보여 준다. wide에서는 tree와
+   editor/PTY를 함께 보고, narrow에서는 tree drawer를 닫아 작업 영역을 확보한다.
+2. **전용 project column.** 정보 구조는 가장 명시적이지만 application shell과 layout
+   persistence 변경 범위가 크고 기존 Agent 진입과 중복된다.
+3. **Dockview-native tree panel.** 자유로운 재배치는 가능하지만 tree가 또 하나의
+   닫을 수 있는 문서가 되어 프로젝트의 안정적인 출발점이라는 의미가 약해진다.
+
+선택 방향의 핵심 tradeoff는 narrow에서 tree와 파일을 동시에 보지 않는 대신,
+파일 선택 후 즉시 editor로 전환하고 Files control로 같은 tree 상태를 다시 여는
+것이다.
+
+### 13.3 정보 구조와 실제 클릭 흐름
+
+- Agents에서 프로젝트 이름을 선택하면 같은 sidebar가 Project Explorer로 바뀌고
+  파일 tree를 즉시 표시한다. Files/Changes/Working tree/Sessions 내부 tab은 없다.
+- header에는 Back, 프로젝트 이름과 경로, 하나보다 많은 실제 checkout이 있을 때만
+  보이는 작업 위치 selector, New Chat과 Manage만 둔다.
+- tree와 파일명·본문 search는 같은 project-relative path를 가리킨다. 파일을 한 번
+  click하거나 Enter/Space로 활성화하면 일반 read-only tab이 열린다. preview,
+  double-click pinning, Keep Open은 없다.
+- PTY path, PTY change summary, Agent Session file-change도 같은 open command를
+  사용한다. 이미 열린 path이면 새 tab을 만들지 않고 그 tab과 요청 위치를 재사용한다.
+- Agent session 목록과 PTY/Agent panel은 기존 surface에 남는다. 프로젝트 tree를
+  Sessions view로 바꾸지 않는다.
+- 등록 프로젝트 밖의 image/PDF/binary preview는 기존 generic preview 규칙을 유지한다.
+  등록 프로젝트의 text path는 generic preview로 우회하지 않는다.
+
+### 13.4 문서 정체성, 비교 렌즈와 tree 표현
+
+문서의 durable identity는
+`projectId + rootId + workspaceId + canonical project-relative path`다. Windows
+path casing은 main process가 canonical equality key로 정규화한다. repository,
+revision, comparison source, reveal location과 view mode는 tab identity가 아니며
+layout에 저장하지 않는다.
+
+기본 렌즈는 `HEAD ↔ 현재 checkout` 전체 변경이다. 직접 파일 열기와 tree 재선택은
+항상 이 렌즈로 돌아간다. Agent Session 링크만 exact `historyId + turnId` 렌즈를
+같은 tab에 일시 적용하고 닫을 수 있는 `Agent turn` provenance chip을 보여 준다.
+chip을 닫으면 현재 변경으로 복귀한다. staged/branch/commit catalog와 selector는
+제공하지 않는다.
+
+tree는 실제 entry와 Git 상태를 합쳐 같은 node에 `M/A/D/R`, `+N -M`을 표시한다.
+삭제된 path와 rename의 이전 path는 virtual node로 나타내고, nested repository,
+untracked 파일과 첫 commit 이전 repository에서도 정확한 상태를 계산한다. 색만으로
+상태를 구분하지 않는다.
+
+### 13.5 editor와 inline diff
+
+파일 surface는 하나의 `project-editor`다. text 파일은 1 MiB 이하일 때 첫 줄부터
+마지막 줄까지 자르거나 unchanged region을 접지 않고 표시한다. 변경된 파일이면 같은
+Monaco surface에서 inline diff를 자동 표시한다. 사용자는 전체 파일 보기, 현재 파일
+보기, 미리보기 같은 전환 button을 누르지 않는다.
+
+toolbar는 breadcrumb, optional Agent-turn provenance, read-only 상태, Find, Go to
+Line, 이전/다음 변경과 Refresh만 포함한다. Ask about code, Add lines, Add with
+snippet, question composer와 reference 수집·전송 control은 없다.
+
+provider의 안전한 before model을 만들 수 없으면 현재 파일 전체를 유지하고 검증된
+record를 같은 surface의 view zone에 표시한다. 현재 파일도 없으면 같은 path tab에서
+record-only 또는 deleted 상태를 정직하게 표시한다. 과거 내용을 현재 파일인 것처럼
+추정하지 않는다.
+
+### 13.6 wide와 narrow layout
+
+`1024 CSS px` 이상 wide:
+
+```text
+┌──────────┬─────────────────────────────────────────┐
+│ Activity │ Project Files 280–400 px                │
+│ rail     ├───────────────────────────────┬─────────┤
+│          │ editor, available height 68%  │ tabs    │
+│          ├───────────────────────────────┴─────────┤
+│          │ existing PTY/Agent topology, 32%        │
+└──────────┴─────────────────────────────────────────┘
+```
+
+editor와 아래 PTY 영역의 비율은 resizable이며, 기존 여러 PTY group의 topology와
+panel instance를 유지한다. file open과 layout 변경은 terminal focus를 빼앗지 않는다.
+사용자가 editor tab을 명시적으로 활성화할 때만 editor에 focus를 준다.
+
+`1024 CSS px` 미만 narrow:
+
+```text
+┌────────────────────────────┐
+│ Files drawer (on demand)   │
+├────────────────────────────┤
+│ Dockview: Editor | PTY     │
+│ active surface fills body  │
+└────────────────────────────┘
+```
+
+Project Explorer는 focus-trapped drawer이며 파일 활성화 후 자동으로 닫힌다.
+editor와 PTY는 Dockview tab으로 전환하고 PTY renderer는 계속 mounted 상태를
+유지한다. breakpoint 왕복과 project 종료 시 panel node를 재생성하지 않고 원래
+group membership과 크기를 복원한다. sidebar를 닫았다 다시 열어도 active project,
+expanded folder, selection과 search query를 유지한다.
+
+### 13.7 작업 위치와 권한
+
+project에 실제 checkout이 하나면 작업 위치 selector를 숨긴다. main 또는 EZTerminal
+managed worktree는 즉시 읽을 수 있다. 외부 worktree는 exact canonical path, branch와
+Git identity를 보여 준 뒤 사용자 승인을 받아 read-only로 연다. PTY나 Agent 링크가
+작업 위치를 조용히 전환하지 않는다. 승인 취소, 경로·repository identity 변경 또는
+project 제거 시 저장된 승인을 재사용하지 않는다.
+
+### 13.8 상태 계약
+
+| 상태 | 같은 workspace 안의 표현 |
+| --- | --- |
+| loading/long-running | tree 또는 editor region에 `aria-busy`, 기존 내용 유지, stale request 취소 |
+| empty project/folder/search | 대상과 다음 행동을 구체적으로 설명하며 가짜 file을 만들지 않음 |
+| unchanged text | 전체 read-only file, diff decoration 없음 |
+| M/A/D/R | 전체 문맥 inline diff 또는 검증된 deleted/record-only 상태 |
+| binary/1 MiB 초과 | 같은 path tab의 명시적인 unavailable 상태, 일부 내용 미리보기 없음 |
+| permission/external worktree | main이 검증한 승인 surface, 취소 가능 |
+| stale/missing | 현재 revision과 불일치를 설명하고 안전한 Refresh 제공 |
+| comparison failure | 읽을 수 있는 현재 파일은 유지하고 provenance 가까이에 retry 가능한 warning |
+| offline | 모든 source가 local-only이므로 not applicable; network fetch를 시작하지 않음 |
+| validation | 편집·저장이 범위 밖이므로 not applicable |
+| success | tree selection, tab, breadcrumb와 comparison lens가 같은 path를 표시 |
+
+### 13.9 component, token과 입력 계약
+
+기존 Monaco, lucide-react, project token, button, input, tree와 SidebarShell
+primitive를 재사용한다. 새 dependency, font, image asset, network resource나
+telemetry를 추가하지 않는다. component taxonomy는 App-owned project state,
+Project Explorer tree/search, document open coordinator, `project-editor`,
+comparison provenance, worktree approval, layout coordinator로 제한한다.
+
+tree는 roving focus, Arrow/Home/End, Enter/Space를 지원하고 search result는
+line/column까지 editor에 전달한다. breadcrumb와 긴 path는 줄임표와 전체 accessible
+name을 함께 제공한다. 모든 icon-only control에는 label과 tooltip이 있고 focus-visible
+outline을 유지한다. M/A/D/R와 증감 수치는 visible text와 screen-reader name에 모두
+포함한다. target은 WCAG 2.1 A/AA이며 keyboard-only, screen reader label, contrast,
+focus order와 reduced-motion을 관찰 가능하게 검증한다.
+
+### 13.10 lifecycle 불변 조건
+
+project 진입, 파일 열기, wide/narrow 전환, sidebar open/close와 project 종료 동안
+PTY process, session id, output, 실행 중 command, input draft, selection, scroll,
+active panel과 focus를 잃지 않는다. layout coordinator는 기존 Dockview node를
+이동하며 `fromJSON` 또는 panel recreation을 사용하지 않는다. project editor의
+저장 descriptor에는 identity만 남기고 content, revision, lens, reveal과 preview
+상태는 저장하지 않는다. legacy pinned `code-file`/`code-diff` descriptor는 같은
+path의 `project-editor`로 migration하고 legacy preview는 복원하지 않는다.
+
+### 13.11 시각 QA와 증거
+
+normative mock 또는 외부 design file은 없다. 이 문서와 실제 Storybook story가
+규범이며, story가 계약과 달라지면 문서를 자동으로 따라 바꾸지 않는다. asset
+provenance는 기존 repository-owned icon/token뿐이며 추가 license 검토 대상은 없다.
+
+- Storybook integrated story는 `tree + full-file inline editor + live PTY`를
+  1440×900 wide와 800×600 narrow에서 보여 준다.
+- loading, empty, M/A/D/R, deleted, record-only, permission과 error 상태를 component
+  test와 story에서 검증한다.
+- project-local visual snapshot은 available height 채움, 상하단·수평 clipping 부재,
+  drawer 전환과 별도 Changes/질문 UI 부재를 확인한다.
+- Electron E2E는 tree/search/PTY/Agent 진입의 same-tab reuse, exact reveal,
+  breakpoint 왕복과 PTY lifecycle 불변 조건을 실제 runtime에서 확인한다.
+- lint, typecheck, unit/component test, Storybook/visual, ordinary `pnpm e2e`가 gate다.
+  release performance benchmark는 이 설계의 검증 lane이 아니다.
+
+미해결 제품 결정은 없다. 구현 중 발견되는 filesystem/Git 한계는 기능을 추정하거나
+새 Source Control UI를 추가하는 근거가 아니며, 같은 path의 명시적인 unavailable
+상태로 처리한다.
+
+## 14. Explorer 파일·폴더 시각 계층
+
+이 절은 desktop의 일반 Files Explorer와 Agent Project Explorer가 공유하는 entry
+표현 계약이다. 대상은 큰 폴더에서 경로와 Git 변경을 함께 훑는 사용자이며, 별도
+학습이나 view 전환 없이 폴더·파일 종류·계층을 즉시 구분하는 것이 목표다. Quick
+Open, editor tab, breadcrumb와 mobile surface는 이 계약의 범위가 아니다.
+
+검토한 방향은 (1) 폴더 위계와 선별된 Lucide file icon을 함께 강화하는 방식,
+(2) VS Code file-icon package를 추가하는 방식, (3) 기존 monochrome icon을 유지하고
+간격만 조정하는 방식이다. **방향 1을 선택한다.** 방향 2는 새 dependency와 과도한
+색상 vocabulary를 만들고, 방향 3은 현재의 파일·폴더 구분 문제를 충분히 해결하지
+못한다. Lucide와 semantic `--ui-*` token만 사용하며 새 image, font, network asset,
+telemetry 또는 persisted theme role을 추가하지 않는다.
+
+- folder는 `Folder`와 `FolderOpen`, 낮은 opacity의 fill, restrained accent와 굵기
+  650의 이름을 사용한다. Project tree의 expanded folder는 옅은 surface와 16px
+  간격의 semantic border indentation guide를 가진다.
+- file은 case-insensitive basename과 extension으로 판별한다. README/CHANGELOG/LICENSE,
+  package manifest, lockfile, Docker/Make/Git/editor/env/config file을 extension보다 먼저
+  판별하고, `test`/`spec` 이름을 일반 code extension보다 먼저 판별한다.
+- icon shape은 code, web/style, terminal script, JSON, config, document, test, data,
+  image, archive와 generic fallback을 구분한다. 색 category는 folder/accent,
+  code/info, config/warning, document/subdued-info, test/success, media와 generic/muted로
+  제한한다. danger는 Git delete/conflict 전용으로 남긴다.
+- Project tree의 기존 28px row, 일반 Explorer의 compact padding, selection background,
+  focus outline, Git `M/A/D/R`와 diffstat를 유지한다. selection과 Git status가 file-type
+  color보다 강한 signal이어야 한다.
+- icon은 decorative `aria-hidden`이다. Project folder는 `aria-expanded`로, 일반 Files
+  list는 localized visually-hidden file/folder text로 종류를 전달한다. 의미는 색 하나에
+  의존하지 않는다. create/rename, loading, empty, error와 parent entry에서도 기존
+  keyboard 및 pointer 동작을 유지한다.
+
+외부 normative mock은 없다. `ProjectWorkspaceComposition`의 wide/narrow story와
+`DesktopHandoff` Explorer story가 visual oracle이며, 대표 folder/code/config/document/
+test/media/generic entry와 High Contrast를 포함한다. resolver unit test, 두 Explorer의
+component test, Storybook axe/visual, lint, typecheck와 ordinary `pnpm e2e`가 검증 gate다.
+release performance benchmark는 이 변경의 검증 lane이 아니다. 미해결 제품 결정은 없다.
+
+## 15. Project Map surface
+
+Project Map은 Agent Project Explorer에서 명시적으로 여는 desktop-only Dockview 패널이다.
+기존 Project 문서·PTY·Agent 패널을 대체하지 않으며 collection 하나당 하나의 패널을
+재사용한다. 패널은 renderer에서 native React/SVG로 그린다. 외부 HTML, WebContentsView,
+repository가 제공한 CSS나 실행 가능한 내용을 렌더링하지 않는다. 저장·검증·provenance
+계약과 mode 의미는 [`project-map.md`](../design/project-map.md)가 소유한다.
+
+정보 순서는 map 선택과 검증/승인 상태, 검색·chapter, diagram, 선택한 항목의 근거,
+검증 check와 Agent authoring이다. Header에는 map selector, candidate가 있을 때의 **맵 승인**,
+승인 뒤에만 활성화되는 theme/export와 refresh를 둔다. Candidate/last-approved/background
+verification은 diagram을 가리지 않는 inline banner로 구분한다. Stable-ID semantic/evidence
+diff는 접힌 summary에서 수량을 먼저 보여 주고 필요할 때 펼친다.
+
+`binding-required`에서는 diagram 대신 logical root별 workspace 선택과 명시적 Save를 먼저
+보여 준다. `stale`은 현재 source가 review를 요구함을 알리고, invalid current source는 raw
+결과를 그리지 않는다. 기존 승인이 있으면 last-approved를 계속 탐색하게 하고 없으면 원인과
+recovery가 있는 invalid state를 보여 준다. Loading은 최초 검증과 approved cache 뒤 background
+검증을 구분하며 후자는 기존 map interaction을 막지 않는다.
+
+검토한 실행 방향은 (1) 기존 active Agent의 현재 turn 뒤에 요청을 queue하는 방식, (2) 요청마다
+전용 Agent session을 여는 방식, (3) 보이지 않는 background worker를 main에서 만드는 방식이다.
+**방향 2를 선택한다.** 방향 1은 기존 turn의 종료 시점에 진행이 묶이고 사용자가 실제 작업 surface를
+볼 수 없으며, 방향 3은 terminal-first 제품에서 실행·승인·오류를 관찰할 수 있는 표면을 숨긴다.
+전용 session은 Project Explorer의 검증된 `새 세션` 준비·실행 경로를 재사용하고 정확한
+Project/root/workspace를 고정한다.
+
+Manifest가 없는 empty state의 primary action은 **Project Map 만들기**다. 별도 modal이 아니라
+같은 panel에서 첫 map type, 설치된 Codex/Claude Agent와 editable creation brief를 순서대로 보여
+준다. active Agent 유무와 coordination join 여부는 생성 가능 조건이 아니다. 설치된 지원 Agent가
+없으면 Agent 설정으로 복구할 수 있음을 표시하고 실행을 비활성화한다. Create/Update를 누르면 main이
+선택한 Agent와 exact owning workspace를 다시 준비한 뒤 새 project terminal tab을 열고 focus한다.
+이 tab은 일반 `새 세션`과 같은 실제 Agent PTY이며 Project Map 전용 요청이라는 사실과 이후 출력·승인·
+오류를 사용자가 직접 볼 수 있어야 한다.
+
+새 PTY의 Agent activity가 식별된 뒤에만 그 activity를 소유자로 하는 tracked job을 저장한다. 같은
+runtime-only bootstrap이 반환된 job ID를 brief에 결합하고 PTY의 bracketed-paste ready 신호에 맞춰
+최초 prompt를 한 번 제출한다. 기존 Agent의 `whenReady` queue로 우회하지 않는다. Agent 준비,
+session 실행 또는 job 저장이 실패하면 완료나 전달 성공으로 표현하지 않고 새 session 안의 retry
+가능한 오류와 Project Map authoring surface의 실행 실패 상태를 유지한다. 요청 제출 성공은 map 생성
+완료가 아니라 전용 session과 tracked job이 시작됐다는 뜻이다.
+
+버튼을 누른 뒤 준비가 끝날 때까지는 **전용 Agent 세션 여는 중**을 transient state로 쓰고 중복 실행을
+막는다. tracked job이 반환되는 즉시 empty/creation/diagram 어느 화면에서도 사라지지 않는 compact
+status strip을 panel header 아래에 고정한다. Strip은 대상 Agent, exact job phase, 마지막 갱신 시각과
+cooperative Cancel을 보여 주며 **요청 저장 → 전용 세션 → Agent 작업**의 세 milestone을 구분한다.
+queued에서는 새 session에서 첫 progress report를 기다린다고 표시한다. 이전 버전에서 복원된 기존
+session job은 dispatch 방식을 추정하지 않고 **Agent 수락 또는 progress report 대기**라고 표현한다.
+알 수 없는 진행률을 percentage나 animation으로 추정하지 않는다.
+
+Agent가 Draft와 Production을 통과해 `awaiting-review`를 보고해도 완료로 표현하지 않는다. 사람의
+승인 뒤에만 completed가 되며 export는 exact approved fingerprint가 있을 때만 가능하다. 앱의
+Create/Update는 Agent orchestration control이지 자동 source write, 성공으로 가장한 generation,
+commit 또는 merge action이 아니다.
+
+넓은 panel에서는 rail, diagram, inspector가 나란히 있다. 좁아지면 선택된 inspector와
+authoring은 아래로 흐른다. 선택 항목이 없는 좁은 상태는 빈 inspector를 숨기고 verification
+통과 수와 Agent authoring 진입만 compact footer로 남겨 diagram 높이를 보존한다. Map은 panel
+resize나 Dockview 이동으로 remount하지 않으며 Fit은 camera만 바꾼다. Wheel zoom, zoom button,
+pointer pan, minimap, 검색, chapter, authored route, upstream/downstream는 동일한 stable semantic
+ID를 사용한다.
+
+SVG item과 relation은 keyboard focus와 accessible name을 가지며 동일 내용을 탐색하는 semantic
+outline을 제공한다. 상태·검증은 색만으로 전달하지 않는다. Evidence button은 opaque
+project/root/workspace identity와 상대 경로·line만 source navigation에 전달한다. Motion은 기능
+이해에 필요하지 않고 `prefers-reduced-motion`에서 즉시 상태 전환한다. App chrome은 현재 UI
+locale을 따르지만 map authored prose와 English identifier를 자동 번역하지 않는다.
+
+Production Storybook은 다섯 mode의 영문/한국어 variant와 empty/create, cold open, background
+verification, active job, candidate, approved, stale, last-approved 상태를 고정 입력으로 보여 준다.
+Reader visual matrix는 1200×800 dark English와 800×600 light Korean에서 다섯 mode를 모두
+검토하고 creation baseline도 같은 두 viewport를 유지한다. Story는 layout·responsive·keyboard·
+axe evidence이며 임의 repository map의 사실성을 자동 증명하지 않는다. Snapshot은 실제
+reference와 side-by-side로 확인한 뒤에만 accepted baseline을 갱신한다.
+
+## 16. EZTerminal 2.0 r6 승인 계약
+
+### 16.1 정보 구조와 시작
+
+Windows 전역 진입은 프로젝트·받은 요청·도구·설정이다. 프로젝트 안의 개요·기획·디자인·대화·
+작업·검토·파일은 상단에서 전환하고, 왼쪽에는 현재 영역의 목록 한 칸만 둔다. 대화 영역에서
+다시 대화 목록 sidebar를 중첩하지 않는다. Project → Workspace → Session은 실행의 데이터
+맥락으로 유지하며 화면 깊이와 일치시킬 의무는 없다. 선택한 항목은 stable ID로 재사용한다.
+
+Android의 전역 진입은 프로젝트·대화·작업·터미널·더보기다. PC 제어는 홈/프로젝트 진입과
+더보기에서 명시적으로 시작한다. Desktop의 다중 pane을 축소 복제하지 않고 목록→내용→보조
+편집 sheet로 구성한다. 기존 persistent terminal layer와 Back·focus restoration 계약은 유지한다.
+
+제품 기획, 빠른 작업, 일반 대화, 실제 터미널을 직접 시작할 수 있다. 일반 대화와 터미널에
+기획 작성을 강제하지 않는다. 빠른 작업은 목적·대상·완료 조건을 담은 compact 시작 카드에서
+명시적으로 시작한다. 신규 default는 Dark·말풍선이며 기존 사용자의 보기·테마·세션·기록을
+이전 과정에서 덮어쓰지 않는다. 독립 로드맵 메뉴·간트차트·로드맵 저장 도메인은 추가하지 않는다.
+
+### 16.2 동일 채팅의 두 스킨
+
+말풍선과 CLI 스킨은 같은 Session/Turn/message ID·첨부·답장·도구 결과·승인·대기열을 렌더링한다.
+스킨은 기기별 보기 설정이며 전환이 provider·권한·실행 상태·저장소를 바꾸거나 새 세션을 만들지
+않는다. 실제 터미널은 별도 입력 대상이며 CLI 스킨 입력이 PTY로 전달되어서는 안 된다.
+
+스킨 전환 시 초안·커서/선택 범위·답장·첨부·펼친 도구·열린 산출물·승인 대상·대기 메시지를
+보존한다. transcript는 읽던 메시지 ID를 기준으로 위치를 복원하며 새 응답이 사용자의 입력
+focus를 빼앗지 않는다. 하단 composer는 대화 scroll과 분리한다. 첨부·복사·답장·참조·AI 설정·
+전송은 두 스킨 모두에 존재하고 실제 capability에 맞게 활성화한다.
+
+Desktop Enter 전송·Shift+Enter 줄바꿈·IME 조합 보호와 Android Enter 줄바꿈·버튼 전송을
+지킨다. 응답 중 후속 입력은 대기열과 현재 turn 중단을 구분한다. 전송 receipt 전에는 복구 가능한
+초안을 유지하며 결과가 불명확하면 호스트 기록과 대조하고 중복 전송하지 않는다. Android 오프라인은
+캐시 열람과 미전송 초안을 제공하며 재연결 자체로 전송하지 않는다.
+
+CLI 프롬프트 기호는 장식으로 처리하고 작성자·역할·상태는 의미 있는 텍스트로 읽힌다. 메시지별
+동작은 hover 없이도 keyboard/touch로 접근한다. 실제 terminal의 Ctrl+C·붙여넣기·IME·세션
+종료 의미는 변경하지 않는다.
+
+### 16.3 상태·반응형·AI 실행
+
+대화 완료, 첨부/답장 작성, 응답 중, 승인 대기, 결과 검토를 두 플랫폼과 두 스킨에서 제공한다.
+loading·empty·error·offline·stale·conflict·unsupported를 구분하고 원인과 복구 행동을 표시한다.
+PC의 대화·산출물 병치는 좁은 창에서 내용 전환으로 바꾸되 초안과 읽던 위치를 보존한다. Android는
+한 열과 명시적 결과 페이지 진입을 사용하고 keyboard·safe area 때문에 입력과 전송이 가려지지
+않아야 한다. 터치·대비·zoom·reduced motion 기준은 이 문서의 기존 플랫폼 계약을 따른다.
+
+역할별 AI 프로필은 편집·버전 복원과 AI 수정 제안 비교를 지원한다. 제안 적용은 명시적이며 진행 중
+attempt의 설정 snapshot은 바꾸지 않는다. 영향 작업과 후속 작업만 보류하고 무관 작업은 유지한다.
+검증 복구는 기본 추가 2회 후 사용자 판단을 기다리며 전체 시간 제한은 두지 않는다. provider 장애는
+영향 작업만 대기하고 사용자가 대체 대상을 선택한다. 상세 상태·명령 경계는
+[정책 계약](reference/v2/POLICY-CONTRACTS.md)을 따른다.
+
+### 16.4 구현 대응과 검증
+
+공통 transcript 계약은 기존 `StructuredAgentSession` 계열과 daemon event를 확장한다. W01은
+공통 상태·명령, W02/W03은 Windows/Android 표현·입력, W04는 기획, W05는 scene 편집,
+W06은 AI 실행, W07은 검토·통합, W08은 기존 도구·백업, W09는 종합 검증을 맡는다.
+Production primitive·Dockview·Monaco·runtime token을 사용하며 시안 HTML/CSS를 통째로 복사하지 않는다.
+
+[59개 화면 상태 명세](reference/v2/SCREENS.md), [채팅 상세 시안](reference/v2/CHAT-SKINS.md),
+[기존 기능 대응표](reference/v2/LEGACY-COVERAGE.md)를 입력으로 삼고 실제 story/state·E2E 증거를
+남긴다. 시안 데이터·가짜 AI 응답·자동 캡처를 실제 provider/PTY/Android 복구 검증으로 인정하지 않는다.
+고정 desktop handoff를 변경하지 않으며 새 구현 snapshot도 reference와 나란히 검토한 뒤에만 갱신한다.
+
+## 후속 검토 후보 · 소프로젝트와 실행 흐름
+
+사용자가 요청한 [개선 계획](agent-workflow-plan.md)과 [r4 시안](reference/v2-agent-chat-r4/index.html)은
+프로젝트 아래 소프로젝트·일반 대화의 동등한 깊이, 프리셋/대화 생성, 편집 가능한 단계·실행 그래프와
+공통 채팅 연결을 다룬다. 소프로젝트는 기존 논의의 기획 단위와 같은 대상이다.
+
+상세 flow/state/responsive 후보는 [r4 UX 보완 계약](reference/v2-agent-chat-r4/UI-CONTRACT.md)에 둔다.
+현재 디자인 버전 승인이나 제품 구현 완료를 뜻하지 않으며 위 활성 계약을 자동 대체하지 않는다.
+기존 DESIGN·token 소유권과 고정 handoff는 유지한다. 단계 그래프는 사용자가 정의한 작업 흐름이며
+관리형 Agent의 부모/자식 관계를 채팅 track으로 표현하는 기존 계약과 별개다.

@@ -37,6 +37,15 @@ function makeEnvelope(layout: unknown = makeLayout()): Record<string, unknown> {
 }
 
 describe('layout-schema — validation pipeline (A-M1)', () => {
+  it('restores project planning panels with identity only and keeps them mounted', () => {
+    const layout = makeLayout(['planning-project-1']);
+    (layout.panels as Record<string, unknown>)['planning-project-1'] = { id: 'planning-project-1', contentComponent: 'planning-workspace', params: { projectId: 'project-1', projectName: 'Project', section: 'planning' } };
+    const envelope = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(envelope?.layout.panels['planning-project-1'].params).toEqual({ projectId: 'project-1', projectName: 'Project', section: 'planning' });
+    expect(sanitizeSerializedLayout(envelope!.layout)).toMatchObject({ panels: { 'planning-project-1': { renderer: 'always' } } });
+    (layout.panels as Record<string, { params: unknown }>)['planning-project-1'].params = { projectId: 'project-1', projectName: 'Project', rootPath: 'C:/unexpected' };
+    expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
+  });
   it('round-trips a valid envelope', () => {
     const env = validateLayoutEnvelope(makeEnvelope());
     expect(env).not.toBeNull();
@@ -494,7 +503,7 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
 
   it('buildLayoutEnvelope wraps a raw toJSON() result (save path)', () => {
     const env = buildLayoutEnvelope(makeLayout(['tab-1', 'tab-2']), '2026-07-02T00:00:00.000Z');
-    expect(env?.schemaVersion).toBe(LAYOUT_SCHEMA_VERSION);
+    expect(env?.schemaVersion).toBe(2);
     expect(Object.keys(env?.layout.panels ?? {})).toHaveLength(2);
   });
 

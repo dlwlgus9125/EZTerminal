@@ -1,27 +1,79 @@
+/* Self-hosted font faces, shared by desktop, Android and Storybook through
+   ui/styles.css. The packaged renderer's CSP is `font-src 'self'`
+   (vite.renderer.config.ts), which blocks remote fonts, and offline builds
+   cannot reach them anyway. Latin subsets only; Hangul falls back to the
+   system UI font. Share Tech Mono is the display face (wordmark, Matrix
+   headings); VT323 is a Matrix accent; JetBrains Mono / Fira Code are
+   terminal-font picker entries (fonts.ts FONT_CATALOG). */
+@font-face {
+  font-family: 'Share Tech Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/share-tech-mono-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/vt323-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Fira Code';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/fira-code-latin.woff2') format('woff2');
+}
+
+:root, [data-theme] {
+  /* Conversation roles derive from the active semantic palette, including v1/v2 mods. */
+  --ui-conversation-canvas: var(--ui-canvas);
+  --ui-conversation-user: var(--ui-surface-raised);
+  --ui-conversation-code: var(--ui-surface-inset);
+  --ui-conversation-composer: var(--ui-surface);
+  --ui-conversation-border: var(--ui-border-subtle);
+  --ui-pane-active-border: var(--ui-accent);
+  --ui-conversation-width: 52rem;
+  /* Chat transcript column and roles that alias semantic ones per theme scope. */
+  --ui-chat-max-width: 46rem;
+  --ui-chat-code-bg: var(--ui-surface-inset);
+  --ui-chat-link: var(--ui-info);
+}
+
 :root {
-  /* Semantic colour fallbacks. Theme runtime may override these per theme. */
-  --ui-canvas: #010301;
-  --ui-surface: #040a06;
-  --ui-surface-raised: #051009;
-  --ui-surface-inset: #020704;
-  --ui-text-primary: #b7fbd4;
-  --ui-text-secondary: #78dba5;
-  --ui-text-muted: #5cbd87;
-  --ui-text-inverse: #00150a;
-  --ui-border-subtle: #17301f;
-  --ui-border-strong: #4bbd7a;
-  --ui-accent: #35e58f;
-  --ui-accent-rgb: 53, 229, 143;
-  --ui-on-accent: #001c0d;
-  --ui-focus: #8affba;
-  --ui-info: #62d8ff;
-  --ui-info-rgb: 98, 216, 255;
-  --ui-success: #35e58f;
-  --ui-success-rgb: 53, 229, 143;
-  --ui-warning: #ffd166;
-  --ui-warning-rgb: 255, 209, 102;
-  --ui-danger: #ff6b7a;
-  --ui-danger-rgb: 255, 107, 122;
+  /* Semantic colour fallbacks: the product default (Dark). Theme runtime may
+     override these per theme; built-in [data-theme] blocks below declare all. */
+  --ui-canvas: #1b1a18;
+  --ui-surface: #22211f;
+  --ui-surface-raised: #2b2a27;
+  --ui-surface-inset: #161513;
+  --ui-text-primary: #ecebe6;
+  --ui-text-secondary: #bdbab1;
+  --ui-text-muted: #9e9b92;
+  --ui-text-inverse: #1b1a18;
+  --ui-border-subtle: #363430;
+  --ui-border-strong: #78756d;
+  --ui-accent: #7aa7ff;
+  --ui-accent-rgb: 122, 167, 255;
+  --ui-on-accent: #0a1730;
+  --ui-focus: #9dbdff;
+  --ui-info: #7aa7ff;
+  --ui-info-rgb: 122, 167, 255;
+  --ui-success: #62c08f;
+  --ui-success-rgb: 98, 192, 143;
+  --ui-warning: #e2ae58;
+  --ui-warning-rgb: 226, 174, 88;
+  --ui-danger: #f47a74;
+  --ui-danger-rgb: 244, 122, 116;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
   --ui-agent-codex-rgb: 72, 215, 200;
@@ -46,34 +98,28 @@
   --ui-border-mid: var(--ui-border-subtle);
   --ui-border-focus-soft: var(--ui-border-strong);
 
-  /* Derived interaction colours stay coupled to semantic theme roles. */
-  --ui-surface-hover: color-mix(in srgb, var(--ui-accent) 8%, var(--ui-surface));
-  --ui-surface-active: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-surface));
-  --ui-surface-selected: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface));
-  --ui-backdrop: color-mix(in srgb, #000 72%, transparent);
-  --ui-accent-muted: color-mix(in srgb, var(--ui-accent) 16%, var(--ui-surface));
-  --ui-info-muted: color-mix(in srgb, var(--ui-info) 14%, var(--ui-surface));
-  --ui-success-muted: color-mix(in srgb, var(--ui-success) 14%, var(--ui-surface));
-  --ui-warning-muted: color-mix(in srgb, var(--ui-warning) 14%, var(--ui-surface));
-  --ui-danger-muted: color-mix(in srgb, var(--ui-danger) 14%, var(--ui-surface));
+  /* Derived interaction, status-tint and chat roles are precomputed per theme
+     in the generated region at the end of this file (Android WebView 74 cannot
+     evaluate color-mix()). */
+  --ui-backdrop: rgba(0, 0, 0, 0.72);
 
-  /* Phosphor glow is derived from the accent so custom themes get a coherent
-     one for free. A theme opts out by setting --ui-glow-color to transparent;
-     the shadows below then mix to nothing. The opt-out has to travel through
-     its own token because `[data-theme]` and `[data-theme='light']` have equal
-     specificity, so the recompute block would otherwise win on source order. */
+  /* Phosphor glow follows the accent; Light and High Contrast opt out through
+     --ui-glow-color. The resulting --ui-glow-text/--ui-glow-box shadows are in
+     the generated region. */
   --ui-glow-color: var(--ui-accent);
   /* Persisted FX · NEON level (0–10) is normalized by the renderer. It scales
      decoration only; individual effect toggles remain the source of intent. */
   --ui-effect-intensity: 0.7;
-  --ui-glow-text: 0 0 12px color-mix(in srgb, var(--ui-glow-color) 50%, transparent);
-  --ui-glow-box: 0 0 0 1px color-mix(in srgb, var(--ui-glow-color) 25%, transparent),
-    0 0 28px color-mix(in srgb, var(--ui-glow-color) 18%, transparent);
 
   /* Typography. UI and terminal fonts deliberately have separate contracts. */
-  --ui-font-body: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  --ui-font-heading: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --ui-font-body: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  /* Display face: wordmark and short signal labels only (DESIGN.md). */
+  --ui-font-display: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  /* Headings read in the body face; Matrix swaps in the display face below. */
+  --ui-font-heading: var(--ui-font-body);
   --ui-font-terminal: var(--term-font, "Cascadia Code", "Cascadia Mono", Consolas, monospace);
+  /* Code inside product chrome (chat code blocks, paths) follows the user's terminal font. */
+  --ui-font-mono: var(--ui-font-terminal);
   --ui-font-size-xs: 0.75rem;
   --ui-font-size-sm: 0.8125rem;
   --ui-font-size-md: 0.875rem;
@@ -86,6 +132,7 @@
   --ui-font-size-2xs: 0.65625rem;
   --ui-font-size-3xl: 1.625rem;
   --ui-font-size-10: var(--ui-font-size-3xs);
+  --ui-font-size-11: var(--ui-font-size-2xs);
   --ui-font-size-12: var(--ui-font-size-xs);
   --ui-font-size-13: var(--ui-font-size-sm);
   --ui-font-size-14: var(--ui-font-size-md);
@@ -95,7 +142,9 @@
   --ui-line-height-tight: 1.2;
   --ui-line-height-normal: 1.45;
   --ui-line-height-relaxed: 1.6;
-  --ui-letter-spacing-heading: 0.055em;
+  /* Wide tracking belongs to the display face; body-face headings sit at 0. */
+  --ui-letter-spacing-display: 0.055em;
+  --ui-letter-spacing-heading: 0;
 
   /* Four-point spacing rhythm. */
   --ui-space-0: 0;
@@ -132,8 +181,8 @@
   --ui-control-inline-padding-md: var(--ui-space-3);
   --ui-control-inline-padding-lg: var(--ui-space-4);
 
-  --ui-shadow-raised: 0 0.5rem 1.5rem color-mix(in srgb, #000 38%, transparent);
-  --ui-shadow-overlay: 0 1rem 3rem color-mix(in srgb, #000 56%, transparent);
+  --ui-shadow-raised: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.38);
+  --ui-shadow-overlay: 0 1rem 3rem rgba(0, 0, 0, 0.56);
   --ui-focus-ring: 0 0 0 1px var(--ui-canvas), 0 0 0 3px var(--ui-focus);
 
   --ui-z-base: 0;
@@ -164,68 +213,72 @@
 }
 
 [data-theme='dark'] {
-  --ui-canvas: #070a09;
-  --ui-surface: #0c1110;
-  --ui-surface-raised: #121917;
-  --ui-surface-inset: #040706;
-  --ui-text-primary: #ecf6f1;
-  --ui-text-secondary: #b8c9c1;
-  --ui-text-muted: #91a59b;
-  --ui-text-inverse: #07100c;
-  --ui-border-subtle: #2a3832;
-  --ui-border-strong: #637a70;
-  --ui-text-dim: #71857b;
-  --ui-border-mid: #1e2926;
+  --ui-font-heading: var(--ui-font-body);
+  --ui-letter-spacing-heading: 0;
+  --ui-canvas: #1b1a18;
+  --ui-surface: #22211f;
+  --ui-surface-raised: #2b2a27;
+  --ui-surface-inset: #161513;
+  --ui-text-primary: #ecebe6;
+  --ui-text-secondary: #bdbab1;
+  --ui-text-muted: #9e9b92;
+  --ui-text-inverse: #1b1a18;
+  --ui-border-subtle: #363430;
+  --ui-border-strong: #78756d;
+  --ui-text-dim: #9e9b92;
+  --ui-border-mid: #2e2c29;
   /* Carries modal and pane boundaries, so it holds 3:1 against the surfaces it
      separates even though no automated gate covers this role. */
-  --ui-border-focus-soft: #4a7264;
-  --ui-accent: #2fe0a0;
-  --ui-accent-rgb: 47, 224, 160;
-  --ui-on-accent: #04110c;
-  --ui-focus: #65f4c0;
-  --ui-info: #56c8ff;
-  --ui-info-rgb: 86, 200, 255;
-  --ui-success: #2fe0a0;
-  --ui-success-rgb: 47, 224, 160;
-  --ui-warning: #f4c45e;
-  --ui-warning-rgb: 244, 196, 94;
-  --ui-danger: #ff6b7a;
-  --ui-danger-rgb: 255, 107, 122;
+  --ui-border-focus-soft: #78756d;
+  --ui-accent: #7aa7ff;
+  --ui-accent-rgb: 122, 167, 255;
+  --ui-on-accent: #0a1730;
+  --ui-focus: #9dbdff;
+  --ui-info: #7aa7ff;
+  --ui-info-rgb: 122, 167, 255;
+  --ui-success: #62c08f;
+  --ui-success-rgb: 98, 192, 143;
+  --ui-warning: #e2ae58;
+  --ui-warning-rgb: 226, 174, 88;
+  --ui-danger: #f47a74;
+  --ui-danger-rgb: 244, 122, 116;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
   --ui-agent-codex-rgb: 72, 215, 200;
   --ui-agent-claude-rgb: 229, 138, 107;
-  --ui-glow-color: var(--ui-accent);
+  --ui-glow-color: transparent;
 }
 
 [data-theme='light'] {
-  --ui-canvas: #f2f5f3;
+  --ui-font-heading: var(--ui-font-body);
+  --ui-letter-spacing-heading: 0;
+  --ui-canvas: #faf9f6;
   --ui-surface: #ffffff;
   --ui-surface-raised: #ffffff;
-  --ui-surface-inset: #e8eeeb;
-  --ui-text-primary: #14201a;
-  --ui-text-secondary: #3f5047;
-  --ui-text-muted: #5c6d64;
+  --ui-surface-inset: #f2f0eb;
+  --ui-text-primary: #1c1b19;
+  --ui-text-secondary: #4a4843;
+  --ui-text-muted: #6b6861;
   --ui-text-inverse: #ffffff;
-  --ui-border-subtle: #c9d2cd;
-  --ui-border-strong: #66776e;
+  --ui-border-subtle: #e4e1da;
+  --ui-border-strong: #7d7a72;
   /* Dark enough to clear 4.5:1 against the inset surface, which is the darkest
      background this role sits on in the light theme. */
-  --ui-text-dim: #5d6c64;
-  --ui-border-mid: #dde3e0;
-  --ui-border-focus-soft: #7d938a;
-  --ui-accent: #087847;
-  --ui-accent-rgb: 8, 120, 71;
+  --ui-text-dim: #6b6861;
+  --ui-border-mid: #ece9e3;
+  --ui-border-focus-soft: #8c897f;
+  --ui-accent: #2f5fd0;
+  --ui-accent-rgb: 47, 95, 208;
   --ui-on-accent: #ffffff;
-  --ui-focus: #075fca;
-  --ui-info: #075fca;
-  --ui-info-rgb: 7, 95, 202;
-  --ui-success: #087847;
-  --ui-success-rgb: 8, 120, 71;
+  --ui-focus: #2f5fd0;
+  --ui-info: #2f5fd0;
+  --ui-info-rgb: 47, 95, 208;
+  --ui-success: #1a7a4f;
+  --ui-success-rgb: 26, 122, 79;
   --ui-warning: #8a5a00;
   --ui-warning-rgb: 138, 90, 0;
-  --ui-danger: #b4233c;
-  --ui-danger-rgb: 180, 35, 60;
+  --ui-danger: #b42d38;
+  --ui-danger-rgb: 180, 45, 56;
   --ui-agent-codex: #006b64;
   --ui-agent-claude: #9a3f28;
   --ui-agent-codex-rgb: 0, 107, 100;
@@ -235,6 +288,8 @@
 }
 
 [data-theme='high-contrast'] {
+  --ui-font-heading: var(--ui-font-body);
+  --ui-letter-spacing-heading: 0;
   --ui-canvas: #000000;
   --ui-surface: #000000;
   --ui-surface-raised: #000000;
@@ -274,23 +329,25 @@
 }
 
 [data-theme='matrix'] {
-  --ui-canvas: #010301;
-  --ui-surface: #040a06;
-  --ui-surface-raised: #051009;
-  --ui-surface-inset: #020704;
-  --ui-text-primary: #b7fbd4;
-  --ui-text-secondary: #78dba5;
-  --ui-text-muted: #5cbd87;
+  --ui-font-heading: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --ui-letter-spacing-heading: 0.055em;
+  --ui-canvas: #020604;
+  --ui-surface: #07110b;
+  --ui-surface-raised: #0c1b12;
+  --ui-surface-inset: #010402;
+  --ui-text-primary: #c6fde0;
+  --ui-text-secondary: #8fe6b6;
+  --ui-text-muted: #66c592;
   --ui-text-inverse: #00150a;
-  --ui-border-subtle: #17301f;
+  --ui-border-subtle: #1d3d29;
   /* borderStrong carries the 3:1 non-text contrast gate in theme-contrast.ts,
      so the handoff's dimmer strong value lives on --ui-border-mid instead. */
   --ui-border-strong: #4bbd7a;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
-  --ui-text-dim: #3f8f63;
-  --ui-border-mid: #143523;
-  --ui-border-focus-soft: #2c6a47;
+  --ui-text-dim: #52ad7c;
+  --ui-border-mid: #163322;
+  --ui-border-focus-soft: #2f7350;
   --ui-accent: #35e58f;
   --ui-accent-rgb: 53, 229, 143;
   --ui-on-accent: #001c0d;
@@ -308,6 +365,155 @@
   --ui-glow-color: var(--ui-accent);
 }
 
+/* Chat code syntax per built-in theme. Unset themes (custom ones) fall back to
+   the semantic roles in chat/markdown/highlighter.ts; these keep keyword,
+   function and string apart where those roles share a hue. */
+[data-theme='dark'] {
+  --ui-code-token-keyword: #c4a7f5;
+  --ui-code-token-function: #7aa7ff;
+  --ui-code-token-string: #9fd08a;
+  --ui-code-token-string-expression: #9fd08a;
+  --ui-code-token-constant: #e9b872;
+}
+
+[data-theme='light'] {
+  --ui-code-token-keyword: #7a3eb1;
+  --ui-code-token-function: #2f5fd0;
+  --ui-code-token-string: #1a7a4f;
+  --ui-code-token-string-expression: #1a7a4f;
+  --ui-code-token-constant: #8a5a00;
+}
+
+[data-theme='high-contrast'] {
+  --ui-code-token-keyword: #66b2ff;
+  --ui-code-token-function: #ff99ff;
+  --ui-code-token-string: #00ff66;
+  --ui-code-token-string-expression: #00ff66;
+  --ui-code-token-constant: #ffcc00;
+}
+
+[data-theme='matrix'] {
+  --ui-code-token-keyword: #62d8ff;
+  --ui-code-token-function: #35e58f;
+  --ui-code-token-string: #b6f5d0;
+  --ui-code-token-string-expression: #b6f5d0;
+  --ui-code-token-constant: #ffd166;
+}
+
+/* derived-ui-tokens:start — generated from themes.ts; rewrite with
+   UPDATE_DERIVED_UI_TOKENS=1 pnpm vitest run src/renderer/styles/ui-tokens.test.ts */
+:root {
+  --ui-surface-hover: #292c31;
+  --ui-surface-active: #2e343e;
+  --ui-surface-selected: #323947;
+  --ui-accent-muted: #303643;
+  --ui-accent-hover: #88affc;
+  --ui-info-muted: #2e343e;
+  --ui-success-muted: #2b372f;
+  --ui-warning-muted: #3d3527;
+  --ui-danger-muted: #3f2d2b;
+  --ui-danger-soft: #503532;
+  --ui-warning-border: #917443;
+  --ui-danger-border: #9b5752;
+  --ui-warning-ring: rgba(226, 174, 88, 0.35);
+  --ui-danger-ring: rgba(244, 122, 116, 0.35);
+  --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
+  --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
+  --ui-chat-user-bubble: #2e2d2b;
+  --ui-chat-inline-code: #343331;
+  --ui-chat-diff-add: #212d24;
+  --ui-chat-diff-remove: #352321;
+}
+[data-theme='dark'] {
+  --ui-surface-hover: #292c31;
+  --ui-surface-active: #2e343e;
+  --ui-surface-selected: #323947;
+  --ui-accent-muted: #303643;
+  --ui-accent-hover: #88affc;
+  --ui-info-muted: #2e343e;
+  --ui-success-muted: #2b372f;
+  --ui-warning-muted: #3d3527;
+  --ui-danger-muted: #3f2d2b;
+  --ui-danger-soft: #503532;
+  --ui-warning-border: #917443;
+  --ui-danger-border: #9b5752;
+  --ui-warning-ring: rgba(226, 174, 88, 0.35);
+  --ui-danger-ring: rgba(244, 122, 116, 0.35);
+  --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
+  --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
+  --ui-chat-user-bubble: #2e2d2b;
+  --ui-chat-inline-code: #343331;
+  --ui-chat-diff-add: #212d24;
+  --ui-chat-diff-remove: #352321;
+}
+[data-theme='light'] {
+  --ui-surface-hover: #eef2fb;
+  --ui-surface-active: #e2e9f8;
+  --ui-surface-selected: #dae2f7;
+  --ui-accent-muted: #dee5f7;
+  --ui-accent-hover: #2d57ba;
+  --ui-info-muted: #e2e9f8;
+  --ui-success-muted: #dfece6;
+  --ui-warning-muted: #efe8db;
+  --ui-danger-muted: #f5e2e3;
+  --ui-danger-soft: #efd1d3;
+  --ui-warning-border: #b69a66;
+  --ui-danger-border: #cd8285;
+  --ui-warning-ring: rgba(138, 90, 0, 0.35);
+  --ui-danger-ring: rgba(180, 45, 56, 0.35);
+  --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
+  --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
+  --ui-chat-user-bubble: #f1f1f1;
+  --ui-chat-inline-code: #ebeaea;
+  --ui-chat-diff-add: #d4dfd5;
+  --ui-chat-diff-remove: #e9d5d2;
+}
+[data-theme='high-contrast'] {
+  --ui-surface-hover: #001408;
+  --ui-surface-active: #00240e;
+  --ui-surface-selected: #002e12;
+  --ui-accent-muted: #002910;
+  --ui-accent-hover: #1fff78;
+  --ui-info-muted: #0e1924;
+  --ui-success-muted: #00240e;
+  --ui-warning-muted: #241d00;
+  --ui-danger-muted: #240d0d;
+  --ui-danger-soft: #381414;
+  --ui-warning-border: #c6aa3a;
+  --ui-danger-border: #c66c6c;
+  --ui-warning-ring: rgba(255, 204, 0, 0.35);
+  --ui-danger-ring: rgba(255, 92, 92, 0.35);
+  --ui-glow-text: 0 0 12px rgba(0, 0, 0, 0);
+  --ui-glow-box: 0 0 0 1px rgba(0, 0, 0, 0), 0 0 28px rgba(0, 0, 0, 0);
+  --ui-chat-user-bubble: #0f0f0f;
+  --ui-chat-inline-code: #171717;
+  --ui-chat-diff-add: #00240e;
+  --ui-chat-diff-remove: #240d0d;
+}
+[data-theme='matrix'] {
+  --ui-surface-hover: #0b2216;
+  --ui-surface-active: #0d2f1d;
+  --ui-surface-selected: #0f3723;
+  --ui-accent-muted: #0e3320;
+  --ui-accent-hover: #46e899;
+  --ui-info-muted: #142d2d;
+  --ui-success-muted: #0d2f1d;
+  --ui-warning-muted: #2a2c18;
+  --ui-danger-muted: #2a1e1b;
+  --ui-danger-soft: #3e2523;
+  --ui-warning-border: #968a47;
+  --ui-danger-border: #965252;
+  --ui-warning-ring: rgba(255, 209, 102, 0.35);
+  --ui-danger-ring: rgba(255, 107, 122, 0.35);
+  --ui-glow-text: 0 0 12px rgba(53, 229, 143, 0.5);
+  --ui-glow-box: 0 0 0 1px rgba(53, 229, 143, 0.25), 0 0 28px rgba(53, 229, 143, 0.18);
+  --ui-chat-user-bubble: #121f18;
+  --ui-chat-inline-code: #18261e;
+  --ui-chat-diff-add: #082416;
+  --ui-chat-diff-remove: #251213;
+}
+/* derived-ui-tokens:end */
+
 /* Density is resolved once at the document boundary so every primitive follows
    the same contract. Adaptive keeps the compact desktop rhythm while retaining
    the 40px large action tier; explicit preferences make every desktop control
@@ -322,23 +528,6 @@
   --ui-control-height-sm: 2.5rem;
   --ui-control-height-md: 2.5rem;
   --ui-control-height-lg: 2.5rem;
-}
-
-/* Derived roles must be recomputed on nested theme previews as well as the
-   document root; inherited custom properties otherwise retain the parent's
-   already-computed palette. */
-[data-theme] {
-  --ui-surface-hover: color-mix(in srgb, var(--ui-accent) 8%, var(--ui-surface));
-  --ui-surface-active: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-surface));
-  --ui-surface-selected: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface));
-  --ui-accent-muted: color-mix(in srgb, var(--ui-accent) 16%, var(--ui-surface));
-  --ui-info-muted: color-mix(in srgb, var(--ui-info) 14%, var(--ui-surface));
-  --ui-success-muted: color-mix(in srgb, var(--ui-success) 14%, var(--ui-surface));
-  --ui-warning-muted: color-mix(in srgb, var(--ui-warning) 14%, var(--ui-surface));
-  --ui-danger-muted: color-mix(in srgb, var(--ui-danger) 14%, var(--ui-surface));
-  --ui-glow-text: 0 0 12px color-mix(in srgb, var(--ui-glow-color) 50%, transparent);
-  --ui-glow-box: 0 0 0 1px color-mix(in srgb, var(--ui-glow-color) 25%, transparent),
-    0 0 28px color-mix(in srgb, var(--ui-glow-color) 18%, transparent);
 }
 
 :lang(ko) {

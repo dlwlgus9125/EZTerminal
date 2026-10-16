@@ -234,7 +234,7 @@ function seedTerminalProject(userDataDir: string, projectRoot: string): void {
 
 async function openProjectHistory(window: Page): Promise<void> {
   await window.getByRole('button', { name: 'Manage Handoff' }).click();
-  await window.getByRole('menuitem', { name: 'Session history' }).click();
+  await window.getByRole('menuitem', { name: 'CLI history', exact: true }).click();
   await expect(window.getByTestId('agent-project-history')).toBeVisible();
 }
 
@@ -260,7 +260,7 @@ test('lists a local Claude session for a terminal project and opens it read-only
   await window.getByTestId('rail-agents').click();
   await expect(window.getByTestId('agent-hub')).toBeVisible();
 
-  const project = window.locator('.agent-project-open');
+  const project = window.getByTestId('project-conversation-tree').locator('[data-kind="project"]').filter({ hasText: 'Handoff' });
   await expect(project).toContainText('Handoff');
 
   // The session list is fetched no earlier than Session history being chosen
@@ -276,28 +276,27 @@ test('lists a local Claude session for a terminal project and opens it read-only
   // The conversation body is fetched no earlier than the session being opened,
   // and opening it must not start a run.
   await rows.first().click();
-  const panel = window.getByTestId('agent-session-panel');
+  const panel = window.getByTestId('conversation-start');
   await expect(panel).toBeVisible({ timeout: 15_000 });
-  const transcript = window.getByTestId('agent-history-transcript');
+  const transcript = panel.getByTestId('structured-agent-transcript');
   await expect(transcript).toContainText(PROMPT);
   await expect(transcript).toContainText('reading the handoff package now');
+  // Tool activity reads as a collapsed run ("Ran 1 command and edited 1 file"); expanding it names the command.
+  await expect(transcript).toContainText('Ran 1 command');
+  await transcript.locator('.chat-run__header').first().click();
   await expect(transcript).toContainText('pnpm test:unit');
   // Slash-command plumbing is not conversation.
   await expect(transcript).not.toContainText('/clear');
   await expect(transcript).not.toContainText('Caveat:');
   // Roles are provider-driven: the prompt keeps the sigil, the reply is labelled
   // with the provider that produced it rather than a hardcoded agent name.
-  const roles = window.locator('.agent-history-terminal__role');
-  await expect(roles.first()).toHaveText('You');
-  await expect(roles.nth(1)).toHaveText('claude');
-
-  await expect(window.getByRole('tab', { name: /Handoff · Claude/u })).toBeVisible();
+  await expect(panel.getByTestId('structured-agent-session')).toHaveAttribute('data-provider', 'claude');
+  await expect(panel.getByTestId('structured-agent-composer-input')).toBeVisible();
 
   // A structured file-change activity is itself the review affordance: one
   // click opens that exact file in the unified read-only Project editor.
-  const fileChange = transcript
-    .locator('button.agent-work-activity[data-kind="file-change"]')
-    .filter({ hasText: 'src/app.ts' });
+  await transcript.locator('.conversation-history__changes summary').click();
+  const fileChange = transcript.getByRole('button', { name: 'src/app.ts', exact: true });
   await expect(fileChange).toContainText('src/app.ts');
   await fileChange.click();
   const diff = window.getByTestId('project-editor-panel');
@@ -338,10 +337,9 @@ test('keeps the complete current file and an unplaced provider record in one rev
   await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
   await window.locator('.agent-history-row').first().click();
-  const transcript = window.getByTestId('agent-history-transcript');
-  const fileChange = transcript
-    .locator('button.agent-work-activity[data-kind="file-change"]')
-    .filter({ hasText: 'src/app.ts' });
+  const transcript = window.getByTestId('conversation-start').getByTestId('structured-agent-transcript');
+  await transcript.locator('.conversation-history__changes summary').click();
+  const fileChange = transcript.getByRole('button', { name: 'src/app.ts', exact: true });
   await expect(fileChange).toBeVisible({ timeout: 15_000 });
   await fileChange.click();
 
@@ -379,14 +377,14 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
 
-  const transcript = window.getByTestId('agent-history-transcript');
-  const turns = transcript.locator('.agent-history-terminal__turn');
+  const transcript = window.getByTestId('conversation-start').getByTestId('structured-agent-transcript');
+  const turns = transcript.locator('.chat-row[data-kind="user"]');
   // Exactly one page: the newest twenty of the twenty-six turns on disk.
   await expect(turns).toHaveCount(20, { timeout: 15_000 });
   await expect(transcript).toContainText(PROMPT);
   await expect(turns.first()).toContainText('earlier turn 7');
 
-  await transcript.evaluate((element) => { element.scrollTop = 0; });
+  await transcript.getByRole('button', { name: 'Load earlier messages' }).click();
   // The remaining six are prepended, not swapped in.
   await expect(turns).toHaveCount(26, { timeout: 15_000 });
   await expect(turns.first()).toContainText('earlier turn 1');
@@ -395,7 +393,7 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
   await app.close();
 });
 
-test('first message converts the same tab into a Claude run rooted at the project', async () => {
+test('explicit terminal continuation opens a Claude run rooted at the recorded project', async () => {
   const home = createRegisteredE2eTempDir('ezterm-e2e-claude-resume-home-');
   const projectRoot = createRegisteredE2eTempDir('ezterm-e2e-claude-resume-root-');
   const userDataDir = createRegisteredE2eTempDir('ezterm-e2e-claude-resume-data-');
@@ -411,15 +409,9 @@ test('first message converts the same tab into a Claude run rooted at the projec
   const rows = window.locator('.agent-history-row');
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
-  await expect(window.getByTestId('agent-session-panel')).toBeVisible({ timeout: 15_000 });
-
-  const input = window.getByTestId('agent-session-panel').getByTestId('cmd-input');
-  await input.fill('keep going from here');
-  await window.getByTestId('agent-session-panel').getByTestId('btn-run').click();
-
-  // The read-only view is replaced in place — no second tab, no visible resume
-  // command. This is the handoff the user never sees.
-  await expect(window.getByTestId('agent-session-panel')).toHaveCount(0, { timeout: 20_000 });
+  await expect(window.getByTestId('conversation-start')).toBeVisible({ timeout: 15_000 });
+  await window.getByTestId('conversation-start').locator('.conversation-start__menu summary').click();
+  await window.getByRole('button', { name: 'Continue in terminal', exact: true }).click();
   // The workspace still holds its original empty terminal tab; the resumed one
   // is the only pane carrying a run block.
   const pane = window.getByTestId('pane')
@@ -438,7 +430,6 @@ test('first message converts the same tab into a Claude run rooted at the projec
   // The block is labelled by provider, and the session id never reaches the DOM.
   await expect(pane.getByTestId('block-command').first()).toHaveText('claude');
   await expect(pane).not.toContainText(SESSION_ID);
-  await expect(window.getByRole('tab', { name: /Handoff · Claude/u })).toBeVisible();
 
   await app.close();
 });

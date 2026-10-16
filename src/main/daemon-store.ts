@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, ApprovalRequestSchema, parseApprovalRequest } from '../shared/approval-request';
+import { ChatMessageContextSchema } from '../shared/chat-message';
+import { TRANSCRIPT_PAYLOAD_CAPABILITY, TranscriptPayloadSchema, parseTranscriptPayload } from '../shared/transcript-payload';
 
 import {
   DAEMON_PROTOCOL_VERSION,
@@ -87,6 +90,10 @@ export interface DaemonMigrationReceiptInput {
   readonly detail?: Readonly<Record<string, unknown>>;
 }
 
+export interface DaemonMigrationReceipt extends DaemonMigrationReceiptInput {
+  readonly importedAt: string;
+}
+
 export type DaemonStoreMutation =
   | { readonly kind: 'project.upsert'; readonly value: DaemonProjectInput }
   | { readonly kind: 'workspace.upsert'; readonly value: DaemonWorkspaceInput }
@@ -95,6 +102,7 @@ export type DaemonStoreMutation =
   | { readonly kind: 'agent-relation.upsert'; readonly value: DaemonAgentRelationInput }
   | { readonly kind: 'agent-relation.delete'; readonly relationId: string }
   | { readonly kind: 'turn.upsert'; readonly value: DaemonTurnInput }
+  | { readonly kind: 'turn.queue-position'; readonly turnId: string; readonly sessionId: string; readonly position: number }
   | { readonly kind: 'transcript.append'; readonly items: readonly DaemonTranscriptItemInput[] }
   | { readonly kind: 'approval.upsert'; readonly value: DaemonApprovalInput }
   | { readonly kind: 'provider.upsert'; readonly value: DaemonProviderInput }
@@ -563,6 +571,71 @@ export class DaemonStore {
   private initializationFailure: DaemonStoreInitializationError | undefined;
   private state: 'uninitialized' | 'ready' | 'failed' | 'closing' | 'closed' = 'uninitialized';
 
+  /** Host-private import provenance; provider IDs never become snapshot fields. */
+  getMigrationReceipt(id: string): DaemonMigrationReceipt | undefined {
+    const row = this.requireDatabase().prepare('SELECT * FROM migration_receipts WHERE id = ?').get(id) as SqlRow | undefined;
+    return row ? { id: String(row.id), source: String(row.source), fingerprint: String(row.fingerprint),
+      ...(row.detail_json ? { detail: JSON.parse(String(row.detail_json)) as Readonly<Record<string, unknown>> } : {}),
+      importedAt: String(row.imported_at) } : undefined;
+  }
+
+  /** A bounded sidebar excerpt, without loading the conversation transcript. */
+  getConversationPreview(sessionId: string): string {
+    const database = this.requireDatabase();
+    const last = database.prepare(`SELECT kind, turn_id, COALESCE(message_id, id) AS message_key FROM transcript_items
+      WHERE session_id = ? AND kind IN ('user-message', 'assistant-message') ORDER BY sequence DESC LIMIT 1`).get(sessionId) as SqlRow | undefined;
+    if (!last) return '';
+    const rows = this.all(database, `SELECT substr(text, -1000) AS excerpt, is_delta FROM transcript_items
+      WHERE session_id = ? AND kind = ? AND turn_id IS ? AND COALESCE(message_id, id) = ? ORDER BY sequence DESC LIMIT 64`,
+    sessionId, last.kind, last.turn_id, last.message_key);
+    const parts: string[] = [];
+    for (const row of rows) {
+      parts.unshift(String(row.excerpt)); if (row.is_delta === 0 || parts.join('').length >= 1_000) break;
+    }
+    return parts.join('').slice(-500);
+  }
+
+  /** Latest complete message groups first by page; each page is chronological. */
+  getConversationTranscript(sessionId: string, beforeSequence = Number.MAX_SAFE_INTEGER, limit = 20): { items: readonly DaemonTranscriptItem[]; nextCursor: string | null } {
+    if (!Number.isSafeInteger(beforeSequence) || beforeSequence < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new Error('Invalid conversation page.');
+    const database = this.requireDatabase();
+    const groups = this.all(database, `SELECT turn_id, kind, COALESCE(message_id, id) AS message_key, MIN(sequence) AS first_sequence
+      FROM transcript_items WHERE session_id = ? AND sequence < ?
+      GROUP BY turn_id, kind, COALESCE(message_id, id) ORDER BY first_sequence DESC LIMIT ?`, sessionId, beforeSequence, limit + 1);
+    const selected = groups.slice(0, limit).reverse();
+    const items = selected.map((group): DaemonTranscriptItem => {
+      const fragments = this.all(database, `SELECT * FROM transcript_items WHERE session_id = ? AND turn_id IS ? AND kind = ?
+        AND COALESCE(message_id, id) = ? ORDER BY sequence`,
+      sessionId, group.turn_id, group.kind, group.message_key);
+      const first = fragments[0]!;
+      return { id: requiredString(first, 'id'), sessionId, sequence: integer(first, 'sequence'),
+        ...(optionalString(first, 'turn_id') === undefined ? {} : { turnId: optionalString(first, 'turn_id') }),
+        ...(optionalString(first, 'message_id') === undefined ? {} : { messageId: optionalString(first, 'message_id') }),
+        kind: requiredString(first, 'kind') as DaemonTranscriptItem['kind'],
+        text: fragments.reduce((text, row) => bool(row, 'is_delta') ? text + requiredString(row, 'text') : requiredString(row, 'text'), ''),
+        isDelta: false, isSensitive: fragments.some(row => bool(row, 'is_sensitive')),
+        ...(optionalString(first, 'context_json') === undefined ? {} : { context: ChatMessageContextSchema.parse(JSON.parse(requiredString(first, 'context_json'))) }),
+        ...transcriptPayloadFromRow(fragments.at(-1)!),
+        createdAt: requiredString(first, 'created_at') };
+    });
+    return { items, nextCursor: groups.length > limit && selected[0] ? String(selected[0].first_sequence) : null };
+  }
+
+  /** Pending cross-store continuation keeps source restrictions until its workflow link is durable. */
+  pendingConversationSource(sessionId: string): string | undefined {
+    if (this.getMigrationReceipt(`history-linked-${sessionId}`)) return undefined;
+    const receipt = this.listMigrationReceipts('history-continuation').find(item => item.detail?.sessionId === sessionId);
+    return typeof receipt?.detail?.sourceSessionId === 'string' ? receipt.detail.sourceSessionId : undefined;
+  }
+
+  listMigrationReceipts(source: string): readonly DaemonMigrationReceipt[] {
+    return this.all(this.requireDatabase(), 'SELECT * FROM migration_receipts WHERE source = ? ORDER BY imported_at, id', source)
+      .map(row => ({ id: String(row.id), source: String(row.source), fingerprint: String(row.fingerprint),
+        ...(row.detail_json ? { detail: JSON.parse(String(row.detail_json)) as Readonly<Record<string, unknown>> } : {}),
+        importedAt: String(row.imported_at) }));
+  }
+
   constructor(userDataDirectory: string, options: DaemonStoreOptions = {}) {
     this.databasePath = resolveDaemonDatabasePath(userDataDirectory);
     this.userDataDirectory = path.dirname(this.databasePath);
@@ -825,6 +898,7 @@ export class DaemonStore {
     const runtime = this.runtimeRow(database);
     return {
       protocolVersion: DAEMON_PROTOCOL_VERSION,
+      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, 'agent-effort-v1'],
       revision: runtime.revision,
       eventSequence: runtime.eventSequence,
       generatedAt: this.isoNow(),
@@ -854,6 +928,7 @@ export class DaemonStore {
         sessionId: requiredString(row, 'session_id'), providerId: requiredString(row, 'provider_id'),
         ...(optionalString(row, 'provider_session_id') === undefined ? {} : { providerSessionId: optionalString(row, 'provider_session_id') }),
         ...(optionalString(row, 'model') === undefined ? {} : { model: optionalString(row, 'model') }),
+        ...(optionalString(row, 'reasoning_effort') === undefined ? {} : { reasoningEffort: optionalString(row, 'reasoning_effort') }),
         permissionPreset: requiredString(row, 'permission_preset') as DaemonAgent['permissionPreset'],
         state: requiredString(row, 'state') as DaemonAgent['state'],
         ...(optionalString(row, 'current_turn_id') === undefined ? {} : { currentTurnId: optionalString(row, 'current_turn_id') }),
@@ -888,6 +963,9 @@ export class DaemonStore {
         ...(optionalString(row, 'turn_id') === undefined ? {} : { turnId: optionalString(row, 'turn_id') }),
         providerRequestId: requiredString(row, 'provider_request_id'), risk: requiredString(row, 'risk') as DaemonApproval['risk'],
         title: requiredString(row, 'title'), ...(optionalString(row, 'detail') === undefined ? {} : { detail: optionalString(row, 'detail') }),
+        // The request is kept for history but only travels while it can be answered:
+        // a resolved diff or plan would otherwise ride in every snapshot push.
+        ...(requiredString(row, 'state') === 'pending' ? approvalRequestFromRow(row) : {}),
         state: requiredString(row, 'state') as DaemonApproval['state'],
         ...(optionalString(row, 'resolved_at') === undefined ? {} : { resolvedAt: optionalString(row, 'resolved_at') }),
         revision: integer(row, 'revision'), createdAt: requiredString(row, 'created_at'), updatedAt: requiredString(row, 'updated_at'),
@@ -976,6 +1054,8 @@ export class DaemonStore {
       text: requiredString(row, 'text'), isDelta: bool(row, 'is_delta'), isSensitive: bool(row, 'is_sensitive'),
       ...(optionalString(row, 'related_session_id') === undefined ? {} : { relatedSessionId: optionalString(row, 'related_session_id') }),
       ...(optionalString(row, 'message_id') === undefined ? {} : { messageId: optionalString(row, 'message_id') }),
+      ...(optionalString(row, 'context_json') === undefined ? {} : { context: ChatMessageContextSchema.parse(JSON.parse(requiredString(row, 'context_json'))) }),
+      ...transcriptPayloadFromRow(row),
       createdAt: requiredString(row, 'created_at'),
     }));
   }
@@ -1142,6 +1222,68 @@ export class DaemonStore {
     return receipt
       ? { revision: receipt.revision, eventSequence: receipt.eventSequence }
       : { revision: this.getRevision(), eventSequence: this.getEventSequence() };
+  }
+
+  /** Main-only planning execution reader over the existing authority connection. */
+  readPlanningExecution<T>(read: (database: DatabaseSync) => T): T {
+    return read(this.requireDatabase());
+  }
+
+  /** Explicit, project-scoped history cleanup. Never removes sessions, user files, or referenced evidence. */
+  purgeArchivedSessionHistory(projectId: string, sessionIds: readonly string[], expectedRevision: number, protectedSessionIds: readonly string[] = []): Promise<{ revision: number; eventSequence: number; removedItems: number }> {
+    return this.writer.runExclusive(() => {
+      const database = this.requireDatabase();
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const runtime = this.runtimeRow(database);
+        if (runtime.revision !== expectedRevision) throw new Error('History changed after the cleanup preview. Refresh before deleting.');
+        if (!sessionIds.length || sessionIds.length > 2_000 || new Set(sessionIds).size !== sessionIds.length) throw new Error('Select distinct archived conversation histories.');
+        for (const sessionId of sessionIds) {
+          const session = database.prepare('SELECT project_id, archived_at FROM sessions WHERE id = ?').get(sessionId);
+          if (!session || session.project_id !== projectId || !session.archived_at || protectedSessionIds.includes(sessionId)) throw new Error('The selected history is not an unreferenced archived conversation.');
+          const active = database.prepare("SELECT 1 FROM turns WHERE session_id = ? AND state NOT IN ('completed', 'failed', 'interrupted') LIMIT 1").get(sessionId);
+          const approval = database.prepare("SELECT 1 FROM approvals WHERE session_id = ? AND state = 'pending' LIMIT 1").get(sessionId);
+          const reference = database.prepare('SELECT 1 FROM planning_execution_attempt_refs WHERE session_id = ? LIMIT 1').get(sessionId);
+          const relation = database.prepare('SELECT 1 FROM agent_relations WHERE parent_session_id = ? OR child_session_id = ? LIMIT 1').get(sessionId, sessionId);
+          const pendingCommand = database.prepare("SELECT 1 FROM command_outbox WHERE state IN ('pending', 'sent', 'delivery-uncertain') AND json_extract(envelope_json, '$.payload.sessionId') = ? LIMIT 1").get(sessionId);
+          if (active || approval || reference || relation || pendingCommand) throw new Error('Active work or required references protect this conversation history.');
+        }
+        let removedItems = 0;
+        const revision = runtime.revision + 1;
+        const now = this.isoNow();
+        for (const sessionId of sessionIds) {
+          removedItems += Number(database.prepare('DELETE FROM transcript_items WHERE session_id = ?').run(sessionId).changes);
+          database.prepare('UPDATE sessions SET revision = ?, updated_at = ? WHERE id = ?').run(revision, now, sessionId);
+        }
+        const eventSequence = this.appendEvents(database, sessionIds.map(sessionId => ({ kind: 'entity.upserted' as const, payload: { entityType: 'session' as const, entityId: sessionId } })), revision, runtime.eventSequence, now);
+        database.prepare('UPDATE runtime_settings SET revision = ?, event_sequence = ?, updated_at = ? WHERE singleton = 1').run(revision, eventSequence, now);
+        database.exec('COMMIT');
+        return { revision, eventSequence, removedItems };
+      } catch (error) { database.exec('ROLLBACK'); throw error; }
+    });
+  }
+
+  /**
+   * Planning execution uses its own project revision and receipts, but shares
+   * the daemon writer, connection, migration backup, and shutdown boundary.
+   * Only synchronous database work may run inside this transaction.
+   */
+  writePlanningExecution<T>(write: (database: DatabaseSync) => T): Promise<T> {
+    return this.writer.runExclusive(() => {
+      const database = this.requireDatabase();
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const result = write(database);
+        if (result !== null && typeof result === 'object' && 'then' in result) {
+          throw new Error('Planning execution transactions must be synchronous.');
+        }
+        database.exec('COMMIT');
+        return result;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    });
   }
 
   /**
@@ -1452,6 +1594,70 @@ export class DaemonStore {
         throw error;
       }
     }
+    if (version < 5) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.exec(`
+          CREATE TABLE IF NOT EXISTS planning_execution_projects (
+            project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE RESTRICT,
+            revision INTEGER NOT NULL CHECK (revision >= 0)
+          ) STRICT;
+          CREATE TABLE IF NOT EXISTS planning_execution_runs (
+            run_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES planning_execution_projects(project_id) ON DELETE RESTRICT,
+            preparation_json TEXT NOT NULL CHECK (json_valid(preparation_json)),
+            preparation_fingerprint TEXT NOT NULL,
+            state_json TEXT NOT NULL CHECK (json_valid(state_json))
+          ) STRICT;
+          CREATE INDEX IF NOT EXISTS planning_execution_runs_project ON planning_execution_runs(project_id, run_id);
+          CREATE TABLE IF NOT EXISTS planning_execution_attempt_refs (
+            attempt_id TEXT PRIMARY KEY,
+            dispatch_id TEXT NOT NULL UNIQUE,
+            run_id TEXT NOT NULL REFERENCES planning_execution_runs(run_id) ON DELETE RESTRICT,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+            turn_id TEXT NOT NULL UNIQUE REFERENCES turns(id) ON DELETE RESTRICT
+          ) STRICT;
+          CREATE TABLE IF NOT EXISTS planning_execution_receipts (
+            command_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            command_fingerprint TEXT NOT NULL,
+            receipt_json TEXT NOT NULL CHECK (json_valid(receipt_json))
+          ) STRICT;
+          CREATE TRIGGER IF NOT EXISTS planning_execution_preparation_immutable
+          BEFORE UPDATE OF preparation_json, preparation_fingerprint, project_id ON planning_execution_runs
+          BEGIN SELECT RAISE(ABORT, 'Execution preparation is immutable'); END;
+          PRAGMA user_version = 5;
+        `);
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
+    if (version < 6) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.exec('ALTER TABLE transcript_items ADD COLUMN context_json TEXT CHECK (context_json IS NULL OR json_valid(context_json))');
+        database.exec('PRAGMA user_version = 6');
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
+    if (version < 7) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.exec('ALTER TABLE transcript_items ADD COLUMN payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json))');
+        database.exec('ALTER TABLE approvals ADD COLUMN request_json TEXT CHECK (request_json IS NULL OR json_valid(request_json))');
+        database.exec('ALTER TABLE agents ADD COLUMN reasoning_effort TEXT');
+        database.exec('PRAGMA user_version = 7');
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
     const row = database.prepare('SELECT singleton FROM runtime_settings WHERE singleton = 1').get();
     if (!row) throw new Error('Daemon database is missing runtime metadata.');
   }
@@ -1581,17 +1787,18 @@ export class DaemonStore {
         database.prepare(`
           INSERT INTO agents (
             session_id, provider_id, provider_session_id, model, permission_preset, state, current_turn_id,
-            queued_turn_count, orchestration_enabled, revision, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            queued_turn_count, orchestration_enabled, revision, created_at, updated_at, reasoning_effort
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id) DO UPDATE SET
             provider_id = excluded.provider_id, provider_session_id = excluded.provider_session_id,
-            model = excluded.model, permission_preset = excluded.permission_preset, state = excluded.state,
+            model = excluded.model, reasoning_effort = excluded.reasoning_effort,
+            permission_preset = excluded.permission_preset, state = excluded.state,
             current_turn_id = excluded.current_turn_id, queued_turn_count = excluded.queued_turn_count,
             orchestration_enabled = excluded.orchestration_enabled, revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
           value.sessionId, value.providerId, value.providerSessionId ?? null, value.model ?? null,
           value.permissionPreset, value.state, value.currentTurnId ?? null, value.queuedTurnCount,
-          value.orchestrationEnabled ? 1 : 0, revision, now, now,
+          value.orchestrationEnabled ? 1 : 0, revision, now, now, value.reasoningEffort ?? null,
         );
         return [{ kind: 'entity.upserted', payload: { entityType: 'agent', entityId: value.sessionId } }];
       }
@@ -1614,6 +1821,12 @@ export class DaemonStore {
       case 'agent-relation.delete':
         database.prepare('DELETE FROM agent_relations WHERE id = ?').run(mutation.relationId);
         return [{ kind: 'entity.upserted', payload: { entityType: 'relation', entityId: mutation.relationId } }];
+      case 'turn.queue-position': {
+        const updated = database.prepare("UPDATE turns SET enqueue_sequence = ?, revision = ?, updated_at = ? WHERE id = ? AND session_id = ? AND state = 'queued'")
+          .run(mutation.position, revision, now, mutation.turnId, mutation.sessionId);
+        if (updated.changes !== 1) throw new Error('Queued turn changed before reordering.');
+        return [{ kind: 'entity.upserted', payload: { entityType: 'turn', entityId: mutation.turnId } }];
+      }
       case 'turn.upsert': {
         const value = mutation.value;
         database.prepare(`
@@ -1649,15 +1862,18 @@ export class DaemonStore {
         database.prepare(`
           INSERT INTO approvals (
             id, session_id, turn_id, provider_request_id, risk, title, detail, state, resolved_at,
-            revision, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            revision, created_at, updated_at, request_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             session_id = excluded.session_id, turn_id = excluded.turn_id, provider_request_id = excluded.provider_request_id,
-            risk = excluded.risk, title = excluded.title, detail = excluded.detail, state = excluded.state,
+            risk = excluded.risk, title = excluded.title, detail = excluded.detail,
+            request_json = COALESCE(excluded.request_json, approvals.request_json),
+            state = excluded.state,
             resolved_at = excluded.resolved_at, revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
           value.id, value.sessionId, value.turnId ?? null, value.providerRequestId, value.risk, value.title,
           value.detail ?? null, value.state, value.resolvedAt ?? null, revision, now, now,
+          serializedApprovalRequest(value.request),
         );
         return [
           { kind: 'entity.upserted', payload: { entityType: 'approval', entityId: value.id } },
@@ -1787,7 +2003,9 @@ export class DaemonStore {
     if (items.length < 1 || items.length > this.maxTranscriptBatchItems) {
       throw new Error(`Transcript batch must contain between 1 and ${this.maxTranscriptBatchItems} items.`);
     }
-    const byteLength = items.reduce((total, item) => total + Buffer.byteLength(item.text, 'utf8'), 0);
+    const byteLength = items.reduce((total, item) => total + Buffer.byteLength(item.text, 'utf8')
+      + (item.context ? Buffer.byteLength(JSON.stringify(item.context), 'utf8') : 0)
+      + (item.payload ? Buffer.byteLength(JSON.stringify(item.payload), 'utf8') : 0), 0);
     if (byteLength > this.maxTranscriptBatchUtf8Bytes) {
       throw new Error(`Transcript batch exceeds ${this.maxTranscriptBatchUtf8Bytes} UTF-8 bytes.`);
     }
@@ -1795,8 +2013,9 @@ export class DaemonStore {
     const rangeBySession = new Map<string, { from: number; to: number }>();
     const insert = database.prepare(`
       INSERT INTO transcript_items (
-        id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at, message_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at, message_id, context_json,
+        payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const findExisting = database.prepare('SELECT id FROM transcript_items WHERE id = ?');
     for (const item of items) {
@@ -1816,6 +2035,8 @@ export class DaemonStore {
       insert.run(
         item.id, item.sessionId, item.turnId ?? null, sequence, item.kind, item.text,
         item.isDelta ? 1 : 0, item.isSensitive ? 1 : 0, item.relatedSessionId ?? null, item.createdAt ?? now, item.messageId ?? null,
+        item.context ? JSON.stringify(ChatMessageContextSchema.parse(item.context)) : null,
+        serializedTranscriptPayload(item.payload),
       );
       nextSequenceBySession.set(item.sessionId, sequence);
       const range = rangeBySession.get(item.sessionId);
@@ -1900,5 +2121,50 @@ export class DaemonStore {
       database.exec('ROLLBACK');
       throw error;
     }
+  }
+}
+
+/** Maximum serialized approval request; larger requests keep only title/detail. */
+const MAX_APPROVAL_REQUEST_BYTES = 64 * 1024;
+
+/**
+ * Persistence is tolerant on write as well as read: a payload or request an
+ * adapter shaped wrongly is dropped (the item and approval still land with their
+ * legacy text), never a reason to fail the whole batch or block the turn.
+ */
+function serializedTranscriptPayload(payload: unknown): string | null {
+  if (payload === undefined) return null;
+  const parsed = TranscriptPayloadSchema.safeParse(payload);
+  return parsed.success ? JSON.stringify(parsed.data) : null;
+}
+
+function serializedApprovalRequest(request: unknown): string | null {
+  if (request === undefined) return null;
+  const parsed = ApprovalRequestSchema.safeParse(request);
+  if (!parsed.success) return null;
+  const json = JSON.stringify(parsed.data);
+  return Buffer.byteLength(json, 'utf8') <= MAX_APPROVAL_REQUEST_BYTES ? json : null;
+}
+
+/** A stored payload this build cannot read is dropped, never fatal: `text` still renders. */
+function transcriptPayloadFromRow(row: SqlRow): Pick<DaemonTranscriptItem, 'payload'> {
+  const raw = optionalString(row, 'payload_json');
+  if (raw === undefined) return {};
+  try {
+    const payload = parseTranscriptPayload(JSON.parse(raw));
+    return payload ? { payload } : {};
+  } catch {
+    return {};
+  }
+}
+
+function approvalRequestFromRow(row: SqlRow): Pick<DaemonApproval, 'request'> {
+  const raw = optionalString(row, 'request_json');
+  if (raw === undefined) return {};
+  try {
+    const request = parseApprovalRequest(JSON.parse(raw));
+    return request ? { request } : {};
+  } catch {
+    return {};
   }
 }

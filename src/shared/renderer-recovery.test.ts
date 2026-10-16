@@ -117,6 +117,18 @@ describe('renderer recovery checkpoint validation', () => {
     expect(Object.isFrozen(validated?.structuredAgentCreates[0]?.command.payload)).toBe(true);
   });
 
+  it('preserves an unsent native skill draft separately from the exact create command', () => {
+    const checkpoint = structuredAgentRecoveryCheckpoint();
+    const record = (checkpoint.structuredAgentCreates as Array<Record<string, unknown>>)[0]!;
+    const draft = { text: '$review inspect this', skills: [{ providerId: 'codex', id: '/skills/review/SKILL.md', name: 'review', invocation: '$review' }] };
+    record.composerDraft = draft;
+    const recovered = validateRendererRecoveryCheckpoint(checkpoint)?.structuredAgentCreates[0];
+    expect(recovered?.composerDraft).toEqual(draft);
+    expect(recovered?.command.payload.initialPrompt).toBe('Create an Agent');
+    record.composerDraft = { ...draft, skills: [{ ...draft.skills[0], providerId: 'claude' }] };
+    expect(validateRendererRecoveryCheckpoint(checkpoint)).toBeNull();
+  });
+
   it.each([
     ['missing panel', (checkpoint: Record<string, unknown>) => {
       const records = checkpoint.structuredAgentCreates as Array<Record<string, unknown>>;

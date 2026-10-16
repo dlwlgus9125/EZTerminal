@@ -1,0 +1,301 @@
+{
+  "provider": "codex",
+  "scenario": "todo-enabled",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-4f64ba7444daf48f87325a83d48e0eef",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Use your update_plan tool to track these three steps and complete them in order, updating the plan as you go: (1) read README.md, (2) read src/app.ts, (3) answer in one sentence what greet returns.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_7ab03022891e50bfa4482d65",
+      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll read the two files in order and track each step in the plan.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_613eb4aea15e6b06ca645d00",
+      "messageId": "codex_message_2437a924d9ba88f3df47cb40",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll read the two files in order and track each step in the plan.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_plan_072c5bf61ba9e35688ef2007",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [ ] Read README.md (in progress)\n- [ ] Read src/app.ts\n- [ ] Answer in one sentence what greet returns",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "in_progress"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "pending"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "pending"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_b5116b763c9cc6f0266c08ee",
+      "messageId": "codex_message_8483d9ae9e80329314f5d196",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ Get-Content -LiteralPath README.md",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-495725ab-5552-4701-ad80-a50610cc11d5",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\README.md",
+        "command": "Get-Content -LiteralPath README.md",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_c6ab185a905bb164cf09eb74",
+      "messageId": "codex_message_8483d9ae9e80329314f5d196",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "# Demo app\r\n\r\nA tiny demo project used for EZTerminal provider fixture capture.\r\nThe `greet` helper lives in src/app.ts.\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-495725ab-5552-4701-ad80-a50610cc11d5",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "result",
+        "status": "completed",
+        "target": "<WORKSPACE>\\README.md",
+        "command": "Get-Content -LiteralPath README.md",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 533
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_plan_f763ce68ab328515351ac858",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [ ] Read src/app.ts (in progress)\n- [ ] Answer in one sentence what greet returns",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "in_progress"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "pending"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_item_3269b688593f5b43240db58f",
+      "messageId": "codex_message_49b521de76ccaf0870232a4d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ Get-Content -LiteralPath src/app.ts",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-3238a501-77c2-4e9d-9c73-d91e1a85de32",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content -LiteralPath src/app.ts",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_item_9581efd3e44bb614e10fce86",
+      "messageId": "codex_message_49b521de76ccaf0870232a4d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "export function greet(name: string): string {\r\n  return `Hello, ${name}!`;\r\n}\r\n\r\nexport function main(): void {\r\n  console.log(greet('world'));\r\n}\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-3238a501-77c2-4e9d-9c73-d91e1a85de32",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "result",
+        "status": "completed",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content -LiteralPath src/app.ts",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 617
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "codex_plan_bb68014c323d0e634121f61c",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [ ] Answer in one sentence what greet returns (in progress)",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "in_progress"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "codex_plan_ae6a6921301a4769040d37d1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "- [x] Read README.md\n- [x] Read src/app.ts\n- [x] Answer in one sentence what greet returns",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "todo",
+        "source": "codex-plan",
+        "items": [
+          {
+            "text": "Read README.md",
+            "status": "completed"
+          },
+          {
+            "text": "Read src/app.ts",
+            "status": "completed"
+          },
+          {
+            "text": "Answer in one sentence what greet returns",
+            "status": "completed"
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 11
+    },
+    {
+      "id": "codex_delta_5caffc5c50d6739806a57057",
+      "messageId": "codex_message_56853f50244967a45cea7ad7",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "`greet(name)` returns the string `Hello, ${name}!`, with the supplied name inserted.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 12
+    },
+    {
+      "id": "codex_item_50a9a502002cc65153c43b5a",
+      "messageId": "codex_message_56853f50244967a45cea7ad7",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "`greet(name)` returns the string `Hello, ${name}!`, with the supplied name inserted.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 13
+    },
+    {
+      "id": "turn-summary-be700f6d22355b535356f3c495498fe3",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "`greet(name)` returns the string `Hello, ${name}!`, with the supplied name inserted.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 14,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

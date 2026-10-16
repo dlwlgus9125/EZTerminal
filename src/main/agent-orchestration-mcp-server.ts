@@ -11,6 +11,10 @@ import {
   type PermissionPreset,
 } from '../shared/daemon-protocol';
 import type { ProviderSessionContext } from './agent-provider-adapter';
+import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema } from '../shared/workflow';
+import { WORKFLOW_SKILL } from '../shared/workflow-skill';
+import type { WorkflowService } from './workflow-service';
+import type { WorkflowAuthority } from './workflow-authority';
 
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_PROMPT_LENGTH = 200_000;
@@ -44,6 +48,8 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly createToken?: () => string;
   readonly now?: () => Date;
   readonly reportError?: (context: string, error: unknown) => void;
+  readonly workflow?: () => { authority: WorkflowAuthority; service: WorkflowService } | undefined;
+  readonly workflowAllowed?: (sessionId: string) => boolean;
 }
 
 interface SessionCapability {
@@ -319,16 +325,26 @@ export class AgentOrchestrationMcpServer {
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : LATEST_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'ezterminal-orchestration', version: '1.0.0' },
-        instructions: 'Create and communicate with managed child Agents in the same EZTerminal Project.',
+        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}`,
       };
     }
     if (request.method === 'ping') return {};
     if (request.method === 'tools/list') {
       const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
-      return { tools: this.toolDefinitions(ownerAgent.permissionPreset) };
+      const orchestration = snapshot.runtime.orchestrationToolsEnabled && ownerAgent.orchestrationEnabled;
+      return { tools: [...(orchestration ? this.toolDefinitions(ownerAgent.permissionPreset) : []), ...(this.workflowEnabled(sessionId) ? this.workflowToolDefinitions() : [])] };
     }
     if (request.method !== 'tools/call') throw new McpRequestError(-32601, 'Method not found.');
-    const params = strictObject(request.params, ['name', 'arguments']);
+    const params = strictObject(request.params, ['name', 'arguments', '_meta']);
+    if (params._meta !== undefined) {
+      if (!isObject(params._meta)) throw new McpRequestError(-32602, 'Request metadata must be an object.');
+      const progressToken = params._meta.progressToken;
+      if (progressToken !== undefined && typeof progressToken !== 'string'
+        && (typeof progressToken !== 'number' || !Number.isInteger(progressToken))) {
+        throw new McpRequestError(-32602, 'Request metadata progressToken must be a string or integer.');
+      }
+    }
+    // MCP metadata (including client thread IDs) never supplies tool arguments or authority.
     const name = requiredString(params.name, 'name', 128);
     const args = params.arguments ?? {};
     try {
@@ -343,6 +359,27 @@ export class AgentOrchestrationMcpServer {
     const snapshot = this.requireLiveCapability(sessionId);
     const ownerSession = snapshot.sessions.find((session) => session.id === sessionId)!;
     const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
+    if (['workflow_read', 'workflow_command', 'validate_workflow', 'preview_workflow'].includes(name)) {
+      const workflow = this.options.workflow?.();
+      if (!workflow || !this.workflowEnabled(sessionId)) throw new McpRequestError(-32002, 'Workflow tools are unavailable for this session.');
+      if (name === 'workflow_read') {
+        strictObject(value, []);
+        const result = await workflow.authority.read(ownerSession.projectId);
+        return toolText({ ...result, preview: workflow.service.previewForSession(sessionId) ?? null }, !result.ok);
+      }
+      if (name === 'preview_workflow') {
+        const result = await workflow.authority.editPreview(sessionId, value); return toolText(result, !result.ok);
+      }
+      if (name === 'validate_workflow') {
+        const parsed = WorkflowGraphSchema.safeParse(value);
+        return parsed.success ? toolText({ ok: true, issues: validateWorkflowGraph(parsed.data, true) }) : toolText({ ok: false, error: 'Invalid graph schema.' }, true);
+      }
+      const parsed = WorkflowCommandSchema.safeParse(value);
+      if (!parsed.success || parsed.data.projectId !== ownerSession.projectId) throw new McpRequestError(-32602, 'Use an explicit workflow command in this conversation project.');
+      const result = await workflow.authority.execute(parsed.data, { kind: 'ai', id: `session:${sessionId}`, sessionId });
+      return toolText(result, !result.ok);
+    }
+    if (!snapshot.runtime.orchestrationToolsEnabled || !ownerAgent.orchestrationEnabled) throw new McpRequestError(-32002, 'Agent orchestration is disabled.');
     switch (name) {
       case 'list_agents': {
         strictObject(value, []);
@@ -510,9 +547,9 @@ export class AgentOrchestrationMcpServer {
       ? snapshot.providers.find((candidate) => candidate.id === agent.providerId)
       : undefined;
     if (
-      !runtimeEnabled
-      || !agent?.orchestrationEnabled
+      (!(runtimeEnabled && agent?.orchestrationEnabled) && !this.workflowEnabled(sessionId))
       || !provider?.enabled
+      || !agent
       || provider.health !== 'ready'
       || !session
       || !project
@@ -524,6 +561,20 @@ export class AgentOrchestrationMcpServer {
       throw new McpRequestError(-32002, 'This Agent orchestration capability is no longer active.');
     }
     return snapshot;
+  }
+
+  private workflowEnabled(sessionId: string): boolean {
+    return Boolean(this.options.workflow?.() && this.options.workflowAllowed?.(sessionId));
+  }
+
+  private workflowToolDefinitions(): JsonObject[] {
+    const graph = { type: 'object', description: 'Graph with entryNodeId:string|null, nodes:[{id,title,operation:agent|condition|parallel|join|approval|complete,role:planning|design|implementation|review|integration,instructions,document,providerId?,model?,permissionPreset:plan|standard,acceptance:string[],allowedPaths:string[],retryLimit:0..20,position:{x,y},inputs:[{nodeId,kind:document|result}],condition?:{sourceNodeId,field:outcome,equals:passed|failed},joinPolicy?:all|any}], edges:[{id,from,to,outcome:next|passed|failed|approved|rejected,retryLimit?:1..20}]. Stable IDs preserve conversations.' };
+    return [
+      { name: 'workflow_read', description: 'Read this project’s subprojects, graph drafts, changes, run snapshots and this conversation’s creation preview. No model or run is started.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+      { name: 'workflow_command', description: `${WORKFLOW_SKILL.instructions}\nCommands: subproject.create payload {id,title,goal,presetId:feature|fix|research|parallel|custom,graph?}; workflow.patch payload {graph,summary}; workflow.undo payload {changeId}. Envelope: commandId,projectId,hostId,expectedRevision,subprojectId (required except create),type,payload.`, inputSchema: { type: 'object', properties: { commandId: { type: 'string' }, projectId: { type: 'string' }, hostId: { type: 'string' }, expectedRevision: { type: 'integer' }, subprojectId: { type: 'string' }, type: { type: 'string' }, payload: { type: 'object', properties: { graph }, additionalProperties: true } }, required: ['commandId', 'projectId', 'hostId', 'expectedRevision', 'type', 'payload'], additionalProperties: false } },
+      { name: 'validate_workflow', description: 'Validate a proposed graph without changing any stored draft or starting execution.', inputSchema: graph },
+      { name: 'preview_workflow', description: 'Edit the creation preview explicitly opened by the user for this conversation. This never creates a saved subproject. Read workflow_read first; the UI updates its preview and the user chooses Create or Cancel.', inputSchema: { type: 'object', properties: { commandId: { type: 'string' }, previewId: { type: 'string' }, expectedRevision: { type: 'integer' }, graph }, required: ['commandId', 'previewId', 'expectedRevision', 'graph'], additionalProperties: false } },
+    ];
   }
 
   private managedDescendants(snapshot: DaemonSnapshot, sessionId: string): Set<string> {

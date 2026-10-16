@@ -1,3 +1,4 @@
+import { OpenClawConnectionStatus, OpenClawControlStatus } from './OpenClawControlStatus';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -14,6 +15,8 @@ import { observationalIntervalMs, type UiResourceProfile } from '../shared/resou
 import { startAsyncPoll } from './async-poller';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { Button, Field, Input } from './ui';
+import './openclaw-panel.css';
 
 /** How often the sessions list is re-polled while the gateway is running —
  * there is no push subscription for it (unlike status/logs), see the M1
@@ -310,81 +313,40 @@ export function OpenClawPanel({
             {status ? t(STATE_LABEL_KEY[status.state]) : t('openClaw.checking')}
           </span>
         </div>
-        {status?.version && (
-          <div className="openclaw-state-detail">
-            {t('openClaw.version', { version: status.version })}
-          </div>
-        )}
         {status && (
-          <div className="openclaw-state-detail">{t('openClaw.port', { port: status.port })}</div>
+          <p className="openclaw-state-detail">
+            {[status.version ? t('openClaw.version', { version: status.version }) : null, t('openClaw.port', { port: status.port })]
+              .filter(Boolean).join(' · ')}
+          </p>
+        )}
+        {/* The handoff asks for channels / messages today / queued work; the gateway
+            reports none of those, so these are the three live numbers it does report. */}
+        {state === 'running' && status && (
+          <dl className="openclaw-stats" data-testid="openclaw-metrics">
+            <div>
+              <dt>{t('openClaw.metricChannels')}</dt>
+              <dd>{hasSessionsSnapshot ? numberFormatter.format(channels.length) : '—'}</dd>
+            </div>
+            <div>
+              <dt>{t('openClaw.metricSessions')}</dt>
+              <dd>{hasSessionsSnapshot ? numberFormatter.format(sessions.length) : '—'}</dd>
+            </div>
+            <div>
+              <dt>{t('openClaw.metricTokens')}</dt>
+              <dd>
+                {hasSessionsSnapshot
+                  ? numberFormatter.format(
+                    sessions.reduce((total, session) => total + (session.totalTokens ?? 0), 0),
+                  )
+                  : '—'}
+              </dd>
+            </div>
+          </dl>
         )}
       </section>
 
-      {control && (
-        <section
-          className="status-section openclaw-control-card"
-          data-testid="openclaw-control"
-          data-phase={control.operation?.phase ?? 'idle'}
-          aria-live="polite"
-        >
-          <h2 className="status-section-title">{t('openClaw.controlTitle')}</h2>
-          <div className="openclaw-control-grid">
-            <span>{t('openClaw.desiredState')}</span>
-            <strong>{t(`openClaw.desired.${control.desiredState}`)}</strong>
-            <span>{t('openClaw.supervisor')}</span>
-            <strong>{t(`openClaw.supervisorState.${control.supervisorState}`)}</strong>
-          </div>
-          {control.operation && (
-            <div className="openclaw-control-progress" role="status">
-              <span>{t(`openClaw.phase.${control.operation.phase}`)}</span>
-              {control.operation.attempt > 0 && (
-                <span>{t('openClaw.attempt', {
-                  attempt: control.operation.attempt,
-                  max: control.operation.maxAttempts,
-                })}</span>
-              )}
-            </div>
-          )}
-          {control.issue && (
-            <div className="openclaw-control-issue" role="alert" data-testid="openclaw-control-issue">
-              <strong>{control.issue.detail}</strong>
-              <span>{control.issue.remediation}</span>
-              <code>{control.issue.diagnosticId}</code>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Console read-out. The handoff asks for channels / messages today /
-          queued work; the gateway reports none of those, so these are the three
-          live numbers it does report. */}
-      {state === 'running' && status && (
-        <section className="status-section openclaw-metrics" data-testid="openclaw-metrics">
-          <div className="openclaw-metric">
-            <span className="openclaw-metric-value">
-              {hasSessionsSnapshot ? numberFormatter.format(channels.length) : '—'}
-            </span>
-            <span className="openclaw-metric-label">{t('openClaw.metricChannels')}</span>
-          </div>
-          <div className="openclaw-metric">
-            <span className="openclaw-metric-value">
-              {hasSessionsSnapshot ? numberFormatter.format(sessions.length) : '—'}
-            </span>
-            <span className="openclaw-metric-label">{t('openClaw.metricSessions')}</span>
-          </div>
-          <div className="openclaw-metric">
-            <span className="openclaw-metric-value">
-              {hasSessionsSnapshot
-                ? numberFormatter.format(
-                  sessions.reduce((total, session) => total + (session.totalTokens ?? 0), 0),
-                )
-                : '—'}
-            </span>
-            <span className="openclaw-metric-label">{t('openClaw.metricTokens')}</span>
-          </div>
-
-        </section>
-      )}
+      <OpenClawConnectionStatus status={status} />
+      {control && <OpenClawControlStatus control={control} testId="openclaw-control" />}
 
       {state === 'not-installed' ? (
         <section className="status-section" data-testid="openclaw-guidance">
@@ -404,58 +366,36 @@ export function OpenClawPanel({
         <>
           <section className="status-section">
             <h2 className="status-section-title">{t('openClaw.lifecycle')}</h2>
-            <div className="openclaw-lifecycle-buttons">
-              <button
-                type="button"
-                className="btn btn-split"
-                disabled={startDisabled}
-                onClick={() => void runLifecycle('start')}
-                data-testid="btn-openclaw-start"
-              >
+            <div className="openclaw-actions">
+              <Button size="sm" disabled={startDisabled} onClick={() => void runLifecycle('start')} data-testid="btn-openclaw-start">
                 {t('openClaw.start')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-split"
-                disabled={stopDisabled}
-                onClick={() => void runLifecycle('stop')}
-                data-testid="btn-openclaw-stop"
-              >
+              </Button>
+              <Button size="sm" disabled={stopDisabled} onClick={() => void runLifecycle('stop')} data-testid="btn-openclaw-stop">
                 {t('openClaw.stop')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-split"
-                disabled={restartDisabled}
-                onClick={() => void runLifecycle('restart')}
-                data-testid="btn-openclaw-restart"
-              >
+              </Button>
+              <Button size="sm" disabled={restartDisabled} onClick={() => void runLifecycle('restart')} data-testid="btn-openclaw-restart">
                 {t('openClaw.restart')}
-              </button>
+              </Button>
             </div>
             {lifecycleError && (
               <div className="openclaw-error-inline" data-testid="openclaw-lifecycle-error">
                 {lifecycleError}
               </div>
             )}
-            <button
-              type="button"
-              className="btn btn-split openclaw-chat-btn"
-              onClick={onOpenChat}
-              title={t('openClaw.openChat')}
-              data-testid="btn-openclaw-open-chat"
-            >
-              {t('openClaw.openChat')}
-            </button>
-            <button
-              type="button"
-              className="btn btn-split openclaw-chat-btn"
-              onClick={() => void capabilities.openClaw.openChatExternal().catch(() => undefined)}
-              title={t('openClaw.openBrowser')}
-              data-testid="btn-openclaw-open-chat-external"
-            >
-              {t('openClaw.openBrowser')}
-            </button>
+            <div className="openclaw-actions">
+              <Button size="sm" variant="primary" onClick={onOpenChat} title={t('openClaw.openChat')} data-testid="btn-openclaw-open-chat">
+                {t('openClaw.openChat')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void capabilities.openClaw.openChatExternal().catch(() => undefined)}
+                title={t('openClaw.openBrowser')}
+                data-testid="btn-openclaw-open-chat-external"
+              >
+                {t('openClaw.openBrowser')}
+              </Button>
+            </div>
           </section>
 
           {state === 'stopped' && (
@@ -584,50 +524,37 @@ export function OpenClawPanel({
               ))}
             </div>
             {!autoScroll && (
-              <button
-                type="button"
-                className="btn btn-split openclaw-log-resume"
-                onClick={resumeAutoScroll}
-                data-testid="openclaw-log-resume"
-              >
+              <Button size="sm" variant="ghost" className="openclaw-log-resume" onClick={resumeAutoScroll} data-testid="openclaw-log-resume">
                 {t('openClaw.resumeLogs')}
-              </button>
+              </Button>
             )}
           </section>
 
           <section className="status-section">
             <h2 className="status-section-title">{t('openClaw.coreSettings')}</h2>
-            <div className="openclaw-config-row">
-              <span>{t('openClaw.defaultModel')}</span>
-              <input
-                className="settings-scrollback-input"
-                value={modelDraft}
-                aria-label={t('openClaw.defaultModel')}
-                onChange={(e) => setModelDraft(e.target.value)}
-                data-testid="openclaw-config-model"
-              />
+            <div className="openclaw-config">
+              <Field label={t('openClaw.defaultModel')}>
+                <Input
+                  uiSize="sm"
+                  value={modelDraft}
+                  onChange={(e) => setModelDraft(e.target.value)}
+                  data-testid="openclaw-config-model"
+                />
+              </Field>
+              <Field label={t('openClaw.gatewayPort')}>
+                <Input
+                  uiSize="sm"
+                  type="number"
+                  value={portDraft}
+                  placeholder={config?.['gateway.port'] === OPENCLAW_CONFIG_UNSET ? t('openClaw.unset') : undefined}
+                  onChange={(e) => setPortDraft(e.target.value)}
+                  data-testid="openclaw-config-port"
+                />
+              </Field>
+              <Button size="sm" disabled={savingConfig} onClick={() => void saveConfig()} data-testid="openclaw-config-save">
+                {t('openClaw.save')}
+              </Button>
             </div>
-            <div className="openclaw-config-row">
-              <span>{t('openClaw.gatewayPort')}</span>
-              <input
-                type="number"
-                className="settings-scrollback-input"
-                value={portDraft}
-                placeholder={config?.['gateway.port'] === OPENCLAW_CONFIG_UNSET ? t('openClaw.unset') : undefined}
-                aria-label={t('openClaw.gatewayPort')}
-                onChange={(e) => setPortDraft(e.target.value)}
-                data-testid="openclaw-config-port"
-              />
-            </div>
-            <button
-              type="button"
-              className="btn btn-split"
-              disabled={savingConfig}
-              onClick={() => void saveConfig()}
-              data-testid="openclaw-config-save"
-            >
-              {t('openClaw.save')}
-            </button>
             {configError && (
               <div className="openclaw-error-inline" data-testid="openclaw-config-error">
                 {configError}
@@ -636,14 +563,9 @@ export function OpenClawPanel({
             {restartBanner && (
               <div className="openclaw-restart-banner" data-testid="openclaw-restart-banner">
                 <span>{t('openClaw.restartRequired')}</span>
-                <button
-                  type="button"
-                  className="btn btn-split"
-                  onClick={restartNow}
-                  data-testid="openclaw-restart-now"
-                >
+                <Button size="sm" onClick={restartNow} data-testid="openclaw-restart-now">
                   {t('openClaw.restart')}
-                </button>
+                </Button>
               </div>
             )}
           </section>

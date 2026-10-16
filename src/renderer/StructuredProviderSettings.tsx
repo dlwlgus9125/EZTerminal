@@ -2,6 +2,7 @@ import { RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   DEFAULT_CLAUDE_PROVIDER_ENABLEMENT,
   type ClaudeAuthenticationPath,
@@ -63,18 +64,24 @@ export function daemonProviderMatchesProbe(
   const reviewMatches = provider.reviewDigest === reviewDigest;
   if (versionMatches && reviewMatches) return true;
 
+  // Only the version moved: both CLIs update in place, and the review stays bound to
+  // the executable path, launch argv and environment rather than to one build.
   return !versionMatches
     && !reviewMatches
     && provider.enabled
-    && provider.id === 'codex'
-    && probe.providerId === 'codex'
-    && provider.protocol === 'codex-app-server'
     && probe.available
     && probe.authenticationState === 'first-launch'
-    && probe.authenticationDetail === CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL
     && probe.unavailableReason === undefined
-    && (probe.reviewNotices?.length ?? 0) === 0
-    && Boolean(provider.reviewDigest);
+    && Boolean(provider.reviewDigest)
+    && (
+      (provider.id === 'codex'
+        && provider.protocol === 'codex-app-server'
+        && probe.authenticationDetail === CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL
+        && (probe.reviewNotices?.length ?? 0) === 0)
+      || (provider.id === 'claude'
+        && provider.protocol === 'claude-agent-sdk'
+        && probe.authenticationDetail === CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL)
+    );
 }
 
 function claudeEnablementEqual(

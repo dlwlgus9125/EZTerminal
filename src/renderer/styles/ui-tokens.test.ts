@@ -1,12 +1,13 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { calculateContrastRatio } from '../theme-contrast';
+import { calculateContrastRatio, deriveUiTokens } from '../theme-contrast';
 import { THEMES } from '../themes';
 
-const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css'), 'utf8');
+const tokensPath = resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css');
+let css = readFileSync(tokensPath, 'utf8');
 const desktopFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/index.css'), 'utf8');
 const mobileFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/mobile-shared.css'), 'utf8');
 
@@ -61,7 +62,101 @@ function mediaBlocks(source: string, condition: string): string[] {
   return blocks;
 }
 
+const DERIVED_START = '/* derived-ui-tokens:start';
+const DERIVED_END = '/* derived-ui-tokens:end */';
+const GLOWING_THEMES = new Set(['matrix']);
+
+/** The generated region: :root (product default) plus every built-in theme. */
+function expectedDerivedRegion(source: string): string {
+  const block = (selector: string, theme: keyof typeof THEMES): string => {
+    const borderMid = scopedDeclarationFrom(source, `[data-theme='${theme}']`, '--ui-border-mid');
+    const tokens = deriveUiTokens(THEMES[theme].ui!, { glow: GLOWING_THEMES.has(theme), borderMid });
+    return `${selector} {\n${Object.entries(tokens).map(([name, value]) => `  ${name}: ${value};`).join('\n')}\n}`;
+  };
+  return [
+    block(':root', 'dark'),
+    ...(['dark', 'light', 'high-contrast', 'matrix'] as const).map((theme) => block(`[data-theme='${theme}']`, theme)),
+  ].join('\n');
+}
+
+function derivedRegion(source: string): string {
+  const start = source.indexOf(DERIVED_START);
+  const startEnd = source.indexOf('*/', start) + 2;
+  const end = source.indexOf(DERIVED_END);
+  return source.slice(startEnd, end).trim();
+}
+
+if (process.env.UPDATE_DERIVED_UI_TOKENS === '1') {
+  const start = css.indexOf(DERIVED_START);
+  const startEnd = css.indexOf('*/', start) + 2;
+  const end = css.indexOf(DERIVED_END);
+  css = `${css.slice(0, startEnd)}\n${expectedDerivedRegion(css)}\n${css.slice(end)}`;
+  writeFileSync(tokensPath, css);
+}
+
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 describe('UI token contract', () => {
+  it('precomputes derived roles for every built-in theme from the runtime registry', () => {
+    expect(css).toContain(DERIVED_START);
+    expect(derivedRegion(css)).toBe(expectedDerivedRegion(css));
+  });
+
+  it('ships no color-mix() or :has() to the Android WebView 74 floor in shared foundations', () => {
+    for (const file of ['src/renderer/styles/ui-tokens.css', 'src/renderer/ui/primitives.css', 'src/renderer/structured-agent.css']) {
+      const source = withoutComments(readFileSync(resolve(process.cwd(), file), 'utf8'));
+      expect(source, `${file} must not use color-mix()`).not.toMatch(/color-mix\(/);
+      expect(source, `${file} must not use :has()`).not.toMatch(/:has\(/);
+    }
+  });
+
+  it('keeps a Chrome 74 fallback in front of every color-mix() that reaches Android', () => {
+    // WebView 74 drops a color-mix() declaration whole; an earlier declaration of the same
+    // property in the same block is what it renders instead. Modern engines take the later line.
+    const files = [
+      'src/renderer/mobile-shared.css',
+      'src/renderer/daemon-agent-sessions.css',
+      'src/renderer/daemon-safe-mode-notice.css',
+      ...readdirSync(resolve(process.cwd(), 'mobile/src'))
+        .filter((name) => name.endsWith('.css'))
+        .map((name) => `mobile/src/${name}`),
+    ];
+    const missing: string[] = [];
+    for (const file of files) {
+      const source = withoutComments(readFileSync(resolve(process.cwd(), file), 'utf8'));
+      for (const block of source.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+        const declarations = block[2].split(';').map((part) => part.trim()).filter(Boolean)
+          .map((part) => ({ property: part.slice(0, part.indexOf(':')).trim(), value: part.slice(part.indexOf(':') + 1) }));
+        declarations.forEach((declaration, index) => {
+          if (!declaration.value.includes('color-mix(')) return;
+          const covered = declarations.slice(0, index)
+            .some((earlier) => earlier.property === declaration.property && !earlier.value.includes('color-mix('));
+          if (!covered) missing.push(`${file}: ${block[1].trim()} { ${declaration.property} }`);
+        });
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('ships no selector Chrome 74 drops whole rules over in planning and workflow CSS', () => {
+    // These files reach Android through MobilePlanningNavigator. The chrome74 build target
+    // lowers properties such as inset, but not selectors: an unparsed :is() drops the whole
+    // rule (here, the mobile 48px touch target).
+    for (const file of [
+      'src/renderer/planning-workspace.css',
+      'src/renderer/planning/planning-ai.css',
+      'src/renderer/planning/scene-designer.css',
+      'src/renderer/workflow/workflow.css',
+    ]) {
+      const source = withoutComments(readFileSync(resolve(process.cwd(), file), 'utf8'));
+      expect(source, `${file} must not use color-mix()`).not.toMatch(/color-mix\(/);
+      expect(source, `${file} must not use :has()`).not.toMatch(/:has\(/);
+      expect(source, `${file} must not use :is()`).not.toMatch(/:is\(/);
+    }
+  });
+
   it('defines every semantic colour consumed by primitives', () => {
     for (const token of [
       '--ui-canvas',
@@ -262,10 +357,11 @@ describe('UI token contract', () => {
     // Light and High Contrast opt out of phosphor bloom through the glow
     // colour, not the shadows: `[data-theme]` and `[data-theme='light']` have
     // equal specificity, so the recompute block would win on source order.
-    for (const theme of ['light', 'high-contrast']) {
+    // Phosphor bloom is Matrix atmosphere only (DESIGN.md Colors).
+    for (const theme of ['dark', 'light', 'high-contrast']) {
       expect(scopedDeclaration(`[data-theme='${theme}']`, '--ui-glow-color')).toBe('transparent');
     }
-    for (const theme of ['dark', 'matrix']) {
+    for (const theme of ['matrix']) {
       expect(scopedDeclaration(`[data-theme='${theme}']`, '--ui-glow-color')).toBe(
         'var(--ui-accent)',
       );

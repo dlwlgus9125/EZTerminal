@@ -1,3 +1,4 @@
+import { toggleWorkbenchTool } from './workbench-navigation';
 import { readFileSync } from 'node:fs';
 import { test, expect } from './test';
 
@@ -36,7 +37,7 @@ test('running: drawer shows state/version/sessions/log lines (AC1/AC2/AC3)', asy
   });
   try {
     const window = await app.firstWindow();
-    await window.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-openclaw');
     await expect(window.getByTestId('openclaw-panel')).toBeVisible();
 
     const stateSection = window.getByTestId('openclaw-state');
@@ -68,7 +69,7 @@ test('stopped -> start: guidance CTA, fake CLI argv recorded, state flips, UI re
   });
   try {
     const window = await app.firstWindow();
-    await window.getByTestId('btn-toggle-openclaw').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-openclaw');
     await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'stopped', {
       timeout: 10_000,
     });

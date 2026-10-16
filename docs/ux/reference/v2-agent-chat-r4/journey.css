@@ -1,0 +1,98 @@
+/* Flow composition: consumes the same runtime semantic tokens as the shared chat. */
+.conversation-workspace { display:flex; min-height:0; min-width:0; flex:1; }
+.conversation-workspace>.chat-area { min-width:0; }
+.project-tabs.flow-tabs { flex:none; gap:22px; }
+.flow-tabs button { padding:12px 0; font-size:12px; color:var(--ui-text-muted); white-space:nowrap; }
+.flow-tabs button.active { color:var(--ui-accent); }
+.flow-page { min-height:0; overflow:auto; flex:1; padding:28px 40px 40px; }
+.flow-page-inner { max-width:1050px; margin:0 auto; }
+.flow-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin-bottom:26px; }
+.flow-heading h1 { font-size:24px; }
+.flow-heading p { font-size:13px; line-height:1.8; color:var(--ui-text-secondary); margin-top:8px; max-width:620px; }
+.flow-heading>.btn { flex:none; }
+.flow-overview-list { display:grid; border-top:1px solid var(--ui-border-subtle); }
+.flow-overview-list article { display:flex; align-items:center; gap:18px; padding:22px 0; border-bottom:1px solid var(--ui-border-subtle); }
+.flow-overview-list h2 { font-size:16px; margin:3px 0 5px; }
+.flow-overview-list p { font-size:12px; color:var(--ui-text-secondary); }
+.flow-document-meta { display:flex; align-items:center; gap:12px; margin-bottom:14px; font-size:12px; color:var(--ui-text-secondary); flex-wrap:wrap; }
+.flow-editor { border:1px solid var(--ui-border-subtle); border-radius:var(--ui-radius-xl); background:var(--ui-surface); padding:22px; }
+.flow-editor>label { display:block; font-size:14px; font-weight:600; margin-bottom:14px; }
+.flow-editor textarea { display:block; width:100%; min-height:170px; font-size:13px; line-height:1.9; margin-bottom:16px; }
+.flow-editor>.row { align-items:flex-start; flex-wrap:wrap; }
+.flow-editor small { max-width:75%; }
+.flow-linked-chat { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 0; margin-top:16px; border-top:1px solid var(--ui-border-subtle); }
+.flow-linked-chat h2,.flow-linked-chat h3 { font-size:14px; }
+.flow-linked-chat p { font-size:12px; color:var(--ui-text-secondary); margin-top:6px; }
+.flow-linked-chat .btn { flex:none; }
+.flow-bottom-actions { display:flex; justify-content:flex-end; margin-top:20px; }
+.flow-bottom-note { font-size:12px; color:var(--ui-text-secondary); margin-top:20px; line-height:1.8; }
+.flow-context { flex:none; margin:0 28px 12px; padding:11px 0; border-block:1px solid var(--ui-border-subtle); }
+.flow-context-main { display:flex; align-items:center; gap:16px; }
+.flow-context-main>.btn { flex:none; }
+.context-copy { min-width:0; flex:1; }
+.context-copy strong { display:block; font-size:13px; }
+.context-copy small { display:block; font-size:11px; margin-top:3px; }
+.context-update { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:9px; font-size:12px; color:var(--ui-warning); }
+.flow-context>p { font-size:11px; color:var(--ui-text-secondary); margin-top:8px; }
+.flow-reference { width:290px; flex:none; overflow:auto; padding:18px; border-left:1px solid var(--ui-border-subtle); background:var(--ui-surface); }
+.flow-reference h2 { font-size:12px; font-weight:500; }
+.flow-reference h3 { margin-top:22px; line-height:1.6; }
+.flow-reference .badge { font-size:10px; white-space:normal; }
+.reference-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.9; margin-top:16px; color:var(--ui-text-secondary); }
+.flow-reference-links { display:grid; gap:8px; margin:24px 0; }
+.flow-reference>p.muted { font-size:12px; line-height:1.8; }
+.flow-related-reference { padding-top:14px; margin-top:18px; border-top:1px solid var(--ui-border-subtle); }
+.flow-related-reference h3 { margin-top:0; font-size:12px; }
+.flow-related-reference .reference-text { margin-top:8px; font-size:12px; }
+.with-context .transcript { padding:16px 24px; }
+.with-context .composer-region { padding-inline:24px; }
+.with-context .composer-options { flex-wrap:wrap; }
+.flow-welcome { padding:10px 0 25px; }
+.flow-welcome h2 { font-size:22px; }
+.flow-result-card { padding:16px; border:1px solid var(--ui-border-subtle); border-radius:var(--ui-radius-lg); margin:18px 0; background:var(--ui-surface); }
+.flow-result-card>div { display:flex; gap:8px; align-items:center; }
+.flow-result-card strong { font-size:13px; }
+.flow-result-card p { font-size:12px; line-height:1.8; color:var(--ui-text-secondary); margin:10px 0 14px; }
+.flow-result-card>small { display:block; margin-top:8px; }
+.flow-task-card { padding:24px; background:var(--ui-surface); border:1px solid var(--ui-border-subtle); border-radius:var(--ui-radius-xl); }
+.flow-task-card h2 { font-size:17px; }
+.flow-task-card>p { color:var(--ui-text-secondary); font-size:13px; margin-top:12px; line-height:1.8; }
+.flow-task-card dl { display:grid; grid-template-columns:100px minmax(0,1fr); gap:14px; font-size:12px; margin:26px 0; }
+.flow-task-card dt { color:var(--ui-text-muted); }
+.flow-task-card dd { margin:0; overflow-wrap:anywhere; }
+.flow-screen-example { max-width:440px; padding:24px; margin:24px auto; border:1px solid var(--ui-border-subtle); border-radius:var(--ui-radius-xl); background:var(--ui-surface-inset); }
+.flow-screen-example h2 { font-size:15px; margin-bottom:20px; }
+.flow-screen-example label { display:grid; gap:8px; font-size:12px; }
+.flow-screen-example p { font-size:12px; margin:8px 0 16px; }
+.flow-diff,.flow-source-text { font:12px/1.9 var(--ui-font-terminal); white-space:pre-wrap; overflow-wrap:anywhere; padding:16px; background:var(--ui-surface-inset); border:1px solid var(--ui-border-subtle); border-radius:var(--ui-radius-lg); margin:18px 0; }
+.flow-evidence { display:grid; gap:10px; font-size:12px; }
+.flow-evidence>div { display:flex; align-items:center; gap:8px; }
+.flow-evidence svg { color:var(--ui-success); }
+.flow-compare { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:20px 0; }
+.flow-compare section { padding:16px; border:1px solid var(--ui-border-subtle); border-radius:var(--ui-radius-lg); background:var(--ui-surface-inset); min-width:0; }
+.flow-compare p { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:12px; }
+@media(max-width:1180px) { .flow-reference { display:none; } .flow-page { padding:24px; } }
+.product[data-device=mobile] .flow-tabs { display:flex; overflow:auto; gap:22px; padding:0 16px; }
+.product[data-device=mobile] .flow-tabs button { min-width:40px; min-height:44px; }
+.product[data-device=mobile] .flow-page { padding:20px 16px 30px; }
+.product[data-device=mobile] .flow-heading { flex-wrap:wrap; gap:14px; margin-bottom:18px; }
+.product[data-device=mobile] .flow-heading h1 { font-size:21px; }
+.product[data-device=mobile] .flow-heading p { font-size:12px; }
+.product[data-device=mobile] .flow-editor,.product[data-device=mobile] .flow-task-card { padding:16px; }
+.product[data-device=mobile] .flow-editor small { max-width:none; }
+.product[data-device=mobile] .flow-linked-chat { align-items:flex-start; flex-wrap:wrap; }
+.product[data-device=mobile] .flow-context { margin:0 16px 8px; padding:8px 0; }
+.product[data-device=mobile] .flow-context-main { gap:8px; flex-wrap:wrap; }
+.product[data-device=mobile] .flow-context-main>.btn { font-size:11px; padding:5px 8px; }
+.product[data-device=mobile] .context-copy { order:-1; flex-basis:100%; }
+.product[data-device=mobile] .flow-context>p { font-size:10px; }
+.product[data-device=mobile] .flow-reference { display:none; }
+.product[data-device=mobile] .with-context .transcript { padding:12px 16px; }
+.product[data-device=mobile] .with-context .composer-region { padding:8px 12px 10px; }
+.product[data-device=mobile] .flow-overview-list article { flex-wrap:wrap; gap:12px; }
+.product[data-device=mobile] .flow-overview-list article .grow { flex-basis:calc(100% - 70px); }
+.product[data-device=mobile] .flow-overview-list article>.btn { margin-left:54px; }
+.product[data-device=mobile] .flow-task-card>.row { flex-wrap:wrap; }
+.overlay-shade[data-mobile=true] .flow-compare { grid-template-columns:1fr; }
+.flow-compact-composer { display:flex; align-items:center; gap:12px; border-top:1px solid var(--ui-border-subtle); }
+.flow-compact-composer small { flex:1; font-size:11px; }

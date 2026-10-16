@@ -73,6 +73,7 @@ function transcriptEntry(
   value: unknown,
   index: number,
   namespace: string,
+  fullText = false,
 ): AgentTranscriptEntry | null {
   const item = asObject(value);
   if (!item) return null;
@@ -80,9 +81,9 @@ function transcriptEntry(
   const id = opaqueTranscriptId('item', item.id, `${namespace}:${index}`);
   switch (type) {
     case 'userMessage':
-      return { type: 'message', id, role: 'user', markdown: boundedText(item.content) };
+      return { type: 'message', id, role: 'user', markdown: boundedText(item.content, fullText ? Number.MAX_SAFE_INTEGER : 20_000) };
     case 'agentMessage':
-      return { type: 'message', id, role: 'assistant', markdown: boundedText(item.text ?? item.content) };
+      return { type: 'message', id, role: 'assistant', markdown: boundedText(item.text ?? item.content, fullText ? Number.MAX_SAFE_INTEGER : 20_000) };
     case 'commandExecution':
       return {
         type: 'activity',
@@ -149,7 +150,7 @@ function transcriptEntry(
   }
 }
 
-function normalizeTurns(result: unknown, pageNamespace: string): readonly AgentTranscriptTurn[] {
+function normalizeTurns(result: unknown, pageNamespace: string, fullText = false): readonly AgentTranscriptTurn[] {
   const object = asObject(result);
   const rawTurns = Array.isArray(object?.data)
     ? object.data
@@ -161,7 +162,7 @@ function normalizeTurns(result: unknown, pageNamespace: string): readonly AgentT
     if (!turn) return [];
     const id = opaqueTranscriptId('turn', turn.id, `${pageNamespace}:${turnIndex}`);
     const entries = (Array.isArray(turn.items) ? turn.items : [])
-      .map((entry, entryIndex) => transcriptEntry(entry, entryIndex, id))
+      .map((entry, entryIndex) => transcriptEntry(entry, entryIndex, id, fullText))
       .filter((entry): entry is AgentTranscriptEntry => entry !== null);
     return [{
       id,
@@ -241,7 +242,13 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     };
   }
 
-  async readTranscript(privateId: string, cursor?: string, limit = 10): Promise<AgentTranscriptPage> {
+  resolveProviderSessionId(privateId: string): string | null { return privateId || null; }
+
+  readTranscriptForAdoption(privateId: string, cursor?: string, limit = 20): Promise<AgentTranscriptPage> {
+    return this.readTranscript(privateId, cursor, limit, true);
+  }
+
+  async readTranscript(privateId: string, cursor?: string, limit = 10, fullText = false): Promise<AgentTranscriptPage> {
     const boundedLimit = Math.max(1, Math.min(MAX_AGENT_TRANSCRIPT_PAGE_SIZE, Math.trunc(limit)));
     let result: unknown;
     let pagedTurns = true;
@@ -267,8 +274,8 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
       historyId: '',
       provider: this.provider,
       turns: pagedTurns
-        ? [...normalizeTurns(normalized, cursor ?? 'latest')].reverse()
-        : normalizeTurns(normalized, 'full'),
+        ? [...normalizeTurns(normalized, cursor ?? 'latest', fullText)].reverse()
+        : normalizeTurns(normalized, 'full', fullText),
       nextCursor: asString(object?.nextCursor),
     };
   }

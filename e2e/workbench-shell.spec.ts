@@ -1,3 +1,4 @@
+import { toggleWorkbenchTool } from './workbench-navigation';
 import { expect, test } from './test';
 
 import { launchApp } from './launch-app';
@@ -28,9 +29,9 @@ test('desktop shell has four header zones and a focus-restoring overlay sidebar'
     await expect(window.getByTestId('preset-menu')).toHaveCount(0);
     await expect.poll(() => workspace.evaluate((element) => document.activeElement === element)).toBe(true);
 
-    const explorer = window.getByTestId('btn-toggle-files');
+    const explorer = window.getByTestId('rail-tools');
     const dockBefore = await window.locator('.dock-host').boundingBox();
-    await explorer.click();
+    await toggleWorkbenchTool(window, 'btn-toggle-files');
 
     const sidebar = window.getByTestId('workbench-sidebar');
     const dockHost = window.locator('.dock-host');
@@ -54,7 +55,7 @@ test('desktop shell has four header zones and a focus-restoring overlay sidebar'
 
     // Reopen Explorer so the original Escape/focus-restoration contract remains
     // covered after the rail switch-and-close regression above.
-    await explorer.click();
+    await toggleWorkbenchTool(window, 'btn-toggle-files');
     await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
 
     await window.keyboard.press('Escape');
@@ -94,7 +95,7 @@ test('narrow rail, scrim, and sidebar share one scaled geometry at 800 and 1024 
 
     const sampleGeometry = async (label: string): Promise<void> => {
       const rail = await window.locator('.activity-rail').boundingBox();
-      const railButton = await window.getByTestId('btn-toggle-files').boundingBox();
+      const railButton = await window.getByTestId('rail-tools').boundingBox();
       const scrim = await window.locator('.workbench-sidebar-scrim').boundingBox();
       const sidebar = await window.getByTestId('workbench-sidebar').boundingBox();
       expect(rail).not.toBeNull();
@@ -154,7 +155,7 @@ test('a nested sidebar dialog keeps ownership when the wide shell becomes narrow
       () => matchMedia('(min-width: 1200px)').matches,
     )).toBe(true);
 
-    await window.getByTestId('btn-toggle-files').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-files');
     const sidebar = window.getByTestId('workbench-sidebar');
     await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
     const packageEntry = window.getByTestId('file-entry').filter({ hasText: 'package.json' });
@@ -205,7 +206,7 @@ test('wide shell reflows once, switches destinations in place, and resizes by ke
     await expect.poll(() => window.evaluate(() => matchMedia('(min-width: 1200px)').matches)).toBe(true);
 
     const dockBefore = await window.locator('.dock-host').boundingBox();
-    await window.getByTestId('btn-toggle-stats').click();
+    await toggleWorkbenchTool(window, 'btn-toggle-stats');
     const sidebar = window.getByTestId('workbench-sidebar');
     await expect(sidebar).toHaveAttribute('data-destination', 'monitor');
     expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('relative');
@@ -216,7 +217,7 @@ test('wide shell reflows once, switches destinations in place, and resizes by ke
     expect(dockAfter?.x).toBeGreaterThan(dockBefore?.x ?? 0);
     expect(dockAfter?.width).toBeLessThan(dockBefore?.width ?? Number.POSITIVE_INFINITY);
 
-    await window.getByTestId('rail-remote').click();
+    await toggleWorkbenchTool(window, 'rail-remote');
     await expect(window.getByTestId('workbench-sidebar')).toHaveCount(1);
     await expect(sidebar).toHaveAttribute('data-destination', 'remote');
     await expect(window.getByTestId('remote-panel')).toBeVisible();
@@ -226,6 +227,30 @@ test('wide shell reflows once, switches destinations in place, and resizes by ke
     await resizer.focus();
     await resizer.press('ArrowRight');
     await expect(resizer).toHaveAttribute('aria-valuenow', String(widthBefore + 8));
+  } finally {
+    await app.close();
+  }
+});
+
+test('focus or scrollIntoView inside a panel never scrolls the shell itself', async () => {
+  const app = await launchApp();
+  try {
+    const window = await app.firstWindow();
+    await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+    // Hidden dockview panels and tall panel content overflow the dock host; the shell
+    // must clip that overflow rather than become programmatically scrollable.
+    const scrolled = await window.evaluate(() => {
+      const body = document.querySelector<HTMLElement>('.workbench-body')!;
+      const tall = document.createElement('div');
+      tall.style.cssText = 'position:absolute;top:0;left:0;width:1px;height:4000px';
+      body.appendChild(tall);
+      body.scrollTop = 300;
+      tall.scrollIntoView({ block: 'end' });
+      const result = body.scrollTop;
+      tall.remove();
+      return result;
+    });
+    expect(scrolled).toBe(0);
   } finally {
     await app.close();
   }

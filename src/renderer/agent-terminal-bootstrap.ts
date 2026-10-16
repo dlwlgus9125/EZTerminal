@@ -1,7 +1,7 @@
-import type { AgentLaunchBootstrap } from '../shared/agent-history';
+import type { AgentTerminalBootstrap } from '../shared/agent-history';
 
 interface BootstrapRecord {
-  readonly bootstrap: AgentLaunchBootstrap;
+  readonly bootstrap: AgentTerminalBootstrap;
   readonly expires: ReturnType<typeof setTimeout>;
 }
 
@@ -14,7 +14,7 @@ const BOOTSTRAP_TTL_MS = 5 * 60 * 1_000;
  */
 export function registerAgentTerminalBootstrap(
   panelId: string,
-  bootstrap: AgentLaunchBootstrap,
+  bootstrap: AgentTerminalBootstrap,
 ): void {
   clearAgentTerminalBootstrap(panelId);
   const expires = setTimeout(() => records.delete(panelId), BOOTSTRAP_TTL_MS);
@@ -23,7 +23,7 @@ export function registerAgentTerminalBootstrap(
 
 export function peekAgentTerminalBootstrap(
   panelId: string,
-): AgentLaunchBootstrap | undefined {
+): AgentTerminalBootstrap | undefined {
   return records.get(panelId)?.bootstrap;
 }
 

@@ -1,0 +1,11 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { fn } from 'storybook/test';
+import { AppI18nProvider } from './i18n';
+import { PlanningResultDetails } from './PlanningResultDetails';
+import './index.css';
+import './planning-workspace.css';
+const meta: Meta<typeof PlanningResultDetails> = {title:'Production/Planning/Result evidence',component:PlanningResultDetails,parameters:{layout:'fullscreen'},args:{selection:{kind:'attempt',projectId:'project-story',attemptId:'attempt-story'},disabled:false,onClose:fn(),onOpenConversation:fn(),read:async(query)=>query.kind==='attempt'?{ok:true,kind:'attempt',result:{version:1,projectId:'project-story',runId:'run-story',taskId:'task-story',attemptId:'attempt-story',baselineFingerprint:'a'.repeat(64),artifacts:[{artifactId:'artifact-story',revision:1}],rootPath:'C:/Workspace/EZTerminal/worktrees/task-cli-skin',baseCommit:'b'.repeat(40),commit:'c'.repeat(40),changedPaths:['src/renderer/StructuredAgentSession.tsx','src/renderer/structured-agent.css'],validations:[{validationId:'test-skin-state',status:'passed',exitCode:0,logRefs:['log-story'],summary:'스킨 전환 후 대화·입력·스크롤 유지 검증 4개 통과'}],reviewerSessionId:'reviewer-story',review:{decision:'approve',summary:'CLI 스킨에서도 같은 메시지·승인·전송 상태가 유지됩니다.',inspections:[{validationId:'review-cli-layout',status:'passed',summary:'390px와 1440px에서 입력창과 로그 줄바꿈 확인'}]}}}:query.kind==='diff'?{ok:true,kind:'diff',text:'diff --git a/src/renderer/structured-agent.css b/src/renderer/structured-agent.css\n+ .agent-session[data-skin="cli"] { gap: 0; }'}:query.kind==='log'?{ok:true,kind:'log',text:'4 tests passed\nexit 0'}:{ok:true,kind:'integration',integration:null}},decorators:[(Story)=><AppI18nProvider locale="ko" languages={['ko']}><Story /></AppI18nProvider>]};
+export default meta;
+type Story = StoryObj<typeof meta>;
+export const TaskEvidence: Story = {};
+export const MobileEvidence: Story = {parameters:{viewport:{defaultViewport:'mobile1'}}};

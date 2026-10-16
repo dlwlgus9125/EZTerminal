@@ -17,7 +17,7 @@ import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { useLatestRequestGate } from './latest-request';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
-import { Button, Dialog, useToast, VisuallyHidden } from './ui';
+import { Button, Dialog, IconButton, useToast, VisuallyHidden } from './ui';
 import { VirtualizedRows } from './VirtualizedRows';
 
 interface BreadcrumbSegment {
@@ -499,16 +499,17 @@ export function FileExplorerPanel({
         data-testid="file-breadcrumb"
       >
         <div className="file-breadcrumb-row">
-          <button
-            className="btn btn-split file-breadcrumb-up"
+          <IconButton
+            icon={ArrowUp}
+            size="sm"
+            variant="secondary"
+            className="file-breadcrumb-up"
             onClick={handleUp}
             disabled={rootsMode}
             title={t('fileExplorer.goUp')}
             aria-label={t('fileExplorer.goUp')}
             data-testid="file-up"
-          >
-            <ArrowUp aria-hidden="true" size={16} />
-          </button>
+          />
           <ol className="file-breadcrumb-trail">
             {crumbs.map((crumb, index) => {
               const current = index === crumbs.length - 1;

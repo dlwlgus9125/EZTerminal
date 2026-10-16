@@ -1,5 +1,37 @@
 @import "./styles/ui-tokens.css";
 
+/* Measured by the Android bootstrap: Chrome 74 accepts grid gap but ignores flex gap. */
+[data-ui-flex-gap='unsupported'] .workflow-header,
+[data-ui-flex-gap='unsupported'] .workflow-toolbar,
+[data-ui-flex-gap='unsupported'] .workflow-inline,
+[data-ui-flex-gap='unsupported'] .workflow-conversation-context,
+[data-ui-flex-gap='unsupported'] .workflow-conversation-row,
+[data-ui-flex-gap='unsupported'] .workflow-activation,
+[data-ui-flex-gap='unsupported'] .workflow-history h3 { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-header > *,
+[data-ui-flex-gap='unsupported'] .workflow-toolbar > *,
+[data-ui-flex-gap='unsupported'] .workflow-inline > *,
+[data-ui-flex-gap='unsupported'] .workflow-conversation-context > *,
+[data-ui-flex-gap='unsupported'] .workflow-conversation-row > *,
+[data-ui-flex-gap='unsupported'] .workflow-activation > *,
+[data-ui-flex-gap='unsupported'] .workflow-history h3 > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] > * { margin-right: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .workflow-item { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-item > * + * { margin-left: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .workflow-node-list .workflow-item > * + * { margin-left: 0; }
+/* Planning (MobilePlanningNavigator): the project header, its actions and the planning tool row. */
+[data-ui-flex-gap='unsupported'] .planning-workspace__header,
+[data-ui-flex-gap='unsupported'] .planning-workspace__identity,
+[data-ui-flex-gap='unsupported'] .planning-workspace__actions,
+[data-ui-flex-gap='unsupported'] .planning-workspace__embedded-actions,
+[data-ui-flex-gap='unsupported'] .planning-workspace__subnav { gap: 0; }
+[data-ui-flex-gap='unsupported'] .planning-workspace__header > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__actions > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__embedded-actions > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__identity > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__subnav > * { margin-right: var(--ui-space-2); }
+
 /*
  * Deliberate mobile/shared boundary.
  *
@@ -18,42 +50,7 @@
    The structured block/table engine is unchanged; only its skin is.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Self-hosted font faces so the packaged renderer renders them: its build-time
-   CSP is `font-src 'self'` (see vite.renderer.config.ts), which blocks remote
-   Google Fonts, and offline builds can't reach them anyway. Vite fingerprints +
-   emits these woff2 from ./fonts into the bundle, served from 'self'. Latin
-   subset only. Share Tech Mono / VT323 are Matrix theme faces (E1+), declared
-   unconditionally but only referenced under [data-theme='matrix'], so the other
-   built-in themes never fetch them. JetBrains Mono / Fira Code are body-font
-   picker entries (fonts.ts FONT_CATALOG), selectable independent of theme. */
-@font-face {
-  font-family: "Share Tech Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/share-tech-mono-latin.woff2") format("woff2");
-}
-@font-face {
-  font-family: "VT323";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/vt323-latin.woff2") format("woff2");
-}
-@font-face {
-  font-family: "JetBrains Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Fira Code";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/fira-code-latin.woff2") format("woff2");
-}
+/* Font faces live in styles/ui-tokens.css (imported through ui/styles.css). */
 
 :root {
   color-scheme: dark;
@@ -64,19 +61,19 @@
     "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
 
   /* Console surfaces, near-black with subtly layered depth. */
-  --term-bg: #0c0c0c; /* the console background */
-  --term-bg-raised: #151515; /* command line / input strip */
-  --term-bg-inset: #0a0a0a; /* table body, deepest plane */
+  --term-bg: #1b1a18; /* the console background */
+  --term-bg-raised: #22211f; /* command line / input strip */
+  --term-bg-inset: #161513; /* table body, deepest plane */
   --term-bg-hover: rgba(255, 255, 255, 0.04);
 
   /* Hairline separators — block chrome stays thin, never card-like. */
-  --term-border: #242424;
-  --term-border-faint: #1a1a1a;
+  --term-border: #363430;
+  --term-border-faint: #2b2a27;
 
   /* Foreground ramp. */
   --term-fg: #cccccc; /* default text */
   --term-fg-bright: #f2f2f2; /* command text, emphasis */
-  --term-fg-dim: #7f7f7f; /* metadata, counts */
+  --term-fg-dim: #8c8c8c; /* metadata, counts */
   --term-fg-faint: #565656; /* chrome glyphs, loading */
 
   /* Classic terminal accents. */
@@ -86,7 +83,7 @@
   --term-cyan: #56b6c2; /* table headers, paths */
   --term-blue: #4d9fff; /* running / focus */
 
-  --term-selection: rgba(45, 211, 152, 0.22);
+  --term-selection: rgba(122, 167, 255, 0.28);
 
   font-family: var(--term-font);
   /* Keep rem-based product tokens on the canonical 16px scale. The persisted
@@ -103,12 +100,12 @@
    CSS can't import that file, so keep the two in sync by hand. */
 [data-theme="light"] {
   color-scheme: light;
-  --term-bg: #f5f5f5;
+  --term-bg: #faf9f6;
   --term-bg-raised: #ffffff;
-  --term-bg-inset: #ececec;
+  --term-bg-inset: #f2f0eb;
   --term-bg-hover: rgba(0, 0, 0, 0.05);
-  --term-border: #d0d0d0;
-  --term-border-faint: #e2e2e2;
+  --term-border: #e4e1da;
+  --term-border-faint: #eeebe5;
   --term-fg: #1c1c1c;
   --term-fg-bright: #000000;
   --term-fg-dim: #5f5f5f;
@@ -118,7 +115,7 @@
   --term-amber: #9a6a00;
   --term-cyan: #0f7c8c;
   --term-blue: #1857c4;
-  --term-selection: rgba(14, 138, 75, 0.18);
+  --term-selection: rgba(47, 95, 208, 0.18);
 }
 
 [data-theme="high-contrast"] {
@@ -148,13 +145,13 @@
   --term-font:
     "Share Tech Mono", "Cascadia Code", Consolas, "Courier New", monospace;
 
-  --term-bg: #010301;
-  --term-bg-raised: #071109;
-  --term-bg-inset: #020402;
+  --term-bg: #020604;
+  --term-bg-raised: #07110b;
+  --term-bg-inset: #010402;
   --term-bg-hover: rgba(41, 211, 152, 0.08);
 
-  --term-border: #3c8d61;
-  --term-border-faint: #1d5035;
+  --term-border: #2c6a47;
+  --term-border-faint: #163322;
 
   --term-fg: #8af7bd;
   --term-fg-bright: #d5ffe7;
@@ -269,6 +266,15 @@ html[data-effect-crt-rollbar="on"] body::after {
   inset: 0;
   z-index: 201;
   pointer-events: none;
+  /* WebView 74 drops the color-mix() gradient below and keeps this one. */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-in, 59.4px),
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-out, 60.6px),
+    transparent calc(var(--fx-rollbar-thickness, 120) * 1px),
+    transparent var(--fx-rollbar-period, 70vh)
+  );
   background-image: repeating-linear-gradient(
     to bottom,
     color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) 0,
@@ -967,6 +973,9 @@ body {
 }
 
 .file-source-line--selected {
+  /* WebView 74 drops the color-mix() line below and keeps this one. */
+  background: rgba(var(--ui-warning-rgb), 0.2);
+  outline: 1px solid rgba(var(--ui-warning-rgb), 0.55);
   background: color-mix(in srgb, var(--term-amber) 20%, transparent);
   outline: 1px solid color-mix(in srgb, var(--term-amber) 55%, transparent);
 }
@@ -1110,10 +1119,12 @@ body {
 
 .agent-row[data-status="blocked"],
 .agent-row[data-status="error"] {
+  border-color: var(--ui-danger-border);
   border-color: color-mix(in srgb, var(--term-red) 55%, var(--term-border));
 }
 
 .agent-row[data-status="waiting"] {
+  border-color: var(--ui-warning-border);
   border-color: color-mix(in srgb, var(--term-amber) 55%, var(--term-border));
 }
 
@@ -1304,6 +1315,7 @@ body {
   margin: 0.25rem 0;
   padding: 0.35rem 0.55rem;
   border-left: 2px solid var(--term-amber);
+  background: rgba(var(--ui-warning-rgb), 0.1);
   background: color-mix(in srgb, var(--term-amber) 10%, transparent);
   color: var(--term-amber);
   font-size: 0.75rem;
@@ -1618,6 +1630,7 @@ body {
   min-height: 24px;
   padding: 3px 5px 3px 7px;
   color: var(--term-fg);
+  background: var(--term-bg-raised);
   background: color-mix(in srgb, var(--term-bg-raised) 92%, transparent);
   border: 1px solid var(--term-amber);
   border-radius: 999px;

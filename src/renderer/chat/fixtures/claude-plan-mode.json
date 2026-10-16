@@ -1,0 +1,288 @@
+{
+  "provider": "claude",
+  "scenario": "plan-mode",
+  "capturedWith": {
+    "agentSdk": "0.3.260",
+    "cli": "2.1.289 (Claude Code)"
+  },
+  "items": [
+    {
+      "id": "message-335b83bc55c6db953c3b7ecebf70352b",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Plan how to add a `farewell(name)` function next to `greet` in src/app.ts. Keep the plan to three short bullet points, then present it with ExitPlanMode. Do not implement it.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "claude_385c530aada2a1e6949e7ed3",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\src\\\\app.ts\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01BzmBQmzzr1yCD92wTVorRQ",
+        "name": "Read",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "claude_2293900f91d9b6f6f661f7d9",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "1\texport function greet(name: string): string {\n2\t  return `Hello, ${name}!`;\n3\t}\n4\t\n5\texport function main(): void {\n6\t  console.log(greet('world'));\n7\t}\n8\t",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01BzmBQmzzr1yCD92wTVorRQ",
+        "name": "Read",
+        "category": "read",
+        "phase": "result",
+        "status": "completed"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "claude_f5f30692461d8f9c7fbfeac3",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Write\n{\n  \"file_path\": \"<WORKSPACE>\\\\.claude-plans\\\\plan-how-to-add-nested-dusk.md\",\n  \"content\": \"# Plan: add `farewell(name)` to src/app.ts\\n\\n- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\\n- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\\n- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\\n\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_016tE8Qh74rudzwkGHUxEGg8",
+        "name": "Write",
+        "category": "write",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\.claude-plans\\plan-how-to-add-nested-dusk.md"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "claude_e74d6227211e7d640450bc8c",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\.claude-plans\\\\plan-how-to-add-nested-dusk.md\",\"patch\":\"+# Plan: add `farewell(name)` to src/app.ts\\n+\\n+- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\\n+- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\\n+- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\",\"coverage\":\"fragment\"}]}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_016tE8Qh74rudzwkGHUxEGg8",
+        "name": "Write",
+        "category": "write",
+        "phase": "result",
+        "status": "completed",
+        "files": [
+          {
+            "path": "<WORKSPACE>\\.claude-plans\\plan-how-to-add-nested-dusk.md",
+            "kind": "add",
+            "added": 5
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "claude_6c409ac928d64503da60e241",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "ToolSearch\n{\n  \"query\": \"select:ExitPlanMode\",\n  \"max_results\": 1\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Wo67Kc2oPULTpy11PXwhkt",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "call",
+        "status": "running"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "claude_ffdcf6a8179d6f20d67170e9",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "ExitPlanMode",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01Wo67Kc2oPULTpy11PXwhkt",
+        "name": "ToolSearch",
+        "category": "other",
+        "phase": "result",
+        "status": "completed"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "claude_88aaffab3ccc6a4a8aa38f90",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "ExitPlanMode\n{\n  \"plan\": \"# Plan: add `farewell(name)` to src/app.ts\\n\\n- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\\n- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\\n- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\\n\",\n  \"planFilePath\": \"<WORKSPACE>\\\\.claude-plans\\\\plan-how-to-add-nested-dusk.md\"\n}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01JwhhWVkTXN9XxfM44gdqqi",
+        "name": "ExitPlanMode",
+        "category": "plan",
+        "phase": "call",
+        "status": "running"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "claude_2d1d01fa2858202eba4376bf",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "approval",
+      "text": "Claude tool request allowed.",
+      "isDelta": false,
+      "isSensitive": false,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "claude_fe2c2f67a92e62ba0e1b2330",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\nYour plan has been saved to: <WORKSPACE>\\.claude-plans\\plan-how-to-add-nested-dusk.md\nYou can refer back to it if needed during implementation.\n\n## Approved Plan:\n# Plan: add `farewell(name)` to src/app.ts\n\n- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\n- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\n- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\n",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "toolu_01JwhhWVkTXN9XxfM44gdqqi",
+        "name": "ExitPlanMode",
+        "category": "plan",
+        "phase": "result",
+        "status": "completed"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "claude_22af10f59985fc2b81b6f5de",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 11
+    },
+    {
+      "id": "claude_ed27a3155eb971fc5b216796",
+      "messageId": "claude_msg:msg_011Cg3Kb4Q3GcLZrQxnDzqoz:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "You approved the plan, and it's saved to `.claude-plans/plan-how-to-add-nested-dusk.md`. I haven't changed `src/app.ts`, since you asked me not to implement it.\n\n- **Add the function:** put `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` right after `greet` in `src/app.ts`, written the same way.\n- **Optionally call it:** add `console.log(farewell('world'))` to `main()` so it prints when the app runs.\n- **Check it:** run `npx tsc --noEmit` to type-check, then run the app and confirm it prints `Goodbye, world!`.\n\nTell me if you want me to go ahead and implement it.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 12
+    },
+    {
+      "id": "claude_6d516055d20f473f4a48ac67",
+      "messageId": "claude_msg:msg_011Cg3Kb4Q3GcLZrQxnDzqoz:1",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "You approved the plan, and it's saved to `.claude-plans/plan-how-to-add-nested-dusk.md`. I haven't changed `src/app.ts`, since you asked me not to implement it.\n\n- **Add the function:** put `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` right after `greet` in `src/app.ts`, written the same way.\n- **Optionally call it:** add `console.log(farewell('world'))` to `main()` so it prints when the app runs.\n- **Check it:** run `npx tsc --noEmit` to type-check, then run the app and confirm it prints `Goodbye, world!`.\n\nTell me if you want me to go ahead and implement it.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 13
+    },
+    {
+      "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Claude completed the turn.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 14,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-2dd0114c394f12f2eb6c5b9ab2902410",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "e145f8c4-ef58-4f74-9618-3bcad6d1618f",
+      "risk": "write",
+      "title": "Approve plan",
+      "detail": "# Plan: add `farewell(name)` to src/app.ts",
+      "request": {
+        "v": 1,
+        "callId": "toolu_01JwhhWVkTXN9XxfM44gdqqi",
+        "kind": "plan",
+        "markdown": "# Plan: add `farewell(name)` to src/app.ts\n\n- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\n- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\n- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\n",
+        "filePath": "<WORKSPACE>\\.claude-plans\\plan-how-to-add-nested-dusk.md"
+      },
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "toolName": "ExitPlanMode",
+      "result": {
+        "behavior": "allow",
+        "updatedInput": {
+          "plan": "# Plan: add `farewell(name)` to src/app.ts\n\n- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\n- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\n- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\n",
+          "planFilePath": "<WORKSPACE>\\.claude-plans\\plan-how-to-add-nested-dusk.md"
+        },
+        "toolUseID": "toolu_01JwhhWVkTXN9XxfM44gdqqi"
+      }
+    }
+  ]
+}

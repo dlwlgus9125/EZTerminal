@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +8,7 @@ import {
   cssColorToRgbChannels,
   resolveProviderIdentityColors,
   resolveAccessibleTheme,
+  seedTerminalCssVars,
   seedUiThemeColors,
   uiThemeColorsToCssVars,
 } from './theme-contrast';
@@ -83,6 +86,39 @@ describe('theme contrast math', () => {
       4.5,
     );
     expect(calculateContrastRatio(resolved.theme.xterm.cursor!, resolved.theme.xterm.background!)).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('terminal-chrome seeding for custom themes', () => {
+  it('takes the background from the xterm canvas and the rest from the ui palette', () => {
+    const ui = THEMES.light.ui!;
+    const vars = seedTerminalCssVars(ui, { background: '#fdfdfd' });
+    expect(vars).toMatchObject({
+      '--term-bg': '#fdfdfd',
+      '--term-bg-raised': ui.surfaceRaised,
+      '--term-bg-inset': ui.surfaceInset,
+      '--term-border': ui.borderSubtle,
+      '--term-fg': ui.textPrimary,
+      '--term-fg-dim': ui.textSecondary,
+      '--term-green': ui.success,
+      '--term-red': ui.danger,
+      '--term-amber': ui.warning,
+      '--term-blue': ui.info,
+    });
+    expect(vars['--term-selection']).toMatch(/^rgba\(/u);
+  });
+
+  // Any --term-* colour the chrome reads must be seeded, or a ui-only custom theme
+  // shows the :root dark value there while the rest of the app follows the theme.
+  it('covers every --term-* colour the desktop and mobile foundation sheets read', () => {
+    const read = (file: string): string => readFileSync(resolve(process.cwd(), 'src/renderer', file), 'utf8');
+    const used = new Set(
+      [...`${read('index.css')}\n${read('mobile-shared.css')}`.matchAll(/var\(\s*(--term-[a-z-]+)/gu)]
+        .map((match) => match[1])
+        .filter((name) => name !== '--term-font'),
+    );
+    const seeded = Object.keys(seedTerminalCssVars(THEMES.dark.ui!, {}));
+    expect([...used].filter((name) => !seeded.includes(name))).toEqual([]);
   });
 });
 

@@ -11,9 +11,19 @@
 
 ## Overview
 
-EZTerminal의 기준 이미지는 **green-phosphor terminal과 operations console을 결합한
-professional workbench**다. 사용자는 장식된 dashboard가 아니라 실제 세션, 파일,
-agent와 원격 장치를 오래 다루는 도구를 보고 있다고 느껴야 한다.
+EZTerminal의 기준 이미지는 **대화·기획·실행을 연결하는 차분한 professional workbench**다.
+현재 작업과 산출물에 가장 큰 시각적 공간을 주고, 상태·요청·실제 실행 대상을 명확하게
+표현한다. 사용자는 세션, 파일, agent와 원격 장치를 오래 다루는 도구를 보고 있다고 느껴야 한다.
+
+2026-10-13 승인한 [v2 r6 기준](docs/ux/reference/v2/APPROVAL.md)을 반영한다. 신규 기본값은
+Dark와 말풍선 스킨이며 기존 사용자의 theme·skin 설정은 보존한다. Matrix/CRT는 선택 가능한
+시각 표현으로 유지한다.
+
+2026-10-15 UX 개편에서 Dark/Light 기본 팔레트를 **Ink 방향**으로 확정했다. 따뜻한 차콜
+canvas와 그 위로 한 단계씩 밝아지는 surface, 파란 signal accent를 쓰며 terminal pane도 같은
+canvas 위에 놓인다. Matrix는 같은 정체성을 유지하되 surface 단계와 경계를 더 또렷하게 한
+**Refined** palette를 쓴다. 두 결정은 새 채팅 행 위에서 다시 확인해 확정했다. 승인된 의도와 현재 구현의 일치 여부는
+[구현 진행 기록](docs/ezterminal-v2-implementation.md)에서 따로 검증한다.
 
 Matrix 정체성은 신호처럼 선명한 accent, 어두운 계층형 surface, 절제된 scanline과
 terminal 문법에서 나온다. 그러나 모든 theme에서 제품의 우선순위는 가독성, 실제
@@ -30,6 +40,15 @@ Agent 작업은 Project → Workspace → Session의 맥락을 유지하되 모�
 입력 대기, 실패, 승인 요청처럼 사용자의 판단이 필요한 순간에만 시각적 무게를 높인다. 사용자는
 부모뿐 아니라 자식 Agent도 직접 열어 대화하고 권한·모델·lifecycle을 제어할 수 있어야 한다.
 
+말풍선과 CLI는 동일한 메시지 기반 채팅의 시각 표현이다. 말풍선은 메시지별 영역을 드러내고,
+CLI 스킨은 좌측에 이어지는 출력, 간결한 작성자·역할 표시와 프롬프트 표현을 사용한다.
+CLI 외형에서도 첨부·답장·승인·전송 같은 채팅 조작이 식별되어야 하며, 실제 셸 입력창으로
+오해하게 하는 가짜 경로·PTY 상태를 추가하지 않는다. 실제 터미널은 기존 도구로 유지한다.
+
+채팅은 작업을 보고하되 소음을 만들지 않는다. 여러 도구 호출은 한 줄 요약으로 접히고, 펼쳤을 때만
+명령·대상·결과가 드러난다. 사람의 판단이 필요한 승인·질문·계획만 입력창 위에서 무게를 갖는다.
+코드 색은 theme마다 keyword·함수·문자열을 구분하되 상태 색의 의미를 빼앗지 않는다.
+
 ## Colors
 
 색은 semantic role로 선택한다. application chrome은 `--ui-*`, 실제 terminal과 terminal
@@ -42,8 +61,12 @@ runtime theme registry만 정의한다.
   만든다. 단순히 서로 다른 검정을 늘어놓지 않는다.
 - Success, warning, danger와 info는 실제 상태 의미가 있을 때만 쓴다. 의미는 label,
   icon 또는 구조로도 전달한다.
-- Glow와 scanline은 Matrix theme의 제한된 atmosphere다. Light와 High Contrast에서는
-  형태와 경계가 먼저이며, custom theme에도 Matrix 색을 강제로 섞지 않는다.
+- Glow와 scanline은 Matrix theme의 제한된 atmosphere다. Dark, Light와 High Contrast에서는
+  형태와 경계가 먼저이며, custom theme에도 Matrix 색을 강제로 섞지 않는다. Matrix 안에서도
+  glow는 focus, 활성 pane, 실행 중 상태처럼 살아 있는 signal에만 쓰고 dialog나 hover 같은
+  일반 elevation에는 쓰지 않는다.
+- Hover, selected, status tint 같은 파생 role은 theme별로 미리 계산된 값이다. Android
+  WebView 하한에서 평가되지 않는 런타임 색 혼합을 feature CSS에서 쓰지 않는다.
 - Remote video처럼 content 자체가 색을 소유하는 media plane은 chrome과 분리한다.
   그 위의 control은 전용 media semantic token으로 읽을 수 있어야 한다.
 
@@ -55,6 +78,8 @@ terminal content처럼 고정 폭이 의미를 돕는 곳에만 사용한다.
 
 한국어 문장 전체를 display 또는 terminal font로 만들지 않는다. Heading은 짧고 기능을
 명명하며, metadata는 작아질 수 있지만 핵심 상태나 action보다 먼저 희미해져야 한다.
+Heading은 본문과 같은 UI face를 쓰고, display face는 wordmark와 Matrix heading에만 쓴다.
+채팅과 chrome 안의 code는 사용자가 고른 terminal font를 따른다.
 정확한 family, type scale와 line height는 token foundation이 소유한다.
 
 ## Layout

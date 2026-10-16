@@ -5,12 +5,28 @@ import {
   decodeFrame,
   encodeFrame,
   REMOTE_PROTOCOL_VERSION,
+  negotiateRemoteProtocol,
   uint8ArrayToBase64,
   type ClientToServerMessage,
   type ServerToClientMessage,
   type WireInterpreterFrame,
 } from './remote-protocol';
 import type { InterpreterFrame } from './ipc';
+
+describe('single-offer remote protocol negotiation', () => {
+  it('selects the highest shared version, retaining exact legacy requests without an offer', () => {
+    expect(negotiateRemoteProtocol(12, [12, 14, 15, 13])).toBe(15);
+    expect(negotiateRemoteProtocol(12, [16, 15, 12])).toBe(16);
+    expect(negotiateRemoteProtocol(14, undefined)).toBe(14);
+    expect(negotiateRemoteProtocol(12, undefined)).toBe(12);
+  });
+  it.each([null, [], [15, 15, 12], [15], ['15', 12], [0, 12], [12.5, 12], [65_536, 12], Array.from({ length: 17 }, (_, i) => i + 1)].map(offered => ({ offered })))('rejects malformed or unbound version offers: $offered', ({ offered }) => {
+    expect(negotiateRemoteProtocol(12, offered)).toBeNull();
+  });
+  it.each([1, 11, 16, '12', undefined])('does not rescue an unsupported fallback version: %s', requested => {
+    expect(negotiateRemoteProtocol(requested, [15, 14, 13, 12])).toBeNull();
+  });
+});
 
 describe('remote-protocol — base64 Uint8Array round-trip', () => {
   it('round-trips an empty array', () => {

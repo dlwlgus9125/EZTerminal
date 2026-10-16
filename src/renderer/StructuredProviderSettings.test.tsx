@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   type ClaudeProviderEnablement,
   type ProviderInspection,
@@ -52,6 +53,9 @@ function inspection(
       ...(providerId === 'codex' ? {
         authenticationState: 'first-launch' as const,
         authenticationDetail: CODEX_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
+      } : available ? {
+        authenticationState: 'first-launch' as const,
+        authenticationDetail: CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
       } : {}),
       reviewNotices: providerId === 'claude' ? [{
         id: 'anthropic-commercial-terms',
@@ -244,7 +248,28 @@ describe('StructuredProviderSettings', () => {
     expect(card.querySelector('[data-testid="provider-disable-codex"]')).not.toBeNull();
   });
 
-  it('keeps Codex identity drift, one-field review drift, and Claude version updates stale', () => {
+  it('keeps an enabled Claude provider ready after its CLI auto-updates in place', () => {
+    const reviewedSource = inspection('claude', 'reviewed-claude', true);
+    const reviewed = providerRecord({
+      ...reviewedSource,
+      probe: { ...reviewedSource.probe, executableVersion: '2.1.261' },
+    });
+    const currentSource = inspection('claude', 'current-claude', true);
+    const current = { ...currentSource, probe: { ...currentSource.probe, executableVersion: '2.1.289' } };
+
+    expect(daemonProviderMatchesProbe(reviewed, current.probe, current.reviewDigest)).toBe(true);
+    for (const probe of [
+      { ...current.probe, executablePath: 'C:\\Tools\\claude-next.exe' },
+      { ...current.probe, environmentVariableNames: [...current.probe.environmentVariableNames, 'CLAUDE_HOME'] },
+      { ...current.probe, available: false },
+      { ...current.probe, unavailableReason: 'CLAUDE_PROVIDER_DISABLED: Claude Agent is disabled.' },
+      { ...current.probe, authenticationDetail: 'Authentication policy changed.' },
+    ] satisfies readonly ProviderProbeResult[]) {
+      expect(daemonProviderMatchesProbe(reviewed, probe, current.reviewDigest)).toBe(false);
+    }
+  });
+
+  it('keeps Codex identity drift and one-field review drift stale', () => {
     const reviewedSource = inspection('codex', 'reviewed-0.152.1');
     const reviewed = providerRecord({
       ...reviewedSource,
@@ -287,22 +312,6 @@ describe('StructuredProviderSettings', () => {
       reviewed,
       current.probe,
       reviewedSource.reviewDigest,
-    )).toBe(false);
-
-    const reviewedClaudeSource = inspection('claude', 'reviewed-claude', true);
-    const reviewedClaude = providerRecord({
-      ...reviewedClaudeSource,
-      probe: { ...reviewedClaudeSource.probe, executableVersion: '2.1.260' },
-    });
-    const currentClaudeSource = inspection('claude', 'current-claude', true);
-    const currentClaude = {
-      ...currentClaudeSource,
-      probe: { ...currentClaudeSource.probe, executableVersion: '2.1.261' },
-    };
-    expect(daemonProviderMatchesProbe(
-      reviewedClaude,
-      currentClaude.probe,
-      currentClaude.reviewDigest,
     )).toBe(false);
   });
 

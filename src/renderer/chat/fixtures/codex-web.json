@@ -1,0 +1,126 @@
+{
+  "provider": "codex",
+  "scenario": "web",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-a36f2038460302e9fcc815a1efd79c30",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Search the web for the current Node.js LTS major version and answer in one sentence. Do not run shell commands.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_1bfb9779fed08387b63748c3",
+      "messageId": "codex_message_b2f5fdff0c1af630f474104f",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll check the official Node.js release information.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_8ec938c7d0dbc22b8c491ed2",
+      "messageId": "codex_message_b2f5fdff0c1af630f474104f",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll check the official Node.js release information.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_7ce5dbf0f9ae19b0ef9b88ab",
+      "messageId": "codex_message_10118859aca7c02ebf55f37d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Search the web",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-56866484-dc25-435a-ad57-afa20bf8491c",
+        "name": "webSearch",
+        "category": "web",
+        "phase": "call",
+        "status": "running"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_821b5be91f62e0d9c77aaf25",
+      "messageId": "codex_message_10118859aca7c02ebf55f37d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "1. Node.js — Node.js Releases\n   https://nodejs.org/en/about/previous-releases?source=post_page---------------------------\n2. Node.js — End-Of-Life\n   https://nodejs.org/en/about/eol\n3. Node.js — Download Node.js®\n   https://nodejs.org/en/download/current\n4. Node.js — Node.js 24.17.0 (LTS)\n   https://nodejs.org/en/blog/release/v24.17.0\n5. Node.js — Node.js 24.18.0 (LTS)\n   https://nodejs.org/en/blog/release/v24.18.0\n6. Node.js — Node.js 20.9.0 (LTS)\n   https://nodejs.org/en/blog/release/v20.9.0\n7. Releases · nodejs/node · GitHub\n   https://github.com/nodejs/node/releases\n8. Node.js — Run JavaScript Everywhere\n   https://nodejs.org/en/download/archive/v22.23.0\n9. Releases · nodejs/node · GitHub\n   https://github.com/nodejs/node/releases?after=v4.4.7\n10. Node.js\n   https://nodejs.org/en/blog/r\n11. Node.js — Run JavaScript Everywhere\n   https://nodejs.org/en/download/archive/v22\n12. Node.js Status\n   https://status.nodejs.org/\n13. Typeface Use\n   https://nodejs.org/static/documents/2018-survey-report.pdf\n14. Downloads\n\nLatest LTS Version: 16.13.1 (includes n\n   https://static.packt-cdn.com/downloads/9781803231181_ColorImages.pdf\n15. endoflife.date recommendations\n   https://captnemo.in/talks/eol-recommendations.pdf\n16. Node.js\n   https://en.wikipedia.org/wiki/Node.js\n17. nodejs/node User Guide\n   https://doccompiler.ai/api/v1/jobs/shared/job_1776399442426_3925001f/download/nodejs__node__UserGuide.pdf\n18. Node.js\n   https://de.wikipedia.org/wiki/Node.js\n19. Release 0.14.0: Node.js v24, Wiki Integration, Devvit Skills (Experimental)\n   https://www.reddit.com/r/Devvit/comments/1vkvjlt/release_0140_nodejs_v24_wiki_integration_devvit/\n20. Node.js\n   https://it.wikipedia.org/wiki/Node.js\n21. Node.js\n   https://es.wikipedia.org/wiki/Node.js\n22. Node.js\n   https://ru.wikipedia.org/wiki/Node.js\n23. Are you all getting ready for Node 26, 2026-04-22, Version 26.0.0\n   https://www.reddit.com/r/node/comments/1spyd3n/are_you_all_getting_ready_for_node_26_20260422/",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-56866484-dc25-435a-ad57-afa20bf8491c",
+        "name": "webSearch",
+        "category": "web",
+        "phase": "result",
+        "status": "completed",
+        "target": "site.nodejs.org latest LTS Node.js version October 2026 ...",
+        "durationMs": 2058,
+        "query": "site.nodejs.org latest LTS Node.js version October 2026 ..."
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_delta_35ecc9a9f1beceb1162e9d96",
+      "messageId": "codex_message_20e94104aa1a0fc703eadca4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "The current Node.js LTS major version is **24 (Krypton)**, according to the [official Node.js release list](https://nodejs.org/en/about/previous-releases).",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_c76833298847bb238aadd876",
+      "messageId": "codex_message_20e94104aa1a0fc703eadca4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "The current Node.js LTS major version is **24 (Krypton)**, according to the [official Node.js release list](https://nodejs.org/en/about/previous-releases).",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "turn-summary-66b5e72badb12ed1749f270e3826ab69",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "The current Node.js LTS major version is **24 (Krypton)**, according to the [official Node.js release list](https://nodejs.org/en/about/previous-releases).",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 8,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

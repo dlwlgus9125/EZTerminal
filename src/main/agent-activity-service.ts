@@ -220,6 +220,13 @@ export class AgentActivityService {
     return { revision: this.revision, items };
   }
 
+  /** Host-only exact hook correlation. Ambiguous provider ownership is deliberately not guessed. */
+  conversationBinding(sessionId: string): { provider: 'codex' | 'claude'; providerSessionId: string } | undefined {
+    const record = [...this.records.values()].filter(item => item.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!record || (record.provider !== 'codex' && record.provider !== 'claude') || record.providerSessionIds.size !== 1) return undefined;
+    return { provider: record.provider, providerSessionId: [...record.providerSessionIds][0] };
+  }
+
   onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void {
     this.snapshotListeners.add(listener);
     return () => this.snapshotListeners.delete(listener);

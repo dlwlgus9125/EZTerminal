@@ -11,6 +11,7 @@ import {
   installCryptoRandomUuid,
   installElementReplaceChildren,
   installHTMLElementInert,
+  installFlexGapSupport,
   installObjectHasOwn,
   installWeakRef,
   installWebViewCompatibility,
@@ -18,6 +19,32 @@ import {
 } from './webview-compat';
 
 describe('WebView 74 compatibility primitives', () => {
+  it.each([0, 1])('detects flex gap from measured child separation (%i px), not parsed CSS', (separation) => {
+    document.documentElement.removeAttribute('data-ui-flex-gap');
+    const rects = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return { top: this.previousElementSibling ? 1 + separation : 0, bottom: this.previousElementSibling ? 2 + separation : 1 } as DOMRect;
+    });
+    try {
+      const before = document.body.childElementCount; installFlexGapSupport();
+      expect(document.documentElement.getAttribute('data-ui-flex-gap')).toBe(separation ? 'supported' : 'unsupported');
+      expect(document.body.childElementCount).toBe(before);
+    } finally { rects.mockRestore(); document.documentElement.removeAttribute('data-ui-flex-gap'); }
+  });
+  it('installs allSettled for mixed provider catalog results before loading application code', async () => {
+    const native = Object.getOwnPropertyDescriptor(Promise, 'allSettled')!;
+    try {
+      Object.defineProperty(Promise, 'allSettled', { configurable: true, writable: true, value: undefined });
+      installWebViewCompatibility();
+      expect(getMissingWebViewCompatibilityFeatures()).toEqual([]);
+      expect(WEBVIEW74_COMPATIBILITY_FEATURES).toContain('Promise.allSettled');
+      await expect(Promise.allSettled([Promise.resolve('models'), Promise.reject('offline'), 3])).resolves.toEqual([{ status: 'fulfilled', value: 'models' }, { status: 'rejected', reason: 'offline' }, { status: 'fulfilled', value: 3 }]);
+      await expect(Promise.allSettled([])).resolves.toEqual([]);
+      await expect(Promise.allSettled(null as never)).rejects.toThrow('requires an iterable');
+      const throwingIterator = { [Symbol.iterator](): Iterator<unknown> { throw new Error('iterator failed'); } };
+      await expect(Promise.allSettled(throwingIterator)).rejects.toThrow('iterator failed');
+    } finally { Object.defineProperty(Promise, 'allSettled', native); }
+    installWebViewCompatibility(); expect(Promise.allSettled).toBe(native.value);
+  });
   afterEach(() => {
     document.body.innerHTML = '';
   });
@@ -181,6 +208,7 @@ describe('WebView 74 compatibility primitives', () => {
       Element: { prototype: { replaceChildren: vi.fn() } },
       WeakRef: vi.fn(),
       AggregateError: undefined,
+      Promise: { allSettled: vi.fn() },
       Blob: { prototype: blobPrototype },
       File: { prototype: Object.create(blobPrototype) as object },
       Array: { prototype: { at: vi.fn() } },

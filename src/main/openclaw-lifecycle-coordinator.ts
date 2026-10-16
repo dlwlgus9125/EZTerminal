@@ -28,6 +28,12 @@ import { JsonFile } from './json-file';
 export const OPENCLAW_SUPERVISOR_TASK_NAME = 'EZTerminal OpenClaw Supervisor';
 const CONTROL_SCHEMA_VERSION = 1 as const;
 const CONTROL_POLL_MS = 1000;
+const OBSERVATION_FRESH_MS = 30_000;
+
+function isRecent(value: string | undefined, now: number): boolean {
+  const age = now - Date.parse(value ?? '');
+  return Number.isFinite(age) && age >= 0 && age < OBSERVATION_FRESH_MS;
+}
 
 interface OpenClawIntentRecord {
   readonly schemaVersion: 1;
@@ -324,33 +330,34 @@ export class PowerShellOpenClawSupervisor implements OpenClawSupervisorAdapter {
         ),
       };
     }
-    const repair = await runProcess('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      this.assetPath,
-      '-RepairStateAcl',
-      '-StateDirectory',
-      this.stateDirectory,
-      '-CliPath',
-      cliPath,
-    ], 30_000);
-    const repairResult = this.parseResult(repair);
-    if (!repairResult.ok) return repairResult;
-    try {
-      await this.installAsset();
-    } catch {
-      return {
-        ok: false,
-        issue: bootstrapIssue(
-          'permission-denied',
-          'EZTerminal could not install the current-user OpenClaw supervisor files.',
-          'Check access to the EZTerminal user-data directory and try again.',
-        ),
-      };
+    const source = await fs.readFile(this.assetPath);
+    const current = await fs.readFile(this.installedScriptPath).catch(() => null);
+    if (!current?.equals(source)) {
+      const repair = await runProcess('powershell.exe', [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', this.assetPath, '-RepairStateAcl',
+        '-StateDirectory', this.stateDirectory, '-CliPath', cliPath,
+      ], 30_000);
+      const repairResult = this.parseResult(repair);
+      if (!repairResult.ok) return repairResult;
+      const prepared = this.parseResult(await runProcess('powershell.exe', [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', this.assetPath, '-PrepareUpgrade',
+        '-StateDirectory', this.stateDirectory, '-CliPath', cliPath,
+      ], 350_000));
+      if (!prepared.ok) return prepared;
+      try {
+        await this.installAsset();
+      } catch {
+        return {
+          ok: false,
+          issue: bootstrapIssue(
+            'permission-denied',
+            'EZTerminal could not install the current-user OpenClaw supervisor files.',
+            'Check access to the EZTerminal user-data directory and try again.',
+          ),
+        };
+      }
     }
     const result = await runProcess('powershell.exe', [
       '-NoLogo',
@@ -395,6 +402,7 @@ export class OpenClawLifecycleCoordinator {
   private initialized: Promise<void> | null = null;
   private requestChain: Promise<void> = Promise.resolve();
   private pendingIntent: OpenClawIntentRecord | null = null;
+  private locallySubmittedGeneration: number | null = null;
   private bootstrapControlIssue: OpenClawControlIssue | null = null;
   private physicalStatus: OpenClawStatus = { state: 'unknown', port: 18789 };
   private physicalStatusObservedAt = 0;
@@ -475,13 +483,14 @@ export class OpenClawLifecycleCoordinator {
   private mergeSnapshot(runtime: OpenClawControlSnapshot | null): OpenClawControlSnapshot {
     const now = this.now();
     const base = runtime ?? defaultSnapshot(this.physicalStatus, now);
-    const runtimeUpdatedAt = runtime ? Date.parse(runtime.updatedAt) : Number.NaN;
-    const status = runtime && Number.isFinite(runtimeUpdatedAt)
+    const runtimeUpdatedAt = runtime ? Date.parse(runtime.statusObservedAt ?? '') : Number.NaN;
+    const status = runtime && isRecent(runtime.statusObservedAt, now.getTime())
       && runtimeUpdatedAt > this.physicalStatusObservedAt
-      ? runtime.status
+      ? { ...runtime.status, connectionState: this.physicalStatus.connectionState }
       : this.physicalStatus;
     const pending = this.pendingIntent;
     if (pending && (!runtime || runtime.generation < pending.generation)) {
+      const waiting = isRecent(pending.requestedAt, now.getTime()) && !this.bootstrapControlIssue;
       return {
         schemaVersion: CONTROL_SCHEMA_VERSION,
         intentId: pending.intentId,
@@ -489,7 +498,7 @@ export class OpenClawLifecycleCoordinator {
         status,
         desiredState: pending.desiredState,
         supervisorState: this.bootstrapControlIssue ? 'error' : 'ready',
-        operation: {
+        operation: waiting ? {
           intentId: pending.intentId,
           generation: pending.generation,
           action: pending.action,
@@ -497,7 +506,7 @@ export class OpenClawLifecycleCoordinator {
           attempt: 0,
           maxAttempts: 3,
           requestedAt: pending.requestedAt,
-        },
+        } : null,
         issue: this.bootstrapControlIssue,
         updatedAt: pending.requestedAt,
       };
@@ -506,7 +515,9 @@ export class OpenClawLifecycleCoordinator {
       this.pendingIntent = null;
       if (runtime.supervisorState === 'ready') this.bootstrapControlIssue = null;
     }
-    const merged = { ...base, status };
+    const staleOperation = base.operation && base.operation.phase !== 'blocked'
+      && !isRecent(base.supervisorHeartbeatAt, now.getTime());
+    const merged = { ...base, status, operation: staleOperation ? null : base.operation };
     return this.bootstrapControlIssue
       ? {
           ...merged,
@@ -587,10 +598,14 @@ export class OpenClawLifecycleCoordinator {
       const [current, runtime] = await Promise.all([this.readIntent(), this.readRuntime()]);
       const desiredState = desiredStateFor(action);
       const activePending = current
+        && this.locallySubmittedGeneration === current.generation
         && this.pendingIntent?.generation === current.generation
-        && this.pendingIntent.action === action;
+        && this.pendingIntent.action === action
+        && isRecent(this.pendingIntent.requestedAt, this.now().getTime())
+        && !this.bootstrapControlIssue;
       const activeSameAction = current
         && current.action === action
+        && isRecent(runtime?.supervisorHeartbeatAt, this.now().getTime())
         && runtime?.operation !== null
         && runtime?.generation === current.generation
         && runtime.operation?.phase !== 'blocked';
@@ -598,6 +613,9 @@ export class OpenClawLifecycleCoordinator {
         && current.desiredState === desiredState
         && action !== 'restart'
         && runtime?.issue === null
+        && isRecent(runtime?.statusObservedAt, this.now().getTime())
+        && this.physicalStatus.state === desiredState
+        && this.now().getTime() - this.physicalStatusObservedAt < OBSERVATION_FRESH_MS
         && ((desiredState === 'running' && runtime?.status.state === 'running')
           || (desiredState === 'stopped' && runtime?.status.state === 'stopped'));
       if (current && (activePending || activeSameAction || terminalSameIntent)) {
@@ -627,6 +645,7 @@ export class OpenClawLifecycleCoordinator {
       };
       await this.intentFile.enqueue(() => this.intentFile.writeAtomic(JSON.stringify(next)));
       this.pendingIntent = next;
+      this.locallySubmittedGeneration = next.generation;
       await this.refreshSnapshot();
 
       const wake = await this.supervisor.wake();

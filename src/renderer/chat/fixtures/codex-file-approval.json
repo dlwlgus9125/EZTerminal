@@ -1,0 +1,192 @@
+{
+  "provider": "codex",
+  "scenario": "file-approval",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-d945ea02860577a53eb4e16a3d7e3eb6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Create the file ../outside-codex-file-approval.md containing exactly one line `hello` using your file editing tool (apply_patch), not a shell command. If a tool call is denied or fails, stop immediately and say so in one sentence; do not retry or try alternatives.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_a441dedfc8f9156999ef66b5",
+      "messageId": "codex_message_9a952c8219186294ce112b40",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll use `apply_patch` to create the file with one line: `hello`.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_1fe08656a9e1130fed79459b",
+      "messageId": "codex_message_9a952c8219186294ce112b40",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll use `apply_patch` to create the file with one line: `hello`.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_746602656b13dd6401d963e0",
+      "messageId": "codex_message_30c4557c0f6bcb3f0bff6470",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Add <CAPTURE_ROOT>\\outside-codex-file-approval.md",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-56aaaa49-3c9c-4880-80e7-5fd8a7172098",
+        "name": "fileChange",
+        "category": "write",
+        "phase": "call",
+        "status": "running",
+        "target": "<CAPTURE_ROOT>\\outside-codex-file-approval.md",
+        "files": [
+          {
+            "path": "<CAPTURE_ROOT>\\outside-codex-file-approval.md",
+            "kind": "add",
+            "added": 1,
+            "removed": 0
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_b5e7f676217432a7dbfe4a60",
+      "messageId": "codex_message_30c4557c0f6bcb3f0bff6470",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<CAPTURE_ROOT>\\\\outside-codex-file-approval.md\",\"patch\":\"hello\\n\",\"coverage\":\"patch\"}]}",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-56aaaa49-3c9c-4880-80e7-5fd8a7172098",
+        "name": "fileChange",
+        "category": "write",
+        "phase": "result",
+        "status": "completed",
+        "target": "<CAPTURE_ROOT>\\outside-codex-file-approval.md",
+        "durationMs": 2217,
+        "files": [
+          {
+            "path": "<CAPTURE_ROOT>\\outside-codex-file-approval.md",
+            "kind": "add",
+            "added": 1,
+            "removed": 0
+          }
+        ]
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_f639741e75f8c93e72e99a6c",
+      "messageId": "codex_message_bc89ba10eba27b7fa26c11ee",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_delta_ea0a6e2bb218a5807b74e0fb",
+      "messageId": "codex_message_e471631ff8ec37ca589fa5e4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "Created `../outside-codex-file-approval.md` containing exactly one line: `hello`.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_item_4c0689f9191a222ab43c7a7f",
+      "messageId": "codex_message_e471631ff8ec37ca589fa5e4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "Created `../outside-codex-file-approval.md` containing exactly one line: `hello`.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "turn-summary-cc48b422b6a8e21f0e8e90dbc9919285",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Created `../outside-codex-file-approval.md` containing exactly one line: `hello`.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 9,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-e54c67c23cda27a6d844d4f3255f723c",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "file-change:n:0",
+      "risk": "write",
+      "title": "Apply file changes",
+      "request": {
+        "v": 1,
+        "callId": "exec-56aaaa49-3c9c-4880-80e7-5fd8a7172098",
+        "kind": "file-change",
+        "files": [
+          {
+            "path": "<CAPTURE_ROOT>\\outside-codex-file-approval.md",
+            "kind": "add",
+            "diff": "hello\n"
+          }
+        ]
+      },
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "method": "item/fileChange/requestApproval",
+      "result": {
+        "decision": "accept"
+      }
+    }
+  ]
+}

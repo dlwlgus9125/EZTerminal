@@ -9,6 +9,7 @@ export interface WorkspaceBarProps {
   readonly onApplyTwoByOne: () => void;
   readonly onApplyOnePlusTwo: () => void;
   readonly onApplySingle: () => void;
+  readonly onApplyRows?: () => void;
 }
 
 /**
@@ -26,23 +27,27 @@ export function WorkspaceBar({
   onApplyTwoByOne,
   onApplyOnePlusTwo,
   onApplySingle,
+  onApplyRows,
 }: WorkspaceBarProps): JSX.Element {
-  const { t } = useAppTranslation();
+  const { t, i18n } = useAppTranslation();
 
   return (
     <div className="workspace-bar" data-testid="workspace-bar">
-      <span className="workspace-bar__label">{t('workspace.currentLabel')}</span>
-      <span className="workspace-bar__name" data-testid="workspace-bar-name">
-        {presetName ?? t('workspace.unsavedLayout')}
-      </span>
+      {presetName !== null && (
+        <span className="workspace-bar__name" data-testid="workspace-bar-name" title={t('workspace.currentLabel')}>
+          {presetName}
+        </span>
+      )}
 
       <span className="workspace-bar__chips">
+        {onApplyRows && <button type="button" className="workspace-bar__chip" onClick={onApplyRows} disabled={paneCount < 2} title={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} aria-label={i18n.language.startsWith('ko') ? '위아래' : 'Rows'} data-testid="workspace-bar-layout-rows"><Rows2 aria-hidden="true" />{i18n.language.startsWith('ko') ? '위아래' : 'Rows'}</button>}
         <button
           type="button"
           className="workspace-bar__chip"
           onClick={onApplyTwoByOne}
           disabled={paneCount < 2}
           title={t('workspace.layoutTwoByOneDescription')}
+          aria-label={t('workspace.layoutTwoByOne')}
           data-testid="workspace-bar-layout-two-by-one"
         >
           <Columns2 aria-hidden="true" />
@@ -54,6 +59,7 @@ export function WorkspaceBar({
           onClick={onApplyOnePlusTwo}
           disabled={paneCount < 2}
           title={t('workspace.layoutOnePlusTwoDescription')}
+          aria-label={t('workspace.layoutOnePlusTwo')}
           data-testid="workspace-bar-layout-one-plus-two"
         >
           <Rows2 aria-hidden="true" />
@@ -65,6 +71,7 @@ export function WorkspaceBar({
           onClick={onApplySingle}
           disabled={paneCount < 2}
           title={t('workspace.layoutSingleDescription')}
+          aria-label={t('workspace.layoutSingle')}
           data-testid="workspace-bar-layout-single"
         >
           <Square aria-hidden="true" />

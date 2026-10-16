@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-10-13T11:06:27.539Z",
+  "kind": "existing-prototype-scenario-audit",
+  "plan": "docs/ux/agent-workflow-plan.md",
+  "target": "docs/ux/reference/v2-agent-chat-r2/index.html",
+  "method": "Read-only headless Chromium inspection of 8 scene/device combinations plus 2 in-memory draft round trips; HTTP(S) requests blocked. Product and provider not launched.",
+  "productValidated": false,
+  "realProviderValidated": false,
+  "androidApkValidated": false,
+  "newDesignApproved": false,
+  "sources": {
+    "src/shared/planning.ts": "d6faead4ddb86d17f49f6476b9ba1c640e5f023c5248e46b0138d1bbb52626ba",
+    "src/main/planning-service.ts": "54e1e5ab370a26393c33e1dd503fd3daf1155688647cf28c4c011934579fd0e1",
+    "src/shared/planning-draft.ts": "dc5f85f3bc3252865b57e89b0da875daaa48b5bdcaa26ad375dca3f1a170409c",
+    "src/renderer/PlanningWorkspacePanel.stories.tsx": "050d100575dc04547525a5ab7a9411d83209f0b89fd22707b3abd0cd7700c946",
+    "src/renderer/PlanningWorkspacePanel.tsx": "4863a5fe3d47911511d32ea8e2b000c293fcf6eb8755354ceef2b8cad2c24e67",
+    "src/renderer/PlanningWorkspaceDockPanel.tsx": "bb77d28f4cb4017468a5c3dcead41079b596dd1f429fc631c1e1e5c0d8f79a73",
+    "src/renderer/PlanningExecutionPanel.tsx": "e181d48b6ea8b0240c590e99453eb844b51c82cc5fabf12437794eb1fdc3e1c6",
+    "src/renderer/PlanningResultDetails.tsx": "135a444a24dd392fdf430dff4f7c02aedafe73f275dc58c62ad5a7dbee6445fc",
+    "src/renderer/PlanningQuickTaskCard.tsx": "4491cb390cdc663d85175e9c31312f13b413600a1cb6203eaf4feb67433223ea",
+    "src/renderer/StructuredAgentSession.tsx": "385fd8d253f81ec954b353cac0c93c776c2125654c49ca162d872a5657a4bac4",
+    "src/main/agent-provider-adapter.ts": "29f74a982b97f6db7cd1eaccb58d8031fa1f5de5fc3dbe25284d09b3c678aa67",
+    "src/main/claude-provider-adapter.ts": "347b52c5f4b7738dadb26e09c7286fbd8b1a681a14e110d4adcab1c6d73451f1",
+    "src/main/planning-ai-service.ts": "8bd7eecc133b8aa515cbeaacd944d9db7051c93e5eda86fb9aad19adcafe5747",
+    "mobile/src/MobilePlanningNavigator.tsx": "f5e5e4c4227400eb1b4e5beb5e9a8a8a6966b6df9111aa2c460cbfc89cb8a64d",
+    "mobile/src/mobile-planning-draft-store.ts": "bbcf45f1ffadc1a76a12107ab181052bdfc41cc619acdccd034182abc0f86bb8",
+    "docs/ux/reference/v2-agent-chat-r2/manifest.json": "b9a994f26b9b5f837dfc62666554be17864d60e34ea08d2428ccb691b2af5f58"
+  },
+  "observations": [
+    {
+      "device": "desktop",
+      "scene": "flow-overview",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "device-desktop",
+        "device-mobile",
+        "language",
+        "review",
+        "new-chat",
+        "extensions",
+        "chat",
+        "about-scope",
+        "j-area",
+        "j-last-chat"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "desktop",
+      "scene": "flow-planning",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "device-desktop",
+        "device-mobile",
+        "language",
+        "review",
+        "new-chat",
+        "extensions",
+        "chat",
+        "about-scope",
+        "j-area",
+        "j-last-chat",
+        "j-open-chat",
+        "j-save-document"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "desktop",
+      "scene": "welcome",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "device-desktop",
+        "device-mobile",
+        "language",
+        "review",
+        "new-chat",
+        "extensions",
+        "chat",
+        "about-scope",
+        "session",
+        "history",
+        "j-area",
+        "j-last-chat",
+        "skin",
+        "provider-info",
+        "skills",
+        "mcp",
+        "refresh",
+        "prompt-explore",
+        "prompt-ui",
+        "prompt-debug",
+        "select-skill",
+        "attachment",
+        "files",
+        "model",
+        "permission",
+        "provider"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "desktop",
+      "scene": "flow-tasks",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "device-desktop",
+        "device-mobile",
+        "language",
+        "review",
+        "new-chat",
+        "extensions",
+        "chat",
+        "about-scope",
+        "j-area",
+        "j-last-chat",
+        "j-prepare"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "mobile",
+      "scene": "flow-overview",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "language",
+        "review",
+        "navigation",
+        "new-chat",
+        "extensions",
+        "j-area",
+        "j-last-chat",
+        "chat",
+        "about-scope"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "mobile",
+      "scene": "flow-planning",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "language",
+        "review",
+        "navigation",
+        "new-chat",
+        "extensions",
+        "j-area",
+        "j-last-chat",
+        "j-open-chat",
+        "j-save-document",
+        "chat",
+        "about-scope"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "mobile",
+      "scene": "welcome",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "language",
+        "review",
+        "navigation",
+        "new-chat",
+        "extensions",
+        "j-area",
+        "j-last-chat",
+        "skin",
+        "provider-info",
+        "skills",
+        "mcp",
+        "refresh",
+        "prompt-explore",
+        "prompt-ui",
+        "prompt-debug",
+        "select-skill",
+        "attachment",
+        "files",
+        "model",
+        "permission",
+        "provider",
+        "chat",
+        "about-scope"
+      ],
+      "observationOnly": true
+    },
+    {
+      "device": "mobile",
+      "scene": "flow-tasks",
+      "simulatedModelTurns": 0,
+      "visibleCreatePlanButtons": [],
+      "visibleActions": [
+        "language",
+        "review",
+        "navigation",
+        "new-chat",
+        "extensions",
+        "j-area",
+        "j-last-chat",
+        "j-prepare",
+        "chat",
+        "about-scope"
+      ],
+      "observationOnly": true
+    }
+  ],
+  "roundTrips": [
+    {
+      "device": "desktop",
+      "documentDraftPreserved": true,
+      "conversationDraftPreserved": true,
+      "simulatedModelTurnsBeforeReturn": 0,
+      "simulatedModelTurnsAfterReopen": 0
+    },
+    {
+      "device": "mobile",
+      "documentDraftPreserved": true,
+      "conversationDraftPreserved": true,
+      "simulatedModelTurnsBeforeReturn": 0,
+      "simulatedModelTurnsAfterReopen": 0
+    }
+  ],
+  "consoleErrors": [],
+  "externalRequests": [],
+  "limits": [
+    "The model turn counter belongs to the prototype fixture, not a real provider.",
+    "No multiple-plan or creation feature exists in this fixture; missing entry is an observed gap, not a failed implementation test.",
+    "No screenshot baselines were updated.",
+    "No product E2E or performance benchmark was run."
+  ]
+}

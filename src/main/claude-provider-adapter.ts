@@ -1,7 +1,14 @@
+import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
+import { clipApprovalBody, parseApprovalRequest, type ApprovalRequest } from '../shared/approval-request';
+import { claudeFileChange, encodeFileChanges, replacementLines, type RecordedFileChange } from '../shared/conversation-changes';
+import { toolCategory, toolTarget } from '../shared/tool-catalog';
+import type { TodoItem, ToolPayload, ToolStatus, TranscriptPayload } from '../shared/transcript-payload';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import type { AgentCapabilityItem, AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import { claudeExtensionArguments, runNativeExtensionCommand } from './agent-native-extensions';
 
 import {
   getSessionMessages,
@@ -16,7 +23,9 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 
 import type { DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
+import { promptWithChatContext } from '../shared/chat-message';
 import {
+  CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
   DEFAULT_CLAUDE_PROVIDER_ENABLEMENT,
   getClaudeEnablementGateFailure,
   type ClaudeAuthenticationPath,
@@ -50,6 +59,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_500;
 const MAX_SAFE_TEXT_LENGTH = 20_000;
 const MAX_RECONCILIATION_ITEMS = 2_000;
 const MAX_PROVIDER_HISTORY_MESSAGES = 5_000;
+const MAX_TRACKED_TOOL_CALLS = 500;
 /** Oldest Claude Code CLI this adapter will review, enable and launch. */
 export const CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION = '2.1.260';
 const CLAUDE_AGENT_SDK_ARGV = [
@@ -149,7 +159,7 @@ const ERROR_MESSAGES: Readonly<Record<ClaudeProviderErrorCode, string>> = {
     'Using a claude.ai login or its subscription rate limits in a third-party product requires prior Anthropic approval. EZTerminal does not start or provide that login flow.',
   CLAUDE_EXECUTABLE_NOT_FOUND: 'An installed Claude executable could not be found.',
   CLAUDE_EXECUTABLE_INVALID:
-    'The Claude executable path or version no longer matches the pinned Agent SDK review.',
+    'The Claude executable is no longer at the reviewed path or is outside the supported version range.',
   CLAUDE_AUTHENTICATION_FAILED:
     'Claude authentication failed. Configure the installed Claude CLI or an API-key environment outside EZTerminal.',
   CLAUDE_ACCOUNT_UNAVAILABLE: 'The Claude account is currently unavailable.',
@@ -273,6 +283,8 @@ export interface ClaudeQuerySession extends AsyncIterable<SDKMessage> {
   setModel(model?: string): Promise<void>;
   initializationResult(): Promise<unknown>;
   supportedModels(): Promise<ModelInfo[]>;
+  supportedCommands?(): Promise<readonly { name: string; description: string }[]>;
+  mcpServerStatus?(): Promise<readonly { name: string; status: string; scope?: string }[]>;
   close(): void;
   return?(value?: void): Promise<IteratorResult<SDKMessage, void>>;
 }
@@ -301,6 +313,11 @@ export interface ClaudeProviderAdapterOptions {
   readonly initializationTimeoutMs?: number;
   readonly operationTimeoutMs?: number;
   readonly shutdownTimeoutMs?: number;
+  readonly extensionCommand?: typeof runNativeExtensionCommand;
+  /** Streaming batch timing; replay passes a scheduler that never fires so goldens are deterministic. */
+  readonly deltaCoalescer?: DeltaCoalescerOptions;
+  /** Expose Claude Code's task tools (TaskCreate/TaskUpdate) to tool-enabled sessions. Defaults to true. */
+  readonly enableTaskTools?: boolean;
 }
 
 type TurnState = 'submitted' | 'completed' | 'interrupted' | 'failed';
@@ -323,6 +340,29 @@ interface PendingApproval {
   settle(result: PermissionResult): void;
 }
 
+interface ToolCallRecord {
+  readonly name: string;
+  readonly input: unknown;
+}
+
+/** The main thread's streaming assistant message (one at a time; blocks are sequential). */
+interface StreamState {
+  readonly messageId: string;
+  /** Latest content_block_start; that block's final `assistant` message arrives before its stop. */
+  index?: number;
+  thinking?: { readonly index: number; readonly startedAt: number; text: string };
+}
+
+interface TranscriptOptions {
+  readonly turnId?: string;
+  readonly source: string;
+  readonly messageId?: string;
+  readonly payload?: TranscriptPayload;
+  /** Keep an empty body; a reasoning row still carries its duration. */
+  readonly allowEmpty?: boolean;
+  readonly isDelta?: boolean;
+}
+
 interface SessionRecord {
   readonly context: ProviderSessionContext;
   readonly enablement: ClaudeProviderEnablement;
@@ -333,8 +373,15 @@ interface SessionRecord {
   streamPromise: Promise<void>;
   readonly turnsByCommand: Map<string, TurnRecord>;
   readonly turnsByUuid: Map<string, TurnRecord>;
+  /** The turn the CLI is answering; only its first message carries user_message_uuid. */
+  activeTurn?: TurnRecord;
+  stream?: StreamState;
+  readonly coalescer: DeltaCoalescer;
   readonly pendingApprovals: Map<string, PendingApproval>;
-  readonly toolNames: Map<string, string>;
+  readonly toolCalls: Map<string, ToolCallRecord>;
+  /** Claude Code's task list (TaskCreate/TaskUpdate ids, or TodoWrite positions). */
+  readonly tasks: Map<string, TodoItem>;
+  readonly fileChanges: Map<string, RecordedFileChange>;
   readonly childTitles: Map<string, string>;
   readonly transcript: DaemonTranscriptItem[];
   sequence: number;
@@ -352,6 +399,7 @@ interface SessionRecord {
 
 interface ClaudeAccountAuthenticationEvidence {
   readonly apiProvider?: string;
+  readonly apiKeySource?: string;
   readonly hasSubscription: boolean;
   readonly indicatesOAuth: boolean;
 }
@@ -463,9 +511,199 @@ function permissionMode(preset: PermissionPreset): NonNullable<Options['permissi
 }
 
 function toolRisk(toolName: string): 'read' | 'write' | 'danger' {
-  if (['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'].includes(toolName)) return 'read';
-  if (['Edit', 'Write', 'NotebookEdit'].includes(toolName)) return 'write';
+  if (['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'AskUserQuestion'].includes(toolName)) return 'read';
+  if (['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'ExitPlanMode'].includes(toolName)) return 'write';
   return 'danger';
+}
+
+function asArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** Shared by streamed deltas and the block's final text so the renderer replaces one with the other. */
+function claudeMessageId(providerMessageId: string, index: number): string {
+  return `claude_msg:${providerMessageId}:${String(index)}`;
+}
+
+function shortText(value: string): string {
+  return clipApprovalBody(value, 2_000);
+}
+
+function firstLine(value: string, limit = 160): string {
+  const line = value.trim().split(/\r?\n/u, 1)[0] ?? '';
+  return line.length > limit ? `${line.slice(0, limit - 1)}...` : line;
+}
+
+/** Legacy `Name\n{json}` body. JSON keeps every field; a Write's path must not collapse into its content. */
+function toolCallText(name: string, input: unknown): string {
+  return `${name}\n${typeof input === 'object' && input !== null ? JSON.stringify(input, null, 2) : providerTranscriptText(input)}`;
+}
+
+/** ToolSearch answers with tool_reference blocks; show the loaded tool names instead of their JSON. */
+function toolResultText(content: unknown): string {
+  if (!Array.isArray(content)) return providerTranscriptText(content);
+  return content.map((entry) => {
+    const block = asObject(entry);
+    return block?.type === 'tool_reference' && typeof block.tool_name === 'string'
+      ? block.tool_name
+      : providerTranscriptText(entry);
+  }).filter(Boolean).join('\n');
+}
+
+function toolCallPayload(name: string, callId: string, input: unknown): ToolPayload {
+  const category = toolCategory(name);
+  const target = toolTarget(name, input);
+  const command = category === 'command' ? asString(asObject(input)?.command) : null;
+  return {
+    v: 1,
+    type: 'tool',
+    callId: shortText(callId),
+    name: shortText(name),
+    category,
+    phase: 'call',
+    status: 'running',
+    ...(target ? { target: shortText(target) } : {}),
+    ...(command ? { command: clipApprovalBody(command, 8_000) } : {}),
+  };
+}
+
+function lineCount(value: unknown): number {
+  return typeof value === 'string' && value ? value.replace(/\r?\n$/u, '').split(/\r?\n/u).length : 0;
+}
+
+/** Files touched by a successful Edit/MultiEdit/Write, counted from the call input the change record came from. */
+/** Lines an edit adds and removes, counted from its line diff rather than its whole old and new text. */
+function editCounts(edits: readonly (JsonObject | null)[]): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const edit of edits) {
+    for (const line of replacementLines(asString(edit?.old_string) ?? '', asString(edit?.new_string) ?? '')) {
+      if (line.startsWith('+')) added += 1;
+      else if (line.startsWith('-')) removed += 1;
+    }
+  }
+  return { added, removed };
+}
+
+function toolResultFiles(
+  name: string,
+  input: unknown,
+  change: RecordedFileChange | undefined,
+  structured: unknown,
+): ToolPayload['files'] {
+  const record = asObject(input);
+  if (name === 'MultiEdit') {
+    const filePath = asString(record?.file_path);
+    if (!filePath) return undefined;
+    return [{ path: shortText(filePath), kind: 'update', ...editCounts(asArray(record?.edits).map(asObject)) }];
+  }
+  if (!change) return undefined;
+  if (name === 'Edit') {
+    return [{ path: shortText(change.path), kind: 'update', ...editCounts([record]) }];
+  }
+  if (name === 'Write') {
+    // An overwrite reports only the new content, so its removed lines are unknown.
+    const created = asObject(structured)?.type === 'create';
+    return [{ path: shortText(change.path), kind: created ? 'add' : 'update', ...(created ? { added: lineCount(record?.content) } : {}) }];
+  }
+  return undefined;
+}
+
+function todoStatus(value: unknown): TodoItem['status'] | undefined {
+  return value === 'pending' || value === 'in_progress' || value === 'completed' ? value : undefined;
+}
+
+function todoChecklist(items: readonly TodoItem[]): string {
+  return items.map((item) => (
+    `- [${item.status === 'completed' ? 'x' : ' '}] ${item.text}${item.status === 'in_progress' ? ' (in progress)' : ''}`
+  )).join('\n') || 'No tasks.';
+}
+
+function prefixedLines(prefix: '+' | '-', value: unknown): string[] {
+  return typeof value === 'string' && value
+    ? value.replace(/\r?\n$/u, '').split(/\r?\n/u).map((line) => `${prefix}${line}`)
+    : [];
+}
+
+/** A small unified-style diff: one `@@` hunk per replacement, or the written content as additions. */
+function approvalDiff(toolName: string, input: Record<string, unknown>): string {
+  const hunks = toolName === 'Write'
+    ? [prefixedLines('+', input.content)]
+    : (toolName === 'MultiEdit' ? asArray(input.edits).map(asObject) : [input])
+      .map((edit) => replacementLines(asString(edit?.old_string) ?? '', asString(edit?.new_string) ?? ''));
+  return hunks.map((lines) => ['@@', ...lines].join('\n')).join('\n');
+}
+
+/**
+ * The approval card's subject plus a legacy title/detail. Sensitivity is
+ * metadata; approval detail is local and archive-redacted
+ * (docs/design/agent-collaboration.md).
+ */
+function claudeApproval(
+  toolName: string,
+  input: Record<string, unknown>,
+  callId: string,
+): { readonly title: string; readonly detail?: string; readonly request?: ApprovalRequest } {
+  const target = toolTarget(toolName, input);
+  const generic: ApprovalRequest = {
+    v: 1,
+    callId: shortText(callId),
+    kind: 'tool',
+    toolName: shortText(toolName),
+    ...(target ? { target: shortText(target) } : {}),
+    input: clipApprovalBody(JSON.stringify(input, null, 2)),
+  };
+  let title = `Use ${toolName}`;
+  let detail = target;
+  let request: unknown = generic;
+  if (toolCategory(toolName) === 'command') {
+    const command = asString(input.command) ?? '';
+    title = 'Run command';
+    detail = command;
+    request = { v: 1, callId: shortText(callId), kind: 'command', command: clipApprovalBody(command) };
+  } else if (toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'Write') {
+    const filePath = asString(input.file_path) ?? '';
+    title = `Edit ${path.win32.basename(filePath) || 'file'}`;
+    detail = filePath;
+    request = {
+      v: 1,
+      callId: shortText(callId),
+      kind: 'file-change',
+      // Whether a Write creates or replaces is unknown until it runs.
+      files: [{ path: shortText(filePath), ...(toolName === 'Write' ? {} : { kind: 'update' }), diff: clipApprovalBody(approvalDiff(toolName, input)) }],
+    };
+  } else if (toolName === 'AskUserQuestion') {
+    const questions = asArray(input.questions).map(asObject).slice(0, 4).map((question) => ({
+      question: shortText(asString(question?.question) ?? ''),
+      ...(asString(question?.header) ? { header: shortText(asString(question?.header)!) } : {}),
+      multiSelect: question?.multiSelect === true,
+      options: asArray(question?.options).map(asObject).filter((option) => asString(option?.label)).slice(0, 8).map((option) => ({
+        label: shortText(asString(option?.label)!),
+        ...(asString(option?.description) ? { description: shortText(asString(option?.description)!) } : {}),
+      })),
+    }));
+    title = 'Answer a question';
+    detail = questions[0]?.question;
+    request = { v: 1, callId: shortText(callId), kind: 'question', questions };
+  } else if (toolName === 'ExitPlanMode') {
+    const markdown = asString(input.plan);
+    const filePath = asString(input.planFilePath);
+    title = 'Approve plan';
+    detail = markdown ?? filePath ?? undefined;
+    request = {
+      v: 1,
+      callId: shortText(callId),
+      kind: 'plan',
+      ...(markdown ? { markdown: clipApprovalBody(markdown) } : {}),
+      ...(filePath ? { filePath: shortText(filePath) } : {}),
+    };
+  }
+  const summary = detail ? firstLine(detail) : '';
+  return {
+    title,
+    ...(summary ? { detail: summary } : {}),
+    request: parseApprovalRequest(request) ?? parseApprovalRequest(generic),
+  };
 }
 
 function normalizeEnablement(value: ClaudeProviderEnablement): ClaudeProviderEnablement {
@@ -542,6 +780,7 @@ function claudeAccountAuthenticationEvidence(
   const accountApiKeySource = asString(account?.apiKeySource);
   return {
     ...(apiProvider ? { apiProvider } : {}),
+    ...(accountApiKeySource ? { apiKeySource: accountApiKeySource } : {}),
     hasSubscription: Boolean(subscriptionType?.trim()),
     indicatesOAuth: [tokenSource, accountApiKeySource].some((value) => (
       typeof value === 'string' && /oauth|claude\.ai|subscription/iu.test(value)
@@ -661,6 +900,7 @@ function providerModel(model: ModelInfo, isDefault: boolean): ProviderModel {
     displayName: safeText(model.displayName, 200) || 'Claude',
     description: safeText(model.description, 500) || undefined,
     supportsReasoning: model.supportsEffort !== false,
+    ...(model.supportedEffortLevels?.length ? { reasoningEfforts: model.supportedEffortLevels } : {}),
     isDefault,
   };
 }
@@ -712,6 +952,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private readonly operationTimeoutMs: number;
   private readonly shutdownTimeoutMs: number;
   private readonly providedQueryFactory: boolean;
+  private readonly extensionCommand: typeof runNativeExtensionCommand;
+  private readonly deltaCoalescerOptions: DeltaCoalescerOptions | undefined;
+  private readonly enableTaskTools: boolean;
+  private readonly discoveryControllers = new Set<AbortController>();
   private readonly listeners = new Set<AgentProviderEventListener>();
   private readonly sessions = new Map<string, SessionRecord>();
   private executablePromise: Promise<string | null> | null = null;
@@ -726,6 +970,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.enablementStore = options.enablementStore ?? new MemoryClaudeProviderEnablementStore();
     this.queryFactory = options.queryFactory ?? ((input) => query(input) as ClaudeQuerySession);
     this.providedQueryFactory = options.queryFactory !== undefined;
+    this.extensionCommand = options.extensionCommand ?? runNativeExtensionCommand;
     this.historyReader = options.historyReader ?? ((sessionId, historyOptions) =>
       getSessionMessages(sessionId, historyOptions));
     this.resolveExecutable = options.resolveExecutable ?? (async () => {
@@ -740,6 +985,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.initializationTimeoutMs = options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS;
     this.operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    this.deltaCoalescerOptions = options.deltaCoalescer;
+    this.enableTaskTools = options.enableTaskTools ?? true;
   }
 
   setLaunchDescriptor(descriptor: ProviderLaunchDescriptor): void {
@@ -839,7 +1086,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       authenticationState: unavailable ? 'unavailable' : 'first-launch',
       authenticationDetail: unavailable
         ? 'Claude authentication cannot be verified until provider setup and executable review are complete.'
-        : 'Claude authentication is verified from SDK initialization metadata when the first Agent session starts.',
+        : CLAUDE_FIRST_LAUNCH_AUTHENTICATION_DETAIL,
       reviewNotices: [
         {
           id: 'anthropic-commercial-terms',
@@ -869,15 +1116,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       this.assertLifecycleGeneration(lifecycleGeneration, signal);
       return [...this.sessions.values()].find((session) => !session.disposed && session.initialized);
     });
-    if (!active) {
-      return [{
-        id: 'default',
-        displayName: 'Claude',
-        description: 'Use the default model selected by the installed Claude CLI.',
-        supportsReasoning: true,
-        isDefault: true,
-      }];
-    }
+    if (!active) return (await this.listCapabilities(process.cwd(), signal)).models;
     try {
       const models = await bounded(
         abortable(active.query.supportedModels(), signal),
@@ -887,6 +1126,81 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     } catch (error) {
       throw classifyClaudeProviderError(error);
     }
+  }
+
+  async listCapabilities(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog> {
+    const generation = await this.enterLifecycle(signal);
+    const readiness = await abortable(this.assertReady(signal), signal);
+    if (!path.isAbsolute(workspaceRoot)) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    this.discoveryControllers.add(controller);
+    const input = new AsyncInputQueue<SDKUserMessage>();
+    let metadata: ClaudeQuerySession | undefined;
+    let stream: Promise<void> | undefined;
+    try {
+      this.assertLifecycleGeneration(generation, signal);
+      metadata = this.queryFactory({ prompt: input, options: {
+        cwd: workspaceRoot, pathToClaudeCodeExecutable: readiness.executablePath,
+        abortController: controller, persistSession: false, env: readiness.environment,
+        settingSources: ['user', 'project', 'local'], permissionMode: 'plan',
+        canUseTool: async () => ({ behavior: 'deny', message: 'Capability discovery does not execute tools.' }),
+      } });
+      const querySession = metadata;
+      // The input queue deliberately stays empty. SDK control requests work before
+      // a prompt; draining the output is required for their responses, not a turn.
+      stream = (async () => { try { for await (const message of querySession) { void message; if (controller.signal.aborted) break; } } catch { /* Control calls report errors below. */ } })();
+      const initialization = await bounded(abortable(querySession.initializationResult(), controller.signal), this.initializationTimeoutMs);
+      const [models, commands, servers, installed] = await Promise.allSettled([
+        bounded(abortable(querySession.supportedModels(), controller.signal), this.operationTimeoutMs),
+        querySession.supportedCommands ? bounded(abortable(querySession.supportedCommands(), controller.signal), this.operationTimeoutMs) : Promise.resolve(asObject(initialization)?.commands ?? []),
+        querySession.mcpServerStatus ? bounded(abortable(querySession.mcpServerStatus(), controller.signal), this.operationTimeoutMs) : Promise.reject(new Error('Unsupported MCP status')),
+        this.extensionCommand(readiness.executablePath, ['plugin', 'list', '--json'], workspaceRoot, readiness.environment, controller.signal),
+      ]);
+      const items: AgentCapabilityItem[] = [];
+      const issues: { section: 'models' | 'skills' | 'plugins' | 'mcp'; message: string }[] = [];
+      if (commands.status === 'fulfilled') for (const raw of Array.isArray(commands.value) ? commands.value : []) {
+        const command = asObject(raw);
+        const name = typeof command?.name === 'string' ? command.name : undefined;
+        if (name) items.push({ id: name, kind: 'skill', name, description: typeof command?.description === 'string' ? command.description : undefined,
+          invocation: `/${name}`, enabled: true, source: 'Claude native settings', actions: [] });
+      }
+      if (servers.status === 'fulfilled') for (const server of servers.value) items.push({
+        id: server.name, kind: 'mcp', name: server.name, status: server.status, scope: server.scope,
+        enabled: server.status !== 'disabled', actions: ['user', 'project', 'local'].includes(server.scope ?? '') ? ['mcp-remove'] : [],
+      });
+      if (installed.status === 'fulfilled') {
+        try {
+          const plugins: unknown = JSON.parse(installed.value);
+          for (const raw of Array.isArray(plugins) ? plugins : []) {
+            const plugin = asObject(raw);
+            if (typeof plugin?.id !== 'string') continue;
+            if (typeof plugin.projectPath === 'string' && path.resolve(plugin.projectPath).toLowerCase() !== path.resolve(workspaceRoot).toLowerCase()) continue;
+            items.push({ id: plugin.id, kind: 'plugin', name: plugin.id,
+              version: typeof plugin.version === 'string' ? plugin.version : undefined,
+              scope: typeof plugin.scope === 'string' ? plugin.scope : undefined,
+              source: typeof plugin.installPath === 'string' ? plugin.installPath : undefined,
+              enabled: plugin.enabled === true, actions: ['plugin-enable', 'plugin-disable', 'plugin-update', 'plugin-remove'] });
+          }
+        } catch { issues.push({ section: 'plugins', message: 'The installed Claude CLI returned an incompatible plugin catalog.' }); }
+      }
+      for (const [section, result] of [['models', models], ['skills', commands], ['mcp', servers], ['plugins', installed]] as const) {
+        if (result.status === 'rejected') issues.push({ section, message: `Claude could not read ${section}. Refresh or update the installed provider.` });
+      }
+      return { models: models.status === 'fulfilled' ? models.value.map((model, index) => providerModel(model, index === 0)) : [], items, issues,
+        actions: ['plugin-install', 'plugin-remove', 'plugin-enable', 'plugin-disable', 'plugin-update', 'marketplace-add', 'marketplace-remove', 'marketplace-update', 'mcp-add', 'mcp-remove'] };
+    } catch (error) { throw classifyClaudeProviderError(error); }
+    finally {
+      input.close(); controller.abort(); metadata?.close();
+      signal?.removeEventListener('abort', abort); this.discoveryControllers.delete(controller);
+      if (stream) await Promise.race([stream, new Promise<void>((resolve) => { const timer = setTimeout(resolve, this.shutdownTimeoutMs); timer.unref?.(); })]);
+    }
+  }
+
+  async manageExtension(workspaceRoot: string, command: AgentExtensionCommand, signal?: AbortSignal): Promise<void> {
+    const readiness = await abortable(this.assertReady(signal), signal);
+    await this.extensionCommand(readiness.executablePath, claudeExtensionArguments(command), workspaceRoot, readiness.environment, signal);
   }
 
   async createSession(context: ProviderSessionContext, signal?: AbortSignal): Promise<ProviderSessionHandle> {
@@ -904,6 +1218,14 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     this.throwIfAborted(signal);
     const session = this.session(input.sessionId, input.providerSessionId);
     if (session.turnsByCommand.has(input.commandId)) return;
+    if (input.context?.skills?.length) {
+      if (session.context.toolsDisabled || !session.query.supportedCommands) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+      const commands = await bounded(abortable(session.query.supportedCommands(), signal), this.operationTimeoutMs);
+      if (input.context.skills.some((skill) => skill.providerId !== 'claude' || !commands.some((command) => command.name === skill.id && command.name === skill.name))) {
+        throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+      }
+      if (session.turnsByCommand.has(input.commandId)) return;
+    }
     const clientUuid = deterministicCommandUuid(input.commandId);
     const turn: TurnRecord = {
       turnId: input.turnId,
@@ -921,14 +1243,17 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       commandId: input.commandId,
     });
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
-    this.appendTranscript(session, 'user-message', input.prompt, {
-      turnId: input.turnId,
-      source: `command:${input.commandId}`,
-    });
+    // No user-message echo: the runtime persisted the prompt when it accepted the command.
     try {
       session.input.push({
         type: 'user',
-        message: { role: 'user', content: input.prompt },
+        message: { role: 'user', content: input.context ? [
+          { type: 'text', text: promptWithChatContext(input.prompt, input.context) },
+          ...(input.context.attachments ?? []).filter((attachment) => attachment.kind === 'image').map((attachment) => ({
+            type: 'image' as const,
+            source: { type: 'base64' as const, media_type: attachment.mimeType as 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data: attachment.data },
+          })),
+        ] : input.prompt },
         parent_tool_use_id: null,
         uuid: clientUuid as SDKUserMessage['uuid'],
         session_id: input.providerSessionId,
@@ -995,15 +1320,20 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const session = this.session(input.sessionId, input.providerSessionId);
     const pending = session.pendingApprovals.get(input.providerRequestId);
     if (!pending) throw new ClaudeProviderError('CLAUDE_APPROVAL_NOT_FOUND');
+    const response = input.response;
+    // AskUserQuestion reads its answers from the approved input.
+    const answers = input.decision === 'allow' && response?.kind === 'answers' ? response.answers : undefined;
+    const plan = input.decision === 'allow' && response?.kind === 'plan' ? response : undefined;
+    const feedback = input.decision === 'deny' && response?.kind === 'feedback' ? response.message : undefined;
     pending.settle(input.decision === 'allow'
       ? {
           behavior: 'allow',
-          updatedInput: pending.input,
+          updatedInput: answers ? { ...pending.input, answers } : pending.input,
           toolUseID: pending.toolUseId,
         }
       : {
           behavior: 'deny',
-          message: 'Denied by the user.',
+          message: feedback ?? 'Denied by the user.',
           toolUseID: pending.toolUseId,
         });
     session.pendingApprovals.delete(input.providerRequestId);
@@ -1016,6 +1346,18 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       sessionId: input.sessionId,
       state: session.pendingApprovals.size > 0 ? 'blocked' : 'working',
     });
+    if (!plan) return;
+    // After the settle: the CLI itself leaves plan mode for `default` once ExitPlanMode is approved.
+    try {
+      await bounded(session.query.setPermissionMode(permissionMode(plan.mode)), this.operationTimeoutMs);
+      session.handle = { ...session.handle, permissionPreset: plan.mode };
+    } catch {
+      // The approval itself was delivered, so this is not a delivery failure.
+      this.appendTranscript(session, 'notice', 'Claude could not switch the permission mode after the plan approval.', {
+        turnId: pending.turnId,
+        source: `approval:${input.providerRequestId}:permission-mode`,
+      });
+    }
   }
 
   subscribe(listener: AgentProviderEventListener): () => void {
@@ -1093,6 +1435,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const session = this.sessions.get(sessionId);
     if (!session || session.handle.providerSessionId !== providerSessionId) return;
     if (session.disposed) return;
+    session.coalescer.dispose();
     for (const turn of session.turnsByCommand.values()) {
       if (turn.state === 'submitted') this.finishTurn(session, turn, 'interrupted');
     }
@@ -1109,6 +1452,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   deactivate(): Promise<void> {
+    for (const controller of this.discoveryControllers) controller.abort();
     if (this.deactivatePromise) return this.deactivatePromise;
     this.lifecycleGeneration += 1;
     const operation = this.enqueueLifecycle(async () => {
@@ -1170,8 +1514,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       streamPromise: Promise.resolve(),
       turnsByCommand: new Map(),
       turnsByUuid: new Map(),
+      coalescer: new DeltaCoalescer((item) => this.recordTranscript(session, item), this.deltaCoalescerOptions),
       pendingApprovals: new Map(),
-      toolNames: new Map(),
+      toolCalls: new Map(),
+      tasks: new Map(),
+      fileChanges: new Map(),
       childTitles: new Map(),
       transcript: [],
       sequence: 0,
@@ -1192,8 +1539,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       authenticationSettled: false,
       initializationReceived: false,
     };
-    const canUseTool: CanUseTool = (toolName, toolInput, request) =>
-      this.requestApproval(session, toolName, toolInput, request);
+    const canUseTool: CanUseTool = (toolName, toolInput, request) => context.toolsDisabled
+      ? Promise.resolve({ behavior: 'deny', message: 'Tools are disabled for planning proposals.' })
+      : this.requestApproval(session, toolName, toolInput, request);
     const options: Options = {
       abortController,
       cwd: context.workspaceRoot,
@@ -1201,14 +1549,25 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       permissionMode: permissionMode(context.permissionPreset),
       allowDangerouslySkipPermissions: context.permissionPreset === 'full-access',
       canUseTool,
-      includePartialMessages: false,
+      // Planning proposals are read once complete; only conversations stream.
+      includePartialMessages: !context.toolsDisabled,
       forwardSubagentText: true,
       agentProgressSummaries: true,
       persistSession: true,
-      env: readiness.environment,
+      env: {
+        ...readiness.environment,
+        ...(this.enableTaskTools && !context.toolsDisabled ? { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } : {}),
+        ...context.environment,
+      },
+      settingSources: ['user', 'project', 'local'],
+      ...(context.managedExecution ? { disallowedTools: ['Agent', 'Task'] } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      // An empty allow-list is only an approval preference. Remove the actual
+      // catalog, including configured MCP tools, and ignore ambient settings.
+      ...(context.toolsDisabled ? { tools: [], disallowedTools: ['*'], settingSources: [], mcpServers: {}, plugins: [], agents: {} } : {}),
       ...(context.model ? { model: context.model } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : { sessionId: providerSessionId }),
+      ...(context.reasoningEffort ? { effort: context.reasoningEffort as Options['effort'] } : {}),
     };
     try {
       const { initialization } = await this.enqueueLifecycle(() => {
@@ -1284,18 +1643,26 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   private handleMessage(session: SessionRecord, message: SDKMessage): void {
-    switch (message.type) {
+    // command_lifecycle is not in the SDK's SDKMessage union, so switch on the raw type.
+    const raw = message as unknown as JsonObject;
+    switch (raw.type) {
+      case 'stream_event':
+        this.handleStreamEvent(session, raw);
+        break;
+      case 'command_lifecycle':
+        this.handleCommandLifecycle(session, raw);
+        break;
       case 'assistant':
-        this.handleAssistant(session, message as unknown as JsonObject);
+        this.handleAssistant(session, raw);
         break;
       case 'user':
-        this.handleProviderUserMessage(session, message as unknown as JsonObject);
+        this.handleProviderUserMessage(session, raw);
         break;
       case 'result':
-        this.handleResult(session, message as unknown as JsonObject);
+        this.handleResult(session, raw);
         break;
       case 'rate_limit_event': {
-        const info = asObject((message as unknown as JsonObject).rate_limit_info);
+        const info = asObject(raw.rate_limit_info);
         if (info?.status === 'rejected') {
           this.emitProviderError(
             session.context.sessionId,
@@ -1305,53 +1672,157 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         break;
       }
       case 'tool_progress':
-        this.handleToolProgress(session, message as unknown as JsonObject);
+        this.handleToolProgress(session, raw);
         break;
       case 'system':
-        this.handleSystem(session, message as unknown as JsonObject);
+        this.handleSystem(session, raw);
         break;
       default:
         break;
     }
   }
 
+  private handleCommandLifecycle(session: SessionRecord, message: JsonObject): void {
+    const uuid = asString(message.command_uuid);
+    const turn = uuid ? session.turnsByUuid.get(uuid) : undefined;
+    if (!turn) return;
+    if (message.state === 'started') session.activeTurn = turn;
+    else if ((message.state === 'completed' || message.state === 'cancelled') && session.activeTurn === turn) {
+      session.activeTurn = undefined;
+    }
+  }
+
+  /**
+   * Partial messages of the main thread. Text streams as deltas; the block's
+   * final `assistant` message then replaces them under the same messageId.
+   * Subagent (child) messages are not streamed.
+   */
+  private handleStreamEvent(session: SessionRecord, message: JsonObject): void {
+    if (typeof message.parent_tool_use_id === 'string') return;
+    const event = asObject(message.event);
+    if (!event) return;
+    const turn = this.turnForMessage(session, message);
+    const stream = session.stream;
+    const index = typeof event.index === 'number' ? event.index : undefined;
+    switch (event.type) {
+      case 'message_start': {
+        const providerMessageId = asString(asObject(event.message)?.id);
+        session.stream = providerMessageId ? { messageId: providerMessageId } : undefined;
+        return;
+      }
+      case 'content_block_start':
+        if (!stream || index === undefined) return;
+        stream.index = index;
+        if (asObject(event.content_block)?.type === 'thinking') {
+          stream.thinking = { index, startedAt: this.now().getTime(), text: '' };
+        }
+        return;
+      case 'content_block_delta': {
+        const delta = asObject(event.delta);
+        if (!stream || index === undefined || !delta) return;
+        if (delta.type === 'text_delta' && typeof delta.text === 'string') {
+          const messageId = claudeMessageId(stream.messageId, index);
+          session.coalescer.append(messageId, delta.text, (text) => this.transcriptItem(session, 'assistant-message', text, {
+            turnId: turn?.turnId,
+            source: `${messageId}:delta:${String(session.sequence + 1)}`,
+            messageId,
+            isDelta: true,
+          }));
+        } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string' && stream.thinking?.index === index) {
+          stream.thinking.text += delta.thinking;
+        }
+        return;
+      }
+      case 'content_block_stop':
+        session.coalescer.flushAll();
+        if (stream?.thinking && stream.thinking.index === index) this.emitThinking(session, stream, turn);
+        return;
+      case 'message_stop':
+        this.closeStream(session, turn);
+        return;
+      default:
+        return;
+    }
+  }
+
+  private emitThinking(session: SessionRecord, stream: StreamState, turn: TurnRecord | undefined): void {
+    const thinking = stream.thinking;
+    if (!thinking) return;
+    stream.thinking = undefined;
+    // The CLI redacts thinking text; the row still records how long Claude thought.
+    this.appendTranscript(session, 'reasoning', thinking.text, {
+      turnId: turn?.turnId,
+      source: `${claudeMessageId(stream.messageId, thinking.index)}:reasoning`,
+      payload: { v: 1, type: 'reasoning', durationMs: Math.max(0, Math.round(this.now().getTime() - thinking.startedAt)) },
+      allowEmpty: true,
+    });
+  }
+
+  /** Message end, or a turn that ended mid-stream (interrupt): land buffered text and an open thinking block. */
+  private closeStream(session: SessionRecord, turn: TurnRecord | undefined): void {
+    session.coalescer.flushAll();
+    if (session.stream) this.emitThinking(session, session.stream, turn);
+    session.stream = undefined;
+  }
+
   private handleAssistant(session: SessionRecord, message: JsonObject): void {
     const turn = this.turnForMessage(session, message);
     const providerMessage = asObject(message.message);
+    const providerMessageId = asString(providerMessage?.id);
     if (turn && providerMessage) {
-      turn.providerTurnId = asString(providerMessage.id) ?? asString(message.uuid) ?? turn.providerTurnId;
+      turn.providerTurnId = providerMessageId ?? asString(message.uuid) ?? turn.providerTurnId;
     }
     const content = providerMessage?.content;
     if (!Array.isArray(content)) return;
     const child = typeof message.parent_tool_use_id === 'string';
-    content.forEach((rawBlock, index) => {
+    // With partial messages each block arrives as its own assistant message.
+    const stream = !child && providerMessageId && session.stream?.messageId === providerMessageId ? session.stream : undefined;
+    content.forEach((rawBlock, contentIndex) => {
       const block = asObject(rawBlock);
       if (!block) return;
       const type = asString(block.type);
-      const source = `${asString(message.uuid) ?? this.createId()}:${String(index)}`;
+      const index = stream?.index !== undefined && content.length === 1 ? stream.index : contentIndex;
+      const source = `${asString(message.uuid) ?? this.createId()}:${String(contentIndex)}`;
       if (type === 'text') {
-        const text = providerTranscriptText(block.text);
-        if (text.trim()) {
-          this.appendTranscript(session, child ? 'child-summary' : 'assistant-message', text, {
-            turnId: turn?.turnId,
-            source,
-          });
-        }
+        this.appendTranscript(session, child ? 'child-summary' : 'assistant-message', providerTranscriptText(block.text), {
+          turnId: turn?.turnId,
+          source,
+          ...(!child && providerMessageId ? { messageId: claudeMessageId(providerMessageId, index) } : {}),
+        });
         return;
       }
       if (type === 'thinking') {
         const text = providerTranscriptText(block.thinking);
-        if (text.trim()) this.appendTranscript(session, 'reasoning', text, { turnId: turn?.turnId, source });
+        if (stream?.thinking?.index === index) {
+          // Emitted at content_block_stop, which carries the duration.
+          stream.thinking.text = text || stream.thinking.text;
+          return;
+        }
+        this.appendTranscript(session, 'reasoning', text, {
+          turnId: turn?.turnId,
+          source,
+          payload: { v: 1, type: 'reasoning' },
+        });
         return;
       }
       if (type === 'tool_use' || type === 'server_tool_use') {
         const name = safeToolName(block.name);
         const toolId = asString(block.id);
-        if (toolId) session.toolNames.set(toolId, name);
-        this.appendTranscript(session, 'tool-call', `${name}\n${providerTranscriptText(block.input)}`, {
+        if (toolId) {
+          session.toolCalls.set(toolId, { name, input: block.input });
+          // Bound calls whose result never arrives.
+          if (session.toolCalls.size > MAX_TRACKED_TOOL_CALLS) session.toolCalls.delete(session.toolCalls.keys().next().value!);
+          const change = claudeFileChange(name, block.input);
+          if (change && encodeFileChanges([change])) session.fileChanges.set(toolId, change);
+          // Bound unfinished operations from a provider that never returns a result.
+          if (session.fileChanges.size > 100) session.fileChanges.delete(session.fileChanges.keys().next().value!);
+        }
+        this.appendTranscript(session, 'tool-call', toolCallText(name, block.input), {
           turnId: turn?.turnId,
           source,
+          ...(toolId ? { payload: toolCallPayload(name, toolId, block.input) } : {}),
         });
+        if (name === 'TodoWrite' && toolId) this.applyTodoWrite(session, block.input, turn, toolId);
       }
     });
     const assistantError = asString(message.error);
@@ -1365,34 +1836,132 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const content = asObject(message.message)?.content;
     if (!Array.isArray(content)) return;
     const turn = this.turnForMessage(session, message);
+    // The structured result describes the message's only tool_result.
+    const structured = content.length === 1 ? message.tool_use_result : undefined;
+    const meta = asArray(message.tool_result_meta).map(asObject);
     content.forEach((rawBlock, index) => {
       const block = asObject(rawBlock);
       if (!block || block.type !== 'tool_result') return;
       const toolId = asString(block.tool_use_id);
-      const name = toolId ? session.toolNames.get(toolId) ?? 'tool' : 'tool';
+      const call = toolId ? session.toolCalls.get(toolId) : undefined;
+      if (toolId) session.toolCalls.delete(toolId);
+      const name = call?.name ?? 'tool';
       const failed = block.is_error === true;
-      this.appendTranscript(session, 'tool-result', providerTranscriptText(block.content) || `${name} ${failed ? 'failed' : 'completed'}.`, {
+      const change = toolId ? session.fileChanges.get(toolId) : undefined;
+      if (toolId) session.fileChanges.delete(toolId);
+      const text = toolResultText(block.content);
+      const denied = meta.some((entry) => entry?.id === toolId && entry?.non_execution_kind === 'permission-rule')
+        || text === 'Denied by the user.';
+      const status: ToolStatus = !failed
+        ? 'completed'
+        : denied
+          ? 'denied'
+          : turn?.interruptRequested || text.startsWith('[Request interrupted by user')
+            ? 'interrupted'
+            : 'failed';
+      const files = status === 'completed' ? toolResultFiles(name, call?.input, change, structured) : undefined;
+      this.appendTranscript(session, 'tool-result', (!failed && change ? encodeFileChanges([change]) : undefined) || text || `${name} ${failed ? 'failed' : 'completed'}.`, {
         turnId: turn?.turnId,
         source: `${asString(message.uuid) ?? this.createId()}:${String(index)}`,
+        ...(toolId ? {
+          payload: {
+            v: 1,
+            type: 'tool',
+            callId: shortText(toolId),
+            name: shortText(name),
+            category: toolCategory(name),
+            phase: 'result',
+            status,
+            ...(files ? { files } : {}),
+          },
+        } : {}),
       });
+      if (status === 'completed' && call && toolId) this.applyTaskResult(session, call, structured, text, turn, toolId);
+    });
+  }
+
+  /** TaskCreate gets its id from the result; TaskUpdate applies once it succeeded. */
+  private applyTaskResult(
+    session: SessionRecord,
+    call: ToolCallRecord,
+    structured: unknown,
+    text: string,
+    turn: TurnRecord | undefined,
+    toolId: string,
+  ): void {
+    const input = asObject(call.input);
+    if (call.name === 'TaskCreate') {
+      const id = asString(asObject(asObject(structured)?.task)?.id) ?? text.match(/Task #(\d+)/u)?.[1];
+      const subject = asString(input?.subject);
+      if (!id || !subject) return;
+      const active = asString(input?.activeForm);
+      session.tasks.set(id, { text: shortText(subject), status: 'pending', ...(active ? { active: shortText(active) } : {}) });
+    } else if (call.name === 'TaskUpdate') {
+      const id = typeof input?.taskId === 'number' ? String(input.taskId) : asString(input?.taskId);
+      const task = id ? session.tasks.get(id) : undefined;
+      if (!id || !task) return;
+      const status = asString(asObject(asObject(structured)?.statusChange)?.to) ?? input?.status;
+      if (status === 'deleted') {
+        session.tasks.delete(id);
+      } else {
+        const subject = asString(input?.subject);
+        const active = asString(input?.activeForm);
+        session.tasks.set(id, {
+          ...task,
+          ...(subject ? { text: shortText(subject) } : {}),
+          status: todoStatus(status) ?? task.status,
+          ...(active ? { active: shortText(active) } : {}),
+        });
+      }
+    } else {
+      return;
+    }
+    this.emitTodo(session, turn, toolId);
+  }
+
+  /** TodoWrite carries the whole list, so it replaces the tracked one as soon as it is called. */
+  private applyTodoWrite(session: SessionRecord, input: unknown, turn: TurnRecord | undefined, toolId: string): void {
+    const todos = asArray(asObject(input)?.todos).map(asObject);
+    session.tasks.clear();
+    todos.forEach((todo, index) => {
+      const text = asString(todo?.content);
+      const status = todoStatus(todo?.status);
+      if (!text || !status) return;
+      const active = asString(todo?.activeForm);
+      session.tasks.set(`todo:${String(index)}`, { text: shortText(text), status, ...(active ? { active: shortText(active) } : {}) });
+    });
+    this.emitTodo(session, turn, toolId);
+  }
+
+  private emitTodo(session: SessionRecord, turn: TurnRecord | undefined, toolId: string): void {
+    const items = [...session.tasks.values()].slice(0, 100);
+    this.appendTranscript(session, 'notice', todoChecklist(items), {
+      turnId: turn?.turnId,
+      source: `todo:${toolId}`,
+      payload: { v: 1, type: 'todo', source: 'claude-todowrite', items },
     });
   }
 
   private handleResult(session: SessionRecord, message: JsonObject): void {
     const turns = this.turnsForResult(session, message);
+    this.closeStream(session, turns[0]);
     const terminalReason = asString(message.terminal_reason);
-    const interrupted = terminalReason === 'aborted_streaming' || terminalReason === 'aborted_tools';
-    const isError = message.is_error === true || message.subtype !== 'success';
+    // A user stop ends in error_during_execution; it is an interruption, not a provider failure.
+    const interrupted = terminalReason === 'aborted_streaming'
+      || terminalReason === 'aborted_tools'
+      || turns.some((turn) => turn.interruptRequested);
+    const isError = !interrupted && (message.is_error === true || message.subtype !== 'success');
     const errorValue = asString(message.error)
       ?? (Array.isArray(message.errors) ? message.errors.find((entry): entry is string => typeof entry === 'string') : null)
       ?? (isError ? asString(message.result) : null);
     const classified = isError ? classifyClaudeProviderError(errorValue ?? 'unknown') : null;
     for (const turn of turns) {
       turn.providerTurnId = asString(message.uuid) ?? turn.providerTurnId;
-      if (interrupted || turn.interruptRequested) this.finishTurn(session, turn, 'interrupted');
+      if (interrupted) this.finishTurn(session, turn, 'interrupted');
       else if (classified) this.finishTurn(session, turn, 'failed', classified);
       else this.finishTurn(session, turn, 'completed');
     }
+    if (session.activeTurn && turns.includes(session.activeTurn)) session.activeTurn = undefined;
     if (classified) this.emitProviderError(session.context.sessionId, classified);
     const remaining = [...session.turnsByCommand.values()].some((turn) => turn.state === 'submitted');
     this.emit({
@@ -1516,7 +2085,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const existing = session.pendingApprovals.get(request.requestId);
     if (existing) return existing.promise;
     const toolName = safeToolName(toolNameValue);
-    const turn = [...session.turnsByCommand.values()].find((candidate) => candidate.state === 'submitted');
+    const turn = session.activeTurn?.state === 'submitted'
+      ? session.activeTurn
+      : [...session.turnsByCommand.values()].find((candidate) => candidate.state === 'submitted');
+    // Text streamed so far belongs before the approval it led to.
+    session.coalescer.flushAll();
     let settlePromise: (result: PermissionResult) => void = () => undefined;
     const promise = new Promise<PermissionResult>((resolve) => {
       let settled = false;
@@ -1544,42 +2117,63 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         });
       }
     }, { once: true });
+    // The SDK's own title/description strings are not used; the request is built from the tool input.
+    const approval = claudeApproval(toolName, input, request.toolUseID);
     this.emit({
       kind: 'approval-requested',
       sessionId: session.context.sessionId,
       ...(turn ? { turnId: turn.turnId } : {}),
       providerRequestId: request.requestId,
       risk: toolRisk(toolName),
-      title: `Claude requests ${toolName}`,
-      // Raw tool input/title/description is intentionally not placed in the
-      // durable event stream because it may contain environment credentials.
+      title: approval.title,
+      ...(approval.detail ? { detail: approval.detail } : {}),
+      ...(approval.request ? { request: approval.request } : {}),
     });
     this.emit({ kind: 'session-state', sessionId: session.context.sessionId, state: 'blocked' });
     return promise;
   }
 
+  /** Emits one complete row; buffered deltas are flushed first so they never land after it. */
   private appendTranscript(
     session: SessionRecord,
     kind: DaemonTranscriptItem['kind'],
     text: string,
-    options: { readonly turnId?: string; readonly source: string },
+    options: TranscriptOptions,
   ): void {
+    session.coalescer.flushAll();
+    const item = this.transcriptItem(session, kind, text, options);
+    if (item) this.recordTranscript(session, item);
+  }
+
+  /** Allocates the next sequence only for a row that will be emitted. */
+  private transcriptItem(
+    session: SessionRecord,
+    kind: DaemonTranscriptItem['kind'],
+    text: string,
+    options: TranscriptOptions,
+  ): DaemonTranscriptItem | undefined {
     const original = providerTranscriptText(text);
-    if (!original.trim()) return;
+    // A whitespace-only delta (a paragraph break) is still part of the message.
+    if (options.isDelta ? !original : !original.trim() && !options.allowEmpty) return undefined;
     session.sequence += 1;
-    const item: DaemonTranscriptItem = {
+    return {
       id: `claude_${createHash('sha256').update(`${session.handle.providerSessionId}:${options.source}`).digest('hex').slice(0, 24)}`,
+      ...(options.messageId ? { messageId: options.messageId } : {}),
       sessionId: session.context.sessionId,
       ...(options.turnId ? { turnId: options.turnId } : {}),
       sequence: session.sequence,
       kind,
       text: original,
-      isDelta: false,
+      isDelta: options.isDelta === true,
       isSensitive: kind === 'user-message'
         || kind === 'assistant-message'
         || kind === 'reasoning',
+      ...(options.payload ? { payload: options.payload } : {}),
       createdAt: this.now().toISOString(),
     };
+  }
+
+  private recordTranscript(session: SessionRecord, item: DaemonTranscriptItem): void {
     session.transcript.push(item);
     if (session.transcript.length > MAX_RECONCILIATION_ITEMS) session.transcript.shift();
     this.emit({ kind: 'transcript', item });
@@ -1622,9 +2216,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         } else if (message.type === 'assistant' && block.type === 'thinking') {
           append('reasoning', asString(block.thinking) ?? '', source);
         } else if (message.type === 'assistant' && (block.type === 'tool_use' || block.type === 'server_tool_use')) {
-          append('tool-call', `${safeToolName(block.name)}\n${providerTranscriptText(block.input)}`, source);
+          append('tool-call', toolCallText(safeToolName(block.name), block.input), source);
         } else if (message.type === 'user' && block.type === 'tool_result') {
-          append('tool-result', providerTranscriptText(block.content) || (block.is_error === true ? 'Claude tool failed.' : 'Claude tool completed.'), source);
+          append('tool-result', toolResultText(block.content) || (block.is_error === true ? 'Claude tool failed.' : 'Claude tool completed.'), source);
         } else if (message.type === 'user' && block.type === 'text') {
           append('user-message', asString(block.text) ?? '', source);
         }
@@ -1633,11 +2227,19 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     return items;
   }
 
+  /**
+   * Only a turn's first message carries user_message_uuid(s); it (or
+   * command_lifecycle `started`) binds the active turn that later messages,
+   * including late ones after an interrupt, inherit.
+   */
   private turnForMessage(session: SessionRecord, message: JsonObject): TurnRecord | undefined {
     const direct = asString(message.user_message_uuid);
     if (direct) {
       const turn = session.turnsByUuid.get(direct);
-      if (turn) return turn;
+      if (turn) {
+        session.activeTurn = turn;
+        return turn;
+      }
     }
     const uuids = message.user_message_uuids;
     if (Array.isArray(uuids)) {
@@ -1645,11 +2247,15 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         const uuid = uuids[index];
         if (typeof uuid === 'string') {
           const turn = session.turnsByUuid.get(uuid);
-          if (turn) return turn;
+          if (turn) {
+            session.activeTurn = turn;
+            return turn;
+          }
         }
       }
     }
-    return [...session.turnsByCommand.values()].find((turn) => turn.state === 'submitted');
+    return session.activeTurn
+      ?? [...session.turnsByCommand.values()].find((turn) => turn.state === 'submitted');
   }
 
   private turnsForResult(session: SessionRecord, message: JsonObject): TurnRecord[] {
@@ -1677,6 +2283,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   ): void {
     if (turn.state !== 'submitted') return;
     turn.state = outcome;
+    session.coalescer.flushAll();
     this.emit({
       kind: 'turn-finished',
       sessionId: session.context.sessionId,
@@ -1747,22 +2354,29 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   private settleAuthentication(session: SessionRecord): void {
     if (
-      session.authenticationSettled
-      || session.apiKeySource === undefined
-      || !session.initializationReceived
+      !session.initializationReceived
       || !session.accountAuthentication
     ) return;
-    const failure = classifyClaudeAuthenticationEvidence(
-      session.enablement.authenticationPath,
-      session.apiKeySource || undefined,
-      session.accountAuthentication,
-    );
+    const evidence = session.accountAuthentication;
+    const source = session.apiKeySource ?? evidence.apiKeySource;
+    // Current native CLI emits system/init only after the first user input.
+    // Its initialization control response already reports coarse account facts.
+    // An approved first-party subscription is positive evidence; missing or
+    // ambiguous metadata must fail closed instead of requiring a fake turn.
+    const failure = source !== undefined
+      ? classifyClaudeAuthenticationEvidence(session.enablement.authenticationPath, source || undefined, evidence)
+      : session.enablement.authenticationPath === 'existing-claude-ai-login'
+        && evidence.apiProvider === 'firstParty' && (evidence.hasSubscription || evidence.indicatesOAuth)
+        ? null
+        : 'CLAUDE_AUTHENTICATION_FAILED';
     if (!failure) {
       session.resolveAuthentication();
       return;
     }
     session.rejectAuthentication(new ClaudeProviderError(failure));
     if (session.initialized) {
+      this.emitProviderError(session.context.sessionId, new ClaudeProviderError(failure));
+      this.emit({ kind: 'session-state', sessionId: session.context.sessionId, state: 'failed', detail: new ClaudeProviderError(failure).message });
       session.abortController.abort();
       session.query.close();
     }
@@ -1858,11 +2472,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       this.executableVersion(canonical, buildProviderProcessEnvironment([]), signal),
       signal,
     );
-    if (
-      !samePath
-      || version !== descriptor.executableVersion
-      || !compatibleClaudeExecutableVersion(version)
-    ) {
+    // The review binds the executable path, not one build: Claude Code auto-updates in
+    // place, so any supported version at the reviewed path may launch (as with Codex).
+    if (!samePath || !compatibleClaudeExecutableVersion(version)) {
       throw new ClaudeProviderError('CLAUDE_EXECUTABLE_INVALID');
     }
     return {

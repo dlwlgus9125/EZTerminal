@@ -9,6 +9,7 @@ import {
 } from '../shared/agent';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { Button } from './ui';
 import { ScheduleSettings } from './ScheduleSettings';
 import type { AgentProjectLauncherSummary } from '../shared/agent-history';
 import { StructuredProviderSettings } from './StructuredProviderSettings';
@@ -167,9 +168,8 @@ export function AgentIntegrationSettings({
                 {integration.blockers.map((blocker) => <p key={blocker}>{blocker}</p>)}
               </details>}
             </div>
-            <button
-              type="button"
-              className="btn btn-split"
+            <Button
+              size="sm"
               disabled={
                 busyProvider !== null ||
                 (!integration.enabled && integration.blockers.length > 0) ||
@@ -183,7 +183,7 @@ export function AgentIntegrationSettings({
                 : integration.enabled
                   ? t('agentSettings.remove')
                   : t('agentSettings.install')}
-            </button>
+            </Button>
           </div>
         ))}
       </div>
@@ -219,16 +219,16 @@ export function AgentIntegrationSettings({
 
       <div className="settings-agent-generic-head">
         <h3 className="settings-agent-subtitle">{t('agentSettings.genericProfiles')}</h3>
-        <button
-          type="button"
-          className="btn btn-split"
+        <Button
+          size="sm"
+          variant="ghost"
           onClick={() => setSettings((current) => ({
             ...current,
             genericProfiles: [...current.genericProfiles, newProfile()],
           }))}
         >
           {t('agentSettings.add')}
-        </button>
+        </Button>
       </div>
       {settings.genericProfiles.map((profile) => (
         <div className="settings-agent-profile" key={profile.id}>
@@ -253,21 +253,21 @@ export function AgentIntegrationSettings({
             />
             {t('agentSettings.enabled')}
           </label>
-          <button
-            type="button"
-            className="btn btn-split"
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => setSettings((current) => ({
               ...current,
               genericProfiles: current.genericProfiles.filter((candidate) => candidate.id !== profile.id),
             }))}
           >
             {t('agentSettings.removeProfile')}
-          </button>
+          </Button>
         </div>
       ))}
-      <button type="button" className="btn btn-split" onClick={() => void persist(settings)}>
+      <Button size="sm" onClick={() => void persist(settings)}>
         {t('agentSettings.saveProfiles')}
-      </button>
+      </Button>
       </details>
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
       </section>

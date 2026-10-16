@@ -126,6 +126,28 @@ afterEach(() => {
 });
 
 describe('OpenClawPanel', () => {
+  it('keeps chat available during a management connection failure and collapses execution details', async () => {
+    const control: OpenClawControlSnapshot = {
+      schemaVersion: 1, intentId: 'running', generation: 1,
+      status: { state: 'running', port: 18789, connectionState: 'unavailable' },
+      desiredState: 'running', supervisorState: 'ready', operation: null, issue: null,
+      updatedAt: new Date().toISOString(),
+    };
+    const { capabilities } = makeCapabilities(control.status, {
+      observeDrawer: (observer) => {
+        observer.onStatus(control.status);
+        observer.onControl?.(control);
+        return vi.fn();
+      },
+    });
+    await render(capabilities);
+    expect(container.querySelector('[data-testid="openclaw-state"]')?.getAttribute('data-state')).toBe('running');
+    expect(container.querySelector('[data-testid="openclaw-connection-status"]')).not.toBeNull();
+    expect(container.querySelector<HTMLDetailsElement>('.openclaw-control-details')?.open).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="btn-openclaw-open-chat"]')?.disabled).toBe(false);
+    expect(container.querySelector('.openclaw-control-details')?.textContent).toContain('openclaw doctor --fix');
+  });
+
   it('shows installation guidance without operational controls when the CLI is absent', async () => {
     const { capabilities } = makeCapabilities({ state: 'not-installed', port: 18789 });
 
