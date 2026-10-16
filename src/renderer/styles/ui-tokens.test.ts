@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -110,6 +110,34 @@ describe('UI token contract', () => {
       expect(source, `${file} must not use color-mix()`).not.toMatch(/color-mix\(/);
       expect(source, `${file} must not use :has()`).not.toMatch(/:has\(/);
     }
+  });
+
+  it('keeps a Chrome 74 fallback in front of every color-mix() that reaches Android', () => {
+    // WebView 74 drops a color-mix() declaration whole; an earlier declaration of the same
+    // property in the same block is what it renders instead. Modern engines take the later line.
+    const files = [
+      'src/renderer/mobile-shared.css',
+      'src/renderer/daemon-agent-sessions.css',
+      'src/renderer/daemon-safe-mode-notice.css',
+      ...readdirSync(resolve(process.cwd(), 'mobile/src'))
+        .filter((name) => name.endsWith('.css'))
+        .map((name) => `mobile/src/${name}`),
+    ];
+    const missing: string[] = [];
+    for (const file of files) {
+      const source = withoutComments(readFileSync(resolve(process.cwd(), file), 'utf8'));
+      for (const block of source.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+        const declarations = block[2].split(';').map((part) => part.trim()).filter(Boolean)
+          .map((part) => ({ property: part.slice(0, part.indexOf(':')).trim(), value: part.slice(part.indexOf(':') + 1) }));
+        declarations.forEach((declaration, index) => {
+          if (!declaration.value.includes('color-mix(')) return;
+          const covered = declarations.slice(0, index)
+            .some((earlier) => earlier.property === declaration.property && !earlier.value.includes('color-mix('));
+          if (!covered) missing.push(`${file}: ${block[1].trim()} { ${declaration.property} }`);
+        });
+      }
+    }
+    expect(missing).toEqual([]);
   });
 
   it('ships no selector Chrome 74 drops whole rules over in planning and workflow CSS', () => {

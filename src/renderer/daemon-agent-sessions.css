@@ -94,6 +94,8 @@
   justify-content: space-between;
   gap: var(--ui-space-2);
   padding: var(--ui-space-2);
+  /* WebView 74 drops the color-mix() line below and keeps this one. */
+  border: 1px solid var(--ui-danger-border);
   border: 1px solid color-mix(in srgb, var(--ui-danger) 45%, var(--ui-border-subtle));
   border-radius: var(--ui-radius-md);
   background: var(--ui-danger-muted);

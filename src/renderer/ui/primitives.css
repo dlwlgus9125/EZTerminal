@@ -630,7 +630,9 @@
   content: '';
   position: absolute;
   z-index: 1;
-  inset: 0 0 auto;
+  top: 0;
+  right: 0;
+  left: 0;
   block-size: 4px;
 }
 

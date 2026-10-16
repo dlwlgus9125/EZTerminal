@@ -255,6 +255,15 @@ html[data-effect-crt-rollbar="on"] body::after {
   inset: 0;
   z-index: 201;
   pointer-events: none;
+  /* WebView 74 drops the color-mix() gradient below and keeps this one. */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-in, 59.4px),
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-out, 60.6px),
+    transparent calc(var(--fx-rollbar-thickness, 120) * 1px),
+    transparent var(--fx-rollbar-period, 70vh)
+  );
   background-image: repeating-linear-gradient(
     to bottom,
     color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) 0,
@@ -953,6 +962,9 @@ body {
 }
 
 .file-source-line--selected {
+  /* WebView 74 drops the color-mix() line below and keeps this one. */
+  background: rgba(var(--ui-warning-rgb), 0.2);
+  outline: 1px solid rgba(var(--ui-warning-rgb), 0.55);
   background: color-mix(in srgb, var(--term-amber) 20%, transparent);
   outline: 1px solid color-mix(in srgb, var(--term-amber) 55%, transparent);
 }
@@ -1096,10 +1108,12 @@ body {
 
 .agent-row[data-status="blocked"],
 .agent-row[data-status="error"] {
+  border-color: var(--ui-danger-border);
   border-color: color-mix(in srgb, var(--term-red) 55%, var(--term-border));
 }
 
 .agent-row[data-status="waiting"] {
+  border-color: var(--ui-warning-border);
   border-color: color-mix(in srgb, var(--term-amber) 55%, var(--term-border));
 }
 
@@ -1290,6 +1304,7 @@ body {
   margin: 0.25rem 0;
   padding: 0.35rem 0.55rem;
   border-left: 2px solid var(--term-amber);
+  background: rgba(var(--ui-warning-rgb), 0.1);
   background: color-mix(in srgb, var(--term-amber) 10%, transparent);
   color: var(--term-amber);
   font-size: 0.75rem;
@@ -1604,6 +1619,7 @@ body {
   min-height: 24px;
   padding: 3px 5px 3px 7px;
   color: var(--term-fg);
+  background: var(--term-bg-raised);
   background: color-mix(in srgb, var(--term-bg-raised) 92%, transparent);
   border: 1px solid var(--term-amber);
   border-radius: 999px;
