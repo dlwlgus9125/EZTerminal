@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { RemoteRuntimeStatus } from '../shared/ipc';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { Button } from './ui';
 
 type PairingError =
   | { readonly kind: 'external'; readonly message: string }
@@ -13,9 +14,8 @@ type PairingError =
 /**
  * Mobile pairing panel (M4): shows the LAN URL(s) + auth token a phone needs
  * to connect to this desktop's remote-control bridge, plus a rotate action.
- * Reuses the `status-drawer`/`status-section`/`btn-split` styles StatusPanel
- * already defines in index.css rather than adding new CSS — same overlay
- * shape, different content.
+ * A plain sidebar section of the Remote destination; its rows and the token
+ * card are styled by remote-panel.css.
  */
 export function ConnectionInfoPanel({
   capabilities = rendererCapabilities,
@@ -99,70 +99,68 @@ export function ConnectionInfoPanel({
         : null;
 
   return (
-    <div className="status-drawer" data-testid="connection-info-panel">
-      <section className="status-section">
-        <h2 className="status-section-title">{t('remote.pairingTitle')}</h2>
-        <p className="status-loading" role="note" data-testid="pairing-ws-warning">
-          {t('remote.trustedNetworkWarning')}
-        </p>
-        {loading ? (
-          <div className="status-loading">{t('common.loading')}</div>
-        ) : securityError ? (
-          <div className="status-loading" role="alert" data-testid="pairing-security-error">
-            {securityErrorText}
-          </div>
-        ) : remoteStatus.state === 'error' ? (
-          <div className="status-loading" role="alert" data-testid="pairing-runtime-error">
-            {remoteStatus.error ?? t('remote.runtimeUnavailable')}{' '}
-            {remoteStatus.desiredEnabled && (
-              <button className="btn btn-split" onClick={handleRetry} data-testid="pairing-runtime-retry">
-                {t('common.retry')}
-              </button>
-            )}
-          </div>
-        ) : remoteStatus.state === 'starting' || remoteStatus.state === 'stopping' ? (
-          <div className="status-loading" data-testid="pairing-runtime-transition">
-            {remoteStatus.state === 'starting' ? t('remote.starting') : t('remote.stopping')}
-          </div>
-        ) : remoteStatus.state !== 'running' ? (
-          <div className="status-loading" data-testid="pairing-remote-disabled">
-            {t('remote.disabled')}
-          </div>
-        ) : urls.length === 0 ? (
-          <div className="status-loading">{t('remote.noLan')}</div>
-        ) : (
-          <>
-            {urls.map((url) => (
-              <div key={url} className="status-metric" data-testid="connection-url">
-                {url}{' '}
-                <button className="btn btn-split" onClick={() => handleCopy(url)}>
-                  {copiedText === url ? t('remote.copied') : t('remote.copy')}
-                </button>
-              </div>
-            ))}
-            <div className="status-metric pairing-token" data-testid="connection-token">
-              <span className="pairing-token-label">{t('remote.token')}</span>
-              <code className="pairing-token-value">{token}</code>
-              <button className="btn btn-split" onClick={() => handleCopy(token!)}>
-                {copiedText === token ? t('remote.copied') : t('remote.copy')}
-              </button>
+    <section className="status-section" data-testid="connection-info-panel">
+      <h2 className="status-section-title">{t('remote.pairingTitle')}</h2>
+      <p className="remote-warning" role="note" data-testid="pairing-ws-warning">
+        {t('remote.trustedNetworkWarning')}
+      </p>
+      {loading ? (
+        <div className="status-loading">{t('common.loading')}</div>
+      ) : securityError ? (
+        <div className="status-loading" role="alert" data-testid="pairing-security-error">
+          {securityErrorText}
+        </div>
+      ) : remoteStatus.state === 'error' ? (
+        <div className="status-loading" role="alert" data-testid="pairing-runtime-error">
+          {remoteStatus.error ?? t('remote.runtimeUnavailable')}{' '}
+          {remoteStatus.desiredEnabled && (
+            <Button size="sm" variant="ghost" onClick={handleRetry} data-testid="pairing-runtime-retry">
+              {t('common.retry')}
+            </Button>
+          )}
+        </div>
+      ) : remoteStatus.state === 'starting' || remoteStatus.state === 'stopping' ? (
+        <div className="status-loading" data-testid="pairing-runtime-transition">
+          {remoteStatus.state === 'starting' ? t('remote.starting') : t('remote.stopping')}
+        </div>
+      ) : remoteStatus.state !== 'running' ? (
+        <div className="status-loading" data-testid="pairing-remote-disabled">
+          {t('remote.disabled')}
+        </div>
+      ) : urls.length === 0 ? (
+        <div className="status-loading">{t('remote.noLan')}</div>
+      ) : (
+        <>
+          {urls.map((url) => (
+            <div key={url} className="remote-endpoint" data-testid="connection-url">
+              <code title={url}>{url}</code>
+              <Button size="sm" variant="ghost" onClick={() => handleCopy(url)}>
+                {copiedText === url ? t('remote.copied') : t('remote.copy')}
+              </Button>
             </div>
-            <button
-              className="btn btn-split"
-              onClick={handleRotate}
-              title={t('remote.rotateTokenHint')}
-              data-testid="btn-rotate-token"
-            >
-              {t('remote.rotateToken')}
-            </button>
-            {justRotated && (
-              <div className="status-loading">
-                {t('remote.rotatedNotice')}
-              </div>
-            )}
-          </>
-        )}
-      </section>
-    </div>
+          ))}
+          <div className="pairing-token" data-testid="connection-token">
+            <span className="pairing-token-label">{t('remote.token')}</span>
+            <code className="pairing-token-value">{token}</code>
+            <Button size="sm" variant="ghost" onClick={() => handleCopy(token!)}>
+              {copiedText === token ? t('remote.copied') : t('remote.copy')}
+            </Button>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleRotate}
+            title={t('remote.rotateTokenHint')}
+            data-testid="btn-rotate-token"
+          >
+            {t('remote.rotateToken')}
+          </Button>
+          {justRotated && (
+            <div className="status-loading">
+              {t('remote.rotatedNotice')}
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }

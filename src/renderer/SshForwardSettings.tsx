@@ -5,6 +5,7 @@ import { observationalIntervalMs, type UiResourceProfile } from '../shared/resou
 import { startAsyncPoll } from './async-poller';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { Button } from './ui';
 
 type SshForwardError =
   | { readonly kind: 'external'; readonly message: string }
@@ -94,15 +95,15 @@ export function SshForwardSettings({
                 </span>
                 <small title={forward.connectionId}>SSH {forward.connectionId.slice(0, 8)}</small>
               </div>
-              <button
-                type="button"
-                className="btn btn-split"
+              <Button
+                size="sm"
+                variant="ghost"
                 disabled={stopping !== null}
                 onClick={() => { void stop(forward); }}
                 data-testid={`settings-ssh-forward-stop-${forward.forwardId}`}
               >
                 {stopping === forward.forwardId ? t('remote.stopping') : t('remote.stop')}
-              </button>
+              </Button>
             </div>
           ))}
         </div>
