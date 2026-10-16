@@ -35,6 +35,24 @@ describe('project conversation hierarchy', () => {
     expect(recent.some(row => row.node.id === searched[0].node.id)).toBe(true);
     expect(recent.filter(row => row.node.target.kind === 'conversation').map(row => row.node.title)).toEqual(['Yesterday in Claude', 'Requirement review', 'Build options']);
   });
+  it('folds subagent chats under their parent and keeps them out of flat lists', () => {
+    const child: ProjectNavigationConversation = { ...general, id: 'child', sessionId: 'child', title: 'Claude subagent', updatedAt: 40, parentSessionId: 'chat-stage' };
+    const orphan: ProjectNavigationConversation = { ...general, id: 'orphan', sessionId: 'orphan', title: 'Orphan subagent', updatedAt: 5, parentSessionId: 'missing' };
+    const tree = fixture([general, stage, native, child, orphan]);
+    const research = tree[0].children!.find(node => node.target.kind === 'subproject')!.children!.find(node => node.target.kind === 'stage' && node.target.nodeId === 'login:research')!;
+    const parent = research.children!.find(node => node.title === 'Requirement review')!;
+    expect(parent.children!.map(node => node.target)).toEqual([{ kind: 'conversation', projectId: 'project-story', conversationId: 'child', sessionId: 'child' }]);
+    expect(tree[0].children!.find(node => node.title === 'Build options')!.children).toBeUndefined();
+    expect(tree[0].children!.some(node => node.title === 'Orphan subagent')).toBe(true);
+    const expanded = new Set([tree[0].id, tree[0].children!.find(node => node.target.kind === 'subproject')!.id, research.id]);
+    const collapsed = visibleProjectConversationRows(tree, { expanded, query: '', view: 'projects', includeArchived: false });
+    expect(collapsed.some(row => row.node.title === 'Claude subagent')).toBe(false);
+    const open = visibleProjectConversationRows(tree, { expanded: new Set([...expanded, parent.id]), query: '', view: 'projects', includeArchived: false });
+    expect(open.find(row => row.node.title === 'Claude subagent')).toMatchObject({ parentId: parent.id, depth: 4 });
+    for (const view of [{ query: '', view: 'recent' as const }, { query: 'Claude subagent', view: 'projects' as const }]) {
+      expect(visibleProjectConversationRows(tree, { expanded: new Set(), includeArchived: false, ...view }).some(row => row.node.title === 'Claude subagent')).toBe(false);
+    }
+  });
   it('keeps a stable session identity when a refreshed history summary replaces daemon fallback', () => {
     const before = fixture([{ ...general, id: 'daemon-fallback' }]);
     const after = fixture([{ ...general, id: 'opaque-summary' }]);

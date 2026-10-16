@@ -23,6 +23,8 @@ export interface ProjectNavigationConversation {
   readonly nodeTitle?: string;
   readonly archived?: boolean;
   readonly status?: string;
+  /** Set while this chat is an attached subagent of that session. */
+  readonly parentSessionId?: string;
 }
 
 export interface ProjectNavigationTerminal {
@@ -51,6 +53,7 @@ export interface ProjectConversationNode {
   readonly archived?: boolean;
   readonly status?: string;
   readonly pinned?: boolean;
+  readonly subagent?: boolean;
   readonly children?: readonly ProjectConversationNode[];
 }
 
@@ -70,17 +73,33 @@ export function projectConversationTree(input: {
 }): readonly ProjectConversationNode[] {
   return input.projects.map(project => {
     const workflow = input.workflows[project.id];
-    const conversations = input.conversations.filter(item => item.projectId === project.id);
+    const listed = input.conversations.filter(item => item.projectId === project.id);
+    const sessions = new Set(listed.flatMap(item => item.sessionId ? [item.sessionId] : []));
+    // A subagent chat lives under its parent conversation; one whose parent is not listed stays reachable here.
+    const subagents = new Map<string, ProjectNavigationConversation[]>();
+    const nested = new Set<ProjectNavigationConversation>();
+    for (const item of listed) {
+      if (item.parentSessionId && item.parentSessionId !== item.sessionId && sessions.has(item.parentSessionId)) {
+        subagents.set(item.parentSessionId, [...subagents.get(item.parentSessionId) ?? [], item]);
+        nested.add(item);
+      }
+    }
+    const conversations = listed.filter(item => !nested.has(item));
     const links = new Map((workflow?.sessionLinks ?? []).map(link => [link.sessionId, link]));
     const assigned = new Set<string>();
-    const conversationNode = (conversation: ProjectNavigationConversation, path: readonly string[], archived = false): ProjectConversationNode => ({
-      id: projectConversationNodeKey('conversation', project.id, conversation.sessionId ? `session:${conversation.sessionId}` : conversation.id),
-      title: conversation.title,
-      target: { kind: 'conversation', projectId: project.id, conversationId: conversation.id, sessionId: conversation.sessionId },
-      path, updatedAt: conversation.updatedAt, source: conversation.source,
-      providerLabel: conversation.providerLabel, status: conversation.status,
-      archived: archived || conversation.archived,
-    });
+    const conversationNode = (conversation: ProjectNavigationConversation, path: readonly string[], archived = false, subagent = false): ProjectConversationNode => {
+      const children = (conversation.sessionId ? subagents.get(conversation.sessionId) ?? [] : [])
+        .map(child => conversationNode(child, [...path, conversation.title], archived, true)).sort(byRecent);
+      return {
+        id: projectConversationNodeKey('conversation', project.id, conversation.sessionId ? `session:${conversation.sessionId}` : conversation.id),
+        title: conversation.title,
+        target: { kind: 'conversation', projectId: project.id, conversationId: conversation.id, sessionId: conversation.sessionId },
+        path, updatedAt: conversation.updatedAt, source: conversation.source,
+        providerLabel: conversation.providerLabel, status: conversation.status,
+        archived: archived || conversation.archived,
+        ...subagent ? { subagent } : {}, ...children.length ? { children } : {},
+      };
+    };
     const children: ProjectConversationNode[] = (workflow?.subprojects ?? []).map(subproject => {
       const subprojectPath = [project.title, subproject.title];
       const linked = conversations.filter(conversation => {
@@ -151,7 +170,8 @@ export function visibleProjectConversationRows(nodes: readonly ProjectConversati
       if (!allowed(node)) return;
       if ((query || ['conversation', 'subproject', 'terminal'].includes(node.target.kind))
         && (!query || [node.title, ...node.path].join(' ').toLocaleLowerCase().includes(query))) matches.push(node);
-      node.children?.forEach(visit);
+      // Subagent chats are listed only under their parent conversation.
+      if (node.target.kind !== 'conversation') node.children?.forEach(visit);
     };
     nodes.forEach(visit);
     return matches.sort(byRecent).map(node => ({ node, depth: 0, expanded: false }));

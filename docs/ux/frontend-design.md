@@ -94,7 +94,9 @@ name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 
 - Explorer는 file navigation, breadcrumb와 preview 진입점을 소유한다.
 - Projects는 Attention 다음 Project → Workspace → Session 탐색과 생성·재열기·기록을
   소유한다. Agent와 일반 Terminal을 같은 목록에서 구분하며 중복 Active/Recent 목록은
-  authoritative session 탐색이 불가능한 호환 경로에서만 유지한다.
+  authoritative session 탐색이 불가능한 호환 경로에서만 유지한다. detach되지 않은 child
+  (관리형·provider-native subagent) 대화는 parent 대화 아래에 접힌 상태로만 두고 최근순·검색·
+  이전 대화 기록에는 따로 나열하지 않는다.
 - Monitor는 system stats와 packet/traffic을 합친다. producer는 실제로 visible할 때만
   poll/capture한다.
 - Remote는 pairing, remote access, device roster, PC Control 상태와 SSH forwarding을

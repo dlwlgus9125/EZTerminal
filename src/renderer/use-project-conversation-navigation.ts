@@ -156,6 +156,8 @@ export function useProjectConversationNavigation({ projects, snapshot, access, c
     const agents = new Map((snapshot?.agents ?? []).map(agent => [agent.sessionId, agent]));
     const sessions = new Map((snapshot?.sessions ?? []).map(session => [session.id, session]));
     const linked = new Set([...entries.values()].flatMap(entry => [entry.linkedSessionId, ...(entry.sessionAliases ?? [])]).filter(Boolean));
+    const parents = new Map<string, string>();
+    for (const relation of snapshot?.agentRelations ?? []) if (relation.detachedAt === undefined) parents.set(relation.childSessionId, relation.parentSessionId);
     const conversations: ProjectNavigationConversation[] = [...entries.values()].map(entry => {
       const session = entry.linkedSessionId ? sessions.get(entry.linkedSessionId) : undefined;
       const agent = entry.linkedSessionId ? agents.get(entry.linkedSessionId) : undefined;
@@ -166,6 +168,7 @@ export function useProjectConversationNavigation({ projects, snapshot, access, c
         providerLabel: entry.providerId === 'claude' ? 'Claude' : entry.providerId === 'codex' ? 'Codex' : entry.providerId,
         sessionId: entry.linkedSessionId, subprojectId: entry.subprojectId, subprojectTitle: entry.subprojectTitle, nodeId: entry.nodeId, nodeTitle: entry.nodeTitle,
         archived: current ? isDaemonSessionArchived(current, agent) : entry.archived, status: current ? agent?.state ?? current.state : entry.state,
+        parentSessionId: entry.linkedSessionId ? parents.get(entry.linkedSessionId) : undefined,
       };
     });
     for (const session of snapshot?.sessions ?? []) {
@@ -173,7 +176,7 @@ export function useProjectConversationNavigation({ projects, snapshot, access, c
       const agent = agents.get(session.id);
       conversations.push({ id: `session:${session.id}`, projectId: session.projectId, title: session.title,
         updatedAt: Date.parse(session.updatedAt), source: 'agent', providerLabel: agent?.providerId === 'claude' ? 'Claude' : agent?.providerId === 'codex' ? 'Codex' : agent?.providerId ?? '',
-        sessionId: session.id, archived: isDaemonSessionArchived(session, agent), status: agent?.state ?? session.state });
+        sessionId: session.id, archived: isDaemonSessionArchived(session, agent), status: agent?.state ?? session.state, parentSessionId: parents.get(session.id) });
     }
     return projectConversationTree({ projects: [...knownProjects.values()], conversations, workflows,
       terminals: (includeTerminals ? snapshot?.sessions ?? [] : []).filter(session => session.kind === 'terminal').map(session => ({

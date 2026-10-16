@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Folder, FolderKanban, GitBranch, MessageSquare, Pin, Search, SquareTerminal } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderKanban, GitBranch, MessageSquare, Pin, Search, SquareTerminal, Users } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useAppTranslation } from './i18n';
 import { Button, Input } from './ui';
@@ -162,7 +162,7 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
   };
   const kindLabel = (node: ProjectConversationNode): string => ({
     project: text('프로젝트', 'Project'), subproject: text('소프로젝트', 'Subproject'),
-    stage: text('단계', 'Stage'), conversation: node.source === 'native' ? 'CLI' : text('대화', 'Chat'),
+    stage: text('단계', 'Stage'), conversation: node.subagent ? text('서브에이전트', 'Subagent') : node.source === 'native' ? 'CLI' : text('대화', 'Chat'),
     terminal: text('터미널', 'Terminal'),
   })[node.target.kind];
   const date = (value: number): string => value > 0 ? new Intl.DateTimeFormat(ko ? 'ko' : 'en', { month: 'short', day: 'numeric' }).format(value) : '';
@@ -198,7 +198,7 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
         {rows.map((row, index) => {
           const { node } = row;
           const branch = !flat && Boolean(node.children);
-          const Icon = { project: Folder, subproject: FolderKanban, stage: GitBranch, conversation: MessageSquare, terminal: SquareTerminal }[node.target.kind];
+          const Icon = node.subagent ? Users : { project: Folder, subproject: FolderKanban, stage: GitBranch, conversation: MessageSquare, terminal: SquareTerminal }[node.target.kind];
           const status = node.target.kind === 'project' ? projectStatus?.[node.target.projectId] : undefined;
           return <div key={node.id} role="none" className="project-conversation-tree__entry">
             <div role="treeitem" aria-level={row.depth + 1} aria-expanded={branch ? row.expanded : undefined} aria-selected={activeId === node.id}
@@ -218,6 +218,7 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
                 <small>{(flat || node.target.kind === 'conversation' && row.depth === 1 && node.path.length > 1) && node.path.length ? `${node.path.join(' / ')} · ` : ''}{node.providerLabel ? `${node.providerLabel}${node.source === 'native' ? ' CLI' : ''}` : kindLabel(node)}
                   {node.archived ? ` · ${text('보관됨', 'Archived')}` : ''}{node.target.kind === 'conversation' || node.target.kind === 'terminal' ? ` · ${date(node.updatedAt)}` : ''}
                   {node.target.kind === 'stage' && node.children?.length ? ` · ${text('대화', 'Chats')} ${node.children.length}` : ''}
+                  {node.target.kind === 'conversation' && node.children?.length ? ` · ${text('서브에이전트', 'Subagents')} ${node.children.length}` : ''}
                   {statusLabel(node.status) ? ` · ${statusLabel(node.status)}` : ''}</small>
               </span>
               {/* What needs you shows at a glance: working, waiting for you, failed or queued. */}

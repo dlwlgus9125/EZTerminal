@@ -26,6 +26,7 @@ function NavigationStory({ mobile = false, offline = false, empty = false, error
       { id: 'release', projectId: 'project-story', title: ko ? '릴리스 노트 초안' : 'Draft the release notes', source: 'agent' as const, providerLabel: 'Codex', updatedAt: 1_792_000_080_000, sessionId: 'release', status: 'queued' },
       { id: 'sent', projectId: 'project-story', title: ko ? '설정 화면 문구 정리' : 'Tidy the settings copy', source: 'agent' as const, providerLabel: 'Codex', updatedAt: 1_792_000_070_000, sessionId: 'sent', status: 'delivery-uncertain' },
     ] : []),
+    { id: 'general-subagent', projectId: 'project-story', title: 'Claude subagent', source: 'agent', providerLabel: 'Claude', updatedAt: 1_792_000_095_000, sessionId: 'general-subagent', status: 'done', parentSessionId: 'general' },
     { id: 'cli', projectId: 'project-story', title: ko ? '어제 CLI에서 확인한 배포 조건' : 'Yesterday’s release checks in CLI', source: 'native', providerLabel: 'Claude', updatedAt: 1_792_000_000_000 },
     { id: 'stage', projectId: 'project-story', title: ko ? '로그인 요구사항 검토' : 'Review login requirements', source: 'stage', providerLabel: 'Codex', updatedAt: 1_792_000_200_000, sessionId: 'chat-stage', status: statuses ? 'blocked' : undefined },
     { id: 'archived', projectId: 'project-story', title: ko ? '지난 인증 흐름 검토' : 'Previous authentication review', source: 'agent', providerLabel: 'Claude', updatedAt: 1_790_000_000_000, sessionId: 'archived', archived: true },

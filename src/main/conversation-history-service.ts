@@ -113,7 +113,9 @@ export class ConversationHistoryService implements ConversationHistoryClient {
       const projects = await this.nativeProjects();
       const scoped = projects.filter(project => !query.projectId || this.projectIdentity(project, snapshot).id === query.projectId);
       const candidates: { entry: ConversationEntry; stream: string }[] = [];
-      const app = query.source === 'native' ? [] : snapshot.sessions.filter(session => session.kind === 'agent' && this.currentSession(session.id, snapshot)?.id === session.id)
+      // A subagent chat is reached through its parent conversation, not listed as history of its own.
+      const subagents = new Set(snapshot.agentRelations.filter(relation => relation.detachedAt === undefined).map(relation => relation.childSessionId));
+      const app = query.source === 'native' ? [] : snapshot.sessions.filter(session => session.kind === 'agent' && !subagents.has(session.id) && this.currentSession(session.id, snapshot)?.id === session.id)
         .map(session => this.appEntry(session, snapshot)).filter((entry): entry is ConversationEntry => !!entry)
         .filter(entry => this.matches(entry, query)).sort(this.sort);
       candidates.push(...app.slice(cursor.app, cursor.app + limit).map(entry => ({ entry, stream: 'app' })));

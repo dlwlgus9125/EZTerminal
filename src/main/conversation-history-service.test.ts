@@ -119,6 +119,20 @@ describe('unified conversation history', () => {
       .toMatchObject({ model: 'current-model', permissionPreset: 'full-access', reasoningEffort: 'high' });
   });
 
+  it('lists a subagent chat only through its parent, until it is detached', async () => {
+    const h = await harness();
+    const chat = (id: string) => [
+      { kind: 'session.upsert' as const, value: { id, projectId: 'project', workspaceId: 'workspace', kind: 'agent' as const, title: id, state: 'completed' as const, source: 'structured' as const } },
+      { kind: 'agent.upsert' as const, value: { sessionId: id, providerId: 'codex', permissionPreset: 'standard' as const, state: 'done' as const, queuedTurnCount: 0, orchestrationEnabled: true } },
+    ];
+    const child = (id: string, owner: 'managed' | 'provider-native', detachedAt?: string) => ({ kind: 'agent-relation.upsert' as const,
+      value: { id: `relation-${id}`, treeId: 'parent', parentSessionId: 'parent', childSessionId: id, owner, depth: 1, ...(detachedAt ? { detachedAt } : {}) } });
+    await h.daemon.applySystemCommit({ mutations: [...chat('parent'), ...chat('native-child'), ...chat('managed-child'), ...chat('detached-child'),
+      child('native-child', 'provider-native'), child('managed-child', 'managed'), child('detached-child', 'managed', now().toISOString())] });
+    const page = await h.service.listConversations({ source: 'app', archived: 'include' }); if (!page.ok) throw new Error(page.message);
+    expect(page.items.map(entry => entry.linkedSessionId).sort()).toEqual(['detached-child', 'parent']);
+  });
+
   it('keeps complete interleaved message groups across backwards page boundaries', async () => {
     const h = await harness(); const result = await h.service.resumeHistory(await h.request()); if (!result.ok) throw new Error(result.message); await h.runtime.whenIdle();
     const base = { sessionId: result.sessionId, kind: 'assistant-message' as const, isSensitive: false, createdAt: now().toISOString() };
