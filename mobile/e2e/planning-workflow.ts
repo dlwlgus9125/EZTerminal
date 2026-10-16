@@ -14,7 +14,7 @@ import path from 'node:path';
 import { OwnedDesktopProfileRegistry } from '../../e2e/owned-desktop-profile.ts';
 import {
   APK_PATH, APP_ID, MAIN_ENTRY, closeMobileE2eResources, closeWebViewDevtools, connectAndAuth,
-  evaluateWebView, launchDesktop, runAdb, runAdbBinary, sleep,
+  evaluateWebView, launchDesktop, runAdb, runAdbBinary, setTestIdTextValue, sleep,
   waitForTestId, waitForTestIdHidden,
 } from './lib.ts';
 
@@ -173,7 +173,8 @@ async function main(): Promise<void> {
       sourceFingerprint: process.env.EZTERMINAL_E2E_SOURCE_FINGERPRINT ?? null,
     };
     const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
-    desktop = await launchDesktop({ env: { [pathKey]: `${path.resolve(import.meta.dirname, '../../e2e/fixtures/fake-codex')}${path.delimiter}${process.env[pathKey] ?? ''}` } });
+    const fakeCodex = path.resolve(import.meta.dirname, '../../e2e/fixtures/fake-codex');
+    desktop = await launchDesktop({ env: { [pathKey]: `${fakeCodex}${path.delimiter}${process.env[pathKey] ?? ''}` } });
     const host = desktop.window;
     const saved = await host.evaluate(root => window.ezterminal.saveAgentProject({
       name: 'Android planning E2E', primaryRoot: root, additionalRoots: [], pinned: false,
@@ -270,8 +271,9 @@ async function main(): Promise<void> {
     await writeFile(path.join(artifactDir, 'planning-recovered.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     report.finalHostRevision = final.revision;
     // r4: real remote subproject commands, common chat identity, and the device's
-    // encrypted graph cache. Provider discovery uses the reviewed CLI fixture;
-    // no provider turn or execution is started in this scenario.
+    // encrypted graph cache. Provider discovery uses the reviewed CLI fixture. A 2.0
+    // conversation starts with its first message, so the deterministic fixture answers
+    // exactly one turn; no workflow execution run is started in this scenario.
     await recordWorkflowRuntimeErrors();
     // Planning replaces the project's item list (Phase 4); subprojects live in the other view.
     await clickLabel('[data-testid="workflow-workspace"] .workflow-switch button', ['Subprojects and conversations', '소프로젝트·대화']);
@@ -290,6 +292,8 @@ async function main(): Promise<void> {
     await fillSelector('.workflow-stage textarea', 'Android unsaved stage draft');
     await waitForCondition('encrypted graph draft receipt', `(async () => { const r = await window.ezterminal.workflowDraftRead(${JSON.stringify(projectId)}); const state = r.ok && r.snapshot.state; const draft = state && state.drafts[${JSON.stringify(subproject.id)}]; const node = draft && draft.graph.nodes.find(n => n.id === ${JSON.stringify(subproject.graph.entryNodeId)}); return !!node && node.document === 'Android unsaved stage draft'; })()`);
     const inspected = await host.evaluate(() => window.ezterminal.inspectDaemonProvider('codex')); if (!inspected.ok) throw new Error(inspected.message);
+    // Never enable a real provider: the first message below must reach the fixture only.
+    assert.ok(path.resolve(inspected.value.probe.executablePath).startsWith(fakeCodex), `expected the fake codex, found ${inspected.value.probe.executablePath}`);
     for (let attempt = 0; attempt < 4; attempt++) {
       const enabled = await host.evaluate(async ({ probe, reviewDigest, attempt }) => {
         const state = await window.ezterminal.getDaemonSnapshot(); if (!state) throw new Error('Daemon unavailable'); const commandId = `android-workflow-provider-${attempt}`;
@@ -299,10 +303,21 @@ async function main(): Promise<void> {
     }
     await clickSelector('[data-testid="workflow-workspace"] header button');
     await clickLabel('[data-testid="workflow-workspace"] button', ['New conversation', '새 일반 대화']);
-    await clickSelector('[data-testid="structured-agent-create"]');
+    await waitForTestId('conversation-start', 30_000);
+    await setTestIdTextValue('structured-agent-composer-input', 'Android stage conversation');
+    await clickSelector('[data-testid="structured-agent-send"]');
     await waitForTestId('structured-agent-session', 30_000);
+    await waitForCondition('fixture reply to the first message', `document.body.innerText.indexOf('Structured Codex fixture ready') >= 0`, 45_000);
+    const afterFirstSend = await host.evaluate(() => window.ezterminal.getDaemonSnapshot());
+    assert.equal(afterFirstSend?.turns.length, (before?.turns.length ?? 0) + 1, 'The first message starts exactly one fixture turn');
     const sessionId = await evaluateWebView<string>('document.querySelector("[data-testid=structured-agent-session]").getAttribute("data-session-id")');
-    await fillSelector('[data-testid="structured-agent-composer-input"]', 'Android unsent chat draft');
+    // The accepted first message clears the composer once its draft store is ready; type the
+    // unsent draft only after that, as the conversation journey does.
+    await waitForCondition('live composer recovery ready', `!!document.querySelector('.mobile-v2-draft-status[data-state="saved"]')`);
+    await waitForCondition('accepted draft cleared', `(document.querySelector('[data-testid="structured-agent-composer-input"]') || {}).value === ''`);
+    // More than one composer can be mounted here; type into the visible one, as lib does.
+    await setTestIdTextValue('structured-agent-composer-input', 'Android unsent chat draft');
+    await sleep(1000);
     await clickSelector('[data-testid="shell-tab-home"]');
     await clickLabel('.workflow-conversation-row button', ['Link to stage', '단계에 연결']);
     await evaluateWebView(`(() => { const selects = document.querySelectorAll('[role="dialog"] select'); selects[0].value = ${JSON.stringify(subproject.id)}; selects[0].dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
@@ -311,7 +326,8 @@ async function main(): Promise<void> {
     await waitForCondition('stage chat link acknowledged', `!document.querySelector('[role="dialog"]')`, 30_000);
     await clickSelector('.workflow-stage .workflow-items button'); await waitForTestId('structured-agent-session');
     assert.equal(await evaluateWebView('document.querySelector("[data-testid=structured-agent-session]").getAttribute("data-session-id")'), sessionId);
-    assert.equal(await evaluateWebView('document.querySelector("[data-testid=structured-agent-composer-input]").value'), 'Android unsent chat draft');
+    // Reopening restores the device draft asynchronously ("Loading device draft…").
+    await waitForCondition('unsent chat draft restored in the reopened conversation', `(() => { const visible = Array.prototype.slice.call(document.querySelectorAll('[data-testid="structured-agent-composer-input"]')).reverse().filter(node => node.getBoundingClientRect().width > 0)[0]; return !!visible && visible.value === 'Android unsent chat draft'; })()`, 30_000);
     await clickLabel('.workflow-conversation-context button', ['Return to this stage', '이 단계로 돌아가기']);
     await waitForCondition('unsaved stage preserved through chat return', `(document.querySelector('.workflow-stage textarea') || {}).value === 'Android unsaved stage draft'`);
     await assertWorkflowHealthy('Stage chat return');
@@ -343,8 +359,8 @@ async function main(): Promise<void> {
       assert.equal(observed.runs.length, 0, 'Reconnect must not start a workflow run');
       await sleep(150);
     } while (Date.now() < r4ObservationUntil);
-    assert.deepEqual((await host.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.turns, before?.turns);
-    phases.push('r4 encrypted graph snapshot/draft restore offline after force-stop; reconnect keeps local draft and host revision/document/runs unchanged for 2 seconds without provider turns');
+    assert.deepEqual((await host.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.turns.length, afterFirstSend?.turns.length, 'Reconnect must not start a provider turn');
+    phases.push('r4 encrypted graph snapshot/draft restore offline after force-stop; reconnect keeps local draft and host revision/document/runs unchanged for 2 seconds without new provider turns');
     report.status = 'passed';
     console.log('[planning-e2e] PASS: explicit recovered draft -> PC revision 2; no automatic send/provider turns');
   } catch (error) {
