@@ -1136,85 +1136,15 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   cursor: default;
 }
 
-/* Settings drawer (v0.2.0 M2; theme/font selects + import added in
-   theme-effects-font M3) — same .status-drawer/.status-section shell as
-   StatusPanel/ConnectionInfoPanel above; the rules below are the drawer's own
-   additions. */
+/* Checkbox/radio rows shared by the settings panel and the agent provider settings;
+   the settings panel's own rules live in settings-panel.css. */
 .settings-radio-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  color: var(--term-fg);
+  gap: var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-primary);
   cursor: pointer;
-}
-
-.settings-scale-stepper {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.settings-theme-import {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin-top: 0.4rem;
-}
-
-.settings-theme-import-error {
-  font-size: 0.72rem;
-  color: var(--term-red);
-}
-
-.settings-scale-value {
-  min-width: 3.2em;
-  text-align: center;
-  font-size: 0.82rem;
-  color: var(--term-fg-bright);
-  font-variant-numeric: tabular-nums;
-}
-
-.settings-scrollback-input {
-  width: 6rem;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.78rem;
-  font-family: inherit;
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-border);
-  border-radius: 3px;
-  color: var(--term-fg);
-}
-
-.settings-scrollback-input:focus {
-  outline: none;
-  border-color: var(--term-green);
-}
-
-/* crt-rollbar line params (rollbar-params) — nested beneath the crt-rollbar
-   toggle in the Effects section (desktop SettingsPanel + mobile
-   MobileSettingsView both use these two classes). */
-.settings-rollbar-params {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin: 0.3rem 0 0.5rem 1.4rem;
-}
-
-.settings-rollbar-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--term-fg);
-}
-
-.settings-rollbar-row span {
-  min-width: 8.5em;
-}
-
-.settings-rollbar-row input[type='range'] {
-  flex: 1;
 }
 
 .openclaw-autostart-row {
@@ -3615,45 +3545,17 @@ button.agent-work-activity:focus-visible {
   font-weight: 700;
 }
 
-.agent-integration-list,
-.settings-agent-profile {
-  display: grid;
-  gap: 8px;
-}
-
-.agent-integration-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--term-border-faint);
-}
-
-.agent-integration-copy {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-  color: var(--term-fg-dim);
-  font-size: 11px;
-}
-
-.agent-integration-copy strong {
-  color: var(--term-fg-bright);
-  font-size: 12px;
-}
-
 .settings-agent-warning,
 .settings-agent-message {
-  color: var(--term-amber);
-  font-size: 11px;
-  line-height: 1.4;
+  color: var(--ui-warning);
+  font-size: var(--ui-font-size-2xs);
+  line-height: var(--ui-line-height-normal);
 }
 
 .settings-agent-subtitle {
-  margin: 12px 0 6px;
-  color: var(--term-fg);
-  font-size: 11px;
+  margin: var(--ui-space-3) 0 var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -3671,23 +3573,27 @@ button.agent-work-activity:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ui-space-2);
 }
 
 .settings-agent-profile {
-  margin-bottom: 8px;
-  padding: 8px;
-  border: 1px solid var(--term-border-faint);
-  background: var(--term-bg-inset);
+  display: grid;
+  gap: var(--ui-space-2);
+  margin-bottom: var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
 }
 
 .settings-agent-profile input[type='text'],
 .settings-agent-profile > input {
   min-width: 0;
-  padding: 5px 6px;
-  border: 1px solid var(--term-border);
-  background: var(--term-bg);
-  color: var(--term-fg);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
   font: inherit;
 }
 

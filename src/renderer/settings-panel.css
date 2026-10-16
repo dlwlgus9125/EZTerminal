@@ -1,0 +1,287 @@
+/* Settings destination (handoff 12). Tokens only (guard:design-style checks this file).
+   Category list on the left, the active category's sections on the right; the
+   body runs one step smaller than the shell so labels, values and fold-outs
+   share one size. */
+
+.settings-workbench {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr);
+  overflow: hidden !important;
+  font-family: var(--ui-font-body);
+  font-size: var(--ui-font-size-sm);
+}
+
+.settings-workbench input[type='range'],
+.settings-workbench input[type='radio'],
+.settings-workbench input[type='checkbox'] {
+  accent-color: var(--ui-accent);
+}
+
+/* == CATEGORIES == */
+.settings-category-nav {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  padding: var(--ui-space-2);
+  border-inline-end: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface-inset);
+}
+
+.settings-category-button {
+  min-height: var(--ui-control-height-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font: inherit;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-category-button:hover {
+  background: var(--ui-surface-hover);
+  color: var(--ui-text-primary);
+}
+
+.settings-category-button[aria-current='page'] {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface-selected);
+  color: var(--ui-accent);
+}
+
+.settings-category-button:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.settings-category-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.settings-category-content [hidden] {
+  display: none !important;
+}
+
+/* Section-level fold-outs (Agents) read like the other section headings, with a chevron. */
+.settings-category-content details.status-section > summary {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  color: var(--ui-text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-category-content details.status-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-category-content details.status-section > summary::before {
+  content: '';
+  width: 0.375rem;
+  height: 0.375rem;
+  flex: none;
+  margin: 0 var(--ui-space-2) 0 var(--ui-space-1);
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.settings-category-content details.status-section[open] > summary {
+  margin-bottom: var(--ui-space-3);
+}
+
+.settings-category-content details.status-section[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+/* A failed lifecycle read sits in a sentence-length status; let it wrap. */
+.settings-category-content > .status-section > .ez-ui-status {
+  flex-wrap: wrap;
+  white-space: normal;
+  line-height: var(--ui-line-height-normal);
+}
+
+/* == GENERAL == */
+.settings-field-row {
+  display: grid;
+  gap: var(--ui-space-2);
+  margin-top: var(--ui-space-3);
+  color: var(--ui-text-secondary);
+}
+
+.settings-field-row:first-child {
+  margin-top: 0;
+}
+
+.settings-scale-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.settings-scale-value {
+  min-width: 3.2em;
+  color: var(--ui-text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* == APPEARANCE == */
+.settings-theme-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  margin-top: var(--ui-space-2);
+}
+
+.settings-theme-import-error {
+  color: var(--ui-danger);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* Reads like a field label, with the live level beside it. */
+.settings-effect-intensity {
+  display: grid;
+  gap: var(--ui-space-2);
+  margin-block: 0 var(--ui-space-4);
+  color: var(--ui-text-secondary);
+}
+
+.settings-effect-intensity__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+}
+
+.settings-effect-intensity__heading output {
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-effect-intensity input[type='range'] {
+  inline-size: 100%;
+  margin: 0;
+}
+
+.settings-effect-intensity__description {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+/* Effect parameters under their toggle: label and control in two columns that
+   always fit the content column, never pushing past its edge. */
+.settings-rollbar-params {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  margin: var(--ui-space-1) 0 var(--ui-space-2) var(--ui-space-6);
+}
+
+.settings-rollbar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5rem, 1fr);
+  align-items: center;
+  gap: var(--ui-space-3);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* Korean labels wrap between words, not inside one. */
+.settings-rollbar-row span {
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.settings-rollbar-row input[type='range'] {
+  inline-size: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.settings-rollbar-row input[type='checkbox'] {
+  justify-self: start;
+  margin: 0;
+}
+
+.settings-rollbar-row input[type='color'] {
+  justify-self: start;
+  inline-size: 2.5rem;
+  block-size: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  cursor: pointer;
+}
+
+/* == AGENTS == terminal activity hooks. */
+.agent-integration-list {
+  display: grid;
+  gap: var(--ui-space-2);
+}
+
+.agent-integration-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2) 0;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.agent-integration-row > .ez-ui-button {
+  flex: none;
+}
+
+.agent-integration-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.agent-integration-copy strong {
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+}
+
+/* == ABOUT == */
+.settings-diagnostic-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--ui-space-1) var(--ui-space-4);
+  align-items: baseline;
+  margin-top: var(--ui-space-3);
+}
+
+.settings-diagnostic-grid span {
+  color: var(--ui-text-muted);
+}
+
+.settings-diagnostic-grid code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-xs);
+  text-overflow: ellipsis;
+}

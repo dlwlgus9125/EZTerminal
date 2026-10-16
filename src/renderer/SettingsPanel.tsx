@@ -19,6 +19,7 @@ import { useAppTranslation } from './i18n';
 import { SCROLLBACK_MAX, SCROLLBACK_MIN } from './scrollback';
 import type { ThemeDefinition } from './themes';
 import { Button, Field, IconButton, Input, Select, Switch, Tooltip } from './ui';
+import './settings-panel.css';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
 import { AppUpdateCard } from './AppUpdateCard';
@@ -468,6 +469,10 @@ export function SettingsPanel({
           label={t('settings.bootIntro')}
           data-testid="settings-boot-intro"
         />
+      </section>
+
+      <section className="status-section" hidden={category !== 'appearance'}>
+        <h2 className="status-section-title">{t('settings.crtEffects')}</h2>
         <label className="settings-effect-intensity">
           <span className="settings-effect-intensity__heading">
             <span>{t('settings.effectIntensity')}</span>
@@ -490,7 +495,6 @@ export function SettingsPanel({
             {t('settings.effectIntensityDescription')}
           </span>
         </label>
-        <h2 className="status-section-title">{t('settings.crtEffects')}</h2>
         {Object.values(EFFECT_CATALOG).map((entry) => {
             const supported = activeThemeEffects.includes(entry.id);
             const on = supported && (effectToggles[entry.id] ?? entry.defaultOn);
