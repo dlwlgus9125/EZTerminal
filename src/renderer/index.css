@@ -953,9 +953,9 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .file-breadcrumb {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ui-space-1);
   padding: var(--ui-space-2) var(--ui-space-3);
-  border-bottom: 1px solid var(--ui-border-mid);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 .file-breadcrumb-row {
@@ -1202,32 +1202,32 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  background: var(--term-bg-raised);
-  border-right: 1px solid var(--term-border);
-  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.35);
+  background: var(--ui-surface-raised);
+  border-right: 1px solid var(--ui-border-subtle);
+  box-shadow: var(--ui-shadow-raised);
 }
 
 .file-path-input:focus {
   outline: none;
-  border-color: var(--term-green);
+  border-color: var(--ui-accent);
 }
 
 .file-error {
-  padding: 0.4rem 0.6rem;
-  font-size: 0.75rem;
-  color: var(--term-red);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-danger);
 }
 
 .file-binary-notice {
-  padding: 0.4rem 0.6rem;
-  font-size: 0.75rem;
-  color: var(--term-amber);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-warning);
 }
 
 .file-loading {
-  padding: 0.35rem 0.6rem;
-  font-size: 0.75rem;
-  color: var(--term-fg-faint);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-muted);
 }
 
 .file-list {
@@ -1240,31 +1240,31 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.6rem;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-3);
   border: 0;
   background: transparent;
   font-family: inherit;
-  font-size: 0.8rem;
+  font-size: var(--ui-font-size-sm);
   text-align: left;
-  color: var(--term-fg);
+  color: var(--ui-text-secondary);
   cursor: pointer;
 }
 
 .file-entry:hover,
 .file-entry:focus-visible {
-  background: var(--term-bg-inset);
-  color: var(--term-fg-bright);
+  background: var(--ui-surface-hover);
+  color: var(--ui-text-primary);
 }
 
 .file-entry:focus-visible {
-  outline: 2px solid var(--term-blue);
+  outline: 2px solid var(--ui-focus);
   outline-offset: -2px;
 }
 
 .file-entry-icon {
   flex: 0 0 auto;
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
 }
 
 .file-entry-name {
@@ -1276,8 +1276,8 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 .file-entry-size {
   flex: 0 0 auto;
-  font-size: 0.72rem;
-  color: var(--term-fg-faint);
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1293,10 +1293,10 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   z-index: 160;
   display: flex;
   flex-direction: column;
-  background: var(--term-bg-raised);
-  border: 1px solid var(--term-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-overlay);
 }
 
 .file-viewer-overlay--pending {
@@ -1316,20 +1316,20 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .file-viewer-truncated {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.72rem;
-  color: var(--term-amber);
-  border-bottom: 1px solid var(--term-border-faint);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-warning);
+  border-bottom: 1px solid var(--ui-border-subtle);
 }
 
 .file-viewer-content {
   flex: 1 1 auto;
   margin: 0;
-  padding: 0.75rem;
+  padding: var(--ui-space-3);
   overflow: auto;
   font-family: inherit;
-  font-size: 0.8rem;
-  color: var(--term-fg);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1338,34 +1338,33 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .file-context-menu {
   position: fixed;
   z-index: 165;
-  min-width: 190px;
-  padding: 0.35rem;
-  background: var(--term-bg-raised);
-  border: 1px solid var(--term-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  min-width: 11.875rem;
+  padding: var(--ui-space-1);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  box-shadow: var(--ui-shadow-raised);
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.125rem;
 }
 .file-context-menu-item {
   text-align: left;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.78rem;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
   font-family: inherit;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 3px;
-  color: var(--term-fg);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-primary);
   cursor: pointer;
 }
 .file-context-menu-item:hover,
 .file-context-menu-item:focus-visible {
-  border-color: var(--term-green);
-  color: var(--term-fg-bright);
+  background: var(--ui-surface-hover);
 }
 .file-context-menu-item:focus-visible {
-  outline: 2px solid var(--term-blue);
+  outline: 2px solid var(--ui-focus);
   outline-offset: -2px;
 }
 
@@ -2138,7 +2137,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .file-entry-change {
   margin-inline-start: auto;
   flex: none;
-  padding: 1px 6px;
+  padding: 1px var(--ui-space-1);
   border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-info);
@@ -2159,7 +2158,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 /* A size column and a change tag would otherwise both claim the right edge. */
 .file-entry-change + .file-entry-size {
-  margin-inline-start: 8px;
+  margin-inline-start: var(--ui-space-2);
 }
 
 .file-entry--parent .file-entry-name {
