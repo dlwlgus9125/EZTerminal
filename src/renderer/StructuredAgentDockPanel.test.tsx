@@ -1161,6 +1161,65 @@ describe('StructuredAgentDockPanel', () => {
     expect(sendCommand).not.toHaveBeenCalled();
   });
 
+  it('hands a review to a profile as a managed child that reports back', async () => {
+    const parentSession = {
+      id: 'agent-parent', projectId: 'project-1', workspaceId: 'project-1.root-1.workspace-1', kind: 'agent' as const,
+      title: 'Login fix', state: 'idle' as const, source: 'structured' as const, revision: 1, createdAt: NOW, updatedAt: NOW,
+    };
+    const parentSnapshot: DaemonSnapshot = { ...snapshot, sessions: [parentSession], agents: [{
+      sessionId: parentSession.id, providerId: 'codex', permissionPreset: 'full-access', state: 'idle', queuedTurnCount: 0,
+      orchestrationEnabled: false, revision: 1, createdAt: NOW, updatedAt: NOW,
+    }], runtime: { ...snapshot.runtime, orchestrationToolsEnabled: false } };
+    const commands: DaemonCommand[] = [];
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getAvailability: getReadyAvailability,
+        getSnapshot: async () => parentSnapshot,
+        getTranscript: async () => [],
+        sendCommand: async (command) => {
+          commands.push(command);
+          return { ok: true, status: 'applied', commandId: command.commandId, revision: 5, eventSequence: 10 };
+        },
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: true }),
+      },
+      structuredProviders: { ...rendererCapabilities.structuredProviders, listModels: async () => ({ ok: true, value: [] }) },
+    };
+    Object.defineProperty(window, 'ezterminal', { configurable: true, value: { chatAgentProfiles: {
+      list: async () => [{ id: 'reviewer', name: 'Careful reviewer', providerId: 'codex', model: 'gpt-5', reasoningEffort: 'high', permissionPreset: 'plan', whenToUse: 'Review without editing.' }],
+      save: vi.fn(), remove: vi.fn(),
+    } } });
+    const props = {
+      capabilities: access,
+      onOpenSession: vi.fn(),
+      params: { historyId: `${STRUCTURED_AGENT_SESSION_PREFIX}${parentSession.id}` },
+      api: { id: 'parent-agent', setTitle: vi.fn(), updateParameters: vi.fn() },
+    } as unknown as IDockviewPanelProps & { capabilities: CapabilityAccess };
+    act(() => root.render(<AppI18nProvider locale="en" languages={['en']}><StructuredAgentDockPanel {...props} /></AppI18nProvider>));
+    await flush();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="structured-agent-delegate-review"]')!.click());
+    await flush();
+    const dialog = document.querySelector('[data-testid="delegate-agent-dialog"]')!;
+    expect(dialog.textContent).toContain('Review without editing.');
+    expect(document.querySelector<HTMLTextAreaElement>('[data-testid="delegate-agent-instruction"]')!.value).toContain('git diff');
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="delegate-agent-submit"]')!.click());
+    await flush();
+
+    expect(commands.at(-1)).toMatchObject({
+      type: 'agent.create',
+      principal: { kind: 'desktop' },
+      payload: {
+        workspaceId: parentSession.workspaceId, title: 'Review · Login fix', providerId: 'codex', model: 'gpt-5', reasoningEffort: 'high',
+        permissionPreset: 'plan', parentSessionId: parentSession.id, reportBack: true, initialPrompt: expect.stringContaining('Login fix'),
+      },
+    });
+    expect(document.querySelector('[data-testid="delegate-agent-dialog"]')).toBeNull();
+  });
+
   it('opens direct children and sends guarded lifecycle commands through the v12 authority', async () => {
     const parentSession = {
       id: 'agent-parent', projectId: 'project-1', workspaceId: 'project-1.root-1.workspace-1', kind: 'agent' as const,

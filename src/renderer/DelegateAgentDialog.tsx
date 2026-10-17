@@ -38,6 +38,8 @@ export interface DelegateAgentDialogProps {
   readonly onSubmit: (request: DelegateAgentRequest) => Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>;
   /** Opens Settings → Agents → collaboration when there is no profile yet. */
   readonly onManageProfiles?: () => void;
+  /** Offer "새 워크트리…" (desktop). */
+  readonly allowNewWorktree?: boolean;
 }
 
 const NEW_WORKTREE = '__new-worktree__';
@@ -49,7 +51,7 @@ const BRANCH = /^[A-Za-z0-9._/-]{1,100}$/u;
  * track and under this chat in the project tree, and can be opened directly.
  */
 export function DelegateAgentDialog({
-  open, onOpenChange, mode, profiles, providerLabels, workspaces, defaultWorkspaceId, initialInstruction, onSubmit, onManageProfiles,
+  open, onOpenChange, mode, profiles, providerLabels, workspaces, defaultWorkspaceId, initialInstruction, onSubmit, onManageProfiles, allowNewWorktree = true,
 }: DelegateAgentDialogProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
@@ -140,7 +142,7 @@ export function DelegateAgentDialog({
               {workspaces.map((entry) => (
                 <option key={entry.id} value={entry.id}>{entry.kind === 'worktree' ? `${entry.label} · ${text('워크트리', 'worktree')}` : entry.label}</option>
               ))}
-              <option value={NEW_WORKTREE}>{text('새 워크트리…', 'New worktree…')}</option>
+              {allowNewWorktree && <option value={NEW_WORKTREE}>{text('새 워크트리…', 'New worktree…')}</option>}
             </Select>
           </Field>
           {newWorktree && (

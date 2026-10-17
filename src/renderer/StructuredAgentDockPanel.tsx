@@ -24,6 +24,10 @@ import { setStructuredAgentTabStatus, structuredTabStatus, tabProvider } from '.
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
+import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { isRunOwnedWorkspace } from '../shared/workspace-worktree';
+import { DelegateAgentDialog, type DelegateAgentRequest, type DelegateMode } from './DelegateAgentDialog';
+import { useAppTranslation } from './i18n';
 import type { RendererRecoveryStructuredAgentCreate } from '../shared/renderer-recovery';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
@@ -45,6 +49,7 @@ import {
   resolvePreferredDaemonWorkspaceId,
   structuredAgentModelOptions,
   structuredAgentProviderOptions,
+  structuredAgentSessionTitle,
   structuredAgentWorkspaceOptions,
   type StructuredAgentCreateOutcome,
   type StructuredAgentCreateCommand,
@@ -288,6 +293,19 @@ export function StructuredAgentDockPanel(
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createdDraft, setCreatedDraft] = useState<CreatedDraftState | null>(null);
   const recoveredCreateRef = useRef<RendererRecoveryStructuredAgentCreate | undefined>(undefined);
+  const { i18n } = useAppTranslation();
+  const korean = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
+  // 맡기기 / 검토 맡기기: a person hands this chat's work, or a review of it, to a new child.
+  const profileAccess = window.ezterminal?.chatAgentProfiles;
+  const worktreeAccess = window.ezterminal?.workspaceWorktrees;
+  const [delegateMode, setDelegateMode] = useState<DelegateMode | null>(null);
+  const [delegateProfiles, setDelegateProfiles] = useState<readonly ChatAgentProfile[]>([]);
+  useEffect(() => {
+    if (!delegateMode || !profileAccess) return undefined;
+    let alive = true;
+    void profileAccess.list().then((profiles) => { if (alive) setDelegateProfiles(profiles); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [delegateMode, profileAccess]);
   const checkpointCreateRef = useRef<RendererRecoveryStructuredAgentCreate | undefined>(undefined);
   const [uncertainDraft, setUncertainDraft] = useState<UncertainDraftState | null>(() => {
     const registered = createRecoveryRegistry?.get(props.api.id);
@@ -1085,6 +1103,57 @@ export function StructuredAgentDockPanel(
     approval.state === 'pending' && approval.request?.subagent?.sessionId === sessionId
   ));
 
+  const delegate = async (mode: DelegateMode, request: DelegateAgentRequest): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> => {
+    const profile = delegateProfiles.find((entry) => entry.id === request.profileId);
+    if (!profile || !session) return { ok: false, error: 'This conversation or profile is no longer available.' };
+    let workspaceId: string;
+    if (request.workspace.kind === 'new-worktree') {
+      if (!worktreeAccess) return { ok: false, error: 'New worktrees can be created on the desktop only.' };
+      const created = await worktreeAccess.create(session.projectId, request.workspace.branch);
+      if (!created.ok) return { ok: false, error: created.message };
+      workspaceId = created.value.workspaceId;
+    } else {
+      workspaceId = request.workspace.workspaceId;
+    }
+    const childSessionId = opaqueId('agent');
+    const title = mode === 'review'
+      ? `${korean ? '검토' : 'Review'} · ${session.title}`
+      : structuredAgentSessionTitle(request.instruction) || profile.name;
+    // The worktree sync moves the revision on; one retry reads the new one.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const authority = await latestSnapshot();
+      if (!authority) return { ok: false, error: 'The Agent daemon is unavailable.' };
+      const commandId = opaqueId('command');
+      const receipt = await sendCommand(createDaemonCommand({
+        commandId,
+        idempotencyKey: commandId,
+        expectedRevision: authority.revision,
+        issuedAt: new Date().toISOString(),
+        principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+        type: 'agent.create',
+        payload: {
+          sessionId: childSessionId, workspaceId, title, providerId: profile.providerId,
+          ...(profile.model ? { model: profile.model } : {}),
+          ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+          permissionPreset: profile.permissionPreset, initialPrompt: request.instruction, parentSessionId: sessionId,
+          ...(request.reportBack ? { reportBack: true } : {}),
+        },
+      }));
+      if (!receipt) return { ok: false, error: 'The Agent daemon did not answer. Check the child list before trying again.' };
+      if (receipt.ok) return { ok: true };
+      if (receipt.error.code !== 'revision-conflict') return { ok: false, error: receipt.error.message };
+    }
+    return { ok: false, error: 'The project changed while handing off. Try again.' };
+  };
+  const lastPrompt = [...transcriptItems].reverse().find((item) => item.kind === 'user-message')?.text.trim();
+  const delegateInstruction = !session ? '' : delegateMode === 'review'
+    ? korean
+      ? `"${session.title}" 대화에서 바뀐 내용을 검토해 줘. 파일은 고치지 말고, git diff로 변경을 확인해서 문제와 위험, 빠진 테스트를 알려 줘.`
+      : `Review what changed in the "${session.title}" conversation. Do not edit files; read the changes with git diff and report problems, risks and missing tests.`
+    : korean
+      ? `"${session.title}" 대화의 작업을 이어서 해 줘.${lastPrompt ? `\n\n지금까지의 요청:\n${lastPrompt}` : ''}`
+      : `Continue the work of the "${session.title}" conversation.${lastPrompt ? `\n\nWhat was asked so far:\n${lastPrompt}` : ''}`;
+
   const openRelatedSession = (targetSessionId: string): void => {
     const targetSession = snapshot?.sessions.find((candidate) => candidate.id === targetSessionId);
     const targetAgent = snapshot?.agents.find((candidate) => candidate.sessionId === targetSessionId);
@@ -1196,7 +1265,7 @@ export function StructuredAgentDockPanel(
     && agent !== undefined
     && HEARTBEAT_SESSION_STATES.has(agent.state);
 
-  return (
+  return (<>
     <StructuredAgentSessionPanel
       onOpenProjectFiles={session && workflowNavigation ? () => workflowNavigation.openFiles(session.projectId) : undefined}
       viewStateKey={props.params?.conversationId ? `desktop:conversation:${props.params.conversationId}` : undefined}
@@ -1291,6 +1360,23 @@ export function StructuredAgentDockPanel(
       onDetach={!historyOnly && owner === 'managed' && session && agent && activeRelation
         ? () => runLifecycleCommand('agent.detach')
         : undefined}
+      onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
     />
-  );
+    {delegateMode && session && (
+      <DelegateAgentDialog
+        open
+        onOpenChange={(open) => { if (!open) setDelegateMode(null); }}
+        mode={delegateMode}
+        profiles={delegateProfiles}
+        providerLabels={Object.fromEntries((snapshot?.providers ?? []).map((entry) => [entry.id, entry.displayName]))}
+        workspaces={structuredAgentWorkspaceOptions(snapshot, session.projectId).filter((entry) => !isRunOwnedWorkspace(entry.id))
+          .map((entry) => ({ id: entry.id, label: entry.label, kind: entry.kind === 'worktree' ? 'worktree' as const : 'local' as const }))}
+        defaultWorkspaceId={session.workspaceId}
+        initialInstruction={delegateInstruction}
+        allowNewWorktree={Boolean(worktreeAccess)}
+        {...(props.onOpenSettings ? { onManageProfiles: props.onOpenSettings } : {})}
+        onSubmit={(request) => delegate(delegateMode, request)}
+      />
+    )}
+  </>);
 }
