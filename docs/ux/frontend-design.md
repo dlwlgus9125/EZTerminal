@@ -96,7 +96,11 @@ name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 
   소유한다. Agent와 일반 Terminal을 같은 목록에서 구분하며 중복 Active/Recent 목록은
   authoritative session 탐색이 불가능한 호환 경로에서만 유지한다. detach되지 않은 child
   (관리형·provider-native subagent) 대화는 parent 대화 아래에 접힌 상태로만 두고 최근순·검색·
-  이전 대화 기록에는 따로 나열하지 않는다.
+  이전 대화 기록에는 따로 나열하지 않는다. 접힌 parent 행은 child의 작업 중·확인 대기·오류를
+  `서브에이전트 N개 ○○`로 한 번만 드러낸다. 프로젝트에 활성 워크트리가 있을 때만 Project 아래에
+  작업 위치 단계(로컬 하나 + 워크트리별 행)가 생기며, 워크트리 행은 `작업 중·검토 대기·완료`와
+  병합(나머지 새 대화·변경 검토는 포인터가 동작 영역에 올 때)을 가진다. 기획 실행이 만든 워크트리는
+  실행의 통합 단계가 처리하므로 이 단계와 병합에서 뺀다. 실행의 단계·검토 대화는 해당 단계 아래에 접힌다.
 - Monitor는 system stats와 packet/traffic을 합친다. producer는 실제로 visible할 때만
   poll/capture한다.
 - Remote는 pairing, remote access, device roster, PC Control 상태와 SSH forwarding을
@@ -467,6 +471,14 @@ Terminal, Diff/Review, opt-in Browser, Script/Service tab을 소유한다. 기�
 호환되는 Local workspace 아래에 비파괴적으로 등록한다. 별도의 `협업 설정` destination이나
 Project별 enable/profile/limit form은 만들지 않는다.
 
+워크트리는 Desktop에서만 만든다: 프로젝트 `⋯ → 새 워크트리…` 또는 새 대화의 `작업 위치 → 새 워크트리…`.
+브랜치 이름을 받아 project checkout 옆에 worktree를 만들고(커밋되지 않은 변경은 옮기지 않음) 그 위치의
+새 대화를 연다. 상태는 git에서 읽는다: 그 위치의 대화가 실행 중이면 작업 중, 아니면 base보다 앞선
+커밋이나 커밋되지 않은 변경이 있으면 검토 대기, base에 병합됐으면 완료. 다시 읽는 시점은 워크트리 목록이나
+그 안의 실행 여부가 바뀔 때와 창이 focus를 얻을 때다. 병합 대화상자는 보낼 커밋 수와 미커밋 여부를 보이고,
+미커밋이면 먼저 커밋 메시지를 받아 커밋한 뒤 base branch에 병합 커밋 하나로 합친다. 충돌이면 병합을
+되돌리고 이유를 보인다.
+
 모든 실행 중 Agent row/card는 provider, model, permission preset, workspace와 현재
 `starting/working/blocked/done/idle/error/unknown` 상태를 함께 표시한다. session tab을 닫는
 동작은 layout만 바꾸며 실행이나 history를 종료하지 않는다. Cancel은 현재 turn, Archive는
@@ -544,10 +556,17 @@ deny, conflict, stale, failed와 interrupted는 서로 다른 text 상태이며 
 
 ### 10.3 관리형 Agent tree와 직접 대화
 
-Host에서 한 번 `오케스트레이션 도구 사용`을 켜면 새로 만들거나 resume한 모든 Agent session에
-session-scoped orchestration MCP가 연결된다. Project별 협업 enable/profile/path/limit UI와 별도
-run graph는 없다. provider-native subagent도 같은 track에 표시하지만 provider-owned/read-only로
-명확히 구분한다.
+설정 → 에이전트의 항상 보이는 **에이전트 협업** 구역에서 `에이전트가 다른 에이전트를 만들 수 있음`(기본
+꺼짐)을 켜면 새로 만들거나 resume한 모든 Agent session에 session-scoped orchestration MCP가 연결된다.
+같은 구역의 에이전트 프로필은 새 대화의 `프로필` 선택(AI·모델·권한·강도를 채움)과 맡기기가 쓴다.
+Project별 협업 enable/profile/path/limit UI와 별도 run graph는 없다. provider-native subagent도 같은
+track에 표시하지만 provider-owned/read-only로 명확히 구분한다: 열면 받은 지시·도구·결과만 보이고 입력창
+대신 `상위 대화에서 이어집니다`와 `← 상위 대화` breadcrumb가 있으며, parent의 Agent/Task 도구 행에는
+`열기`가 붙는다. track은 작업 중·확인 대기를 앞에 두고 4개까지 보인 뒤 `외 N개`로 접는다.
+
+대화 `⋯ → 맡기기…`/`검토 맡기기…`는 프로필·작업 위치(새 워크트리 포함)·미리 채운 지시·`끝나면 결과를
+이 대화로 보내기`(검토 기본 켬, 맡기기 기본 끔)를 받는 대화상자를 연다. 사용자는 parent에 남고 child는
+track과 트리에 나타난다. 회신된 결과는 parent에 `서브에이전트가 보낸 결과 · 제목 · 열기`로 보인다.
 
 Agent transcript와 composer 사이에는 direct child를 보여 주는 compact track을 둔다. child가
 없으면 렌더링하지 않는다. 항목은 provider, 상태, 경과 시간, attention과 bounded result summary를

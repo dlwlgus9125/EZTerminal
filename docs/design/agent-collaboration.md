@@ -154,9 +154,21 @@ OAuth에는 bare executable name이 아닌 canonical path가 필요하다. EZTer
 
 ## 관리형 Agent tree
 
-Host에서 `오케스트레이션 도구 사용`을 한 번 켜면 새로 만들거나 resume한 Agent마다 session-scoped
-orchestration MCP를 제공한다. Project별 Collaboration enable/profile/path/limit UI와 별도 run graph는
-없다. 관리형 child는 parent와 같은 완전한 Agent session이며 재귀와 cross-provider를 지원한다.
+설정 → 에이전트 → **에이전트 협업**의 `에이전트가 다른 에이전트를 만들 수 있음`(기본 꺼짐)을 켜면 새로
+만들거나 resume한 Agent마다 session-scoped orchestration MCP를 제공한다. 같은 구역의 **에이전트 프로필**
+(provider·model·reasoning effort·permission·언제 쓰나요, desktop `chat-agent-profiles.json`)은 새 대화의
+`프로필` 선택, 대화 메뉴의 맡기기, MCP `list_profiles`/`create_agent{profileId}`가 함께 쓴다. MCP로 만든
+child도 profile permission이 호출한 Agent의 permission을 넘을 수 없다. Project별 Collaboration UI와
+별도 run graph는 없다. 관리형 child는 parent와 같은 완전한 Agent session이며 재귀와 cross-provider를
+지원한다.
+
+사람이 대화 메뉴의 `맡기기…`/`검토 맡기기…`로 만드는 child(desktop·android 주체)는 위 토글이나 parent의
+orchestration 표시와 무관하게 만들 수 있다. 관리형 상한과 같은 Project·살아 있는 parent 조건은 같다.
+child의 첫 transcript 행이 출처(parent)와 `결과 회신` 여부를 기록한다. 회신을 고른 child는 처음 끝난
+turn의 마지막 답(최대 8,000자, 잘리면 표시)을 parent의 다음 메시지로 한 번 보낸다. 이 메시지는 host만
+보내는 실제 `agent.submit`(`reportOf`, 주체 `report-back-runtime`)이며 화면에 `서브에이전트가 보낸 결과`로
+표시된다. 보낼 수 없으면(parent 종료·provider 비활성) 기존 요약 행으로 남긴다. 검토 맡기기는 기본 회신,
+맡기기는 기본 미회신이다.
 
 사용자는 child를 직접 열고 대화하며 model/permission 변경, Cancel, Archive와 Detach를 실행할 수 있다.
 busy session의 일반 Send는 FIFO queue에 들어가고 `Interrupt + Send`만 현재 turn을 중단한다.
@@ -165,12 +177,19 @@ busy session의 일반 Send는 FIFO queue에 들어가고 `Interrupt + Send`만 
 - Archive: 실행을 끝낸 뒤 기본 목록에서 숨기고 history는 보존
 - Detach: parent edge만 제거하고 top-level session으로 승격, 실행은 유지
 
-parent에는 child transcript를 복사하지 않는다. bounded result summary와 child link를 event로 전달한다.
-같은 Workspace child는 자동 open하지 않고 cross-workspace child만 context 전환을 알리기 위해 자동
-open할 수 있다. provider-native subagent는 같은 track에 표시하지만 read-only/provider-owned다.
+parent에는 child transcript를 복사하지 않는다. bounded result summary(child의 그 turn 마지막 답, 없으면
+provider 요약)와 child link를 event로 전달한다. 같은 Workspace child는 자동 open하지 않고
+cross-workspace child만 context 전환을 알리기 위해 자동 open할 수 있다.
+
+provider-native subagent(Claude Agent tool의 `local_agent`, Codex sub-agent thread)는 토글과 무관하게
+child 대화로 기록한다. 지시·도구·결과는 child에만 쌓이고 parent에는 시작 link와 최종 요약 한 번만
+남는다. child 안의 승인은 parent 승인 독에 `서브에이전트 ○○ 요청`으로 표시된다. 백그라운드 셸·MCP
+작업은 서브에이전트가 아니다. 목록(프로젝트 대화 탭·이전 대화·검색·최근순·모바일)은 child를 따로
+보이지 않고 트리에서 parent 아래 접는다. read-only/provider-owned다.
 
 hard cap은 동시 managed turn 4, tree node 16, depth 4, tree당 10분 내 child 생성 12,
-background turn 2시간이다. 동시성 초과는 FIFO queue로 수용하고 node/depth/rate/time cap은 구조화된
+background turn 2시간이다. provider-native child는 host가 예약하는 작업이 아니라 기록이므로 별도로
+루트 대화당 100개, depth 8까지 기록한다. 동시성 초과는 FIFO queue로 수용하고 node/depth/rate/time cap은 구조화된
 오류 또는 timeout 상태로 처리한다.
 
 ## Schedule, heartbeat와 local control
