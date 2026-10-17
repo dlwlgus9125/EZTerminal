@@ -1,4 +1,5 @@
 import type { ApprovalResponse } from '../shared/approval-request';
+import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { createHash } from 'node:crypto';
 import { validateChatMessageContext, type ChatMessageContext, type ChatReplyReference } from '../shared/chat-message';
 
@@ -26,6 +27,7 @@ import type {
   DaemonSystemTransitionPlanner,
 } from './daemon-command-router';
 import type {
+  DaemonMigrationReceipt,
   DaemonScheduleRun,
   DaemonScheduleRunInput,
   DaemonStoreCommit,
@@ -80,6 +82,17 @@ export interface DaemonAgentRuntimeOptions {
     limit?: number,
   ) => readonly DaemonTranscriptItem[];
   readonly findCommand?: (commandId: string) => DaemonCommand | undefined;
+  readonly findMigrationReceipt?: (id: string) => DaemonMigrationReceipt | undefined;
+  /**
+   * Whether the provider kept a transcript for this subagent: true/false when
+   * the parent's own record could be read, undefined when there is no evidence.
+   */
+  readonly subagentRecordExists?: (input: {
+    readonly providerId: string;
+    readonly workspaceRoot: string;
+    readonly parentProviderSessionId: string;
+    readonly childProviderSessionId: string;
+  }) => boolean | undefined;
   readonly orchestrationForSession?: (
     sessionId: string,
   ) => ProviderSessionContext['orchestration'] | undefined;
@@ -170,6 +183,9 @@ function commandError(
 ): DaemonCommandExecutionResult {
   return { ok: false, error: { code, message, retryable } };
 }
+
+/** Receipts of subagents archived by the startup pass; each one restores its session. */
+export const PROVIDER_NATIVE_REPAIR_SOURCE = 'provider-native-repair';
 
 function stableId(prefix: string, ...parts: readonly string[]): string {
   return `${prefix}-${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)}`;
@@ -389,6 +405,8 @@ export class DaemonAgentRuntime {
         .catch((error) => this.report('provider event failed', error));
     });
     await this.expirePersistedApprovals();
+    if (this.disposed) return;
+    await this.settleProviderNativeChildren();
     if (this.disposed) return;
     await this.recoverUnattachedClaims();
     if (this.disposed) return;
@@ -1334,8 +1352,18 @@ export class DaemonAgentRuntime {
         kind: 'turn.upsert' as const,
         value: turnInput(turn, { state: 'working' }),
       }] : []),
-      { kind: 'agent.upsert', value: agentInput(agent, { state: 'working', ...(planMode ? { permissionPreset: planMode } : {}) }) },
-      { kind: 'session.upsert', value: sessionInput(session, 'running') },
+      // A subagent's request can arrive after the parent's turn: an idle parent stays idle.
+      ...(turn || agent.currentTurnId
+        ? [
+            { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'working', ...(planMode ? { permissionPreset: planMode } : {}) }) },
+            { kind: 'session.upsert' as const, value: sessionInput(session, 'running') },
+          ]
+        : this.pendingApprovalElsewhere(context.snapshot, approval)
+          ? []
+          : [
+              { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'idle', ...(planMode ? { permissionPreset: planMode } : {}) }) },
+              { kind: 'session.upsert' as const, value: sessionInput(session, 'idle') },
+            ]),
     ] }, afterCommit: () => this.runBackground(
       `resolve approval ${approval.id}`,
       () => this.resolveProviderApproval(
@@ -1500,8 +1528,9 @@ export class DaemonAgentRuntime {
     if (depth > DAEMON_HARD_LIMITS.treeDepth) {
       return { ok: false, result: commandError('tree-depth-limit', 'Managed Agent tree depth limit reached.') };
     }
+    // Provider-native subagents have their own bounds; they do not use up the managed tree.
     const treeRelations = snapshot.agentRelations.filter((relation) => (
-      relation.treeId === treeId && !relation.detachedAt
+      relation.treeId === treeId && !relation.detachedAt && relation.owner === 'managed'
     ));
     const nodeIds = new Set<string>([treeId]);
     for (const relation of treeRelations) {
@@ -1513,7 +1542,7 @@ export class DaemonAgentRuntime {
     }
     const windowStart = this.now().valueOf() - DAEMON_HARD_LIMITS.childCreationWindowMs;
     const recentChildren = snapshot.agentRelations.filter((relation) => (
-      relation.treeId === treeId && Date.parse(relation.createdAt) >= windowStart
+      relation.treeId === treeId && relation.owner === 'managed' && Date.parse(relation.createdAt) >= windowStart
     )).length;
     if (recentChildren >= DAEMON_HARD_LIMITS.childCreationsPerWindow) {
       return { ok: false, result: commandError('child-rate-limit', 'Managed Agent child creation rate limit reached.') };
@@ -1875,6 +1904,10 @@ export class DaemonAgentRuntime {
   private async handleProviderEvent(providerId: string, event: AgentProviderEvent): Promise<void> {
     if (this.disposed) return;
     if (event.kind === 'transcript') {
+      if (event.providerChildId) {
+        await this.routeSubagentTranscript(providerId, event.item, event.providerChildId);
+        return;
+      }
       const mutations = this.transcriptMutations([transcriptInput(event.item)]);
       await this.transition((snapshot) => {
         const agent = snapshot.agents.find((entry) => entry.sessionId === event.item.sessionId);
@@ -2106,11 +2139,24 @@ export class DaemonAgentRuntime {
           else if (existing.state === 'denied' || existing.state === 'expired') response = 'deny';
           return undefined;
         }
-        const turn = event.turnId
-          ? snapshot.turns.find((entry) => entry.id === event.turnId)
-          : agent.currentTurnId
-            ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
-            : undefined;
+        // A subagent's request lives on this session but not on its turn: a background
+        // subagent can ask after the parent's turn ended, and that must not expire it.
+        const subagentId = event.providerChildId
+          ? nativeChildSessionId(providerId, event.sessionId, event.providerChildId)
+          : undefined;
+        const subagent = subagentId ? snapshot.sessions.find((entry) => entry.id === subagentId) : undefined;
+        const turn = subagentId
+          ? undefined
+          : event.turnId
+            ? snapshot.turns.find((entry) => entry.id === event.turnId)
+            : agent.currentTurnId
+              ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+              : undefined;
+        const request = event.request && subagent
+          ? { ...event.request, subagent: { sessionId: subagent.id, title: subagent.title.slice(0, 2_000) } }
+          : event.request;
+        // Clients that predate the structured request still see which subagent is asking.
+        const detail = subagent ? `${subagent.title}: ${event.detail ?? event.title}` : event.detail;
         const stale = TERMINAL_SESSION_STATES.has(session.state)
           || (event.turnId !== undefined && (!turn || TERMINAL_TURN_STATES.has(turn.state)))
           || (turn !== undefined && agent.currentTurnId !== turn.id);
@@ -2124,8 +2170,8 @@ export class DaemonAgentRuntime {
             providerRequestId: event.providerRequestId,
             risk: event.risk,
             title: event.title,
-            ...(event.detail ? { detail: event.detail } : {}),
-            ...(event.request ? { request: event.request } : {}),
+            ...(detail ? { detail } : {}),
+            ...(request ? { request } : {}),
             state: stale ? 'expired' : 'pending',
             ...(stale ? { resolvedAt: now } : {}),
           } },
@@ -2287,73 +2333,99 @@ export class DaemonAgentRuntime {
     }
   }
 
+  /**
+   * A row a provider produced inside one of its subagents goes to that
+   * subagent's session. A subagent with no session (over its bounds, or its
+   * parent is gone) drops the row; it never falls back into the parent.
+   */
+  private async routeSubagentTranscript(
+    providerId: string,
+    item: Extract<AgentProviderEvent, { kind: 'transcript' }>['item'],
+    providerChildId: string,
+  ): Promise<void> {
+    const childId = nativeChildSessionId(providerId, item.sessionId, providerChildId);
+    const mutations = this.transcriptMutations([routedChildItem(item, childId)]);
+    await this.transition((snapshot) => {
+      const child = snapshot.sessions.find((entry) => entry.id === childId);
+      const agent = snapshot.agents.find((entry) => entry.sessionId === childId);
+      if (!child || !agent || agent.providerId !== providerId || child.state === 'archived') return undefined;
+      return { mutations };
+    });
+  }
+
+  /**
+   * A subagent the provider started on its own (Claude Agent tool, Codex
+   * sub-agent). It becomes a read-only child session whether or not the host's
+   * orchestration tools are on: the person asked to see what it did.
+   */
   private async handleNativeSubagent(
     providerId: string,
     event: Extract<AgentProviderEvent, { kind: 'native-subagent' }>,
   ): Promise<void> {
     await this.transition((snapshot) => {
-      const parent = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-      const parentAgent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      const workspace = parent
-        ? findActiveDaemonWorkspace(snapshot, parent.workspaceId, parent.projectId)
+      const root = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+      const rootAgent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+      const workspace = root
+        ? findActiveDaemonWorkspace(snapshot, root.workspaceId, root.projectId)
         : undefined;
       if (
-        !parent
-        || !parentAgent
+        !root
+        || !rootAgent
         || !workspace
-        || parentAgent.providerId !== providerId
-        || parent.archivedAt !== undefined
+        || rootAgent.providerId !== providerId
+        || root.archivedAt !== undefined
       ) {
         return undefined;
       }
-      const childId = stableId('native-agent', providerId, event.sessionId, event.providerChildId);
+      const childId = nativeChildSessionId(providerId, event.sessionId, event.providerChildId);
+      // A subagent started by another subagent nests under it when that one is shown.
+      const nestedParentId = event.parentProviderChildId
+        ? nativeChildSessionId(providerId, event.sessionId, event.parentProviderChildId)
+        : undefined;
+      const parentSessionId = nestedParentId && snapshot.sessions.some((entry) => entry.id === nestedParentId)
+        ? nestedParentId
+        : event.sessionId;
       const existingSession = snapshot.sessions.find((entry) => entry.id === childId);
       const existingAgent = snapshot.agents.find((entry) => entry.sessionId === childId);
       const existingRelation = snapshot.agentRelations.find((entry) => entry.childSessionId === childId);
       if (
         !existingRelation
-        && (
-          TERMINAL_SESSION_STATES.has(parent.state)
-          || TERMINAL_AGENT_STATES.has(parentAgent.state)
-          || !snapshot.runtime.orchestrationToolsEnabled
-          || !parentAgent.orchestrationEnabled
-        )
+        && (TERMINAL_SESSION_STATES.has(root.state) || TERMINAL_AGENT_STATES.has(rootAgent.state))
       ) return undefined;
       const relationPlan = existingRelation
         ? { treeId: existingRelation.treeId, depth: existingRelation.depth }
-        : this.planNativeRelation(snapshot, event.sessionId);
+        : this.planNativeRelation(snapshot, parentSessionId);
       if (!relationPlan) {
-        return { mutations: [{ kind: 'transcript.append', items: [{
-          id: stableId('native-agent-limit', providerId, event.sessionId, event.providerChildId),
+        return { mutations: this.transcriptMutations([{
+          id: stableId('native-agent-limit', providerId, event.sessionId),
           sessionId: event.sessionId,
           kind: 'error',
-          text: 'A provider-native subagent exceeded the managed tree safety limits.',
+          text: 'This conversation reached the subagent display limit; later subagents still run but are not shown.',
           isDelta: false,
           isSensitive: false,
-        }] }] };
+        }]) };
       }
-      const resultSummary = boundedChildSummary(event.summary);
-      const summaryMutations = resultSummary
-        ? this.transcriptMutations([{
-            id: stableId('native-parent-summary', providerId, event.sessionId, event.providerChildId, resultSummary),
-            sessionId: event.sessionId,
-            kind: 'child-summary',
-            text: resultSummary,
-            isDelta: false,
-            isSensitive: false,
-            relatedSessionId: childId,
-          }, {
-            id: stableId('native-child-summary', providerId, event.sessionId, event.providerChildId, resultSummary),
-            sessionId: childId,
-            kind: 'notice',
-            text: resultSummary,
-            isDelta: false,
-            isSensitive: false,
-            relatedSessionId: event.sessionId,
-          }])
-        : [];
+      const now = this.isoNow();
+      const relatedParentId = existingRelation?.parentSessionId ?? parentSessionId;
+      const parentTurnId = relatedParentId === event.sessionId ? rootAgent.currentTurnId : undefined;
+      const finished = event.state === 'done' || event.state === 'error';
+      const result = finished && event.summary
+        ? subagentResultItem({
+            providerId,
+            rootSessionId: event.sessionId,
+            parentSessionId: relatedParentId,
+            childSessionId: childId,
+            providerChildId: event.providerChildId,
+            ...(event.toolUseId ? { toolUseId: event.toolUseId } : {}),
+            state: event.state === 'done' ? 'done' : 'error',
+            summary: event.summary,
+            ...(parentTurnId ? { parentTurnId } : {}),
+            createdAt: now,
+          })
+        : undefined;
+      const resultMutations = result ? this.transcriptMutations([result]) : [];
       if (existingSession && TERMINAL_SESSION_STATES.has(existingSession.state)) {
-        return summaryMutations.length > 0 ? { mutations: summaryMutations } : undefined;
+        return resultMutations.length > 0 ? { mutations: resultMutations } : undefined;
       }
       const state: DaemonAgent['state'] = event.state === 'done'
         ? 'done'
@@ -2372,8 +2444,8 @@ export class DaemonAgentRuntime {
           ? sessionInput(existingSession, sessionState)
           : {
               id: childId,
-              projectId: parent.projectId,
-              workspaceId: parent.workspaceId,
+              projectId: root.projectId,
+              workspaceId: root.workspaceId,
               kind: 'agent',
               title: event.title,
               state: sessionState,
@@ -2385,48 +2457,166 @@ export class DaemonAgentRuntime {
               sessionId: childId,
               providerId,
               providerSessionId: event.providerChildId,
-              model: parentAgent.model,
-              permissionPreset: parentAgent.permissionPreset,
+              model: rootAgent.model,
+              permissionPreset: rootAgent.permissionPreset,
               state,
               queuedTurnCount: 0,
-              orchestrationEnabled: parentAgent.orchestrationEnabled,
+              orchestrationEnabled: false,
             } },
       ];
-      if (!existingRelation) mutations.push({ kind: 'agent-relation.upsert', value: {
-        id: stableId('relation', relationPlan.treeId, childId),
-        treeId: relationPlan.treeId,
-        parentSessionId: event.sessionId,
-        childSessionId: childId,
-        owner: 'provider-native',
-        depth: relationPlan.depth,
-      } });
-      mutations.push(...summaryMutations);
+      if (!existingRelation) {
+        mutations.push({ kind: 'agent-relation.upsert', value: {
+          id: stableId('relation', relationPlan.treeId, childId),
+          treeId: relationPlan.treeId,
+          parentSessionId,
+          childSessionId: childId,
+          owner: 'provider-native',
+          depth: relationPlan.depth,
+        } });
+        mutations.push(...this.transcriptMutations(subagentStartItems({
+          providerId,
+          rootSessionId: event.sessionId,
+          parentSessionId,
+          childSessionId: childId,
+          providerChildId: event.providerChildId,
+          title: event.title,
+          ...(event.toolUseId ? { toolUseId: event.toolUseId } : {}),
+          ...(event.subagentType ? { subagentType: event.subagentType } : {}),
+          ...(event.background !== undefined ? { background: event.background } : {}),
+          ...(event.instruction ? { instruction: event.instruction } : {}),
+          ...(parentTurnId ? { parentTurnId } : {}),
+          createdAt: now,
+        })));
+      }
+      mutations.push(...resultMutations);
       return { mutations };
     });
   }
 
+  /**
+   * Startup pass over provider-native subagents. One still running when the host
+   * stopped lost its provider process with it: it ends as interrupted. One
+   * recorded before only Agent-tool tasks counted as subagents may be a
+   * background shell command; with the provider's own record as evidence that
+   * no such subagent exists, it is archived (and can be restored from its
+   * receipt). Without evidence nothing is archived; the next start retries.
+   */
+  private async settleProviderNativeChildren(): Promise<void> {
+    const exists = this.options.subagentRecordExists;
+    try {
+      await this.options.applySystemTransition(({ snapshot }) => {
+        const now = this.isoNow();
+        const mutations: DaemonStoreMutation[] = [];
+        for (const relation of snapshot.agentRelations) {
+          if (relation.owner !== 'provider-native' || relation.detachedAt) continue;
+          const session = snapshot.sessions.find((entry) => entry.id === relation.childSessionId);
+          const agent = snapshot.agents.find((entry) => entry.sessionId === relation.childSessionId);
+          if (!session || !agent || session.archivedAt || session.state === 'archived') continue;
+          if (ACTIVE_AGENT_STATES.has(agent.state)) {
+            mutations.push(
+              { kind: 'session.upsert', value: sessionInput(session, 'interrupted') },
+              { kind: 'agent.upsert', value: agentInput(agent, { state: 'interrupted' }) },
+            );
+            continue;
+          }
+          if (agent.providerId !== 'claude' || !exists || !agent.providerSessionId) continue;
+          const root = this.providerNativeRoot(snapshot, relation.parentSessionId);
+          const rootAgent = root ? snapshot.agents.find((entry) => entry.sessionId === root.id) : undefined;
+          const workspace = root ? snapshot.workspaces.find((entry) => entry.id === root.workspaceId) : undefined;
+          if (!rootAgent?.providerSessionId || !workspace) continue;
+          const items = this.options.readTranscript(session.id, 0, 20);
+          const onlyLifecycle = items.every((item) => item.kind === 'notice'
+            && /^Subagent (completed\.|stopped without completing\.)$/u.test(item.text.trim()));
+          if (!onlyLifecycle) continue;
+          const recorded = exists({
+            providerId: agent.providerId,
+            workspaceRoot: workspace.rootPath,
+            parentProviderSessionId: rootAgent.providerSessionId,
+            childProviderSessionId: agent.providerSessionId,
+          });
+          if (recorded !== false) continue;
+          mutations.push(
+            { kind: 'session.upsert', value: sessionInput(session, 'archived', now) },
+            { kind: 'agent.upsert', value: agentInput(agent, { state: 'archived' }) },
+            { kind: 'migration-receipt.record', value: {
+              id: stableId('provider-native-repair', session.id),
+              source: PROVIDER_NATIVE_REPAIR_SOURCE,
+              fingerprint: session.id,
+              detail: {
+                sessionId: session.id,
+                previousSessionState: session.state,
+                previousAgentState: agent.state,
+                providerSessionId: agent.providerSessionId,
+                parentProviderSessionId: rootAgent.providerSessionId,
+                reason: 'no provider subagent record; a background task was recorded as a subagent',
+              },
+            } },
+          );
+        }
+        return mutations.length ? { value: undefined, commit: { mutations } } : undefined;
+      });
+    } catch (error) {
+      this.report('provider-native subagent startup pass failed', error);
+    }
+  }
+
+  /** Undo of the startup archive: back to the states recorded in each receipt. */
+  async restoreProviderNativeRepair(): Promise<readonly string[]> {
+    const receipt = await this.options.applySystemTransition(({ snapshot }) => {
+      const restored: string[] = [];
+      const mutations: DaemonStoreMutation[] = [];
+      for (const session of snapshot.sessions) {
+        if (session.state !== 'archived') continue;
+        const repair = this.options.findMigrationReceipt?.(stableId('provider-native-repair', session.id));
+        const agent = snapshot.agents.find((entry) => entry.sessionId === session.id);
+        if (!repair || !agent) continue;
+        const sessionState = repair.detail?.previousSessionState as DaemonSession['state'] | undefined;
+        const agentState = repair.detail?.previousAgentState as DaemonAgent['state'] | undefined;
+        if (!sessionState || !agentState) continue;
+        mutations.push(
+          { kind: 'session.upsert', value: sessionInput({ ...session, archivedAt: undefined }, sessionState) },
+          { kind: 'agent.upsert', value: agentInput(agent, { state: agentState }) },
+        );
+        restored.push(session.id);
+      }
+      return { value: restored, commit: { mutations } };
+    });
+    return receipt?.value ?? [];
+  }
+
+  /** The top of a provider-native chain: the session whose provider ran every subagent below it. */
+  private providerNativeRoot(snapshot: DaemonSnapshot, sessionId: string): DaemonSession | undefined {
+    let current = sessionId;
+    for (let depth = 0; depth <= DAEMON_HARD_LIMITS.providerNativeTreeDepth; depth += 1) {
+      const up = snapshot.agentRelations.find((relation) => (
+        relation.childSessionId === current && relation.owner === 'provider-native' && !relation.detachedAt
+      ));
+      if (!up) return snapshot.sessions.find((entry) => entry.id === current);
+      current = up.parentSessionId;
+    }
+    return undefined;
+  }
+
+  /** Provider-native subagents count only against their own, larger bounds. */
   private planNativeRelation(snapshot: DaemonSnapshot, parentSessionId: string): ChildRelationPlan | null {
     const parentRelation = snapshot.agentRelations.find((relation) => (
       relation.childSessionId === parentSessionId && !relation.detachedAt
     ));
     const treeId = parentRelation?.treeId ?? parentSessionId;
     const depth = (parentRelation?.depth ?? 0) + 1;
-    if (depth > DAEMON_HARD_LIMITS.treeDepth) return null;
-    const relations = snapshot.agentRelations.filter((relation) => (
-      relation.treeId === treeId && !relation.detachedAt
-    ));
-    const nodes = new Set<string>([treeId]);
-    for (const relation of relations) {
-      nodes.add(relation.parentSessionId);
-      nodes.add(relation.childSessionId);
-    }
-    if (nodes.size >= DAEMON_HARD_LIMITS.nodesPerTree) return null;
-    const windowStart = this.now().valueOf() - DAEMON_HARD_LIMITS.childCreationWindowMs;
-    const recentChildren = snapshot.agentRelations.filter((relation) => (
-      relation.treeId === treeId && Date.parse(relation.createdAt) >= windowStart
+    if (depth > DAEMON_HARD_LIMITS.providerNativeTreeDepth) return null;
+    const nativeChildren = snapshot.agentRelations.filter((relation) => (
+      relation.treeId === treeId && !relation.detachedAt && relation.owner === 'provider-native'
     )).length;
-    if (recentChildren >= DAEMON_HARD_LIMITS.childCreationsPerWindow) return null;
+    if (nativeChildren >= DAEMON_HARD_LIMITS.providerNativeNodesPerTree) return null;
     return { treeId, depth };
+  }
+
+  /** Another pending approval keeps the session waiting after this one resolves. */
+  private pendingApprovalElsewhere(snapshot: DaemonSnapshot, approval: DaemonSnapshot['approvals'][number]): boolean {
+    return snapshot.approvals.some((entry) => (
+      entry.sessionId === approval.sessionId && entry.id !== approval.id && entry.state === 'pending'
+    ));
   }
 
   private rearmPersistedTimeouts(): void {

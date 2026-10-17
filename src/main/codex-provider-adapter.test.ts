@@ -705,17 +705,17 @@ describe('CodexProviderAdapter', () => {
     expect(transcriptEvents.map((event) => event.item)).toMatchObject([
       { sessionId: 'session-1', turnId: 'local-turn-1', sequence: 1, kind: 'assistant-message', text: 'Work', isDelta: true },
       { sessionId: 'session-1', turnId: 'local-turn-1', sequence: 2, kind: 'assistant-message', text: 'Work complete', isDelta: false },
-      { sessionId: 'session-1', turnId: 'local-turn-1', sequence: 3, kind: 'notice' },
-      { sessionId: 'session-1', turnId: 'local-turn-1', sequence: 4, kind: 'notice' },
+      // Spawning is an agent call the sub-agent hangs off; its later activity is not a row.
+      { sessionId: 'session-1', turnId: 'local-turn-1', sequence: 3, kind: 'tool-call', payload: { name: 'spawn_agent', category: 'agent', callId: 'collab-1', target: 'Inspect tests' } },
     ]);
     expect(events.filter((event) => event.kind === 'native-subagent')).toEqual([
       {
         kind: 'native-subagent', sessionId: 'session-1', providerChildId: 'child-thread',
-        title: 'Inspect tests', state: 'working',
+        title: 'Inspect tests', state: 'working', toolUseId: 'collab-1', instruction: 'Inspect tests',
       },
       {
         kind: 'native-subagent', sessionId: 'session-1', providerChildId: 'child-thread',
-        title: 'child', state: 'done',
+        title: 'Inspect tests', state: 'done',
       },
     ]);
     expect(events.filter((event) => event.kind === 'turn-finished')).toEqual([{

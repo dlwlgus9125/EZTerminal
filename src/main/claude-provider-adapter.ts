@@ -60,6 +60,13 @@ const MAX_SAFE_TEXT_LENGTH = 20_000;
 const MAX_RECONCILIATION_ITEMS = 2_000;
 const MAX_PROVIDER_HISTORY_MESSAGES = 5_000;
 const MAX_TRACKED_TOOL_CALLS = 500;
+/** Tools whose calls start a provider-native subagent. */
+const SUBAGENT_TOOLS = new Set(['Agent', 'Task']);
+/** Claude Code's subagent task ids; background shell tasks use a different shape. */
+const SUBAGENT_TASK_ID = /^a[0-9a-f]{16}$/u;
+/** Subagent messages held until their task_started arrives. */
+const MAX_PENDING_SUBAGENT_MESSAGES = 200;
+const MAX_SUBAGENT_INSTRUCTION = 8_000;
 /** Oldest Claude Code CLI this adapter will review, enable and launch. */
 export const CLAUDE_CLI_MINIMUM_SUPPORTED_VERSION = '2.1.260';
 const CLAUDE_AGENT_SDK_ARGV = [
@@ -365,6 +372,19 @@ interface TranscriptOptions {
   /** Keep an empty body; a reasoning row still carries its duration. */
   readonly allowEmpty?: boolean;
   readonly isDelta?: boolean;
+  /** The row belongs to this subagent (task id); the daemon re-homes it. */
+  readonly providerChildId?: string;
+}
+
+/** A provider-native subagent: an Agent-tool task, never a background shell or MCP task. */
+interface SubagentRecord {
+  readonly taskId: string;
+  readonly toolUseId?: string;
+  readonly title: string;
+  readonly subagentType?: string;
+  readonly background: boolean;
+  /** Set when another subagent started this one. */
+  readonly parentTaskId?: string;
 }
 
 interface SessionRecord {
@@ -392,7 +412,14 @@ interface SessionRecord {
   /** Claude Code's task list (TaskCreate/TaskUpdate ids, or TodoWrite positions). */
   readonly tasks: Map<string, TodoItem>;
   readonly fileChanges: Map<string, RecordedFileChange>;
-  readonly childTitles: Map<string, string>;
+  /** Provider-native subagents by task id. */
+  readonly subagents: Map<string, SubagentRecord>;
+  /** Agent tool use → the subagent task it started. */
+  readonly subagentByToolUse: Map<string, string>;
+  /** Tool calls made inside a subagent → that subagent's task id (nests its own subagents). */
+  readonly subagentToolOwner: Map<string, string>;
+  /** Subagent messages that arrived before their task_started, by Agent tool use. */
+  readonly pendingSubagentMessages: Map<string, JsonObject[]>;
   readonly transcript: DaemonTranscriptItem[];
   sequence: number;
   disposed: boolean;
@@ -1606,7 +1633,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       toolCalls: new Map(),
       tasks: new Map(),
       fileChanges: new Map(),
-      childTitles: new Map(),
+      subagents: new Map(),
+      subagentByToolUse: new Map(),
+      subagentToolOwner: new Map(),
+      pendingSubagentMessages: new Map(),
       transcript: [],
       sequence: 0,
       disposed: false,
@@ -1853,8 +1883,30 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     session.stream = undefined;
   }
 
+  /**
+   * A message from inside a subagent: its rows go to the subagent (`taskId`),
+   * `held` when it came before its task_started, or undefined when the parent
+   * call is not a subagent at all and the message keeps the old treatment.
+   */
+  private subagentFor(session: SessionRecord, message: JsonObject): string | 'held' | undefined {
+    const parentToolUseId = asString(message.parent_tool_use_id);
+    if (!parentToolUseId) return undefined;
+    const taskId = session.subagentByToolUse.get(parentToolUseId);
+    if (taskId) return taskId;
+    const call = session.toolCalls.get(parentToolUseId);
+    if (!call || !SUBAGENT_TOOLS.has(call.name)) return undefined;
+    const held = session.pendingSubagentMessages.get(parentToolUseId) ?? [];
+    held.push(message);
+    if (held.length > MAX_PENDING_SUBAGENT_MESSAGES) held.shift();
+    session.pendingSubagentMessages.set(parentToolUseId, held);
+    return 'held';
+  }
+
   private handleAssistant(session: SessionRecord, message: JsonObject): void {
-    const turn = this.turnForMessage(session, message);
+    const subagent = this.subagentFor(session, message);
+    if (subagent === 'held') return;
+    // A subagent's rows are its own: no parent turn, no parent stream, no parent task list.
+    const turn = subagent ? undefined : this.turnForMessage(session, message);
     const providerMessage = asObject(message.message);
     const providerMessageId = asString(providerMessage?.id);
     if (turn && providerMessage) {
@@ -1863,6 +1915,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const content = providerMessage?.content;
     if (!Array.isArray(content)) return;
     const child = typeof message.parent_tool_use_id === 'string';
+    const routed = subagent ? { providerChildId: subagent } : {};
     // With partial messages each block arrives as its own assistant message.
     const stream = !child && providerMessageId && session.stream?.messageId === providerMessageId ? session.stream : undefined;
     content.forEach((rawBlock, contentIndex) => {
@@ -1872,10 +1925,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       const index = stream?.index !== undefined && content.length === 1 ? stream.index : contentIndex;
       const source = `${asString(message.uuid) ?? this.createId()}:${String(contentIndex)}`;
       if (type === 'text') {
-        this.appendTranscript(session, child ? 'child-summary' : 'assistant-message', providerTranscriptText(block.text), {
+        this.appendTranscript(session, child && !subagent ? 'child-summary' : 'assistant-message', providerTranscriptText(block.text), {
           turnId: turn?.turnId,
           source,
           ...(!child && providerMessageId ? { messageId: claudeMessageId(providerMessageId, index) } : {}),
+          ...routed,
         });
         return;
       }
@@ -1890,6 +1944,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
           turnId: turn?.turnId,
           source,
           payload: { v: 1, type: 'reasoning' },
+          ...routed,
         });
         return;
       }
@@ -1898,6 +1953,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         const toolId = asString(block.id);
         if (toolId) {
           session.toolCalls.set(toolId, { name, input: block.input });
+          if (subagent) session.subagentToolOwner.set(toolId, subagent);
           // Bound calls whose result never arrives.
           if (session.toolCalls.size > MAX_TRACKED_TOOL_CALLS) session.toolCalls.delete(session.toolCalls.keys().next().value!);
           const change = claudeFileChange(name, block.input);
@@ -1909,8 +1965,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
           turnId: turn?.turnId,
           source,
           ...(toolId ? { payload: toolCallPayload(name, toolId, block.input) } : {}),
+          ...routed,
         });
-        if (name === 'TodoWrite' && toolId) this.applyTodoWrite(session, block.input, turn, toolId);
+        if (name === 'TodoWrite' && toolId && !subagent) this.applyTodoWrite(session, block.input, turn, toolId);
       }
     });
     const assistantError = asString(message.error);
@@ -1923,7 +1980,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private handleProviderUserMessage(session: SessionRecord, message: JsonObject): void {
     const content = asObject(message.message)?.content;
     if (!Array.isArray(content)) return;
-    const turn = this.turnForMessage(session, message);
+    const subagent = this.subagentFor(session, message);
+    if (subagent === 'held') return;
+    // A foreground subagent's instruction also arrives here as text; it came with task_started.
+    const turn = subagent ? undefined : this.turnForMessage(session, message);
     // The structured result describes the message's only tool_result.
     const structured = content.length === 1 ? message.tool_use_result : undefined;
     const meta = asArray(message.tool_result_meta).map(asObject);
@@ -1948,8 +2008,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
             ? 'interrupted'
             : 'failed';
       const files = status === 'completed' ? toolResultFiles(name, call?.input, change, structured) : undefined;
+      if (toolId) session.subagentToolOwner.delete(toolId);
       this.appendTranscript(session, 'tool-result', (!failed && change ? encodeFileChanges([change]) : undefined) || text || `${name} ${failed ? 'failed' : 'completed'}.`, {
         turnId: turn?.turnId,
+        ...(subagent ? { providerChildId: subagent } : {}),
         source: `${asString(message.uuid) ?? this.createId()}:${String(index)}`,
         ...(toolId ? {
           payload: {
@@ -1964,7 +2026,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
           },
         } : {}),
       });
-      if (status === 'completed' && call && toolId) this.applyTaskResult(session, call, structured, text, turn, toolId);
+      if (status === 'completed' && call && toolId && !subagent) this.applyTaskResult(session, call, structured, text, turn, toolId);
     });
   }
 
@@ -2068,66 +2130,31 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       return;
     }
     if (subtype === 'task_started') {
-      if (message.ambient === true || message.skip_transcript === true) return;
-      const childId = asString(message.task_id);
-      if (!childId) return;
-      const subagentType = safeToolName(message.subagent_type ?? 'subagent');
-      const title = subagentType === 'subagent' ? 'Claude subagent' : `Claude ${subagentType}`;
-      session.childTitles.set(childId, title);
-      this.emit({
-        kind: 'native-subagent',
-        sessionId: session.context.sessionId,
-        providerChildId: childId,
-        title,
-        state: 'starting',
-      });
+      this.startSubagent(session, message);
       return;
     }
-    if (subtype === 'task_progress') {
-      const childId = asString(message.task_id);
-      if (!childId) return;
-      this.emit({
-        kind: 'native-subagent',
-        sessionId: session.context.sessionId,
-        providerChildId: childId,
-        title: session.childTitles.get(childId) ?? 'Claude subagent',
-        state: 'working',
-        ...(asString(message.summary) ? { summary: safeText(message.summary, 500) } : {}),
-      });
-      return;
-    }
-    if (subtype === 'task_updated') {
-      const childId = asString(message.task_id);
-      if (!childId) return;
-      const status = asString(asObject(message.patch)?.status);
-      const state = status === 'completed'
-        ? 'done'
-        : status === 'failed' || status === 'killed'
-          ? 'error'
-          : status === 'paused'
-            ? 'blocked'
-            : 'working';
-      this.emit({
-        kind: 'native-subagent',
-        sessionId: session.context.sessionId,
-        providerChildId: childId,
-        title: session.childTitles.get(childId) ?? 'Claude subagent',
-        state,
-      });
-      return;
-    }
-    if (subtype === 'task_notification') {
-      const childId = asString(message.task_id);
-      if (!childId) return;
-      const status = asString(message.status);
-      this.emit({
-        kind: 'native-subagent',
-        sessionId: session.context.sessionId,
-        providerChildId: childId,
-        title: session.childTitles.get(childId) ?? 'Claude subagent',
-        state: status === 'completed' ? 'done' : 'error',
-        summary: status === 'completed' ? 'Subagent completed.' : 'Subagent stopped without completing.',
-      });
+    if (subtype === 'task_progress' || subtype === 'task_updated' || subtype === 'task_notification') {
+      const subagent = session.subagents.get(asString(message.task_id) ?? '');
+      // Background shell, MCP and workflow tasks are not subagents.
+      if (!subagent) return;
+      if (subtype === 'task_progress') {
+        this.emitSubagent(session, subagent, 'working', asString(message.summary) ? safeText(message.summary, 500) : undefined);
+      } else if (subtype === 'task_updated') {
+        const status = asString(asObject(message.patch)?.status);
+        this.emitSubagent(session, subagent, status === 'completed'
+          ? 'done'
+          : status === 'failed' || status === 'killed'
+            ? 'error'
+            : status === 'paused'
+              ? 'blocked'
+              : 'working');
+      } else {
+        const completed = asString(message.status) === 'completed';
+        // The notification's summary is the subagent's answer; the parent gets it once.
+        const summary = asString(message.summary)?.trim();
+        this.emitSubagent(session, subagent, completed ? 'done' : 'error',
+          summary ? safeText(summary, 2_000) : completed ? 'Subagent completed.' : 'Subagent stopped without completing.');
+      }
       return;
     }
     if (subtype === 'session_state_changed') {
@@ -2146,14 +2173,67 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   private handleToolProgress(session: SessionRecord, message: JsonObject): void {
+    const subagent = session.subagents.get(asString(message.task_id) ?? '');
+    if (subagent) this.emitSubagent(session, subagent, 'working');
+  }
+
+  /**
+   * Only Agent-tool tasks are subagents. The SDK names the kind (`local_agent`
+   * vs `local_bash`, `mcp_task`, `local_workflow`); without it, the call that
+   * started the task (or Claude Code's subagent id shape) decides.
+   */
+  private startSubagent(session: SessionRecord, message: JsonObject): void {
+    if (message.ambient === true || message.skip_transcript === true) return;
     const taskId = asString(message.task_id);
-    if (!taskId || !session.childTitles.has(taskId)) return;
+    if (!taskId || session.subagents.has(taskId)) return;
+    const toolUseId = asString(message.tool_use_id);
+    const call = toolUseId ? session.toolCalls.get(toolUseId) : undefined;
+    const taskType = asString(message.task_type);
+    const isSubagent = taskType
+      ? taskType === 'local_agent'
+      : (call !== undefined && SUBAGENT_TOOLS.has(call.name)) || SUBAGENT_TASK_ID.test(taskId);
+    if (!isSubagent) return;
+    const input = asObject(call?.input);
+    const subagentType = asString(message.subagent_type) ?? asString(input?.subagent_type);
+    const description = asString(message.description) ?? asString(input?.description);
+    const instruction = asString(message.prompt) ?? asString(input?.prompt);
+    const parentTaskId = toolUseId ? session.subagentToolOwner.get(toolUseId) : undefined;
+    const subagent: SubagentRecord = {
+      taskId,
+      ...(toolUseId ? { toolUseId } : {}),
+      title: safeText(description ?? (subagentType ? `Claude ${subagentType}` : 'Claude subagent'), 200),
+      ...(subagentType ? { subagentType: safeToolName(subagentType) } : {}),
+      background: message.is_backgrounded === true,
+      ...(parentTaskId ? { parentTaskId } : {}),
+    };
+    session.subagents.set(taskId, subagent);
+    if (toolUseId) session.subagentByToolUse.set(toolUseId, taskId);
+    this.emitSubagent(session, subagent, 'starting', undefined, instruction ? safeText(instruction, MAX_SUBAGENT_INSTRUCTION) : undefined);
+    const held = toolUseId ? session.pendingSubagentMessages.get(toolUseId) : undefined;
+    if (toolUseId) session.pendingSubagentMessages.delete(toolUseId);
+    for (const pending of held ?? []) this.handleMessage(session, pending as unknown as SDKMessage);
+  }
+
+  private emitSubagent(
+    session: SessionRecord,
+    subagent: SubagentRecord,
+    state: Extract<AgentProviderEvent, { kind: 'native-subagent' }>['state'],
+    summary?: string,
+    instruction?: string,
+  ): void {
+    session.coalescer.flushAll();
     this.emit({
       kind: 'native-subagent',
       sessionId: session.context.sessionId,
-      providerChildId: taskId,
-      title: session.childTitles.get(taskId) ?? 'Claude subagent',
-      state: 'working',
+      providerChildId: subagent.taskId,
+      title: subagent.title,
+      state,
+      ...(summary ? { summary } : {}),
+      ...(subagent.toolUseId ? { toolUseId: subagent.toolUseId } : {}),
+      ...(subagent.subagentType ? { subagentType: subagent.subagentType } : {}),
+      background: subagent.background,
+      ...(subagent.parentTaskId ? { parentProviderChildId: subagent.parentTaskId } : {}),
+      ...(instruction ? { instruction } : {}),
     });
   }
 
@@ -2207,10 +2287,15 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }, { once: true });
     // The SDK's own title/description strings are not used; the request is built from the tool input.
     const approval = claudeApproval(toolName, input, request.toolUseID);
+    // Raised inside a subagent: the approval lives on this session but is not tied to its turn,
+    // because a background subagent can ask after the parent's turn ended.
+    const subagent = request.agentID ? session.subagents.get(request.agentID) : undefined;
+    if (subagent) this.emitSubagent(session, subagent, 'blocked');
     this.emit({
       kind: 'approval-requested',
       sessionId: session.context.sessionId,
-      ...(turn ? { turnId: turn.turnId } : {}),
+      ...(turn && !subagent ? { turnId: turn.turnId } : {}),
+      ...(subagent ? { providerChildId: subagent.taskId } : {}),
       providerRequestId: request.requestId,
       risk: toolRisk(toolName),
       title: approval.title,
@@ -2230,7 +2315,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   ): void {
     session.coalescer.flushAll();
     const item = this.transcriptItem(session, kind, text, options);
-    if (item) this.recordTranscript(session, item);
+    if (item) this.recordTranscript(session, item, options.providerChildId);
   }
 
   /** Allocates the next sequence only for a row that will be emitted. */
@@ -2261,7 +2346,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     };
   }
 
-  private recordTranscript(session: SessionRecord, item: DaemonTranscriptItem): void {
+  private recordTranscript(session: SessionRecord, item: DaemonTranscriptItem, providerChildId?: string): void {
+    if (providerChildId) {
+      // A subagent's row is not part of this session's own reconciliation history.
+      this.emit({ kind: 'transcript', item, providerChildId });
+      return;
+    }
     session.transcript.push(item);
     if (session.transcript.length > MAX_RECONCILIATION_ITEMS) session.transcript.shift();
     this.emit({ kind: 'transcript', item });
@@ -2288,6 +2378,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       });
     };
     for (const message of history.slice(-MAX_RECONCILIATION_ITEMS)) {
+      // Subagent rows live in the subagent's own session, not in this history.
+      if (message.parent_tool_use_id) continue;
       const envelope = asObject(message.message);
       const content = envelope?.content;
       if (typeof content === 'string' && message.type === 'user') {
@@ -2300,7 +2392,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         if (!block) return;
         const source = `${message.uuid}:${String(index)}`;
         if (message.type === 'assistant' && block.type === 'text') {
-          append(message.parent_tool_use_id ? 'child-summary' : 'assistant-message', asString(block.text) ?? '', source);
+          append('assistant-message', asString(block.text) ?? '', source);
         } else if (message.type === 'assistant' && block.type === 'thinking') {
           append('reasoning', asString(block.thinking) ?? '', source);
         } else if (message.type === 'assistant' && (block.type === 'tool_use' || block.type === 'server_tool_use')) {

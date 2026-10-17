@@ -231,7 +231,23 @@ describe('buildChatModel over a Claude session with subagents', () => {
     const model = buildChatModel({ items: child, turns: finishedTurns(child) });
     const first = model.rows[0];
     expect(first?.kind === 'user' && first.origin).toBe('parent-agent');
-    expect(kinds(model.rows)).toEqual(['user', 'turn-status', 'activity', 'assistant']);
+    // A subagent has no turn records of its own: no turn status row.
+    expect(kinds(model.rows)).toEqual(['user', 'activity', 'assistant']);
+  });
+});
+
+describe('buildChatModel over a Codex session with a sub-agent', () => {
+  it('joins the sub-agent to its spawn call even though the link was recorded first', () => {
+    const recorded = golden('codex-subagent-approval');
+    const parentId = recorded.items[0]!.sessionId;
+    const parent = recorded.items.filter((item) => item.sessionId === parentId);
+    const model = buildChatModel({ items: parent, approvals: recorded.approvals, turns: finishedTurns(parent) });
+    const spawn = model.rows.flatMap((row) => row.kind === 'activity' ? row.entries : [])
+      .flatMap((entry) => entry.kind === 'tool' && entry.tool.category === 'agent' ? [entry.tool] : []);
+    expect(spawn.map((tool) => [tool.name, tool.subagent?.title, tool.subagent?.state])).toEqual([['spawn_agent', 'delete file', 'done']]);
+    const children = model.rows.filter((row): row is Extract<ChatRow, { kind: 'child' }> => row.kind === 'child');
+    expect(children.map((row) => row.subagent?.title)).toEqual(['delete file']);
+    expect(children[0]!.text).toMatch(/deleted/u);
   });
 });
 

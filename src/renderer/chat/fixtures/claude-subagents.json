@@ -5,6 +5,26 @@
     "agentSdk": "0.3.260",
     "cli": "2.1.289 (Claude Code)"
   },
+  "sessions": [
+    {
+      "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
+      "parentSessionId": "replay-session",
+      "providerChildId": "a558c7936a94f9e76",
+      "title": "Read README title",
+      "subagentType": "Explore",
+      "background": true,
+      "state": "done"
+    },
+    {
+      "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
+      "parentSessionId": "replay-session",
+      "providerChildId": "a4bb3807ad29ef096",
+      "title": "Find greet definition",
+      "subagentType": "Explore",
+      "background": true,
+      "state": "done"
+    }
+  ],
   "items": [
     {
       "id": "message-335b83bc55c6db953c3b7ecebf70352b",
@@ -77,6 +97,23 @@
       "sequence": 4
     },
     {
+      "id": "native-instruction-f5873036d52f6f622490588e34d8744a",
+      "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
+      "kind": "user-message",
+      "text": "Read README.md in the current working directory and report its title (the top-level heading). Breadth: quick. Reply with just the title.",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "subagent",
+        "role": "instruction",
+        "parentSessionId": "replay-session",
+        "callId": "toolu_01Vna2VdQ9ainw9HTPjzd9Dp"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 1
+    },
+    {
       "id": "claude_4a0962b059720576d6bf1234",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
@@ -140,6 +177,23 @@
       "sequence": 7
     },
     {
+      "id": "native-instruction-65ecca2298a8b0ed18cf3a23d678f6a0",
+      "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
+      "kind": "user-message",
+      "text": "Find where the function or symbol `greet` is defined in the current working directory's repository. Breadth: medium. Report the file path and line number of the definition, briefly.",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "subagent",
+        "role": "instruction",
+        "parentSessionId": "replay-session",
+        "callId": "toolu_015rjtQtQThL2xNdFKh53Xpp"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 1
+    },
+    {
       "id": "claude_42d1f1c258f0bcfa4dbf21ae",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
@@ -193,27 +247,8 @@
       "sequence": 10
     },
     {
-      "id": "native-instruction-f5873036d52f6f622490588e34d8744a",
-      "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
-      "turnId": "native-turn-f5873036d52f6f622490588e34d8744a",
-      "kind": "user-message",
-      "text": "Read README.md in the current working directory and report its title (the top-level heading). Breadth: quick. Reply with just the title.",
-      "isDelta": false,
-      "isSensitive": false,
-      "payload": {
-        "v": 1,
-        "type": "subagent",
-        "role": "instruction",
-        "parentSessionId": "replay-session",
-        "callId": "toolu_01Vna2VdQ9ainw9HTPjzd9Dp"
-      },
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 1
-    },
-    {
       "id": "claude_1bdcf06ab1565603277fc24f",
       "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
-      "turnId": "native-turn-f5873036d52f6f622490588e34d8744a",
       "kind": "tool-call",
       "text": "Read\n{\n  \"file_path\": \"<WORKSPACE>\\\\README.md\",\n  \"limit\": 20\n}",
       "isDelta": false,
@@ -234,7 +269,6 @@
     {
       "id": "claude_078df2b16ab13d1e2135959c",
       "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
-      "turnId": "native-turn-f5873036d52f6f622490588e34d8744a",
       "kind": "tool-result",
       "text": "1\t# Demo app\n2\t\n3\tA tiny demo project used for EZTerminal provider fixture capture.\n4\tThe `greet` helper lives in src/app.ts.\n5\t",
       "isDelta": false,
@@ -254,22 +288,21 @@
     {
       "id": "claude_217aef7664f0cd05ed9822a2",
       "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
-      "turnId": "native-turn-f5873036d52f6f622490588e34d8744a",
       "kind": "assistant-message",
       "text": "Demo app",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 4
     },
     {
-      "id": "native-parent-summary-3d8cc1f9e26d84e7033bfe4f865ade98",
+      "id": "native-parent-summary-bceb93ac5a640fb44b972382df278628",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "child-summary",
       "text": "Demo app",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "relatedSessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
       "payload": {
         "v": 1,
@@ -283,27 +316,8 @@
       "sequence": 11
     },
     {
-      "id": "native-instruction-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "turnId": "native-turn-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "kind": "user-message",
-      "text": "Find where the function or symbol `greet` is defined in the current working directory's repository. Breadth: medium. Report the file path and line number of the definition, briefly.",
-      "isDelta": false,
-      "isSensitive": false,
-      "payload": {
-        "v": 1,
-        "type": "subagent",
-        "role": "instruction",
-        "parentSessionId": "replay-session",
-        "callId": "toolu_015rjtQtQThL2xNdFKh53Xpp"
-      },
-      "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 1
-    },
-    {
       "id": "claude_d997efcba3314806678d1254",
       "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "turnId": "native-turn-65ecca2298a8b0ed18cf3a23d678f6a0",
       "kind": "tool-call",
       "text": "Grep\n{\n  \"pattern\": \"greet\",\n  \"path\": \"<WORKSPACE>\",\n  \"output_mode\": \"content\"\n}",
       "isDelta": false,
@@ -324,7 +338,6 @@
     {
       "id": "claude_a0637c90e9f73aa7b9619607",
       "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "turnId": "native-turn-65ecca2298a8b0ed18cf3a23d678f6a0",
       "kind": "tool-result",
       "text": "README.md:4:The `greet` helper lives in src/app.ts.\nsrc\\app.ts:1:export function greet(name: string): string {\nsrc\\app.ts:6:  console.log(greet('world'));",
       "isDelta": false,
@@ -344,22 +357,21 @@
     {
       "id": "claude_1b3bb078a007a51a773f12b5",
       "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "turnId": "native-turn-65ecca2298a8b0ed18cf3a23d678f6a0",
       "kind": "assistant-message",
       "text": "`greet` is defined at line 1 of `<WORKSPACE>\\src\\app.ts`:\n\n```ts\nexport function greet(name: string): string {\n```\n\nThere's no other definition in the repository. The same file calls it at line 6, `greet('world')`, and `README.md` line 4 mentions it.",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 4
     },
     {
-      "id": "native-parent-summary-a7c521ce5d1bdd4d68213a9a6787b58f",
+      "id": "native-parent-summary-4379a3bc268b9ae5228e5b118be36c88",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "child-summary",
       "text": "`greet` is defined at line 1 of `<WORKSPACE>\\src\\app.ts`:\n\n```ts\nexport function greet(name: string): string {\n```\n\nThere's no other definition in the repository. The same file calls it at line 6, `greet('world')`, and `README.md` line 4 mentions it.",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "relatedSessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
       "payload": {
         "v": 1,
@@ -572,28 +584,6 @@
         },
         "toolUseID": "toolu_01DTqwGmJSoGEKn2pKyQaPY3"
       }
-    }
-  ],
-  "sessions": [
-    {
-      "sessionId": "native-agent-f5873036d52f6f622490588e34d8744a",
-      "parentSessionId": "replay-session",
-      "providerChildId": "a558c7936a94f9e76",
-      "title": "Read README title",
-      "subagentType": "Explore",
-      "background": true,
-      "state": "done",
-      "turnId": "native-turn-f5873036d52f6f622490588e34d8744a"
-    },
-    {
-      "sessionId": "native-agent-65ecca2298a8b0ed18cf3a23d678f6a0",
-      "parentSessionId": "replay-session",
-      "providerChildId": "a4bb3807ad29ef096",
-      "title": "Find greet definition",
-      "subagentType": "Explore",
-      "background": true,
-      "state": "done",
-      "turnId": "native-turn-65ecca2298a8b0ed18cf3a23d678f6a0"
     }
   ]
 }

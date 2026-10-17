@@ -1,0 +1,596 @@
+{
+  "provider": "codex",
+  "scenario": "subagents",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "sessions": [
+    {
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "parentSessionId": "replay-session",
+      "providerChildId": "01a14808-36d4-7781-a817-7c8e11795894",
+      "title": "read readme title",
+      "state": "working"
+    },
+    {
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "parentSessionId": "replay-session",
+      "providerChildId": "01a14808-45a6-7de3-89a6-2e3c094c478c",
+      "title": "find greet definition",
+      "state": "working"
+    }
+  ],
+  "items": [
+    {
+      "id": "message-14dab22d421e8424f11867e4c2b356f0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Spawn one sub-agent that reads README.md and reports its title, and a second sub-agent that finds where `greet` is defined in src/app.ts. Wait for both sub-agents to finish, then answer in two sentences. Do not read the files yourself.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_bcf349529b6e02e8ab669c74",
+      "messageId": "codex_message_12d1d5d26515eb11ad3d4d1a",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll assign each file lookup to a separate sub-agent and wait for both reports.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_587e1a99331c8942c2b09f1b",
+      "messageId": "codex_message_12d1d5d26515eb11ad3d4d1a",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll assign each file lookup to a separate sub-agent and wait for both reports.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "native-subagent-link-80f3180279f19a7f10cb2e99c18567d8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Subagent started: read readme title",
+      "isDelta": false,
+      "isSensitive": false,
+      "relatedSessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "payload": {
+        "v": 1,
+        "type": "subagent",
+        "role": "link",
+        "childSessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+        "callId": "call_1aaf8862a8fa450f8a4ec40d1b794477",
+        "title": "read readme title"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_9774ea2b4bb53c6867b1cf2b",
+      "messageId": "codex_message_84808f1df49787f1d7186fe6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Sub-agent read readme title",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "call_1aaf8862a8fa450f8a4ec40d1b794477",
+        "name": "spawn_agent",
+        "category": "agent",
+        "phase": "call",
+        "status": "running",
+        "target": "read readme title"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_0f47cb8fd6a3db786dd1c71d",
+      "messageId": "codex_message_84808f1df49787f1d7186fe6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "Started sub-agent read readme title.",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "call_1aaf8862a8fa450f8a4ec40d1b794477",
+        "name": "spawn_agent",
+        "category": "agent",
+        "phase": "result",
+        "status": "completed",
+        "target": "read readme title"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "native-subagent-link-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Subagent started: find greet definition",
+      "isDelta": false,
+      "isSensitive": false,
+      "relatedSessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "payload": {
+        "v": 1,
+        "type": "subagent",
+        "role": "link",
+        "childSessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+        "callId": "call_c7205ce21763482988fb2937e8578602",
+        "title": "find greet definition"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_item_67f624cf0f0c362e527f8cd7",
+      "messageId": "codex_message_d079ac9942e8a68ed41ca8a8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Sub-agent find greet definition",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "call_c7205ce21763482988fb2937e8578602",
+        "name": "spawn_agent",
+        "category": "agent",
+        "phase": "call",
+        "status": "running",
+        "target": "find greet definition"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_item_433e9c875a26bc6fe7f854ff",
+      "messageId": "codex_message_d079ac9942e8a68ed41ca8a8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "Started sub-agent find greet definition.",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "call_c7205ce21763482988fb2937e8578602",
+        "name": "spawn_agent",
+        "category": "agent",
+        "phase": "result",
+        "status": "completed",
+        "target": "find greet definition"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "codex_item_b7d7a923db2d21285cf6ce1d",
+      "messageId": "codex_message_2131787e8791460846c2cb28",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 1
+    },
+    {
+      "id": "codex_item_73eca7f891b3346443339907",
+      "messageId": "codex_message_39531f739c177df5e62f7883",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 1
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 1
+    },
+    {
+      "id": "codex_item_cf23ee52069cdafcf24aba95",
+      "messageId": "codex_message_4afb904a6375dce8664b87ba",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_253edf98ed52863621511f8b",
+      "messageId": "codex_message_882429beddfe534e62dd846e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 1
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 10
+    },
+    {
+      "id": "codex_item_b978946f1c72b160bae06352",
+      "messageId": "codex_message_08bc5d5eba470f63fd360af7",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_1603a146e7fccb78005502da",
+      "messageId": "codex_message_20fe0ea33debff6f4eb878bc",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 1
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_bfdd49f11d8686b49d2f27b7",
+      "messageId": "codex_message_1a215b8b65285eef3b1ae484",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_203da12894ccd168e9e84c0f",
+      "messageId": "codex_message_eb1896ac7930b4457dc82145",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_d2561a6afe9f977e218bb27f",
+      "messageId": "codex_message_a108949e1b0ffbc04126d52e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 11
+    },
+    {
+      "id": "codex_delta_c5eb4165e16db9d5c3835255",
+      "messageId": "codex_message_cbad605b3461dd96843a98cf",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "Both sub-agents are still waiting for their file commands to return; neither has reported a result yet.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 12
+    },
+    {
+      "id": "codex_item_433031982e14af7355c7cde9",
+      "messageId": "codex_message_cbad605b3461dd96843a98cf",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "Both sub-agents are still waiting for their file commands to return; neither has reported a result yet.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 13
+    },
+    {
+      "id": "codex_item_e9162734e24b6e3d661849ff",
+      "messageId": "codex_message_ed6660449752a77a91f5bfa6",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_179e0afb5b1cc4947b645477",
+      "messageId": "codex_message_175f14d5c4b8b3d7e864f07a",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_414ddecdfffc8b29b13073a8",
+      "messageId": "codex_message_ea242f97ba26683292667f89",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_db5515eeeba71b25d08fa640",
+      "messageId": "codex_message_02c66dcbaec223eb5e36e975",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 14
+    },
+    {
+      "id": "codex_item_ecf4318b829a03b3a71293e5",
+      "messageId": "codex_message_d48419a9beab4a4a20da5127",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 7
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_item_3306e04c7118ca1588031df0",
+      "messageId": "codex_message_052af4fa1b8104f1b67733a4",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 2
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_e2d4ea87bb9b62602d34b3f2",
+      "messageId": "codex_message_50d935971a3922856a3bff1d",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_item_4e37971497a992a45565c545",
+      "messageId": "codex_message_377e61b6a512dbd6ad23dfda",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_330a35ea98a9cde7de55035f",
+      "messageId": "codex_message_81ecb3e94ba4514518738651",
+      "sessionId": "native-agent-2b2ec0dd6d9c0b46bc6bfc868d1263e3",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 6
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "codex_item_1327f7922ed0027b2e9a277e",
+      "messageId": "codex_message_dafa4dd82069fa65ce8da71d",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 1
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 15
+    },
+    {
+      "id": "codex_item_05b88531de62aebcf555070b",
+      "messageId": "codex_message_c4ddff15e8977ebaa5ffbbf8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 16
+    },
+    {
+      "id": "codex_delta_79afb6d4b438805705d73b4f",
+      "messageId": "codex_message_886b6b799ea64efb58b52db6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "The file commands appear to be stalled. I’ve asked both sub-agents to retry without loading shell profiles.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 17
+    },
+    {
+      "id": "codex_item_387ef66925fcf9a3741b1b51",
+      "messageId": "codex_message_886b6b799ea64efb58b52db6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "The file commands appear to be stalled. I’ve asked both sub-agents to retry without loading shell profiles.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 18
+    },
+    {
+      "id": "codex_item_40f7fdc81e86f4e550ecd5a7",
+      "messageId": "codex_message_e929b5bd356d4201eaa40259",
+      "sessionId": "native-agent-80f3180279f19a7f10cb2e99c18567d8",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_item_4ae1b310fb0214ce7815b474",
+      "messageId": "codex_message_d6e419cd33a4ad68f5cd774a",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "reasoning",
+        "durationMs": 0
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 19
+    }
+  ],
+  "approvals": [],
+  "providerResponses": []
+}

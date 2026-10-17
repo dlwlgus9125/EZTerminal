@@ -5,6 +5,17 @@
     "agentSdk": "0.3.260",
     "cli": "2.1.289 (Claude Code)"
   },
+  "sessions": [
+    {
+      "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
+      "parentSessionId": "replay-session",
+      "providerChildId": "a015edb6088ce6863",
+      "title": "Delete README.md via shell",
+      "subagentType": "general-purpose",
+      "background": false,
+      "state": "done"
+    }
+  ],
   "items": [
     {
       "id": "message-335b83bc55c6db953c3b7ecebf70352b",
@@ -63,11 +74,10 @@
     {
       "id": "native-instruction-c5db594cd2a2d09fd32326020bf4b7af",
       "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
-      "turnId": "native-turn-c5db594cd2a2d09fd32326020bf4b7af",
       "kind": "user-message",
       "text": "In the working directory <WORKSPACE>, delete the file README.md using a single shell command (e.g., PowerShell `Remove-Item -LiteralPath README.md -Confirm:$false`). If the tool call is denied or fails, stop immediately and do not retry or try alternatives. Report exactly what happened: the command you ran, whether it succeeded, was denied, or failed, and any output/error message.",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "payload": {
         "v": 1,
         "type": "subagent",
@@ -81,7 +91,6 @@
     {
       "id": "claude_f2887806db6a838ff502030e",
       "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
-      "turnId": "native-turn-c5db594cd2a2d09fd32326020bf4b7af",
       "kind": "tool-call",
       "text": "PowerShell\n{\n  \"command\": \"Remove-Item -LiteralPath README.md -Confirm:$false\",\n  \"description\": \"Delete README.md in working directory\"\n}",
       "isDelta": false,
@@ -102,19 +111,18 @@
     },
     {
       "id": "claude_04cbc7f38c6f6399beb58ca8",
-      "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
-      "turnId": "native-turn-c5db594cd2a2d09fd32326020bf4b7af",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
       "kind": "approval",
       "text": "Claude tool request allowed.",
       "isDelta": false,
       "isSensitive": false,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 3
+      "sequence": 4
     },
     {
       "id": "claude_98f64c4e94e036fe98ec027b",
       "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
-      "turnId": "native-turn-c5db594cd2a2d09fd32326020bf4b7af",
       "kind": "tool-result",
       "text": "(PowerShell completed with no output)",
       "isDelta": false,
@@ -129,27 +137,26 @@
         "status": "completed"
       },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 4
+      "sequence": 3
     },
     {
       "id": "claude_edfc353c9b9af46a504bc804",
       "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
-      "turnId": "native-turn-c5db594cd2a2d09fd32326020bf4b7af",
       "kind": "assistant-message",
       "text": "I ran this command once, in PowerShell, from `<WORKSPACE>`:\n\n```\nRemove-Item -LiteralPath README.md -Confirm:$false\n```\n\n- **Result:** It succeeded. The permission system didn't block it, and the command didn't fail.\n- **Output:** None. The command printed nothing and gave no error, which is what PowerShell does when a delete works.\n\nI didn't run a second command to check that the file is gone, because you asked for one command only.",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 5
+      "sequence": 4
     },
     {
-      "id": "native-parent-summary-ebf8e8af6dd178cff49962dd47811b14",
+      "id": "native-parent-summary-0124464f356f975e3cf2cc0019bc2552",
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "child-summary",
       "text": "I ran this command once, in PowerShell, from `<WORKSPACE>`:\n\n```\nRemove-Item -LiteralPath README.md -Confirm:$false\n```\n\n- **Result:** It succeeded. The permission system didn't block it, and the command didn't fail.\n- **Output:** None. The command printed nothing and gave no error, which is what PowerShell does when a delete works.\n\nI didn't run a second command to check that the file is gone, because you asked for one command only.",
       "isDelta": false,
-      "isSensitive": false,
+      "isSensitive": true,
       "relatedSessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
       "payload": {
         "v": 1,
@@ -160,7 +167,7 @@
         "state": "done"
       },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 4
+      "sequence": 5
     },
     {
       "id": "claude_d8ea8f8217f6363cb1ea3d2f",
@@ -180,7 +187,7 @@
         "status": "completed"
       },
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 5
+      "sequence": 6
     },
     {
       "id": "claude_356ea6292bda99ab3e6d8a52",
@@ -192,7 +199,7 @@
       "isDelta": true,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 6
+      "sequence": 7
     },
     {
       "id": "claude_936878923ba3250825e6853e",
@@ -204,7 +211,7 @@
       "isDelta": false,
       "isSensitive": true,
       "createdAt": "2026-10-01T09:00:00.000Z",
-      "sequence": 7
+      "sequence": 8
     },
     {
       "id": "turn-summary-9e0ef69cf81a4ac032bd2ce76303552d",
@@ -214,7 +221,7 @@
       "text": "Claude completed the turn.",
       "isDelta": false,
       "isSensitive": false,
-      "sequence": 8,
+      "sequence": 9,
       "createdAt": "2026-10-01T09:00:00.000Z"
     }
   ],
@@ -222,11 +229,10 @@
     {
       "id": "approval-6087cf41b832c5ee69d525365d76caf1",
       "sessionId": "replay-session",
-      "turnId": "replay-turn-1",
       "providerRequestId": "f21b38f8-9a23-4b62-a903-d835fe673a66",
       "risk": "danger",
       "title": "Run command",
-      "detail": "Remove-Item -LiteralPath README.md -Confirm:$false",
+      "detail": "Delete README.md via shell: Remove-Item -LiteralPath README.md -Confirm:$false",
       "request": {
         "v": 1,
         "callId": "toolu_014VqiDfRBgxki69VLDbuHSP",
@@ -255,18 +261,6 @@
         },
         "toolUseID": "toolu_014VqiDfRBgxki69VLDbuHSP"
       }
-    }
-  ],
-  "sessions": [
-    {
-      "sessionId": "native-agent-c5db594cd2a2d09fd32326020bf4b7af",
-      "parentSessionId": "replay-session",
-      "providerChildId": "a015edb6088ce6863",
-      "title": "Delete README.md via shell",
-      "subagentType": "general-purpose",
-      "background": false,
-      "state": "done",
-      "turnId": "native-turn-c5db594cd2a2d09fd32326020bf4b7af"
     }
   ]
 }

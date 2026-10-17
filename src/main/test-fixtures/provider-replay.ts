@@ -34,6 +34,7 @@ import {
   type CodexServerRequestHandler,
 } from '../codex-app-server-client';
 import { CodexProviderAdapter } from '../codex-provider-adapter';
+import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from '../native-subagent-projection';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 export const PROVIDER_CAPTURE_DIRECTORY = path.resolve(directory, '../../../test/fixtures/provider-capture');
@@ -113,6 +114,18 @@ export interface ProviderReplayGolden {
   readonly approvals: readonly DaemonApproval[];
   /** The adapter's own answers to provider approval requests, in order. */
   readonly providerResponses: readonly unknown[];
+  /** Provider-native subagents the runtime would show; their rows are in `items` under their own session. */
+  readonly sessions?: readonly ProjectedSubagentSession[];
+}
+
+export interface ProjectedSubagentSession {
+  readonly sessionId: string;
+  readonly parentSessionId: string;
+  readonly providerChildId: string;
+  readonly title: string;
+  readonly subagentType?: string;
+  readonly background?: boolean;
+  readonly state: 'starting' | 'working' | 'blocked' | 'done' | 'error';
 }
 
 export function listProviderCaptureFixtures(captureDirectory = PROVIDER_CAPTURE_DIRECTORY): string[] {
@@ -273,10 +286,12 @@ function goldenFor(fixture: ProviderCaptureFixture, harness: ReplayHarness): Pro
     const detail = harness.failures.map((error) => (error instanceof Error ? error.message : String(error))).join('; ');
     throw new Error(`${fixture.name}: adapter operations failed during replay: ${detail}`);
   }
+  const sessions = harness.projection.subagentList();
   return {
     provider: fixture.meta.provider,
     scenario: fixture.meta.scenario,
     capturedWith: fixture.meta.capturedWith,
+    ...(sessions.length ? { sessions } : {}),
     items: harness.projection.items,
     approvals: harness.projection.approvalList(),
     providerResponses: harness.providerResponses,
@@ -669,6 +684,8 @@ type TranscriptInput = Omit<DaemonTranscriptItem, 'sequence' | 'createdAt'> & { 
 class RuntimeProjection {
   readonly items: DaemonTranscriptItem[] = [];
   private readonly approvals = new Map<string, DaemonApproval>();
+  private readonly subagents = new Map<string, ProjectedSubagentSession>();
+  private readonly subagentCalls = new Map<string, string>();
   private turn: ProjectedTurn | undefined;
   private currentTurnId: string | undefined;
 
@@ -676,6 +693,10 @@ class RuntimeProjection {
 
   approvalList(): DaemonApproval[] {
     return [...this.approvals.values()];
+  }
+
+  subagentList(): ProjectedSubagentSession[] {
+    return [...this.subagents.values()];
   }
 
   /** agent.submit acceptance writes the user's message before provider dispatch. */
@@ -718,6 +739,12 @@ class RuntimeProjection {
       case 'transcript': {
         const item = event.item;
         if (item.sessionId !== this.sessionId) return undefined;
+        if (event.providerChildId) {
+          // DaemonAgentRuntime.routeSubagentTranscript: only into a shown subagent.
+          const childId = nativeChildSessionId(this.providerId, item.sessionId, event.providerChildId);
+          if (this.subagents.has(childId)) this.append(routedChildItem(item, childId));
+          return undefined;
+        }
         if (item.turnId !== undefined && item.turnId !== this.turn?.id) return undefined;
         this.append({
           id: item.id,
@@ -786,8 +813,16 @@ class RuntimeProjection {
       case 'approval-requested': {
         const id = stableId('approval', this.providerId, providerSessionId, event.sessionId, event.providerRequestId);
         if (this.approvals.has(id)) return undefined;
-        const turnId = event.turnId ?? this.currentTurnId;
+        // A subagent's request is labelled with it and not tied to the parent's turn.
+        const subagent = event.providerChildId
+          ? this.subagents.get(nativeChildSessionId(this.providerId, event.sessionId, event.providerChildId))
+          : undefined;
+        const turnId = event.providerChildId ? undefined : event.turnId ?? this.currentTurnId;
         const turn = turnId !== undefined && this.turn?.id === turnId ? this.turn : undefined;
+        const request = event.request && subagent
+          ? { ...event.request, subagent: { sessionId: subagent.sessionId, title: subagent.title } }
+          : event.request;
+        const detail = subagent ? `${subagent.title}: ${event.detail ?? event.title}` : event.detail;
         const stale = (event.turnId !== undefined && (!turn || TERMINAL_TURN_STATES.has(turn.state)))
           || (turn !== undefined && this.currentTurnId !== turn.id);
         this.approvals.set(id, {
@@ -797,8 +832,8 @@ class RuntimeProjection {
           providerRequestId: event.providerRequestId,
           risk: event.risk,
           title: event.title,
-          ...(event.detail ? { detail: event.detail } : {}),
-          ...(event.request ? { request: event.request } : {}),
+          ...(detail ? { detail } : {}),
+          ...(request ? { request } : {}),
           state: stale ? 'expired' : 'pending',
           ...(stale ? { resolvedAt: REPLAY_NOW } : {}),
           revision: 1,
@@ -812,6 +847,7 @@ class RuntimeProjection {
         this.applyProviderError(event);
         return undefined;
       case 'native-subagent':
+        this.applySubagent(event);
         return undefined;
     }
   }
@@ -891,6 +927,61 @@ class RuntimeProjection {
       revision: approval.revision + 1,
       updatedAt: REPLAY_NOW,
     });
+  }
+
+  /** DaemonAgentRuntime.handleNativeSubagent, without session/agent state and limits. */
+  private applySubagent(event: Extract<AgentProviderEvent, { kind: 'native-subagent' }>): void {
+    if (event.sessionId !== this.sessionId) return;
+    const childId = nativeChildSessionId(this.providerId, event.sessionId, event.providerChildId);
+    const nestedParentId = event.parentProviderChildId
+      ? nativeChildSessionId(this.providerId, event.sessionId, event.parentProviderChildId)
+      : undefined;
+    let child = this.subagents.get(childId);
+    if (!child) {
+      const parentSessionId = nestedParentId && this.subagents.has(nestedParentId) ? nestedParentId : this.sessionId;
+      child = {
+        sessionId: childId,
+        parentSessionId,
+        providerChildId: event.providerChildId,
+        title: event.title,
+        ...(event.subagentType ? { subagentType: event.subagentType } : {}),
+        ...(event.background !== undefined ? { background: event.background } : {}),
+        state: event.state,
+      };
+      this.subagents.set(childId, child);
+      if (event.toolUseId) this.subagentCalls.set(childId, event.toolUseId);
+      for (const item of subagentStartItems({
+        providerId: this.providerId,
+        rootSessionId: event.sessionId,
+        parentSessionId,
+        childSessionId: childId,
+        providerChildId: event.providerChildId,
+        title: event.title,
+        ...(event.toolUseId ? { toolUseId: event.toolUseId } : {}),
+        ...(event.subagentType ? { subagentType: event.subagentType } : {}),
+        ...(event.background !== undefined ? { background: event.background } : {}),
+        ...(event.instruction ? { instruction: event.instruction } : {}),
+        ...(parentSessionId === this.sessionId && this.currentTurnId ? { parentTurnId: this.currentTurnId } : {}),
+        createdAt: REPLAY_NOW,
+      })) this.append(item);
+    }
+    const terminal = child.state === 'done' || child.state === 'error';
+    if (!terminal) this.subagents.set(childId, { ...child, state: event.state });
+    if ((event.state === 'done' || event.state === 'error') && event.summary) {
+      const result = subagentResultItem({
+        providerId: this.providerId,
+        rootSessionId: event.sessionId,
+        parentSessionId: child.parentSessionId,
+        childSessionId: childId,
+        providerChildId: event.providerChildId,
+        ...(event.toolUseId ?? this.subagentCalls.get(childId) ? { toolUseId: event.toolUseId ?? this.subagentCalls.get(childId)! } : {}),
+        state: event.state,
+        summary: event.summary,
+        ...(child.parentSessionId === this.sessionId && this.currentTurnId ? { parentTurnId: this.currentTurnId } : {}),
+        createdAt: REPLAY_NOW,
+      });
+      if (result) this.append(result);
+    }
   }
 
   /** DaemonStore.appendTranscriptItems: a known id is a no-op; sequence is per session. */

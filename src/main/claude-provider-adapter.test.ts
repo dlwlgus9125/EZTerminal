@@ -910,46 +910,44 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
-  it('publishes native subagent lifecycle events', async () => {
+  it('publishes Agent-tool subagents only and routes their messages to them', async () => {
     const fixture = makeAdapter();
     await start(fixture);
-
-    fixture.query.emit({
-      type: 'system',
-      subtype: 'task_started',
-      uuid: 'task-start',
-      session_id: providerSessionId,
-      task_id: 'child-1',
-      subagent_type: 'Explore',
-      description: 'inspect',
-    });
-    fixture.query.emit({
-      type: 'system',
-      subtype: 'task_progress',
-      uuid: 'task-progress',
-      session_id: providerSessionId,
-      task_id: 'child-1',
-      description: 'inspect',
-      summary: 'Reviewing modules',
-    });
-    fixture.query.emit({
-      type: 'system',
-      subtype: 'task_notification',
-      uuid: 'task-done',
-      session_id: providerSessionId,
-      task_id: 'child-1',
-      status: 'completed',
-      summary: 'done',
-    });
+    const parentMessage = { type: 'assistant', uuid: 'agent-call', session_id: providerSessionId, parent_tool_use_id: null,
+      message: { id: 'msg_parent', content: [{ type: 'tool_use', id: 'toolu_agent', name: 'Agent', input: { description: 'inspect', subagent_type: 'Explore', prompt: 'Read the modules.' } }] } };
+    fixture.query.emit(parentMessage);
+    // A background shell command is a task too, but not a subagent.
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'bash-start', session_id: providerSessionId, task_id: 'b1234abcd', task_type: 'local_bash', description: 'sleep' });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'task-start', session_id: providerSessionId, task_id: 'a0123456789abcdef',
+      tool_use_id: 'toolu_agent', task_type: 'local_agent', subagent_type: 'Explore', description: 'inspect', prompt: 'Read the modules.', is_backgrounded: true });
+    fixture.query.emit({ type: 'assistant', uuid: 'child-call', session_id: providerSessionId, parent_tool_use_id: 'toolu_agent',
+      message: { id: 'msg_child', content: [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: 'a.ts' } }] } });
+    fixture.query.emit({ type: 'user', uuid: 'child-result', session_id: providerSessionId, parent_tool_use_id: 'toolu_agent',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_read', content: 'export const a = 1;' }] } });
+    fixture.query.emit({ type: 'assistant', uuid: 'child-text', session_id: providerSessionId, parent_tool_use_id: 'toolu_agent',
+      message: { id: 'msg_child_2', content: [{ type: 'text', text: 'a.ts exports a.' }] } });
+    fixture.query.emit({ type: 'system', subtype: 'task_progress', uuid: 'task-progress', session_id: providerSessionId, task_id: 'a0123456789abcdef', description: 'inspect', summary: 'Reviewing modules' });
+    fixture.query.emit({ type: 'system', subtype: 'task_notification', uuid: 'bash-done', session_id: providerSessionId, task_id: 'b1234abcd', status: 'completed', summary: 'sleep done' });
+    fixture.query.emit({ type: 'system', subtype: 'task_notification', uuid: 'task-done', session_id: providerSessionId, task_id: 'a0123456789abcdef', status: 'completed', summary: 'a.ts exports a.' });
 
     await vi.waitFor(() => {
       const children = fixture.events.filter((event) => event.kind === 'native-subagent');
       expect(children).toEqual([
-        expect.objectContaining({ providerChildId: 'child-1', title: 'Claude Explore', state: 'starting' }),
-        expect.objectContaining({ providerChildId: 'child-1', state: 'working' }),
-        expect.objectContaining({ providerChildId: 'child-1', state: 'done' }),
+        expect.objectContaining({ providerChildId: 'a0123456789abcdef', title: 'inspect', subagentType: 'Explore', toolUseId: 'toolu_agent',
+          instruction: 'Read the modules.', background: true, state: 'starting' }),
+        expect.objectContaining({ providerChildId: 'a0123456789abcdef', state: 'working', summary: 'Reviewing modules' }),
+        expect.objectContaining({ providerChildId: 'a0123456789abcdef', state: 'done', summary: 'a.ts exports a.' }),
       ]);
     });
+    const routed = fixture.events.filter((event): event is Extract<AgentProviderEvent, { kind: 'transcript' }> => event.kind === 'transcript' && event.providerChildId !== undefined);
+    expect(routed.map((event) => [event.item.kind, event.providerChildId, event.item.turnId])).toEqual([
+      ['tool-call', 'a0123456789abcdef', undefined],
+      ['tool-result', 'a0123456789abcdef', undefined],
+      ['assistant-message', 'a0123456789abcdef', undefined],
+    ]);
+    // Nothing from inside the subagent lands in the parent.
+    expect(fixture.events.some((event) => event.kind === 'transcript' && !event.providerChildId && /Read|exports/u.test(event.item.text) && event.item.kind !== 'tool-call')).toBe(false);
+    expect(fixture.events.some((event) => event.kind === 'transcript' && event.item.kind === 'child-summary')).toBe(false);
     await fixture.adapter.dispose();
   });
 
@@ -1005,7 +1003,7 @@ describe('ClaudeProviderAdapter sessions', () => {
     });
     fixture.query.emit({ type: 'command_lifecycle', command_uuid: clientUuid, state: 'cancelled', uuid: 'lifecycle', session_id: providerSessionId });
     // Messages are handled in order, so this marker proves the result was processed.
-    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker' });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker', task_type: 'local_agent' });
 
     await vi.waitFor(() => {
       expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
@@ -1085,7 +1083,7 @@ describe('ClaudeProviderAdapter sessions', () => {
     fixture.query.interruptReceipt = { still_queued: [uuidB] };
     await fixture.adapter.interrupt(context.sessionId, providerSessionId);
     fixture.query.emit({ type: 'assistant', uuid: 'late', session_id: providerSessionId, parent_tool_use_id: null, message: { id: 'msg_a', content: [{ type: 'text', text: 'Partial' }] } });
-    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker' });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker', task_type: 'local_agent' });
 
     await vi.waitFor(() => {
       expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
@@ -1170,7 +1168,7 @@ describe('ClaudeProviderAdapter sessions', () => {
     ] } });
     fixture.query.emit({ type: 'user', uuid: 'u-multi', session_id: providerSessionId, parent_tool_use_id: null,
       message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_multi', content: 'Applied 2 edits' }] } });
-    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker' });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker', task_type: 'local_agent' });
 
     await vi.waitFor(() => {
       expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));

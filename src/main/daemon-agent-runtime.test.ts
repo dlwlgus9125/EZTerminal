@@ -138,6 +138,7 @@ async function harness(options: {
   readonly revokeOrchestrationForSession?: (sessionId: string) => void;
   readonly conversationContext?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationContext'];
   readonly conversationWritable?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationWritable'];
+  readonly subagentRecordExists?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['subagentRecordExists'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -1737,6 +1738,91 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('archives a background task once recorded as a Claude subagent, with evidence, and can restore it', async () => {
+    const first = await harness();
+    let restartedRuntime: DaemonAgentRuntime | undefined;
+    let restartedStore: DaemonStore | undefined;
+    try {
+      await first.enable(first.claude, 'claude');
+      await first.prepareWorkspace();
+      await first.execute('agent.create', {
+        sessionId: 'lead',
+        workspaceId: 'workspace-1',
+        title: 'Lead',
+        providerId: 'claude',
+        permissionPreset: 'standard',
+        initialPrompt: 'Lead the work.',
+      });
+      for (const providerChildId of ['bgouojd3c', 'a0123456789abcdef']) {
+        first.claude.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId, title: 'Claude subagent', state: 'done' });
+      }
+      await first.runtime.whenIdle();
+      const childOf = (providerChildId: string) => first.router.getSnapshot().agents.find((agent) => agent.providerSessionId === providerChildId)!.sessionId;
+      const shell = childOf('bgouojd3c');
+      const real = childOf('a0123456789abcdef');
+      // What builds before this change stored for every task: one lifecycle notice.
+      await first.router.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [shell, real].map((sessionId) => ({
+        id: `old-notice-${sessionId}`, sessionId, kind: 'notice' as const, text: 'Subagent completed.', isDelta: false, isSensitive: false,
+      })) }] });
+      await first.runtime.dispose();
+      await first.store.close();
+
+      restartedStore = new DaemonStore(first.directory, { now: () => new Date('2026-09-04T10:01:00.000Z') });
+      await restartedStore.init();
+      const store = restartedStore;
+      const providers = new AgentProviderRegistry([fakeAdapter('codex', 'codex-app-server'), fakeAdapter('claude', 'claude-agent-sdk')]);
+      const routerRef: { current?: DaemonCommandRouter } = {};
+      const evidence = vi.fn((input: { readonly childProviderSessionId: string }) => input.childProviderSessionId.startsWith('a'));
+      restartedRuntime = new DaemonAgentRuntime({
+        providers,
+        getSnapshot: () => routerRef.current!.getSnapshot(),
+        applySystemCommit: (commit) => routerRef.current!.applySystemCommit(commit),
+        applySystemTransition: (transition) => routerRef.current!.applySystemTransition(transition),
+        readTranscript: (sessionId, afterSequence, limit) => routerRef.current!.readTranscript(sessionId, afterSequence, limit),
+        findCommand: (commandId) => store.findCommand(commandId)?.command,
+        findMigrationReceipt: (id) => store.getMigrationReceipt(id),
+        subagentRecordExists: evidence,
+        now: () => new Date('2026-09-04T10:01:00.000Z'),
+      });
+      const router = new DaemonCommandRouter(store, { handlers: restartedRuntime.handlers() });
+      routerRef.current = router;
+      await restartedRuntime.start();
+
+      expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'claude', childProviderSessionId: 'bgouojd3c' }));
+      const session = (id: string) => router.getSnapshot().sessions.find((entry) => entry.id === id)!;
+      expect(session(shell)).toMatchObject({ state: 'archived' });
+      expect(session(real).state).not.toBe('archived');
+      expect(store.listMigrationReceipts('provider-native-repair')).toEqual([
+        expect.objectContaining({ detail: expect.objectContaining({ sessionId: shell, providerSessionId: 'bgouojd3c' }) }),
+      ]);
+
+      expect(await restartedRuntime.restoreProviderNativeRepair()).toEqual([shell]);
+      expect(session(shell).state).toBe('completed');
+      expect(session(shell).archivedAt).toBeUndefined();
+    } finally {
+      await restartedRuntime?.dispose();
+      await restartedStore?.close();
+    }
+  });
+
+  it('archives nothing when the provider record cannot be read', async () => {
+    const h = await harness({ subagentRecordExists: () => undefined });
+    try {
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'lead', workspaceId: 'workspace-1', title: 'Lead', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Lead.',
+      });
+      h.claude.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId: 'bgouojd3c', title: 'Claude subagent', state: 'done' });
+      await h.runtime.whenIdle();
+      await (h.runtime as unknown as { settleProviderNativeChildren(): Promise<void> }).settleProviderNativeChildren();
+      expect(h.router.getSnapshot().sessions.some((entry) => entry.state === 'archived')).toBe(false);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('rehydrates an explicitly stopped Session and accepts a follow-up Send after restart', async () => {
     const first = await harness();
     let restartedRuntime: DaemonAgentRuntime | undefined;
@@ -2058,13 +2144,10 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
-  it('projects provider-native completion summaries onto the parent without resurrecting the child', async () => {
+  it('shows a provider-native subagent with orchestration off: link, instruction, its own rows and one result', async () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');
     await h.prepareWorkspace();
-    await h.router.applySystemCommit({
-      mutations: [{ kind: 'runtime.update', value: { orchestrationToolsEnabled: true } }],
-    });
     await h.execute('agent.create', {
       sessionId: 'lead',
       workspaceId: 'workspace-1',
@@ -2073,38 +2156,103 @@ describe('DaemonAgentRuntime', () => {
       permissionPreset: 'standard',
       initialPrompt: 'Lead the work.',
     });
+    expect(h.router.getSnapshot().runtime.orchestrationToolsEnabled).toBe(false);
 
     h.codex.emit({
       kind: 'native-subagent',
       sessionId: 'lead',
       providerChildId: 'native-1',
       title: 'Native reviewer',
-      state: 'done',
+      state: 'starting',
+      toolUseId: 'call-1',
+      subagentType: 'reviewer',
+      instruction: 'Review the change without editing.',
     });
     await h.runtime.whenIdle();
     const child = h.router.getSnapshot().agentRelations[0]!.childSessionId;
-    h.codex.emit({
-      kind: 'native-subagent',
-      sessionId: 'lead',
-      providerChildId: 'native-1',
-      title: 'Native reviewer',
-      state: 'done',
-      summary: 'The native review completed safely.',
-    });
+    h.codex.emit({ kind: 'transcript', providerChildId: 'native-1', item: {
+      id: 'child-row', sessionId: 'lead', turnId: 'not-the-childs', sequence: 1, kind: 'assistant-message',
+      text: 'The change is safe.', isDelta: false, isSensitive: true, createdAt: '2026-10-17T00:00:00.000Z',
+    } });
+    // A row for a subagent that was never shown is dropped, not put in the parent.
+    h.codex.emit({ kind: 'transcript', providerChildId: 'unknown', item: {
+      id: 'stray-row', sessionId: 'lead', sequence: 2, kind: 'assistant-message',
+      text: 'Stray.', isDelta: false, isSensitive: true, createdAt: '2026-10-17T00:00:00.000Z',
+    } });
+    h.codex.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId: 'native-1', title: 'Native reviewer', state: 'working', summary: 'Reading the diff' });
+    h.codex.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId: 'native-1', title: 'Native reviewer', state: 'done', toolUseId: 'call-1', summary: 'The native review completed safely.' });
+    h.codex.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId: 'native-1', title: 'Native reviewer', state: 'done', toolUseId: 'call-1', summary: 'The native review completed safely.' });
     await h.runtime.whenIdle();
 
-    expect(h.router.getSnapshot().sessions.find((session) => session.id === child))
-      .toMatchObject({ state: 'completed' });
-    expect(h.router.readTranscript('lead')).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'child-summary',
-        text: 'The native review completed safely.',
-        relatedSessionId: child,
-      }),
-    ]));
-    expect(h.router.readTranscript(child)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'notice', relatedSessionId: 'lead' }),
-    ]));
+    expect(h.router.getSnapshot().agentRelations[0]).toMatchObject({ owner: 'provider-native', parentSessionId: 'lead' });
+    expect(h.router.getSnapshot().sessions.find((session) => session.id === child)).toMatchObject({ state: 'completed', title: 'Native reviewer' });
+    const parentRows = h.router.readTranscript('lead');
+    expect(parentRows.filter((item) => item.relatedSessionId === child).map((item) => [item.kind, (item.payload as { role?: string } | undefined)?.role])).toEqual([
+      ['notice', 'link'],
+      ['child-summary', 'result'],
+    ]);
+    expect(parentRows.some((item) => /Reading the diff|The change is safe|Stray/u.test(item.text))).toBe(false);
+    const childRows = h.router.readTranscript(child);
+    expect(childRows.map((item) => [item.kind, item.text, item.turnId])).toEqual([
+      ['user-message', 'Review the change without editing.', undefined],
+      ['assistant-message', 'The change is safe.', undefined],
+    ]);
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('keeps a subagent approval on the parent, labelled, and not tied to the parent turn', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'lead',
+      workspaceId: 'workspace-1',
+      title: 'Lead',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      initialPrompt: 'Lead the work.',
+    });
+    h.codex.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId: 'native-1', title: 'Delete README', state: 'working' });
+    await h.runtime.whenIdle();
+    const child = h.router.getSnapshot().agentRelations[0]!.childSessionId;
+    h.codex.emit({
+      kind: 'approval-requested',
+      sessionId: 'lead',
+      providerChildId: 'native-1',
+      providerRequestId: 'request-1',
+      risk: 'danger',
+      title: 'Run command',
+      detail: 'Remove-Item README.md',
+      request: { v: 1, kind: 'command', command: 'Remove-Item README.md' },
+    });
+    await h.runtime.whenIdle();
+    const approval = h.router.getSnapshot().approvals.find((entry) => entry.providerRequestId === 'request-1')!;
+    expect(approval).toMatchObject({ sessionId: 'lead', state: 'pending', detail: 'Delete README: Remove-Item README.md' });
+    expect(approval.turnId).toBeUndefined();
+    expect(approval.request).toMatchObject({ kind: 'command', subagent: { sessionId: child, title: 'Delete README' } });
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('shows more provider-native subagents than the managed tree allows', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'lead',
+      workspaceId: 'workspace-1',
+      title: 'Lead',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      initialPrompt: 'Lead the work.',
+    });
+    for (let index = 0; index < 22; index += 1) {
+      h.codex.emit({ kind: 'native-subagent', sessionId: 'lead', providerChildId: `native-${String(index)}`, title: `Worker ${String(index)}`, state: 'working' });
+    }
+    await h.runtime.whenIdle();
+    expect(h.router.getSnapshot().agentRelations.filter((relation) => relation.owner === 'provider-native')).toHaveLength(22);
+    expect(h.router.readTranscript('lead').some((item) => item.kind === 'error')).toBe(false);
     await h.runtime.dispose();
     await h.store.close();
   });

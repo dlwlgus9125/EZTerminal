@@ -15,9 +15,6 @@ import {
 // UPDATE_PROVIDER_GOLDENS=1 rewrites src/renderer/chat/fixtures from the
 // recorded provider traffic; otherwise the committed goldens are the contract.
 const updateGoldens = process.env.UPDATE_PROVIDER_GOLDENS === '1';
-// Goldens written ahead of the adapter work: each subagent's rows in its own
-// session. They fail until the adapters route child traffic; then drop the entry.
-const AWAITING_SUBAGENT_ROUTING = new Set(['claude-subagents', 'claude-subagent-approval', 'codex-subagents', 'codex-subagent-approval']);
 
 describe('recorded provider sessions replayed through the current adapters', () => {
   const fixtures = listProviderCaptureFixtures();
@@ -27,8 +24,7 @@ describe('recorded provider sessions replayed through the current adapters', () 
   });
 
   for (const name of fixtures) {
-    const test = AWAITING_SUBAGENT_ROUTING.has(name) && !updateGoldens ? it.fails : it;
-    test(`${name} matches its golden transcript`, async () => {
+    it(`${name} matches its golden transcript`, async () => {
       const golden = await replayProviderFixture(readProviderCaptureFixture(name));
       // The store drops a payload or request that fails its schema; an adapter
       // must never emit one, so the replay fails loudly instead.

@@ -12,6 +12,12 @@ export const DAEMON_HARD_LIMITS = Object.freeze({
   childCreationsPerWindow: 12,
   childCreationWindowMs: 10 * 60 * 1_000,
   backgroundTurnMs: 2 * 60 * 60 * 1_000,
+  /**
+   * Subagents a provider starts on its own (Claude Agent tool, Codex sub-agents)
+   * are projections, not work the host schedules: their own, larger bounds.
+   */
+  providerNativeNodesPerTree: 100,
+  providerNativeTreeDepth: 8,
 });
 
 export type DaemonPrincipalKind = 'desktop' | 'android' | 'cli' | 'mcp' | 'provider';

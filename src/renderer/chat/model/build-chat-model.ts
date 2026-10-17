@@ -266,6 +266,12 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
   let callSerial = 0;
   const hasTodoPayloads = items.some((item) => item.payload && parseTranscriptPayload(item.payload)?.type === 'todo');
   const subagents = subagentLinks(items);
+  // Codex records a sub-agent's link before the call that spawned it; look ahead for the call.
+  const calledIds = new Set(items.flatMap((item) => {
+    if (item.kind !== 'tool-call' || !item.payload) return [];
+    const payload = parseTranscriptPayload(item.payload);
+    return payload?.type === 'tool' ? [payload.callId] : [];
+  }));
   const legacyTasks = hasTodoPayloads ? undefined : new LegacyTaskList();
 
   const turnActive = (turnId: string | undefined): boolean => {
@@ -437,7 +443,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           break;
         }
         // A subagent's start is shown on the call that started it.
-        if (payload?.type === 'subagent' && payload.callId && toolsByCallId.has(payload.callId)) break;
+        if (payload?.type === 'subagent' && payload.callId && calledIds.has(payload.callId)) break;
         if (payload?.type === 'subagent' && item.relatedSessionId) {
           const subagent = payload.callId ? subagents.get(payload.callId) : undefined;
           push({ kind: 'child', id: `notice:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text,

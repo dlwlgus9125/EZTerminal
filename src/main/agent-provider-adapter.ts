@@ -112,6 +112,11 @@ export type AgentProviderEvent =
   | {
       readonly kind: 'transcript';
       readonly item: DaemonTranscriptItem;
+      /**
+       * The item belongs to this provider-native subagent of `item.sessionId`.
+       * Only the daemon knows the child's session id; it re-homes the item.
+       */
+      readonly providerChildId?: string;
     }
   | {
       readonly kind: 'turn-finished';
@@ -131,6 +136,8 @@ export type AgentProviderEvent =
       readonly detail?: string;
       /** Structured subject of the approval (command, files, question, plan). */
       readonly request?: ApprovalRequest;
+      /** Raised inside this provider-native subagent; the approval still lives on `sessionId`. */
+      readonly providerChildId?: string;
     }
   | {
       readonly kind: 'native-subagent';
@@ -139,6 +146,15 @@ export type AgentProviderEvent =
       readonly title: string;
       readonly state: 'starting' | 'working' | 'blocked' | 'done' | 'error';
       readonly summary?: string;
+      /** Provider call that started the child (Claude Agent tool use, Codex spawn item). */
+      readonly toolUseId?: string;
+      /** What the parent asked the child to do. */
+      readonly instruction?: string;
+      /** Provider's agent kind, e.g. Claude `Explore`. */
+      readonly subagentType?: string;
+      readonly background?: boolean;
+      /** Set when another subagent started this one. */
+      readonly parentProviderChildId?: string;
     }
   | {
       readonly kind: 'provider-error';

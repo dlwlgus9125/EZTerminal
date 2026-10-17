@@ -1,0 +1,277 @@
+{
+  "provider": "codex",
+  "scenario": "subagent-approval",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "sessions": [
+    {
+      "sessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "parentSessionId": "replay-session",
+      "providerChildId": "01a14807-8999-7210-9919-b198e8b43ff0",
+      "title": "delete file",
+      "state": "done"
+    }
+  ],
+  "items": [
+    {
+      "id": "message-2cf8c63134a8683dbe10a410001a6698",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "Spawn one sub-agent that deletes the file ../outside-codex-subagent-approval.txt using a shell command, wait for it, and report what happened. Do not run any command yourself. If a tool call is denied or fails, stop immediately and say so in one sentence; do not retry or try alternatives.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_a626fb62d285799aa54b4794",
+      "messageId": "codex_message_8a8a1d7160495cf8750a4b97",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll delegate the deletion to one sub-agent, wait for its result, and report what happened.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_fbe644279e43923351f98e09",
+      "messageId": "codex_message_8a8a1d7160495cf8750a4b97",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll delegate the deletion to one sub-agent, wait for its result, and report what happened.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "native-subagent-link-0340ce446f8e65b79e359944676fa5a2",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "Subagent started: delete file",
+      "isDelta": false,
+      "isSensitive": false,
+      "relatedSessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "payload": {
+        "v": 1,
+        "type": "subagent",
+        "role": "link",
+        "childSessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+        "callId": "call_6d9faae527e24d2a8f86eb49de0c391b",
+        "title": "delete file"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_3b78003d060b3e9d2a01f3b7",
+      "messageId": "codex_message_5da2ec744f4a5f905e2ae466",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "Sub-agent delete file",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "call_6d9faae527e24d2a8f86eb49de0c391b",
+        "name": "spawn_agent",
+        "category": "agent",
+        "phase": "call",
+        "status": "running",
+        "target": "delete file"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_item_3f94eecba05cc85f47421318",
+      "messageId": "codex_message_5da2ec744f4a5f905e2ae466",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "Started sub-agent delete file.",
+      "isDelta": false,
+      "isSensitive": false,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "call_6d9faae527e24d2a8f86eb49de0c391b",
+        "name": "spawn_agent",
+        "category": "agent",
+        "phase": "result",
+        "status": "completed",
+        "target": "delete file"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_162a6cf1604dbbbf0dbcd615",
+      "messageId": "codex_message_be51de229020e0dd0f3c7e9e",
+      "sessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "kind": "tool-call",
+      "text": "$ Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-98437085-3050-4574-9d0f-ad6f3f400987",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "call",
+        "status": "running",
+        "target": "Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+        "command": "Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 1
+    },
+    {
+      "id": "codex_item_1187cdc53072d717ee38efb1",
+      "messageId": "codex_message_be51de229020e0dd0f3c7e9e",
+      "sessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "kind": "tool-result",
+      "text": "Exit code 0",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-98437085-3050-4574-9d0f-ad6f3f400987",
+        "name": "commandExecution",
+        "category": "command",
+        "phase": "result",
+        "status": "completed",
+        "target": "Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+        "command": "Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 2869
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_delta_d3d881aa1928f06677f85798",
+      "messageId": "codex_message_d77c93884855db08f7cee745",
+      "sessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "kind": "assistant-message",
+      "text": "The escalated PowerShell command deleted `../outside-codex-subagent-approval.txt` successfully, exiting with code 0.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_1122bd18562902ba4e44e76a",
+      "messageId": "codex_message_d77c93884855db08f7cee745",
+      "sessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "kind": "assistant-message",
+      "text": "The escalated PowerShell command deleted `../outside-codex-subagent-approval.txt` successfully, exiting with code 0.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "native-parent-summary-f4bcd6948499d9719b523db2b8e3216e",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "child-summary",
+      "text": "The escalated PowerShell command deleted `../outside-codex-subagent-approval.txt` successfully, exiting with code 0.",
+      "isDelta": false,
+      "isSensitive": true,
+      "relatedSessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+      "payload": {
+        "v": 1,
+        "type": "subagent",
+        "role": "result",
+        "childSessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+        "callId": "call_6d9faae527e24d2a8f86eb49de0c391b",
+        "state": "done"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    },
+    {
+      "id": "codex_delta_c705b84d9613793a20d18405",
+      "messageId": "codex_message_833bc5292dba87d721f703a0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "The sub-agent deleted `../outside-codex-subagent-approval.txt` successfully; its shell command exited with code 0. I ran no commands myself.",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 8
+    },
+    {
+      "id": "codex_item_2711e21d1336722088e49695",
+      "messageId": "codex_message_833bc5292dba87d721f703a0",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "The sub-agent deleted `../outside-codex-subagent-approval.txt` successfully; its shell command exited with code 0. I ran no commands myself.",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 9
+    },
+    {
+      "id": "turn-summary-2c4064446ef4fa7f2fc81121322d005c",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "notice",
+      "text": "The sub-agent deleted `../outside-codex-subagent-approval.txt` successfully; its shell command exited with code 0. I ran no commands myself.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 10,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-a2861c602048621969017953919a0cbd",
+      "sessionId": "replay-session",
+      "providerRequestId": "command:n:0",
+      "risk": "danger",
+      "title": "Run command",
+      "detail": "delete file: Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+      "request": {
+        "v": 1,
+        "callId": "exec-98437085-3050-4574-9d0f-ad6f3f400987",
+        "reason": "May I delete the exact file ../outside-codex-subagent-approval.txt outside the writable workspace?",
+        "kind": "command",
+        "command": "Remove-Item -LiteralPath '../outside-codex-subagent-approval.txt' -ErrorAction Stop",
+        "cwd": "<WORKSPACE>",
+        "subagent": {
+          "sessionId": "native-agent-0340ce446f8e65b79e359944676fa5a2",
+          "title": "delete file"
+        }
+      },
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "method": "item/commandExecution/requestApproval",
+      "result": {
+        "decision": "accept"
+      }
+    }
+  ]
+}

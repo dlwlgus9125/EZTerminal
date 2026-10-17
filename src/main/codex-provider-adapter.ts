@@ -126,6 +126,16 @@ interface SessionState {
   /** The runtime already persisted these prompts, so Codex's echo of them is dropped. */
   readonly submittedCommandIds: Set<string>;
   readonly planRevisions: Map<string, number>;
+  /**
+   * Set on the shadow state of a sub-agent thread: its rows belong to that
+   * sub-agent (the daemon re-homes them), its turns are not the parent's.
+   */
+  readonly subagentOf?: string;
+  /** The state that started this sub-agent (the session's own, or another sub-agent's). */
+  readonly subagentParent?: SessionState;
+  readonly subagentTitle?: string;
+  /** The sub-agent's latest answer, sent back to its parent when it finishes. */
+  lastAgentMessage?: string;
 }
 
 type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change';
@@ -266,6 +276,15 @@ function reconciliationTurnState(
     default:
       return 'working';
   }
+}
+
+/** Codex names the spawning collab tool `spawn_agent` (app-server) or `spawnAgent` (older payloads). */
+const SPAWN_AGENT_TOOLS = new Set(['spawn_agent', 'spawnAgent']);
+
+/** `/root/read_readme_title` → `read readme title`. */
+function subagentTitle(agentPath: string): string {
+  const name = path.basename(agentPath).replace(/[_-]+/gu, ' ').trim();
+  return name || 'Codex sub-agent';
 }
 
 function nativeState(value: unknown): 'starting' | 'working' | 'blocked' | 'done' | 'error' {
@@ -708,6 +727,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly listeners = new Set<AgentProviderEventListener>();
   private readonly sessions = new Map<string, SessionState>();
   private readonly sessionIdByProviderId = new Map<string, string>();
+  /** Sub-agent threads (any depth) by thread id; their notifications route to the sub-agent. */
+  private readonly subagentThreads = new Map<string, SessionState>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly unregister: Array<() => void> = [];
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
@@ -1332,6 +1353,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     } finally {
       const stillOwnsSession = this.sessions.get(state.sessionId) === state;
       if (stillOwnsSession) this.sessions.delete(state.sessionId);
+      for (const [threadId, subagent] of this.subagentThreads) {
+        if (subagent.sessionId === state.sessionId) this.subagentThreads.delete(threadId);
+      }
       if (
         stillOwnsSession
         && this.sessionIdByProviderId.get(state.providerSessionId) === state.sessionId
@@ -1364,6 +1388,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       }
       this.sessions.clear();
       this.sessionIdByProviderId.clear();
+      this.subagentThreads.clear();
       await connection?.dispose();
     }).finally(() => {
       if (this.deactivatePromise === operation) this.deactivatePromise = null;
@@ -1519,24 +1544,31 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   private handleApproval(kind: ApprovalKind, value: unknown, context: CodexServerRequestContext): Promise<unknown> {
     const params = asObject(value);
-    const providerSessionId = params ? threadIdFromParams(params) : undefined;
-    const sessionId = providerSessionId ? this.sessionIdByProviderId.get(providerSessionId) : undefined;
+    const threadId = params ? threadIdFromParams(params) : undefined;
+    // A sub-agent thread asks through its session: the approval lives there, labelled with the sub-agent.
+    const subagent = threadId && !this.sessionIdByProviderId.has(threadId) ? this.subagentThreads.get(threadId) : undefined;
+    const sessionId = subagent?.sessionId ?? (threadId ? this.sessionIdByProviderId.get(threadId) : undefined);
+    const owner = sessionId ? this.sessions.get(sessionId) : undefined;
+    const providerSessionId = subagent ? owner?.providerSessionId : threadId;
     if (!params || !providerSessionId || !sessionId) {
       throw new Error('Codex approval referenced an unknown session.');
     }
     const explicitId = asString(params.approvalId);
     const providerRequestId = `${kind}:${explicitId ?? this.rpcIdKey(context.id)}`;
     if (this.pendingApprovals.has(providerRequestId)) throw new Error('Codex repeated a pending approval id.');
-    const state = this.sessions.get(sessionId);
+    const state = subagent ?? owner;
     state?.deltas.flushAll();
     const request = this.approvalRequest(kind, params, state);
+    if (subagent?.subagentParent && subagent.subagentOf) {
+      this.emitNativeSubagent(subagent.subagentParent, subagent.subagentOf, subagent.subagentTitle ?? 'Codex sub-agent', 'blocked');
+    }
     return new Promise<unknown>((resolve) => {
       const pending: PendingApproval = {
         providerRequestId,
         kind,
         sessionId,
         providerSessionId,
-        ...(asString(params.turnId) ? { turnId: asString(params.turnId) } : {}),
+        ...(asString(params.turnId) && !subagent ? { turnId: asString(params.turnId) } : {}),
         params,
         resolve,
       };
@@ -1546,6 +1578,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind: 'approval-requested',
         sessionId,
         ...(pending.turnId ? { turnId: this.localTurnId(sessionId, pending.turnId) } : {}),
+        ...(subagent?.subagentOf ? { providerChildId: subagent.subagentOf } : {}),
         providerRequestId,
         risk: kind === 'file-change' || kind === 'legacy-file-change' ? 'write' : 'danger',
         title: this.approvalTitle(kind),
@@ -1644,6 +1677,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const providerSessionId = asString(params.threadId);
     const sessionId = providerSessionId ? this.sessionIdByProviderId.get(providerSessionId) : undefined;
     const state = sessionId ? this.sessions.get(sessionId) : undefined;
+    const subagent = !state && providerSessionId ? this.subagentThreads.get(providerSessionId) : undefined;
+    if (subagent) {
+      this.handleSubagentNotification(subagent, method, params);
+      return;
+    }
     if (method === 'error') {
       const error = asObject(params.error);
       const message = sanitizeProviderDiagnostic(
@@ -1700,6 +1738,96 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       default:
         return;
     }
+  }
+
+  /**
+   * A sub-agent thread's own stream: its items become its rows, its turn is
+   * not the parent's, and finishing sends its last answer back to the parent.
+   */
+  private handleSubagentNotification(state: SessionState, method: string, params: JsonObject): void {
+    const parent = state.subagentParent;
+    const childId = state.subagentOf;
+    if (!parent || !childId) return;
+    const title = state.subagentTitle ?? 'Codex sub-agent';
+    switch (method) {
+      case 'turn/started':
+        this.emitNativeSubagent(parent, childId, title, 'working');
+        return;
+      case 'turn/completed': {
+        const turn = asObject(params.turn);
+        const providerTurnId = asString(turn?.id) ?? asString(params.turnId);
+        for (const itemValue of asArray(turn?.items)) {
+          if (providerTurnId) this.handleItem(state, providerTurnId, asObject(itemValue), true);
+        }
+        if (providerTurnId) this.settleStartedItems(state, providerTurnId, turnStatus(turn?.status) === 'interrupted');
+        state.deltas.flushAll();
+        const outcome = turnStatus(turn?.status);
+        const summary = (turn ? this.lastAssistantText(turn) : '') || state.lastAgentMessage;
+        this.emitNativeSubagent(parent, childId, title, outcome === 'completed' ? 'done' : 'error', summary);
+        return;
+      }
+      case 'item/started':
+      case 'item/completed': {
+        const item = asObject(params.item);
+        if (method === 'item/completed' && item?.type === 'agentMessage' && asString(item.text)) {
+          state.lastAgentMessage = boundedText(item.text, 2_000);
+        }
+        this.handleItem(state, asString(params.turnId), item, method === 'item/completed',
+          nonNegativeInteger(method === 'item/completed' ? params.completedAtMs : params.startedAtMs));
+        return;
+      }
+      case 'item/agentMessage/delta':
+        this.emitDelta(state, params, 'assistant-message');
+        return;
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/reasoning/textDelta':
+        this.emitDelta(state, params, 'reasoning');
+        return;
+      case 'error':
+        if (params.willRetry !== true) {
+          const message = sanitizeProviderDiagnostic(asString(asObject(params.error)?.message) ?? 'Codex reported an unknown error.').text;
+          this.emitNativeSubagent(parent, childId, title, 'error', message);
+        }
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** A sub-agent's shadow state: same item handling, rows tagged for the sub-agent. */
+  private trackSubagent(parent: SessionState, threadId: string, title: string): SessionState {
+    const existing = this.subagentThreads.get(threadId);
+    if (existing) return existing;
+    const state: SessionState = {
+      sessionId: parent.sessionId,
+      providerSessionId: threadId,
+      workspaceRoot: parent.workspaceRoot,
+      permissionPreset: parent.permissionPreset,
+      nextTranscriptSequence: 0,
+      preResponseLifecycle: new Map(),
+      preResponseLifecycleOverflowed: false,
+      completedItemKeys: new Set(),
+      nativeStateByChild: new Map(),
+      deltas: new DeltaCoalescer((item) => this.emitTranscript(state, item), this.deltaCoalescer),
+      startedItems: new Map(),
+      submittedCommandIds: new Set(),
+      planRevisions: new Map(),
+      subagentOf: threadId,
+      subagentParent: parent,
+      subagentTitle: title,
+    };
+    this.subagentThreads.set(threadId, state);
+    return state;
+  }
+
+  /** A sub-agent's rows go out tagged with it and without the parent's turn. */
+  private emitTranscript(state: SessionState, item: DaemonTranscriptItem): void {
+    if (!state.subagentOf) {
+      this.emit({ kind: 'transcript', item });
+      return;
+    }
+    const routed = Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'turnId')) as unknown as DaemonTranscriptItem;
+    this.emit({ kind: 'transcript', item: routed, providerChildId: state.subagentOf });
   }
 
   private handleThreadStatus(state: SessionState, status: JsonObject | undefined): void {
@@ -2013,7 +2141,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       state.nextTranscriptSequence -= 1;
       return;
     }
-    this.emit({ kind: 'transcript', item: transcript });
+    this.emitTranscript(state, transcript);
   }
 
   /** Closes the turn's in-flight items; on interrupt, open tool calls get an `interrupted` result. */
@@ -2031,7 +2159,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   /** turn/plan/updated (the `update_plan` tool) becomes one todo notice per revision. */
   private handleTurnPlan(state: SessionState, params: JsonObject): void {
     const providerTurnId = asString(params.turnId);
-    if (!providerTurnId) return;
+    if (!providerTurnId || state.subagentOf) return;
     const items: TodoItem[] = asArray(params.plan).flatMap((value) => {
       const step = asObject(value);
       const text = asString(step?.step);
@@ -2213,14 +2341,26 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         kind = 'tool-result';
         text = providerTranscriptText(item.output) || `${asString(item.name) ?? 'function'} completed.`;
         break;
-      case 'collabAgentToolCall':
-        kind = 'notice';
-        text = `${asString(item.tool) ?? 'Agent action'}: ${asString(item.status) ?? (started ? 'started' : 'completed')}`;
+      case 'collabAgentToolCall': {
+        // Spawning is the call a sub-agent hangs off; waiting and messaging are plumbing.
+        if (!SPAWN_AGENT_TOOLS.has(asString(item.tool) ?? '')) return undefined;
+        const prompt = asString(item.prompt);
+        kind = started ? 'tool-call' : 'tool-result';
+        text = started ? `spawn_agent\n${prompt ?? ''}`.trim() : `Sub-agent ${asString(item.status) ?? 'started'}.`;
+        payload = toolPayload({
+          callId: providerItemId, name: 'spawn_agent', category: 'agent', started, status: item.status,
+          target: boundedText(prompt, 120).split(/\r?\n/u)[0] || 'Codex sub-agent', durationMs,
+        });
         break;
-      case 'subAgentActivity':
-        kind = 'notice';
-        text = `Sub-agent ${asString(item.kind) ?? 'activity'}.`;
+      }
+      case 'subAgentActivity': {
+        if (asString(item.kind) !== 'started') return undefined;
+        const title = subagentTitle(asString(item.agentPath) ?? '');
+        kind = started ? 'tool-call' : 'tool-result';
+        text = started ? `Sub-agent ${title}` : `Started sub-agent ${title}.`;
+        payload = toolPayload({ callId: providerItemId, name: 'spawn_agent', category: 'agent', started, status: started ? 'inProgress' : 'completed', target: title, durationMs });
         break;
+      }
       case 'webSearch': {
         const query = webSearchQuery(item);
         kind = started ? 'tool-call' : 'tool-result';
@@ -2283,25 +2423,44 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private emitNativeSubagents(state: SessionState, item: JsonObject, completed: boolean): void {
+    // A thread reporting back to its own parent (or a main session) is not a new sub-agent.
+    const isOwnLineage = (threadId: string): boolean => this.sessionIdByProviderId.has(threadId)
+      || threadId === state.providerSessionId
+      || threadId === state.subagentParent?.providerSessionId;
     if (item.type === 'subAgentActivity') {
       const childId = asString(item.agentThreadId);
-      if (!childId) return;
-      this.emitNativeSubagent(state, childId, path.basename(asString(item.agentPath) ?? childId), nativeState(item.kind));
+      if (!childId || isOwnLineage(childId)) return;
+      const activity = asString(item.kind);
+      const known = this.subagentThreads.get(childId);
+      if (!known && activity !== 'started') return;
+      const child = known ?? this.trackSubagent(state, childId, subagentTitle(asString(item.agentPath) ?? childId));
+      const next = nativeState(activity);
+      this.emitNativeSubagent(state, childId, child.subagentTitle ?? 'Codex sub-agent', next,
+        next === 'done' || next === 'error' ? child.lastAgentMessage : undefined,
+        activity === 'started' && asString(item.id) ? { toolUseId: asString(item.id)! } : {});
       return;
     }
     const receiverIds = asArray(item.receiverThreadIds).filter((value): value is string => typeof value === 'string');
     const states = asObject(item.agentsStates);
     const childIds = new Set([...receiverIds, ...Object.keys(states ?? {})]);
+    const prompt = asString(item.prompt);
     for (const childId of childIds) {
+      if (isOwnLineage(childId)) continue;
       const childState = asObject(states?.[childId]);
+      const child = this.trackSubagent(state, childId, boundedText(prompt, 120).split(/\r?\n/u)[0] || asString(item.tool) || 'Codex sub-agent');
+      const message = asString(childState?.message)
+        ? sanitizeProviderDiagnostic(asString(childState?.message), { maxLength: 2_000 }).text
+        : undefined;
       this.emitNativeSubagent(
         state,
         childId,
-        boundedText(item.prompt, 120).split(/\r?\n/u)[0] || asString(item.tool) || 'Codex sub-agent',
+        child.subagentTitle ?? 'Codex sub-agent',
         nativeState(childState?.status ?? item.status ?? (completed ? 'completed' : 'inProgress')),
-        asString(childState?.message)
-          ? sanitizeProviderDiagnostic(asString(childState?.message), { maxLength: 2_000 }).text
-          : undefined,
+        message,
+        {
+          ...(SPAWN_AGENT_TOOLS.has(asString(item.tool) ?? '') && asString(item.id) ? { toolUseId: asString(item.id)! } : {}),
+          ...(SPAWN_AGENT_TOOLS.has(asString(item.tool) ?? '') && prompt ? { instruction: boundedText(prompt, 8_000) } : {}),
+        },
       );
     }
   }
@@ -2312,6 +2471,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     title: string,
     childState: 'starting' | 'working' | 'blocked' | 'done' | 'error',
     summary?: string,
+    start: { readonly toolUseId?: string; readonly instruction?: string } = {},
   ): void {
     const signature = `${childState}\0${summary ?? ''}`;
     if (state.nativeStateByChild.get(childId) === signature) return;
@@ -2323,6 +2483,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       title: title.slice(0, 200),
       state: childState,
       ...(summary ? { summary: summary.slice(0, 2_000) } : {}),
+      ...(start.toolUseId ? { toolUseId: start.toolUseId } : {}),
+      ...(start.instruction ? { instruction: start.instruction } : {}),
+      // A sub-agent's own sub-agent nests under it.
+      ...(state.subagentOf ? { parentProviderChildId: state.subagentOf } : {}),
     });
   }
 

@@ -120,6 +120,8 @@ describe('daemon protocol', () => {
       childCreationsPerWindow: 12,
       childCreationWindowMs: 600_000,
       backgroundTurnMs: 7_200_000,
+      providerNativeNodesPerTree: 100,
+      providerNativeTreeDepth: 8,
     });
   });
 });

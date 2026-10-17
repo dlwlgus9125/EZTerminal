@@ -26,6 +26,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
+import { claudeSubagentRecordExists } from './claude-subagent-records';
 import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history-ipc';
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
@@ -942,6 +943,8 @@ app.on('ready', async () => {
       daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
     findCommand: (commandId) => daemonStore.findCommand(commandId)?.command,
+    findMigrationReceipt: (id) => daemonStore.getMigrationReceipt(id),
+    subagentRecordExists: (input) => claudeSubagentRecordExists(input),
     canDispatchTurn: (turn) => (planningRuntimeRef.current?.canDispatchTurn(turn)
       ?? !/^planning-(?:review-)?[a-f0-9]{32}$/u.test(turn.sessionId))
       && (planningRuntimeRef.ai?.canDispatchTurn(turn) ?? !turn.sessionId.startsWith('planning-ai-')),
