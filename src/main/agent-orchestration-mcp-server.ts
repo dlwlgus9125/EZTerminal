@@ -12,7 +12,8 @@ import {
 } from '../shared/daemon-protocol';
 import type { ProviderSessionContext } from './agent-provider-adapter';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
-import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema } from '../shared/workflow';
+import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema, type WorkflowCommand } from '../shared/workflow';
+import type { ExecutionRun } from '../shared/planning-execution';
 import { WORKFLOW_SKILL } from '../shared/workflow-skill';
 import type { WorkflowService } from './workflow-service';
 import type { WorkflowAuthority } from './workflow-authority';
@@ -65,6 +66,24 @@ class McpRequestError extends Error {
     super(message);
     this.name = 'McpRequestError';
   }
+}
+
+/** A run as an agent follows it: per stage, bounded, without frozen documents or the graph. */
+function workflowRunResults(run: ExecutionRun): JsonObject {
+  const nodes = run.preparation.workflow?.graph.nodes ?? [];
+  return {
+    runId: run.runId, state: run.state, approvalPolicy: run.preparation.approvalPolicy ?? 'user',
+    ...(run.integrationAuthorized ? { integrationAllowedBy: run.integrationAuthorized.by } : {}),
+    awaitingApproval: (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval')
+      .map((activation) => nodes.find((node) => node.id === activation.nodeId)?.title ?? activation.nodeId),
+    stages: run.tasks.map((task) => ({
+      stage: nodes.find((node) => node.id === task.taskId)?.title ?? run.preparation.tasks.find((entry) => entry.taskId === task.taskId)?.title ?? task.taskId,
+      state: task.state,
+      attempts: run.attempts.filter((attempt) => attempt.taskId === task.taskId).map((attempt) => ({
+        number: attempt.number, state: attempt.state, ...(attempt.summary ? { summary: attempt.summary.slice(0, 4_000) } : {}),
+      })),
+    })),
+  } as unknown as JsonObject;
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -362,9 +381,18 @@ export class AgentOrchestrationMcpServer {
     const snapshot = this.requireLiveCapability(sessionId);
     const ownerSession = snapshot.sessions.find((session) => session.id === sessionId)!;
     const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
-    if (['workflow_read', 'workflow_command', 'validate_workflow', 'preview_workflow'].includes(name)) {
+    if (['workflow_read', 'workflow_command', 'validate_workflow', 'preview_workflow', 'workflow_run', 'workflow_results'].includes(name)) {
       const workflow = this.options.workflow?.();
       if (!workflow || !this.workflowEnabled(sessionId)) throw new McpRequestError(-32002, 'Workflow tools are unavailable for this session.');
+      if (name === 'workflow_run') return this.workflowRun(workflow.authority, sessionId, ownerSession.projectId, ownerAgent, value);
+      if (name === 'workflow_results') {
+        const args = strictObject(value, ['runId']);
+        const runId = requiredString(args.runId, 'runId', 160);
+        const read = await workflow.authority.read(ownerSession.projectId);
+        if (!read.ok) return toolText(read, true);
+        const run = read.snapshot.runs.find((entry) => entry.runId === runId);
+        return run ? toolText({ ok: true, run: workflowRunResults(run) }) : toolText({ ok: false, error: 'Unknown runId. Read workflow_read for this project\u2019s runs.' }, true);
+      }
       if (name === 'workflow_read') {
         strictObject(value, []);
         const result = await workflow.authority.read(ownerSession.projectId);
@@ -595,12 +623,49 @@ export class AgentOrchestrationMcpServer {
     return Boolean(this.options.workflow?.() && this.options.workflowAllowed?.(sessionId));
   }
 
+  /** Runs a subproject's flow for the conversation's agent; the envelope comes from the stored state. */
+  private async workflowRun(
+    authority: WorkflowAuthority,
+    sessionId: string,
+    projectId: string,
+    ownerAgent: DaemonSnapshot['agents'][number],
+    value: unknown,
+  ): Promise<JsonObject> {
+    const args = strictObject(value, ['action', 'subprojectId', 'runId', 'reviewer']);
+    const action = requiredString(args.action, 'action', 16);
+    const actions = { prepare: 'run.prepare', start: 'run.start', pause: 'run.pause', resume: 'run.resume', cancel: 'run.cancel' } as const;
+    if (!(action in actions)) throw new McpRequestError(-32602, 'action is one of prepare, start, pause, resume or cancel.');
+    const subprojectId = requiredString(args.subprojectId, 'subprojectId', 160);
+    const read = await authority.read(projectId);
+    if (!read.ok) return toolText(read, true);
+    const subproject = read.snapshot.subprojects.find((entry) => entry.id === subprojectId);
+    if (!subproject) throw new McpRequestError(-32602, 'Unknown subprojectId. Read workflow_read first.');
+    const envelope = { commandId: `mcp-run-${this.createId()}`, projectId, hostId: read.snapshot.hostId, expectedRevision: subproject.revision, subprojectId };
+    let command: WorkflowCommand;
+    if (action === 'prepare') {
+      const reviewer = isObject(args.reviewer)
+        ? { providerId: requiredString(args.reviewer.providerId, 'reviewer.providerId', 128), model: requiredString(args.reviewer.model, 'reviewer.model', 256) }
+        : ownerAgent.model ? { providerId: ownerAgent.providerId, model: ownerAgent.model } : undefined;
+      if (!reviewer) throw new McpRequestError(-32602, 'Give reviewer {providerId, model}: this conversation runs on its provider\u2019s default model.');
+      command = { ...envelope, type: 'run.prepare', payload: { runId: `run-${this.createId()}`, reviewer } };
+    } else {
+      command = { ...envelope, type: actions[action as Exclude<keyof typeof actions, 'prepare'>], payload: { runId: requiredString(args.runId, 'runId', 160) } };
+    }
+    const result = await authority.execute(command, { kind: 'ai', id: `session:${sessionId}`, sessionId });
+    return toolText({ ...result, ...(command.type === 'run.prepare' && result.ok ? { runId: command.payload.runId } : {}) }, !result.ok);
+  }
+
   private workflowToolDefinitions(): JsonObject[] {
     const graph = { type: 'object', description: 'Graph with entryNodeId:string|null, nodes:[{id,title,operation:agent|condition|parallel|join|approval|complete,role:planning|design|implementation|review|integration,instructions,document,providerId?,model?,permissionPreset:plan|standard,acceptance:string[],allowedPaths:string[],retryLimit:0..20,position:{x,y},inputs:[{nodeId,kind:document|result}],condition?:{sourceNodeId,field:outcome,equals:passed|failed},joinPolicy?:all|any}], edges:[{id,from,to,outcome:next|passed|failed|approved|rejected,retryLimit?:1..20}]. Stable IDs preserve conversations.' };
     return [
       { name: 'workflow_read', description: 'Read this project’s subprojects, graph drafts, changes, run snapshots and this conversation’s creation preview. No model or run is started.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'workflow_command', description: `${WORKFLOW_SKILL.instructions}\nCommands: subproject.create payload {id,title,goal,presetId:feature|fix|research|parallel|custom,graph?}; workflow.patch payload {graph,summary}; workflow.undo payload {changeId}. Envelope: commandId,projectId,hostId,expectedRevision,subprojectId (required except create),type,payload.`, inputSchema: { type: 'object', properties: { commandId: { type: 'string' }, projectId: { type: 'string' }, hostId: { type: 'string' }, expectedRevision: { type: 'integer' }, subprojectId: { type: 'string' }, type: { type: 'string' }, payload: { type: 'object', properties: { graph }, additionalProperties: true } }, required: ['commandId', 'projectId', 'hostId', 'expectedRevision', 'type', 'payload'], additionalProperties: false } },
       { name: 'validate_workflow', description: 'Validate a proposed graph without changing any stored draft or starting execution.', inputSchema: graph },
+      { name: 'workflow_run', description: 'Run a subproject\u2019s saved flow: prepare (freezes the current draft and returns runId; reviewer defaults to this conversation\u2019s provider and model), then start, pause, resume or cancel that runId. Approval stages and result integration are the person\u2019s, unless they turned on 자동 승인 for the subproject; read workflow_results to follow it.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['prepare', 'start', 'pause', 'resume', 'cancel'] }, subprojectId: { type: 'string' }, runId: { type: 'string' },
+          reviewer: { type: 'object', properties: { providerId: { type: 'string' }, model: { type: 'string' } }, required: ['providerId', 'model'], additionalProperties: false } }, required: ['action', 'subprojectId'], additionalProperties: false } },
+      { name: 'workflow_results', description: 'Read where a run stands: each stage\u2019s state and attempts with their bounded summaries, approvals waiting for the person, and whether integration was allowed.',
+        inputSchema: { type: 'object', properties: { runId: { type: 'string' } }, required: ['runId'], additionalProperties: false } },
       { name: 'preview_workflow', description: 'Edit the creation preview explicitly opened by the user for this conversation. This never creates a saved subproject. Read workflow_read first; the UI updates its preview and the user chooses Create or Cancel.', inputSchema: { type: 'object', properties: { commandId: { type: 'string' }, previewId: { type: 'string' }, expectedRevision: { type: 'integer' }, graph }, required: ['commandId', 'previewId', 'expectedRevision', 'graph'], additionalProperties: false } },
     ];
   }

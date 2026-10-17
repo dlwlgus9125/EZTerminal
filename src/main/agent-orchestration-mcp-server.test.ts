@@ -189,6 +189,34 @@ describe('AgentOrchestrationMcpServer', () => {
     expect(result).toMatchObject({ status: 200, value: { result: { content: [{ text: '{"ok":true,"snapshot":{"projectId":"project-1"},"preview":null}' }] } } });
     expect(read.mock.calls).toEqual([['project-1']]);
   });
+  it('runs a subproject flow for the conversation and reports where the run stands', async () => {
+    const run = { runId: 'run-1', state: 'awaiting-review', preparation: { approvalPolicy: 'auto', tasks: [{ taskId: 'research', title: 'Research' }],
+      workflow: { graph: { nodes: [{ id: 'research', title: '조사' }, { id: 'approval', title: '결과 확인' }] } } },
+      tasks: [{ taskId: 'research', state: 'completed' }], attempts: [{ taskId: 'research', number: 1, state: 'succeeded', summary: 'Found it.' }],
+      workflowRuntime: { activations: [{ id: 'a', nodeId: 'approval', state: 'awaiting-approval' }] } };
+    const read = vi.fn(async () => ({ ok: true as const, snapshot: { hostId: 'host', subprojects: [{ id: 'sub', revision: 2 }], runs: [run] } }));
+    const execute = vi.fn(async () => ({ ok: true as const }));
+    const workflow = { read, execute } as unknown as WorkflowAuthority;
+    const service = { previewForSession: () => undefined } as unknown as import('./workflow-service').WorkflowService;
+    const current = snapshot();
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => ({ ...current, agents: current.agents.map((agent) => ({ ...agent, model: 'gpt-5' })) }), execute: vi.fn() },
+      workflow: () => ({ service, authority: workflow }), workflowAllowed: () => true, createId: () => 'id' });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    const call = (name: string, args: unknown) => post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', { name, arguments: args }));
+    const prepared = await call('workflow_run', { action: 'prepare', subprojectId: 'sub' });
+    expect(JSON.stringify(prepared.value)).toContain('run-id');
+    expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run.prepare', hostId: 'host', subprojectId: 'sub', expectedRevision: 2,
+      payload: { runId: 'run-id', reviewer: { providerId: 'codex', model: 'gpt-5' } } }), { kind: 'ai', id: 'session:lead-1', sessionId: 'lead-1' });
+    await call('workflow_run', { action: 'start', subprojectId: 'sub', runId: 'run-1' });
+    expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run.start', payload: { runId: 'run-1' } }), expect.anything());
+    expect(JSON.stringify((await call('workflow_run', { action: 'approve', subprojectId: 'sub', runId: 'run-1' })).value)).toMatch(/isError|error/u);
+    const results = await call('workflow_results', { runId: 'run-1' });
+    const body = JSON.parse((results.value?.result as { content: Array<{ text: string }> }).content[0]!.text) as { run: Record<string, unknown> };
+    expect(body.run).toMatchObject({ approvalPolicy: 'auto', awaitingApproval: ['결과 확인'], stages: [{ stage: '조사', state: 'completed', attempts: [{ summary: 'Found it.' }] }] });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
   it('rejects malformed tool-call metadata and extra envelope fields before dispatch', async () => {
     const read = vi.fn();
     const service = { previewForSession: () => undefined } as unknown as import('./workflow-service').WorkflowService;
