@@ -89,6 +89,8 @@ export interface WorkspaceWorktreeCleanupDeps extends WorkspaceWorktreeActionDep
   /** The terminals whose process still runs (a terminal's record outlives it). */
   readonly liveTerminalIds: () => ReadonlySet<string>;
   readonly createId?: () => string;
+  /** How long archived chats' processes (and the tools they started) get to let go of the folder. */
+  readonly folderReleaseMs?: number;
 }
 
 /**
@@ -148,7 +150,15 @@ export async function removeWorkspaceWorktree(
   await deps.releaseProviders();
   if (worktree && status?.branch) {
     try {
-      if (await folderHeld(worktree.path)) {
+      // Archived chats' provider processes and the tools they started exit a little after the
+      // archive; only then is a folder still held by something else.
+      const deadline = Date.now() + (archivedChats ? deps.folderReleaseMs ?? 30_000 : 0);
+      let held = await folderHeld(worktree.path);
+      while (held && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        held = await folderHeld(worktree.path);
+      }
+      if (held) {
         return { ok: false, reason: 'in-use', message: `A program is still using ${worktree.path} (a terminal or editor opened there). Close it first.${partly(archivedChats)}` };
       }
     } catch (error) {

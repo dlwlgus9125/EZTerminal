@@ -17,9 +17,10 @@ afterEach(async () => {
   for (const base of bases.splice(0)) await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-/** A program working in the folder, the way a terminal opened there would. */
-function hold(folder: string): ChildProcess {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: folder, stdio: 'ignore', windowsHide: true });
+/** A program working in the folder, the way a terminal opened there would (or a chat's process that is exiting). */
+function hold(folder: string, exitAfterMs?: number): ChildProcess {
+  const script = exitAfterMs ? `setTimeout(() => {}, ${exitAfterMs})` : 'setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ['-e', script], { cwd: folder, stdio: 'ignore', windowsHide: true });
   children.push(child);
   return child;
 }
@@ -95,7 +96,11 @@ async function setup(projectFolders: readonly string[] = ['']) {
     if (merge) expect(await service.merge(target)).toMatchObject({ ok: true });
   };
   const branches = () => git(realRepo, 'branch', '--list', '--format=%(refname:short)').split(/\r?\n/u).filter(Boolean);
-  return { repo: realRepo, deps, create, commitAndMerge, branches, commands, snapshot: () => snapshot };
+  const addChat = (workspaceId: string) => {
+    snapshot = { ...snapshot, sessions: [{ id: 'chat', projectId: 'P0', workspaceId, kind: 'agent', state: 'idle' }],
+      agents: [{ sessionId: 'chat', state: 'idle', queuedTurnCount: 0 }] } as unknown as DaemonSnapshot;
+  };
+  return { repo: realRepo, deps, create, commitAndMerge, branches, commands, addChat, snapshot: () => snapshot };
 }
 
 describe('removeWorkspaceWorktree with git', () => {
@@ -150,6 +155,19 @@ describe('removeWorkspaceWorktree with git', () => {
     expect(existsSync(created.path)).toBe(false);
     expect(s.branches()).toEqual(['main']);
     expect(s.snapshot().workspaces.find((entry) => entry.id === created.workspaceId)?.archivedAt).toBeDefined();
+  });
+
+  it.runIf(process.platform === 'win32')('waits for an archived chat’s process to let go of the folder', async () => {
+    const s = await setup();
+    const created = await s.create();
+    await s.commitAndMerge(created);
+    s.addChat(created.workspaceId);
+    const exiting = hold(created.path, 2_000);
+    await new Promise((resolve) => exiting.once('spawn', resolve));
+    expect(await removeWorkspaceWorktree({ ...s.deps, folderReleaseMs: 15_000 }, created.workspaceId))
+      .toMatchObject({ ok: true, value: { archivedChats: 1, branchDeleted: true } });
+    expect(s.commands).toEqual(['agent.archive']);
+    expect(existsSync(created.path)).toBe(false);
   });
 
   it.runIf(process.platform === 'win32')('finishes a worktree git removed only partly, leaving its branch alone', async () => {
