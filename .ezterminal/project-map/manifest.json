@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3aa56e6cdafd0be15285aab86c3d5a42f760250a15719a73756f3801b1bdccd9",
+        "inputDigest": "sha256:f990ca5b4da461fc5f865da59d686ee311968095bfa2f4aa80b9fd6c2ac59bce",
         "decision": "map-updated",
-        "reason": "Reviewed agent-run planning: a project conversation's agent may prepare and run a flow (ledger principal agent); approvals and integration stay with the person unless the run's frozen auto-approve policy lets the host resolve them. Claim updated."
+        "reason": "Reviewed: only a run prepared with the subproject's auto-approve on records that policy, and a refused automatic decision is reported once and left to the person instead of being retried. Claims unchanged; anchors moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3be73a1bf79b67dcc72c54eca1c461cd4d3829d06b622e1ab4d134e17e6aef2a",
+        "inputDigest": "sha256:ecc4a1159c691fd7829f2422631a3107bef460da5e5b0eb9358b7208aec6f4fc",
         "decision": "map-updated",
-        "reason": "Reviewed workflow tools that run flows and read results, AI run commands without approval or integration, a run's agents folded under their stage in navigation and the tree's worktree level. Claims updated."
+        "reason": "Reviewed: only a run prepared with the subproject's auto-approve on records that policy; the run command boundary is unchanged. Anchor moved, claim unchanged."
       }
     }
   ]

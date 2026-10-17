@@ -143,6 +143,8 @@ describe('planning provider dispatch', () => {
     const prepare = { ...common, commandId: 'workflow-prepare', subprojectId: 'sub', type: 'run.prepare' as const, payload: { runId: 'workflow-run', reviewer: { providerId: 'codex', model: 'model' } } };
     expect(await workflows.execute(prepare, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true }); expect(f.adapter.submit).not.toHaveBeenCalled();
     const frozen = structuredClone(f.ledger.read('project').runs[0].preparation);
+    // A run without 자동 승인 carries no policy field, so older clients still parse it.
+    expect(frozen).not.toHaveProperty('approvalPolicy');
     graph.nodes[0].instructions = 'Next run only';
     expect(await workflows.execute({ ...common, commandId: 'draft-edit', subprojectId: 'sub', type: 'workflow.patch', payload: { graph, summary: 'Next run' } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
     const start = { ...common, expectedRevision: 1, commandId: 'workflow-start', subprojectId: 'sub', type: 'run.start' as const, payload: { runId: 'workflow-run' } };
@@ -244,5 +246,32 @@ describe('auto-approval', () => {
     const done = { state: 'completed', workflowRuntime: { activations: [] } };
     expect(autoApprovalCommands(run({ ...done, gates: [{ gateId: 'g', state: 'pending' }] }))).toEqual([]);
     expect(autoApprovalCommands(run({ ...done, integrationAuthorized: { by: 'auto-approval', at: 'x' } }))).toEqual([]);
+  });
+});
+
+describe('auto-approval in the dispatch pump', () => {
+  it('reports a refused automatic decision once and settles instead of retrying', async () => {
+    const run = {
+      runId: 'run', projectId: 'project', revision: 3, state: 'awaiting-review', createdAt: 'x', updatedAt: 'x', startedAt: 'x',
+      preparation: { approvalPolicy: 'auto', teamMode: 'division', tasks: [], workflow: { subprojectId: 'sub', graph: { nodes: [] } } },
+      tasks: [], attempts: [], evidence: [], reviews: [], gates: [],
+      workflowRuntime: { activations: [{ id: 'gate-1', nodeId: 'approval', iteration: 0, state: 'awaiting-approval', incomingEdgeIds: [] }] },
+    };
+    const refused = { ok: false, error: 'invalid-transition', message: 'This exact workflow approval is no longer pending.' };
+    const getReceipt = vi.fn(() => refused);
+    const reportError = vi.fn();
+    const service = new PlanningRunService({
+      ledger: { recoverInterrupted: async () => 0, read: () => ({ revision: 3, runs: [run] }), getReceipt, execute: vi.fn() },
+      daemon: { getSnapshot: () => ({ projects: [{ id: 'project' }], turns: [] }), onEvent: () => () => undefined },
+      reportError, processReview: vi.fn(), wakeQueuedTurns: vi.fn(),
+    } as unknown as PlanningRunServiceOptions);
+    await service.start();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    service.requestTick();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // One read per pump (start and the explicit tick), not a loop.
+    expect(getReceipt.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(reportError).toHaveBeenCalledOnce();
+    await service.dispose();
   });
 });

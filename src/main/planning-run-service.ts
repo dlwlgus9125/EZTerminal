@@ -105,6 +105,7 @@ export class PlanningRunService {
   private requested = false;
   private pumping: Promise<void> | undefined;
   private unsubscribe: (() => void) | undefined;
+  private readonly refusedAutoApprovals = new Set<string>();
 
   constructor(private readonly options: PlanningRunServiceOptions) {}
 
@@ -199,7 +200,8 @@ export class PlanningRunService {
           if (!prepared.ok) return prepared;
           receipt = await this.options.ledger.execute({ ...common, type: 'run.prepare', payload: { runId: request.payload.runId, preparation: {
             ...prepared.preparation, subprojectId: subproject.id, requestFingerprint: workflowDigest({ command, principal }),
-            approvalPolicy: subproject.autoApprove ? 'auto' : 'user',
+            // Only an opted-in run carries the policy (absent reads as the person's), so older clients keep parsing runs.
+            ...(subproject.autoApprove ? { approvalPolicy: 'auto' as const } : {}),
             ...(principal.kind === 'ai' && principal.sessionId ? { startedBy: { sessionId: principal.sessionId } } : {}),
             workflow: { subprojectId: subproject.id, revision: subproject.revision, fingerprint: workflowDigest(subproject.graph), graph: structuredClone(subproject.graph) },
           } } });
@@ -393,11 +395,17 @@ export class PlanningRunService {
     for (const run of this.allRuns()) {
       if (this.stopped || !run.startedAt) continue;
       // 자동 승인 was frozen into this run: the host answers its approvals and allows integration.
-      const automatic = autoApprovalCommands(run);
-      for (const command of automatic) {
-        await this.runtimeCommand(run, command.commandId, command.type, command.payload, PLANNING_AUTO_APPROVAL_PRINCIPAL);
+      let advanced = false;
+      for (const command of autoApprovalCommands(run)) {
+        const receipt = await this.runtimeCommand(run, command.commandId, command.type, command.payload, PLANNING_AUTO_APPROVAL_PRINCIPAL);
+        if (receipt.ok) advanced = true;
+        else if (!this.refusedAutoApprovals.has(command.commandId)) {
+          // A refused automatic decision is left to the person: reported once, never retried in a loop.
+          this.refusedAutoApprovals.add(command.commandId);
+          this.options.reportError?.(new Error(`Auto-approval ${command.type} for run ${run.runId} was refused: ${receipt.message}`));
+        }
       }
-      if (automatic.length) { this.wake(); continue; }
+      if (advanced) { this.wake(); continue; }
       // A workflow completion/approval is not permission to integrate the worktree.
       if (!run.preparation.workflow || run.integrationAuthorized) await this.options.processIntegration?.(run);
       if (run.state === 'completed' || run.state === 'cancelled') continue;
