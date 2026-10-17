@@ -85,6 +85,10 @@ const SCENARIOS = [
     // No provider: a worktree made from the project menu, work written into it, then commit and merge from its row.
     name: 'worktree-merge', run: (page, project, report) => runWorktreeMerge(page, project, report),
   },
+  {
+    // Settings → 에이전트 협업 profile, then 검토 맡기기 from a real chat: the child reviews and reports back once.
+    name: 'delegate-review', run: (page, project, report) => runDelegateReview(page, project, report),
+  },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
 function prepareWorkspace() {
@@ -217,6 +221,120 @@ async function runScenario(page, project, scenario, report) {
     ...(scenario.name === 'codex-approval' || scenario.outside ? { outsideFileDeleted: !existsSync(outsideFile) } : {}),
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
+}
+
+/** A profile made in Settings, a parent chat that edits, 검토 맡기기, the report back, and the start panel picker. */
+async function runDelegateReview(page, project, report) {
+  const name = 'delegate-review';
+  const shot = async (label) => {
+    await wait(600);
+    await page.screenshot({ path: path.join(output, `${name}-${label}.png`) });
+    report.push({ shot: `${name}-${label}`, files: [`${name}-${label}.png`] });
+  };
+  const ready = (await snapshot(page)).providers.filter((entry) => entry.enabled && entry.health === 'ready').map((entry) => entry.id);
+  // Claude when it is ready: Codex sometimes stalls on reads (out of scope here).
+  const providerId = ready.includes('claude') ? 'claude' : ready.includes('codex') ? 'codex' : undefined;
+  if (!providerId) { report.push({ scenario: name, skipped: 'no provider is enabled and ready' }); return; }
+  const orchestrationBefore = (await snapshot(page)).runtime.orchestrationToolsEnabled;
+  // A rerun on the same profile starts from no saved profiles.
+  await page.evaluate(async () => { for (const profile of await window.ezterminal.chatAgentProfiles.list()) await window.ezterminal.chatAgentProfiles.remove(profile.id); });
+
+  // A parent chat that changes one line, opened in a tab.
+  const parentId = `ux-live-${name}-${Date.now()}`;
+  const created = await command(page, 'agent.create', {
+    sessionId: parentId, workspaceId: project.workspaceId, title: 'UX live · greet 수정', providerId, permissionPreset: 'standard',
+    initialPrompt: 'src/app.ts의 greet가 돌려주는 문자열 끝의 느낌표를 두 개로 바꿔 줘. 다른 것은 하지 말고 한 문장으로 끝났다고만 알려 줘.',
+  });
+  if (!created?.ok) throw new Error(`${name}: agent.create failed ${JSON.stringify(created)}`);
+  const panelId = `agent-session-${SESSION_PREFIX}${parentId}`;
+  await page.evaluate(({ id, historyId, projectId }) => window.__ezAddDockPanel({
+    id, component: 'agent-session', title: 'greet 수정', params: { historyId, projectId },
+  }, { kind: 'main-tab' }), { id: panelId, historyId: `${SESSION_PREFIX}${parentId}`, projectId: project.projectId });
+  const turnsOf = async (sessionId) => (await snapshot(page)).turns.filter((turn) => turn.sessionId === sessionId);
+  const settled = (turns) => turns.length > 0 && turns.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state));
+  const allowed = [];
+  // Waits for a condition, allowing whatever these chats ask for on the way.
+  const until = async (sessionIds, test, timeoutMs, label) => poll(async () => {
+    const snap = await snapshot(page);
+    for (const approval of snap.approvals.filter((entry) => entry.state === 'pending' && sessionIds.includes(entry.sessionId))) {
+      allowed.push({ sessionId: approval.sessionId, title: approval.title });
+      await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' });
+    }
+    return snap;
+  }, (snap) => test(snap), timeoutMs, label);
+  const turnsIn = (snap, sessionId) => snap.turns.filter((turn) => turn.sessionId === sessionId);
+  // Settings → 에이전트 → 에이전트 협업: add the reviewer profile by hand.
+  await page.getByTestId('btn-toggle-settings').click();
+  await page.getByTestId('settings-category-agents').click();
+  const section = page.getByTestId('agent-collaboration-settings');
+  await section.scrollIntoViewIfNeeded();
+  await shot('settings');
+  await section.getByRole('button', { name: '프로필 추가' }).click();
+  const fields = section.getByRole('textbox');
+  await fields.nth(0).fill('꼼꼼한 검토자');
+  const selects = section.locator('select');
+  await selects.nth(0).selectOption(providerId);
+  await selects.nth(2).selectOption('low');
+  await selects.nth(3).selectOption('standard');
+  await fields.nth(1).fill('바뀐 코드를 고치지 않고 검토만 할 때');
+  await section.getByRole('button', { name: '저장', exact: true }).click();
+  await poll(() => page.evaluate(() => window.ezterminal.chatAgentProfiles.list()), (list) => list.length > 0, 10_000, 'saved profile');
+  await shot('settings-profile');
+  await page.getByTestId('btn-toggle-settings').click();
+
+  await until([parentId], (snap) => settled(turnsIn(snap, parentId)), 300_000, 'parent edit').catch(async (error) => {
+    const snap = await snapshot(page);
+    throw new Error(`${error.message}: ${JSON.stringify(turnsIn(snap, parentId).map((turn) => [turn.state, turn.errorCode]))}`);
+  });
+  await wait(2500);
+
+  // 검토 맡기기 from the conversation menu.
+  const session = page.locator('[data-testid="structured-agent-session"]:visible').first();
+  await session.getByTestId('structured-agent-menu').click();
+  await page.getByTestId('structured-agent-delegate-review').click();
+  await page.getByTestId('delegate-agent-dialog').waitFor();
+  await shot('dialog');
+  await page.getByTestId('delegate-agent-submit').click();
+  await page.getByTestId('delegate-agent-dialog').waitFor({ state: 'hidden', timeout: 30_000 });
+  const relation = await poll(() => snapshot(page), (snap) => snap.agentRelations.some((entry) => entry.parentSessionId === parentId), 30_000, 'child relation');
+  const childId = relation.agentRelations.find((entry) => entry.parentSessionId === parentId).childSessionId;
+  await wait(2000);
+  await shot('child-started');
+  await until([parentId, childId], (snap) => settled(turnsIn(snap, childId)), 300_000, 'child review');
+  // The report arrives as the parent's next turn; wait for the parent to answer it.
+  await until([parentId, childId], (snap) => turnsIn(snap, parentId).length >= 2 && settled(turnsIn(snap, parentId)), 300_000, 'parent answer to the report');
+  await wait(2000);
+  await shoot(page, `${name}-reported`, report);
+  const parentItems = await page.evaluate((id) => window.ezterminal.getDaemonTranscript?.(id), parentId);
+  const list = Array.isArray(parentItems?.items) ? parentItems.items : Array.isArray(parentItems) ? parentItems : [];
+  const reportItem = list.find((item) => item.kind === 'user-message' && item.payload?.type === 'subagent');
+  const finalSnap = await snapshot(page);
+  const child = finalSnap.sessions.find((entry) => entry.id === childId);
+  const childAgent = finalSnap.agents.find((entry) => entry.sessionId === childId);
+
+  // The child opens from the parent's 서브에이전트 track.
+  const track = session.locator('[data-testid="structured-agent-child"]').first();
+  if (await track.count()) { await track.click(); await wait(2500); await shoot(page, `${name}-child`, report); }
+
+  // New chat: the profile picker fills AI and permission.
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  await wait(800);
+  // A project row shows new chat once the pointer reaches its actions.
+  await page.getByRole('button', { name: 'UX live check 관리', exact: true }).first().hover();
+  await page.getByRole('button', { name: '새 채팅: UX live check' }).first().click();
+  await wait(2000);
+  const picker = page.locator('[data-testid="conversation-start-profile"]:visible').first();
+  await picker.selectOption({ label: '꼼꼼한 검토자' });
+  await wait(800);
+  const pickedProvider = await page.locator('[aria-label="대화 AI"]:visible').first().inputValue();
+  await shot('start-profile');
+
+  report.push({ scenario: name, providerId, orchestrationBefore, allowed, parentId, childId,
+    child: { title: child?.title, provider: childAgent?.providerId, effort: childAgent?.reasoningEffort, permission: childAgent?.permissionPreset,
+      owner: finalSnap.agentRelations.find((entry) => entry.childSessionId === childId)?.owner },
+    parentTurns: (await turnsOf(parentId)).map((turn) => turn.state), childTurns: (await turnsOf(childId)).map((turn) => turn.state),
+    reportMessage: reportItem ? { text: reportItem.text.slice(0, 300), payload: reportItem.payload } : null,
+    startPanel: { pickedProvider } });
 }
 
 /** Project menu → 새 워크트리 → work lands in it → 검토 대기 → commit → merge → 완료, all from the sidebar. */

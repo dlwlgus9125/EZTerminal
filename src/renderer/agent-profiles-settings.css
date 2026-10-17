@@ -4,14 +4,17 @@
 
 .agent-profiles-settings__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
 }
 
+/* Settings can be a narrow panel: the title keeps its line and the button wraps under it. */
 .agent-profiles-settings__head h3 {
-  margin: 0;
+  margin: 0 var(--ui-space-3) 0 0;
   font-size: var(--ui-font-size-sm);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .agent-profiles-settings__note,
@@ -52,11 +55,9 @@
 
 .agent-profiles-settings__summary span,
 .agent-profiles-settings__summary small {
-  overflow: hidden;
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .agent-profiles-settings__summary small {
