@@ -1750,6 +1750,14 @@
   margin-right: var(--ui-space-1);
 }
 
+.chat-instruction__open {
+  margin-left: var(--ui-space-2);
+}
+
+.chat-instruction[data-origin='subagent-report'] {
+  border-left-color: var(--ui-success);
+}
+
 .chat-instruction__text {
   margin: 0;
   color: var(--ui-text-primary);
@@ -1757,7 +1765,8 @@
   overflow-wrap: anywhere;
 }
 
-.chat-instruction__text[data-folded] {
+.chat-instruction__text[data-folded],
+.chat-instruction__body[data-folded] {
   max-height: 9rem;
   overflow: hidden;
 }

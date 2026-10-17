@@ -14,7 +14,29 @@ type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 
 export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy();
+  const context = useChatContext();
   const fold = useFold(row.id, row.text);
+  if (row.origin === 'subagent-report' && row.from) {
+    // Sent by the delegated child when it finished, not typed by the person.
+    const from = row.from;
+    return (
+      <article className="chat-instruction" data-origin="subagent-report" aria-label={`${copy.subagentReport}: ${from.title ?? copy.subagent}`} data-message-id={row.anchorId}>
+        <p className="chat-instruction__label">
+          <Users aria-hidden="true" />{copy.subagentReport}{from.title ? ` · ${from.title}` : ''}
+          {context.onOpenRelated && (
+            <button type="button" className="chat-link-button chat-instruction__open" onClick={() => context.onOpenRelated?.(from.sessionId)}
+              aria-label={`${copy.openSubagent}: ${from.title ?? copy.subagent}`}>{copy.openSubagent}</button>
+          )}
+        </p>
+        <div className="chat-instruction__body" data-folded={fold.folded || undefined}><Prose markdown={row.text} variant="prose" /></div>
+        {fold.foldable && (
+          <button type="button" className="chat-link-button" onClick={fold.toggle} aria-expanded={!fold.folded}>
+            {fold.folded ? copy.showMore : copy.showLess}
+          </button>
+        )}
+      </article>
+    );
+  }
   if (row.origin === 'parent-agent') {
     // A subagent starts from its parent agent's instruction, not from the person.
     return (

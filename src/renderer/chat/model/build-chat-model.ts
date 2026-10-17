@@ -318,6 +318,10 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           kind: 'user', id: `user:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, ...(item.context ? { context: item.context } : {}),
           ...(payload?.type === 'subagent' && payload.role === 'instruction' ? { origin: 'parent-agent' as const } : {}),
+          ...(payload?.type === 'subagent' && payload.role === 'result' && payload.childSessionId ? {
+            origin: 'subagent-report' as const,
+            from: { sessionId: payload.childSessionId, ...(payload.title ? { title: payload.title } : {}), ...(payload.state ? { state: payload.state } : {}) },
+          } : {}),
           messageId: item.sourceIds[0] ?? item.id, anchorId: item.messageId ?? item.sourceIds[0] ?? item.id, sensitive: item.isSensitive,
         });
         if (turnId && !statusInserted.has(turnId)) {
@@ -444,6 +448,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         }
         // A subagent's start is shown on the call that started it.
         if (payload?.type === 'subagent' && payload.callId && calledIds.has(payload.callId)) break;
+        // A delegated child's own origin row: its header already leads back to the parent.
+        if (payload?.type === 'subagent' && payload.role === 'link' && payload.parentSessionId && !payload.childSessionId) break;
         if (payload?.type === 'subagent' && item.relatedSessionId) {
           const subagent = payload.callId ? subagents.get(payload.callId) : undefined;
           push({ kind: 'child', id: `notice:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text,

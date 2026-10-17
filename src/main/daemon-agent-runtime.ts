@@ -8,7 +8,10 @@ import {
   type DaemonAgent,
   type DaemonCommand,
   type DaemonCommandError,
+  createDaemonCommand,
+  type DaemonCommandReceipt,
   type DaemonCommandType,
+  type DaemonPrincipal,
   type DaemonSession,
   type DaemonSnapshot,
   type DaemonTranscriptItem,
@@ -82,6 +85,8 @@ export interface DaemonAgentRuntimeOptions {
     limit?: number,
   ) => readonly DaemonTranscriptItem[];
   readonly findCommand?: (commandId: string) => DaemonCommand | undefined;
+  /** Issues a command as the host itself (a delegated child's report to its parent). */
+  readonly executeCommand?: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
   readonly findMigrationReceipt?: (id: string) => DaemonMigrationReceipt | undefined;
   /**
    * Whether the provider kept a transcript for this subagent: true/false when
@@ -131,6 +136,21 @@ interface ChildRelationPlan {
 }
 
 const MAX_CHILD_SUMMARY_LENGTH = 2_000;
+
+/** The host's own principal when it sends a delegated child's result to the parent. */
+const REPORT_BACK_PRINCIPAL = 'report-back-runtime';
+
+interface ReportBackPlan {
+  readonly commandId: string;
+  readonly parentSessionId: string;
+  readonly childSessionId: string;
+  readonly prompt: string;
+}
+
+/** A managed child's first transcript row: where it came from and whether to report back. */
+function managedChildOriginId(childSessionId: string): string {
+  return stableId('managed-child-origin', childSessionId);
+}
 
 function boundedChildSummary(value: string | undefined): string | undefined {
   const summary = value?.trim().slice(0, MAX_CHILD_SUMMARY_LENGTH);
@@ -663,7 +683,7 @@ export class DaemonAgentRuntime {
     const provider = this.options.providers.enabledAdapter(snapshot, command.payload.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const relation = command.payload.parentSessionId
-      ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId)
+      ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId, command.principal)
       : undefined;
     if (relation && !relation.ok) return relation.result;
 
@@ -683,12 +703,29 @@ export class DaemonAgentRuntime {
         sessionId: command.payload.sessionId,
         providerId: command.payload.providerId,
         ...(command.payload.model ? { model: command.payload.model } : {}),
+        ...(command.payload.reasoningEffort ? { reasoningEffort: command.payload.reasoningEffort } : {}),
         permissionPreset: command.payload.permissionPreset,
         state: command.payload.initialPrompt ? 'queued' : 'idle',
         queuedTurnCount: command.payload.initialPrompt ? 1 : 0,
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled && !this.options.preparedSessionSettings?.(command.payload.sessionId),
       } },
     ];
+    if (relation?.ok) {
+      // The child's first row names where it came from; turn-finished reads it to report back.
+      const parent = snapshot.sessions.find((entry) => entry.id === command.payload.parentSessionId);
+      mutations.push(...this.transcriptMutations([{
+        id: managedChildOriginId(command.payload.sessionId),
+        sessionId: command.payload.sessionId,
+        kind: 'notice',
+        text: `Started from: ${parent?.title ?? command.payload.parentSessionId}`,
+        isDelta: false,
+        isSensitive: false,
+        createdAt: now,
+        relatedSessionId: command.payload.parentSessionId!,
+        payload: { v: 1, type: 'subagent', role: 'link', parentSessionId: command.payload.parentSessionId!,
+          ...(command.payload.reportBack ? { reportBack: true } : {}) },
+      }]));
+    }
     if (command.payload.initialPrompt) mutations.push(
       { kind: 'turn.upsert', value: {
         id: turnId,
@@ -766,7 +803,7 @@ export class DaemonAgentRuntime {
     const providerAdapter = provider.value;
     const providerSessionId = sourceAgent.providerSessionId;
     const relation = command.payload.parentSessionId
-      ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId)
+      ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId, command.principal)
       : undefined;
     if (relation && !relation.ok) return relation.result;
     const mutations: DaemonStoreMutation[] = [
@@ -886,6 +923,20 @@ export class DaemonAgentRuntime {
     if (['archived', 'done', 'interrupted', 'error'].includes(agent.state)) {
       return commandError('invalid-state', 'Agent Session is not available for a new turn.');
     }
+    let reportPayload: DaemonTranscriptItemInput['payload'];
+    const reportOf = command.type === 'agent.submit' ? command.payload.reportOf : undefined;
+    if (reportOf) {
+      const child = snapshot.sessions.find((entry) => entry.id === reportOf);
+      const managed = snapshot.agentRelations.some((relation) => (
+        relation.childSessionId === reportOf && relation.parentSessionId === session.id
+        && relation.owner === 'managed' && relation.detachedAt === undefined
+      ));
+      if (command.principal.id !== REPORT_BACK_PRINCIPAL || !child || !managed || !this.reportBackRequested(child.id, session.id)) {
+        return commandError('invalid-command', 'Only a delegated child asked to report back can send its result to this conversation.');
+      }
+      const last = snapshot.turns.filter((turn) => turn.sessionId === child.id && turn.finishedAt).sort((a, b) => a.finishedAt!.localeCompare(b.finishedAt!)).at(-1);
+      reportPayload = { v: 1, type: 'subagent', role: 'result', childSessionId: child.id, title: child.title, state: last?.state === 'failed' ? 'error' : 'done' };
+    }
     const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const currentTurn = agent.currentTurnId
@@ -916,15 +967,18 @@ export class DaemonAgentRuntime {
       ...(interruptFirst && hasActiveCurrentTurn
         ? [{ kind: 'session.upsert' as const, value: sessionInput(session, 'delivery-uncertain') }]
         : []),
-      ...this.transcriptMutations([this.userTranscript(
-        session.id,
-        turnId,
-        command.commandId,
-        command.payload.prompt,
-        now,
-        messageContext,
-        messageContext?.replyTo ? this.replyAnchorIsSensitive(session.id, messageContext.replyTo) : false,
-      )]),
+      ...this.transcriptMutations([{
+        ...this.userTranscript(
+          session.id,
+          turnId,
+          command.commandId,
+          command.payload.prompt,
+          now,
+          messageContext,
+          messageContext?.replyTo ? this.replyAnchorIsSensitive(session.id, messageContext.replyTo) : false,
+        ),
+        ...(reportPayload ? { payload: reportPayload } : {}),
+      }]),
     );
     return {
       ok: true,
@@ -1489,11 +1543,15 @@ export class DaemonAgentRuntime {
     snapshot: DaemonSnapshot,
     parentSessionId: string,
     projectId: string,
+    principal: DaemonPrincipal,
   ): { readonly ok: true; readonly value: ChildRelationPlan } | {
     readonly ok: false;
     readonly result: DaemonCommandExecutionResult;
   } {
-    if (!snapshot.runtime.orchestrationToolsEnabled) {
+    // A person handing work off from a chat needs no permission. An agent (MCP) needs the
+    // host toggle and its own orchestration flag, which the toggle set when it was created.
+    const byPerson = principal.kind === 'desktop' || principal.kind === 'android';
+    if (!byPerson && !snapshot.runtime.orchestrationToolsEnabled) {
       return { ok: false, result: commandError(
         'invalid-state',
         'Enable Agent orchestration on this host before creating managed children.',
@@ -1512,7 +1570,7 @@ export class DaemonAgentRuntime {
       || parent.archivedAt !== undefined
       || TERMINAL_SESSION_STATES.has(parent.state)
       || TERMINAL_AGENT_STATES.has(parentAgent.state)
-      || !parentAgent.orchestrationEnabled
+      || (!byPerson && !parentAgent.orchestrationEnabled)
       || providerOwned
     ) {
       return { ok: false, result: commandError(
@@ -1570,6 +1628,61 @@ export class DaemonAgentRuntime {
       permissionPreset,
       ...(orchestration ? { orchestration } : {}),
     };
+  }
+
+  /**
+   * A delegated child that was asked to report back sends its first finished result to its
+   * parent once, as the parent's next message. Nothing is planned when the child was not asked
+   * to, it already reported, or the parent cannot take a turn now; the parent then keeps the
+   * usual summary row.
+   */
+  private reportBackPlan(
+    snapshot: DaemonSnapshot,
+    parent: DaemonSession,
+    child: DaemonSession,
+    failed: boolean,
+    summary: string,
+  ): ReportBackPlan | undefined {
+    if (!this.options.executeCommand) return undefined;
+    const commandId = stableId('report-back', child.id);
+    if (snapshot.turns.some((turn) => turn.commandId === commandId)) return undefined;
+    if (!this.reportBackRequested(child.id, parent.id)) return undefined;
+    const agent = snapshot.agents.find((entry) => entry.sessionId === parent.id);
+    if (
+      !agent
+      || parent.archivedAt !== undefined
+      || TERMINAL_SESSION_STATES.has(parent.state)
+      || TERMINAL_AGENT_STATES.has(agent.state)
+      || agent.state === 'delivery-uncertain'
+      || !this.options.providers.enabledAdapter(snapshot, agent.providerId).ok
+    ) return undefined;
+    const prompt = `${failed ? 'The subagent stopped' : 'The subagent finished'}: "${child.title}"\n\n${summary}`;
+    return { commandId, parentSessionId: parent.id, childSessionId: child.id, prompt };
+  }
+
+  private reportBackRequested(childSessionId: string, parentSessionId: string): boolean {
+    const origin = this.options.readTranscript(childSessionId, 0, 4).find((item) => item.id === managedChildOriginId(childSessionId));
+    return origin?.payload?.type === 'subagent' && origin.payload.reportBack === true && origin.payload.parentSessionId === parentSessionId;
+  }
+
+  /** Sends the planned report as the parent's message; the stable command id makes it once. */
+  private async sendReportBack(plan: ReportBackPlan, summaryRow: DaemonTranscriptItemInput): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const snapshot = this.options.getSnapshot();
+      const receipt = await this.options.executeCommand!(createDaemonCommand({
+        commandId: plan.commandId,
+        idempotencyKey: plan.commandId,
+        expectedRevision: snapshot.revision,
+        issuedAt: this.isoNow(),
+        principal: { kind: 'cli', id: REPORT_BACK_PRINCIPAL },
+        type: 'agent.submit',
+        payload: { sessionId: plan.parentSessionId, prompt: plan.prompt, reportOf: plan.childSessionId },
+      }));
+      if (receipt.ok) return;
+      if (receipt.error.code !== 'revision-conflict') break;
+    }
+    // The parent could not take it as a message: keep the result where it would have been.
+    await this.options.applySystemCommit({ mutations: this.transcriptMutations([summaryRow]) });
   }
 
   private userTranscript(
@@ -2043,6 +2156,7 @@ export class DaemonAgentRuntime {
     if (event.kind === 'turn-finished') {
       let finishedTurnId: string | undefined;
       let releasedCurrent = false;
+      let report: { readonly plan: ReportBackPlan; readonly summaryRow: DaemonTranscriptItemInput } | undefined;
       const resultSummary = boundedChildSummary(event.summary);
       await this.transition((snapshot) => {
         const providerTurnId = event.turnId.startsWith('provider:') ? event.turnId.slice('provider:'.length) : undefined;
@@ -2073,6 +2187,19 @@ export class DaemonAgentRuntime {
         const parent = parentRelation
           ? snapshot.sessions.find((candidate) => candidate.id === parentRelation.parentSessionId)
           : undefined;
+        const reportPlan = parent && resultSummary && !interrupted
+          ? this.reportBackPlan(snapshot, parent, session, failed, resultSummary)
+          : undefined;
+        const summaryRow = resultSummary && parent && parent.state !== 'archived' ? {
+          id: stableId('managed-child-summary', parent.id, event.sessionId, turn.id, resultSummary),
+          sessionId: parent.id,
+          kind: 'child-summary' as const,
+          text: resultSummary,
+          isDelta: false,
+          isSensitive: false,
+          relatedSessionId: event.sessionId,
+        } : undefined;
+        report = reportPlan && summaryRow ? { plan: reportPlan, summaryRow } : undefined;
         return { mutations: [
           { kind: 'turn.upsert', value: turnInput(turn, {
             state: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
@@ -2101,21 +2228,16 @@ export class DaemonAgentRuntime {
             isDelta: false,
             isSensitive: false,
           }]) : []),
-          ...(resultSummary && parent && parent.state !== 'archived'
-            ? this.transcriptMutations([{
-                id: stableId('managed-child-summary', parent.id, event.sessionId, turn.id, resultSummary),
-                sessionId: parent.id,
-                kind: 'child-summary' as const,
-                text: resultSummary,
-                isDelta: false,
-                isSensitive: false,
-                relatedSessionId: event.sessionId,
-              }])
-            : []),
+          // A reported result reaches the parent as its next message instead.
+          ...(summaryRow && !report ? this.transcriptMutations([summaryRow]) : []),
         ] };
       });
       if (finishedTurnId) this.clearTurnTimeout(finishedTurnId);
       if (releasedCurrent) this.queuePump();
+      if (report) {
+        const { plan, summaryRow } = report;
+        this.runBackground(`report ${plan.childSessionId} back to ${plan.parentSessionId}`, () => this.sendReportBack(plan, summaryRow));
+      }
       return;
     }
     if (event.kind === 'approval-requested') {

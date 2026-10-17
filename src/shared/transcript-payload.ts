@@ -99,6 +99,8 @@ const SubagentPayloadSchema = z.object({
   subagentType: ShortText.optional(),
   background: z.boolean().optional(),
   state: z.enum(['done', 'error']).optional(),
+  /** A delegated child's first row: send its first finished result to the parent once. */
+  reportBack: z.boolean().optional(),
 }).strict();
 
 export const TranscriptPayloadSchema = z.discriminatedUnion('type', [

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDaemonCommand,
   type DaemonCommandType,
+  type DaemonPrincipal,
 } from '../shared/daemon-protocol';
 import type {
   AgentProviderAdapter,
@@ -158,6 +159,7 @@ async function harness(options: {
       routerRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
     findCommand: (commandId) => store.findCommand(commandId)?.command,
+    executeCommand: (command) => routerRef.current!.execute(command),
     now,
     idFactory: (() => {
       let id = 0;
@@ -173,6 +175,7 @@ async function harness(options: {
   const executeWithoutSettling = async <T extends DaemonCommandType>(
     type: T,
     payload: Parameters<typeof createDaemonCommand<T>>[0]['payload'],
+    principal: DaemonPrincipal = { kind: 'desktop', id: 'test' },
   ) => {
     const suffix = ++commandSequence;
     const receipt = await router.execute(createDaemonCommand({
@@ -180,7 +183,7 @@ async function harness(options: {
       idempotencyKey: `test:${suffix}`,
       expectedRevision: store.getRevision(),
       issuedAt: '2026-09-04T10:00:00.000Z',
-      principal: { kind: 'desktop', id: 'test' },
+      principal,
       type,
       payload,
     }));
@@ -189,8 +192,9 @@ async function harness(options: {
   const execute = async <T extends DaemonCommandType>(
     type: T,
     payload: Parameters<typeof createDaemonCommand<T>>[0]['payload'],
+    principal?: DaemonPrincipal,
   ) => {
-    const receipt = await executeWithoutSettling(type, payload);
+    const receipt = await executeWithoutSettling(type, payload, principal);
     await runtime.whenIdle();
     return receipt;
   };
@@ -2355,6 +2359,67 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
+  it('lets a person hand work off with orchestration off and reports the result back once', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'lead', workspaceId: 'workspace-1', title: 'Lead', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Build it.',
+      });
+      const leadTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'lead')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'lead', turnId: leadTurn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().runtime.orchestrationToolsEnabled).toBe(false);
+
+      // An agent cannot, the person can.
+      expect(await h.execute('agent.create', {
+        sessionId: 'agent-made', workspaceId: 'workspace-1', title: 'Agent made', providerId: 'codex', permissionPreset: 'standard',
+        initialPrompt: 'No.', parentSessionId: 'lead',
+      }, { kind: 'mcp', id: 'session-lead', sessionId: 'lead' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      expect(await h.execute('agent.create', {
+        sessionId: 'reviewer', workspaceId: 'workspace-1', title: 'Review the change', providerId: 'codex', permissionPreset: 'plan',
+        reasoningEffort: 'high', initialPrompt: 'Review the login change.', parentSessionId: 'lead', reportBack: true,
+      })).toMatchObject({ ok: true });
+      const snapshot = h.router.getSnapshot();
+      expect(snapshot.agentRelations).toEqual([expect.objectContaining({ parentSessionId: 'lead', childSessionId: 'reviewer', owner: 'managed' })]);
+      expect(snapshot.agents.find((agent) => agent.sessionId === 'reviewer')).toMatchObject({ reasoningEffort: 'high', orchestrationEnabled: false });
+      expect(h.router.readTranscript('reviewer')[0]).toMatchObject({
+        kind: 'notice', relatedSessionId: 'lead', payload: { type: 'subagent', role: 'link', parentSessionId: 'lead', reportBack: true },
+      });
+
+      const reviewTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'reviewer')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'reviewer', turnId: reviewTurn.id, outcome: 'completed', summary: 'One edge case is unhandled.' });
+      await h.runtime.whenIdle();
+      const leadRows = h.router.readTranscript('lead');
+      expect(leadRows.filter((item) => item.kind === 'child-summary')).toEqual([]);
+      const report = leadRows.find((item) => item.kind === 'user-message' && item.payload?.type === 'subagent');
+      expect(report).toMatchObject({
+        text: expect.stringContaining('One edge case is unhandled.'),
+        payload: { type: 'subagent', role: 'result', childSessionId: 'reviewer', title: 'Review the change', state: 'done' },
+      });
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
+        sessionId: 'lead', prompt: expect.stringContaining('One edge case is unhandled.'),
+      }), expect.any(AbortSignal));
+
+      // Only the host sends a report; a client cannot label its own message as one.
+      expect(await h.execute('agent.submit', { sessionId: 'lead', prompt: 'Pretend result.', reportOf: 'reviewer' }))
+        .toMatchObject({ ok: false, error: { code: 'invalid-command' } });
+
+      // Further turns of the child do not report again; the parent gets the usual summary.
+      await h.execute('agent.submit', { sessionId: 'reviewer', prompt: 'Check once more.' });
+      const second = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'reviewer' && turn.id !== reviewTurn.id)!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'reviewer', turnId: second.id, outcome: 'completed', summary: 'Still one.' });
+      await h.runtime.whenIdle();
+      const after = h.router.readTranscript('lead');
+      expect(after.filter((item) => item.kind === 'user-message' && item.payload?.type === 'subagent')).toHaveLength(1);
+      expect(after.filter((item) => item.kind === 'child-summary')).toEqual([expect.objectContaining({ text: 'Still one.' })]);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
   it('requires a live orchestration-enabled managed parent before creating a child', async () => {
     const h = await harness();
     try {
@@ -2380,7 +2445,7 @@ describe('DaemonAgentRuntime', () => {
         permissionPreset: 'standard',
         initialPrompt: 'Must not run.',
         parentSessionId: 'disabled-parent',
-      });
+      }, { kind: 'mcp', id: 'session-disabled-parent', sessionId: 'disabled-parent' });
       expect(disabled).toMatchObject({
         ok: false,
         error: { code: 'invalid-state' },

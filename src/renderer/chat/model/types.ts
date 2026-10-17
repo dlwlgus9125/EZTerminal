@@ -83,8 +83,13 @@ export type ChatRow =
   | (RowBase & {
       readonly kind: 'user';
       readonly text: string;
-      /** A subagent's first row: what its parent agent asked, not the person. */
-      readonly origin?: 'parent-agent';
+      /**
+       * Not the person: a subagent's first row is what its parent agent asked
+       * (`parent-agent`); a delegated child's reported result arrives in its parent
+       * as a message (`subagent-report`, from `from`).
+       */
+      readonly origin?: 'parent-agent' | 'subagent-report';
+      readonly from?: ChatSubagentLink;
       readonly context?: ChatMessageContext;
       /** Identity a reply quotes (first source item). */
       readonly messageId: string;

@@ -945,6 +945,7 @@ app.on('ready', async () => {
       daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
     findCommand: (commandId) => daemonStore.findCommand(commandId)?.command,
+    executeCommand: (command) => daemonRouterRef.current!.execute(command),
     findMigrationReceipt: (id) => daemonStore.getMigrationReceipt(id),
     subagentRecordExists: (input) => claudeSubagentRecordExists(input),
     canDispatchTurn: (turn) => (planningRuntimeRef.current?.canDispatchTurn(turn)

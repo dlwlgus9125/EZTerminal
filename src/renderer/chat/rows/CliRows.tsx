@@ -15,7 +15,29 @@ const PREVIEW_LINES = 3;
 
 export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy();
+  const context = useChatContext();
   const fold = useFold(row.id, row.text);
+  if (row.origin === 'subagent-report' && row.from) {
+    const from = row.from;
+    return (
+      <article className="chat-cli-line chat-cli-instruction" data-origin="subagent-report" aria-label={`${copy.subagentReport}: ${from.title ?? copy.subagent}`} data-message-id={row.anchorId}>
+        <span className="chat-cli-glyph" data-tone="muted" aria-hidden="true">↲</span>
+        <div className="chat-cli-line__body">
+          <span className="chat-cli-dim">{copy.subagentReport}{from.title ? ` · ${from.title}` : ''}</span>
+          {context.onOpenRelated && (
+            <button type="button" className="chat-link-button" onClick={() => context.onOpenRelated?.(from.sessionId)}
+              aria-label={`${copy.openSubagent}: ${from.title ?? copy.subagent}`}>{copy.openSubagent}</button>
+          )}
+          <div className="chat-instruction__body" data-folded={fold.folded || undefined}><Prose markdown={row.text} variant="cli" /></div>
+          {fold.foldable && (
+            <button type="button" className="chat-link-button" onClick={fold.toggle} aria-expanded={!fold.folded}>
+              {fold.folded ? copy.showMore : copy.showLess}
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
   if (row.origin === 'parent-agent') {
     return (
       <article className="chat-cli-line chat-cli-instruction" aria-label={copy.parentInstruction} data-message-id={row.anchorId}>

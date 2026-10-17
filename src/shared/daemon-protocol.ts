@@ -343,6 +343,9 @@ export interface DaemonCommandPayloads {
     readonly permissionPreset: PermissionPreset;
     readonly initialPrompt?: string;
     readonly parentSessionId?: string;
+    readonly reasoningEffort?: string;
+    /** A managed child sends its first finished result back to the parent as a new message. */
+    readonly reportBack?: boolean;
   };
   readonly 'agent.resume': {
     readonly sessionId: string;
@@ -356,7 +359,13 @@ export interface DaemonCommandPayloads {
     readonly reasoningEffort?: string;
     readonly parentSessionId?: string;
   };
-  readonly 'agent.submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
+  readonly 'agent.submit': {
+    readonly sessionId: string;
+    readonly prompt: string;
+    readonly context?: ChatMessageContext;
+    /** The host sends a delegated child's result to its parent (`report-back-runtime` only). */
+    readonly reportOf?: string;
+  };
   readonly 'agent.interrupt-and-submit': { readonly sessionId: string; readonly prompt: string; readonly context?: ChatMessageContext };
   readonly 'agent.interrupt': { readonly sessionId: string };
   readonly 'agent.queue': {
@@ -559,6 +568,7 @@ const AgentMessagePayloadSchema = z.object({
   sessionId: IdentifierSchema,
   prompt: NonEmptyStringSchema.max(100_000),
   context: ChatMessageContextSchema.optional(),
+  reportOf: IdentifierSchema.optional(),
 }).strict().refine((value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 900 * 1024,
   'The complete message must fit within 900 KiB.');
 const PositiveIntegerSchema = z.number().int().positive();
@@ -623,6 +633,8 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
     permissionPreset: PermissionPresetSchema,
     initialPrompt: NonEmptyStringSchema.optional(),
     parentSessionId: IdentifierSchema.optional(),
+    reasoningEffort: z.string().min(1).max(32).optional(),
+    reportBack: z.boolean().optional(),
   }).strict(),
   'agent.resume': z.object({
     sessionId: IdentifierSchema,

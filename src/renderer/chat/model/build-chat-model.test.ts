@@ -251,6 +251,25 @@ describe('buildChatModel over a Codex session with a sub-agent', () => {
   });
 });
 
+describe('buildChatModel over a delegated child', () => {
+  const base = { isDelta: false, isSensitive: false, createdAt: '2026-10-17T00:00:00.000Z' };
+  it('leaves the child’s origin row to its header and labels the reported result in the parent', () => {
+    const child = buildChatModel({ items: [
+      { ...base, id: 'origin', sessionId: 'reviewer', sequence: 1, kind: 'notice', text: 'Started from: Lead', relatedSessionId: 'lead',
+        payload: { v: 1, type: 'subagent', role: 'link', parentSessionId: 'lead', reportBack: true } },
+      { ...base, id: 'ask', sessionId: 'reviewer', sequence: 2, turnId: 't1', kind: 'user-message', text: 'Review the login change.' },
+    ] as DaemonTranscriptItem[] });
+    expect(kinds(child.rows)).toEqual(['user']);
+    expect(child.rows[0]).not.toHaveProperty('origin');
+
+    const parent = buildChatModel({ items: [
+      { ...base, id: 'report', sessionId: 'lead', sequence: 9, turnId: 't9', kind: 'user-message', text: 'The subagent finished: "Review" One edge case.',
+        payload: { v: 1, type: 'subagent', role: 'result', childSessionId: 'reviewer', title: 'Review', state: 'done' } },
+    ] as DaemonTranscriptItem[] });
+    expect(parent.rows[0]).toMatchObject({ kind: 'user', origin: 'subagent-report', from: { sessionId: 'reviewer', title: 'Review', state: 'done' } });
+  });
+});
+
 describe('unwrapShellCommand', () => {
   it('handles PowerShell, cmd and sh wrappers', () => {
     expect(unwrapShellCommand(String.raw`"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe" -Command 'Get-Content -LiteralPath src/app.ts'`))
