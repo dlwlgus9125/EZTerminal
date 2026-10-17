@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonTurn,
 } from '../shared/daemon-protocol';
-import type { ExecutionArtifact, ExecutionAttempt, ExecutionRun, PlanningExecutionCommand, PlanningExecutionReceipt, PreparedExecutionTask } from '../shared/planning-execution';
+import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionArtifact, type ExecutionAttempt, type ExecutionRun, type PlanningExecutionCommand, type PlanningExecutionReceipt, type PreparedExecutionTask } from '../shared/planning-execution';
 import { PlanningRunRequestSchema, type PlanningRunRequest, type PlanningRunResult } from '../shared/planning-run';
 import { AsyncMutationGate } from './async-mutation-gate';
 import type { DaemonStore } from './daemon-store';
@@ -52,6 +52,22 @@ function hash(value: unknown): string {
       : JSON.stringify(entry);
   return createHash('sha256').update(canonical(value)).digest('hex');
 }
+/**
+ * What the host resolves for a run frozen with 자동 승인: each approval stage it reached, and
+ * integration once it completed with no pending gate. Nothing for a person's run, or one the
+ * person paused or cancelled.
+ */
+export function autoApprovalCommands(run: ExecutionRun): Array<{ readonly commandId: string; readonly type: 'workflow.approve' | 'workflow.integrate'; readonly payload: Record<string, unknown> }> {
+  if (run.preparation.approvalPolicy !== 'auto' || run.cancelRequested || run.dispatchPaused) return [];
+  const approvals = (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval')
+    .map((activation) => ({ commandId: `auto-approve-${hash([run.runId, activation.id]).slice(0, 32)}`, type: 'workflow.approve' as const,
+      payload: { activationId: activation.id, decision: 'approve' } }));
+  const integrate = run.preparation.workflow && run.state === 'completed' && !run.integrationAuthorized && !run.gates.some((gate) => gate.state === 'pending')
+    ? [{ commandId: `auto-integrate-${hash([run.runId]).slice(0, 32)}`, type: 'workflow.integrate' as const, payload: {} }]
+    : [];
+  return [...approvals, ...integrate];
+}
+
 export function planningAttemptIdentity(runId: string, taskId: string, number: number) {
   const suffix = hash([runId, taskId, number]).slice(0, 32);
   return { attemptId: `attempt-${suffix}`, dispatchId: `dispatch-${suffix}`, sessionId: `planning-${suffix}`, workspaceId: `planning-workspace-${suffix}` };
@@ -135,15 +151,22 @@ export class PlanningRunService {
 
   executeWorkflow(command: WorkflowCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal): Promise<{ ok: true } | { ok: false; error: string; message: string }> {
     return this.gate.runExclusive(async () => {
-      if (this.stopped || principal.kind === 'ai') return { ok: false, error: 'user-required', message: 'An available host and explicit user execution command are required.' };
+      if (this.stopped) return { ok: false, error: 'user-required', message: 'An available host and explicit user execution command are required.' };
+      if (principal.kind === 'ai' && !['run.prepare', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) {
+        return { ok: false, error: 'user-required', message: 'Approvals and integration require an explicit user command.' };
+      }
       if (!command.type.startsWith('run.')) return { ok: false, error: 'invalid-command', message: 'This is not an execution command.' };
       const request = command as Extract<WorkflowCommand, { type: `run.${string}` }>;
       const ledgerId = `workflow:${request.commandId}`;
       // Read the original durable receipt before any preparation side effect on a retry.
       const previous = this.options.ledger.getReceipt(command.projectId, ledgerId);
+      // An agent is recorded by its conversation.
+      const ledgerPrincipal = principal.kind === 'ai'
+        ? { kind: 'agent' as const, id: principal.sessionId ?? principal.id }
+        : { kind: principal.kind, id: principal.id };
       const common = { commandId: ledgerId, projectId: command.projectId,
         expectedRevision: this.options.ledger.read(command.projectId).revision,
-        principal: { kind: principal.kind, id: principal.id } };
+        principal: ledgerPrincipal };
       try {
         let receipt: PlanningExecutionReceipt;
         if (previous) {
@@ -176,6 +199,8 @@ export class PlanningRunService {
           if (!prepared.ok) return prepared;
           receipt = await this.options.ledger.execute({ ...common, type: 'run.prepare', payload: { runId: request.payload.runId, preparation: {
             ...prepared.preparation, subprojectId: subproject.id, requestFingerprint: workflowDigest({ command, principal }),
+            approvalPolicy: subproject.autoApprove ? 'auto' : 'user',
+            ...(principal.kind === 'ai' && principal.sessionId ? { startedBy: { sessionId: principal.sessionId } } : {}),
             workflow: { subprojectId: subproject.id, revision: subproject.revision, fingerprint: workflowDigest(subproject.graph), graph: structuredClone(subproject.graph) },
           } } });
         } else {
@@ -367,6 +392,12 @@ export class PlanningRunService {
   private async pump(): Promise<void> {
     for (const run of this.allRuns()) {
       if (this.stopped || !run.startedAt) continue;
+      // 자동 승인 was frozen into this run: the host answers its approvals and allows integration.
+      const automatic = autoApprovalCommands(run);
+      for (const command of automatic) {
+        await this.runtimeCommand(run, command.commandId, command.type, command.payload, PLANNING_AUTO_APPROVAL_PRINCIPAL);
+      }
+      if (automatic.length) { this.wake(); continue; }
       // A workflow completion/approval is not permission to integrate the worktree.
       if (!run.preparation.workflow || run.integrationAuthorized) await this.options.processIntegration?.(run);
       if (run.state === 'completed' || run.state === 'cancelled') continue;
@@ -524,14 +555,14 @@ export class PlanningRunService {
     }
   }
 
-  private async runtimeCommand(run: ExecutionRun, commandId: string, type: PlanningExecutionCommand['type'], payload: Record<string, unknown>): Promise<PlanningExecutionReceipt> {
+  private async runtimeCommand(run: ExecutionRun, commandId: string, type: PlanningExecutionCommand['type'], payload: Record<string, unknown>, principalId = 'planning-runtime'): Promise<PlanningExecutionReceipt> {
     for (let retry = 0; retry < 5; retry += 1) {
       const id = `${commandId}-${retry}`;
       const existing = this.options.ledger.getReceipt(run.projectId, id);
       if (existing && (existing.ok || existing.error !== 'revision-conflict')) return existing;
       if (existing) continue;
       const result = await this.options.ledger.execute({ commandId: id, projectId: run.projectId,
-        expectedRevision: this.options.ledger.read(run.projectId).revision, principal: { kind: 'runtime', id: 'planning-runtime' },
+        expectedRevision: this.options.ledger.read(run.projectId).revision, principal: { kind: 'runtime', id: principalId },
         type, payload: { runId: run.runId, ...payload } });
       if (result.ok || result.error !== 'revision-conflict') return result;
     }

@@ -185,6 +185,24 @@ describe('PlanningExecutionStore', () => {
     expect(readdirSync(f.directory).some((entry) => /planning.*(?:json|sqlite)/u.test(entry))).toBe(false);
   });
 
+  it('lets an agent run the flow but keeps approvals and integration for the person or an auto-approved run', async () => {
+    const f = await fixture();
+    expect(await f.send('run.prepare', { preparation }, 'agent')).toMatchObject({ ok: true });
+    expect(await f.send('run.start', {}, 'agent')).toMatchObject({ ok: true });
+    expect(await f.send('run.pause', {}, 'agent')).toMatchObject({ ok: true });
+    expect(await f.send('workflow.integrate', {}, 'agent')).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await f.send('task.cancel', { taskId: 'T1' }, 'agent')).toMatchObject({ ok: false, error: 'user-required' });
+    const auto = (runId: string) => f.ledger.execute({ commandId: `auto-${runId}`, projectId: 'P1', expectedRevision: f.ledger.read('P1').revision,
+      principal: { kind: 'runtime', id: 'auto-approval' }, type: 'workflow.integrate', payload: { runId } });
+    // A run the person did not set to approve automatically waits for them.
+    expect(await auto('R1')).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await f.send('run.prepare', { runId: 'R2', preparation: { ...preparation, approvalPolicy: 'auto' } })).toMatchObject({ ok: true });
+    // Allowed to try; the run itself is not finished.
+    expect(await auto('R2')).toMatchObject({ ok: false, error: 'invalid-transition' });
+    expect(await f.ledger.execute({ commandId: 'other-runtime', projectId: 'P1', expectedRevision: f.ledger.read('P1').revision,
+      principal: { kind: 'runtime', id: 'planning-runtime' }, type: 'workflow.integrate', payload: { runId: 'R2' } })).toMatchObject({ ok: false, error: 'user-required' });
+  });
+
   it('serializes racing commands and rolls back invalid dependency graphs and session references', async () => {
     const f = await fixture();
     const cyclic = { ...preparation, tasks: preparation.tasks.map((task) => task.taskId === 'T1' ? { ...task, dependsOn: ['T2'] } : task) };

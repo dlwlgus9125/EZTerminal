@@ -71,8 +71,20 @@ export const ExecutionPreparationSchema = z.object({
   progressPolicy: z.enum(['manual', 'checkpoint', 'autonomous']),
   tasks: z.array(PreparedExecutionTaskSchema).min(1).max(128),
   supersedesRunId: id.optional(),
+  /**
+   * Frozen at preparation from the subproject's 자동 승인: `auto` lets the host resolve
+   * approval stages and integration for this run (as `auto-approval`); absent means the person.
+   */
+  approvalPolicy: z.enum(['user', 'auto']).optional(),
+  /** The conversation whose agent prepared this run, when an agent did. */
+  startedBy: z.object({ sessionId: id }).strict().optional(),
 }).strict();
 export type ExecutionPreparation = z.infer<typeof ExecutionPreparationSchema>;
+
+/** The host's principal id when a run's frozen policy lets it approve and integrate. */
+export const PLANNING_AUTO_APPROVAL_PRINCIPAL = 'auto-approval';
+/** What an agent may do to a run; approvals, reviews and integration stay with the person. */
+export const PLANNING_AGENT_RUN_COMMANDS = ['run.prepare', 'run.start', 'run.pause', 'run.continue', 'run.cancel'] as const;
 export type RunDefinition = ExecutionPreparation;
 
 export interface EnvironmentLease {
@@ -202,7 +214,7 @@ const envelope = {
   commandId: id,
   projectId: id,
   expectedRevision: revision,
-  principal: z.object({ kind: z.enum(['desktop', 'android', 'runtime']), id }).strict(),
+  principal: z.object({ kind: z.enum(['desktop', 'android', 'runtime', 'agent']), id }).strict(),
 };
 const run = { runId: id };
 const attempt = { ...run, attemptId: id };

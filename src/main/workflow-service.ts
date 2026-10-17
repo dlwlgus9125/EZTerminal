@@ -228,7 +228,8 @@ export class WorkflowService {
           if (this.previewForSession(principal.sessionId!)) return failure('preview-only', 'This conversation is editing a creation preview. Use preview_workflow; the user will explicitly create the subproject.');
           const linked = registry.sessionLinks.find(entry => entry.sessionId === principal.sessionId);
           if (linked && (linked.scope !== 'flow-edit' || linked.subprojectId !== command.subprojectId)) return failure('forbidden', 'Use a flow editing conversation for this subproject. Stage discussions do not grant graph editing authority.');
-          if (!['subproject.create', 'workflow.patch', 'workflow.undo'].includes(command.type)) return failure('user-required', 'Execution, approvals, ownership and archive decisions require an explicit user command.');
+          // An agent may also run the flow; approvals, integration, ownership and archive stay with the person.
+          if (!['subproject.create', 'workflow.patch', 'workflow.undo', 'run.prepare', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) return failure('user-required', 'Approvals, integration, ownership and archive decisions require an explicit user command.');
         }
         if (subproject?.status === 'archived' && !(command.type === 'subproject.update' && command.payload.status === 'active') && command.type !== 'subproject.copy' && command.type !== 'session.unlink') return failure('archived', 'Restore the subproject before editing it.');
         const now = (this.options.now?.() ?? new Date()).toISOString();

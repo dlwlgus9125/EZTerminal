@@ -19,6 +19,8 @@ export const WorkflowSubprojectSchema = z.object({
   revision, createdAt: z.string().datetime(), updatedAt: z.string().datetime(), presetId: z.string().max(100),
   graph: WorkflowGraphSchema, history: z.array(WorkflowHistorySchema), archivedNodes: z.array(WorkflowNodeSchema),
   legacyPlanning: z.boolean().optional(),
+  /** 자동 승인: runs prepared from now on approve stages and integrate without the person (person only). */
+  autoApprove: z.boolean().optional(),
 }).strict();
 export type WorkflowSubproject = z.infer<typeof WorkflowSubprojectSchema>;
 export const WorkflowSessionLinkSchema = z.object({
@@ -58,7 +60,7 @@ export interface WorkflowNavigationAccess { getWorkflowNavigation(projectId: str
 const envelope = { commandId: id, projectId: id, hostId: id, expectedRevision: revision, subprojectId: id.optional() };
 export const WorkflowCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('subproject.create'), payload: z.object({ id, title: z.string().trim().min(1).max(300), goal: z.string().max(65_536), presetId: z.enum(['feature', 'fix', 'research', 'parallel', 'custom']), graph: WorkflowGraphSchema.optional(), previewId: id.optional(), previewRevision: revision.optional() }).strict() }).strict(),
-  z.object({ ...envelope, type: z.literal('subproject.update'), payload: z.object({ title: z.string().trim().min(1).max(300).optional(), goal: z.string().max(65_536).optional(), status: z.enum(['active', 'completed', 'archived']).optional() }).strict() }).strict(),
+  z.object({ ...envelope, type: z.literal('subproject.update'), payload: z.object({ title: z.string().trim().min(1).max(300).optional(), goal: z.string().max(65_536).optional(), status: z.enum(['active', 'completed', 'archived']).optional(), autoApprove: z.boolean().optional() }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('subproject.copy'), payload: z.object({ id, title: z.string().trim().min(1).max(300) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('workflow.patch'), payload: z.object({ graph: WorkflowGraphSchema, summary: z.string().min(1).max(1_000) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('workflow.undo'), payload: z.object({ changeId: id }).strict() }).strict(),

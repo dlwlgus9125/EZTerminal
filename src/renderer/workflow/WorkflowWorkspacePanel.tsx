@@ -11,7 +11,7 @@ import { WorkflowRecovery } from './workflow-recovery';
 import type { PlanningConversation, PlanningWorkspaceSection } from '../PlanningWorkspacePanel';
 import { StructuredAgentDraftPanel, type StructuredAgentDraftFormState, type StructuredAgentDraftInput, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { createStructuredAgentSession, structuredAgentProviderOptions, structuredAgentWorkspaceOptions, type StructuredAgentCreateCommand } from '../structured-agent-create';
-import { Badge, Button, Dialog, Field, IconButton, Input, LoadingState, Select } from '../ui';
+import { Badge, Button, Dialog, Field, IconButton, Input, LoadingState, Select, Switch } from '../ui';
 import { WorkflowEditor, useWorkflowCopy, workflowOperationLabel, workflowOutcomeLabel, workflowStateLabel } from './WorkflowEditor';
 import { WorkflowRunView } from './WorkflowRunView';
 import { useAgentStateLabel } from '../agent-state-label';
@@ -382,6 +382,13 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     <Dialog open={active && prepareOpen} onOpenChange={setPrepareOpen} title={text('실행 준비', 'Prepare execution')} description={text('이 버전의 흐름·설정·참조를 고정합니다. 준비 후 실행 시작을 눌러야 작업합니다.', 'Freeze this graph, settings and references. Work begins only after you start the prepared run.')} closeLabel={text('닫기', 'Close')}
       footer={<><Button onClick={() => setPrepareOpen(false)}>{text('취소', 'Cancel')}</Button><Button disabled={readOnly || !!local || issues.length > 0 || !models[reviewer.providerId]?.some(model => model.id === reviewer.model) || !daemon?.providers.some(provider => provider.id === reviewer.providerId && provider.enabled && provider.health === 'ready')} onClick={() => { const runId = `run-${crypto.randomUUID()}`; void execute({ type: 'run.prepare', payload: { runId, reviewer } }).then(ok => { if (ok) { setPreparedRunId(runId); setPrepareOpen(false); setView('run'); } }); }}>{text('이 버전 준비', 'Prepare this version')}</Button></>}>
       <p>{selected?.title} · v{selected?.revision}</p>
+      {/* The person's switch; agents may run the flow but never turn this on. Frozen into each run at preparation. */}
+      <Switch checked={selected?.autoApprove === true} disabled={readOnly || !!local}
+        onChange={event => void execute({ type: 'subproject.update', payload: { autoApprove: event.target.checked } })}
+        label={text('자동 승인', 'Auto-approve')}
+        description={text('켜면 이 소프로젝트에서 준비하는 실행은 승인 단계와 결과 통합 허용을 사람 대신 처리하고 기록에 남깁니다. 이미 준비된 실행에는 적용되지 않습니다.',
+          'When on, runs prepared from this subproject pass approval stages and allow result integration without you, and the run records it. Runs already prepared keep their setting.')}
+        data-testid="workflow-auto-approve" />
       <Field label={text('독립 검토 AI', 'Independent reviewer')}><Select value={reviewer.providerId} onChange={event => setReviewer({ providerId: event.target.value, model: '' })}><option value="">{text('제공자 선택', 'Choose a provider')}</option>{daemon?.providers.filter(provider => provider.enabled).map(provider => <option key={provider.id} value={provider.id} disabled={provider.health !== 'ready'}>{provider.displayName}{provider.health !== 'ready' ? text(' · 사용 불가', ' · Unavailable') : ''}</option>)}</Select></Field>
       <Field label={text('검토 모델', 'Reviewer model')}><Select value={reviewer.model} onChange={event => setReviewer({ ...reviewer, model: event.target.value })}><option value="">{text('모델 선택', 'Choose a model')}</option>{models[reviewer.providerId]?.map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></Field>
       {!models[reviewer.providerId]?.length && <p role="status">{text('사용 가능한 검토 모델을 확인하지 못했습니다. 제공자 연결을 확인하고 다시 불러오세요.', 'No reviewer models are available. Check the provider connection and refresh.')}</p>}

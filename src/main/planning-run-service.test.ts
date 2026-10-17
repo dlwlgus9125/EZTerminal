@@ -11,7 +11,7 @@ import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
 import { PlanningService } from './planning-service';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { PlanningRunService, type PlanningRunServiceOptions } from './planning-run-service';
+import { autoApprovalCommands, PlanningRunService, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
 import { WorkflowService } from './workflow-service';
 import { createWorkflowGraph } from '../shared/workflow';
@@ -159,6 +159,23 @@ describe('planning provider dispatch', () => {
     expect(await f.service.executeWorkflow({ ...start, payload: { runId: 'another' } }, { id: 'sub' } as never, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: false, error: 'command-conflict' });
     expect(f.options.processIntegration).not.toHaveBeenCalled(); expect(f.errors).toEqual([]);
   });
+  it('lets a project conversation prepare and start a run, freezing 자동 승인 and who started it', async () => {
+    const f = await fixture(); const directory = f.store.getSnapshot().projects[0].rootPath!;
+    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
+      runs: () => f.ledger.read('project').runs, session: id => id === 'chat' ? { projectId: 'project', managed: false } : undefined,
+      executeRun: (...args) => f.service.executeWorkflow(...args) });
+    const graph = createWorkflowGraph('research', 'sub'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'codex', model: 'model', instructions: 'Research with evidence', acceptance: ['Explain observed evidence'] };
+    const common = { projectId: 'project', hostId: 'host', expectedRevision: 0 };
+    const person = { kind: 'desktop' as const, id: 'test' };
+    const agent = { kind: 'ai' as const, id: 'agent', sessionId: 'chat' };
+    expect(await workflows.execute({ ...common, commandId: 'create-sub', type: 'subproject.create', payload: { id: 'sub', title: 'Research', goal: '', presetId: 'research', graph } }, person)).toMatchObject({ ok: true });
+    expect(await workflows.execute({ ...common, commandId: 'auto-on', subprojectId: 'sub', type: 'subproject.update', payload: { autoApprove: true } }, person)).toMatchObject({ ok: true });
+    expect(await workflows.execute({ ...common, expectedRevision: 1, commandId: 'agent-prepare', subprojectId: 'sub', type: 'run.prepare', payload: { runId: 'agent-run', reviewer: { providerId: 'codex', model: 'model' } } }, agent)).toMatchObject({ ok: true });
+    expect(f.ledger.read('project').runs[0].preparation).toMatchObject({ approvalPolicy: 'auto', startedBy: { sessionId: 'chat' } });
+    expect(await workflows.execute({ ...common, expectedRevision: 1, commandId: 'agent-start', subprojectId: 'sub', type: 'run.start', payload: { runId: 'agent-run' } }, agent)).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(await workflows.execute({ ...common, expectedRevision: 1, commandId: 'agent-integrate', subprojectId: 'sub', type: 'run.integrate', payload: { runId: 'agent-run' } }, agent)).toMatchObject({ ok: false, error: 'user-required' });
+  });
   it('blocks replacement reviewers after execution authority stops', async () => {
     const f = await fixture();
     const turn = { sessionId: `planning-review-${'a'.repeat(32)}-g2` } as Parameters<PlanningRunService['canDispatchTurn']>[0];
@@ -200,5 +217,32 @@ describe('planning provider dispatch', () => {
     await vi.waitFor(() => expect(f.ledger.read('project').runs[0].attempts[0].state).toBe('running'));
     expect(f.adapter.submit).toHaveBeenCalledOnce();
     expect(f.ledger.read('project').runs[0].tasks[0].retriesUsed).toBe(0);
+  });
+});
+
+describe('auto-approval', () => {
+  const run = (overrides: Record<string, unknown> = {}, preparation: Record<string, unknown> = {}) => ({
+    runId: 'run', projectId: 'project', revision: 3, state: 'awaiting-review', createdAt: 'x', updatedAt: 'x', startedAt: 'x',
+    preparation: { approvalPolicy: 'auto', workflow: { subprojectId: 'sub' }, ...preparation },
+    tasks: [], attempts: [], evidence: [], reviews: [], gates: [],
+    workflowRuntime: { activations: [{ id: 'gate-1', nodeId: 'approval', iteration: 0, state: 'awaiting-approval', incomingEdgeIds: [] }] },
+    ...overrides,
+  }) as unknown as Parameters<typeof autoApprovalCommands>[0];
+
+  it('approves the stages a 자동 승인 run reached and allows integration once it completed', () => {
+    expect(autoApprovalCommands(run())).toEqual([expect.objectContaining({ type: 'workflow.approve', payload: { activationId: 'gate-1', decision: 'approve' } })]);
+    expect(autoApprovalCommands(run({ state: 'completed', workflowRuntime: { activations: [] } }))).toEqual([expect.objectContaining({ type: 'workflow.integrate' })]);
+    // Stable identities: a restart repeats the same commands, which the ledger replays.
+    expect(autoApprovalCommands(run())[0]!.commandId).toBe(autoApprovalCommands(run())[0]!.commandId);
+  });
+
+  it('leaves the person’s runs, and paused, cancelled, gated or integrated ones, alone', () => {
+    expect(autoApprovalCommands(run({}, { approvalPolicy: 'user' }))).toEqual([]);
+    expect(autoApprovalCommands(run({}, { approvalPolicy: undefined }))).toEqual([]);
+    expect(autoApprovalCommands(run({ dispatchPaused: true }))).toEqual([]);
+    expect(autoApprovalCommands(run({ cancelRequested: true }))).toEqual([]);
+    const done = { state: 'completed', workflowRuntime: { activations: [] } };
+    expect(autoApprovalCommands(run({ ...done, gates: [{ gateId: 'g', state: 'pending' }] }))).toEqual([]);
+    expect(autoApprovalCommands(run({ ...done, integrationAuthorized: { by: 'auto-approval', at: 'x' } }))).toEqual([]);
   });
 });

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 import {
+  PLANNING_AGENT_RUN_COMMANDS,
+  PLANNING_AUTO_APPROVAL_PRINCIPAL,
   PLANNING_EXECUTION_VERSION,
   PlanningExecutionCommandSchema,
   type ExecutionArtifact,
@@ -239,9 +241,14 @@ export class PlanningExecutionStore {
 
   private checkPrincipal(command: PlanningExecutionCommand): void {
     const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'run.cancel-reconcile'].includes(command.type);
+    // The host approves and integrates only for a run frozen with automatic approval (checked in apply).
+    const autoApproval = command.principal.kind === 'runtime' && command.principal.id === PLANNING_AUTO_APPROVAL_PRINCIPAL
+      && (command.type === 'workflow.approve' || command.type === 'workflow.integrate');
     requireState(!runtime || command.principal.kind === 'runtime', 'runtime-required', 'Only the host execution adapter can record provider activity.');
-    requireState(runtime || ['run.pause-impact', 'review.decide', 'attempt.retry'].includes(command.type) || command.principal.kind !== 'runtime',
+    requireState(runtime || autoApproval || ['run.pause-impact', 'review.decide', 'attempt.retry'].includes(command.type) || command.principal.kind !== 'runtime',
       'user-required', 'This decision requires an explicit user command.');
+    requireState(command.principal.kind !== 'agent' || (PLANNING_AGENT_RUN_COMMANDS as readonly string[]).includes(command.type),
+      'user-required', 'An agent can prepare, start, pause, continue or cancel a run; approvals, reviews and integration are the person’s.');
   }
 
   private apply(database: DatabaseSync, command: PlanningExecutionCommand, now: string): ExecutionRun {
@@ -318,9 +325,11 @@ export class PlanningExecutionStore {
           return { ...task, cancelRequested: true, state: active ? 'paused' : 'cancelled', pauseReason: active ? 'Cancellation acknowledgement pending.' : undefined };
         }) };
       case 'workflow.integrate':
+        requireState(command.principal.kind !== 'runtime' || run.preparation.approvalPolicy === 'auto', 'user-required', 'This run waits for a person to allow integration.');
         requireState(run.preparation.workflow && run.state === 'completed' && !run.dispatchPaused && !run.gates.some(gate => gate.state === 'pending'), 'invalid-transition', 'Complete the workflow and resolve approvals before requesting integration.');
         return { ...run, integrationAuthorized: { by: command.principal.id, at: now } };
       case 'workflow.approve': {
+        requireState(command.principal.kind !== 'runtime' || run.preparation.approvalPolicy === 'auto', 'user-required', 'This run waits for a person to approve.');
         const activation = run.workflowRuntime?.activations.find(entry => entry.id === command.payload.activationId);
         requireState(activation?.state === 'awaiting-approval', 'invalid-transition', 'This exact workflow approval is no longer pending.');
         requireState(run.preparation.workflow?.graph.nodes.find(node => node.id === activation.nodeId)?.operation === 'approval', 'invalid-reference', 'The stage is not an approval gate.');

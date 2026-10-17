@@ -153,6 +153,23 @@ describe('workflow authority and storage', () => {
     // The execution adapter receives exactly the same command/graph, allowing its durable receipt to reconcile.
     expect(executeRun.mock.calls[0]).toEqual(executeRun.mock.calls[1]);
   });
+  it('lets a project conversation run its flow while approvals, integration and 자동 승인 stay with the person', async () => {
+    const executeRun = vi.fn(async () => ({ ok: true as const }));
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [],
+      session: id => id === 'chat' ? { projectId: 'project', managed: false } : undefined, executeRun });
+    const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'claude', model: 'model', instructions: 'Research', acceptance: ['Report evidence'] };
+    await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user);
+    const agent = { kind: 'ai' as const, id: 'agent', sessionId: 'chat' };
+    const prepare: WorkflowCommand = { ...base, subprojectId: 'a', commandId: 'agent-prepare', expectedRevision: 0, type: 'run.prepare', payload: { runId: 'run', reviewer: { providerId: 'claude', model: 'model' } } };
+    expect((await service.execute(prepare, agent)).ok).toBe(true);
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({ type: 'run.prepare' }), expect.anything(), agent);
+    const approve: WorkflowCommand = { ...base, subprojectId: 'a', commandId: 'agent-approve', expectedRevision: 0, type: 'run.approve', payload: { runId: 'run', activationId: 'x', decision: 'approve' } };
+    expect(await service.execute(approve, agent)).toMatchObject({ ok: false, error: 'user-required' });
+    const autoApprove: WorkflowCommand = { ...base, subprojectId: 'a', commandId: 'agent-auto', expectedRevision: 0, type: 'subproject.update', payload: { autoApprove: true } };
+    expect(await service.execute(autoApprove, agent)).toMatchObject({ ok: false, error: 'user-required' });
+    expect((await service.execute({ ...autoApprove, commandId: 'person-auto' }, user)).ok).toBe(true);
+    expect((await snapshot()).subprojects[0]).toMatchObject({ autoApprove: true });
+  });
   it('reconciles a copied planning file after the registry response is lost without copying later source edits', async () => {
     await service.execute(create('a'), user);
     const originalRename = fs.rename.bind(fs); let count = 0;
