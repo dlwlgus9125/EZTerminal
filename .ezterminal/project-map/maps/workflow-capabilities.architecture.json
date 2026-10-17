@@ -86,24 +86,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/project-conversation-tree-model.ts",
-          "startLine": 67,
-          "endLine": 187,
-          "lineDigest": "sha256:66aec6d52f99001afc5ff23f5ff44bf34677f03d78814fe23e6a51aabc34f93c",
-          "claim": "One metadata-only projection keeps general chats and subprojects as peers, attaches stage conversations using exact links, folds attached subagent chats under their parent, and feeds tree, recent and title search views."
+          "startLine": 107,
+          "endLine": 264,
+          "lineDigest": "sha256:eec4d9d92cb00206d2925cfbe47bc00023fecd2e9c26586eacdc0fa9823f41f8",
+          "claim": "One metadata-only projection keeps chats and subprojects as peers, attaches stage conversations by exact links, folds subagent chats under their parent with what they need, and adds a worktree level only when one is active."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/ProjectConversationTree.tsx",
-          "startLine": 53,
-          "endLine": 155,
-          "lineDigest": "sha256:605ed6afd621c76d7fd155b560fbcb37f6bc9ce4725c70c08bf86e2be53e56b2",
+          "startLine": 55,
+          "endLine": 157,
+          "lineDigest": "sha256:d3b00537fc32acf152d45062b56115da4f604bdbd7b4627924d059427bbdfc05",
           "claim": "Host-scoped view state preserves search, expansion and selection. Scroll restoration waits for asynchronous row height; chevron expansion and named-item opening remain separate."
         },
         {
           "rootAlias": "app",
           "relativePath": "mobile/src/MobilePlanningNavigator.tsx",
-          "startLine": 49,
-          "endLine": 62,
+          "startLine": 50,
+          "endLine": 63,
           "lineDigest": "sha256:df01fc98afe927573c7ebf940e861dce14accd56b34454576b4c3f611dd8ab8c",
           "claim": "Android derives a nonsecret authority fingerprint and uses the same shared navigation projection for the connected host."
         }
@@ -156,10 +156,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 208,
-          "endLine": 272,
-          "lineDigest": "sha256:4256e34e1a90a256605cbd8147f580c5123e94e11528a0a263294be195f6e9fe",
-          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts but cannot execute, approve, archive or change ownership."
+          "startLine": 230,
+          "endLine": 295,
+          "lineDigest": "sha256:bdc168ac71c8c2d0a2cc65998ac17fff3634ca9853c979fb93f59194e1723300",
+          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts and prepare, start, pause, resume or cancel runs, but cannot approve, integrate, archive, change ownership or set auto-approve."
         }
       ]
     },
@@ -194,16 +194,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 162,
-          "endLine": 207,
+          "startLine": 184,
+          "endLine": 229,
           "lineDigest": "sha256:924253944a103be427abf9eb15473af3d900e7d3d1412fe159192b40d0550e95",
           "claim": "Stage writes follow exact saved lineage, including continuation sources. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 136,
-          "endLine": 157,
+          "startLine": 158,
+          "endLine": 179,
           "lineDigest": "sha256:8203afae1fbf7287851493d51c93923cc832a9b65f6039e80bf0dcb3ef67b60a",
           "claim": "Explicit continuation copies the original stage reference snapshot after checking project, ordinary Session ownership and active stage; it does not silently refresh references."
         }
@@ -221,16 +221,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 362,
-          "endLine": 382,
-          "lineDigest": "sha256:9b6b9ac7f3ae9e615af4bcfc2f9375e7c11dddac3a63ae7c060d06f00d28dd7e",
-          "claim": "Session-authorized workflow tools read, validate, preview and edit drafts through the same host service; caller project identity cannot retarget the capability."
+          "startLine": 384,
+          "endLine": 413,
+          "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
+          "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 66,
-          "endLine": 107,
+          "startLine": 85,
+          "endLine": 126,
           "lineDigest": "sha256:72fd534a64cd35281b2ec6711d56ba9807ca5f3f586bd4c747509460efceebc5",
           "claim": "One serialized project boundary binds a creation preview to one ordinary conversation. Exact command receipts and monotonic revisions reject duplicate contents, discarded-preview replies and changed drafts."
         }
@@ -267,10 +267,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 136,
-          "endLine": 192,
-          "lineDigest": "sha256:1e9ef8bf82cae1e1632bc36bde67a1595784cc954f483f4958085b030a6fea78",
-          "claim": "Explicit user run commands freeze graph and scoped planning into the existing ledger; receipt fingerprints reconcile retries before preparation or dispatch."
+          "startLine": 152,
+          "endLine": 217,
+          "lineDigest": "sha256:ce57e43907c2725c830b20321c11c5c675fb1d335806622c7dd6e95360ed77cf",
+          "claim": "User or project-agent run commands freeze graph, scoped planning and auto-approve policy into the ledger; agents cannot approve or integrate; receipt fingerprints reconcile retries before preparation or dispatch."
         }
       ]
     },
@@ -305,8 +305,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 413,
-          "endLine": 475,
+          "startLine": 444,
+          "endLine": 506,
           "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -324,16 +324,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 860,
-          "endLine": 949,
+          "startLine": 881,
+          "endLine": 970,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1149,
-          "endLine": 1219,
+          "startLine": 1176,
+          "endLine": 1246,
           "lineDigest": "sha256:76650c632b70a0534cd56e1ca9d449e1d2692c30d566a95ec499dc0fede4522b",
           "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt."
         }
@@ -351,16 +351,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 114,
-          "endLine": 135,
-          "lineDigest": "sha256:6ce7b1e3c3c557bbd5a94f78e9b0e595fde517d7109916634c807127ab89e0d6",
-          "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated historical/current Session links only."
+          "startLine": 133,
+          "endLine": 157,
+          "lineDigest": "sha256:781684d32446a001dc6c31c18b5391d4bbb06cddc8f4ebd4b78a80a4277dadf5",
+          "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated Session links, including each run's stage and review agents under their stage."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/use-project-conversation-navigation.ts",
-          "startLine": 49,
-          "endLine": 153,
+          "startLine": 52,
+          "endLine": 156,
           "lineDigest": "sha256:636211db5681534b3fbc942cae4b015d3ef7a9f534ab98f4c9108afacb897211",
           "claim": "Lazy metadata reads are fenced by host identity and coalesced per project; pagination remains separate and visible navigation polls only lightweight workflow summaries."
         }
@@ -378,10 +378,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 208,
-          "endLine": 272,
-          "lineDigest": "sha256:4256e34e1a90a256605cbd8147f580c5123e94e11528a0a263294be195f6e9fe",
-          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts but cannot execute, approve, archive or change ownership."
+          "startLine": 230,
+          "endLine": 295,
+          "lineDigest": "sha256:bdc168ac71c8c2d0a2cc65998ac17fff3634ca9853c979fb93f59194e1723300",
+          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts and prepare, start, pause, resume or cancel runs, but cannot approve, integrate, archive, change ownership or set auto-approve."
         }
       ]
     },
@@ -395,10 +395,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 136,
-          "endLine": 192,
-          "lineDigest": "sha256:1e9ef8bf82cae1e1632bc36bde67a1595784cc954f483f4958085b030a6fea78",
-          "claim": "Explicit user run commands freeze graph and scoped planning into the existing ledger; receipt fingerprints reconcile retries before preparation or dispatch."
+          "startLine": 152,
+          "endLine": 217,
+          "lineDigest": "sha256:ce57e43907c2725c830b20321c11c5c675fb1d335806622c7dd6e95360ed77cf",
+          "claim": "User or project-agent run commands freeze graph, scoped planning and auto-approve policy into the ledger; agents cannot approve or integrate; receipt fingerprints reconcile retries before preparation or dispatch."
         }
       ]
     },
@@ -429,8 +429,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 413,
-          "endLine": 475,
+          "startLine": 444,
+          "endLine": 506,
           "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -446,8 +446,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 413,
-          "endLine": 475,
+          "startLine": 444,
+          "endLine": 506,
           "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -480,8 +480,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 860,
-          "endLine": 949,
+          "startLine": 881,
+          "endLine": 970,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }
@@ -531,8 +531,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 162,
-          "endLine": 207,
+          "startLine": 184,
+          "endLine": 229,
           "lineDigest": "sha256:924253944a103be427abf9eb15473af3d900e7d3d1412fe159192b40d0550e95",
           "claim": "Stage writes follow exact saved lineage, including continuation sources. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         }
@@ -548,8 +548,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 162,
-          "endLine": 207,
+          "startLine": 184,
+          "endLine": 229,
           "lineDigest": "sha256:924253944a103be427abf9eb15473af3d900e7d3d1412fe159192b40d0550e95",
           "claim": "Stage writes follow exact saved lineage, including continuation sources. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         }
@@ -565,10 +565,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 362,
-          "endLine": 382,
-          "lineDigest": "sha256:9b6b9ac7f3ae9e615af4bcfc2f9375e7c11dddac3a63ae7c060d06f00d28dd7e",
-          "claim": "Session-authorized workflow tools read, validate, preview and edit drafts through the same host service; caller project identity cannot retarget the capability."
+          "startLine": 384,
+          "endLine": 413,
+          "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
+          "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         }
       ]
     },
@@ -582,10 +582,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 208,
-          "endLine": 272,
-          "lineDigest": "sha256:4256e34e1a90a256605cbd8147f580c5123e94e11528a0a263294be195f6e9fe",
-          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts but cannot execute, approve, archive or change ownership."
+          "startLine": 230,
+          "endLine": 295,
+          "lineDigest": "sha256:bdc168ac71c8c2d0a2cc65998ac17fff3634ca9853c979fb93f59194e1723300",
+          "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts and prepare, start, pause, resume or cancel runs, but cannot approve, integrate, archive, change ownership or set auto-approve."
         }
       ]
     },
@@ -599,16 +599,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 114,
-          "endLine": 135,
-          "lineDigest": "sha256:6ce7b1e3c3c557bbd5a94f78e9b0e595fde517d7109916634c807127ab89e0d6",
-          "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated historical/current Session links only."
+          "startLine": 133,
+          "endLine": 157,
+          "lineDigest": "sha256:781684d32446a001dc6c31c18b5391d4bbb06cddc8f4ebd4b78a80a4277dadf5",
+          "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated Session links, including each run's stage and review agents under their stage."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/use-project-conversation-navigation.ts",
-          "startLine": 49,
-          "endLine": 153,
+          "startLine": 52,
+          "endLine": 156,
           "lineDigest": "sha256:636211db5681534b3fbc942cae4b015d3ef7a9f534ab98f4c9108afacb897211",
           "claim": "Lazy metadata reads are fenced by host identity and coalesced per project; pagination remains separate and visible navigation polls only lightweight workflow summaries."
         }

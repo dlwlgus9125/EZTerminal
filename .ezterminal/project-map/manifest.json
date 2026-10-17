@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b8abe5a8088cb01a9ed360254b4b8c0e375ce2a40a6d6160da5cc573b87c3d38",
+        "inputDigest": "sha256:e3c22a566a798579965845dc6a556e37387f1e8cc0f082bbf4b6da7f7a17f446",
         "decision": "map-updated",
-        "reason": "Reviewed subagent nesting: unified history no longer lists attached subagent chats (managed or provider-native) as rows of their own; they stay reachable under the parent conversation and return to the list once detached. Anchor claim updated."
+        "reason": "Reviewed provider-native subagents as read-only child chats, hand-off with a host-sent one-time report, profiles in MCP child creation and startup settling of children. Claims updated for creation, submit, startup, MCP, main wiring, navigator and session surface."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:51ea68978104b2a9cbf265eaaaac52edab706a4bf833e780dec4f404e2a2f007",
-        "decision": "no-semantic-impact",
-        "reason": "Inputs changed for recording provider-applied model and effort; startup, store and shutdown ordering are unchanged. Relocated source anchors only."
+        "inputDigest": "sha256:fcb94f564a7ea0b762dd74ee8e18b734eb046e4f6d5b4ec47a55b6060b7daa9f",
+        "decision": "map-updated",
+        "reason": "Reviewed startup: provider-native children are settled (running ones interrupted, misrecorded ones archived with receipts) next to approval expiry and rehydration. Startup anchor claim updated."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:627168894e43b2b7ea6952b8481105296909cd8e7249c476a8c8a1bfd7d37d47",
+        "inputDigest": "sha256:363906a61aeae39b1a0b2700454e8558cc2e81279851cf7165f26953f459e9b7",
         "decision": "no-semantic-impact",
-        "reason": "Inputs changed because unified history now leaves attached subagent chats to their parent conversation; remote transport, session mirroring and history wire shapes are unchanged. Relocated anchors only."
+        "reason": "Inputs changed for subagent routing, hand-off and worktree IPC; remote transport, session mirroring and wire shapes are unchanged and new protocol fields are optional. Relocated anchors only."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9fdd00bc691352383dee00cfcbffca86edf43d3595f034e04286bc70535b8eee",
+        "inputDigest": "sha256:98091ef783cdcbac1facbd8422054724236d2841859cdf42fec06ae5c7234a3d",
         "decision": "no-semantic-impact",
-        "reason": "Inputs changed for the chat overhaul and compact shell; Project Map navigation and approval collaboration are unchanged. Relocated source anchors only."
+        "reason": "Inputs changed: a subagent's approval is stored on its parent and labelled with the subagent; the person answers it in the same dock with the same decisions. Relocated anchors only."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:637399fe3a337d4ebe5bbaf321e0a93c9d6fb6962746c91892e84619c05031d1",
-        "decision": "no-semantic-impact",
-        "reason": "The chat model pill names a concrete model by the provider alias row that resolves to it; Session identity, skin and history picker behavior are unchanged. Relocated anchors only."
+        "inputDigest": "sha256:3aa56e6cdafd0be15285aab86c3d5a42f760250a15719a73756f3801b1bdccd9",
+        "decision": "map-updated",
+        "reason": "Reviewed agent-run planning: a project conversation's agent may prepare and run a flow (ledger principal agent); approvals and integration stay with the person unless the run's frozen auto-approve policy lets the host resolve them. Claim updated."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:bbd27e54ccf69bfdffe3eb22b2248a8053f1ef2edae481411805cb7187e8bb97",
+        "inputDigest": "sha256:3be73a1bf79b67dcc72c54eca1c461cd4d3829d06b622e1ab4d134e17e6aef2a",
         "decision": "map-updated",
-        "reason": "Reviewed the conversation tree: attached subagent chats fold under their parent conversation, collapsed by default, and are left out of the recent view and title search. Anchor claim updated."
+        "reason": "Reviewed workflow tools that run flows and read results, AI run commands without approval or integration, a run's agents folded under their stage in navigation and the tree's worktree level. Claims updated."
       }
     }
   ]

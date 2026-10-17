@@ -122,16 +122,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 1868,
-          "endLine": 1986,
-          "lineDigest": "sha256:1f9dddd3b7041f9a5403332120590e280c2c17e470f2b924b831f144056bd26b",
+          "startLine": 1926,
+          "endLine": 2051,
+          "lineDigest": "sha256:f405c5dec40dab76cb9da4616de6aeb8d4517ab184b30b08866fcd05df403bc2",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 504,
-          "endLine": 515,
+          "startLine": 530,
+          "endLine": 541,
           "lineDigest": "sha256:3dfb280a860ff96e8649251a3ecddcb51ea1d56045a81ae5c2293b1e683cb1a2",
           "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
         },
@@ -273,10 +273,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 135,
-          "endLine": 255,
-          "lineDigest": "sha256:00f8de809f39d7579d967a103c1a23df4f9b6977eeb0fc85946e9a6ea7ecb9d7",
-          "claim": "Only user execution commands freeze a graph and scoped planning baseline into the existing ledger; exact durable command fingerprints prevent preparation or run replay under changed inputs."
+          "startLine": 151,
+          "endLine": 280,
+          "lineDigest": "sha256:2497cdbd8de8e2a44280bf0aad3c8eaaff87965b4a987e6d0d121f31b77df7c9",
+          "claim": "User or project-agent run commands freeze a graph, planning baseline and auto-approve policy into the ledger; agents cannot approve or integrate; durable fingerprints prevent replay under changed inputs."
         },
         {
           "rootAlias": "app",
@@ -300,8 +300,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 142,
-          "endLine": 210,
+          "startLine": 144,
+          "endLine": 212,
           "lineDigest": "sha256:9db6212d02876728b5c9c442b07f19d4b6d1ff380b052eda52475ce5c35df81c",
           "claim": "SQLite savepoints persist command identity, revisions and projected run state together; workflow activations are projected through the same durable execution ledger."
         }
@@ -319,16 +319,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 413,
-          "endLine": 475,
+          "startLine": 444,
+          "endLine": 506,
           "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 467,
-          "endLine": 514,
+          "startLine": 498,
+          "endLine": 545,
           "lineDigest": "sha256:de70c51e0908e0531cf6cf7510f8e55e25336db4d4fd001fcfc2acac457b8929",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
@@ -469,10 +469,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 135,
-          "endLine": 255,
-          "lineDigest": "sha256:00f8de809f39d7579d967a103c1a23df4f9b6977eeb0fc85946e9a6ea7ecb9d7",
-          "claim": "Only user execution commands freeze a graph and scoped planning baseline into the existing ledger; exact durable command fingerprints prevent preparation or run replay under changed inputs."
+          "startLine": 151,
+          "endLine": 280,
+          "lineDigest": "sha256:2497cdbd8de8e2a44280bf0aad3c8eaaff87965b4a987e6d0d121f31b77df7c9",
+          "claim": "User or project-agent run commands freeze a graph, planning baseline and auto-approve policy into the ledger; agents cannot approve or integrate; durable fingerprints prevent replay under changed inputs."
         }
       ]
     },
@@ -486,8 +486,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 142,
-          "endLine": 210,
+          "startLine": 144,
+          "endLine": 212,
           "lineDigest": "sha256:9db6212d02876728b5c9c442b07f19d4b6d1ff380b052eda52475ce5c35df81c",
           "claim": "SQLite savepoints persist command identity, revisions and projected run state together; workflow activations are projected through the same durable execution ledger."
         }
@@ -503,8 +503,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 413,
-          "endLine": 475,
+          "startLine": 444,
+          "endLine": 506,
           "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }
