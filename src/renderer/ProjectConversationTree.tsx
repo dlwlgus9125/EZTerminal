@@ -216,7 +216,8 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
             : { project: Folder, subproject: FolderKanban, stage: GitBranch, conversation: MessageSquare, terminal: SquareTerminal }[node.target.kind];
           const status = node.target.kind === 'project' ? projectStatus?.[node.target.projectId] : undefined;
           // Collapsed, a parent shows what its subagents need; open, each child shows its own.
-          const attention = !flat && !row.expanded ? node.attention : undefined;
+          // A parent already waiting for the same thing (its subagent's approval lives on it) says it once.
+          const attention = !flat && !row.expanded && node.attention?.status !== node.status ? node.attention : undefined;
           const rowStatus = attention && (!node.status || node.status === 'completed' || node.status === 'idle') ? attention.status : node.status;
           return <div key={node.id} role="none" className="project-conversation-tree__entry">
             <div role="treeitem" aria-level={row.depth + 1} aria-expanded={branch ? row.expanded : undefined} aria-selected={activeId === node.id}
