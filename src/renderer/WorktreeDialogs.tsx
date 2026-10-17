@@ -101,7 +101,14 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
     const result = await cleanup.run();
     setBusy(null);
     setConfirming(false);
-    if (!result.ok) setError(result.message);
+    // Refusals the person can act on are said in their language; git's own failures stay as git wrote them.
+    if (!result.ok && result.reason === 'in-use') {
+      setError(text('이 워크트리를 아직 쓰는 것이 있어 정리하지 않았습니다(실행 중인 대화, 그곳에서 연 터미널이나 편집기). 멈추거나 닫은 뒤 다시 정리하세요. 다시 해도 안전합니다.',
+        'Something is still using this worktree (a running chat, or a terminal or editor opened there), so nothing was cleaned up. Stop or close it, then clean up again; that is safe.'));
+    } else if (!result.ok && (result.reason === 'not-merged' || result.reason === 'dirty-worktree')) {
+      setError(text('병합되지 않았거나 커밋 안 된 변경이 있어 정리하지 않았습니다. 커밋하고 병합한 뒤 정리하세요.',
+        'Not cleaned up: there is unmerged work or uncommitted changes. Commit and merge first.'));
+    } else if (!result.ok) setError(result.message);
     else if (result.value.notes.length) setCleanedNotes(result.value.notes);
     else onOpenChange(false);
     await onRefresh();
@@ -120,7 +127,7 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   }
   if (confirming && cleanup) {
     return (
-      <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="md" tone="danger"
+      <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="md" tone="danger" initialFocusRef={backRef}
         title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Trash2 aria-hidden="true" />}
         closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
         footer={<>

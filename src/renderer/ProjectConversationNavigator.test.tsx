@@ -93,6 +93,7 @@ describe('project navigation observation', () => {
       status: vi.fn(async () => ({ ok: true, value: [status] })),
       remove: vi.fn()
         .mockResolvedValueOnce({ ok: false, reason: 'in-use', message: 'A program is still using the folder.' })
+        .mockResolvedValueOnce({ ok: false, reason: 'git-failed', message: 'fatal: not a git repository' })
         .mockResolvedValue({ ok: true, value: { branch: 'session-ux', branchDeleted: true, archivedChats: 1, notes: [] } }),
     };
     const chat = (id: string, agent: Record<string, unknown> = {}) => ({
@@ -126,7 +127,12 @@ describe('project navigation observation', () => {
       // A refusal comes back to the first step with the reason.
       await act(async () => button('worktree-cleanup-confirm')!.click());
       expect(worktrees.remove).toHaveBeenCalledWith('feature');
-      expect(document.querySelector('[data-testid="worktree-merge-dialog"] [role="alert"]')?.textContent).toBe('A program is still using the folder.');
+      const alert = (): string | null | undefined => document.querySelector('[data-testid="worktree-merge-dialog"] [role="alert"]')?.textContent;
+      expect(alert()).toContain('Something is still using this worktree');
+      // Git's own failure is shown as git wrote it.
+      await act(async () => button('worktree-cleanup')!.click());
+      await act(async () => button('worktree-cleanup-confirm')!.click());
+      expect(alert()).toBe('fatal: not a git repository');
       await act(async () => button('worktree-cleanup')!.click());
       await act(async () => button('worktree-cleanup-confirm')!.click());
       expect(document.querySelector('[data-testid="worktree-merge-dialog"]')).toBeNull();
@@ -140,7 +146,7 @@ describe('project navigation observation', () => {
       await act(async () => button('worktree-cleanup')!.click());
       expect(button('worktree-cleanup-confirm')!.disabled).toBe(true);
       expect(document.querySelector('[data-testid="worktree-merge-dialog"]')?.textContent).toContain('A chat or terminal is still running here.');
-      expect(worktrees.remove).toHaveBeenCalledTimes(2);
+      expect(worktrees.remove).toHaveBeenCalledTimes(3);
     } finally {
       Object.assign(window, { ezterminal: previous });
     }
