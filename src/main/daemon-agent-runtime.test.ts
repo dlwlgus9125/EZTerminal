@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createDaemonCommand,
+  type DaemonCommand,
   type DaemonCommandType,
   type DaemonPrincipal,
 } from '../shared/daemon-protocol';
@@ -2394,8 +2395,21 @@ describe('DaemonAgentRuntime', () => {
         id: 'review-answer', sessionId: 'reviewer', turnId: reviewTurn.id, sequence: 1, kind: 'assistant-message',
         text: 'One edge case is unhandled.', isDelta: false, isSensitive: true, createdAt: '2026-10-17T00:00:00.000Z',
       } });
+      // The first try loses a revision race; the retry is a new command and lands.
+      const execute = h.router.execute.bind(h.router);
+      let conflicted = false;
+      vi.spyOn(h.router, 'execute').mockImplementation(async (value: unknown) => {
+        const command = value as DaemonCommand;
+        if (!conflicted && command.type === 'agent.submit' && command.payload.reportOf) {
+          conflicted = true;
+          return { ok: false, status: 'rejected', commandId: command.commandId, revision: 0,
+            error: { code: 'revision-conflict', message: 'Snapshot advanced', retryable: true } };
+        }
+        return execute(command);
+      });
       h.codex.emit({ kind: 'turn-finished', sessionId: 'reviewer', turnId: reviewTurn.id, outcome: 'completed', summary: 'Codex completed the turn.' });
       await h.runtime.whenIdle();
+      expect(conflicted).toBe(true);
       const leadRows = h.router.readTranscript('lead');
       expect(leadRows.filter((item) => item.kind === 'child-summary')).toEqual([]);
       const report = leadRows.find((item) => item.kind === 'user-message' && item.payload?.type === 'subagent');

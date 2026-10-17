@@ -141,7 +141,6 @@ const MAX_CHILD_SUMMARY_LENGTH = 2_000;
 const REPORT_BACK_PRINCIPAL = 'report-back-runtime';
 
 interface ReportBackPlan {
-  readonly commandId: string;
   readonly parentSessionId: string;
   readonly childSessionId: string;
   readonly prompt: string;
@@ -1643,12 +1642,14 @@ export class DaemonAgentRuntime {
     snapshot: DaemonSnapshot,
     parent: DaemonSession,
     child: DaemonSession,
+    finishedTurnId: string,
     failed: boolean,
     summary: string,
   ): ReportBackPlan | undefined {
     if (!this.options.executeCommand) return undefined;
-    const commandId = stableId('report-back', child.id);
-    if (snapshot.turns.some((turn) => turn.commandId === commandId)) return undefined;
+    // Once: only the child's first finished turn reports (a finished turn never finishes again).
+    if (snapshot.turns.some((turn) => turn.sessionId === child.id && turn.id !== finishedTurnId
+      && (turn.state === 'completed' || turn.state === 'failed'))) return undefined;
     if (!this.reportBackRequested(child.id, parent.id)) return undefined;
     const agent = snapshot.agents.find((entry) => entry.sessionId === parent.id);
     if (
@@ -1663,7 +1664,7 @@ export class DaemonAgentRuntime {
     const prompt = failed
       ? `This conversation handed work to a subagent ("${child.title}"). It stopped with an error; its last message follows. Continue from it.\n\n${summary}`
       : `This conversation handed work to a subagent ("${child.title}"). It finished; its answer follows. Continue from it.\n\n${summary}`;
-    return { commandId, parentSessionId: parent.id, childSessionId: child.id, prompt };
+    return { parentSessionId: parent.id, childSessionId: child.id, prompt };
   }
 
   /** A session's last complete answer in one turn. */
@@ -1691,9 +1692,11 @@ export class DaemonAgentRuntime {
   private async sendReportBack(plan: ReportBackPlan, summaryRow: DaemonTranscriptItemInput): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const snapshot = this.options.getSnapshot();
+      // A rejected command keeps its receipt, so each retry is a new command at the new revision.
+      const commandId = stableId('report-back', plan.childSessionId, String(snapshot.revision));
       const receipt = await this.options.executeCommand!(createDaemonCommand({
-        commandId: plan.commandId,
-        idempotencyKey: plan.commandId,
+        commandId,
+        idempotencyKey: commandId,
         expectedRevision: snapshot.revision,
         issuedAt: this.isoNow(),
         principal: { kind: 'cli', id: REPORT_BACK_PRINCIPAL },
@@ -2215,7 +2218,7 @@ export class DaemonAgentRuntime {
         const reportText = boundedChildSummary(answer, MAX_REPORT_LENGTH)
           ?.concat((answer?.trim().length ?? 0) > MAX_REPORT_LENGTH ? '\n\n(…cut here; the full answer is in the subagent conversation.)' : '');
         const reportPlan = parent && reportText && !interrupted
-          ? this.reportBackPlan(snapshot, parent, session, failed, reportText)
+          ? this.reportBackPlan(snapshot, parent, session, turn.id, failed, reportText)
           : undefined;
         const summaryRow = parentSummary && parent && parent.state !== 'archived' ? {
           id: stableId('managed-child-summary', parent.id, event.sessionId, turn.id, parentSummary),
