@@ -28,6 +28,7 @@ import { pathToFileURL } from 'node:url';
 import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
 import { claudeSubagentRecordExists } from './claude-subagent-records';
 import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
+import { ChatAgentProfileStore, installChatAgentProfileIpc } from './chat-agent-profile-store';
 import { WorkspaceWorktreeService } from './workspace-worktree-service';
 import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history-ipc';
 import { installAppUpdateIpc } from './app-update-ipc';
@@ -1151,6 +1152,10 @@ app.on('ready', async () => {
   // 127.0.0.1 and its bearer descriptor is injected into interpreter shell
   // sessions below; it never crosses preload or the mobile bridge.
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
+  const chatAgentProfileStore = new ChatAgentProfileStore(app.getPath('userData'));
+  const chatAgentProfilesReady = chatAgentProfileStore.init().catch((err) => {
+    console.error('[main] chat agent profiles init failed:', err);
+  });
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
   const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
   const agentOrchestrationStore = new AgentOrchestrationStore(app.getPath('userData'));
@@ -2172,6 +2177,7 @@ app.on('ready', async () => {
     }
   };
   const pendingWorktreeActions = new Map<string, AbortController>();
+  featureIpcDisposers.push(installChatAgentProfileIpc({ ipc: ipcMain, store: chatAgentProfileStore, ready: chatAgentProfilesReady }));
   featureIpcDisposers.push(installWorkspaceWorktreeIpc({
     ipc: ipcMain,
     worktrees: worktreeService,
@@ -2677,6 +2683,11 @@ app.on('ready', async () => {
         name: 'agent settings',
         after: ['local Agent operation ingress', 'main-owned runtime startup'],
         run: () => agentSettingsStore.flush(),
+      },
+      {
+        name: 'chat agent profiles',
+        after: ['local Agent operation ingress', 'main-owned runtime startup'],
+        run: () => chatAgentProfileStore.flush(),
       },
       {
         name: 'project workspace access',

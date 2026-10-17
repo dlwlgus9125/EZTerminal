@@ -436,6 +436,11 @@ const api: EzTerminalApi = {
     commit: (workspaceId: string, message: string) => ipcRenderer.invoke('workspace-worktrees:commit', workspaceId, message),
     merge: (workspaceId: string) => ipcRenderer.invoke('workspace-worktrees:merge', workspaceId),
   },
+  chatAgentProfiles: {
+    list: () => ipcRenderer.invoke('chat-agent-profiles:list'),
+    save: (profile: import('../shared/chat-agent-profiles').ChatAgentProfile) => ipcRenderer.invoke('chat-agent-profiles:save', profile),
+    remove: (id: string) => ipcRenderer.invoke('chat-agent-profiles:remove', id),
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);

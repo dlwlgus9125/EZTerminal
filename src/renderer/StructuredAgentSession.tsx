@@ -76,7 +76,7 @@ import { SettingPill } from './chat/composer/SettingPill';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
-import { withCurrentModel } from './structured-agent-create';
+import { structuredAgentEffortOptions, withCurrentModel } from './structured-agent-create';
 
 export type StructuredAgentUiResult =
   | { readonly ok: true }
@@ -1836,9 +1836,7 @@ export function StructuredAgentSessionPanel({
       setSettingsError(result.message);
     }
   };
-  const effortOptions = providerId === 'claude'
-    ? (['low', 'medium', 'high', 'xhigh', 'max'] as const)
-    : (['minimal', 'low', 'medium', 'high', 'xhigh'] as const);
+  const effortOptions = structuredAgentEffortOptions(providerId);
   const effortLabel = (value: string): string => ({
     minimal: i18n.language.startsWith('ko') ? '최소' : 'Minimal',
     low: i18n.language.startsWith('ko') ? '낮음' : 'Low',

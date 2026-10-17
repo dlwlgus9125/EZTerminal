@@ -32,3 +32,14 @@ export function parseChatAgentProfiles(value: unknown): readonly ChatAgentProfil
   const parsed = ChatAgentProfileListSchema.safeParse(value);
   return parsed.success ? parsed.data.profiles : [];
 }
+
+export type ChatAgentProfileResult =
+  | { readonly ok: true; readonly profiles: readonly ChatAgentProfile[] }
+  | { readonly ok: false; readonly error: string };
+
+/** Desktop only: the renderer's view of the saved profiles. */
+export interface ChatAgentProfileAccess {
+  list(): Promise<readonly ChatAgentProfile[]>;
+  save(profile: ChatAgentProfile): Promise<ChatAgentProfileResult>;
+  remove(id: string): Promise<ChatAgentProfileResult>;
+}

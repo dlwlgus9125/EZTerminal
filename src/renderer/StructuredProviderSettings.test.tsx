@@ -438,36 +438,6 @@ describe('StructuredProviderSettings', () => {
     expect(setLifecycle).toHaveBeenLastCalledWith({ keepRunning: false });
   });
 
-  it('uses a fresh daemon revision for orchestration and reloads authority after a conflict', async () => {
-    const snapshots = [snapshot(4), snapshot(12), snapshot(13, [], true)];
-    const getSnapshot = vi.fn(async () => snapshots.shift() ?? snapshot(13, [], true));
-    const sendCommand = vi.fn(async (command: DaemonCommand): Promise<DaemonCommandReceipt> => ({
-      ok: false,
-      status: 'rejected',
-      commandId: command.commandId,
-      revision: 13,
-      error: {
-        code: 'revision-conflict',
-        message: 'revision changed',
-        retryable: true,
-        currentRevision: 13,
-      },
-    }));
-    renderSettings(capabilities({ getSnapshot, sendCommand }));
-    await flush();
-
-    act(() => container.querySelector<HTMLInputElement>('[data-testid="agent-orchestration-tools"]')!.click());
-    await flush();
-
-    expect(sendCommand).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'runtime.set-settings',
-      expectedRevision: 12,
-      payload: { orchestrationToolsEnabled: true },
-    }));
-    expect(container.querySelector<HTMLInputElement>('[data-testid="agent-orchestration-tools"]')!.checked).toBe(true);
-    expect(container.textContent).toContain('latest settings were reloaded');
-  });
-
   it('shows Ready only when the durable provider identity still matches the reviewed probe', async () => {
     const codex = inspection('codex', 'codex-ready');
     renderSettings(capabilities({

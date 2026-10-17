@@ -13,6 +13,7 @@ import { Button } from './ui';
 import { ScheduleSettings } from './ScheduleSettings';
 import type { AgentProjectLauncherSummary } from '../shared/agent-history';
 import { StructuredProviderSettings } from './StructuredProviderSettings';
+import { ChatAgentCollaborationSettings } from './ChatAgentCollaborationSettings';
 
 const DEFAULT_SETTINGS: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
@@ -271,6 +272,7 @@ export function AgentIntegrationSettings({
       </details>
       {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
       </section>
+      <ChatAgentCollaborationSettings capabilities={capabilities} />
       <details className="status-section" data-testid="agent-chat-settings" onToggle={(event) => setConversationOpen(event.currentTarget.open)}>
         <summary>{t('agentSettings.structuredProvidersTitle')}</summary>
         {conversationOpen && <StructuredProviderSettings capabilities={capabilities} />}

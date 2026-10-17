@@ -1496,6 +1496,8 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;
   /** Desktop worktree workspaces: create, read where each stands, commit, merge. */
   workspaceWorktrees?: import('./workspace-worktree').WorkspaceWorktreeAccess;
+  /** Desktop agent profiles: provider, model, effort, permission and when to use each. */
+  chatAgentProfiles?: import('./chat-agent-profiles').ChatAgentProfileAccess;
 
   // ── Git working tree (read-only) ────────────────────────────────────────
   /** Branch and per-file change counts for one directory. Returns an untracked

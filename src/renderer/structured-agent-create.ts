@@ -131,6 +131,13 @@ export function structuredAgentProviderOptions(
     }));
 }
 
+/** The reasoning effort levels a provider accepts, lowest first (composer and agent profiles). */
+export function structuredAgentEffortOptions(providerId: string): readonly string[] {
+  return providerId === 'claude'
+    ? ['low', 'medium', 'high', 'xhigh', 'max']
+    : ['minimal', 'low', 'medium', 'high', 'xhigh'];
+}
+
 export function structuredAgentWorkspaceOptions(
   snapshot: DaemonSnapshot | null,
   projectId?: string,

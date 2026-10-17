@@ -17,7 +17,7 @@ import {
 } from '../shared/daemon-protocol';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
-import { Badge, Button, Status, Switch } from './ui';
+import { Badge, Button, Status } from './ui';
 
 type BuiltInProviderId = 'codex' | 'claude';
 
@@ -188,10 +188,7 @@ export function StructuredProviderSettings({
   const [claudeStored, setClaudeStored] = useState<ClaudeProviderEnablement | null>(null);
   const [claudeDraft, setClaudeDraft] = useState<ClaudeProviderEnablement>(DEFAULT_CLAUDE_PROVIDER_ENABLEMENT);
   const [claudeLoadError, setClaudeLoadError] = useState<string | null>(null);
-  const [hostError, setHostError] = useState<string | null>(null);
-  const [hostBusy, setHostBusy] = useState<'orchestration' | 'lifecycle' | null>(null);
   const providerBusyRef = useRef(new Set<BuiltInProviderId>());
-  const hostBusyRef = useRef(false);
   const inspectionGeneration = useRef<Record<BuiltInProviderId, number>>({ codex: 0, claude: 0 });
 
   const refreshSnapshot = useCallback(async (): Promise<DaemonSnapshot | null> => {
@@ -275,41 +272,6 @@ export function StructuredProviderSettings({
   const setClaudeDraftValue = (patch: Partial<ClaudeProviderEnablement>): void => {
     setClaudeDraft((current) => enablementWith(current, patch));
     setProviderMessages((current) => ({ ...current, claude: null }));
-  };
-
-  const updateOrchestration = async (enabled: boolean): Promise<void> => {
-    if (hostBusyRef.current) return;
-    hostBusyRef.current = true;
-    setHostBusy('orchestration');
-    setHostError(null);
-    try {
-      const authority = await capabilities.daemon.getSnapshot();
-      if (!authority) throw new Error('unavailable');
-      setSnapshot(authority);
-      const commandId = opaqueId('provider-settings');
-      const receipt = await capabilities.daemon.sendCommand(createDaemonCommand({
-        commandId,
-        idempotencyKey: commandId,
-        expectedRevision: authority.revision,
-        issuedAt: new Date().toISOString(),
-        principal: { kind: 'desktop', id: 'renderer-provider-settings' },
-        type: 'runtime.set-settings',
-        payload: { orchestrationToolsEnabled: enabled },
-      }));
-      if (!receipt.ok) {
-        await refreshSnapshot();
-        setHostError(receipt.error.code === 'revision-conflict'
-          ? t('agentSettings.runtimeRevisionChanged')
-          : receipt.error.message);
-        return;
-      }
-      await refreshSnapshot();
-    } catch {
-      setHostError(t('agentSettings.runtimeSaveFailed'));
-    } finally {
-      hostBusyRef.current = false;
-      setHostBusy(null);
-    }
   };
 
   const prepareClaude = async (): Promise<ProviderInspection | null> => {
@@ -469,41 +431,10 @@ export function StructuredProviderSettings({
 
   return (
     <div className="structured-provider-settings">
-      <section
-        className="agent-host-settings"
-        id="agent-host-settings"
-        tabIndex={-1}
-        aria-labelledby="agent-host-settings-title"
-      >
-        <div className="agent-settings-heading">
-          <div>
-            <h2 className="status-section-title" id="agent-host-settings-title">
-              {t('agentSettings.hostRuntimeTitle')}
-            </h2>
-            <p>{t('agentSettings.hostRuntimeDescription')}</p>
-          </div>
-          {hostBusy && <Status variant="loading" live="polite">{t('agentSettings.runtimeSaving')}</Status>}
-        </div>
-        {snapshot ? (
-          <div className="agent-host-settings__controls">
-            <Switch
-              checked={snapshot.runtime.orchestrationToolsEnabled}
-              disabled={hostBusy !== null}
-              onChange={(event) => void updateOrchestration(event.target.checked)}
-              label={t('agentSettings.orchestrationTools')}
-              description={t('agentSettings.orchestrationToolsHint')}
-              data-testid="agent-orchestration-tools"
-            />
-          </div>
-        ) : (
-          <Status variant="loading" live="polite">{t('agentSettings.runtimeLoading')}</Status>
-        )}
-        {(hostError || snapshotError) && (
-          <Status className="agent-settings-error" variant="danger" live="assertive">
-            {hostError ?? snapshotError}
-          </Status>
-        )}
-      </section>
+      {/* Whether agents may start other agents lives in 에이전트 협업 (ChatAgentCollaborationSettings). */}
+      {snapshotError && (
+        <Status className="agent-settings-error" variant="danger" live="assertive">{snapshotError}</Status>
+      )}
 
       <section className="structured-provider-section" aria-labelledby="structured-provider-title">
         <div className="agent-settings-heading">
