@@ -18,7 +18,8 @@ function fixture() {
   };
   // The new worktree becomes a workspace once the projects are synced.
   const syncProjects = vi.fn(async () => { snapshot = { ...snapshot, workspaces: [...snapshot.workspaces, worktree] } as unknown as DaemonSnapshot; });
-  const dispose = installWorkspaceWorktreeIpc({ ipc: ipc as never, worktrees: worktrees as never, service: service as unknown as WorkspaceWorktreeService, getSnapshot: () => snapshot, syncProjects });
+  const dispose = installWorkspaceWorktreeIpc({ ipc: ipc as never, worktrees: worktrees as never, service: service as unknown as WorkspaceWorktreeService, getSnapshot: () => snapshot, syncProjects,
+    executeCommand: vi.fn(), releaseProviders: vi.fn(async () => undefined) });
   const invoke = (channel: string, ...args: unknown[]) => handlers.get(`workspace-worktrees:${channel}`)!({}, ...args);
   const snapshotAdd = (workspace: object) => { snapshot = { ...snapshot, workspaces: [...snapshot.workspaces, workspace] } as unknown as DaemonSnapshot; };
   return { handlers, worktrees, service, syncProjects, dispose, invoke, snapshotAdd };
@@ -60,6 +61,20 @@ describe('workspace worktree IPC', () => {
     expect(await f.invoke('commit', 'planning-workspace-abc', 'x')).toMatchObject({ ok: false, reason: 'not-found' });
     expect(await f.invoke('status', 'P')).toEqual({ ok: true, value: [expect.objectContaining({ workspaceId: 'W' })] });
     expect(f.service.merge).not.toHaveBeenCalled();
+  });
+
+  it('cleans up one worktree at a time', async () => {
+    const f = fixture();
+    await f.invoke('create', 'P', 'feature/login');
+    let release = () => {};
+    f.worktrees.execute.mockImplementationOnce(() => new Promise((resolve) => {
+      release = () => resolve({ ok: false, error: 'GIT_FAILED', message: 'git is busy' } as never);
+    }));
+    const first = f.invoke('remove', 'W');
+    expect(await f.invoke('remove', 'W')).toMatchObject({ ok: false, reason: 'in-use' });
+    release();
+    expect(await first).toEqual({ ok: false, reason: 'git-failed', message: 'git is busy' });
+    expect(await f.invoke('remove', 'L')).toMatchObject({ ok: false, reason: 'not-found' });
   });
 
   it('removes its handlers', () => {

@@ -1,24 +1,29 @@
 import type { IpcMain } from 'electron';
 
-import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../shared/daemon-protocol';
 import { isRunOwnedWorkspace, type WorkspaceWorktreeIpcResult } from '../shared/workspace-worktree';
 import type { WorkspaceWorktreeService, WorkspaceWorktreeTarget } from './workspace-worktree-service';
 import type { WorktreeService } from './worktree-service';
-import { createWorkspaceWorktree } from './workspace-worktree-actions';
+import { createWorkspaceWorktree, removeWorkspaceWorktree } from './workspace-worktree-actions';
 
 /**
  * Desktop-only worktree workspaces: create one for a project, read where each
- * stands, commit its changes and merge it into the main checkout's branch.
+ * stands, commit its changes, merge it into the main checkout's branch and
+ * clean it up once merged.
  */
 export function installWorkspaceWorktreeIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
   readonly worktrees: Pick<WorktreeService, 'execute'>;
-  readonly service: WorkspaceWorktreeService;
+  readonly service: Pick<WorkspaceWorktreeService, 'status' | 'commit' | 'merge' | 'deleteMergedBranch'>;
   readonly getSnapshot: () => DaemonSnapshot | undefined;
   /** Registers new worktrees with the daemon so they become workspaces. */
   readonly syncProjects: () => Promise<void>;
+  /** Archives the chats of a worktree being cleaned up. */
+  readonly executeCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
+  /** Waits (bounded) for archived chats to let go of their provider processes. */
+  readonly releaseProviders: () => Promise<void>;
 }): () => void {
-  const { ipc, worktrees, service, getSnapshot, syncProjects } = input;
+  const { ipc, worktrees, service, getSnapshot, syncProjects, executeCommand, releaseProviders } = input;
   const mainRootOf = (snapshot: DaemonSnapshot, projectId: string): string | undefined => {
     const project = snapshot.projects.find((entry) => entry.id === projectId);
     return project?.rootPath;
@@ -60,7 +65,19 @@ export function installWorkspaceWorktreeIpc(input: {
     return target ? service.merge(target) : missing;
   });
 
+  const removing = new Set<string>();
+  ipc.handle('workspace-worktrees:remove', async (_event, workspaceId: unknown) => {
+    if (typeof workspaceId !== 'string' || workspaceId.length > 200) return missing;
+    if (removing.has(workspaceId)) return { ok: false, reason: 'in-use', message: 'This worktree is already being cleaned up.' };
+    removing.add(workspaceId);
+    try {
+      return await removeWorkspaceWorktree({ worktrees, service, getSnapshot, syncProjects, executeCommand, releaseProviders }, workspaceId);
+    } finally {
+      removing.delete(workspaceId);
+    }
+  });
+
   return () => {
-    for (const channel of ['create', 'status', 'commit', 'merge']) ipc.removeHandler(`workspace-worktrees:${channel}`);
+    for (const channel of ['create', 'status', 'commit', 'merge', 'remove']) ipc.removeHandler(`workspace-worktrees:${channel}`);
   };
 }

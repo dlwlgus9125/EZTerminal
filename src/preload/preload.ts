@@ -435,6 +435,7 @@ const api: EzTerminalApi = {
     status: (projectId: string) => ipcRenderer.invoke('workspace-worktrees:status', projectId),
     commit: (workspaceId: string, message: string) => ipcRenderer.invoke('workspace-worktrees:commit', workspaceId, message),
     merge: (workspaceId: string) => ipcRenderer.invoke('workspace-worktrees:merge', workspaceId),
+    remove: (workspaceId: string) => ipcRenderer.invoke('workspace-worktrees:remove', workspaceId),
   },
   chatAgentProfiles: {
     list: () => ipcRenderer.invoke('chat-agent-profiles:list'),

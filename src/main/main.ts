@@ -2193,6 +2193,12 @@ app.on('ready', async () => {
     service: new WorkspaceWorktreeService(),
     getSnapshot: () => daemonRouterRef.current?.getSnapshot(),
     syncProjects: () => requestDaemonProjectSync(),
+    executeCommand: (command) => daemonRouterRef.current!.execute(command),
+    // Archived chats dispose their provider sessions in the background; their processes hold the folder.
+    releaseProviders: () => new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 15_000);
+      void daemonAgentRuntime.whenIdle().finally(() => { clearTimeout(timer); resolve(); });
+    }),
   }));
   agentWorktreeRef.create = (projectId, branch) => createWorkspaceWorktree({
     worktrees: worktreeService,

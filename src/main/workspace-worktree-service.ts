@@ -98,6 +98,17 @@ export class WorkspaceWorktreeService {
     return { ok: true, value: { into: baseBranch, commit } };
   }
 
+  /** Deletes a branch that is fully merged (git refuses otherwise); its worktree must already be gone. */
+  async deleteMergedBranch(mainRoot: string, branch: string, signal?: AbortSignal): Promise<{ readonly deleted: boolean; readonly message?: string }> {
+    if (!SAFE_BRANCH.test(branch)) return { deleted: false, message: 'The branch is not a plain local branch name.' };
+    try {
+      await this.git.run(mainRoot, ['branch', '-d', branch], signal);
+      return { deleted: true };
+    } catch (error) {
+      return { deleted: false, message: gitMessage(error) };
+    }
+  }
+
   private async currentBranch(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
     try {
       const name = (await this.git.run(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'], signal)).trim();
@@ -108,7 +119,7 @@ export class WorkspaceWorktreeService {
   }
 }
 
-function gitMessage(error: unknown): string {
+export function gitMessage(error: unknown): string {
   if (error instanceof GitCommandError) return error.message.split(/\r?\n/u).slice(0, 3).join(' ').slice(0, 500);
   return error instanceof Error ? error.message.slice(0, 500) : 'Git failed.';
 }
