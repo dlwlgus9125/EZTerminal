@@ -11,7 +11,8 @@ import {
   type DaemonSnapshot,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
-import { isRunOwnedWorkspace } from '../shared/workspace-worktree';
+import { isSafeLocalBranch } from '../shared/agent-coordination';
+import { isRunOwnedWorkspace, type WorkspaceWorktreeIpcResult } from '../shared/workspace-worktree';
 import { childProgress, finalAssistantText, latestFinishedTurn, reportBackRequested, type TranscriptReader } from './managed-child-transcript';
 import type { ProviderSessionContext } from './agent-provider-adapter';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
@@ -54,6 +55,8 @@ interface OrchestrationAuthority {
 const MAX_WAIT_SECONDS = 240;
 const DEFAULT_WAIT_SECONDS = 120;
 const MAX_WAITS_PER_AGENT = 8;
+/** Worktrees an agent may leave open in one project (planning runs' own worktrees are not counted). */
+const MAX_AGENT_WORKTREES_PER_PROJECT = 16;
 /** How much of a descendant's answer an Agent reads back (the full answer stays in its conversation). */
 const MAX_ANSWER_LENGTH = 8_000;
 
@@ -74,6 +77,8 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly workflowAllowed?: (sessionId: string) => boolean;
   /** The person's saved agent profiles; `create_agent` can start a child from one. */
   readonly listProfiles?: () => readonly ChatAgentProfile[];
+  /** Creates a worktree workspace in a project (desktop host only). */
+  readonly createWorktree?: (projectId: string, branch: string) => Promise<WorkspaceWorktreeIpcResult<{ readonly workspaceId: string; readonly path: string; readonly branch: string }>>;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }
@@ -517,6 +522,20 @@ export class AgentOrchestrationMcpServer {
         });
         return toolText({ ok: receipt.ok, sessionId: childSessionId, receipt }, !receipt.ok);
       }
+      case 'create_worktree': {
+        const args = strictObject(value, ['branch']);
+        if (!this.options.createWorktree) throw new McpRequestError(-32601, 'create_worktree is unavailable on this host.');
+        // Creating a branch and a folder writes to the repository: not from a plan-only Agent.
+        if (ownerAgent.permissionPreset === 'plan') throw new McpRequestError(-32602, 'A plan-only Agent cannot create worktrees.');
+        if (!isSafeLocalBranch(args.branch)) throw new McpRequestError(-32602, 'branch must be a local branch name of letters, numbers and . _ / -.');
+        const open = snapshot.workspaces.filter((entry) => entry.projectId === ownerSession.projectId && entry.kind === 'worktree'
+          && entry.archivedAt === undefined && !isRunOwnedWorkspace(entry.id)).length;
+        if (open >= MAX_AGENT_WORKTREES_PER_PROJECT) {
+          throw new McpRequestError(-32602, `This project already has ${MAX_AGENT_WORKTREES_PER_PROJECT} worktrees; ask the person to merge and clean some up.`);
+        }
+        const created = await this.options.createWorktree(ownerSession.projectId, args.branch);
+        return created.ok ? toolText({ ok: true, ...created.value }) : toolText({ ok: false, error: created.message }, true);
+      }
       case 'read_agent': {
         const args = strictObject(value, ['sessionId']);
         const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
@@ -953,6 +972,11 @@ export class AgentOrchestrationMcpServer {
           reportBack: { type: 'boolean' },
         }, ['prompt']),
       },
+      ...(this.options.createWorktree && ownerPreset !== 'plan' ? [{
+        name: 'create_worktree',
+        description: 'Create a new branch in its own git worktree in this project and return its workspaceId and folder. It starts from the main checkout\'s current commit without its uncommitted changes. Start children there with create_agent{workspaceId}; your own workspace does not change.',
+        inputSchema: objectSchema({ branch: { type: 'string', minLength: 1, maxLength: 200 } }, ['branch']),
+      }] : []),
       ...(this.options.authority.readTranscript ? [{
         name: 'read_agent',
         description: 'Read where a managed descendant stands (finished, needs-attention or working) and its latest answer, up to 8000 characters.',

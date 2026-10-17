@@ -1,14 +1,10 @@
 import type { IpcMain } from 'electron';
 
-import { isSafeLocalBranch } from '../shared/agent-coordination';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { isRunOwnedWorkspace, type WorkspaceWorktreeIpcResult } from '../shared/workspace-worktree';
 import type { WorkspaceWorktreeService, WorkspaceWorktreeTarget } from './workspace-worktree-service';
 import type { WorktreeService } from './worktree-service';
-
-const samePath = (left: string, right: string): boolean => (
-  process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
-);
+import { createWorkspaceWorktree } from './workspace-worktree-actions';
 
 /**
  * Desktop-only worktree workspaces: create one for a project, read where each
@@ -36,22 +32,9 @@ export function installWorkspaceWorktreeIpc(input: {
   };
   const missing: WorkspaceWorktreeIpcResult<never> = { ok: false, reason: 'not-found', message: 'This worktree workspace is no longer available.' };
 
-  ipc.handle('workspace-worktrees:create', async (_event, projectId: unknown, branch: unknown): Promise<WorkspaceWorktreeIpcResult<{ readonly workspaceId: string }>> => {
-    const snapshot = getSnapshot();
-    const mainRoot = snapshot && typeof projectId === 'string' ? mainRootOf(snapshot, projectId) : undefined;
-    if (!mainRoot) return { ok: false, reason: 'not-found', message: 'This project is no longer available.' };
-    if (!isSafeLocalBranch(branch)) return { ok: false, reason: 'invalid', message: 'Use letters, numbers and . _ / - for the branch name.' };
-    // The worktree starts from the main checkout's commit; its uncommitted changes stay where they are.
-    const created = await worktrees.execute({ action: 'create', cwd: mainRoot, branch, allowDirtyBase: true }, 'desktop');
-    if (!created.ok || !created.opened) {
-      return { ok: false, reason: 'git-failed', message: created.ok ? 'The worktree was not created.' : created.message };
-    }
-    await syncProjects();
-    const workspace = getSnapshot()?.workspaces.find((entry) => entry.kind === 'worktree' && samePath(entry.rootPath, created.opened!.path));
-    return workspace
-      ? { ok: true, value: { workspaceId: workspace.id } }
-      : { ok: false, reason: 'not-found', message: `The worktree was created at ${created.opened.path} but is not listed yet.` };
-  });
+  ipc.handle('workspace-worktrees:create', (_event, projectId: unknown, branch: unknown) => (
+    createWorkspaceWorktree({ worktrees, getSnapshot, syncProjects }, projectId, branch)
+  ));
 
   ipc.handle('workspace-worktrees:status', async (_event, projectId: unknown) => {
     const snapshot = getSnapshot();

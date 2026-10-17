@@ -28,6 +28,7 @@ import { pathToFileURL } from 'node:url';
 import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
 import { claudeSubagentRecordExists } from './claude-subagent-records';
 import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
+import { createWorkspaceWorktree } from './workspace-worktree-actions';
 import { ChatAgentProfileStore, installChatAgentProfileIpc } from './chat-agent-profile-store';
 import { WorkspaceWorktreeService } from './workspace-worktree-service';
 import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history-ipc';
@@ -909,6 +910,8 @@ app.on('ready', async () => {
   const daemonRouterRef: { current?: DaemonCommandRouter; } = {};
   const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService; ai?: PlanningAiService } = {};
   const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
+  // The worktree service starts after the orchestration server; agents reach it through this.
+  const agentWorktreeRef: { create?: (projectId: string, branch: string) => ReturnType<typeof createWorkspaceWorktree> } = {};
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
     && !planningRuntimeRef.current?.preparedSessionSettings(sessionId) && !planningRuntimeRef.results?.preparedSessionSettings(sessionId)
     && !planningRuntimeRef.ai?.preparedSessionSettings(sessionId));
@@ -929,6 +932,9 @@ app.on('ready', async () => {
     workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
     workflowAllowed: workflowSessionAllowed,
     listProfiles: () => chatAgentProfileStore.list(),
+    createWorktree: (projectId, branch) => agentWorktreeRef.create
+      ? agentWorktreeRef.create(projectId, branch)
+      : Promise.resolve({ ok: false, reason: 'not-found', message: 'Worktrees are not available yet.' }),
     authority: {
       getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
       execute: (command) => daemonRouterRef.current!.execute(command),
@@ -2188,6 +2194,11 @@ app.on('ready', async () => {
     getSnapshot: () => daemonRouterRef.current?.getSnapshot(),
     syncProjects: () => requestDaemonProjectSync(),
   }));
+  agentWorktreeRef.create = (projectId, branch) => createWorkspaceWorktree({
+    worktrees: worktreeService,
+    getSnapshot: () => daemonRouterRef.current?.getSnapshot(),
+    syncProjects: () => requestDaemonProjectSync(),
+  }, projectId, branch);
   ipcMain.handle('worktrees:execute', async (event, request: unknown): Promise<WorktreeResult> => {
     if (!isWorktreeRequest(request)) {
       return {

@@ -27,7 +27,7 @@ function fixture() {
 describe('workspace worktree IPC', () => {
   it('creates a worktree from the main checkout and answers with its workspace after the sync', async () => {
     const f = fixture();
-    expect(await f.invoke('create', 'P', 'feature/login')).toEqual({ ok: true, value: { workspaceId: 'W' } });
+    expect(await f.invoke('create', 'P', 'feature/login')).toEqual({ ok: true, value: { workspaceId: 'W', path: 'C:/repo-wt/feature', branch: 'feature/login' } });
     expect(f.worktrees.execute).toHaveBeenCalledWith({ action: 'create', cwd: 'C:/repo', branch: 'feature/login', allowDirtyBase: true }, 'desktop');
     expect(f.syncProjects).toHaveBeenCalledOnce();
   });

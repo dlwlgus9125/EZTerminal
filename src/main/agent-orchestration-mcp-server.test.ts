@@ -963,3 +963,48 @@ describe('reading and waiting on descendants', () => {
     expect(await list(plain)).not.toEqual(expect.arrayContaining(['read_agent']));
   });
 });
+
+describe('create_worktree', () => {
+  async function server(current: DaemonSnapshot, createWorktree = vi.fn(async (_projectId: string, branch: string) => ({
+    ok: true as const, value: { workspaceId: 'worktree-1', path: 'C:\\repo-wt\\feature', branch },
+  }))) {
+    const instance = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => current, execute: vi.fn() }, createWorktree });
+    servers.push(instance);
+    await instance.start();
+    const descriptor = instance.descriptorForSession('lead-1');
+    const call = async (args: unknown) => {
+      const response = await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', { name: 'create_worktree', arguments: args }));
+      const result = response.value?.result as { content: Array<{ text: string }>; isError?: boolean };
+      return { isError: result.isError === true, body: JSON.parse(result.content[0]!.text) as Record<string, unknown> };
+    };
+    const tools = async () => ((await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/list'))).value?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
+    return { call, tools, createWorktree };
+  }
+
+  it('creates a worktree in the caller’s project and returns where it is', async () => {
+    const s = await server(snapshot());
+    expect(await s.tools()).toContain('create_worktree');
+    expect((await s.call({ branch: 'feature/notes' })).body).toEqual({ ok: true, workspaceId: 'worktree-1', path: 'C:\\repo-wt\\feature', branch: 'feature/notes' });
+    expect(s.createWorktree).toHaveBeenCalledWith('project-1', 'feature/notes');
+  });
+
+  it('is not offered to or usable by a plan-only Agent, and refuses unsafe branch names', async () => {
+    const plan = await server(withOwnerPermission(snapshot(), 'plan'));
+    expect(await plan.tools()).not.toContain('create_worktree');
+    expect((await plan.call({ branch: 'feature/notes' })).isError).toBe(true);
+    const standard = await server(snapshot());
+    expect((await standard.call({ branch: '--upload-pack=x' })).isError).toBe(true);
+    expect(plan.createWorktree).not.toHaveBeenCalled();
+    expect(standard.createWorktree).not.toHaveBeenCalled();
+  });
+
+  it('stops at sixteen open worktrees and passes on git’s failure', async () => {
+    const base = snapshot();
+    const worktrees = Array.from({ length: 16 }, (_, index) => ({ ...base.workspaces[0]!, id: `tree-${index}`, kind: 'worktree' as const }));
+    const full = await server({ ...base, workspaces: [...base.workspaces, ...worktrees, { ...worktrees[0]!, id: 'planning-workspace-x' }] });
+    expect((await full.call({ branch: 'one-more' })).isError).toBe(true);
+    expect(full.createWorktree).not.toHaveBeenCalled();
+    const failing = await server(snapshot(), vi.fn(async () => ({ ok: false as const, reason: 'git-failed' as const, message: 'branch exists' })) as never);
+    expect(await failing.call({ branch: 'feature/notes' })).toEqual({ isError: true, body: { ok: false, error: 'branch exists' } });
+  });
+});
