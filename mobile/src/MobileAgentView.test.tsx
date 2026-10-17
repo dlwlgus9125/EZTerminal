@@ -1408,8 +1408,10 @@ describe('MobileAgentView', () => {
 
     expect(onFocusSession).toHaveBeenLastCalledWith('native-child');
     expect(container.querySelector('h1')?.textContent).toContain('Provider-owned child');
-    expect(container.textContent).toContain('Provider-owned · Read only');
-    expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(true);
+    // Read as part of its parent: a way back instead of a composer, no lifecycle actions.
+    expect(testIds('structured-agent-subagent-footer')[0]?.textContent).toContain('The parent conversation runs this subagent');
+    expect(testIds('structured-agent-parent')).toHaveLength(1);
+    expect(testIds('structured-agent-composer-input')).toHaveLength(0);
     expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
   });
 
