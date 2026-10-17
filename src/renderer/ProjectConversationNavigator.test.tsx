@@ -86,4 +86,63 @@ describe('project navigation observation', () => {
       Object.assign(window, { ezterminal: previous });
     }
   });
+  it('cleans up a merged worktree after saying what goes, and not while something runs there', async () => {
+    const status = { workspaceId: 'feature', branch: 'session-ux', baseBranch: 'main', dirty: false, ahead: 0, merged: true, status: 'done' as const };
+    const worktrees = {
+      create: vi.fn(), commit: vi.fn(), merge: vi.fn(),
+      status: vi.fn(async () => ({ ok: true, value: [status] })),
+      remove: vi.fn()
+        .mockResolvedValueOnce({ ok: false, reason: 'in-use', message: 'A program is still using the folder.' })
+        .mockResolvedValue({ ok: true, value: { branch: 'session-ux', branchDeleted: true, archivedChats: 1, notes: [] } }),
+    };
+    const chat = (id: string, agent: Record<string, unknown> = {}) => ({
+      session: { id, projectId: 'project', workspaceId: 'feature', kind: 'agent', state: 'idle', title: id, createdAt: sessionStartSnapshot.generatedAt, updatedAt: sessionStartSnapshot.generatedAt },
+      agent: { sessionId: id, providerId: 'claude', state: 'idle', queuedTurnCount: 0, ...agent },
+    });
+    const withChats = (...chats: ReturnType<typeof chat>[]) => ({ ...sessionStartSnapshot,
+      sessions: chats.map((entry) => entry.session), agents: chats.map((entry) => entry.agent) }) as unknown as DaemonSnapshot;
+    let current = withChats(chat('lead'));
+    const previous = window.ezterminal;
+    Object.assign(window, { ezterminal: { workspaceWorktrees: worktrees } });
+    try {
+      const project = { projectId: 'project', name: 'EZTerminal', primaryRoot: 'C:/Working/EZTerminal', additionalRoots: [], pinned: false };
+      const mount = async (): Promise<void> => {
+        await act(async () => root.render(<AppI18nProvider locale="en" languages={['en']}><ProjectConversationNavigator projects={[project as never]} access={{}}
+          daemonAccess={{ getSnapshot: vi.fn(async () => current), getAvailability: vi.fn(), observeEvents: () => () => undefined }}
+          onOpenProject={vi.fn()} onOpenSession={vi.fn()} onOpenTerminal={vi.fn()} /></AppI18nProvider>));
+      };
+      const button = (id: string): HTMLButtonElement | null => document.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
+      await mount();
+      await act(async () => button('workspace-merge')!.click());
+      // Already merged: nothing to merge, the next step is cleaning up.
+      expect(button('worktree-merge-confirm')).toBeNull();
+      await act(async () => button('worktree-cleanup')!.click());
+      const consequences = document.querySelector('[data-testid="worktree-cleanup-consequences"]')?.textContent;
+      expect(consequences).toContain('Deletes the branch session-ux; its work is merged into main.');
+      expect(consequences).toContain('Archives the 1 chat(s) here.');
+      expect(document.querySelector('[data-testid="worktree-merge-dialog"]')?.textContent).toContain('This cannot be undone.');
+      expect(document.activeElement?.textContent).toBe('Back');
+
+      // A refusal comes back to the first step with the reason.
+      await act(async () => button('worktree-cleanup-confirm')!.click());
+      expect(worktrees.remove).toHaveBeenCalledWith('feature');
+      expect(document.querySelector('[data-testid="worktree-merge-dialog"] [role="alert"]')?.textContent).toBe('A program is still using the folder.');
+      await act(async () => button('worktree-cleanup')!.click());
+      await act(async () => button('worktree-cleanup-confirm')!.click());
+      expect(document.querySelector('[data-testid="worktree-merge-dialog"]')).toBeNull();
+
+      // A turn in flight there: the confirmation says so and does not let it go ahead.
+      current = withChats(chat('lead', { currentTurnId: 'turn-1', state: 'working' }));
+      await act(async () => root.unmount());
+      root = createRoot(element);
+      await mount();
+      await act(async () => button('workspace-merge')!.click());
+      await act(async () => button('worktree-cleanup')!.click());
+      expect(button('worktree-cleanup-confirm')!.disabled).toBe(true);
+      expect(document.querySelector('[data-testid="worktree-merge-dialog"]')?.textContent).toContain('A chat or terminal is still running here.');
+      expect(worktrees.remove).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.assign(window, { ezterminal: previous });
+    }
+  });
 });

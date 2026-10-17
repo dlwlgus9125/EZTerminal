@@ -80,6 +80,7 @@ async function setup(projectFolders: readonly string[] = ['']) {
       return { ok: true as const, status: 'applied' as const, commandId: command.commandId, revision: snapshot.revision, eventSequence: 1 };
     },
     releaseProviders: async () => undefined,
+    liveTerminalIds: () => new Set<string>(),
   };
   const create = async (projectId = 'P0', branch = 'feature/notes') => {
     const created = await createWorkspaceWorktree(deps, projectId, branch);

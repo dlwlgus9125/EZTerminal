@@ -2199,6 +2199,7 @@ app.on('ready', async () => {
       const timer = setTimeout(resolve, 15_000);
       void daemonAgentRuntime.whenIdle().finally(() => { clearTimeout(timer); resolve(); });
     }),
+    liveTerminalIds: () => new Set(broker?.listSessions().map((session) => session.sessionId) ?? []),
   }));
   agentWorktreeRef.create = (projectId, branch) => createWorkspaceWorktree({
     worktrees: worktreeService,

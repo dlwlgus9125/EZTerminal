@@ -13,9 +13,14 @@ export function isRunOwnedWorkspace(workspaceId: string): boolean {
  * What cleaning up a worktree touches in these workspaces: the chats to archive (not a provider's
  * own subagents, which follow their parent) and whether anything is still running there. Agents
  * are busy with a turn in flight, queued or awaiting approval; any other live session (terminal,
- * script, service) is busy because it keeps the folder open.
+ * script, service) is busy because it keeps the folder open. A terminal's record outlives its
+ * process, so `liveTerminals` (when known) says which terminals still run.
  */
-export function worktreeCleanupScope(snapshot: DaemonSnapshot, workspaceIds: ReadonlySet<string>): { readonly chats: readonly string[]; readonly busy: boolean } {
+export function worktreeCleanupScope(
+  snapshot: DaemonSnapshot,
+  workspaceIds: ReadonlySet<string>,
+  liveTerminals?: ReadonlySet<string>,
+): { readonly chats: readonly string[]; readonly busy: boolean } {
   const settled = new Set(['completed', 'interrupted', 'failed', 'archived']);
   const providerNative = new Set(snapshot.agentRelations.filter((relation) => relation.owner === 'provider-native' && relation.detachedAt === undefined)
     .map((relation) => relation.childSessionId));
@@ -24,7 +29,8 @@ export function worktreeCleanupScope(snapshot: DaemonSnapshot, workspaceIds: Rea
   for (const session of snapshot.sessions) {
     if (!workspaceIds.has(session.workspaceId) || session.archivedAt !== undefined || session.state === 'archived') continue;
     if (session.kind !== 'agent') {
-      if (!settled.has(session.state)) busy = true;
+      const gone = session.kind === 'terminal' && session.source === 'legacy-pty' && liveTerminals !== undefined && !liveTerminals.has(session.id);
+      if (!gone && !settled.has(session.state)) busy = true;
       continue;
     }
     const agent = snapshot.agents.find((entry) => entry.sessionId === session.id);

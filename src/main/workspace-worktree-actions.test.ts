@@ -55,7 +55,7 @@ describe('removeWorkspaceWorktree', () => {
     sessions?: Row[]; agents?: Row[]; turns?: Row[]; approvals?: Row[]; relations?: Row[];
     workspaces?: Row[]; projects?: Row[];
     listed?: Row[]; listedAfterRemove?: Row[]; removeResult?: Row; branchResult?: { deleted: boolean; message?: string };
-    syncArchives?: boolean; conflictsFirst?: number;
+    syncArchives?: boolean; conflictsFirst?: number; liveTerminals?: string[];
   } = {}) {
     const calls: string[] = [];
     let snapshot = {
@@ -103,6 +103,7 @@ describe('removeWorkspaceWorktree', () => {
     const deps = {
       worktrees: worktrees as never, service: service as never, getSnapshot: () => snapshot, syncProjects, executeCommand,
       releaseProviders: vi.fn(async () => { calls.push('release'); }), createId: (() => { let n = 0; return () => `id-${n++}`; })(),
+      liveTerminalIds: () => new Set(options.liveTerminals ?? []),
     };
     return { deps, calls, executeCommand, worktrees };
   }
@@ -133,13 +134,19 @@ describe('removeWorkspaceWorktree', () => {
     ['a turn in flight', { sessions: [chat('lead')], agents: [agent('lead', { currentTurnId: 't1' })] }, 'in-use'],
     ['a queued turn', { sessions: [chat('lead')], agents: [agent('lead', { queuedTurnCount: 1 })] }, 'in-use'],
     ['an approval waiting', { sessions: [chat('lead')], agents: [agent('lead')], approvals: [{ sessionId: 'lead', state: 'pending' }] }, 'in-use'],
-    ['a terminal still open there', { sessions: [chat('shell', 'W', 'terminal', 'running')] }, 'in-use'],
+    ['a terminal still open there', { sessions: [{ ...chat('shell', 'W', 'terminal', 'running'), source: 'legacy-pty' }], liveTerminals: ['shell'] }, 'in-use'],
+    ['a script still running there', { sessions: [chat('dev', 'W', 'service', 'running')] }, 'in-use'],
   ] as const)('touches nothing when there is %s', async (_label, options, reason) => {
     const c = cleanup(options as never);
     expect(await removeWorkspaceWorktree(c.deps, 'W')).toMatchObject({ ok: false, reason });
     expect(c.executeCommand).not.toHaveBeenCalled();
     expect(c.calls).not.toContain('git remove');
     expect(c.calls).not.toContain('release');
+  });
+
+  it('does not wait for a terminal whose process is already gone', async () => {
+    const c = cleanup({ sessions: [{ ...chat('shell', 'W', 'terminal', 'running'), source: 'legacy-pty' }], liveTerminals: [] });
+    expect(await removeWorkspaceWorktree(c.deps, 'W')).toMatchObject({ ok: true });
   });
 
   it('refuses the main checkout, a planning run’s worktree and unknown ids before asking git', async () => {

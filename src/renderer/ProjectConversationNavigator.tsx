@@ -1,6 +1,6 @@
 import { FileDiff, GitMerge, MessageSquarePlus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { isRunOwnedWorkspace, type WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
+import { isRunOwnedWorkspace, worktreeCleanupScope, type WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
 import { useAppTranslation } from './i18n';
 import { IconButton } from './ui';
 import { WorktreeMergeDialog } from './WorktreeDialogs';
@@ -137,8 +137,15 @@ export function ProjectConversationNavigator({ projects, access, daemonAccess, p
       onRefresh={refreshWorktrees}
       {...(onReviewDirectory ? { onReview: () => onReviewDirectory(mergeTarget.rootPath) } : {})}
       onCommit={message => worktrees.commit(mergeTarget.workspaceId, message)}
-      onMerge={() => worktrees.merge(mergeTarget.workspaceId)} />}
+      onMerge={() => worktrees.merge(mergeTarget.workspaceId)}
+      cleanup={{ ...worktreeCleanupScopeOf(effectiveSnapshot, mergeTarget.workspaceId), run: () => worktrees.remove(mergeTarget.workspaceId) }} />}
   </>;
+}
+
+function worktreeCleanupScopeOf(snapshot: DaemonSnapshot | null, workspaceId: string): { readonly chats: number; readonly busy: boolean } {
+  if (!snapshot) return { chats: 0, busy: true };
+  const scope = worktreeCleanupScope(snapshot, new Set([workspaceId]));
+  return { chats: scope.chats.length, busy: scope.busy };
 }
 
 function findConversationNode(nodes: readonly ProjectConversationNode[], conversationId: string): ProjectConversationNode | undefined {

@@ -19,7 +19,7 @@ function fixture() {
   // The new worktree becomes a workspace once the projects are synced.
   const syncProjects = vi.fn(async () => { snapshot = { ...snapshot, workspaces: [...snapshot.workspaces, worktree] } as unknown as DaemonSnapshot; });
   const dispose = installWorkspaceWorktreeIpc({ ipc: ipc as never, worktrees: worktrees as never, service: service as unknown as WorkspaceWorktreeService, getSnapshot: () => snapshot, syncProjects,
-    executeCommand: vi.fn(), releaseProviders: vi.fn(async () => undefined) });
+    executeCommand: vi.fn(), releaseProviders: vi.fn(async () => undefined), liveTerminalIds: () => new Set<string>() });
   const invoke = (channel: string, ...args: unknown[]) => handlers.get(`workspace-worktrees:${channel}`)!({}, ...args);
   const snapshotAdd = (workspace: object) => { snapshot = { ...snapshot, workspaces: [...snapshot.workspaces, workspace] } as unknown as DaemonSnapshot; };
   return { handlers, worktrees, service, syncProjects, dispose, invoke, snapshotAdd };

@@ -22,8 +22,9 @@ export function installWorkspaceWorktreeIpc(input: {
   readonly executeCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
   /** Waits (bounded) for archived chats to let go of their provider processes. */
   readonly releaseProviders: () => Promise<void>;
+  readonly liveTerminalIds: () => ReadonlySet<string>;
 }): () => void {
-  const { ipc, worktrees, service, getSnapshot, syncProjects, executeCommand, releaseProviders } = input;
+  const { ipc, worktrees, service, getSnapshot, syncProjects, executeCommand, releaseProviders, liveTerminalIds } = input;
   const mainRootOf = (snapshot: DaemonSnapshot, projectId: string): string | undefined => {
     const project = snapshot.projects.find((entry) => entry.id === projectId);
     return project?.rootPath;
@@ -71,7 +72,7 @@ export function installWorkspaceWorktreeIpc(input: {
     if (removing.has(workspaceId)) return { ok: false, reason: 'in-use', message: 'This worktree is already being cleaned up.' };
     removing.add(workspaceId);
     try {
-      return await removeWorkspaceWorktree({ worktrees, service, getSnapshot, syncProjects, executeCommand, releaseProviders }, workspaceId);
+      return await removeWorkspaceWorktree({ worktrees, service, getSnapshot, syncProjects, executeCommand, releaseProviders, liveTerminalIds }, workspaceId);
     } finally {
       removing.delete(workspaceId);
     }

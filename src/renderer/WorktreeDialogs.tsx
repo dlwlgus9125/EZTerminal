@@ -1,7 +1,7 @@
-import { GitBranch, GitMerge } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { GitBranch, GitMerge, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
-import type { WorkspaceWorktreeIpcResult, WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
+import type { RemovedWorkspaceWorktree, WorkspaceWorktreeIpcResult, WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
 import { useAppTranslation } from './i18n';
 import { Button, Dialog, Field, Input } from './ui';
 import './worktree-dialogs.css';
@@ -59,9 +59,10 @@ export function NewWorktreeDialog({ open, onOpenChange, projectName, createLabel
 
 /**
  * Bring a worktree's work home: see what it holds, commit what is uncommitted,
- * and merge its branch into the main checkout's branch. Each is a click.
+ * and merge its branch into the main checkout's branch. Each is a click. Once
+ * merged, the worktree can be cleaned up after a confirmation that says what goes.
  */
-export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefresh, onReview, onCommit, onMerge }: {
+export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefresh, onReview, onCommit, onMerge, cleanup }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly title: string;
@@ -70,15 +71,75 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
   readonly onReview?: () => void;
   readonly onCommit: (message: string) => Promise<WorkspaceWorktreeIpcResult<{ readonly commit: string }>>;
   readonly onMerge: () => Promise<WorkspaceWorktreeIpcResult<{ readonly into: string; readonly commit: string }>>;
+  /** Offered once the work is merged: the chats it archives and whether something still runs there. */
+  readonly cleanup?: {
+    readonly chats: number;
+    readonly busy: boolean;
+    readonly run: () => Promise<WorkspaceWorktreeIpcResult<RemovedWorkspaceWorktree>>;
+  };
 }): JSX.Element {
   const text = useText();
   const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState<'commit' | 'merge' | null>(null);
+  const [busy, setBusy] = useState<'commit' | 'merge' | 'cleanup' | null>(null);
   const [error, setError] = useState<string>();
   const [merged, setMerged] = useState<string>();
-  useEffect(() => { if (open) { setMessage(''); setError(undefined); setMerged(undefined); void onRefresh(); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [confirming, setConfirming] = useState(false);
+  const [cleanedNotes, setCleanedNotes] = useState<readonly string[]>();
+  const backRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (open) { setMessage(''); setError(undefined); setMerged(undefined); setConfirming(false); setCleanedNotes(undefined); void onRefresh(); }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Asking to delete something puts focus on the way back, not on the delete.
+  useEffect(() => { if (confirming) backRef.current?.focus(); }, [confirming]);
   const branch = status?.branch ?? title;
   const base = status?.baseBranch ?? 'main';
+  const cleanable = Boolean(cleanup && status && !status.dirty && status.ahead === 0 && (merged || status.merged));
+  const runCleanup = async (): Promise<void> => {
+    if (!cleanup) return;
+    setBusy('cleanup');
+    setError(undefined);
+    const result = await cleanup.run();
+    setBusy(null);
+    setConfirming(false);
+    if (!result.ok) setError(result.message);
+    else if (result.value.notes.length) setCleanedNotes(result.value.notes);
+    else onOpenChange(false);
+    await onRefresh();
+  };
+  if (cleanedNotes) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange} size="md" title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Trash2 aria-hidden="true" />}
+        closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
+        footer={<Button variant="secondary" onClick={() => onOpenChange(false)}>{text('닫기', 'Close')}</Button>}>
+        <div className="worktree-merge">
+          <p className="worktree-merge__done" role="status">{text('워크트리를 정리했습니다.', 'The worktree is cleaned up.')}</p>
+          <ul className="worktree-merge__notes" data-testid="worktree-cleanup-notes">{cleanedNotes.map((note) => <li key={note}>{note}</li>)}</ul>
+        </div>
+      </Dialog>
+    );
+  }
+  if (confirming && cleanup) {
+    return (
+      <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} size="md" tone="danger"
+        title={text(`${branch} 정리`, `Clean up ${branch}`)} icon={<Trash2 aria-hidden="true" />}
+        closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
+        footer={<>
+          <Button ref={backRef} variant="secondary" disabled={busy !== null} onClick={() => setConfirming(false)}>{text('돌아가기', 'Back')}</Button>
+          <Button variant="danger" leadingIcon={<Trash2 />} loading={busy === 'cleanup'} disabled={busy !== null || cleanup.busy}
+            onClick={() => void runCleanup()} data-testid="worktree-cleanup-confirm">{text('정리', 'Clean up')}</Button>
+        </>}>
+        <div className="worktree-merge">
+          <ul className="worktree-merge__consequences" data-testid="worktree-cleanup-consequences">
+            <li>{text('워크트리 폴더를 지웁니다.', 'Deletes the worktree folder.')}</li>
+            <li>{text(`브랜치 ${branch}를 삭제합니다. 작업은 ${base}에 병합돼 있습니다.`, `Deletes the branch ${branch}; its work is merged into ${base}.`)}</li>
+            {cleanup.chats > 0 && <li>{text(`이 위치의 대화 ${cleanup.chats}개를 보관합니다. 기록은 남지만 더 이어 갈 수 없습니다.`, `Archives the ${cleanup.chats} chat(s) here. Their history stays, but they cannot continue.`)}</li>}
+          </ul>
+          <p className="worktree-merge__warning">{text('되돌릴 수 없습니다.', 'This cannot be undone.')}</p>
+          {cleanup.busy && <p className="worktree-merge__note" role="status">{text('이 위치에서 아직 실행 중인 대화나 터미널이 있습니다. 멈춘 뒤 정리하세요.', 'A chat or terminal is still running here. Stop it, then clean up.')}</p>}
+        </div>
+      </Dialog>
+    );
+  }
   const run = async <T,>(kind: 'commit' | 'merge', action: () => Promise<WorkspaceWorktreeIpcResult<T>>, done: (value: T) => void): Promise<void> => {
     setBusy(kind);
     setError(undefined);
@@ -95,7 +156,9 @@ export function WorktreeMergeDialog({ open, onOpenChange, title, status, onRefre
       closeLabel={text('닫기', 'Close')} testId="worktree-merge-dialog"
       footer={<>
         <Button variant="secondary" disabled={busy !== null} onClick={() => onOpenChange(false)}>{merged ? text('닫기', 'Close') : text('취소', 'Cancel')}</Button>
-        {!merged && <Button variant="primary" loading={busy === 'merge'} disabled={busy !== null || !status || status.dirty || status.ahead === 0}
+        {cleanable && <Button variant="secondary" leadingIcon={<Trash2 />} disabled={busy !== null}
+          onClick={() => { setError(undefined); setConfirming(true); }} data-testid="worktree-cleanup">{text('워크트리 정리…', 'Clean up worktree…')}</Button>}
+        {!merged && !cleanable && <Button variant="primary" loading={busy === 'merge'} disabled={busy !== null || !status || status.dirty || status.ahead === 0}
           onClick={() => void run('merge', onMerge, (value) => setMerged(value.into))} data-testid="worktree-merge-confirm">{text(`${base}로 병합`, `Merge into ${base}`)}</Button>}
       </>}>
       <div className="worktree-merge">

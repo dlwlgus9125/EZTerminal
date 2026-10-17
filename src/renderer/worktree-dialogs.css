@@ -57,3 +57,23 @@
 .worktree-merge__error {
   color: var(--ui-danger);
 }
+
+.worktree-merge__consequences,
+.worktree-merge__notes {
+  margin: 0;
+  padding-left: var(--ui-space-4);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.worktree-merge__consequences > li + li,
+.worktree-merge__notes > li + li {
+  margin-top: var(--ui-space-1);
+}
+
+.worktree-merge__warning {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+}

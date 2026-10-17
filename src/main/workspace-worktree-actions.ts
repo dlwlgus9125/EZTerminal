@@ -86,6 +86,8 @@ export interface WorkspaceWorktreeCleanupDeps extends WorkspaceWorktreeActionDep
   readonly executeCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
   /** Resolves once archived chats have let go of their provider processes (bounded by the caller). */
   readonly releaseProviders: () => Promise<void>;
+  /** The terminals whose process still runs (a terminal's record outlives it). */
+  readonly liveTerminalIds: () => ReadonlySet<string>;
   readonly createId?: () => string;
 }
 
@@ -132,7 +134,7 @@ export async function removeWorkspaceWorktree(
   // One folder can hold the workspaces of several projects (subfolders of one repository).
   const folder = worktree?.path ?? workspace.rootPath;
   const affected = new Set(snapshot.workspaces.filter((entry) => !entry.archivedAt && pathIsWithin(entry.rootPath, folder)).map((entry) => entry.id));
-  const scope = worktreeCleanupScope(snapshot, affected);
+  const scope = worktreeCleanupScope(snapshot, affected, deps.liveTerminalIds());
   if (scope.busy) return { ok: false, reason: 'in-use', message: 'Something is still running in this worktree. Stop its chats, terminals and services first.' };
 
   const createId = deps.createId ?? randomUUID;
