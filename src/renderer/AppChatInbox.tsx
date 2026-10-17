@@ -1,27 +1,16 @@
 import { AlertTriangle, CheckCircle2, ShieldQuestion, Users } from 'lucide-react';
 
+import type { AppChatInboxEntry } from '../shared/app-chat-inbox';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
 import './app-chat-inbox.css';
 
-export interface AppChatInboxItem {
-  readonly id: string;
-  readonly sessionId: string;
-  /** approval: waiting on the person · finished/failed: a turn ended while unseen. */
-  readonly kind: 'approval' | 'finished' | 'failed';
-  readonly conversationTitle: string;
-  readonly providerLabel: string;
-  /** What is asked (approval title) or how it ended (bounded summary). */
-  readonly detail: string;
-  /** The approval was raised inside this provider-native subagent. */
-  readonly subagentTitle?: string;
-  readonly at: string;
-}
+export type { AppChatInboxEntry as AppChatInboxItem } from '../shared/app-chat-inbox';
 
 export interface AppChatInboxProps {
-  readonly items: readonly AppChatInboxItem[];
-  readonly onOpen: (item: AppChatInboxItem) => void;
-  readonly onMarkSeen?: (item: AppChatInboxItem) => void;
+  readonly items: readonly AppChatInboxEntry[];
+  readonly onOpen: (item: AppChatInboxEntry) => void;
+  readonly onMarkSeen?: (item: AppChatInboxEntry) => void;
 }
 
 /** App conversations in the inbox: approvals first, then turns that ended while you were away. */
@@ -33,18 +22,21 @@ export function AppChatInbox({ items, onOpen, onMarkSeen }: AppChatInboxProps): 
   const ended = items.filter((item) => item.kind !== 'approval');
   if (!items.length) return null;
   const time = (value: string): string => new Intl.DateTimeFormat(ko ? 'ko' : 'en', { hour: 'numeric', minute: '2-digit' }).format(Date.parse(value));
-  const row = (item: AppChatInboxItem): JSX.Element => {
+  const providerLabel = (id: string): string => id === 'claude' ? 'Claude' : id === 'codex' ? 'Codex' : id;
+  const detail = (item: AppChatInboxEntry): string => item.detail
+    ?? (item.kind === 'failed' ? text('응답을 마치지 못했습니다.', 'Stopped before finishing its reply.') : text('응답을 마쳤습니다.', 'Finished its reply.'));
+  const row = (item: AppChatInboxEntry): JSX.Element => {
     const Icon = item.kind === 'approval' ? ShieldQuestion : item.kind === 'failed' ? AlertTriangle : CheckCircle2;
     return (
       <article key={item.id} className="agent-row app-chat-inbox__row" data-kind={item.kind} data-testid="app-chat-inbox-item">
         <div className="agent-row-main">
           <Icon aria-hidden="true" size={15} className="app-chat-inbox__icon" />
           <span className="app-chat-inbox__title" title={item.conversationTitle}>{item.conversationTitle}</span>
-          <span className="agent-status">{item.providerLabel} · {time(item.at)}</span>
+          <span className="agent-status">{providerLabel(item.providerId)} · {time(item.at)}</span>
         </div>
         <p className="app-chat-inbox__detail">
           {item.subagentTitle && <span className="app-chat-inbox__subagent"><Users aria-hidden="true" />{item.subagentTitle}</span>}
-          {item.detail}
+          {detail(item)}
         </p>
         <div className="app-chat-inbox__actions">
           {item.kind !== 'approval' && onMarkSeen && <Button size="sm" variant="ghost" onClick={() => onMarkSeen(item)}>{text('읽음', 'Mark read')}</Button>}

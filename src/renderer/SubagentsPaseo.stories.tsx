@@ -300,10 +300,10 @@ export const CollaborationSettings: Story = {
 };
 
 const INBOX: readonly AppChatInboxItem[] = [
-  { id: 'a1', sessionId: 'parent', kind: 'approval', conversationTitle: 'README 삭제 맡기기', providerLabel: 'Claude', subagentTitle: 'Delete README.md via shell', detail: '명령 실행: Remove-Item -LiteralPath README.md', at: '2026-10-17T04:01:00.000Z' },
-  { id: 'a2', sessionId: 'codex', kind: 'approval', conversationTitle: '대화창 UI를 개선해 제안', providerLabel: 'Codex', detail: '파일 변경: src/renderer/chat/chat.css', at: '2026-10-17T03:58:00.000Z' },
-  { id: 'f1', sessionId: 'review', kind: 'finished', conversationTitle: '로그인 변경 검토', providerLabel: 'Codex', detail: '검토 완료: 위험 2건 — 오류 문구가 스크린리더에 읽히지 않습니다.', at: '2026-10-17T03:40:00.000Z' },
-  { id: 'f2', sessionId: 'settings', kind: 'failed', conversationTitle: '설정 문구 정리', providerLabel: 'Claude', detail: '제공자 프로세스가 응답 전에 종료됐습니다.', at: '2026-10-17T03:20:00.000Z' },
+  { id: 'a1', sessionId: 'parent', kind: 'approval', conversationTitle: 'README 삭제 맡기기', providerId: 'claude', subagentTitle: 'Delete README.md via shell', detail: 'Remove-Item -LiteralPath README.md', at: '2026-10-17T04:01:00.000Z' },
+  { id: 'a2', sessionId: 'codex', kind: 'approval', conversationTitle: '대화창 UI를 개선해 제안', providerId: 'codex', detail: 'src/renderer/chat/chat.css', at: '2026-10-17T03:58:00.000Z' },
+  { id: 'f1', sessionId: 'review', kind: 'finished', conversationTitle: '로그인 변경 검토', providerId: 'codex', at: '2026-10-17T03:40:00.000Z' },
+  { id: 'f2', sessionId: 'settings', kind: 'failed', conversationTitle: '설정 문구 정리', providerId: 'claude', errorCode: 'provider-session-failed', at: '2026-10-17T03:20:00.000Z' },
 ];
 
 export const InboxAppChats: Story = {

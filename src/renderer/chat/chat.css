@@ -1772,11 +1772,10 @@
 }
 
 .chat-dock__from {
-  display: flex;
-  align-items: center;
   margin: 0 0 var(--ui-space-1);
   color: var(--ui-text-secondary);
   font-size: var(--ui-font-size-xs);
+  overflow-wrap: anywhere;
 }
 
 .chat-dock__from .chat-link-button {

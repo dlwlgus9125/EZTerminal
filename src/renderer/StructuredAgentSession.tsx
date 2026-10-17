@@ -1953,7 +1953,8 @@ export function StructuredAgentSessionPanel({
             <span aria-hidden="true" />
             <span className="ez-ui-visually-hidden">{copy.status}: </span>{statusLabel ?? (awaitingFirstMessage ? copy.notStarted : stateLabel(state))}
           </span>
-          {owner === 'provider-native' && (
+          {/* A subagent with a parent says who runs it below the transcript instead. */}
+          {owner === 'provider-native' && !parent && (
             <span className="structured-agent-session-header__owner">
               {copy.providerOwned} · {copy.readOnly}
             </span>

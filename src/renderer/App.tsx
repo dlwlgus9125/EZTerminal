@@ -1,4 +1,5 @@
 import { useRendererRecovery } from './useRendererRecovery';
+import { useAppChatInbox } from './use-app-chat-inbox';
 import { useDesktopAppearance } from './useDesktopAppearance';
 import { useTerminalPreferences } from './useTerminalPreferences';
 import { useProjectDocumentNavigation } from './useProjectDocumentNavigation';
@@ -1494,7 +1495,12 @@ export function App(): JSX.Element {
     };
   }, [agentSnapshot, sessionPaneBindings]);
 
-  const attentionCount = countAgentAttention(userFacingAgentSnapshot);
+  const activeConversationSessionId = activePanelId
+    ? structuredAgentSessionId(String(apiRef.current?.getPanel(activePanelId)?.params?.historyId ?? '')) ?? undefined
+    : undefined;
+  // App conversations: approvals waiting on the person and turns that ended unseen.
+  const appChatInbox = useAppChatInbox(activeConversationSessionId);
+  const attentionCount = countAgentAttention(userFacingAgentSnapshot) + appChatInbox.entries.length;
   const unreadUserFacingAgentCount = [...unreadAgentIds]
     .filter((activityId) => !orchestrationWorkerIds.has(activityId)).length;
   const agentSessionIds = useMemo<ReadonlySet<string>>(
@@ -2900,7 +2906,15 @@ export function App(): JSX.Element {
           onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
           onOpenStructuredAgentSession: openStructuredAgentSession,
-          activeConversationSessionId: activePanelId ? structuredAgentSessionId(String(apiRef.current?.getPanel(activePanelId)?.params?.historyId ?? '')) ?? undefined : undefined,
+          activeConversationSessionId,
+          appChatInbox: {
+            entries: appChatInbox.entries,
+            onOpen: (entry) => {
+              appChatInbox.markSeen(entry.sessionId);
+              openStructuredAgentSession({ sessionId: entry.sessionId, title: entry.conversationTitle });
+            },
+            onMarkSeen: (entry) => appChatInbox.markSeen(entry.sessionId),
+          },
           activeConversationId: activePanelId ? apiRef.current?.getPanel(activePanelId)?.params?.conversationId : undefined,
           onCreateWorkspaceSession: (_projectId, workspaceId) => {
             void structuredAgentNavigationValue.openTerminal(workspaceId).then((result) => {

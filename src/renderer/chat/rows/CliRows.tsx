@@ -288,7 +288,8 @@ export function CliNotice({ row }: { readonly row: RowOf<'notice'> | RowOf<'chil
           {row.subagent.subagentType && <span className="chat-cli-dim"> · {row.subagent.subagentType}</span>}
           <span className="chat-cli-dim"> · {failed ? copy.subagentStopped : copy.subagentDone}</span>
           {row.relatedSessionId && context.onOpenRelated && (
-            <button type="button" className="chat-link-button" onClick={() => context.onOpenRelated?.(row.relatedSessionId!)}>{copy.openSubagent}</button>
+            <button type="button" className="chat-link-button" onClick={() => context.onOpenRelated?.(row.relatedSessionId!)}
+              aria-label={`${copy.openSubagent}: ${row.subagent.title ?? copy.subagent}`}>{copy.openSubagent}</button>
           )}
           <div className="chat-cli-result">
             <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>

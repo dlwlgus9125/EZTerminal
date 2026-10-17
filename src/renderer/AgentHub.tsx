@@ -16,6 +16,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { AppChatInbox } from './AppChatInbox';
+import type { AppChatInboxEntry } from '../shared/app-chat-inbox';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -133,6 +135,12 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
 
 export interface AgentHubProps {
   readonly view?: 'all' | 'projects' | 'inbox';
+  /** App conversations that need the person: shown at the top of the inbox. */
+  readonly appChatInbox?: {
+    readonly entries: readonly AppChatInboxEntry[];
+    readonly onOpen: (entry: AppChatInboxEntry) => void;
+    readonly onMarkSeen: (entry: AppChatInboxEntry) => void;
+  };
   /** Opens the project planning surface without adding a nested sidebar. */
   readonly onOpenPlanningProject?: (project: AgentProjectSummary) => void;
   readonly onOpenWorkflowProject?: (project: AgentProjectSummary, subprojectId: string, nodeId?: string) => void;
@@ -230,6 +238,7 @@ type DiffView =
 
 export function AgentHub({
   view = 'all',
+  appChatInbox,
   onOpenPlanningProject,
   onOpenWorkflowProject,
   onOpenConversationHistory,
@@ -1261,6 +1270,9 @@ export function AgentHub({
           />
         ) : (
           <>
+          {view !== 'projects' && appChatInbox && (
+            <AppChatInbox items={appChatInbox.entries} onOpen={appChatInbox.onOpen} onMarkSeen={appChatInbox.onMarkSeen} />
+          )}
           {view !== 'projects' && pendingMergeRequests.length > 0 && (
             <section className="agent-group agent-managed-merges" data-testid="managed-merge-requests">
               <h2 className="status-section-title agent-group-title agent-group-title--attention">
@@ -1376,7 +1388,7 @@ export function AgentHub({
             </section>
           )}
           {view !== 'projects' && renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
-          {view === 'inbox' && pendingMergeRequests.length === 0 && groups.attention.length === 0 && <p className="agent-empty">{i18n.language.startsWith('ko') ? '확인이 필요한 요청이 없습니다.' : 'No requests need your attention.'}</p>}
+          {view === 'inbox' && pendingMergeRequests.length === 0 && groups.attention.length === 0 && !appChatInbox?.entries.length && <p className="agent-empty">{i18n.language.startsWith('ko') ? '확인이 필요한 요청이 없습니다.' : 'No requests need your attention.'}</p>}
           {view !== 'inbox' && <section className="agent-group agent-projects" data-testid="agent-projects">
             <div className="agent-projects-heading">
               <h2 className="status-section-title agent-group-title">

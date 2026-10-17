@@ -308,7 +308,8 @@ function BubbleSubagentResult({ row }: { readonly row: RowOf<'child'> }): JSX.El
           {failed ? copy.subagentStopped : copy.subagentDone}
         </span>
         {row.relatedSessionId && context.onOpenRelated && (
-          <button type="button" className="chat-link-button chat-child__open" onClick={() => context.onOpenRelated?.(row.relatedSessionId!)}>{copy.openSubagent}</button>
+          <button type="button" className="chat-link-button chat-child__open" onClick={() => context.onOpenRelated?.(row.relatedSessionId!)}
+            aria-label={`${copy.openSubagent}: ${subagent.title ?? copy.subagent}`}>{copy.openSubagent}</button>
         )}
       </header>
       <div className="chat-child__summary"><Prose markdown={row.text} variant="prose" /></div>
