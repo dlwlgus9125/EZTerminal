@@ -244,16 +244,18 @@ test('restored Agent opens managed and provider-native children with enforced ow
       `[data-testid="structured-agent-session"][data-session-id="${NATIVE_SESSION_ID}"]`,
     );
     await expect(providerNative).toBeVisible();
-    await expect(providerNative.getByText('Provider-owned · Read only')).toBeVisible();
-    await expect(providerNative.getByTestId('structured-agent-composer-input')).toBeDisabled();
-    await expect(providerNative.getByTestId('structured-agent-composer-disabled-reason'))
-      .toContainText('direct messages and lifecycle changes stay with the parent provider');
+    // A provider-owned subagent reads as a child of its parent: a way back, no composer, no lifecycle.
+    await expect(providerNative.getByTestId('structured-agent-parent')).toContainText('Managed Implementer');
+    await expect(providerNative.getByTestId('structured-agent-subagent-footer'))
+      .toContainText('The parent conversation runs this subagent');
+    await expect(providerNative.getByTestId('structured-agent-composer-input')).toHaveCount(0);
     await expect(providerNative.getByTestId('structured-agent-lifecycle')).toHaveCount(0);
 
     const beforeReadOnlyCheck = await window.evaluate(async () => (
       globalThis.window.ezterminal.getDaemonSnapshot()
     ));
-    await expect(providerNative.getByTestId('structured-agent-composer-input')).toHaveValue('');
+    await providerNative.getByTestId('structured-agent-parent').click();
+    await expect(managed).toBeVisible();
     const afterReadOnlyCheck = await window.evaluate(async () => (
       globalThis.window.ezterminal.getDaemonSnapshot()
     ));
