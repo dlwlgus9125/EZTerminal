@@ -650,12 +650,11 @@ export class AgentOrchestrationMcpServer {
       let done = false;
       let scheduled = false;
       let unsubscribe = (): void => undefined;
-      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = (reason: 'settled' | 'timeout' | 'revoked'): void => {
         if (done) return;
         done = true;
         unsubscribe();
-        if (timer !== undefined) clearTimer(timer);
+        clearTimer(timer);
         this.waiters.delete(waiter);
         signal?.removeEventListener('abort', onAbort);
         resolve(reason);
@@ -687,7 +686,7 @@ export class AgentOrchestrationMcpServer {
           // A notification never breaks the daemon's event loop.
         }
       });
-      timer = setTimer(() => finish('timeout'), timeoutSeconds * 1_000);
+      const timer = setTimer(() => finish('timeout'), timeoutSeconds * 1_000);
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) finish('revoked');
       else evaluate();
