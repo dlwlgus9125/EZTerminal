@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e3c22a566a798579965845dc6a556e37387f1e8cc0f082bbf4b6da7f7a17f446",
+        "inputDigest": "sha256:195e58850103b979c9fa06e9bb7d6cd9ceb004496d382b9eb34b4e933e399f44",
         "decision": "map-updated",
-        "reason": "Reviewed provider-native subagents as read-only child chats, hand-off with a host-sent one-time report, profiles in MCP child creation and startup settling of children. Claims updated for creation, submit, startup, MCP, main wiring, navigator and session surface."
+        "reason": "Reviewed: orchestration MCP adds read_agent, wait_agent (bounded; settled on revoke, stop and disconnect) and create_worktree, and create_agent takes reportBack and a same-Project workspace. Transcript helpers moved to a shared module. One claim updated, other anchors moved."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fcb94f564a7ea0b762dd74ee8e18b734eb046e4f6d5b4ec47a55b6060b7daa9f",
+        "inputDigest": "sha256:72242673ae75b02f9a6da2bcff42f06be8cccf1be6a21d45a2dc4c853c2fc010",
         "decision": "map-updated",
-        "reason": "Reviewed startup: provider-native children are settled (running ones interrupted, misrecorded ones archived with receipts) next to approval expiry and rehydration. Startup anchor claim updated."
+        "reason": "Reviewed: main wires worktree cleanup (archive chats, bounded provider release, live terminal list) and the agent create_worktree route; the workbench lifecycle itself is unchanged. Anchors moved, claims unchanged."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:363906a61aeae39b1a0b2700454e8558cc2e81279851cf7165f26953f459e9b7",
-        "decision": "no-semantic-impact",
-        "reason": "Inputs changed for subagent routing, hand-off and worktree IPC; remote transport, session mirroring and wire shapes are unchanged and new protocol fields are optional. Relocated anchors only."
+        "inputDigest": "sha256:0f9fb9629c2b7ab7bd100d8ec971ad3097f9ad3040d84953ba6b367de0d0240b",
+        "decision": "map-updated",
+        "reason": "Reviewed: main.ts gained worktree cleanup and agent worktree wiring outside the remote session path; the remote session data flow is unchanged. Anchors moved, claims unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:ecc4a1159c691fd7829f2422631a3107bef460da5e5b0eb9358b7208aec6f4fc",
+        "inputDigest": "sha256:2012662589390c6d3608e45f322b9407bc96229a4abaaf4f8b7cb2e27776fd79",
         "decision": "map-updated",
-        "reason": "Reviewed: only a run prepared with the subproject's auto-approve on records that policy; the run command boundary is unchanged. Anchor moved, claim unchanged."
+        "reason": "Reviewed: the MCP tool list and the Claude and Codex MCP configs changed (read, wait and worktree tools; 300-second tool timeout); the workflow capability boundary is unchanged. Anchors moved, claims unchanged."
       }
     }
   ]

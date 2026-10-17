@@ -170,6 +170,20 @@ turn의 마지막 답(최대 8,000자, 잘리면 표시)을 parent의 다음 메
 표시된다. 보낼 수 없으면(parent 종료·provider 비활성) 기존 요약 행으로 남긴다. 검토 맡기기는 기본 회신,
 맡기기는 기본 미회신이다.
 
+Agent가 MCP로 띄운 child의 결과는 두 방법으로 받는다. `wait_agent{sessionId, timeoutSeconds}`는 child가
+끝나거나 승인을 기다리게 될 때까지(1~240초, 기본 120) 기다렸다가 `read_agent`와 같은 내용(상태, 마지막
+turn, 마지막 답 최대 8,000자, 대기 중 승인 제목 최대 5개)을 돌려준다. `needsAttention`이면 사람이 승인한
+뒤 다시 기다린다. `create_agent{reportBack: true}`로 만들고 turn을 끝내면 위 회신이 다음 메시지로 온다.
+같은 child에 둘을 함께 쓰면 결과가 두 번 오므로 회신을 앞둔 직속 child의 `wait_agent`는 거부한다. 대상은
+관리형 후손뿐이고 호출자당 동시 대기는 8개다. 두 provider의 MCP 도구 시간 제한은 300초로 둔다(Claude
+`timeout`, Codex `tool_timeout_sec`).
+
+`create_worktree{branch}`는 호출자의 Project에 새 branch의 worktree를 만들어 `workspaceId`와 폴더를
+돌려준다. 메인 checkout의 현재 commit에서 시작하고 커밋 안 된 변경은 옮기지 않으며 호출자 자신의 작업
+위치는 바뀌지 않는다. Plan permission Agent에는 없고 Project당 열린 워크트리(기획 실행 소유 제외)는 16개까지다.
+`create_agent{workspaceId}`는 같은 Project의 활성 작업 위치(기획 실행 소유 제외)에 child를 띄운다. 병합과
+정리는 사람이 한다.
+
 사용자는 child를 직접 열고 대화하며 model/permission 변경, Cancel, Archive와 Detach를 실행할 수 있다.
 busy session의 일반 Send는 FIFO queue에 들어가고 `Interrupt + Send`만 현재 turn을 중단한다.
 

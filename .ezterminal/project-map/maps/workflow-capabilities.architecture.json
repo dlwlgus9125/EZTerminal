@@ -221,8 +221,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 384,
-          "endLine": 413,
+          "startLine": 418,
+          "endLine": 447,
           "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
           "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         },
@@ -324,16 +324,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 881,
-          "endLine": 970,
+          "startLine": 883,
+          "endLine": 972,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1176,
-          "endLine": 1246,
+          "startLine": 1178,
+          "endLine": 1248,
           "lineDigest": "sha256:76650c632b70a0534cd56e1ca9d449e1d2692c30d566a95ec499dc0fede4522b",
           "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt."
         }
@@ -480,8 +480,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 881,
-          "endLine": 970,
+          "startLine": 883,
+          "endLine": 972,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }
@@ -565,8 +565,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 384,
-          "endLine": 413,
+          "startLine": 418,
+          "endLine": 447,
           "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
           "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         }
