@@ -38,7 +38,8 @@ export function MobileStructuredAgentSession({
       {offlineRead && <p className="mobile-v2-draft-status" role="status">{ko
         ? '오프라인 · 마지막으로 받은 대화를 표시합니다. 재시작 후에는 최근 저장한 일부만 보일 수 있습니다. 전체 원본은 PC 연결 후 불러옵니다.'
         : 'Offline · Showing previously received messages. After restart, only recently cached messages may be available. Reconnect to load the full transcript.'}</p>}
-      {draftStorageStatus && <p className="mobile-v2-draft-status" data-state={draftStorageStatus} role="status">
+      {/* A provider-owned subagent has no composer, so it has no draft to report. */}
+      {draftStorageStatus && !(props.owner === 'provider-native' && props.parent) && <p className="mobile-v2-draft-status" data-state={draftStorageStatus} role="status">
         {draftStorageStatus === 'loading' ? (ko ? '기기 초안 불러오는 중…' : 'Loading device draft…')
           : draftStorageStatus === 'saving' ? (ko ? '기기에 저장 중…' : 'Saving on this device…')
             : draftStorageStatus === 'unavailable' ? (ko ? '보안 저장소에 초안을 저장하지 못했습니다.' : 'The draft could not be saved securely.')

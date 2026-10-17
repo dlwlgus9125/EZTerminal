@@ -2011,13 +2011,19 @@ export interface DesktopE2eSession {
  * WS client to connect first (the WS-triggered mint path only fires on first
  * `auth`). */
 export async function launchDesktop(
-  options: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> } = {},
+  options: {
+    readonly cwd?: string;
+    readonly env?: Readonly<Record<string, string>>;
+    /** Seeds the owned profile (e.g. its daemon store) before the app starts. */
+    readonly prepareProfile?: (userDataDir: string) => Promise<void>;
+  } = {},
 ): Promise<DesktopE2eSession> {
   const profile = createOwnedDesktopProfile();
   const { userDataDir } = profile;
   let app: ElectronApplication | undefined;
   let appCloser: AsyncCloser | undefined;
   try {
+    await options.prepareProfile?.(userDataDir);
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     Object.assign(env, options.env);
