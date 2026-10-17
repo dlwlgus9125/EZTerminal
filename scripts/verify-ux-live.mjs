@@ -89,6 +89,10 @@ const SCENARIOS = [
     // Settings → 에이전트 협업 profile, then 검토 맡기기 from a real chat: the child reviews and reports back once.
     name: 'delegate-review', run: (page, project, report) => runDelegateReview(page, project, report),
   },
+  {
+    // The person's 자동 승인 switch in 실행 준비 saves to the subproject (no run is started).
+    name: 'auto-approve-ui', run: (page, project, report) => runAutoApproveUi(page, project, report),
+  },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
 function prepareWorkspace() {
@@ -221,6 +225,48 @@ async function runScenario(page, project, scenario, report) {
     ...(scenario.name === 'codex-approval' || scenario.outside ? { outsideFileDeleted: !existsSync(outsideFile) } : {}),
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
+}
+
+/** A subproject made runnable, opened from the tree; 실행 준비 shows 자동 승인 and the switch saves it. */
+async function runAutoApproveUi(page, project, report) {
+  const name = 'auto-approve-ui';
+  const shot = async (label) => {
+    await wait(600);
+    await page.screenshot({ path: path.join(output, `${name}-${label}.png`) });
+    report.push({ shot: `${name}-${label}`, files: [`${name}-${label}.png`] });
+  };
+  const exec = (command) => page.evaluate((value) => window.ezterminal.executeWorkflowCommand(value), command);
+  const read = await page.evaluate((id) => window.ezterminal.getWorkflowSnapshot(id), project.projectId);
+  if (!read?.ok) throw new Error(`workflow read failed ${JSON.stringify(read)}`);
+  const providerId = (await snapshot(page)).providers.find((entry) => entry.enabled && entry.health === 'ready')?.id ?? 'codex';
+  const subprojectId = `ux-live-sub-${Date.now().toString(36)}`;
+  const title = `자동 승인 확인 ${stage}`;
+  const created = await exec({ projectId: project.projectId, hostId: read.snapshot.hostId, commandId: `create-${subprojectId}`, expectedRevision: read.snapshot.registryRevision,
+    type: 'subproject.create', payload: { id: subprojectId, title, goal: 'README 제목 확인', presetId: 'research' } });
+  if (!created?.ok) throw new Error(`subproject.create failed ${JSON.stringify(created)}`);
+  const subproject = created.snapshot.subprojects.find((entry) => entry.id === subprojectId);
+  const graph = structuredClone(subproject.graph);
+  for (const node of graph.nodes) if (node.operation === 'agent') Object.assign(node, { providerId, model: 'default', instructions: 'README.md의 제목을 읽어 알려 줘.', acceptance: ['제목을 그대로 인용한다'] });
+  const patched = await exec({ projectId: project.projectId, hostId: read.snapshot.hostId, commandId: `patch-${subprojectId}`, expectedRevision: subproject.revision, subprojectId,
+    type: 'workflow.patch', payload: { graph, summary: 'live check' } });
+  if (!patched?.ok) throw new Error(`workflow.patch failed ${JSON.stringify(patched)}`);
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  await wait(1500);
+  const expand = page.locator('button[aria-label="펼치기: UX live check"]').first();
+  if (await expand.count()) { await expand.click(); await wait(800); }
+  await page.locator(`[role="treeitem"][aria-label^="${title}"]`).first().click();
+  await wait(2500);
+  await page.getByRole('button', { name: '실행 준비', exact: true }).last().click();
+  const toggle = page.getByTestId('workflow-auto-approve');
+  await toggle.waitFor({ state: 'attached', timeout: 15_000 });
+  await shot('prepare-off');
+  // A controlled switch: it turns on once the subproject saved.
+  await toggle.click({ force: true });
+  const saved = await poll(() => page.evaluate((id) => window.ezterminal.getWorkflowSnapshot(id), project.projectId),
+    (value) => value?.ok && value.snapshot.subprojects.find((entry) => entry.id === subprojectId)?.autoApprove === true, 15_000, 'autoApprove saved');
+  await shot('prepare-on');
+  report.push({ scenario: name, subprojectId, autoApprove: saved.snapshot.subprojects.find((entry) => entry.id === subprojectId)?.autoApprove });
+  await page.keyboard.press('Escape');
 }
 
 /** A profile made in Settings, a parent chat that edits, 검토 맡기기, the report back, and the start panel picker. */
