@@ -81,6 +81,10 @@ const SCENARIOS = [
     name: 'codex-subagent-approval', provider: 'codex', preset: 'standard', inspectSubagents: true, outside: true,
     prompt: `서브 에이전트 하나를 만들어서 ${'../'}outside-ux-live-STAGE.txt 파일을 셸 명령으로 삭제하게 하고, 그 결과를 기다렸다가 한 문장으로 알려 줘. 너는 직접 명령을 실행하지 마.`,
   },
+  {
+    // No provider: a worktree made from the project menu, work written into it, then commit and merge from its row.
+    name: 'worktree-merge', run: (page, project, report) => runWorktreeMerge(page, project, report),
+  },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
 function prepareWorkspace() {
@@ -158,6 +162,7 @@ async function resolvePending(page, approval) {
 }
 
 async function runScenario(page, project, scenario, report) {
+  if (scenario.run) return scenario.run(page, project, report);
   const snap = await snapshot(page);
   const provider = snap.providers.find((entry) => entry.id === scenario.provider);
   if (!provider?.enabled || provider.health !== 'ready') {
@@ -212,6 +217,61 @@ async function runScenario(page, project, scenario, report) {
     ...(scenario.name === 'codex-approval' || scenario.outside ? { outsideFileDeleted: !existsSync(outsideFile) } : {}),
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
+}
+
+/** Project menu → 새 워크트리 → work lands in it → 검토 대기 → commit → merge → 완료, all from the sidebar. */
+async function runWorktreeMerge(page, project, report) {
+  const name = 'worktree-merge';
+  const branch = `ux-live/${stage}-${Date.now().toString(36)}`;
+  const shot = async (label) => {
+    await wait(600);
+    await page.screenshot({ path: path.join(output, `${name}-${label}.png`) });
+    report.push({ shot: `${name}-${label}`, files: [`${name}-${label}.png`] });
+  };
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  await wait(1200);
+  await page.getByRole('button', { name: 'UX live check 관리', exact: true }).first().click();
+  await page.getByRole('menuitem', { name: '새 워크트리…' }).click();
+  await page.getByTestId('new-worktree-branch').fill(branch);
+  await shot('create');
+  await page.getByTestId('new-worktree-create').click();
+  const created = await poll(() => snapshot(page), (snap) => snap.workspaces.some((entry) => entry.projectId === project.projectId && entry.kind === 'worktree' && entry.name === branch), 60_000, 'worktree workspace');
+  const worktree = created.workspaces.find((entry) => entry.projectId === project.projectId && entry.kind === 'worktree' && entry.name === branch);
+  await page.getByTestId('new-worktree-dialog').waitFor({ state: 'hidden', timeout: 15_000 });
+  await wait(1500);
+  const select = page.locator('[aria-label="대화 작업 위치"]:visible').first();
+  const startPanel = { draftWorkspace: await select.inputValue().catch(() => undefined),
+    offersNewWorktree: await select.locator('option', { hasText: '새 워크트리…' }).count() };
+  await shot('draft');
+  // What an agent would have done in the worktree.
+  writeFileSync(path.join(worktree.rootPath, 'notes.md'), `Worked on ${branch}.\n`);
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await wait(2500);
+  const expand = page.locator('button[aria-label="펼치기: UX live check"]').first();
+  if (await expand.count()) { await expand.click(); await wait(800); }
+  const row = page.locator('[role="treeitem"]', { hasText: branch }).first();
+  const reviewLabel = await row.getAttribute('aria-label');
+  await shot('review');
+  await row.hover();
+  await page.locator('[data-testid="workspace-merge"]').first().click();
+  await page.getByTestId('worktree-merge-dialog').waitFor();
+  await wait(1200);
+  await shot('dialog-dirty');
+  await page.getByTestId('worktree-commit-message').fill('Add notes from the worktree');
+  await page.getByTestId('worktree-commit').click();
+  await poll(() => page.getByTestId('worktree-merge-ahead').textContent(), (text) => text === '1', 15_000, 'commit ahead');
+  await shot('dialog-ready');
+  await page.getByTestId('worktree-merge-confirm').click();
+  await page.locator('.worktree-merge__done').waitFor({ timeout: 30_000 });
+  await shot('merged');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await wait(2500);
+  const doneLabel = await page.locator('[role="treeitem"]', { hasText: branch }).first().getAttribute('aria-label');
+  await shot('done');
+  const log = execFileSync('git', ['log', '--oneline', '-3'], { cwd: workspace, encoding: 'utf8' }).trim().split('\n');
+  report.push({ scenario: name, branch, startPanel, reviewLabel, doneLabel, mainLog: log, notesMerged: existsSync(path.join(workspace, 'notes.md')) });
 }
 
 /** The subagents of a finished scenario: what the daemon stored, and how they look when opened. */
