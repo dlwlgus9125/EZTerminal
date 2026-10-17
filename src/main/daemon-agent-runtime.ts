@@ -152,10 +152,13 @@ function managedChildOriginId(childSessionId: string): string {
   return stableId('managed-child-origin', childSessionId);
 }
 
-function boundedChildSummary(value: string | undefined): string | undefined {
-  const summary = value?.trim().slice(0, MAX_CHILD_SUMMARY_LENGTH);
+function boundedChildSummary(value: string | undefined, limit = MAX_CHILD_SUMMARY_LENGTH): string | undefined {
+  const summary = value?.trim().slice(0, limit);
   return summary ? summary : undefined;
 }
+
+/** How much of a delegated child's answer its parent hears as a message (the full answer stays in the child). */
+const MAX_REPORT_LENGTH = 8_000;
 
 const ACTIVE_TURN_STATES = new Set<DaemonTurn['state']>([
   'submitting',
@@ -1656,8 +1659,27 @@ export class DaemonAgentRuntime {
       || agent.state === 'delivery-uncertain'
       || !this.options.providers.enabledAdapter(snapshot, agent.providerId).ok
     ) return undefined;
-    const prompt = `${failed ? 'The subagent stopped' : 'The subagent finished'}: "${child.title}"\n\n${summary}`;
+    // The parent did not start the child itself (the person handed the work off), so say so.
+    const prompt = failed
+      ? `This conversation handed work to a subagent ("${child.title}"). It stopped with an error; its last message follows. Continue from it.\n\n${summary}`
+      : `This conversation handed work to a subagent ("${child.title}"). It finished; its answer follows. Continue from it.\n\n${summary}`;
     return { commandId, parentSessionId: parent.id, childSessionId: child.id, prompt };
+  }
+
+  /** A session's last complete answer in one turn. */
+  private finalAssistantText(sessionId: string, turnId: string): string | undefined {
+    let last: string | undefined;
+    let afterSequence = 0;
+    for (;;) {
+      const page = this.options.readTranscript(sessionId, afterSequence, 2_000);
+      for (const item of page) {
+        if (item.turnId === turnId && item.kind === 'assistant-message' && !item.isDelta && item.text.trim()) last = item.text;
+      }
+      if (page.length < 2_000) return last;
+      const next = page.at(-1)?.sequence;
+      if (next === undefined || next <= afterSequence) return last;
+      afterSequence = next;
+    }
   }
 
   private reportBackRequested(childSessionId: string, parentSessionId: string): boolean {
@@ -2187,14 +2209,19 @@ export class DaemonAgentRuntime {
         const parent = parentRelation
           ? snapshot.sessions.find((candidate) => candidate.id === parentRelation.parentSessionId)
           : undefined;
-        const reportPlan = parent && resultSummary && !interrupted
-          ? this.reportBackPlan(snapshot, parent, session, failed, resultSummary)
+        // What the parent hears is the child's last answer; a provider's summary can be a status line.
+        const answer = parent ? this.finalAssistantText(event.sessionId, turn.id) ?? event.summary : undefined;
+        const parentSummary = boundedChildSummary(answer);
+        const reportText = boundedChildSummary(answer, MAX_REPORT_LENGTH)
+          ?.concat((answer?.trim().length ?? 0) > MAX_REPORT_LENGTH ? '\n\n(…cut here; the full answer is in the subagent conversation.)' : '');
+        const reportPlan = parent && reportText && !interrupted
+          ? this.reportBackPlan(snapshot, parent, session, failed, reportText)
           : undefined;
-        const summaryRow = resultSummary && parent && parent.state !== 'archived' ? {
-          id: stableId('managed-child-summary', parent.id, event.sessionId, turn.id, resultSummary),
+        const summaryRow = parentSummary && parent && parent.state !== 'archived' ? {
+          id: stableId('managed-child-summary', parent.id, event.sessionId, turn.id, parentSummary),
           sessionId: parent.id,
           kind: 'child-summary' as const,
-          text: resultSummary,
+          text: parentSummary,
           isDelta: false,
           isSensitive: false,
           relatedSessionId: event.sessionId,

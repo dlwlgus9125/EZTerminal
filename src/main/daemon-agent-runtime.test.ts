@@ -2389,13 +2389,19 @@ describe('DaemonAgentRuntime', () => {
       });
 
       const reviewTurn = h.router.getSnapshot().turns.find((turn) => turn.sessionId === 'reviewer')!;
-      h.codex.emit({ kind: 'turn-finished', sessionId: 'reviewer', turnId: reviewTurn.id, outcome: 'completed', summary: 'One edge case is unhandled.' });
+      // The parent hears the child's answer, not the provider's status line.
+      h.codex.emit({ kind: 'transcript', item: {
+        id: 'review-answer', sessionId: 'reviewer', turnId: reviewTurn.id, sequence: 1, kind: 'assistant-message',
+        text: 'One edge case is unhandled.', isDelta: false, isSensitive: true, createdAt: '2026-10-17T00:00:00.000Z',
+      } });
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'reviewer', turnId: reviewTurn.id, outcome: 'completed', summary: 'Codex completed the turn.' });
       await h.runtime.whenIdle();
       const leadRows = h.router.readTranscript('lead');
       expect(leadRows.filter((item) => item.kind === 'child-summary')).toEqual([]);
       const report = leadRows.find((item) => item.kind === 'user-message' && item.payload?.type === 'subagent');
+      expect(report?.text).not.toContain('Codex completed the turn.');
       expect(report).toMatchObject({
-        text: expect.stringContaining('One edge case is unhandled.'),
+        text: expect.stringMatching(/handed work to a subagent \("Review the change"\)[^]*One edge case is unhandled\./u),
         payload: { type: 'subagent', role: 'result', childSessionId: 'reviewer', title: 'Review the change', state: 'done' },
       });
       expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
