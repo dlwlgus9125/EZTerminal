@@ -93,6 +93,36 @@ const SCENARIOS = [
     // The person's 자동 승인 switch in 실행 준비 saves to the subproject (no run is started).
     name: 'auto-approve-ui', run: (page, project, report) => runAutoApproveUi(page, project, report),
   },
+  {
+    // The parent starts a child, waits on it and quotes its answer: one parent turn, no report turn.
+    name: 'agent-wait', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-wait',
+      'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: plan, 지시: "README.md의 첫 줄 제목을 그대로 알려 줘"). 그다음 wait_agent로 끝날 때까지 기다리고, 서브에이전트가 알려 준 제목을 한 문장으로 인용해 줘. 너는 파일을 직접 읽지 마.',
+      (snap, id) => parentSettled(snap, id)),
+  },
+  {
+    // The child needs an approval first (needsAttention), then runs 90s: the second wait outlasts Codex's 60s default.
+    name: 'agent-wait-long', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-wait-long',
+      'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: standard, 지시: "셸 명령 node -e \\"setTimeout(() => console.log(42), 90000)\\" 를 실행하고 출력된 숫자만 알려 줘"). wait_agent로 기다리고, needsAttention이 true면 사람이 승인할 때까지 기다린 뒤 wait_agent를 timeoutSeconds 200으로 다시 불러. 끝나면 서브에이전트가 알려 준 숫자를 알려 줘.',
+      (snap, id) => parentSettled(snap, id)),
+  },
+  {
+    // reportBack: the parent ends its turn and the result arrives once as its next message.
+    name: 'agent-report-back', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-report-back',
+      'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: plan, reportBack: true, 지시: "README.md의 첫 줄 제목을 알려 줘"). 기다리지 말고 "맡겼습니다"라고만 답하고 턴을 끝내. 나중에 결과가 오면 그 제목을 한 문장으로 알려 줘.',
+      (snap, id) => parentSettled(snap, id, 2)),
+  },
+  {
+    // The parent creates a worktree and starts a child there that writes a file only in that worktree.
+    name: 'agent-worktree', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-worktree',
+      'MCP 도구 create_worktree로 브랜치 "ux-live/STAGE-agent" 워크트리를 만들어 줘. 그 결과의 workspaceId로 create_agent를 불러(providerId: claude, permissionPreset: standard) 서브에이전트가 자기 작업 폴더에 notes.md 파일을 만들고 "from child" 한 줄만 쓰게 해. wait_agent로 기다린 뒤 어느 폴더에 썼는지 알려 줘.',
+      (snap, id) => parentSettled(snap, id),
+      async (snap) => {
+        const worktree = snap.workspaces.find((entry) => entry.kind === 'worktree' && !entry.archivedAt && entry.name === `ux-live/${stage}-agent`);
+        return { worktree: worktree ? { id: worktree.id, rootPath: worktree.rootPath } : null,
+          notesInWorktree: Boolean(worktree && existsSync(path.join(worktree.rootPath, 'notes.md'))),
+          notesInMain: existsSync(path.join(workspace, 'notes.md')) };
+      }),
+  },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
 function prepareWorkspace() {
@@ -226,6 +256,71 @@ async function runScenario(page, project, scenario, report) {
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
 }
+
+/**
+ * A parent chat that uses the orchestration MCP itself: it starts children, waits on them or lets
+ * them report back, and may create a worktree. Approvals anywhere in its tree are allowed.
+ */
+async function runAgentMcp(page, project, report, name, prompt, settledWhen, collect) {
+  const ready = (await snapshot(page)).providers.filter((entry) => entry.enabled && entry.health === 'ready').map((entry) => entry.id);
+  if (!ready.includes('claude')) { report.push({ scenario: name, skipped: 'claude is not enabled and ready' }); return; }
+  // Children need the host toggle on when the parent is created; it is put back afterwards.
+  const before = (await snapshot(page)).runtime.orchestrationToolsEnabled;
+  if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: true });
+  try {
+    const parentId = `ux-live-${name}-${Date.now()}`;
+    const created = await command(page, 'agent.create', {
+      sessionId: parentId, workspaceId: project.workspaceId, title: `UX live · ${name}`, providerId: 'claude', permissionPreset: 'standard', initialPrompt: prompt.replace('STAGE', stage),
+    });
+    if (!created?.ok) throw new Error(`${name}: agent.create failed ${JSON.stringify(created)}`);
+    const panelId = `agent-session-${SESSION_PREFIX}${parentId}`;
+    await page.evaluate(({ id, historyId, projectId }) => window.__ezAddDockPanel({ id, component: 'agent-session', title: name, params: { historyId, projectId } }, { kind: 'main-tab' }),
+      { id: panelId, historyId: `${SESSION_PREFIX}${parentId}`, projectId: project.projectId });
+    const tree = (snap) => {
+      const ids = new Set([parentId]);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const relation of snap.agentRelations) if (ids.has(relation.parentSessionId) && !ids.has(relation.childSessionId)) { ids.add(relation.childSessionId); grew = true; }
+      }
+      return ids;
+    };
+    const allowed = [];
+    const final = await poll(async () => {
+      const snap = await snapshot(page);
+      const ids = tree(snap);
+      for (const approval of snap.approvals.filter((entry) => entry.state === 'pending' && ids.has(entry.sessionId))) {
+        allowed.push({ session: approval.sessionId === parentId ? 'parent' : 'child', title: approval.title.slice(0, 80) });
+        await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' });
+      }
+      return snap;
+    }, (snap) => settledWhen(snap, parentId), 600_000, `${name} settled`);
+    await wait(2000);
+    await shoot(page, `${name}-parent`, report);
+    const children = final.agentRelations.filter((relation) => relation.parentSessionId === parentId);
+    const transcriptOf = async (id) => {
+      const page_ = await page.evaluate((sessionId) => window.ezterminal.getDaemonTranscript(sessionId, 0, 500), id);
+      return Array.isArray(page_?.items) ? page_.items : Array.isArray(page_) ? page_ : [];
+    };
+    const parentItems = await transcriptOf(parentId);
+    const tools = parentItems.filter((item) => item.kind === 'tool-call').map((item) => item.text.slice(0, 80));
+    const answer = parentItems.filter((item) => item.kind === 'assistant-message' && !item.isDelta).map((item) => item.text).at(-1) ?? '';
+    const facts = { scenario: name, parentId, allowed, tools, answer: answer.slice(0, 400),
+      parentTurns: final.turns.filter((turn) => turn.sessionId === parentId).map((turn) => turn.state),
+      children: children.map((relation) => {
+        const session = final.sessions.find((entry) => entry.id === relation.childSessionId);
+        return { owner: relation.owner, title: session?.title, workspaceId: session?.workspaceId, turns: final.turns.filter((turn) => turn.sessionId === relation.childSessionId).map((turn) => turn.state) };
+      }),
+      reports: parentItems.filter((item) => item.kind === 'user-message' && item.payload?.type === 'subagent').length };
+    report.push({ ...facts, ...(collect ? await collect(final, parentId, facts) : {}) });
+  } finally {
+    if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: false }).catch(() => undefined);
+  }
+}
+
+const parentSettled = (snap, parentId, turns = 1) => {
+  const own = snap.turns.filter((turn) => turn.sessionId === parentId);
+  return own.length >= turns && own.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state));
+};
 
 /** A subproject made runnable, opened from the tree; 실행 준비 shows 자동 승인 and the switch saves it. */
 async function runAutoApproveUi(page, project, report) {
