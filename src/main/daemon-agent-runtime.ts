@@ -1,5 +1,6 @@
 import type { ApprovalResponse } from '../shared/approval-request';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
+import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
 import { createHash } from 'node:crypto';
 import { validateChatMessageContext, type ChatMessageContext, type ChatReplyReference } from '../shared/chat-message';
 
@@ -144,11 +145,6 @@ interface ReportBackPlan {
   readonly parentSessionId: string;
   readonly childSessionId: string;
   readonly prompt: string;
-}
-
-/** A managed child's first transcript row: where it came from and whether to report back. */
-function managedChildOriginId(childSessionId: string): string {
-  return stableId('managed-child-origin', childSessionId);
 }
 
 function boundedChildSummary(value: string | undefined, limit = MAX_CHILD_SUMMARY_LENGTH): string | undefined {
@@ -933,10 +929,10 @@ export class DaemonAgentRuntime {
         relation.childSessionId === reportOf && relation.parentSessionId === session.id
         && relation.owner === 'managed' && relation.detachedAt === undefined
       ));
-      if (command.principal.id !== REPORT_BACK_PRINCIPAL || !child || !managed || !this.reportBackRequested(child.id, session.id)) {
+      if (command.principal.id !== REPORT_BACK_PRINCIPAL || !child || !managed || !reportBackRequested(this.options.readTranscript, child.id, session.id)) {
         return commandError('invalid-command', 'Only a delegated child asked to report back can send its result to this conversation.');
       }
-      const last = snapshot.turns.filter((turn) => turn.sessionId === child.id && turn.finishedAt).sort((a, b) => a.finishedAt!.localeCompare(b.finishedAt!)).at(-1);
+      const last = latestFinishedTurn(snapshot.turns, child.id);
       reportPayload = { v: 1, type: 'subagent', role: 'result', childSessionId: child.id, title: child.title, state: last?.state === 'failed' ? 'error' : 'done' };
     }
     const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
@@ -1650,7 +1646,7 @@ export class DaemonAgentRuntime {
     // Once: only the child's first finished turn reports (a finished turn never finishes again).
     if (snapshot.turns.some((turn) => turn.sessionId === child.id && turn.id !== finishedTurnId
       && (turn.state === 'completed' || turn.state === 'failed'))) return undefined;
-    if (!this.reportBackRequested(child.id, parent.id)) return undefined;
+    if (!reportBackRequested(this.options.readTranscript, child.id, parent.id)) return undefined;
     const agent = snapshot.agents.find((entry) => entry.sessionId === parent.id);
     if (
       !agent
@@ -1665,27 +1661,6 @@ export class DaemonAgentRuntime {
       ? `This conversation handed work to a subagent ("${child.title}"). It stopped with an error; its last message follows. Continue from it.\n\n${summary}`
       : `This conversation handed work to a subagent ("${child.title}"). It finished; its answer follows. Continue from it.\n\n${summary}`;
     return { parentSessionId: parent.id, childSessionId: child.id, prompt };
-  }
-
-  /** A session's last complete answer in one turn. */
-  private finalAssistantText(sessionId: string, turnId: string): string | undefined {
-    let last: string | undefined;
-    let afterSequence = 0;
-    for (;;) {
-      const page = this.options.readTranscript(sessionId, afterSequence, 2_000);
-      for (const item of page) {
-        if (item.turnId === turnId && item.kind === 'assistant-message' && !item.isDelta && item.text.trim()) last = item.text;
-      }
-      if (page.length < 2_000) return last;
-      const next = page.at(-1)?.sequence;
-      if (next === undefined || next <= afterSequence) return last;
-      afterSequence = next;
-    }
-  }
-
-  private reportBackRequested(childSessionId: string, parentSessionId: string): boolean {
-    const origin = this.options.readTranscript(childSessionId, 0, 4).find((item) => item.id === managedChildOriginId(childSessionId));
-    return origin?.payload?.type === 'subagent' && origin.payload.reportBack === true && origin.payload.parentSessionId === parentSessionId;
   }
 
   /** Sends the planned report as the parent's message; the stable command id makes it once. */
@@ -2213,7 +2188,7 @@ export class DaemonAgentRuntime {
           ? snapshot.sessions.find((candidate) => candidate.id === parentRelation.parentSessionId)
           : undefined;
         // What the parent hears is the child's last answer; a provider's summary can be a status line.
-        const answer = parent ? this.finalAssistantText(event.sessionId, turn.id) ?? event.summary : undefined;
+        const answer = parent ? finalAssistantText(this.options.readTranscript, event.sessionId, turn.id) ?? event.summary : undefined;
         const parentSummary = boundedChildSummary(answer);
         const reportText = boundedChildSummary(answer, MAX_REPORT_LENGTH)
           ?.concat((answer?.trim().length ?? 0) > MAX_REPORT_LENGTH ? '\n\n(…cut here; the full answer is in the subagent conversation.)' : '');
