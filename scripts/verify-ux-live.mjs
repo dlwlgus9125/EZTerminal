@@ -106,6 +106,12 @@ const SCENARIOS = [
       (snap, id) => parentSettled(snap, id)),
   },
   {
+    // The same 90-second wait from a Codex parent: Codex gives MCP tools 60 seconds unless told otherwise.
+    name: 'agent-wait-long-codex', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-wait-long-codex',
+      'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: standard, 지시: "셸 명령 node -e \\"setTimeout(() => console.log(42), 90000)\\" 를 실행하고 출력된 숫자만 알려 줘"). wait_agent로 기다리고, needsAttention이 true면 사람이 승인할 때까지 기다린 뒤 wait_agent를 timeoutSeconds 200으로 다시 불러. 끝나면 서브에이전트가 알려 준 숫자를 알려 줘.',
+      (snap, id) => parentSettled(snap, id), undefined, 'codex'),
+  },
+  {
     // reportBack: the parent ends its turn and the result arrives once as its next message.
     name: 'agent-report-back', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-report-back',
       'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: plan, reportBack: true, 지시: "README.md의 첫 줄 제목을 알려 줘"). 기다리지 말고 "맡겼습니다"라고만 답하고 턴을 끝내. 나중에 결과가 오면 그 제목을 한 문장으로 알려 줘.',
@@ -122,6 +128,10 @@ const SCENARIOS = [
           notesInWorktree: Boolean(worktree && existsSync(path.join(worktree.rootPath, 'notes.md'))),
           notesInMain: existsSync(path.join(workspace, 'notes.md')) };
       }),
+  },
+  {
+    // Run after agent-worktree: merge its worktree, see cleanup refused while a chat there waits, then clean it up.
+    name: 'worktree-cleanup', run: (page, project, report) => runWorktreeCleanup(page, project, report),
   },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
@@ -261,16 +271,18 @@ async function runScenario(page, project, scenario, report) {
  * A parent chat that uses the orchestration MCP itself: it starts children, waits on them or lets
  * them report back, and may create a worktree. Approvals anywhere in its tree are allowed.
  */
-async function runAgentMcp(page, project, report, name, prompt, settledWhen, collect) {
+async function runAgentMcp(page, project, report, name, prompt, settledWhen, collect, parentProvider = 'claude') {
   const ready = (await snapshot(page)).providers.filter((entry) => entry.enabled && entry.health === 'ready').map((entry) => entry.id);
-  if (!ready.includes('claude')) { report.push({ scenario: name, skipped: 'claude is not enabled and ready' }); return; }
+  for (const provider of new Set(['claude', parentProvider])) {
+    if (!ready.includes(provider)) { report.push({ scenario: name, skipped: `${provider} is not enabled and ready` }); return; }
+  }
   // Children need the host toggle on when the parent is created; it is put back afterwards.
   const before = (await snapshot(page)).runtime.orchestrationToolsEnabled;
   if (!before) await command(page, 'runtime.set-settings', { orchestrationToolsEnabled: true });
   try {
     const parentId = `ux-live-${name}-${Date.now()}`;
     const created = await command(page, 'agent.create', {
-      sessionId: parentId, workspaceId: project.workspaceId, title: `UX live · ${name}`, providerId: 'claude', permissionPreset: 'standard', initialPrompt: prompt.replace('STAGE', stage),
+      sessionId: parentId, workspaceId: project.workspaceId, title: `UX live · ${name}`, providerId: parentProvider, permissionPreset: 'standard', initialPrompt: prompt.replace('STAGE', stage),
     });
     if (!created?.ok) throw new Error(`${name}: agent.create failed ${JSON.stringify(created)}`);
     const panelId = `agent-session-${SESSION_PREFIX}${parentId}`;
@@ -531,6 +543,90 @@ async function runWorktreeMerge(page, project, report) {
   await shot('done');
   const log = execFileSync('git', ['log', '--oneline', '-3'], { cwd: workspace, encoding: 'utf8' }).trim().split('\n');
   report.push({ scenario: name, branch, startPanel, reviewLabel, doneLabel, mainLog: log, notesMerged: existsSync(path.join(workspace, 'notes.md')) });
+}
+
+/**
+ * The worktree agent-worktree left (an idle Claude child whose process holds the folder, and its
+ * uncommitted notes.md): commit and merge it from the sidebar, see cleanup refused while a chat
+ * there waits on an approval, then clean it up and check what went.
+ */
+async function runWorktreeCleanup(page, project, report) {
+  const name = 'worktree-cleanup';
+  const branch = `ux-live/${stage}-agent`;
+  const shot = async (label) => {
+    await wait(600);
+    await page.screenshot({ path: path.join(output, `${name}-${label}.png`) });
+    report.push({ shot: `${name}-${label}`, files: [`${name}-${label}.png`] });
+  };
+  const before = await snapshot(page);
+  const worktree = before.workspaces.find((entry) => entry.kind === 'worktree' && !entry.archivedAt && entry.name === branch);
+  if (!worktree) { report.push({ scenario: name, skipped: `run agent-worktree first: no ${branch} worktree` }); return; }
+  const chatsIn = (snap) => snap.sessions.filter((session) => session.workspaceId === worktree.id && session.kind === 'agent');
+  // A chat there that waits on an approval keeps the worktree busy.
+  const blockerId = `ux-live-cleanup-blocker-${Date.now()}`;
+  const created = await command(page, 'agent.create', {
+    sessionId: blockerId, workspaceId: worktree.id, title: 'UX live · cleanup blocker', providerId: 'claude', permissionPreset: 'standard',
+    initialPrompt: '셸 명령 node -e "console.log(1)" 을 실행해 줘.',
+  });
+  if (!created?.ok) throw new Error(`${name}: agent.create failed ${JSON.stringify(created)}`);
+  const pending = await poll(() => snapshot(page), (snap) => snap.approvals.some((entry) => entry.sessionId === blockerId && entry.state === 'pending'), 180_000, 'blocker approval');
+  const approval = pending.approvals.find((entry) => entry.sessionId === blockerId && entry.state === 'pending');
+
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await wait(2500);
+  const expand = page.locator('button[aria-label="펼치기: UX live check"]').first();
+  if (await expand.count()) { await expand.click(); await wait(800); }
+  const row = page.locator('[role="treeitem"]', { hasText: branch }).first();
+  await row.hover();
+  const merge = row.locator('[data-testid="workspace-merge"]');
+  await ((await merge.count()) ? merge.first() : page.locator('[data-testid="workspace-merge"]').first()).click();
+  await page.getByTestId('worktree-merge-dialog').waitFor();
+  await wait(1200);
+  if (await page.getByTestId('worktree-commit-message').count()) {
+    await page.getByTestId('worktree-commit-message').fill('Add notes from the child agent');
+    await page.getByTestId('worktree-commit').click();
+    await poll(() => page.getByTestId('worktree-merge-ahead').textContent(), (text) => text === '1', 15_000, 'commit ahead');
+  }
+  // A worktree merged in an earlier run goes straight to cleanup.
+  if (await page.getByTestId('worktree-merge-confirm').count()) await page.getByTestId('worktree-merge-confirm').click();
+  await page.getByTestId('worktree-cleanup').waitFor({ timeout: 30_000 });
+  await shot('merged');
+  await page.getByTestId('worktree-cleanup').click();
+  await wait(800);
+  const busy = {
+    confirmDisabled: await page.getByTestId('worktree-cleanup-confirm').isDisabled(),
+    consequences: (await page.getByTestId('worktree-cleanup-consequences').textContent())?.trim(),
+    focused: await page.evaluate(() => document.activeElement?.textContent),
+  };
+  await shot('busy');
+  await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'deny' });
+  await poll(() => snapshot(page), (snap) => {
+    const agent = snap.agents.find((entry) => entry.sessionId === blockerId);
+    return agent && !agent.currentTurnId && agent.queuedTurnCount === 0
+      && !snap.turns.some((turn) => turn.sessionId === blockerId && !['completed', 'failed', 'interrupted'].includes(turn.state));
+  }, 120_000, 'blocker settled');
+  await poll(() => page.getByTestId('worktree-cleanup-confirm').isDisabled(), (disabled) => disabled === false, 15_000, 'cleanup enabled');
+  const ready = { consequences: (await page.getByTestId('worktree-cleanup-consequences').textContent())?.trim() };
+  await shot('confirm');
+  const chatIds = chatsIn(await snapshot(page)).map((session) => session.id);
+  const started = Date.now();
+  await page.getByTestId('worktree-cleanup-confirm').click();
+  await page.getByTestId('worktree-merge-dialog').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => undefined);
+  const tookMs = Date.now() - started;
+  const leftOpen = await page.getByTestId('worktree-merge-dialog').count();
+  const dialogText = leftOpen ? (await page.getByTestId('worktree-merge-dialog').textContent())?.trim() : undefined;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await wait(2500);
+  await shot('after');
+  const after = await snapshot(page);
+  const branches = execFileSync('git', ['branch', '--list', '--format=%(refname:short)'], { cwd: workspace, encoding: 'utf8' }).trim().split(/\r?\n/u);
+  report.push({ scenario: name, branch, busy, ready, tookMs, dialogText,
+    folderGone: !existsSync(worktree.rootPath), branchGone: !branches.includes(branch),
+    workspaceArchived: Boolean(after.workspaces.find((entry) => entry.id === worktree.id)?.archivedAt),
+    chats: chatIds.map((id) => ({ id, state: after.agents.find((entry) => entry.sessionId === id)?.state })),
+    rowGone: (await page.locator('[role="treeitem"]', { hasText: branch }).count()) === 0,
+    notesMerged: existsSync(path.join(workspace, 'notes.md')) });
 }
 
 /** The subagents of a finished scenario: what the daemon stored, and how they look when opened. */
