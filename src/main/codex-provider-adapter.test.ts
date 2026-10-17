@@ -578,6 +578,7 @@ describe('CodexProviderAdapter', () => {
             ezterminal_orchestration: {
               url: 'http://127.0.0.1:43111/mcp',
               http_headers: { Authorization: 'Bearer session-secret' },
+              tool_timeout_sec: 300,
             },
           },
         },

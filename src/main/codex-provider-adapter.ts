@@ -455,6 +455,8 @@ function orchestrationConfig(context: ProviderSessionContext): JsonObject | unde
       ezterminal_orchestration: {
         url: endpoint.toString(),
         http_headers: { Authorization: `Bearer ${context.orchestration.bearerToken}` },
+        // Codex stops a tool call after 60s by default; wait_agent may hold up to 240s.
+        tool_timeout_sec: 300,
       },
     },
   };

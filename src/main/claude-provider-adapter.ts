@@ -979,6 +979,8 @@ function orchestrationMcpServers(
       type: 'http',
       url: endpoint.toString(),
       headers: { Authorization: `Bearer ${bearerToken}` },
+      // wait_agent may hold up to 240s; the HTTP client's own idle limit would cut it near 300s.
+      timeout: 300_000,
     },
   };
 }

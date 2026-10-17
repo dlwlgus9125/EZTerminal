@@ -3,9 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   DaemonCommand,
   DaemonCommandReceipt,
+  DaemonEvent,
   DaemonSnapshot,
+  DaemonTranscriptItem,
 } from '../shared/daemon-protocol';
 import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
+import { managedChildOriginId } from './managed-child-transcript';
 import { WorkflowAuthority } from './workflow-authority';
 import { LocalMutationIngress } from './local-mutation-ingress';
 import { createWorkflowGraph } from '../shared/workflow';
@@ -809,5 +812,154 @@ describe('AgentOrchestrationMcpServer', () => {
     const [first, second] = authority.execute.mock.calls.map(([command]) => command);
     expect(first.commandId).not.toBe(second.commandId);
     expect(second.expectedRevision).toBe(8);
+  });
+});
+
+describe('reading and waiting on descendants', () => {
+  type Listener = (event: DaemonEvent) => void;
+  const answerRow = (sessionId: string, turnId: string, text: string, sequence = 1): DaemonTranscriptItem => ({
+    id: `answer-${sequence}`, sessionId, turnId, sequence, kind: 'assistant-message', text, isDelta: false, isSensitive: true, createdAt: NOW,
+  }) as DaemonTranscriptItem;
+  const finishedTurn = (sessionId = 'child-1') => ({ id: 'turn-1', sessionId, commandId: 'c1', state: 'completed' as const, finishedAt: NOW, revision: 1, createdAt: NOW, updatedAt: NOW });
+
+  function harness(initial: DaemonSnapshot, transcript: Record<string, DaemonTranscriptItem[]> = {}) {
+    let current = initial;
+    const listeners = new Set<Listener>();
+    const timers: Array<{ readonly callback: () => void; readonly delay: number; cleared: boolean }> = [];
+    const authority = {
+      getSnapshot: () => current,
+      execute: vi.fn(async (command: DaemonCommand) => applied(command)),
+      readTranscript: (sessionId: string, after = 0, limit = 500) => (transcript[sessionId] ?? []).filter((item) => item.sequence > after).slice(0, limit),
+      onEvent: (listener: Listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    };
+    const server = new AgentOrchestrationMcpServer({
+      authority, createId: () => 'new',
+      setTimer: ((callback: () => void, delay: number) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }) as never,
+      clearTimer: ((timer: { cleared: boolean }) => { timer.cleared = true; }) as never,
+    });
+    servers.push(server);
+    const update = (next: DaemonSnapshot, entityId = 'child-1'): void => {
+      current = next;
+      for (const listener of [...listeners]) listener({ kind: 'entity.upserted', payload: { entityType: 'agent', entityId } } as DaemonEvent);
+    };
+    let descriptor: ReturnType<AgentOrchestrationMcpServer['descriptorForSession']> | undefined;
+    const call = async (name: string, args: unknown) => {
+      await server.start();
+      // One capability per caller: issuing another would retire the first.
+      descriptor ??= server.descriptorForSession('lead-1');
+      const response = await post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', { name, arguments: args }));
+      const result = response.value?.result as { content: Array<{ text: string }>; isError?: boolean };
+      return { isError: result.isError === true, body: JSON.parse(result.content[0]!.text) as Record<string, unknown> };
+    };
+    return { server, authority, listeners, timers, update, call, transcript };
+  }
+  const working = (base: DaemonSnapshot, state: 'working' | 'blocked' = 'working'): DaemonSnapshot => ({
+    ...base,
+    agents: base.agents.map((agent) => agent.sessionId === 'child-1' ? { ...agent, state, currentTurnId: 'turn-1' } : agent),
+    turns: [{ id: 'turn-1', sessionId: 'child-1', commandId: 'c1', state, revision: 1, createdAt: NOW, updatedAt: NOW }],
+  });
+  const finished = (base: DaemonSnapshot): DaemonSnapshot => ({ ...base, turns: [finishedTurn()] });
+
+  it('reads a descendant’s latest answer, bounded, and nobody else’s', async () => {
+    const h = harness(finished(withManagedChild(snapshot(), 'standard')), { 'child-1': [answerRow('child-1', 'turn-1', 'x'.repeat(9_000))] });
+    const read = await h.call('read_agent', { sessionId: 'child-1' });
+    expect(read.body).toMatchObject({ ok: true, progress: 'finished', title: 'Child', truncated: true, latestTurn: { state: 'completed' } });
+    expect((read.body.answer as string).length).toBe(8_000);
+    expect((await h.call('read_agent', { sessionId: 'lead-2' })).isError).toBe(true);
+  });
+
+  it('returns at once for a finished child and when the child finishes later', async () => {
+    const done = harness(finished(withManagedChild(snapshot(), 'standard')), { 'child-1': [answerRow('child-1', 'turn-1', 'The title is EZTerminal.')] });
+    expect((await done.call('wait_agent', { sessionId: 'child-1' })).body).toMatchObject({ finished: true, answer: 'The title is EZTerminal.' });
+
+    const later = harness(working(withManagedChild(snapshot(), 'standard')));
+    const pending = later.call('wait_agent', { sessionId: 'child-1', timeoutSeconds: 30 });
+    await vi.waitFor(() => expect(later.listeners.size).toBe(1));
+    expect(later.timers[0]?.delay).toBe(30_000);
+    later.transcript['child-1'] = [answerRow('child-1', 'turn-1', 'Done now.')];
+    later.update(finished(withManagedChild(snapshot(), 'standard')));
+    expect((await pending).body).toMatchObject({ finished: true, answer: 'Done now.' });
+    expect(later.listeners.size).toBe(0);
+    expect(later.timers[0]?.cleared).toBe(true);
+  });
+
+  it('stops waiting when the child needs a person’s approval, or at the timeout', async () => {
+    const blocked = harness(working(withManagedChild(snapshot(), 'standard')));
+    const pending = blocked.call('wait_agent', { sessionId: 'child-1' });
+    await vi.waitFor(() => expect(blocked.listeners.size).toBe(1));
+    blocked.update(working(withManagedChild(snapshot(), 'standard'), 'blocked'));
+    expect((await pending).body).toMatchObject({ finished: false, needsAttention: true });
+
+    const slow = harness(working(withManagedChild(snapshot(), 'standard')));
+    const waiting = slow.call('wait_agent', { sessionId: 'child-1' });
+    await vi.waitFor(() => expect(slow.timers).toHaveLength(1));
+    expect(slow.timers[0]!.delay).toBe(120_000);
+    slow.timers[0]!.callback();
+    expect((await waiting).body).toMatchObject({ finished: false, state: 'working' });
+    expect(slow.listeners.size).toBe(0);
+    expect((await slow.call('wait_agent', { sessionId: 'child-1', timeoutSeconds: 241 })).isError).toBe(true);
+  });
+
+  it('refuses to wait on a child that reports back, and on more than eight at once', async () => {
+    const origin = { id: managedChildOriginId('child-1'), sessionId: 'child-1', sequence: 1, kind: 'notice', text: 'Started from: Lead', isDelta: false, isSensitive: false, createdAt: NOW,
+      payload: { v: 1, type: 'subagent', role: 'link', parentSessionId: 'lead-1', reportBack: true } } as DaemonTranscriptItem;
+    const reporting = harness(working(withManagedChild(snapshot(), 'standard')), { 'child-1': [origin] });
+    const refused = await reporting.call('wait_agent', { sessionId: 'child-1' });
+    expect(refused.isError).toBe(true);
+    expect(String(refused.body.error)).toContain('next message');
+
+    const busy = harness(working(withManagedChild(snapshot(), 'standard')));
+    const waits = Array.from({ length: 8 }, () => busy.call('wait_agent', { sessionId: 'child-1' }));
+    await vi.waitFor(() => expect(busy.listeners.size).toBe(8));
+    expect((await busy.call('wait_agent', { sessionId: 'child-1' })).isError).toBe(true);
+    busy.server.revokeSession('lead-1');
+    for (const wait of await Promise.all(waits)) expect(wait.isError).toBe(true);
+    expect(busy.listeners.size).toBe(0);
+  });
+
+  it('lets go of a wait when the caller disconnects or the server stops', async () => {
+    const h = harness(working(withManagedChild(snapshot(), 'standard')));
+    await h.server.start();
+    const descriptor = h.server.descriptorForSession('lead-1');
+    const controller = new AbortController();
+    const request = fetch(descriptor.endpoint, { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json', authorization: `Bearer ${descriptor.bearerToken}` },
+      body: JSON.stringify(rpc(1, 'tools/call', { name: 'wait_agent', arguments: { sessionId: 'child-1' } })) }).catch(() => undefined);
+    await vi.waitFor(() => expect(h.listeners.size).toBe(1));
+    controller.abort();
+    await request;
+    await vi.waitFor(() => expect(h.listeners.size).toBe(0));
+
+    const pending = h.call('wait_agent', { sessionId: 'child-1' }).catch(() => undefined);
+    await vi.waitFor(() => expect(h.listeners.size).toBe(1));
+    await h.server.stop();
+    await pending;
+    expect(h.listeners.size).toBe(0);
+  });
+
+  it('starts a child in another workspace of the project and asks it to report back', async () => {
+    const base = withSecondProject(snapshot());
+    const worktree = { ...base.workspaces[0]!, id: 'worktree-1', kind: 'worktree' as const, rootPath: 'C:\\repo-wt' };
+    const h = harness({ ...base, workspaces: [...base.workspaces, worktree,
+      { ...worktree, id: 'old-worktree', archivedAt: NOW }, { ...worktree, id: 'planning-workspace-abc' }] });
+    const created = await h.call('create_agent', { providerId: 'codex', prompt: 'Write notes.', workspaceId: 'worktree-1', reportBack: true });
+    expect(created.isError).toBe(false);
+    expect(h.authority.execute).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'agent.create', payload: expect.objectContaining({ workspaceId: 'worktree-1', reportBack: true, parentSessionId: 'lead-1' }) }));
+    for (const workspaceId of ['workspace-2', 'old-worktree', 'planning-workspace-abc']) {
+      expect((await h.call('create_agent', { providerId: 'codex', prompt: 'No.', workspaceId })).isError).toBe(true);
+    }
+    expect(h.authority.execute).toHaveBeenCalledOnce();
+  });
+
+  it('offers read_agent and wait_agent only when the host can serve them', async () => {
+    const list = async (server: AgentOrchestrationMcpServer) => {
+      await server.start();
+      const descriptor = server.descriptorForSession('lead-1');
+      const listed = await post(descriptor.endpoint, descriptor.bearerToken, rpc(2, 'tools/list'));
+      return (listed.value?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
+    };
+    expect(await list(harness(snapshot()).server)).toEqual(expect.arrayContaining(['read_agent', 'wait_agent']));
+    const plain = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => snapshot(), execute: vi.fn() } });
+    servers.push(plain);
+    expect(await list(plain)).not.toEqual(expect.arrayContaining(['read_agent']));
   });
 });

@@ -565,6 +565,7 @@ describe('ClaudeProviderAdapter sessions', () => {
         type: 'http',
         url: 'http://127.0.0.1:43111/mcp',
         headers: { Authorization: `Bearer ${bearerToken}` },
+        timeout: 300_000,
       },
     });
     expect(fixture.query.inputOptions.env).toBeDefined();

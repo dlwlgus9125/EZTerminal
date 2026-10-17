@@ -932,6 +932,8 @@ app.on('ready', async () => {
     authority: {
       getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
       execute: (command) => daemonRouterRef.current!.execute(command),
+      readTranscript: (sessionId, afterSequence, limit) => daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit),
+      onEvent: (listener) => daemonRouterRef.current!.onEvent(listener),
     },
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);

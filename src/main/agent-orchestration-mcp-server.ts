@@ -7,9 +7,12 @@ import {
   type DaemonCommandPayloads,
   type DaemonCommandReceipt,
   type DaemonCommandType,
+  type DaemonEvent,
   type DaemonSnapshot,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
+import { isRunOwnedWorkspace } from '../shared/workspace-worktree';
+import { childProgress, finalAssistantText, latestFinishedTurn, reportBackRequested, type TranscriptReader } from './managed-child-transcript';
 import type { ProviderSessionContext } from './agent-provider-adapter';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
 import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema, type WorkflowCommand } from '../shared/workflow';
@@ -41,6 +44,23 @@ interface JsonRpcRequest {
 interface OrchestrationAuthority {
   getSnapshot(): DaemonSnapshot;
   execute(command: DaemonCommand): Promise<DaemonCommandReceipt>;
+  /** Transcript pages, so an Agent can read what its descendant answered. */
+  readTranscript?: TranscriptReader;
+  /** Daemon change notifications, so an Agent can wait on a descendant without polling. */
+  onEvent?: (listener: (event: DaemonEvent) => void) => () => void;
+}
+
+/** How long one wait_agent call may hold (clients are given a longer MCP tool timeout). */
+const MAX_WAIT_SECONDS = 240;
+const DEFAULT_WAIT_SECONDS = 120;
+const MAX_WAITS_PER_AGENT = 8;
+/** How much of a descendant's answer an Agent reads back (the full answer stays in its conversation). */
+const MAX_ANSWER_LENGTH = 8_000;
+
+interface Waiter {
+  readonly ownerSessionId: string;
+  readonly projectId: string;
+  readonly settle: () => void;
 }
 
 export interface AgentOrchestrationMcpServerOptions {
@@ -54,6 +74,8 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly workflowAllowed?: (sessionId: string) => boolean;
   /** The person's saved agent profiles; `create_agent` can start a child from one. */
   readonly listProfiles?: () => readonly ChatAgentProfile[];
+  readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
 interface SessionCapability {
@@ -181,6 +203,7 @@ export class AgentOrchestrationMcpServer {
   private readonly createToken: () => string;
   private readonly now: () => Date;
   private readonly capabilities = new Map<string, SessionCapability>();
+  private readonly waiters = new Set<Waiter>();
   private server: Server | null = null;
   private port: number | null = null;
   private stopping: Promise<void> | null = null;
@@ -249,12 +272,14 @@ export class AgentOrchestrationMcpServer {
 
   revokeSession(sessionId: string): void {
     this.capabilities.delete(sessionId);
+    for (const waiter of [...this.waiters]) if (waiter.ownerSessionId === sessionId) waiter.settle();
   }
 
   revokeProject(projectId: string): void {
     for (const [sessionId, capability] of this.capabilities) {
       if (capability.projectId === projectId) this.capabilities.delete(sessionId);
     }
+    for (const waiter of [...this.waiters]) if (waiter.projectId === projectId) waiter.settle();
   }
 
   stop(): Promise<void> {
@@ -263,6 +288,7 @@ export class AgentOrchestrationMcpServer {
     this.server = null;
     this.port = null;
     this.capabilities.clear();
+    for (const waiter of [...this.waiters]) waiter.settle();
     if (!server) return Promise.resolve();
     this.stopping = new Promise<void>((resolve) => {
       server.close(() => resolve());
@@ -326,8 +352,11 @@ export class AgentOrchestrationMcpServer {
       response.end();
       return;
     }
+    // A wait ends when its caller goes away.
+    const aborted = new AbortController();
+    response.once('close', () => aborted.abort());
     try {
-      const result = await this.dispatch(sessionId, requestValue);
+      const result = await this.dispatch(sessionId, requestValue, aborted.signal);
       json(response, 200, rpcResult(requestValue.id, result));
     } catch (error) {
       const normalized = error instanceof McpRequestError
@@ -338,7 +367,7 @@ export class AgentOrchestrationMcpServer {
     }
   }
 
-  private async dispatch(sessionId: string, request: JsonRpcRequest): Promise<unknown> {
+  private async dispatch(sessionId: string, request: JsonRpcRequest, signal?: AbortSignal): Promise<unknown> {
     const snapshot = this.requireLiveCapability(sessionId);
     if (request.method === 'initialize') {
       const params = isObject(request.params) ? request.params : {};
@@ -347,7 +376,7 @@ export class AgentOrchestrationMcpServer {
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : LATEST_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'ezterminal-orchestration', version: '1.0.0' },
-        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}`,
+        instructions: `Create and communicate with managed child Agents in the same EZTerminal Project. To get a child's result, either call wait_agent (and read_agent) after creating it, or create it with reportBack:true and end your turn: the result then arrives as your next message, so do not also wait on it.\n${this.options.workflow?.() ? WORKFLOW_SKILL.instructions : ''}`,
       };
     }
     if (request.method === 'ping') return {};
@@ -370,14 +399,14 @@ export class AgentOrchestrationMcpServer {
     const name = requiredString(params.name, 'name', 128);
     const args = params.arguments ?? {};
     try {
-      return await this.callTool(sessionId, name, args);
+      return await this.callTool(sessionId, name, args, signal);
     } catch (error) {
       if (error instanceof McpRequestError) return toolText({ ok: false, error: error.message }, true);
       throw error;
     }
   }
 
-  private async callTool(sessionId: string, name: string, value: unknown): Promise<JsonObject> {
+  private async callTool(sessionId: string, name: string, value: unknown, signal?: AbortSignal): Promise<JsonObject> {
     const snapshot = this.requireLiveCapability(sessionId);
     const ownerSession = snapshot.sessions.find((session) => session.id === sessionId)!;
     const ownerAgent = snapshot.agents.find((agent) => agent.sessionId === sessionId)!;
@@ -448,7 +477,10 @@ export class AgentOrchestrationMcpServer {
         });
       }
       case 'create_agent': {
-        const args = strictObject(value, ['providerId', 'title', 'prompt', 'model', 'permissionPreset', 'profileId']);
+        const args = strictObject(value, ['providerId', 'title', 'prompt', 'model', 'permissionPreset', 'profileId', 'reportBack', 'workspaceId']);
+        if (args.reportBack !== undefined && typeof args.reportBack !== 'boolean') throw new McpRequestError(-32602, 'reportBack must be a boolean.');
+        const workspaceId = optionalString(args.workspaceId, 'workspaceId', 256);
+        if (workspaceId) this.requireChildWorkspace(snapshot, ownerSession.projectId, workspaceId);
         const profileId = optionalString(args.profileId, 'profileId', 100);
         const profile = profileId ? this.options.listProfiles?.().find((entry) => entry.id === profileId) : undefined;
         if (profileId && !profile) throw new McpRequestError(-32602, 'Unknown profileId. Read list_profiles first.');
@@ -467,7 +499,7 @@ export class AgentOrchestrationMcpServer {
         const childSessionId = `agent-${this.createId()}`;
         const receipt = await this.executeCommand(sessionId, 'agent.create', {
           sessionId: childSessionId,
-          workspaceId: ownerSession.workspaceId,
+          workspaceId: workspaceId ?? ownerSession.workspaceId,
           title,
           providerId,
           ...(model ? { model } : {}),
@@ -475,14 +507,23 @@ export class AgentOrchestrationMcpServer {
           permissionPreset: preset,
           initialPrompt: prompt,
           parentSessionId: sessionId,
+          ...(args.reportBack === true ? { reportBack: true } : {}),
         }, (current) => {
           this.requirePermissionWithinOwner(
             this.ownerPermission(current, sessionId),
             preset,
           );
+          if (workspaceId) this.requireChildWorkspace(current, ownerSession.projectId, workspaceId);
         });
         return toolText({ ok: receipt.ok, sessionId: childSessionId, receipt }, !receipt.ok);
       }
+      case 'read_agent': {
+        const args = strictObject(value, ['sessionId']);
+        const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
+        return toolText({ ok: true, progress: childProgress(snapshot, targetSessionId), ...this.agentReport(snapshot, sessionId, targetSessionId) });
+      }
+      case 'wait_agent':
+        return this.waitAgent(sessionId, ownerSession.projectId, snapshot, value, signal);
       case 'send_message': {
         const args = strictObject(value, ['sessionId', 'prompt', 'interrupt']);
         const targetSessionId = this.managedExecutableTarget(snapshot, sessionId, args.sessionId);
@@ -550,6 +591,116 @@ export class AgentOrchestrationMcpServer {
       default:
         throw new McpRequestError(-32602, `Unknown tool: ${name}`);
     }
+  }
+
+  /** A child may start in another active workspace of the caller's project, not in a planning run's. */
+  private requireChildWorkspace(snapshot: DaemonSnapshot, projectId: string, workspaceId: string): void {
+    const workspace = snapshot.workspaces.find((entry) => entry.id === workspaceId);
+    if (!workspace || workspace.projectId !== projectId || workspace.archivedAt !== undefined || isRunOwnedWorkspace(workspace.id)) {
+      throw new McpRequestError(-32602, 'workspaceId must be an active workspace of this project (for example one from create_worktree).');
+    }
+  }
+
+  /** What an Agent learns about a descendant: where it stands and its latest answer, bounded. */
+  private agentReport(snapshot: DaemonSnapshot, ownerSessionId: string, targetSessionId: string): JsonObject {
+    const agent = snapshot.agents.find((entry) => entry.sessionId === targetSessionId);
+    const session = snapshot.sessions.find((entry) => entry.id === targetSessionId);
+    const latest = latestFinishedTurn(snapshot.turns, targetSessionId);
+    const read = this.options.authority.readTranscript;
+    // The full answer stays in the descendant's conversation; it is never logged here.
+    const answer = latest && read ? finalAssistantText(read, targetSessionId, latest.id)?.trim() : undefined;
+    return {
+      sessionId: targetSessionId,
+      title: session?.title ?? targetSessionId,
+      ...(agent ? { providerId: agent.providerId, state: agent.state, queuedTurns: agent.queuedTurnCount } : {}),
+      ...(session ? { workspaceId: session.workspaceId } : {}),
+      ...(latest ? { latestTurn: { state: latest.state, ...(latest.finishedAt ? { finishedAt: latest.finishedAt } : {}), ...(latest.errorCode ? { errorCode: latest.errorCode } : {}) } } : {}),
+      answer: answer ? answer.slice(0, MAX_ANSWER_LENGTH) : null,
+      truncated: Boolean(answer && answer.length > MAX_ANSWER_LENGTH),
+      pendingApprovals: snapshot.approvals.filter((approval) => approval.sessionId === targetSessionId && approval.state === 'pending')
+        .slice(0, 5).map((approval) => ({ title: approval.title.slice(0, 200) })),
+      reportBack: Boolean(read && reportBackRequested(read, targetSessionId, ownerSessionId)),
+    };
+  }
+
+  /**
+   * Holds until a descendant finishes, needs a person's approval, or the timeout passes. It wakes on
+   * the descendant's own changes only and re-checks this Agent's capability every time.
+   */
+  private async waitAgent(sessionId: string, projectId: string, snapshot: DaemonSnapshot, value: unknown, signal?: AbortSignal): Promise<JsonObject> {
+    const onEvent = this.options.authority.onEvent;
+    if (!onEvent) throw new McpRequestError(-32601, 'wait_agent is unavailable on this host.');
+    const args = strictObject(value, ['sessionId', 'timeoutSeconds']);
+    const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
+    const timeoutSeconds = args.timeoutSeconds === undefined ? DEFAULT_WAIT_SECONDS : args.timeoutSeconds;
+    if (typeof timeoutSeconds !== 'number' || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > MAX_WAIT_SECONDS) {
+      throw new McpRequestError(-32602, `timeoutSeconds must be an integer from 1 to ${MAX_WAIT_SECONDS}.`);
+    }
+    const read = this.options.authority.readTranscript;
+    const reported = snapshot.turns.some((turn) => turn.sessionId === targetSessionId && (turn.state === 'completed' || turn.state === 'failed'));
+    if (read && !reported && reportBackRequested(read, targetSessionId, sessionId)) {
+      throw new McpRequestError(-32602, 'This child sends its result back as your next message; end your turn instead of waiting (read_agent shows where it stands).');
+    }
+    if ([...this.waiters].filter((waiter) => waiter.ownerSessionId === sessionId).length >= MAX_WAITS_PER_AGENT) {
+      throw new McpRequestError(-32602, `At most ${MAX_WAITS_PER_AGENT} waits can be open at once.`);
+    }
+    const setTimer = this.options.setTimer ?? setTimeout;
+    const clearTimer = this.options.clearTimer ?? clearTimeout;
+    const outcome = await new Promise<'settled' | 'timeout' | 'revoked'>((resolve) => {
+      let done = false;
+      let scheduled = false;
+      let unsubscribe = (): void => undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (reason: 'settled' | 'timeout' | 'revoked'): void => {
+        if (done) return;
+        done = true;
+        unsubscribe();
+        if (timer !== undefined) clearTimer(timer);
+        this.waiters.delete(waiter);
+        signal?.removeEventListener('abort', onAbort);
+        resolve(reason);
+      };
+      const waiter: Waiter = { ownerSessionId: sessionId, projectId, settle: () => finish('revoked') };
+      const onAbort = (): void => finish('revoked');
+      const evaluate = (): void => {
+        scheduled = false;
+        if (done) return;
+        try {
+          const current = this.requireLiveCapability(sessionId);
+          this.managedTarget(current, sessionId, targetSessionId);
+          if (childProgress(current, targetSessionId) !== 'working') finish('settled');
+        } catch {
+          finish('revoked');
+        }
+      };
+      this.waiters.add(waiter);
+      // Subscribe before the first check so a change in between is not missed.
+      unsubscribe = onEvent((event) => {
+        try {
+          const relevant = event.kind === 'runtime.changed' || event.kind === 'entity.archived'
+            || (event.kind === 'entity.upserted' && event.payload.entityType === 'agent' && event.payload.entityId === targetSessionId);
+          if (relevant && !scheduled && !done) {
+            scheduled = true;
+            setImmediate(evaluate);
+          }
+        } catch {
+          // A notification never breaks the daemon's event loop.
+        }
+      });
+      timer = setTimer(() => finish('timeout'), timeoutSeconds * 1_000);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) finish('revoked');
+      else evaluate();
+    });
+    if (outcome === 'revoked') throw new McpRequestError(-32002, 'This Agent orchestration capability is no longer active.');
+    const current = this.options.authority.getSnapshot();
+    const progress = childProgress(current, targetSessionId);
+    return toolText({
+      ok: true,
+      finished: progress === 'finished',
+      ...(progress === 'needs-attention' ? { needsAttention: true } : {}),
+      ...this.agentReport(current, sessionId, targetSessionId),
+    });
   }
 
   private async executeCommand<T extends DaemonCommandType>(
@@ -791,7 +942,7 @@ export class AgentOrchestrationMcpServer {
       }] : []),
       {
         name: 'create_agent',
-        description: `Create a direct managed child Agent without exceeding this Agent's ${ownerPreset} permission capability. Give either profileId (from list_profiles) or providerId; omitted permissionPreset defaults to ${defaultPreset}.`,
+        description: `Create a direct managed child Agent without exceeding this Agent's ${ownerPreset} permission capability. Give either profileId (from list_profiles) or providerId; omitted permissionPreset defaults to ${defaultPreset}. workspaceId starts it in another workspace of this project (e.g. from create_worktree). Then wait_agent for its result, or set reportBack:true and end your turn — the result arrives as your next message; do not do both.`,
         inputSchema: objectSchema({
           profileId: { type: 'string', minLength: 1, maxLength: 100 },
           providerId: { type: 'string', minLength: 1, maxLength: 128 },
@@ -799,8 +950,20 @@ export class AgentOrchestrationMcpServer {
           prompt,
           model: { type: 'string', minLength: 1, maxLength: 256 },
           permissionPreset: preset,
+          workspaceId: { type: 'string', minLength: 1, maxLength: 256 },
+          reportBack: { type: 'boolean' },
         }, ['prompt']),
       },
+      ...(this.options.authority.readTranscript ? [{
+        name: 'read_agent',
+        description: 'Read where a managed descendant stands (finished, needs-attention or working) and its latest answer, up to 8000 characters.',
+        inputSchema: objectSchema({ sessionId }, ['sessionId']),
+      }] : []),
+      ...(this.options.authority.readTranscript && this.options.authority.onEvent ? [{
+        name: 'wait_agent',
+        description: `Wait until a managed descendant finishes or needs a person's approval, up to timeoutSeconds (1-${MAX_WAIT_SECONDS}, default ${DEFAULT_WAIT_SECONDS}); returns its state and latest answer. If finished is false, wait again or tell the person. Not for a child created with reportBack:true.`,
+        inputSchema: objectSchema({ sessionId, timeoutSeconds: { type: 'integer', minimum: 1, maximum: MAX_WAIT_SECONDS } }, ['sessionId']),
+      }] : []),
       {
         name: 'send_message',
         description: 'Send a prompt only to a managed descendant whose permission does not exceed this Agent; optionally interrupt its current turn first.',
