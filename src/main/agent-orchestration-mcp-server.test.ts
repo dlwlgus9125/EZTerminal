@@ -340,6 +340,57 @@ describe('AgentOrchestrationMcpServer', () => {
     });
   });
 
+  it('lists saved profiles and starts a child from one within the owner permission', async () => {
+    const current = withOwnerPermission(snapshot(), 'standard');
+    const commands: DaemonCommand[] = [];
+    const authority = {
+      getSnapshot: () => current,
+      execute: vi.fn(async (command: DaemonCommand) => {
+        commands.push(command);
+        return applied(command);
+      }),
+    };
+    const profiles = [
+      { id: 'reviewer', name: 'Careful reviewer', providerId: 'claude', model: 'opus', reasoningEffort: 'high', permissionPreset: 'plan' as const, whenToUse: 'Review without editing.' },
+      { id: 'builder', name: 'Builder', providerId: 'codex', permissionPreset: 'full-access' as const },
+    ];
+    const ids = ['profile-child', 'profile-command'];
+    const server = new AgentOrchestrationMcpServer({ authority, createId: () => ids.shift()!, listProfiles: () => profiles });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+
+    const listed = await post(descriptor.endpoint, descriptor.bearerToken, rpc(4, 'tools/list'));
+    expect((listed.value?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name)).toContain('list_profiles');
+    const read = await post(descriptor.endpoint, descriptor.bearerToken, rpc(5, 'tools/call', { name: 'list_profiles', arguments: {} }));
+    const body = JSON.parse((read.value?.result as { content: Array<{ text: string }> }).content[0]!.text) as { profiles: Array<{ profileId: string; usable: boolean; whenToUse?: string }> };
+    expect(body.profiles).toEqual([
+      expect.objectContaining({ profileId: 'reviewer', usable: true, whenToUse: 'Review without editing.' }),
+      expect.objectContaining({ profileId: 'builder', usable: false }),
+    ]);
+
+    await post(descriptor.endpoint, descriptor.bearerToken, rpc(6, 'tools/call', {
+      name: 'create_agent', arguments: { profileId: 'reviewer', prompt: 'Review the login change.' },
+    }));
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
+      type: 'agent.create',
+      payload: { title: 'Careful reviewer', providerId: 'claude', model: 'opus', reasoningEffort: 'high', permissionPreset: 'plan', parentSessionId: 'lead-1' },
+    });
+
+    const above = await post(descriptor.endpoint, descriptor.bearerToken, rpc(7, 'tools/call', {
+      name: 'create_agent', arguments: { profileId: 'builder', prompt: 'Escalate.' },
+    }));
+    const mixed = await post(descriptor.endpoint, descriptor.bearerToken, rpc(8, 'tools/call', {
+      name: 'create_agent', arguments: { profileId: 'reviewer', providerId: 'codex', prompt: 'Both.' },
+    }));
+    const unknown = await post(descriptor.endpoint, descriptor.bearerToken, rpc(9, 'tools/call', {
+      name: 'create_agent', arguments: { profileId: 'missing', prompt: 'Nobody.' },
+    }));
+    for (const response of [above, mixed, unknown]) expect(JSON.stringify(response.value)).toMatch(/isError|error/u);
+    expect(commands).toHaveLength(1);
+  });
+
   it('caps omitted plan-owner child permissions at plan and advertises the same ceiling', async () => {
     const current = withOwnerPermission(snapshot(), 'plan');
     const commands: DaemonCommand[] = [];

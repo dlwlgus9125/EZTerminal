@@ -6,6 +6,8 @@ import { HistoryResumeRequestSchema } from './conversation-history';
 export const ConversationSettingsSchema = z.object({
   providerId: z.string().min(1), workspaceId: z.string().min(1), model: z.string().optional(),
   permissionPreset: z.enum(['plan', 'standard', 'full-access']),
+  /** Set by an agent profile; sent with agent.create. */
+  reasoningEffort: z.string().min(1).max(32).optional(),
 }).strict();
 export type ConversationSettings = z.infer<typeof ConversationSettingsSchema>;
 const command = <T extends 'agent.create' | 'agent.submit'>(type: T) => z.custom<DaemonCommandEnvelope<T>>(value => {

@@ -47,6 +47,12 @@ describe('first message transaction', () => {
     expect(creates[0].payload.sessionId).toBe(creates[1].payload.sessionId);
     expect(commands[0].commandId).not.toBe(commands[1].commandId);
   });
+  it('starts with a profile’s reasoning effort', async () => {
+    const h = fixture();
+    expect(await h.controller.send({ ...settings, model: 'gpt-5', permissionPreset: 'plan', reasoningEffort: 'high' }, 'Hello')).toMatchObject({ ok: true });
+    const create = vi.mocked(h.access.sendCommand).mock.calls.map(([command]) => command).find(command => command.type === 'agent.create');
+    expect(create?.payload).toMatchObject({ model: 'gpt-5', permissionPreset: 'plan', reasoningEffort: 'high' });
+  });
   it('keeps a failed continuation in place without creating a replacement conversation', async () => {
     const h = fixture('conversation_original');
     vi.mocked(h.access.history.prepareHistoryResume).mockResolvedValue({ ok: false, reason: 'missing-root', message: 'Working folder is missing.' });

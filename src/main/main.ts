@@ -928,6 +928,7 @@ app.on('ready', async () => {
   const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
     workflow: () => workflowRef.authority && workflowRef.service ? { authority: workflowRef.authority, service: workflowRef.service } : undefined,
     workflowAllowed: workflowSessionAllowed,
+    listProfiles: () => chatAgentProfileStore.list(),
     authority: {
       getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
       execute: (command) => daemonRouterRef.current!.execute(command),

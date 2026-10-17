@@ -11,6 +11,7 @@ import {
   type PermissionPreset,
 } from '../shared/daemon-protocol';
 import type { ProviderSessionContext } from './agent-provider-adapter';
+import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
 import { validateWorkflowGraph, WorkflowGraphSchema, WorkflowCommandSchema } from '../shared/workflow';
 import { WORKFLOW_SKILL } from '../shared/workflow-skill';
 import type { WorkflowService } from './workflow-service';
@@ -50,6 +51,8 @@ export interface AgentOrchestrationMcpServerOptions {
   readonly reportError?: (context: string, error: unknown) => void;
   readonly workflow?: () => { authority: WorkflowAuthority; service: WorkflowService } | undefined;
   readonly workflowAllowed?: (sessionId: string) => boolean;
+  /** The person's saved agent profiles; `create_agent` can start a child from one. */
+  readonly listProfiles?: () => readonly ChatAgentProfile[];
 }
 
 interface SessionCapability {
@@ -400,13 +403,37 @@ export class AgentOrchestrationMcpServer {
             }),
         });
       }
+      case 'list_profiles': {
+        strictObject(value, []);
+        return toolText({
+          ok: true,
+          profiles: (this.options.listProfiles?.() ?? []).map((profile) => ({
+            profileId: profile.id,
+            name: profile.name,
+            providerId: profile.providerId,
+            ...(profile.model ? { model: profile.model } : {}),
+            ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+            permissionPreset: profile.permissionPreset,
+            ...(profile.whenToUse ? { whenToUse: profile.whenToUse } : {}),
+            usable: permissionDoesNotExceed(profile.permissionPreset, ownerAgent.permissionPreset),
+          })),
+        });
+      }
       case 'create_agent': {
-        const args = strictObject(value, ['providerId', 'title', 'prompt', 'model', 'permissionPreset']);
-        const providerId = requiredString(args.providerId, 'providerId', 128);
+        const args = strictObject(value, ['providerId', 'title', 'prompt', 'model', 'permissionPreset', 'profileId']);
+        const profileId = optionalString(args.profileId, 'profileId', 100);
+        const profile = profileId ? this.options.listProfiles?.().find((entry) => entry.id === profileId) : undefined;
+        if (profileId && !profile) throw new McpRequestError(-32602, 'Unknown profileId. Read list_profiles first.');
+        if (profile && (args.providerId !== undefined || args.model !== undefined || args.permissionPreset !== undefined)) {
+          throw new McpRequestError(-32602, 'profileId sets the provider, model and permission; omit them.');
+        }
+        const providerId = profile?.providerId ?? requiredString(args.providerId, 'providerId', 128);
         const prompt = requiredString(args.prompt, 'prompt', MAX_PROMPT_LENGTH);
-        const title = optionalString(args.title, 'title', 256) ?? `${providerId} Agent`;
-        const model = optionalString(args.model, 'model', 256);
-        const preset = permissionPreset(args.permissionPreset)
+        const title = optionalString(args.title, 'title', 256) ?? profile?.name ?? `${providerId} Agent`;
+        const model = profile ? profile.model : optionalString(args.model, 'model', 256);
+        const reasoningEffort = profile?.reasoningEffort;
+        const preset = profile?.permissionPreset
+          ?? permissionPreset(args.permissionPreset)
           ?? defaultChildPermissionPreset(ownerAgent.permissionPreset);
         this.requirePermissionWithinOwner(ownerAgent.permissionPreset, preset);
         const childSessionId = `agent-${this.createId()}`;
@@ -416,6 +443,7 @@ export class AgentOrchestrationMcpServer {
           title,
           providerId,
           ...(model ? { model } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
           permissionPreset: preset,
           initialPrompt: prompt,
           parentSessionId: sessionId,
@@ -691,16 +719,22 @@ export class AgentOrchestrationMcpServer {
         description: 'List this Agent and its currently managed descendants.',
         inputSchema: objectSchema({}),
       },
+      ...(this.options.listProfiles ? [{
+        name: 'list_profiles',
+        description: 'List the agent profiles the person saved (provider, model, effort, permission) and when to use each. Pass one as profileId to create_agent.',
+        inputSchema: objectSchema({}),
+      }] : []),
       {
         name: 'create_agent',
-        description: `Create a direct managed child Agent without exceeding this Agent's ${ownerPreset} permission capability. Omitted permissionPreset defaults to ${defaultPreset}.`,
+        description: `Create a direct managed child Agent without exceeding this Agent's ${ownerPreset} permission capability. Give either profileId (from list_profiles) or providerId; omitted permissionPreset defaults to ${defaultPreset}.`,
         inputSchema: objectSchema({
+          profileId: { type: 'string', minLength: 1, maxLength: 100 },
           providerId: { type: 'string', minLength: 1, maxLength: 128 },
           title: { type: 'string', minLength: 1, maxLength: 256 },
           prompt,
           model: { type: 'string', minLength: 1, maxLength: 256 },
           permissionPreset: preset,
-        }, ['providerId', 'prompt']),
+        }, ['prompt']),
       },
       {
         name: 'send_message',

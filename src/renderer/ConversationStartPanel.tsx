@@ -14,6 +14,7 @@ import { historyTranscriptItems } from './chat/model/history-items';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select } from './ui';
 import { NewWorktreeDialog } from './WorktreeDialogs';
+import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
 
 const NEW_WORKTREE = '__new-worktree__';
@@ -63,6 +64,15 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const [draftRevision, setDraftRevision] = useState(0);
   const acceptedRestore = useRef<string>();
   const [worktreeOpen, setWorktreeOpen] = useState(false);
+  // Saved agent profiles (desktop): one pick fills AI, model, permission and effort.
+  const [profiles, setProfiles] = useState<readonly ChatAgentProfile[]>([]);
+  useEffect(() => {
+    const access = variant === 'desktop' ? window.ezterminal?.chatAgentProfiles : undefined;
+    if (!access || initialEntry) return undefined;
+    let alive = true;
+    void access.list().then(list => { if (alive) setProfiles(list); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [variant, initialEntry]);
   const worktreeAccess = variant === 'desktop' ? window.ezterminal?.workspaceWorktrees : undefined;
   const worktreeProject = snapshot?.projects.find(project => project.id === (entry?.projectId ?? projectId));
   const providers = useMemo(() => structuredAgentProviderOptions(snapshot), [snapshot]);
@@ -89,6 +99,8 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const settings = view.settings ?? initial;
   const selectedProvider = providers.find(item => item.id === settings.providerId);
   const selectedWorkspace = workspaces.find(item => item.id === settings.workspaceId);
+  const activeProfile = profiles.find(profile => profile.providerId === settings.providerId && profile.model === settings.model
+    && profile.permissionPreset === settings.permissionPreset && profile.reasoningEffort === settings.reasoningEffort);
   const canSend = !disconnected && view.status === 'ready' && !loading && !draftLoading && !draftLoadFailed && !inheritedPending && (!entry || (!!page && source !== undefined))
     && !!settings.providerId && (!!entry || !!selectedWorkspace) && !selectedProvider?.disabled;
   useEffect(() => {
@@ -195,8 +207,18 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
     void finish(pending.sessionId).catch(reason => setError(String(reason)));
   }, [view.start, view.draft, disconnected, busy, recovery, finish]);
   const settingsControls = <div className="conversation-start__settings">
+    {!entry && profiles.length > 0 && <Field label={text('프로필', 'Profile')} description={activeProfile?.whenToUse}>
+      <Select aria-label={text('에이전트 프로필', 'Agent profile')} value={activeProfile?.id ?? ''} disabled={busy || !!view.start} data-testid="conversation-start-profile"
+        onChange={event => {
+          const profile = profiles.find(entry => entry.id === event.target.value);
+          if (profile) void recovery.saveComposition({ settings: { ...settings, providerId: profile.providerId, model: profile.model,
+            permissionPreset: profile.permissionPreset, reasoningEffort: profile.reasoningEffort } });
+        }}>
+        <option value="">{text('직접 고르기', 'Choose yourself')}</option>
+        {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={!providers.some(provider => provider.id === profile.providerId && !provider.disabled)}>{profile.name}</option>)}
+      </Select></Field>}
     {!entry && <><Field label={text('AI', 'AI')}><Select aria-label={text('대화 AI', 'Conversation AI')} value={settings.providerId} disabled={busy || !!view.start}
-      onChange={event => void recovery.saveComposition({ settings: { ...settings, providerId: event.target.value, model: undefined } })}>
+      onChange={event => void recovery.saveComposition({ settings: { ...settings, providerId: event.target.value, model: undefined, reasoningEffort: undefined } })}>
       {!settings.providerId && <option value="">{text('AI 선택', 'Choose AI')}</option>}{providers.map(provider => <option key={provider.id} value={provider.id} disabled={provider.disabled}>{provider.label}</option>)}
     </Select></Field><Field label={text('작업 위치', 'Working folder')}><Select aria-label={text('대화 작업 위치', 'Conversation workspace')} value={settings.workspaceId} disabled={busy || !!view.start}
       onChange={event => {
