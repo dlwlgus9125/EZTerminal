@@ -15,6 +15,25 @@ import { copyWorkflowPlanning } from './workflow-planning-copy';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 
+/**
+ * Where a run's own agents belong in the project list: each attempt under the stage it ran,
+ * each independent reviewer under the stage it reviewed. A person's links take precedence.
+ */
+function runSessionLinks(runs: readonly ExecutionRun[]): Array<{ readonly sessionId: string; readonly subprojectId: string; readonly nodeId?: string; readonly scope: 'stage' }> {
+  return runs.flatMap(run => {
+    const subprojectId = run.preparation.workflow?.subprojectId ?? run.preparation.subprojectId;
+    if (!subprojectId) return [];
+    const nodeOf = (taskId: string) => run.preparation.workflow?.graph.nodes.some(node => node.id === taskId) ? { nodeId: taskId } : {};
+    return [
+      ...run.attempts.map(attempt => ({ sessionId: attempt.sessionId, subprojectId, scope: 'stage' as const, ...nodeOf(attempt.taskId) })),
+      ...run.reviews.map(review => {
+        const attempt = run.attempts.find(entry => entry.attemptId === review.attemptId);
+        return { sessionId: review.reviewerSessionId, subprojectId, scope: 'stage' as const, ...(attempt ? nodeOf(attempt.taskId) : {}) };
+      }),
+    ];
+  });
+}
+
 export function workflowDigest(value: unknown): string {
   const canonical = (entry: unknown): string => Array.isArray(entry) ? `[${entry.map(canonical).join(',')}]`
     : entry !== null && typeof entry === 'object' ? `{${Object.entries(entry).filter(([, child]) => child !== undefined).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(',')}}`
@@ -116,7 +135,10 @@ export class WorkflowService {
       try {
         const target = await this.target(projectId, true);
         const stat = await fs.stat(target).catch(error => { if (missing(error)) return null; throw error; });
-        const signature = stat ? `${stat.mtimeMs}:${stat.size}:${this.observed.get(target) ?? ''}` : 'missing';
+        // A run's stage and review agents fold under their stage; runs change without the registry file.
+        const runs = this.options.runs(projectId);
+        const runKey = runs.map(run => `${run.runId}:${run.attempts.length}:${run.reviews.length}`).join(',');
+        const signature = stat ? `${stat.mtimeMs}:${stat.size}:${this.observed.get(target) ?? ''}:${runKey}` : 'missing';
         const cached = this.navigationCache.get(projectId);
         if (stat && cached?.signature === signature) return { ok: true, snapshot: structuredClone(cached.snapshot) };
         const loaded = await this.load(projectId, true); const registry = loaded.file.registry;
@@ -124,10 +146,10 @@ export class WorkflowService {
           subprojects: registry.subprojects.map(owner => ({ id: owner.id, title: owner.title, status: owner.status, updatedAt: owner.updatedAt,
             stages: [...owner.graph.nodes.map(node => ({ id: node.id, title: node.title, archived: false })),
               ...owner.archivedNodes.map(node => ({ id: node.id, title: node.title, archived: true }))] })),
-          sessionLinks: [...new Map([...(registry.historicalSessionLinks ?? []), ...registry.sessionLinks].map(link => [link.sessionId, link])).values()].map(link => ({ sessionId: link.sessionId, subprojectId: link.subprojectId,
+          sessionLinks: [...new Map([...runSessionLinks(runs), ...(registry.historicalSessionLinks ?? []), ...registry.sessionLinks].map(link => [link.sessionId, link])).values()].map(link => ({ sessionId: link.sessionId, subprojectId: link.subprojectId,
             scope: link.scope, ...(link.nodeId ? { nodeId: link.nodeId } : {}) })),
         };
-        this.navigationCache.set(projectId, { signature: stat ? `${stat.mtimeMs}:${stat.size}:${this.observed.get(target) ?? ''}` : 'missing', snapshot });
+        this.navigationCache.set(projectId, { signature, snapshot });
         return { ok: true, snapshot: structuredClone(snapshot) };
       } catch (error) { return this.error(error); }
     });

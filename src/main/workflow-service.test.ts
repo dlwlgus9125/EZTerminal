@@ -170,6 +170,21 @@ describe('workflow authority and storage', () => {
     expect((await service.execute({ ...autoApprove, commandId: 'person-auto' }, user)).ok).toBe(true);
     expect((await snapshot()).subprojects[0]).toMatchObject({ autoApprove: true });
   });
+  it('puts a run’s stage and review agents under their stage in the project list', async () => {
+    let runs: unknown[] = [];
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => runs as never, session: () => undefined });
+    await service.execute(create('a'), user);
+    const first = await service.navigation('project');
+    expect(first.ok && first.snapshot.sessionLinks).toEqual([]);
+    runs = [{ runId: 'run', preparation: { subprojectId: 'a', workflow: { subprojectId: 'a', graph: { nodes: [{ id: 'a:research' }] } } },
+      attempts: [{ attemptId: 'attempt', taskId: 'a:research', sessionId: 'planning-attempt' }], reviews: [{ attemptId: 'attempt', reviewerSessionId: 'planning-review' }] }];
+    // Runs change without the registry file: the projection follows them.
+    const second = await service.navigation('project');
+    expect(second.ok && second.snapshot.sessionLinks).toEqual([
+      { sessionId: 'planning-attempt', subprojectId: 'a', nodeId: 'a:research', scope: 'stage' },
+      { sessionId: 'planning-review', subprojectId: 'a', nodeId: 'a:research', scope: 'stage' },
+    ]);
+  });
   it('reconciles a copied planning file after the registry response is lost without copying later source edits', async () => {
     await service.execute(create('a'), user);
     const originalRename = fs.rename.bind(fs); let count = 0;
