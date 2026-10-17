@@ -430,6 +430,12 @@ const api: EzTerminalApi = {
   revealFileInExplorer: (path: string) => ipcRenderer.invoke('files:reveal', path),
   executeWorktree: (request: import('../shared/worktree').WorktreeRequest) =>
     ipcRenderer.invoke('worktrees:execute', request),
+  workspaceWorktrees: {
+    create: (projectId: string, branch: string) => ipcRenderer.invoke('workspace-worktrees:create', projectId, branch),
+    status: (projectId: string) => ipcRenderer.invoke('workspace-worktrees:status', projectId),
+    commit: (workspaceId: string, message: string) => ipcRenderer.invoke('workspace-worktrees:commit', workspaceId, message),
+    merge: (workspaceId: string) => ipcRenderer.invoke('workspace-worktrees:merge', workspaceId),
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);

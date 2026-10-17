@@ -27,6 +27,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
 import { claudeSubagentRecordExists } from './claude-subagent-records';
+import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
+import { WorkspaceWorktreeService } from './workspace-worktree-service';
 import { installAgentHistoryIpc, installAgentProjectsIpc } from './agent-history-ipc';
 import { installAppUpdateIpc } from './app-update-ipc';
 import { installDaemonAuthorityIpc } from './daemon-authority-ipc';
@@ -2169,6 +2171,13 @@ app.on('ready', async () => {
     }
   };
   const pendingWorktreeActions = new Map<string, AbortController>();
+  featureIpcDisposers.push(installWorkspaceWorktreeIpc({
+    ipc: ipcMain,
+    worktrees: worktreeService,
+    service: new WorkspaceWorktreeService(),
+    getSnapshot: () => daemonRouterRef.current?.getSnapshot(),
+    syncProjects: () => requestDaemonProjectSync(),
+  }));
   ipcMain.handle('worktrees:execute', async (event, request: unknown): Promise<WorktreeResult> => {
     if (!isWorktreeRequest(request)) {
       return {
@@ -3646,7 +3655,7 @@ app.on('ready', async () => {
         },
         canonicalizeDirectory: canonicalAgentDirectory,
         getDaemonSnapshot: () => daemonCommandRouter.getSnapshot(),
-        syncProjects: () => syncAgentProjectsToDaemon(),
+        syncProjects: () => requestDaemonProjectSync(),
       });
     }).catch((err) => {
       console.error('[main] failed to record terminal Agent project:', err);

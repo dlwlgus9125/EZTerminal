@@ -1,0 +1,59 @@
+.worktree-merge > * + * {
+  margin-top: var(--ui-space-3);
+}
+
+.worktree-merge__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-gap: var(--ui-space-2);
+  margin: 0;
+}
+
+.worktree-merge__facts > div {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+}
+
+.worktree-merge__facts dt {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.worktree-merge__facts dd {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.worktree-merge__commit {
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-warning-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-warning-muted);
+}
+
+.worktree-merge__commit > * + * {
+  margin-top: var(--ui-space-2);
+}
+
+.worktree-merge__note,
+.worktree-merge__done,
+.worktree-merge__error {
+  margin: 0;
+  font-size: var(--ui-font-size-sm);
+}
+
+.worktree-merge__note {
+  color: var(--ui-text-secondary);
+}
+
+.worktree-merge__done {
+  color: var(--ui-success);
+}
+
+.worktree-merge__error {
+  color: var(--ui-danger);
+}

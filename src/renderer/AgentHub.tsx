@@ -3,6 +3,7 @@ import {
   Check,
   FolderPlus,
   FolderOpen,
+  GitBranch,
   GitCompareArrows,
   GitMerge,
   History,
@@ -79,6 +80,7 @@ import { rendererCapabilities } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import { useLatestRequestGate } from './latest-request';
 import { ProjectConversationNavigator } from './ProjectConversationNavigator';
+import { NewWorktreeDialog } from './WorktreeDialogs';
 import type { ProjectConversationNavigationAccess } from './use-project-conversation-navigation';
 import {
   Button,
@@ -323,6 +325,8 @@ export function AgentHub({
   const [projectRootsDraft, setProjectRootsDraft] = useState<readonly string[]>([]);
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
+  const [worktreeProject, setWorktreeProject] = useState<AgentProjectSummary | null>(null);
+  const workspaceWorktrees = window.ezterminal?.workspaceWorktrees;
   const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
@@ -1446,6 +1450,11 @@ export function AgentHub({
               onOpenProject={project => onOpenPlanningProject?.(project)} onOpenWorkflow={onOpenWorkflowProject}
               onOpenSession={onOpenStructuredAgentSession ?? (() => undefined)} onOpenTerminal={onFocusSession}
               onOpenHistory={onOpenConversationHistory}
+              {...(onOpenStructuredAgentDraft ? { onNewConversationInWorkspace: (projectId: string, workspaceId: string) => {
+                const project = projects.find(item => item.projectId === projectId);
+                if (project) onOpenStructuredAgentDraft(project, { projectId, workspaceId });
+              } } : {})}
+              {...(onOpenProjectReview || onLoadDiff ? { onReviewDirectory: (directory: string) => void openDiff(directory) } : {})}
               renderProjectActions={projectId => {
                 const project = projects.find(item => item.projectId === projectId);
                 if (!project) return null;
@@ -1456,6 +1465,7 @@ export function AgentHub({
                     {onOpenHistory && <MenuItem icon={History} onSelect={() => onOpenHistory(project.projectId)}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</MenuItem>}
                     <MenuItem icon={History} onSelect={() => openProjectHistory(project)}>{i18n.language.startsWith('ko') ? 'CLI 기록' : 'CLI history'}</MenuItem>
                     {onOpenPlanningProject && <MenuItem icon={Plus} onSelect={() => onOpenPlanningProject(project)}>{i18n.language.startsWith('ko') ? '소프로젝트 만들기·관리' : 'Create and manage subprojects'}</MenuItem>}
+                    {workspaceWorktrees && onOpenStructuredAgentDraft && !disconnected && <MenuItem icon={GitBranch} onSelect={() => setWorktreeProject(project)}>{i18n.language.startsWith('ko') ? '새 워크트리…' : 'New worktree…'}</MenuItem>}
                     {onOpenProjectTerminal && <MenuItem icon={MessageSquarePlus} onSelect={() => onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' })}>{t('header.newTerminal')}</MenuItem>}
                     {onOpenProjectDocument && <MenuItem icon={FolderOpen} onSelect={() => selectDrillProject(project)}>{i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files'}</MenuItem>}
                     <MenuItem icon={Pin} onSelect={() => void saveProject(project, { pinned: !project.pinned })}>{project.pinned ? t('agentHub.projects.unpin') : t('agentHub.projects.pin')}</MenuItem>
@@ -1990,6 +2000,19 @@ export function AgentHub({
           )}
         </div>
       </Dialog>
+      {workspaceWorktrees && onOpenStructuredAgentDraft && worktreeProject && (
+        <NewWorktreeDialog
+          open
+          onOpenChange={(open) => { if (!open) setWorktreeProject(null); }}
+          projectName={worktreeProject.name}
+          onCreate={async (branch) => {
+            const project = worktreeProject;
+            const created = await workspaceWorktrees.create(project.projectId, branch);
+            if (created.ok) onOpenStructuredAgentDraft(project, { projectId: project.projectId, workspaceId: created.value.workspaceId });
+            return created;
+          }}
+        />
+      )}
       <Dialog
         open={projectToDelete !== null}
         onOpenChange={(open) => {

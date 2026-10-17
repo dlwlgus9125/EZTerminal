@@ -13,7 +13,10 @@ import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from 
 import { historyTranscriptItems } from './chat/model/history-items';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select } from './ui';
+import { NewWorktreeDialog } from './WorktreeDialogs';
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
+
+const NEW_WORKTREE = '__new-worktree__';
 
 export interface ConversationStartPanelProps {
   readonly identity: string;
@@ -59,6 +62,9 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const [inheritedPending, setInheritedPending] = useState<ChatStateSnapshot>();
   const [draftRevision, setDraftRevision] = useState(0);
   const acceptedRestore = useRef<string>();
+  const [worktreeOpen, setWorktreeOpen] = useState(false);
+  const worktreeAccess = variant === 'desktop' ? window.ezterminal?.workspaceWorktrees : undefined;
+  const worktreeProject = snapshot?.projects.find(project => project.id === (entry?.projectId ?? projectId));
   const providers = useMemo(() => structuredAgentProviderOptions(snapshot), [snapshot]);
   const workspaces = useMemo(() => structuredAgentWorkspaceOptions(snapshot, entry?.projectId ?? projectId), [snapshot, entry?.projectId, projectId]);
   const recent = snapshot?.agents.filter(agent => entry?.linkedSessionId ? agent.sessionId === entry.linkedSessionId : snapshot.sessions.some(session => session.id === agent.sessionId && (!projectId || session.projectId === projectId)))
@@ -193,9 +199,20 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       onChange={event => void recovery.saveComposition({ settings: { ...settings, providerId: event.target.value, model: undefined } })}>
       {!settings.providerId && <option value="">{text('AI 선택', 'Choose AI')}</option>}{providers.map(provider => <option key={provider.id} value={provider.id} disabled={provider.disabled}>{provider.label}</option>)}
     </Select></Field><Field label={text('작업 위치', 'Working folder')}><Select aria-label={text('대화 작업 위치', 'Conversation workspace')} value={settings.workspaceId} disabled={busy || !!view.start}
-      onChange={event => void recovery.saveComposition({ settings: { ...settings, workspaceId: event.target.value } })}>
+      onChange={event => {
+        if (event.target.value === NEW_WORKTREE) { setWorktreeOpen(true); return; }
+        void recovery.saveComposition({ settings: { ...settings, workspaceId: event.target.value } });
+      }}>
       {!settings.workspaceId && <option value="">{text('프로젝트 선택', 'Choose project')}</option>}{workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.label}</option>)}
+      {worktreeAccess && worktreeProject && !disconnected && <option value={NEW_WORKTREE}>{text('새 워크트리…', 'New worktree…')}</option>}
     </Select></Field></>}
+    {worktreeAccess && worktreeProject && <NewWorktreeDialog open={worktreeOpen} onOpenChange={setWorktreeOpen} projectName={worktreeProject.name}
+      createLabel={text('만들기', 'Create')}
+      onCreate={async branch => {
+        const created = await worktreeAccess.create(worktreeProject.id, branch);
+        if (created.ok) void recovery.saveComposition({ settings: { ...settings, workspaceId: created.value.workspaceId } });
+        return created;
+      }} />}
     {(!providers.length || selectedProvider?.disabled) && onOpenSettings && <Button variant="ghost" onClick={onOpenSettings}>{text('AI 설정 열기', 'Open AI settings')}</Button>}
     {error && <p role="alert">{error}</p>}
     {draftLoadFailed && <Button variant="ghost" onClick={() => setDraftRevision(value => value + 1)}>{text('이전 초안 다시 확인', 'Retry previous draft recovery')}</Button>}

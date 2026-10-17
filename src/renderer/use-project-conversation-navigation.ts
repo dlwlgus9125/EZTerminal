@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
 import type { ConversationEntry, ConversationHistoryClient } from '../shared/conversation-history';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import type { WorkflowNavigationAccess, WorkflowNavigationSnapshot } from '../shared/workflow';
@@ -13,8 +14,10 @@ export interface ProjectConversationNavigationAccess {
 interface ProjectLoadState { readonly loading?: boolean; readonly error?: string; readonly hasMore?: boolean }
 
 /** Loads list metadata on demand. Reading the hierarchy never reads a transcript or starts an Agent. */
-export function useProjectConversationNavigation({ projects, snapshot, access, connected = true, active = true, scope, includeTerminals = false }: {
+export function useProjectConversationNavigation({ projects, snapshot, access, connected = true, active = true, scope, includeTerminals = false, workspaceStatuses }: {
   readonly projects: readonly ProjectNavigationProject[];
+  /** Where each worktree stands (desktop): review or done, and its branch. */
+  readonly workspaceStatuses?: Readonly<Record<string, WorkspaceWorktreeStatusView>>;
   readonly snapshot?: DaemonSnapshot | null;
   readonly access: ProjectConversationNavigationAccess;
   readonly connected?: boolean;
@@ -186,14 +189,22 @@ export function useProjectConversationNavigation({ projects, snapshot, access, c
         workspaceId: session.workspaceId });
     }
     return projectConversationTree({ projects: [...knownProjects.values()], conversations, workflows,
-      workspaces: (snapshot?.workspaces ?? []).map(workspace => ({
-        id: workspace.id, projectId: workspace.projectId, title: workspace.name, kind: workspace.kind,
-        archived: Boolean(workspace.archivedAt), updatedAt: Date.parse(workspace.updatedAt),
-      })),
+      workspaces: (snapshot?.workspaces ?? []).map(workspace => {
+        // A chat running in a worktree is work in progress; otherwise git says review or done.
+        const working = (snapshot?.sessions ?? []).some(session => session.workspaceId === workspace.id
+          && ['starting', 'working', 'blocked', 'queued'].includes(agents.get(session.id)?.state ?? ''));
+        const known = workspaceStatuses?.[workspace.id];
+        const status = working ? 'working' as const : known?.status;
+        return {
+          id: workspace.id, projectId: workspace.projectId, title: workspace.name, kind: workspace.kind,
+          archived: Boolean(workspace.archivedAt), updatedAt: Date.parse(workspace.updatedAt),
+          ...(known?.branch ? { branch: known.branch } : {}), ...(status ? { status } : {}),
+        };
+      }),
       terminals: (includeTerminals ? snapshot?.sessions ?? [] : []).filter(session => session.kind === 'terminal').map(session => ({
         id: session.id, projectId: session.projectId, title: session.title, updatedAt: Date.parse(session.updatedAt),
         archived: Boolean(session.archivedAt) || ['completed', 'interrupted', 'failed'].includes(session.state),
       })) });
-  }, [projects, snapshot, entries, workflows, includeTerminals]);
+  }, [projects, snapshot, entries, workflows, includeTerminals, workspaceStatuses]);
   return { nodes, entries, projectStatus, inspectProject, collapseProject, searchAll, loadMore, loadMoreSearch, searchStatus };
 }

@@ -1494,6 +1494,8 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
 
   /** Main-owned Git worktree operations. Mobile is restricted to list/open. */
   executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;
+  /** Desktop worktree workspaces: create, read where each stands, commit, merge. */
+  workspaceWorktrees?: import('./workspace-worktree').WorkspaceWorktreeAccess;
 
   // ── Git working tree (read-only) ────────────────────────────────────────
   /** Branch and per-file change counts for one directory. Returns an untracked
