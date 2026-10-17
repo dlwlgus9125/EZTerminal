@@ -16,6 +16,22 @@ const PREVIEW_LINES = 3;
 export function CliUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy();
   const fold = useFold(row.id, row.text);
+  if (row.origin === 'parent-agent') {
+    return (
+      <article className="chat-cli-line chat-cli-instruction" aria-label={copy.parentInstruction} data-message-id={row.anchorId}>
+        <span className="chat-cli-glyph" data-tone="muted" aria-hidden="true">↳</span>
+        <div className="chat-cli-line__body">
+          <span className="chat-cli-dim">{copy.parentInstruction}</span>
+          <p className="chat-cli-user__text" data-folded={fold.folded || undefined}>{row.text}</p>
+          {fold.foldable && (
+            <button type="button" className="chat-link-button" onClick={fold.toggle} aria-expanded={!fold.folded}>
+              {fold.folded ? copy.showMore : copy.showLess}
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
   return (
     <article className="chat-cli-user" aria-label={copy.you} data-message-id={row.anchorId}>
       <div className="chat-cli-user__box" data-folded={fold.folded || undefined}>
@@ -94,8 +110,25 @@ function CliTool({ tool }: { readonly tool: ChatTool }): JSX.Element {
           onClick={() => context.setExpanded(key, !open)}>
           <span className="chat-cli-tool__name">{cliToolName(tool)}</span>
           {target && <span className="chat-cli-tool__target">({target})</span>}
+          {tool.subagent?.subagentType && <span className="chat-cli-dim"> · {tool.subagent.subagentType}</span>}
           {tool.durationMs !== undefined && tool.durationMs >= 1_000 && <span className="chat-cli-dim"> · {formatDuration(tool.durationMs, context.locale)}</span>}
         </button>
+        {tool.subagent ? (
+          // The call's own result is provider plumbing ("agent launched…"); the subagent is what matters.
+          <div className="chat-cli-result" data-tone={tool.subagent.state === 'error' ? 'danger' : 'muted'}>
+            <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
+            <div className="chat-cli-result__body">
+              <span className="chat-cli-result__line">
+                {tool.subagent.state === 'error' ? copy.subagentStopped : tool.subagent.state === 'done' ? copy.subagentDone : copy.subagent}
+                {tool.subagent.background ? ` · ${copy.subagentBackground}` : ''}
+                {context.onOpenRelated && (
+                  <button type="button" className="chat-link-button" onClick={() => context.onOpenRelated?.(tool.subagent!.sessionId)}
+                    aria-label={`${copy.openSubagent}: ${tool.subagent.title ?? target ?? copy.subagent}`}>{copy.openSubagent}</button>
+                )}
+              </span>
+            </div>
+          </div>
+        ) : (
         <div className="chat-cli-result" data-tone={summary.tone}>
           <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
           <div className="chat-cli-result__body">
@@ -107,6 +140,7 @@ function CliTool({ tool }: { readonly tool: ChatTool }): JSX.Element {
             )}
           </div>
         </div>
+        )}
         {open && expandable && <ToolDetail tool={tool} variant="cli" />}
       </div>
     </li>
@@ -243,6 +277,27 @@ export function CliChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.Ele
 export function CliNotice({ row }: { readonly row: RowOf<'notice'> | RowOf<'child'> | RowOf<'error'> }): JSX.Element {
   const context = useChatContext();
   const copy = useChatCopy();
+  if (row.kind === 'child' && row.subagent) {
+    const failed = row.subagent.state === 'error';
+    return (
+      <section className="chat-cli-line chat-cli-child" aria-label={`${copy.subagent}: ${row.subagent.title ?? ''}`}>
+        <span className="chat-cli-glyph" data-tone={failed ? 'danger' : 'success'} aria-hidden="true">⏺</span>
+        <div className="chat-cli-line__body">
+          <span className="chat-cli-tool__name">{copy.subagent}</span>
+          <span className="chat-cli-tool__target">({row.subagent.title ?? ''})</span>
+          {row.subagent.subagentType && <span className="chat-cli-dim"> · {row.subagent.subagentType}</span>}
+          <span className="chat-cli-dim"> · {failed ? copy.subagentStopped : copy.subagentDone}</span>
+          {row.relatedSessionId && context.onOpenRelated && (
+            <button type="button" className="chat-link-button" onClick={() => context.onOpenRelated?.(row.relatedSessionId!)}>{copy.openSubagent}</button>
+          )}
+          <div className="chat-cli-result">
+            <span className="chat-cli-result__elbow" aria-hidden="true">⎿</span>
+            <div className="chat-cli-result__body"><Prose markdown={row.text} variant="cli" /></div>
+          </div>
+        </div>
+      </section>
+    );
+  }
   return (
     <p className="chat-cli-line chat-cli-notice" data-kind={row.kind} role={row.kind === 'error' ? 'alert' : undefined}>
       <span className="chat-cli-glyph" data-tone={row.kind === 'error' ? 'danger' : 'muted'} aria-hidden="true">{row.kind === 'error' ? '✗' : '·'}</span>

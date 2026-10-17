@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronRight, CircleSlash, FileDiff, ListChecks, LoaderCircle, MessageCircleQuestion, NotebookPen, Paperclip, ShieldQuestion, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, CircleSlash, CornerDownRight, FileDiff, ListChecks, LoaderCircle, MessageCircleQuestion, NotebookPen, Paperclip, ShieldQuestion, Users, X } from 'lucide-react';
 
 import { useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
@@ -15,6 +15,20 @@ type RowOf<K extends ChatRow['kind']> = Extract<ChatRow, { kind: K }>;
 export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Element {
   const copy = useChatCopy();
   const fold = useFold(row.id, row.text);
+  if (row.origin === 'parent-agent') {
+    // A subagent starts from its parent agent's instruction, not from the person.
+    return (
+      <article className="chat-instruction" aria-label={copy.parentInstruction} data-message-id={row.anchorId}>
+        <p className="chat-instruction__label"><CornerDownRight aria-hidden="true" />{copy.parentInstruction}</p>
+        <p className="chat-instruction__text" data-folded={fold.folded || undefined}>{row.text}</p>
+        {fold.foldable && (
+          <button type="button" className="chat-link-button" onClick={fold.toggle} aria-expanded={!fold.folded}>
+            {fold.folded ? copy.showMore : copy.showLess}
+          </button>
+        )}
+      </article>
+    );
+  }
   return (
     <article className="chat-user" aria-label={copy.you} data-message-id={row.anchorId}>
       <div className="chat-user__bubble" data-folded={fold.folded || undefined}>
@@ -78,7 +92,7 @@ function ToolLine({ tool }: { readonly tool: ChatTool }): JSX.Element {
   const target = toolDisplayTarget(tool, context.workspaceRoot);
   const mono = tool.category !== 'web' && tool.category !== 'agent' && tool.category !== 'todo';
   return (
-    <li className="chat-tool" data-status={tool.status} data-category={tool.category}>
+    <li className="chat-tool" data-status={tool.status} data-category={tool.category} data-linked={tool.subagent ? true : undefined}>
       <button
         type="button"
         className="chat-tool__line"
@@ -90,11 +104,16 @@ function ToolLine({ tool }: { readonly tool: ChatTool }): JSX.Element {
         <span className="chat-tool__verb">{toolVerb(tool, context.locale)}</span>
         {target && <span className="chat-tool__target" data-mono={mono || undefined} title={target}>{target}</span>}
         <span className="chat-tool__meta">
+          {tool.subagent?.subagentType && <span className="chat-chip">{tool.subagent.subagentType}</span>}
           {meta.map((value) => <span key={value} data-tone={value.startsWith('exit') || value.startsWith('종료') ? 'danger' : undefined}>{value}</span>)}
           <StatusGlyph tool={tool} />
           {detail && <ChevronRight className="chat-chevron" aria-hidden="true" />}
         </span>
       </button>
+      {tool.subagent && context.onOpenRelated && (
+        <button type="button" className="chat-link-button chat-tool__open" onClick={() => context.onOpenRelated?.(tool.subagent!.sessionId)}
+          aria-label={`${copy.openSubagent}: ${tool.subagent.title ?? target ?? copy.subagent}`}>{copy.openSubagent}</button>
+      )}
       {open && detail && <ToolDetail tool={tool} />}
     </li>
   );
@@ -272,9 +291,35 @@ export function BubbleChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.
   );
 }
 
+/** A subagent finished: its task, kind and outcome, its answer, and a way in. */
+function BubbleSubagentResult({ row }: { readonly row: RowOf<'child'> }): JSX.Element {
+  const context = useChatContext();
+  const copy = useChatCopy();
+  const subagent = row.subagent!;
+  const failed = subagent.state === 'error';
+  return (
+    <section className="chat-child" data-state={subagent.state} aria-label={`${copy.subagent}: ${subagent.title ?? ''}`}>
+      <header className="chat-child__head">
+        <Users className="chat-child__icon" aria-hidden="true" />
+        <strong className="chat-child__title">{subagent.title ?? copy.subagent}</strong>
+        {subagent.subagentType && <span className="chat-chip">{subagent.subagentType}</span>}
+        <span className="chat-child__state" data-tone={failed ? 'danger' : 'success'}>
+          {failed ? <AlertTriangle aria-hidden="true" /> : <Check aria-hidden="true" />}
+          {failed ? copy.subagentStopped : copy.subagentDone}
+        </span>
+        {row.relatedSessionId && context.onOpenRelated && (
+          <button type="button" className="chat-link-button chat-child__open" onClick={() => context.onOpenRelated?.(row.relatedSessionId!)}>{copy.openSubagent}</button>
+        )}
+      </header>
+      <div className="chat-child__summary"><Prose markdown={row.text} variant="prose" /></div>
+    </section>
+  );
+}
+
 export function BubbleNotice({ row }: { readonly row: RowOf<'notice'> | RowOf<'child'> }): JSX.Element {
   const context = useChatContext();
   const copy = useChatCopy();
+  if (row.kind === 'child' && row.subagent) return <BubbleSubagentResult row={row} />;
   return (
     <p className="chat-notice">
       {row.text}

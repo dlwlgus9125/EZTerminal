@@ -53,6 +53,32 @@ describe('project conversation hierarchy', () => {
       expect(visibleProjectConversationRows(tree, { expanded: new Set(), includeArchived: false, ...view }).some(row => row.node.title === 'Claude subagent')).toBe(false);
     }
   });
+  it('shows the most urgent subagent state on a collapsed parent', () => {
+    const working: ProjectNavigationConversation = { ...general, id: 'a', sessionId: 'a', title: 'Read README title', updatedAt: 41, parentSessionId: 'general', status: 'working', subagentType: 'Explore' };
+    const blocked: ProjectNavigationConversation = { ...general, id: 'b', sessionId: 'b', title: 'Delete README', updatedAt: 42, parentSessionId: 'general', status: 'blocked' };
+    const done: ProjectNavigationConversation = { ...general, id: 'c', sessionId: 'c', title: 'Find greet', updatedAt: 43, parentSessionId: 'general', status: 'completed' };
+    const parent = fixture([general, working, blocked, done])[0].children!.find(node => node.title === 'Build options')!;
+    expect(parent.attention).toEqual({ status: 'blocked', count: 1 });
+    expect(parent.children!.find(node => node.title === 'Read README title')!.subagentType).toBe('Explore');
+    const quiet = fixture([general, done])[0].children!.find(node => node.title === 'Build options')!;
+    expect(quiet.attention).toBeUndefined();
+  });
+  it('adds a workspace level only when the project has a worktree, and merges local checkouts', () => {
+    const local = { id: 'w-local', projectId: 'project-story', title: 'Product', kind: 'local' as const };
+    const duplicate = { ...local, id: 'w-local-main', title: 'Product (main)' };
+    const worktree = { id: 'w-tree', projectId: 'project-story', title: 'fix-login', kind: 'worktree' as const, branch: 'fix-login', status: 'review' as const };
+    const onTree: ProjectNavigationConversation = { ...general, id: 'tree-chat', sessionId: 'tree-chat', title: 'Fix login', workspaceId: 'w-tree', updatedAt: 50 };
+    const flat = projectConversationTree({ projects: [{ id: 'project-story', title: 'Product' }], conversations: [general], workflows: {}, workspaces: [local, duplicate] });
+    expect(flat[0].children!.some(node => node.target.kind === 'workspace')).toBe(false);
+    const tree = projectConversationTree({ projects: [{ id: 'project-story', title: 'Product' }], conversations: [general, onTree], workflows: {}, workspaces: [local, duplicate, worktree] });
+    const places = tree[0].children!.filter(node => node.target.kind === 'workspace');
+    expect(places.map(node => [node.title, node.status, node.children!.map(child => child.title)])).toEqual([
+      ['fix-login', 'review', ['Fix login']],
+      ['Product', undefined, ['Build options']],
+    ]);
+    const archived = projectConversationTree({ projects: [{ id: 'project-story', title: 'Product' }], conversations: [general], workflows: {}, workspaces: [local, { ...worktree, archived: true }] });
+    expect(archived[0].children!.some(node => node.target.kind === 'workspace')).toBe(false);
+  });
   it('keeps a stable session identity when a refreshed history summary replaces daemon fallback', () => {
     const before = fixture([{ ...general, id: 'daemon-fallback' }]);
     const after = fixture([{ ...general, id: 'opaque-summary' }]);

@@ -79,11 +79,34 @@ const PlanPayloadSchema = z.object({
   filePath: ShortText.optional(),
 }).strict();
 
+/**
+ * A provider-native subagent's place in its parent and its own transcript:
+ * `link` (parent: the child started, joined to the call that started it),
+ * `result` (parent: the child's bounded final answer) and `instruction` (the
+ * child's first row: what the parent asked). Clients without this variant drop
+ * the payload and show the row's text, which is written to read on its own.
+ */
+const SubagentPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal('subagent'),
+  role: z.enum(['link', 'result', 'instruction']),
+  /** Provider call that started the child (Claude Agent tool use, Codex spawn item). */
+  callId: ShortText.optional(),
+  childSessionId: ShortText.optional(),
+  parentSessionId: ShortText.optional(),
+  title: ShortText.optional(),
+  /** Provider's agent kind, e.g. Claude `Explore`. */
+  subagentType: ShortText.optional(),
+  background: z.boolean().optional(),
+  state: z.enum(['done', 'error']).optional(),
+}).strict();
+
 export const TranscriptPayloadSchema = z.discriminatedUnion('type', [
   ToolPayloadSchema,
   TodoPayloadSchema,
   ReasoningPayloadSchema,
   PlanPayloadSchema,
+  SubagentPayloadSchema,
 ]);
 
 export type TranscriptPayload = z.infer<typeof TranscriptPayloadSchema>;
@@ -91,6 +114,7 @@ export type ToolPayload = z.infer<typeof ToolPayloadSchema>;
 export type TodoPayload = z.infer<typeof TodoPayloadSchema>;
 export type ReasoningPayload = z.infer<typeof ReasoningPayloadSchema>;
 export type PlanPayload = z.infer<typeof PlanPayloadSchema>;
+export type SubagentPayload = z.infer<typeof SubagentPayloadSchema>;
 export type TodoItem = z.infer<typeof TodoItemSchema>;
 
 /** Tolerant parse: unknown versions and malformed values become `undefined`. */

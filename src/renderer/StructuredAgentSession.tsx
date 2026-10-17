@@ -17,7 +17,10 @@ import {
   AtSign,
   Bot,
   Cpu,
+  CornerLeftUp,
+  Forward,
   Gauge,
+  ScanSearch,
   NotebookPen,
   ShieldAlert,
   ShieldCheck,
@@ -180,6 +183,8 @@ interface StructuredAgentCopy {
   readonly settings: string;
   readonly status: string;
   readonly childTrack: string;
+  readonly childTrackMore: (count: number) => string;
+  readonly childTrackLess: string;
   readonly managed: string;
   readonly providerOwned: string;
   readonly readOnly: string;
@@ -193,6 +198,11 @@ interface StructuredAgentCopy {
   readonly detachingSession: string;
   readonly lifecycleFailed: string;
   readonly providerOwnedReadOnly: string;
+  readonly parentConversation: string;
+  readonly backToParent: string;
+  readonly subagentManaged: string;
+  readonly subagentApprovalWaiting: string;
+  readonly reviewApproval: string;
   readonly archivedReadOnly: string;
   readonly endedReadOnly: string;
   readonly skin: string;
@@ -201,6 +211,8 @@ interface StructuredAgentCopy {
   readonly conversationMenu: string;
   readonly previousConversations: string;
   readonly heartbeatMenu: string;
+  readonly delegateHandoff: string;
+  readonly delegateReview: string;
   readonly heartbeatOn: string;
   readonly changedFiles: (count: number) => string;
   readonly close: string;
@@ -222,7 +234,7 @@ interface StructuredAgentCopy {
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   en: {
     skin: 'Conversation skin', bubbleSkin: 'Bubbles', cliSkin: 'CLI',
-    conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat',
+    conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat', delegateHandoff: 'Hand off…', delegateReview: 'Ask for review…',
     changedFiles: (count) => `${count} ${count === 1 ? 'file' : 'files'} changed`, close: 'Close',
     copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
     replyMessage: 'Reply', reuseMessage: 'Use as draft', removeReply: 'Remove reply',
@@ -286,6 +298,8 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settings: 'Session settings',
     status: 'Status',
     childTrack: 'Child Agents',
+    childTrackMore: (count: number) => `+${count} more`,
+    childTrackLess: 'Show fewer',
     managed: 'Managed',
     providerOwned: 'Provider-owned',
     readOnly: 'Read only',
@@ -299,12 +313,17 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     detachingSession: 'Detaching session',
     lifecycleFailed: 'The session action could not be completed.',
     providerOwnedReadOnly: 'This subagent is owned by the provider. You can review its transcript here, but direct messages and lifecycle changes stay with the parent provider.',
+    parentConversation: 'Parent conversation',
+    backToParent: 'Back to parent',
+    subagentManaged: 'The parent conversation runs this subagent. Send follow-ups there.',
+    subagentApprovalWaiting: 'This subagent is waiting for your approval in the parent conversation.',
+    reviewApproval: 'Review in parent',
     archivedReadOnly: 'This session is archived. Its transcript remains available, but new messages are disabled.',
     endedReadOnly: 'This session has ended. Its transcript remains available, but new messages are disabled.',
   },
   ko: {
     skin: '대화 스킨', bubbleSkin: '말풍선', cliSkin: 'CLI',
-    conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트',
+    conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트', delegateHandoff: '맡기기…', delegateReview: '검토 맡기기…',
     changedFiles: (count) => `파일 ${count}개 변경`, close: '닫기',
     copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
     replyMessage: '답장', reuseMessage: '입력에 가져오기', removeReply: '답장 취소',
@@ -348,7 +367,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     toolCall: '도구 호출',
     toolResult: '도구 결과',
     approval: '승인 필요',
-    childSummary: '하위 Agent 업데이트',
+    childSummary: '서브에이전트 업데이트',
     notice: '알림',
     error: '오류',
     streaming: '응답 중',
@@ -367,7 +386,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     busyHint: 'Send는 FIFO 대기열에 추가합니다. 중단 후 보내기는 현재 턴을 먼저 멈춥니다.',
     settings: '세션 설정',
     status: '상태',
-    childTrack: '하위 Agent',
+    childTrack: '서브에이전트',
+    childTrackMore: (count: number) => `외 ${count}개`,
+    childTrackLess: '접기',
     managed: '관리형',
     providerOwned: 'Provider 소유',
     readOnly: '읽기 전용',
@@ -380,7 +401,12 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     detachSession: '분리',
     detachingSession: '세션 분리 중',
     lifecycleFailed: '세션 동작을 완료하지 못했습니다.',
-    providerOwnedReadOnly: '이 하위 Agent는 provider가 소유합니다. 여기서 대화를 확인할 수 있지만 직접 메시지와 수명주기 변경은 상위 provider가 관리합니다.',
+    providerOwnedReadOnly: '이 서브에이전트는 provider가 소유합니다. 여기서 대화를 확인할 수 있지만 직접 메시지와 수명주기 변경은 상위 provider가 관리합니다.',
+    parentConversation: '상위 대화',
+    backToParent: '상위 대화로',
+    subagentManaged: '상위 대화가 이 서브에이전트를 실행합니다. 후속 요청은 상위 대화에서 보내세요.',
+    subagentApprovalWaiting: '이 서브에이전트가 상위 대화에서 승인을 기다리고 있습니다.',
+    reviewApproval: '승인 확인',
     archivedReadOnly: '보관된 세션입니다. 대화는 계속 볼 수 있지만 새 메시지는 보낼 수 없습니다.',
     endedReadOnly: '종료된 세션입니다. 대화는 계속 볼 수 있지만 새 메시지는 보낼 수 없습니다.',
   },
@@ -911,6 +937,13 @@ export interface StructuredAgentChildTrackProps {
   readonly onSelectSession: (sessionId: string) => void;
 }
 
+/** What needs the person first, then what is running, then what finished. */
+const CHILD_TRACK_RANK: Partial<Record<ManagedAgentState, number>> = {
+  blocked: 0, 'delivery-uncertain': 0, error: 1, starting: 2, working: 2, queued: 3,
+};
+/** Chips shown before the rest folds into "+N"; a 20-subagent turn stays one row. */
+const CHILD_TRACK_VISIBLE = 4;
+
 /** A compact projection of direct children; the authoritative tree remains in the daemon snapshot. */
 export function StructuredAgentChildTrack({
   items,
@@ -918,15 +951,22 @@ export function StructuredAgentChildTrack({
 }: StructuredAgentChildTrackProps): JSX.Element | null {
   const copy = useStructuredAgentCopy();
   const stateLabel = useAgentStateLabel();
+  const [expanded, setExpanded] = useState(false);
   if (items.length === 0) return null;
+  const ordered = items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => (CHILD_TRACK_RANK[left.item.state] ?? 4) - (CHILD_TRACK_RANK[right.item.state] ?? 4) || left.index - right.index)
+    .map(({ item }) => item);
+  const hidden = expanded ? 0 : Math.max(0, ordered.length - CHILD_TRACK_VISIBLE);
+  const visible = hidden > 0 ? ordered.slice(0, CHILD_TRACK_VISIBLE) : ordered;
 
   // One row of chips above the composer: state dot, name and state. Provider and ownership
   // stay in the accessible name and tooltip; attention states carry the visual weight.
   return (
-    <nav className="structured-agent-children" aria-label={`${copy.childTrack} ${items.length}`}>
+    <nav className="structured-agent-children" aria-label={`${copy.childTrack} ${items.length}`} data-expanded={expanded || undefined}>
       <span className="structured-agent-children__heading" aria-hidden="true">{copy.childTrack}</span>
-      <ul className="structured-agent-children__list">
-        {items.map((item) => {
+      <ul className="structured-agent-children__list" data-expanded={expanded || undefined}>
+        {visible.map((item) => {
           const ownership = item.owner === 'provider-native' ? `${copy.providerOwned} · ${copy.readOnly}` : copy.managed;
           const details = `${item.title} · ${stateLabel(item.state)} · ${item.providerLabel} · ${ownership}`;
           return (
@@ -949,6 +989,14 @@ export function StructuredAgentChildTrack({
             </li>
           );
         })}
+        {(hidden > 0 || expanded) && ordered.length > CHILD_TRACK_VISIBLE && (
+          <li>
+            <button type="button" className="structured-agent-child structured-agent-child--more" aria-expanded={expanded}
+              onClick={() => setExpanded((current) => !current)} data-testid="structured-agent-child-more">
+              {expanded ? copy.childTrackLess : copy.childTrackMore(hidden)}
+            </button>
+          </li>
+        )}
       </ul>
     </nav>
   );
@@ -1504,6 +1552,14 @@ export interface StructuredAgentSessionPanelProps {
   /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
+  /** A subagent's parent conversation: the header leads back to it. */
+  readonly parent?: { readonly sessionId: string; readonly title: string };
+  /** Provider's agent kind for a provider-native subagent, e.g. Claude `Explore`. */
+  readonly subagentType?: string;
+  /** The parent holds an approval this subagent raised. */
+  readonly parentApprovalPending?: boolean;
+  /** Hand this conversation's work, or a review of it, to a new child agent. */
+  readonly onDelegate?: (mode: 'handoff' | 'review') => void;
   readonly heartbeatControl?: ReactNode;
   /** A heartbeat is scheduled; the header shows it while its settings stay in a dialog. */
   readonly heartbeatActive?: boolean;
@@ -1607,6 +1663,10 @@ export function StructuredAgentSessionPanel({
   historyOnly = false,
   owner = 'managed',
   childTrack,
+  parent,
+  subagentType,
+  parentApprovalPending = false,
+  onDelegate,
   heartbeatControl,
   heartbeatActive = false,
   recoveryControl,
@@ -1878,8 +1938,14 @@ export function StructuredAgentSessionPanel({
     >
       <header className="structured-agent-session-header">
         <div className="structured-agent-session-header__identity">
-          <span className="structured-agent__eyebrow">{providerLabel}</span>
+          {parent && onOpenRelatedSession ? (
+            <button type="button" className="structured-agent-session-header__parent" onClick={() => onOpenRelatedSession(parent.sessionId)}
+              title={`${copy.parentConversation}: ${parent.title}`} aria-label={`${copy.backToParent}: ${parent.title}`} data-testid="structured-agent-parent">
+              <CornerLeftUp aria-hidden="true" /><span>{parent.title}</span>
+            </button>
+          ) : <span className="structured-agent__eyebrow">{providerLabel}</span>}
           <h1 id={titleId}>{title}</h1>
+          {subagentType && <span className="chat-chip">{subagentType}</span>}
           <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
         </div>
         <div className="structured-agent-session-header__status">
@@ -1992,6 +2058,13 @@ export function StructuredAgentSessionPanel({
                   {skin === 'bubble' ? copy.bubbleSkin : copy.cliSkin}
                 </MenuRadioItem>
               ))}
+              {onDelegate && !providerOwned && !historyOnly && <MenuSeparator />}
+              {onDelegate && !providerOwned && !historyOnly && (
+                <MenuItem icon={Forward} onSelect={() => onDelegate('handoff')} data-testid="structured-agent-delegate">{copy.delegateHandoff}</MenuItem>
+              )}
+              {onDelegate && !providerOwned && !historyOnly && (
+                <MenuItem icon={ScanSearch} onSelect={() => onDelegate('review')} data-testid="structured-agent-delegate-review">{copy.delegateReview}</MenuItem>
+              )}
               {heartbeatControl !== undefined && <MenuSeparator />}
               {heartbeatControl !== undefined && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
               {hasLifecycleActions && (canDetach || canArchive) && <MenuSeparator />}
@@ -2059,7 +2132,18 @@ export function StructuredAgentSessionPanel({
         </Dialog>
       )}
       {recoveryControl}
-      {!historyOnly && (
+      {!historyOnly && providerOwned && parent && (
+        // A provider-owned subagent takes no messages: say who runs it and lead back.
+        <footer className="structured-agent-subagent-footer" data-attention={parentApprovalPending || undefined} data-testid="structured-agent-subagent-footer">
+          <p role={parentApprovalPending ? 'status' : undefined}>{parentApprovalPending ? copy.subagentApprovalWaiting : copy.subagentManaged}</p>
+          {onOpenRelatedSession && (
+            <Button type="button" size="sm" variant={parentApprovalPending ? 'primary' : 'secondary'} onClick={() => onOpenRelatedSession(parent.sessionId)}>
+              {parentApprovalPending ? copy.reviewApproval : copy.backToParent}
+            </Button>
+          )}
+        </footer>
+      )}
+      {!historyOnly && !(providerOwned && parent) && (
         <StructuredAgentComposer
           toolbar={settingsControls}
           queueItems={queueItems}

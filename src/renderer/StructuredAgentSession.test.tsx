@@ -332,15 +332,35 @@ describe('StructuredAgentChildTrack', () => {
       '[data-testid="structured-agent-child"]',
     ));
     expect(children).toHaveLength(2);
-    expect(children[0]?.textContent).toContain('Accessibility review');
-    expect(children[0]?.textContent).toContain('Codex');
+    // Work in flight comes before an idle child.
+    const [native, managed] = children;
+    expect(native?.textContent).toContain('Provider search worker');
+    expect(managed?.textContent).toContain('Accessibility review');
+    expect(managed?.textContent).toContain('Codex');
     // The state reads in the UI language, not as the raw protocol value.
-    expect(children[0]?.textContent).toContain('Ready');
-    expect(children[0]?.textContent).toContain('Managed');
-    expect(children[1]?.textContent).toContain('Provider-owned');
-    expect(children[1]?.textContent).toContain('Read only');
-    act(() => children[0]!.click());
+    expect(managed?.textContent).toContain('Ready');
+    expect(managed?.textContent).toContain('Managed');
+    expect(native?.textContent).toContain('Provider-owned');
+    expect(native?.textContent).toContain('Read only');
+    act(() => managed!.click());
     expect(onSelect).toHaveBeenCalledWith('managed-child');
+  });
+
+  it('shows what needs attention first and folds the rest behind "+N more"', () => {
+    const states = ['done', 'done', 'working', 'done', 'blocked', 'done', 'error'] as const;
+    render(
+      <StructuredAgentChildTrack
+        items={states.map((state, index) => ({ sessionId: `child-${index}`, title: `Child ${index}`, providerLabel: 'Claude', state, owner: 'provider-native' as const }))}
+        onSelectSession={vi.fn()}
+      />,
+    );
+    const titles = (): string[] => Array.from(container.querySelectorAll('[data-testid="structured-agent-child"] .structured-agent-child__title')).map((node) => node.textContent ?? '');
+    expect(titles()).toEqual(['Child 4', 'Child 6', 'Child 2', 'Child 0']);
+    const more = container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-child-more"]')!;
+    expect(more.textContent).toBe('+3 more');
+    act(() => more.click());
+    expect(titles()).toHaveLength(7);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
   });
 });
 

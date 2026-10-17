@@ -1382,3 +1382,111 @@
 .conversation-review__line:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
 .conversation-review__number { width: 3em; flex-shrink: 0; text-align: right; color: var(--ui-text-primary); }
 .conversation-latest { position: sticky; bottom: var(--ui-space-2); display: block; margin: 0 auto; z-index: 1; }
+
+/* Provider-native subagent: the header leads back to the parent conversation and
+ * the composer gives way to a note about who runs it (no flex gap: shared with Android). */
+.structured-agent-session-header__parent {
+  display: inline-flex;
+  flex: 0 3 auto;
+  align-items: center;
+  min-width: 0;
+  max-width: 40%;
+  padding: 0 var(--ui-space-1);
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font: inherit;
+  font-size: var(--ui-font-size-xs);
+  cursor: pointer;
+}
+
+.structured-agent-session-header__parent:hover {
+  background: var(--ui-surface-hover);
+  color: var(--ui-text-primary);
+}
+
+.structured-agent-session-header__parent:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.structured-agent-session-header__parent svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-1);
+}
+
+.structured-agent-session-header__parent span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-agent-session-header__identity > .chat-chip {
+  align-self: center;
+}
+
+.structured-agent-subagent-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  width: min(calc(100% - 2rem), var(--ui-chat-max-width));
+  margin: 0 auto var(--ui-space-3);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised);
+}
+
+.structured-agent-subagent-footer[data-attention] {
+  border-color: var(--ui-warning-border);
+  background: var(--ui-warning-muted);
+}
+
+.structured-agent-subagent-footer p {
+  margin: 0 var(--ui-space-3) 0 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.structured-agent-subagent-footer[data-attention] p {
+  color: var(--ui-text-primary);
+}
+
+.structured-agent-subagent-footer .ez-ui-button {
+  flex: none;
+}
+
+/* "+N more": the rest of a long child list, expanded in place on request. */
+.structured-agent-child--more {
+  color: var(--ui-text-secondary);
+  border-style: solid;
+}
+
+.structured-agent-children__list[data-expanded] {
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
+
+.structured-agent-children__list[data-expanded] > li {
+  margin-bottom: var(--ui-space-1);
+}
+
+.structured-agent-children__list[data-expanded] > li + li {
+  margin-left: 0;
+}
+
+.structured-agent-children__list[data-expanded] > li {
+  margin-right: var(--ui-space-1);
+}
+
+.structured-agent-children[data-expanded] {
+  align-items: flex-start;
+}
+
+.structured-agent-children[data-expanded] .structured-agent-children__heading {
+  line-height: 1.75rem;
+}

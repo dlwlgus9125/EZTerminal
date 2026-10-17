@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Folder, FolderKanban, GitBranch, MessageSquare, Pin, Search, SquareTerminal, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderGit2, FolderKanban, GitBranch, HardDrive, MessageSquare, Pin, Search, SquareTerminal, Users } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useAppTranslation } from './i18n';
 import { Button, Input } from './ui';
@@ -44,6 +44,8 @@ export interface ProjectConversationTreeProps {
   readonly onSearchAll?: (query: string) => void;
   readonly renderProjectActions?: (projectId: string) => ReactNode;
   readonly renderTerminalActions?: (sessionId: string, title: string) => ReactNode;
+  /** Review, merge and new-chat actions for a worktree row. */
+  readonly renderWorkspaceActions?: (target: Extract<ProjectNavigationTarget, { kind: 'workspace' }>) => ReactNode;
   readonly projectStatus?: Readonly<Record<string, { readonly loading?: boolean; readonly error?: string; readonly hasMore?: boolean }>>;
   readonly onLoadMore?: (projectId: string) => void;
   readonly searchStatus?: { readonly loading?: boolean; readonly error?: string; readonly hasMore?: boolean };
@@ -54,7 +56,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps): JS
   return <ProjectConversationTreeView key={props.persistenceScope} {...props} />;
 }
 
-function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading, offline, selectedId, onOpen, onInspectProject, onCollapseProject, onSearchAll, renderProjectActions, renderTerminalActions, projectStatus, onLoadMore, searchStatus, onLoadMoreSearch }: ProjectConversationTreeProps): JSX.Element {
+function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading, offline, selectedId, onOpen, onInspectProject, onCollapseProject, onSearchAll, renderProjectActions, renderTerminalActions, renderWorkspaceActions, projectStatus, onLoadMore, searchStatus, onLoadMoreSearch }: ProjectConversationTreeProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const text = (korean: string, english: string): string => ko ? korean : english;
@@ -164,13 +166,24 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
     project: text('프로젝트', 'Project'), subproject: text('소프로젝트', 'Subproject'),
     stage: text('단계', 'Stage'), conversation: node.subagent ? text('서브에이전트', 'Subagent') : node.source === 'native' ? 'CLI' : text('대화', 'Chat'),
     terminal: text('터미널', 'Terminal'),
+    workspace: node.target.kind === 'workspace' && node.target.local ? text('로컬', 'Local') : text('워크트리', 'Worktree'),
   })[node.target.kind];
   const date = (value: number): string => value > 0 ? new Intl.DateTimeFormat(ko ? 'ko' : 'en', { month: 'short', day: 'numeric' }).format(value) : '';
   const statusLabel = (status: string | undefined): string | undefined => ({
     working: text('응답 중', 'Working'), running: text('진행 중', 'Running'), starting: text('시작 중', 'Starting'),
     blocked: text('확인 대기', 'Needs attention'), error: text('오류', 'Error'), queued: text('대기 중', 'Queued'),
     'delivery-uncertain': text('전송 확인 필요', 'Delivery unconfirmed'), completed: text('완료됨', 'Completed'),
+    review: text('검토 대기', 'Ready to review'), done: text('완료', 'Done'), 'needs-attention': text('확인 대기', 'Needs attention'),
+    failed: text('오류', 'Error'),
   } as Readonly<Record<string, string>>)[status ?? ''];
+  /** A worktree is worked in, not answered: its "working" reads as work in progress. */
+  const nodeStatusLabel = (node: ProjectConversationNode, status = node.status): string | undefined =>
+    node.target.kind === 'workspace' && status === 'working' ? text('작업 중', 'In progress') : statusLabel(status);
+  /** "1 subagent needs attention": what a collapsed parent is hiding. */
+  const attentionLabel = (attention: NonNullable<ProjectConversationNode['attention']>): string => {
+    const label = statusLabel(attention.status) ?? attention.status;
+    return ko ? `서브에이전트 ${attention.count}개 ${label}` : `${attention.count} subagent${attention.count === 1 ? '' : 's'} · ${label}`;
+  };
 
   return <section className="project-conversation-tree" data-mobile={mobile || undefined} aria-label={text('프로젝트와 대화', 'Projects and conversations')} data-testid="project-conversation-tree">
     <div className="project-conversation-tree__search"><Search aria-hidden="true" /><Input value={state.query} maxLength={500}
@@ -198,8 +211,13 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
         {rows.map((row, index) => {
           const { node } = row;
           const branch = !flat && Boolean(node.children);
-          const Icon = node.subagent ? Users : { project: Folder, subproject: FolderKanban, stage: GitBranch, conversation: MessageSquare, terminal: SquareTerminal }[node.target.kind];
+          const Icon = node.subagent ? Users : node.target.kind === 'workspace'
+            ? node.target.local ? HardDrive : FolderGit2
+            : { project: Folder, subproject: FolderKanban, stage: GitBranch, conversation: MessageSquare, terminal: SquareTerminal }[node.target.kind];
           const status = node.target.kind === 'project' ? projectStatus?.[node.target.projectId] : undefined;
+          // Collapsed, a parent shows what its subagents need; open, each child shows its own.
+          const attention = !flat && !row.expanded ? node.attention : undefined;
+          const rowStatus = attention && (!node.status || node.status === 'completed' || node.status === 'idle') ? attention.status : node.status;
           return <div key={node.id} role="none" className="project-conversation-tree__entry">
             <div role="treeitem" aria-level={row.depth + 1} aria-expanded={branch ? row.expanded : undefined} aria-selected={activeId === node.id}
               aria-label={`${node.title} · ${kindLabel(node)}${node.providerLabel ? ` · ${node.providerLabel}` : ''}${node.archived ? ` · ${text('보관됨', 'Archived')}` : ''}${statusLabel(node.status) && node.status !== 'completed' ? ` · ${statusLabel(node.status)}` : ''}`}
@@ -218,11 +236,14 @@ function ProjectConversationTreeView({ nodes, persistenceScope, mobile, loading,
                 <small>{(flat || node.target.kind === 'conversation' && row.depth === 1 && node.path.length > 1) && node.path.length ? `${node.path.join(' / ')} · ` : ''}{node.providerLabel ? `${node.providerLabel}${node.source === 'native' ? ' CLI' : ''}` : kindLabel(node)}
                   {node.archived ? ` · ${text('보관됨', 'Archived')}` : ''}{node.target.kind === 'conversation' || node.target.kind === 'terminal' ? ` · ${date(node.updatedAt)}` : ''}
                   {node.target.kind === 'stage' && node.children?.length ? ` · ${text('대화', 'Chats')} ${node.children.length}` : ''}
-                  {node.target.kind === 'conversation' && node.children?.length ? ` · ${text('서브에이전트', 'Subagents')} ${node.children.length}` : ''}
-                  {statusLabel(node.status) ? ` · ${statusLabel(node.status)}` : ''}</small>
+                  {node.target.kind === 'conversation' && node.children?.length && !attention ? ` · ${text('서브에이전트', 'Subagents')} ${node.children.length}` : ''}
+                  {node.subagentType ? ` · ${node.subagentType}` : ''}
+                  {nodeStatusLabel(node) ? ` · ${nodeStatusLabel(node)}` : ''}
+                  {attention ? ` · ${attentionLabel(attention)}` : ''}</small>
               </span>
               {/* What needs you shows at a glance: working, waiting for you, failed or queued. */}
-              {statusLabel(node.status) && node.status !== 'completed' && <span className="project-conversation-tree__status" data-status={node.status} aria-hidden="true" />}
+              {nodeStatusLabel(node, rowStatus) && rowStatus !== 'completed' && rowStatus !== 'done' && <span className="project-conversation-tree__status" data-status={rowStatus} aria-hidden="true" />}
+              {node.target.kind === 'workspace' && renderWorkspaceActions && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderWorkspaceActions(node.target)}</span>}
               {node.target.kind === 'project' && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderProjectActions?.(node.target.projectId)}</span>}
               {node.target.kind === 'terminal' && !node.archived && <span className="project-conversation-tree__actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>{renderTerminalActions?.(node.target.sessionId, node.title)}</span>}
             {node.target.kind === 'project' && (row.expanded || flat) && <div className="project-conversation-tree__project-status" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>

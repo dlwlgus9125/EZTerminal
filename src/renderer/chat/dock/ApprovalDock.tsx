@@ -189,7 +189,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
     return (
       <div className="chat-dock chat-dock--collapsed" data-risk={approval.risk}>
         <Icon aria-hidden="true" />
-        <span className="chat-dock__title">{title}</span>
+        <span className="chat-dock__title">{request?.subagent ? `${request.subagent.title} · ${title}` : title}</span>
         {pendingCount > 1 && <span className="chat-dock__more">{copy.approval.pendingMore(pendingCount - 1)}</span>}
         <button type="button" className="chat-link-button" onClick={() => onCollapsedChange(false)}>
           <ChevronUp aria-hidden="true" />{copy.approval.expand}
@@ -230,6 +230,12 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
       <header className="chat-dock__header">
         <Icon aria-hidden="true" />
         <div className="chat-dock__heading">
+          {request?.subagent && (
+            <p className="chat-dock__from">
+              {copy.approval.fromSubagent(request.subagent.title)}
+              {context.onOpenRelated && <button type="button" className="chat-link-button" onClick={() => context.onOpenRelated?.(request.subagent!.sessionId)}>{copy.openSubagent}</button>}
+            </p>
+          )}
           <p className="chat-dock__title">{title}</p>
           {/* A question or a plan is not an access request; its risk label would mislead. */}
           {!plan && !question && <p className="chat-dock__risk">{copy.approval.risk[approval.risk]}</p>}

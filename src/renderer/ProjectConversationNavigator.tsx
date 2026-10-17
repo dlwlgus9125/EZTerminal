@@ -72,6 +72,7 @@ export function ProjectConversationNavigator({ projects, access, daemonAccess, p
           if (entry && onOpenHistory) onOpenHistory(entry);
           else if (target.sessionId) onOpenSession({ sessionId: target.sessionId, title: entry?.title, providerLabel: entry?.providerId });
         } else if (target.kind === 'terminal') onOpenTerminal(target.sessionId);
+        else if (target.kind === 'workspace') return;
         else {
           const project = projectFor(target.projectId);
           if (!project) return;

@@ -48,7 +48,7 @@ const KO: Readonly<Record<ToolCategory | 'fetch', Phrase>> = {
   web: (n, live) => (live ? '웹 검색 중' : `웹 검색 ${n}번`),
   fetch: (n, live) => `페이지 ${n}개 ${live ? '가져오는 중' : '가져옴'}`,
   mcp: (n, live) => `도구 ${n}개 ${live ? '호출 중' : '호출함'}`,
-  agent: (n, live) => `하위 에이전트 ${n}개 ${live ? '실행 중' : '실행함'}`,
+  agent: (n, live) => `서브에이전트 ${n}개 ${live ? '실행 중' : '실행함'}`,
   todo: (_n, live) => (live ? '작업 목록 갱신 중' : '작업 목록 갱신'),
   question: (_n, live) => (live ? '질문하는 중' : '질문함'),
   plan: (_n, live) => (live ? '계획 제안 중' : '계획 제안'),
@@ -138,10 +138,11 @@ export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
   if (locale === 'ko') {
     const map: Readonly<Record<string, string>> = {
       read: '읽기', search: '검색', list: '목록', command: '실행', edit: '수정', write: '생성', web: tool.name === 'WebFetch' ? '가져오기' : '웹 검색',
-      fetch: '가져오기', mcp: '도구', agent: '하위 에이전트', todo: '작업 목록', question: '질문', plan: '계획', other: '도구',
+      fetch: '가져오기', mcp: '도구', agent: '서브에이전트', todo: '작업 목록', question: '질문', plan: '계획', other: '도구',
     };
     const verb = map[tool.category] ?? '도구';
     if (tool.awaitingApproval) return `${verb} 승인 대기`;
+    if (tool.category === 'agent' && tool.status === 'running') return '서브에이전트 실행 중';
     return tool.status === 'running' ? `${verb} 중` : failed ? `${verb} 실패` : verb;
   }
   const done: Readonly<Record<string, string>> = {
@@ -151,7 +152,7 @@ export function toolVerb(tool: ChatTool, locale: ChatLocale): string {
   };
   const running: Readonly<Record<string, string>> = {
     read: 'Reading', search: 'Searching', list: 'Listing', command: 'Running', edit: 'Editing', write: 'Creating',
-    web: tool.name === 'WebFetch' ? 'Fetching' : 'Searching the web', mcp: 'Calling', agent: 'Subagent', todo: 'Updating tasks',
+    web: tool.name === 'WebFetch' ? 'Fetching' : 'Searching the web', mcp: 'Calling', agent: 'Running subagent', todo: 'Updating tasks',
     question: 'Asking', plan: 'Proposing plan', other: 'Using',
   };
   if (tool.awaitingApproval) return 'Awaiting approval';

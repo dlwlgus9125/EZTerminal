@@ -43,7 +43,10 @@ function activity(rows: readonly ChatRow[], index = 0): Extract<ChatRow, { kind:
 describe('buildChatModel over recorded provider sessions', () => {
   for (const name of readdirSync(FIXTURES).filter((file) => file.endsWith('.json')).map((file) => file.slice(0, -5))) {
     it(`${name}: shows each prompt once and hides lifecycle notices`, () => {
-      const { items, approvals } = golden(name);
+      // Subagent goldens also hold each child's rows; this is the parent's view.
+      const recorded = golden(name);
+      const items = recorded.items.filter((item) => item.sessionId === recorded.items[0]!.sessionId);
+      const { approvals } = recorded;
       const model = buildChatModel({ items, approvals, turns: finishedTurns(items) });
       const users = model.rows.filter((row) => row.kind === 'user');
       expect(users.length).toBe(1);
@@ -193,6 +196,42 @@ describe('buildChatModel over recorded provider sessions', () => {
     const { items } = golden('codex-markdown');
     const model = buildChatModel({ items: items.filter((item) => item.kind !== 'notice' && !(item.kind === 'assistant-message' && !item.isDelta)), turns: finishedTurns(items, 'working') });
     expect(model.rows.some((row) => row.kind === 'assistant' && row.streaming)).toBe(true);
+  });
+});
+
+describe('buildChatModel over a Claude session with subagents', () => {
+  const recorded = golden('claude-subagents');
+  const parentId = recorded.items[0]!.sessionId;
+  const parent = recorded.items.filter((item) => item.sessionId === parentId);
+  const childId = recorded.items.find((item) => item.sessionId !== parentId)!.sessionId;
+  const child = recorded.items.filter((item) => item.sessionId === childId);
+
+  it('links each Agent call to the subagent it started and hides the start notice', () => {
+    const model = buildChatModel({ items: parent, approvals: recorded.approvals, turns: finishedTurns(parent) });
+    const agents = model.rows.flatMap((row) => row.kind === 'activity' ? row.entries : [])
+      .flatMap((entry) => entry.kind === 'tool' && entry.tool.category === 'agent' ? [entry.tool] : []);
+    expect(agents.map((tool) => [tool.subagent?.title, tool.subagent?.subagentType, tool.subagent?.state])).toEqual([
+      ['Read README title', 'Explore', 'done'],
+      ['Find greet definition', 'Explore', 'done'],
+    ]);
+    expect(agents[0]!.subagent?.sessionId).toBe(childId);
+    expect(model.rows.some((row) => row.kind === 'child' && /Subagent started/u.test(row.text))).toBe(false);
+  });
+
+  it('shows each finished subagent once with its task and a link', () => {
+    const model = buildChatModel({ items: parent, approvals: recorded.approvals, turns: finishedTurns(parent) });
+    const children = model.rows.filter((row): row is Extract<ChatRow, { kind: 'child' }> => row.kind === 'child');
+    expect(children.map((row) => [row.subagent?.title, row.relatedSessionId === row.subagent?.sessionId])).toEqual([
+      ['Read README title', true],
+      ['Find greet definition', true],
+    ]);
+  });
+
+  it('opens the subagent on what its parent asked, then its own work', () => {
+    const model = buildChatModel({ items: child, turns: finishedTurns(child) });
+    const first = model.rows[0];
+    expect(first?.kind === 'user' && first.origin).toBe('parent-agent');
+    expect(kinds(model.rows)).toEqual(['user', 'turn-status', 'activity', 'assistant']);
   });
 });
 

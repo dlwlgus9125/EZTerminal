@@ -26,7 +26,13 @@ const QuestionSchema = z.object({
   options: z.array(QuestionOptionSchema).max(8),
 }).strict();
 
-const Base = { v: z.literal(1), callId: Short.optional() };
+/**
+ * The provider-native subagent that raised the request. The approval itself
+ * lives on the parent session (the child is provider-owned and read-only).
+ */
+const SubagentSchema = z.object({ sessionId: Short, title: Short }).strict();
+
+const Base = { v: z.literal(1), callId: Short.optional(), subagent: SubagentSchema.optional() };
 
 export const ApprovalRequestSchema = z.discriminatedUnion('kind', [
   z.object({ ...Base, kind: z.literal('command'), command: Body, cwd: Short.optional(), reason: Short.optional() }).strict(),

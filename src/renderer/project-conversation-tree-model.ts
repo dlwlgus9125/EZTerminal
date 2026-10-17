@@ -25,6 +25,23 @@ export interface ProjectNavigationConversation {
   readonly status?: string;
   /** Set while this chat is an attached subagent of that session. */
   readonly parentSessionId?: string;
+  /** Provider's agent kind for a provider-native subagent, e.g. Claude `Explore`. */
+  readonly subagentType?: string;
+  /** Daemon workspace (local checkout or worktree) the chat runs in. */
+  readonly workspaceId?: string;
+}
+
+/** Where a project's chats run. Worktrees get their own level; local checkouts share one. */
+export interface ProjectNavigationWorkspace {
+  readonly id: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly kind: 'local' | 'worktree';
+  readonly branch?: string;
+  /** working: a chat runs here · review: idle with unmerged changes · done: merged. */
+  readonly status?: 'working' | 'review' | 'done';
+  readonly archived?: boolean;
+  readonly updatedAt?: number;
 }
 
 export interface ProjectNavigationTerminal {
@@ -39,6 +56,7 @@ export type ProjectNavigationTarget =
   | { readonly kind: 'project'; readonly projectId: string }
   | { readonly kind: 'subproject'; readonly projectId: string; readonly subprojectId: string }
   | { readonly kind: 'stage'; readonly projectId: string; readonly subprojectId: string; readonly nodeId: string }
+  | { readonly kind: 'workspace'; readonly projectId: string; readonly workspaceId: string; readonly local: boolean }
   | { readonly kind: 'conversation'; readonly projectId: string; readonly conversationId: string; readonly sessionId?: string }
   | { readonly kind: 'terminal'; readonly projectId: string; readonly sessionId: string };
 
@@ -54,7 +72,29 @@ export interface ProjectConversationNode {
   readonly status?: string;
   readonly pinned?: boolean;
   readonly subagent?: boolean;
+  readonly subagentType?: string;
+  /** The most urgent state among this conversation's subagents, shown while it is collapsed. */
+  readonly attention?: { readonly status: string; readonly count: number };
+  readonly branch?: string;
   readonly children?: readonly ProjectConversationNode[];
+}
+
+/** What a collapsed parent must surface first: a wait on the person, a failure, then work in flight. */
+const ATTENTION_RANK: Readonly<Record<string, number>> = {
+  blocked: 0, 'needs-attention': 0, 'delivery-uncertain': 0, error: 1, failed: 1, working: 2, running: 2, starting: 2, queued: 3,
+};
+
+function descendantAttention(children: readonly ProjectConversationNode[]): ProjectConversationNode['attention'] {
+  const statuses: string[] = [];
+  const visit = (node: ProjectConversationNode): void => {
+    if (node.status && ATTENTION_RANK[node.status] !== undefined) statuses.push(node.status);
+    node.children?.forEach(visit);
+  };
+  children.forEach(visit);
+  if (!statuses.length) return undefined;
+  const rank = Math.min(...statuses.map(status => ATTENTION_RANK[status]!));
+  const matching = statuses.filter(status => ATTENTION_RANK[status] === rank);
+  return { status: matching[0]!, count: matching.length };
 }
 
 export function projectConversationNodeKey(kind: ProjectNavigationTarget['kind'], ...ids: string[]): string {
@@ -70,6 +110,7 @@ export function projectConversationTree(input: {
   readonly conversations: readonly ProjectNavigationConversation[];
   readonly workflows: Readonly<Record<string, WorkflowNavigationSnapshot | undefined>>;
   readonly terminals?: readonly ProjectNavigationTerminal[];
+  readonly workspaces?: readonly ProjectNavigationWorkspace[];
 }): readonly ProjectConversationNode[] {
   return input.projects.map(project => {
     const workflow = input.workflows[project.id];
@@ -97,8 +138,13 @@ export function projectConversationTree(input: {
         path, updatedAt: conversation.updatedAt, source: conversation.source,
         providerLabel: conversation.providerLabel, status: conversation.status,
         archived: archived || conversation.archived,
-        ...subagent ? { subagent } : {}, ...children.length ? { children } : {},
+        ...subagent ? { subagent } : {}, ...conversation.subagentType ? { subagentType: conversation.subagentType } : {},
+        ...children.length ? { children, ...attentionOf(children) } : {},
       };
+    };
+    const attentionOf = (children: readonly ProjectConversationNode[]): { attention?: ProjectConversationNode['attention'] } => {
+      const attention = descendantAttention(children);
+      return attention ? { attention } : {};
     };
     const children: ProjectConversationNode[] = (workflow?.subprojects ?? []).map(subproject => {
       const subprojectPath = [project.title, subproject.title];
@@ -133,7 +179,38 @@ export function projectConversationTree(input: {
         children: [...remaining.map(conversation => conversationNode(conversation, subprojectPath, subproject.status === 'archived')), ...stageNodes],
       };
     });
-    children.push(...conversations.filter(conversation => !assigned.has(conversation.id)).map(conversation => conversationNode(conversation, [project.title, ...conversation.subprojectTitle ? [conversation.subprojectTitle] : [], ...conversation.nodeTitle ? [conversation.nodeTitle] : []])));
+    const loose = conversations.filter(conversation => !assigned.has(conversation.id)).map(conversation => ({
+      conversation,
+      node: conversationNode(conversation, [project.title, ...conversation.subprojectTitle ? [conversation.subprojectTitle] : [], ...conversation.nodeTitle ? [conversation.nodeTitle] : []]),
+    }));
+    // A worktree is a separate place to work: its chats sit under it. Without one,
+    // every local checkout is the same folder and no extra level is shown.
+    const worktrees = (input.workspaces ?? []).filter(workspace => workspace.projectId === project.id && workspace.kind === 'worktree' && !workspace.archived);
+    if (worktrees.length) {
+      const worktreeIds = new Set(worktrees.map(workspace => workspace.id));
+      const locals = (input.workspaces ?? []).filter(workspace => workspace.projectId === project.id && workspace.kind === 'local' && !workspace.archived);
+      const local = locals[0];
+      const group = (id: string, title: string, entries: typeof loose, workspace: ProjectNavigationWorkspace | undefined, isLocal: boolean): ProjectConversationNode => {
+        const nodes = entries.map(entry => entry.node).sort(byRecent);
+        const status = isLocal
+          ? nodes.some(node => node.status === 'working' || node.status === 'running') ? 'working' : undefined
+          : workspace?.status;
+        return {
+          id: projectConversationNodeKey('workspace', project.id, id), title,
+          target: { kind: 'workspace', projectId: project.id, workspaceId: id, local: isLocal },
+          path: [project.title], updatedAt: Math.max(workspace?.updatedAt ?? 0, ...nodes.map(node => node.updatedAt)),
+          ...status ? { status } : {}, ...workspace?.branch ? { branch: workspace.branch } : {},
+          children: nodes, ...attentionOf(nodes),
+        };
+      };
+      children.push(group(local?.id ?? `${project.id}:local`, local?.branch ?? local?.title ?? project.title,
+        loose.filter(entry => !entry.conversation.workspaceId || !worktreeIds.has(entry.conversation.workspaceId)), local, true));
+      for (const worktree of worktrees) {
+        children.push(group(worktree.id, worktree.branch ?? worktree.title, loose.filter(entry => entry.conversation.workspaceId === worktree.id), worktree, false));
+      }
+    } else {
+      children.push(...loose.map(entry => entry.node));
+    }
     children.push(...(input.terminals ?? []).filter(terminal => terminal.projectId === project.id).map(terminal => ({
       id: projectConversationNodeKey('terminal', project.id, terminal.id),
       title: terminal.title, target: { kind: 'terminal' as const, projectId: project.id, sessionId: terminal.id },

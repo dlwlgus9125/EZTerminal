@@ -16,6 +16,17 @@ export interface ChatToolFile {
   readonly removed?: number;
 }
 
+/** The provider-native subagent a call started (Claude Agent tool, Codex spawn). */
+export interface ChatSubagentLink {
+  readonly sessionId: string;
+  readonly title?: string;
+  /** Provider's agent kind, e.g. Claude `Explore`. */
+  readonly subagentType?: string;
+  readonly background?: boolean;
+  /** Set once the parent heard the child finish. */
+  readonly state?: 'done' | 'error';
+}
+
 /** One tool use: the call and (once it arrives) its result, paired. */
 export interface ChatTool {
   readonly id: string;
@@ -41,6 +52,7 @@ export interface ChatTool {
   readonly createdAt: string;
   /** The pending approval in the dock is about this call; it has not started. */
   readonly awaitingApproval?: boolean;
+  readonly subagent?: ChatSubagentLink;
 }
 
 /** A line inside an activity run: a tool use or a stretch of reasoning. */
@@ -71,6 +83,8 @@ export type ChatRow =
   | (RowBase & {
       readonly kind: 'user';
       readonly text: string;
+      /** A subagent's first row: what its parent agent asked, not the person. */
+      readonly origin?: 'parent-agent';
       readonly context?: ChatMessageContext;
       /** Identity a reply quotes (first source item). */
       readonly messageId: string;
@@ -102,7 +116,13 @@ export type ChatRow =
   | (RowBase & { readonly kind: 'todo'; readonly items: readonly TodoItem[]; readonly change: TodoChange })
   | (RowBase & { readonly kind: 'notice'; readonly text: string })
   | (RowBase & { readonly kind: 'error'; readonly text: string })
-  | (RowBase & { readonly kind: 'child'; readonly text: string; readonly relatedSessionId?: string })
+  | (RowBase & {
+      readonly kind: 'child';
+      readonly text: string;
+      readonly relatedSessionId?: string;
+      /** A subagent's result: its task, kind and outcome. */
+      readonly subagent?: ChatSubagentLink;
+    })
   | (RowBase & {
       readonly kind: 'turn-status';
       readonly turnId: string;

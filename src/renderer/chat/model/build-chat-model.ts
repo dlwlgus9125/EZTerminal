@@ -3,7 +3,7 @@ import type { RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { parseTranscriptPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
-import type { ChatActivity, ChatModel, ChatRow, ChatTool, ChatToolFile, PendingInteraction, TodoChange } from './types';
+import type { ChatActivity, ChatModel, ChatRow, ChatSubagentLink, ChatTool, ChatToolFile, PendingInteraction, TodoChange } from './types';
 
 export interface BuildChatModelInput {
   readonly items: readonly DaemonTranscriptItem[];
@@ -225,6 +225,30 @@ class LegacyTaskList {
   }
 }
 
+/**
+ * Subagents by the provider call that started them: the parent's `link`
+ * notice names the child, a later `result` records how it ended.
+ */
+function subagentLinks(items: readonly DaemonTranscriptItem[]): Map<string, ChatSubagentLink> {
+  const links = new Map<string, ChatSubagentLink>();
+  for (const item of items) {
+    const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+    if (payload?.type !== 'subagent' || !payload.callId) continue;
+    const current = links.get(payload.callId);
+    const sessionId = payload.childSessionId ?? item.relatedSessionId ?? current?.sessionId;
+    if (!sessionId) continue;
+    links.set(payload.callId, {
+      ...current,
+      sessionId,
+      ...(payload.title ? { title: payload.title } : {}),
+      ...(payload.subagentType ? { subagentType: payload.subagentType } : {}),
+      ...(payload.background !== undefined ? { background: payload.background } : {}),
+      ...(payload.state ? { state: payload.state } : {}),
+    });
+  }
+  return links;
+}
+
 /** Build the presentation model for one conversation. */
 export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatModelInput): ChatModel {
   const coalesced = coalesceTranscript(items);
@@ -241,6 +265,7 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
   let todo: TodoItem[] | undefined;
   let callSerial = 0;
   const hasTodoPayloads = items.some((item) => item.payload && parseTranscriptPayload(item.payload)?.type === 'todo');
+  const subagents = subagentLinks(items);
   const legacyTasks = hasTodoPayloads ? undefined : new LegacyTaskList();
 
   const turnActive = (turnId: string | undefined): boolean => {
@@ -282,9 +307,11 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         const text = normalized(item.text);
         if (turnId && userTextByTurn.get(key) === text) break;
         if (turnId) userTextByTurn.set(key, text);
+        const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
         push({
           kind: 'user', id: `user:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt,
           text: item.text, ...(item.context ? { context: item.context } : {}),
+          ...(payload?.type === 'subagent' && payload.role === 'instruction' ? { origin: 'parent-agent' as const } : {}),
           messageId: item.sourceIds[0] ?? item.id, anchorId: item.messageId ?? item.sourceIds[0] ?? item.id, sensitive: item.isSensitive,
         });
         if (turnId && !statusInserted.has(turnId)) {
@@ -330,6 +357,8 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
         const existing = toolsByCallId.get(callId);
         if (existing) break;
         const tool = toolFromCall(item, callId);
+        const subagent = subagents.get(callId);
+        if (subagent) tool.subagent = subagent;
         toolsByCallId.set(callId, tool);
         toolTurn.set(tool, turnId);
         if (tool.category === 'plan' || tool.name === 'ExitPlanMode') {
@@ -407,6 +436,14 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
           recordTodo(item, [...payload.items]);
           break;
         }
+        // A subagent's start is shown on the call that started it.
+        if (payload?.type === 'subagent' && payload.callId && toolsByCallId.has(payload.callId)) break;
+        if (payload?.type === 'subagent' && item.relatedSessionId) {
+          const subagent = payload.callId ? subagents.get(payload.callId) : undefined;
+          push({ kind: 'child', id: `notice:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text,
+            relatedSessionId: item.relatedSessionId, ...(subagent ? { subagent } : {}) });
+          break;
+        }
         const text = normalized(item.text);
         if (LIFECYCLE_NOTICE.test(text)) break;
         if (turnId && lastAssistantByTurn.get(turnId) === text) break;
@@ -418,10 +455,13 @@ export function buildChatModel({ items, approvals = [], turns = [] }: BuildChatM
       case 'error':
         push({ kind: 'error', id: `error:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text });
         break;
-      case 'child-summary':
+      case 'child-summary': {
+        const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+        const subagent = payload?.type === 'subagent' && payload.callId ? subagents.get(payload.callId) : undefined;
         push({ kind: 'child', id: `child:${item.id}`, ...(turnId ? { turnId } : {}), createdAt: item.createdAt, text: item.text,
-          ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}) });
+          ...(item.relatedSessionId ? { relatedSessionId: item.relatedSessionId } : {}), ...(subagent ? { subagent } : {}) });
         break;
+      }
       case 'approval':
         // Decisions show on the tool line; pending ones own the composer area.
         break;

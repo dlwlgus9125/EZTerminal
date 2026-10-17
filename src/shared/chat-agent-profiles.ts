@@ -1,0 +1,34 @@
+import { z } from 'zod';
+
+/**
+ * A saved way to start an app conversation: provider, model, reasoning effort
+ * and permission, plus a note on when to use it. People pick one when they
+ * start or hand off a conversation; orchestrating agents read the note to
+ * choose a profile for a child. Desktop owns the list (main-process JSON).
+ */
+const Short = z.string().trim().min(1).max(200);
+
+export const ChatAgentProfileSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: Short,
+  providerId: z.string().min(1).max(100),
+  model: z.string().max(200).optional(),
+  reasoningEffort: z.string().max(40).optional(),
+  permissionPreset: z.enum(['plan', 'standard', 'full-access']),
+  whenToUse: z.string().max(1_000).optional(),
+}).strict();
+
+export type ChatAgentProfile = z.infer<typeof ChatAgentProfileSchema>;
+
+export const ChatAgentProfileListSchema = z.object({
+  version: z.literal(1),
+  profiles: z.array(ChatAgentProfileSchema).max(50),
+}).strict();
+
+export type ChatAgentProfileList = z.infer<typeof ChatAgentProfileListSchema>;
+
+/** Tolerant read: a malformed file is an empty list, never a crash. */
+export function parseChatAgentProfiles(value: unknown): readonly ChatAgentProfile[] {
+  const parsed = ChatAgentProfileListSchema.safeParse(value);
+  return parsed.success ? parsed.data.profiles : [];
+}

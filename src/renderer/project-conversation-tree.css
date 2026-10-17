@@ -48,8 +48,12 @@
 .project-conversation-tree__status[data-status='running'],
 .project-conversation-tree__status[data-status='starting'] { background: var(--ui-accent); animation: project-tree-status-pulse 1.6s ease-in-out infinite; }
 .project-conversation-tree__status[data-status='blocked'],
+.project-conversation-tree__status[data-status='needs-attention'],
 .project-conversation-tree__status[data-status='delivery-uncertain'] { background: var(--ui-warning); }
-.project-conversation-tree__status[data-status='error'] { background: var(--ui-danger); }
+.project-conversation-tree__status[data-status='error'],
+.project-conversation-tree__status[data-status='failed'] { background: var(--ui-danger); }
+/* A worktree with changes to look at: a ring, not a fill — it waits for you but nothing is wrong. */
+.project-conversation-tree__status[data-status='review'] { background: transparent; box-shadow: inset 0 0 0 2px var(--ui-accent); }
 /* Queued is waiting, not working: a ring, so it differs from the working dot by shape too. */
 .project-conversation-tree__status[data-status='queued'] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ui-text-muted); }
 @keyframes project-tree-status-pulse { 50% { opacity: 0.4; } }

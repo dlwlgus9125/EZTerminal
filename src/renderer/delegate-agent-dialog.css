@@ -1,0 +1,53 @@
+/* Hand-off dialog: one column of fields; no flex gap (desktop-only, but kept to the shared rule). */
+.delegate-agent-dialog__form > * + * {
+  margin-top: var(--ui-space-3);
+}
+
+.delegate-agent-dialog__hint {
+  margin: calc(var(--ui-space-1) * -1) 0 0;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-left: 2px solid var(--ui-accent);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.delegate-agent-dialog__instruction {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 7rem;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font: var(--ui-font-size-sm) / var(--ui-line-height-normal) var(--ui-font-body);
+  resize: vertical;
+}
+
+.delegate-agent-dialog__instruction:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring);
+}
+
+.delegate-agent-dialog__report {
+  display: flex;
+  align-items: center;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+  cursor: pointer;
+}
+
+.delegate-agent-dialog__report input {
+  margin: 0 var(--ui-space-2) 0 0;
+}
+
+.delegate-agent-dialog__empty p,
+.delegate-agent-dialog__error {
+  margin: 0 0 var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.delegate-agent-dialog__error {
+  color: var(--ui-danger);
+}

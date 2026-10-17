@@ -1,0 +1,96 @@
+.agent-profiles-settings > * + * {
+  margin-top: var(--ui-space-3);
+}
+
+.agent-profiles-settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-profiles-settings__head h3 {
+  margin: 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+}
+
+.agent-profiles-settings__note,
+.agent-profiles-settings__empty {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.agent-profiles-settings__list {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  list-style: none;
+}
+
+.agent-profiles-settings__item {
+  display: flex;
+  align-items: center;
+  padding: var(--ui-space-2) var(--ui-space-3);
+}
+
+.agent-profiles-settings__item + .agent-profiles-settings__item {
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.agent-profiles-settings__summary {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-profiles-settings__summary strong {
+  font-size: var(--ui-font-size-sm);
+}
+
+.agent-profiles-settings__summary span,
+.agent-profiles-settings__summary small {
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-profiles-settings__summary small {
+  color: var(--ui-text-muted);
+}
+
+.agent-profiles-settings__editor {
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.agent-profiles-settings__editor > * + * {
+  margin-top: var(--ui-space-3);
+}
+
+.agent-profiles-settings__row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-gap: var(--ui-space-2) var(--ui-space-3);
+}
+
+.agent-profiles-settings__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agent-profiles-settings__actions > * + * {
+  margin-left: var(--ui-space-2);
+}
+
+.agent-profiles-settings__error {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: var(--ui-font-size-sm);
+}
