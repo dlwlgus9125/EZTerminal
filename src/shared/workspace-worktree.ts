@@ -1,3 +1,12 @@
+/**
+ * A planning run's task worktree (`planning-run-service` registers it). The run
+ * owns it and integrates it through its own review, so it is not offered as a
+ * place to work or merge from the sidebar.
+ */
+export function isRunOwnedWorkspace(workspaceId: string): boolean {
+  return workspaceId.startsWith('planning-workspace-');
+}
+
 /** Desktop worktree workspaces: what the renderer asks the main process for. */
 export type WorkspaceWorktreeIpcResult<T> =
   | { readonly ok: true; readonly value: T }

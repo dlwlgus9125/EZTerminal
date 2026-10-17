@@ -54,13 +54,17 @@ describe('project navigation observation', () => {
     Object.assign(window, { ezterminal: { workspaceWorktrees: worktrees } });
     try {
       const onNew = vi.fn();
+      // A planning run's task worktree is the run's to integrate: no row, no merge.
+      const withRunWorktree = { ...sessionStartSnapshot, workspaces: [...sessionStartSnapshot.workspaces,
+        { ...sessionStartSnapshot.workspaces[1]!, id: 'planning-workspace-abc', name: 'Run task', rootPath: 'C:/Working/EZTerminal-worktrees/attempt' }] };
       const project = { projectId: 'project', name: 'EZTerminal', primaryRoot: 'C:/Working/EZTerminal', additionalRoots: [], pinned: false };
       await act(async () => root.render(<AppI18nProvider locale="en" languages={['en']}><ProjectConversationNavigator projects={[project as never]} access={{}}
-        daemonAccess={{ getSnapshot: vi.fn(async () => sessionStartSnapshot), getAvailability: vi.fn(), observeEvents: () => () => undefined }}
+        daemonAccess={{ getSnapshot: vi.fn(async () => withRunWorktree), getAvailability: vi.fn(), observeEvents: () => () => undefined }}
         onOpenProject={vi.fn()} onOpenSession={vi.fn()} onOpenTerminal={vi.fn()} onNewConversationInWorkspace={onNew} /></AppI18nProvider>));
       expect(worktrees.status).toHaveBeenCalledWith('project');
       const row = element.querySelector('[role="treeitem"][aria-label^="session-ux"]');
       expect(row?.getAttribute('aria-label')).toContain('Ready to review');
+      expect(element.querySelector('[role="treeitem"][aria-label^="Run task"]')).toBeNull();
       await act(async () => element.querySelector<HTMLButtonElement>('button[aria-label="New chat here: session-ux"]')!.click());
       expect(onNew).toHaveBeenCalledWith('project', 'feature');
 

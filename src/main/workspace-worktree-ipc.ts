@@ -2,7 +2,7 @@ import type { IpcMain } from 'electron';
 
 import { isSafeLocalBranch } from '../shared/agent-coordination';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
-import type { WorkspaceWorktreeIpcResult } from '../shared/workspace-worktree';
+import { isRunOwnedWorkspace, type WorkspaceWorktreeIpcResult } from '../shared/workspace-worktree';
 import type { WorkspaceWorktreeService, WorkspaceWorktreeTarget } from './workspace-worktree-service';
 import type { WorktreeService } from './worktree-service';
 
@@ -30,7 +30,7 @@ export function installWorkspaceWorktreeIpc(input: {
   const targetOf = (workspaceId: unknown): WorkspaceWorktreeTarget | undefined => {
     if (typeof workspaceId !== 'string' || workspaceId.length > 200) return undefined;
     const snapshot = getSnapshot();
-    const workspace = snapshot?.workspaces.find((entry) => entry.id === workspaceId && entry.kind === 'worktree' && !entry.archivedAt);
+    const workspace = snapshot?.workspaces.find((entry) => entry.id === workspaceId && entry.kind === 'worktree' && !entry.archivedAt && !isRunOwnedWorkspace(entry.id));
     const mainRoot = workspace && snapshot ? mainRootOf(snapshot, workspace.projectId) : undefined;
     return workspace && mainRoot ? { workspaceId: workspace.id, rootPath: workspace.rootPath, mainRoot } : undefined;
   };
@@ -58,7 +58,7 @@ export function installWorkspaceWorktreeIpc(input: {
     if (!snapshot || typeof projectId !== 'string') return { ok: true, value: [] };
     const mainRoot = mainRootOf(snapshot, projectId);
     if (!mainRoot) return { ok: true, value: [] };
-    const targets = snapshot.workspaces.filter((entry) => entry.projectId === projectId && entry.kind === 'worktree' && !entry.archivedAt);
+    const targets = snapshot.workspaces.filter((entry) => entry.projectId === projectId && entry.kind === 'worktree' && !entry.archivedAt && !isRunOwnedWorkspace(entry.id));
     const statuses = await Promise.all(targets.map((workspace) => service
       .status({ workspaceId: workspace.id, rootPath: workspace.rootPath, mainRoot })
       .catch(() => undefined)));

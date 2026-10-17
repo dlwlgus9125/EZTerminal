@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
+import { isRunOwnedWorkspace, type WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
 import type { ConversationEntry, ConversationHistoryClient } from '../shared/conversation-history';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import type { WorkflowNavigationAccess, WorkflowNavigationSnapshot } from '../shared/workflow';
@@ -189,7 +189,8 @@ export function useProjectConversationNavigation({ projects, snapshot, access, c
         workspaceId: session.workspaceId });
     }
     return projectConversationTree({ projects: [...knownProjects.values()], conversations, workflows,
-      workspaces: (snapshot?.workspaces ?? []).map(workspace => {
+      // A planning run's task worktrees are the run's to integrate; their chats stay with the project.
+      workspaces: (snapshot?.workspaces ?? []).filter(workspace => !isRunOwnedWorkspace(workspace.id)).map(workspace => {
         // A chat running in a worktree is work in progress; otherwise git says review or done.
         const working = (snapshot?.sessions ?? []).some(session => session.workspaceId === workspace.id
           && ['starting', 'working', 'blocked', 'queued'].includes(agents.get(session.id)?.state ?? ''));

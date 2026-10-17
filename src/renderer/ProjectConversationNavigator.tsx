@@ -1,6 +1,6 @@
 import { FileDiff, GitMerge, MessageSquarePlus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
+import { isRunOwnedWorkspace, type WorkspaceWorktreeStatusView } from '../shared/workspace-worktree';
 import { useAppTranslation } from './i18n';
 import { IconButton } from './ui';
 import { WorktreeMergeDialog } from './WorktreeDialogs';
@@ -66,7 +66,7 @@ export function ProjectConversationNavigator({ projects, access, daemonAccess, p
   // changes (a chat stopping is when new work appears) or when the window comes back.
   const worktreeKey = useMemo(() => {
     const busy = new Set((snapshot?.agents ?? []).filter(agent => ['starting', 'working', 'blocked', 'queued'].includes(agent.state)).map(agent => agent.sessionId));
-    return (snapshot?.workspaces ?? []).filter(workspace => workspace.kind === 'worktree' && !workspace.archivedAt)
+    return (snapshot?.workspaces ?? []).filter(workspace => workspace.kind === 'worktree' && !workspace.archivedAt && !isRunOwnedWorkspace(workspace.id))
       .map(workspace => `${workspace.projectId} ${workspace.id} ${snapshot!.sessions.some(session => session.workspaceId === workspace.id && busy.has(session.id))}`)
       .sort().join(',');
   }, [snapshot]);

@@ -20,7 +20,8 @@ function fixture() {
   const syncProjects = vi.fn(async () => { snapshot = { ...snapshot, workspaces: [...snapshot.workspaces, worktree] } as unknown as DaemonSnapshot; });
   const dispose = installWorkspaceWorktreeIpc({ ipc: ipc as never, worktrees: worktrees as never, service: service as unknown as WorkspaceWorktreeService, getSnapshot: () => snapshot, syncProjects });
   const invoke = (channel: string, ...args: unknown[]) => handlers.get(`workspace-worktrees:${channel}`)!({}, ...args);
-  return { handlers, worktrees, service, syncProjects, dispose, invoke };
+  const snapshotAdd = (workspace: object) => { snapshot = { ...snapshot, workspaces: [...snapshot.workspaces, workspace] } as unknown as DaemonSnapshot; };
+  return { handlers, worktrees, service, syncProjects, dispose, invoke, snapshotAdd };
 }
 
 describe('workspace worktree IPC', () => {
@@ -49,6 +50,16 @@ describe('workspace worktree IPC', () => {
     expect(await f.invoke('merge', 'L')).toMatchObject({ ok: false, reason: 'not-found' });
     expect(await f.invoke('commit', 'W', 42)).toMatchObject({ ok: false, reason: 'invalid' });
     expect(f.service.merge).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the task worktrees of a planning run to the run', async () => {
+    const f = fixture();
+    await f.invoke('create', 'P', 'feature/login');
+    f.snapshotAdd({ id: 'planning-workspace-abc', projectId: 'P', kind: 'worktree', rootPath: 'C:/repo-wt/attempt' });
+    expect(await f.invoke('merge', 'planning-workspace-abc')).toMatchObject({ ok: false, reason: 'not-found' });
+    expect(await f.invoke('commit', 'planning-workspace-abc', 'x')).toMatchObject({ ok: false, reason: 'not-found' });
+    expect(await f.invoke('status', 'P')).toEqual({ ok: true, value: [expect.objectContaining({ workspaceId: 'W' })] });
+    expect(f.service.merge).not.toHaveBeenCalled();
   });
 
   it('removes its handlers', () => {
