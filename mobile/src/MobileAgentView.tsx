@@ -1485,6 +1485,16 @@ export function MobileAgentView({
         historyOnly={archivedHistory}
         workflowContext={workflowContext.scope ? <WorkflowConversationContext scope={workflowContext.scope} onRefresh={workflowContext.refreshReferences} busy={workflowContext.loading} error={workflowContext.error} onReturn={onOpenWorkflow ? () => { const scope = workflowContext.scope!; onOpenWorkflow(scope.projectId, scope.subprojectId, scope.nodeId); } : undefined} /> : workflowContext.error ? <WorkflowConversationUnavailable message={workflowContext.error} onRetry={workflowContext.retry} /> : undefined}
         {...(selectedDaemonRelation ? { owner: selectedDaemonRelation.owner } : {})}
+        {...(providerOwned && selectedDaemonRelation ? {
+          // A provider-owned subagent leads back to its parent conversation.
+          parent: {
+            sessionId: selectedDaemonRelation.parentSessionId,
+            title: daemonRuntimeState.snapshot?.sessions.find((entry) => entry.id === selectedDaemonRelation.parentSessionId)?.title ?? '',
+          },
+          parentApprovalPending: (daemonRuntimeState.snapshot?.approvals ?? []).some((approval) => (
+            approval.state === 'pending' && approval.request?.subagent?.sessionId === selectedDaemonSession.id
+          )),
+        } : {})}
         {...(selectedDaemonChildren.length > 0 ? {
           childTrack: (
             <StructuredAgentChildTrack

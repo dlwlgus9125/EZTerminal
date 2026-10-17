@@ -108,7 +108,8 @@
         "type": "subagent",
         "role": "instruction",
         "parentSessionId": "replay-session",
-        "callId": "toolu_01Vna2VdQ9ainw9HTPjzd9Dp"
+        "callId": "toolu_01Vna2VdQ9ainw9HTPjzd9Dp",
+        "subagentType": "Explore"
       },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 1
@@ -188,7 +189,8 @@
         "type": "subagent",
         "role": "instruction",
         "parentSessionId": "replay-session",
-        "callId": "toolu_015rjtQtQThL2xNdFKh53Xpp"
+        "callId": "toolu_015rjtQtQThL2xNdFKh53Xpp",
+        "subagentType": "Explore"
       },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 1

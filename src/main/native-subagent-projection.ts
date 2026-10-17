@@ -85,6 +85,8 @@ export function subagentStartItems(start: NativeSubagentStart): DaemonTranscript
         role: 'instruction',
         parentSessionId: start.parentSessionId,
         ...(start.toolUseId ? { callId: start.toolUseId } : {}),
+        // The subagent's own view names its kind from here.
+        ...(start.subagentType ? { subagentType: start.subagentType.slice(0, 2_000) } : {}),
       },
       createdAt: start.createdAt,
     });

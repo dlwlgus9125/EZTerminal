@@ -4,6 +4,7 @@ import type { ConversationEntry } from '../shared/conversation-history';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { daemonEventAffectsAgentSessionProjection, type DaemonAgentSessionListAccess, type DaemonAgentSessionOpenInput } from './DaemonAgentSessions';
 import { ProjectConversationTree } from './ProjectConversationTree';
+import type { ProjectConversationNode } from './project-conversation-tree-model';
 import { TerminalSessionActions } from './TerminalSessionActions';
 import { useLiveTerminalSessions, withLiveTerminalSessions } from './use-live-terminal-sessions';
 import { useProjectConversationNavigation, type ProjectConversationNavigationAccess } from './use-project-conversation-navigation';
@@ -70,7 +71,11 @@ export function ProjectConversationNavigator({ projects, access, daemonAccess, p
         if (target.kind === 'conversation') {
           const entry = navigation.entries.get(target.conversationId);
           if (entry && onOpenHistory) onOpenHistory(entry);
-          else if (target.sessionId) onOpenSession({ sessionId: target.sessionId, title: entry?.title, providerLabel: entry?.providerId });
+          else if (target.sessionId) {
+            // A subagent has no history entry; its row already knows its name.
+            const node = entry ? undefined : findConversationNode(navigation.nodes, target.conversationId);
+            onOpenSession({ sessionId: target.sessionId, title: entry?.title ?? node?.title, providerLabel: entry?.providerId ?? node?.providerLabel });
+          }
         } else if (target.kind === 'terminal') onOpenTerminal(target.sessionId);
         else if (target.kind === 'workspace') return;
         else {
@@ -81,4 +86,13 @@ export function ProjectConversationNavigator({ projects, access, daemonAccess, p
         }
       }} />
   </>;
+}
+
+function findConversationNode(nodes: readonly ProjectConversationNode[], conversationId: string): ProjectConversationNode | undefined {
+  for (const node of nodes) {
+    if (node.target.kind === 'conversation' && node.target.conversationId === conversationId) return node;
+    const found = node.children ? findConversationNode(node.children, conversationId) : undefined;
+    if (found) return found;
+  }
+  return undefined;
 }

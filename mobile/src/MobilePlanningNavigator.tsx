@@ -6,6 +6,7 @@ import { WorkflowWorkspacePanel } from '../../src/renderer/workflow/WorkflowWork
 import { ProjectConversationTree } from '../../src/renderer/ProjectConversationTree';
 import { useProjectConversationNavigation } from '../../src/renderer/use-project-conversation-navigation';
 import type { ConversationEntry } from '../../src/shared/conversation-history';
+import { attachedChildSessionIds } from '../../src/shared/daemon-session-visibility';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobilePageHeader } from './MobilePageHeader';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
@@ -113,7 +114,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       onNewTerminal={connected && workspace ? () => void openProjectTerminal() : undefined}
       onOpenConversation={onOpenChat}
       onOpenHistory={onOpenHistory ? () => onOpenHistory(project.id) : undefined}
-      conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined).map(session => ({ id: session.id, title: session.title, status: state.snapshot?.agents.find(agent => agent.sessionId === session.id)?.state, workspaceLabel: state.snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name }))}
+      conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined && !attachedChildSessionIds(state.snapshot?.agentRelations ?? []).has(session.id)).map(session => ({ id: session.id, title: session.title, status: state.snapshot?.agents.find(agent => agent.sessionId === session.id)?.state, workspaceLabel: state.snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name }))}
       renderPlanning={(subproject, section, runId) => {
         const key = subproject?.id ?? '';
         if (!draftStores.has(key)) draftStores.set(key, mobilePlanningDraftStorage(project.id, () => transport.getRemoteToken(), undefined, subproject?.id));
@@ -127,7 +128,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       initialRunId={runId}
       onBack={() => navigation.closeLayer(layerId, 'ui')}
       onNewConversation={() => onOpenChat()}
-      conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined).map(session => ({
+      conversations={(state.snapshot?.sessions ?? []).filter(session => session.projectId === project.id && session.kind === 'agent' && session.source === 'structured' && session.archivedAt === undefined && !attachedChildSessionIds(state.snapshot?.agentRelations ?? []).has(session.id)).map(session => ({
         id: session.id, title: session.title,
         status: state.snapshot?.agents.find(agent => agent.sessionId === session.id)?.state,
         workspaceLabel: state.snapshot?.workspaces.find(entry => entry.id === session.workspaceId)?.name,

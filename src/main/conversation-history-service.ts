@@ -16,6 +16,7 @@ import type { DaemonCommandRouter } from './daemon-command-router';
 import type { DaemonAgentRuntime } from './daemon-agent-runtime';
 import type { DaemonMigrationReceipt, DaemonStore, DaemonTranscriptItemInput } from './daemon-store';
 import { AsyncMutationGate } from './async-mutation-gate';
+import { attachedChildSessionIds } from '../shared/daemon-session-visibility';
 
 const digest = (...parts: readonly string[]) => createHash('sha256').update(parts.join('\0')).digest('hex');
 const appId = (sessionId: string) => `conversation_${digest('app', sessionId).slice(0, 32)}`;
@@ -114,7 +115,7 @@ export class ConversationHistoryService implements ConversationHistoryClient {
       const scoped = projects.filter(project => !query.projectId || this.projectIdentity(project, snapshot).id === query.projectId);
       const candidates: { entry: ConversationEntry; stream: string }[] = [];
       // A subagent chat is reached through its parent conversation, not listed as history of its own.
-      const subagents = new Set(snapshot.agentRelations.filter(relation => relation.detachedAt === undefined).map(relation => relation.childSessionId));
+      const subagents = attachedChildSessionIds(snapshot.agentRelations);
       const app = query.source === 'native' ? [] : snapshot.sessions.filter(session => session.kind === 'agent' && !subagents.has(session.id) && this.currentSession(session.id, snapshot)?.id === session.id)
         .map(session => this.appEntry(session, snapshot)).filter((entry): entry is ConversationEntry => !!entry)
         .filter(entry => this.matches(entry, query)).sort(this.sort);

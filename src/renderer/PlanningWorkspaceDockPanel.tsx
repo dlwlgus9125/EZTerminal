@@ -2,6 +2,7 @@ import type { IDockviewPanelProps } from "dockview-react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { DaemonSnapshot } from "../shared/daemon-protocol";
 import {
+  attachedChildSessionIds,
   isDaemonSessionArchived,
   isStructuredDaemonAgentSession,
 } from "../shared/daemon-session-visibility";
@@ -101,11 +102,14 @@ export function projectPlanningConversations(
   const providers = new Map(
     snapshot.providers.map((provider) => [provider.id, provider.displayName]),
   );
+  // Subagent chats are reached through their parent conversation.
+  const subagents = attachedChildSessionIds(snapshot.agentRelations);
   return snapshot.sessions
     .filter(
       (session) =>
         workspaces.has(session.workspaceId) &&
         isStructuredDaemonAgentSession(session) &&
+        !subagents.has(session.id) &&
         !isDaemonSessionArchived(session, agents.get(session.id)),
     )
     .sort(

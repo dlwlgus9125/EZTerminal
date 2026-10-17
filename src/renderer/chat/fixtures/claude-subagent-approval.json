@@ -83,7 +83,8 @@
         "type": "subagent",
         "role": "instruction",
         "parentSessionId": "replay-session",
-        "callId": "toolu_01DBZkMbXWPfdTvjyTogi6s7"
+        "callId": "toolu_01DBZkMbXWPfdTvjyTogi6s7",
+        "subagentType": "general-purpose"
       },
       "createdAt": "2026-10-01T09:00:00.000Z",
       "sequence": 1

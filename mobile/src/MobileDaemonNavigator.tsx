@@ -28,6 +28,7 @@ import type {
   SessionKind,
 } from '../../src/shared/daemon-protocol';
 import {
+  attachedChildSessionIds,
   isDaemonSessionArchived,
   isStructuredDaemonAgentSession,
 } from '../../src/shared/daemon-session-visibility';
@@ -293,7 +294,9 @@ export function MobileDaemonNavigator({
         : null;
 
   if (flatConversations) {
+    const subagents = attachedChildSessionIds(snapshot?.agentRelations ?? []);
     const conversations=snapshot?.sessions.filter(session => isStructuredDaemonAgentSession(session)
+      && !subagents.has(session.id)
       && (!projectFilter || session.projectId === projectFilter)
       && isDaemonSessionArchived(session,agents.get(session.id)) === showArchived) ?? [];
     const chatLabel=language === 'ko' ? '대화' : 'Chat';

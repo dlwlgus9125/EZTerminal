@@ -23,6 +23,7 @@ import {
 import { setStructuredAgentTabStatus, structuredTabStatus, tabProvider } from './structured-agent-tab-status';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
+import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type { RendererRecoveryStructuredAgentCreate } from '../shared/renderer-recovery';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
@@ -1070,6 +1071,20 @@ export function StructuredAgentDockPanel(
       }];
     });
 
+  // A provider-owned subagent leads back to its parent and says when the parent holds its approval.
+  const parentSession = activeRelation
+    ? snapshot?.sessions.find((candidate) => candidate.id === activeRelation.parentSessionId)
+    : undefined;
+  const subagentType = owner === 'provider-native'
+    ? transcriptItems.flatMap((item) => {
+        const payload = item.payload ? parseTranscriptPayload(item.payload) : undefined;
+        return payload?.type === 'subagent' && payload.role === 'instruction' && payload.subagentType ? [payload.subagentType] : [];
+      })[0]
+    : undefined;
+  const parentApprovalPending = owner === 'provider-native' && (snapshot?.approvals ?? []).some((approval) => (
+    approval.state === 'pending' && approval.request?.subagent?.sessionId === sessionId
+  ));
+
   const openRelatedSession = (targetSessionId: string): void => {
     const targetSession = snapshot?.sessions.find((candidate) => candidate.id === targetSessionId);
     const targetAgent = snapshot?.agents.find((candidate) => candidate.sessionId === targetSessionId);
@@ -1232,6 +1247,9 @@ export function StructuredAgentDockPanel(
       historyOnly={historyOnly}
       workflowContext={workflowContext.scope ? <WorkflowConversationContext scope={workflowContext.scope} onRefresh={workflowContext.refreshReferences} busy={workflowContext.loading} error={workflowContext.error} onReturn={workflowNavigation?.openWorkflow ? () => { const scope = workflowContext.scope!; workflowNavigation.openWorkflow!(scope.projectId, snapshot?.projects.find(project => project.id === scope.projectId)?.name ?? scope.projectId, scope.subprojectId, scope.nodeId); } : undefined} /> : workflowContext.error ? <WorkflowConversationUnavailable message={workflowContext.error} onRetry={workflowContext.retry} /> : undefined}
       owner={owner}
+      {...(parentSession && props.onOpenSession ? { parent: { sessionId: parentSession.id, title: parentSession.title } } : {})}
+      {...(subagentType ? { subagentType } : {})}
+      parentApprovalPending={parentApprovalPending}
       childTrack={directChildren.length > 0 && props.onOpenSession ? (
         <StructuredAgentChildTrack items={directChildren} onSelectSession={openRelatedSession} />
       ) : undefined}

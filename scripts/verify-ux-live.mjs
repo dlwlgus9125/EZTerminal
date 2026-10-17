@@ -67,6 +67,20 @@ const SCENARIOS = [
     name: 'codex-plan', provider: 'codex', preset: 'standard',
     prompt: 'update_plan으로 세 단계(README.md 읽기, src/app.ts 읽기, greet 반환값을 한 문장으로 답하기)를 관리하면서 순서대로 진행해. 파일은 수정하지 마.',
   },
+  {
+    // Two Agent-tool subagents and a background shell command: only the subagents get their own chats.
+    name: 'claude-subagents', provider: 'claude', preset: 'standard', inspectSubagents: true,
+    prompt: 'Agent 도구로 Explore 서브에이전트 두 개를 동시에 실행해: 하나는 README.md의 제목을 읽어 알려 주고, 다른 하나는 greet 함수가 정의된 위치를 찾아. 그리고 `node -e "setTimeout(() => console.log(1), 3000)"`를 백그라운드 셸 명령(run_in_background)으로 실행해. 두 서브에이전트와 백그라운드 명령이 모두 끝난 뒤 두 문장으로 답해. 파일은 수정하지 마.',
+  },
+  {
+    // The approval a subagent raises is answered in the parent conversation.
+    name: 'claude-subagent-approval', provider: 'claude', preset: 'standard', inspectSubagents: true, outside: true,
+    prompt: `Agent 도구로 general-purpose 서브에이전트 하나를 실행해서 ${'../'}outside-ux-live-STAGE.txt 파일을 셸 명령으로 삭제하게 하고 결과를 알려 줘. 너는 직접 명령을 실행하지 마.`,
+  },
+  {
+    name: 'codex-subagent-approval', provider: 'codex', preset: 'standard', inspectSubagents: true, outside: true,
+    prompt: `서브 에이전트 하나를 만들어서 ${'../'}outside-ux-live-STAGE.txt 파일을 셸 명령으로 삭제하게 하고, 그 결과를 기다렸다가 한 문장으로 알려 줘. 너는 직접 명령을 실행하지 마.`,
+  },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
 function prepareWorkspace() {
@@ -151,6 +165,7 @@ async function runScenario(page, project, scenario, report) {
     return;
   }
   const sessionId = `ux-live-${scenario.name}-${Date.now()}`;
+  if (scenario.outside) writeFileSync(outsideFile, 'Delete me only after approval.\n');
   const created = await command(page, 'agent.create', {
     sessionId, workspaceId: project.workspaceId, title: `UX live · ${scenario.name}`,
     providerId: scenario.provider, permissionPreset: scenario.preset, initialPrompt: scenario.prompt.replace('STAGE', stage),
@@ -192,9 +207,42 @@ async function runScenario(page, project, scenario, report) {
   }
   await wait(1500);
   await shoot(page, `${scenario.name}-done`, report);
+  const subagents = scenario.inspectSubagents ? await inspectSubagents(page, scenario, sessionId, report) : undefined;
   report.push({ scenario: scenario.name, sessionId, finalState, approvalsResolved: handled.size,
-    ...(scenario.name === 'codex-approval' ? { outsideFileDeleted: !existsSync(outsideFile) } : {}) });
+    ...(scenario.name === 'codex-approval' || scenario.outside ? { outsideFileDeleted: !existsSync(outsideFile) } : {}),
+    ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
+}
+
+/** The subagents of a finished scenario: what the daemon stored, and how they look when opened. */
+async function inspectSubagents(page, scenario, sessionId, report) {
+  const snap = await snapshot(page);
+  const children = snap.agentRelations.filter((relation) => relation.parentSessionId === sessionId);
+  const facts = [];
+  for (const relation of children) {
+    const child = snap.sessions.find((entry) => entry.id === relation.childSessionId);
+    const items = await page.evaluate((id) => window.ezterminal.getDaemonTranscript?.(id), relation.childSessionId).catch(() => undefined);
+    facts.push({ owner: relation.owner, title: child?.title, state: child?.state,
+      kinds: Array.isArray(items?.items) ? items.items.map((item) => item.kind) : Array.isArray(items) ? items.map((item) => item.kind) : 'unread' });
+  }
+  const open = page.locator('[data-testid="structured-agent-session"]:visible button[aria-label^="열기: "], [data-testid="structured-agent-session"]:visible button[aria-label^="Open: "]').first();
+  if (await open.count()) {
+    await open.click();
+    await wait(2500);
+    await shoot(page, `${scenario.name}-subagent`, report);
+    const back = page.locator('[data-testid="structured-agent-session"]:visible [data-testid="structured-agent-parent"]').first();
+    if (await back.count()) { await back.click(); await wait(1500); }
+  } else {
+    report.push({ scenario: scenario.name, note: 'no subagent link was rendered' });
+  }
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  await wait(1200);
+  const expand = page.locator(`[aria-label^="펼치기: UX live · ${scenario.name}"], [aria-label^="Expand: UX live · ${scenario.name}"]`).first();
+  if (await expand.count()) { await expand.click(); await wait(800); }
+  await page.screenshot({ path: path.join(output, `${scenario.name}-tree.png`) });
+  report.push({ shot: `${scenario.name}-tree`, files: [`${scenario.name}-tree.png`] });
+  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  return facts;
 }
 
 function applyAppearance() {
