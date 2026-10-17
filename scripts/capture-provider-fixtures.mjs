@@ -160,6 +160,41 @@ const SCENARIOS = [
     prompt: 'Write a detailed 600-word essay about the history of terminal emulators. Do not use any tools.',
   },
   {
+    // Subagents next to non-agent background work: the adapter must project
+    // only the Agent-tool tasks as child sessions, never the background shell.
+    name: 'subagents',
+    waitForTasks: true,
+    deadlineMs: 300_000,
+    codexEphemeral: false,
+    prompt: {
+      claude: 'Do these three things, then answer in two sentences. (1) Use the Agent tool to launch an Explore '
+        + 'subagent that reads README.md and reports its title. (2) At the same time use the Agent tool with '
+        + 'run_in_background set to true to launch a second Explore subagent that finds where `greet` is defined. '
+        + '(3) Run `node -e "setTimeout(() => console.log(\'tick\'), 3000)"` as a background shell command '
+        + '(run_in_background). Wait until both subagents and the background command have finished before answering.',
+      codex: 'Spawn one sub-agent that reads README.md and reports its title, and a second sub-agent that finds where '
+        + '`greet` is defined in src/app.ts. Wait for both sub-agents to finish, then answer in two sentences. '
+        + 'Do not read the files yourself.',
+    },
+  },
+  {
+    // An approval raised inside a subagent (Claude: canUseTool agentID;
+    // Codex: a server request on the child thread).
+    name: 'subagent-approval',
+    waitForTasks: true,
+    deadlineMs: 300_000,
+    codexEphemeral: false,
+    codexThreadConfig: { 'sandbox_workspace_write.exclude_tmpdir_env_var': true },
+    prompt: {
+      // A read-only command (node --version) is auto-allowed; a delete reaches canUseTool.
+      claude: 'Use the Agent tool to launch one general-purpose subagent that deletes README.md using a shell command '
+        + `and reports what happened. Do not run any command yourself. ${STOP_ON_DENIAL}`,
+      codex: 'Spawn one sub-agent that deletes the file ../outside-codex-subagent-approval.txt using a shell command, '
+        + `wait for it, and report what happened. Do not run any command yourself. ${STOP_ON_DENIAL}`,
+    },
+    claude: (toolName) => toolName === 'Bash' ? { behavior: 'deny', message: 'Denied by the user.' } : undefined,
+  },
+  {
     name: 'web',
     prompt: {
       claude: 'Use the WebSearch tool to find the current Node.js LTS major version and answer in one sentence. '
@@ -255,6 +290,9 @@ async function seedProject(workspace, captureRoot, provider, scenario) {
   execFileSync('git', ['init', '-q'], { cwd: workspace, stdio: 'ignore', windowsHide: true });
   if (provider === 'codex' && scenario.name === 'approval-deny') {
     await fs.writeFile(path.join(captureRoot, 'outside-codex-approval-deny.txt'), 'Delete me only with approval.\n');
+  }
+  if (provider === 'codex' && scenario.name === 'subagent-approval') {
+    await fs.writeFile(path.join(captureRoot, 'outside-codex-subagent-approval.txt'), 'Delete me only with approval.\n');
   }
 }
 
@@ -453,6 +491,13 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Follow-up turns (a task notification answered by the model) arrive after the settle point. */
+async function waitForQuiet(context, quietMs = 8_000, limitMs = 90_000) {
+  const until = Date.now() + limitMs;
+  context.lastFrameAt ??= Date.now();
+  while (Date.now() - context.lastFrameAt < quietMs && Date.now() < until) await delay(500);
+}
+
 function withDeadline(promise, ms, onTimeout) {
   let timer;
   return Promise.race([
@@ -494,6 +539,14 @@ async function captureClaude(scenario, context) {
   const resultSeen = new Promise((resolve) => { resolveResult = resolve; });
   let textDeltas = 0;
   let interrupted = false;
+  // waitForTasks: a background subagent or shell command can finish after the
+  // first result; keep recording until every started task has notified.
+  const openTasks = new Set();
+  let results = 0;
+  const settleIfDone = () => {
+    if (results > 0 && openTasks.size === 0) resolveResult();
+  };
+  context.lastFrameAt = Date.now();
 
   const canUseTool = async (toolName, toolInput, options) => {
     // The AbortSignal is not serializable; everything else is the request as delivered.
@@ -543,7 +596,21 @@ async function captureClaude(scenario, context) {
   const iterate = (async () => {
     for await (const message of session) {
       recorder.push({ dir: 'sdk', msg: message });
-      if (message.type === 'result') resolveResult();
+      context.lastFrameAt = Date.now();
+      if (scenario.waitForTasks && message.type === 'system') {
+        if (message.subtype === 'task_started' && message.ambient !== true && message.skip_transcript !== true) {
+          openTasks.add(message.task_id);
+        }
+        if (message.subtype === 'task_notification') {
+          openTasks.delete(message.task_id);
+          settleIfDone();
+        }
+      }
+      if (message.type === 'result') {
+        results += 1;
+        if (scenario.waitForTasks) settleIfDone();
+        else resolveResult();
+      }
       if (
         scenario.interruptAfterTextDeltas
         && !interrupted
@@ -578,11 +645,12 @@ async function captureClaude(scenario, context) {
   recorder.push({ dir: 'prompt', msg: userMessage });
   input.push(userMessage);
 
-  const outcome = await withDeadline(resultSeen, SESSION_DEADLINE_MS, () => {
+  const outcome = await withDeadline(resultSeen, scenario.deadlineMs ?? SESSION_DEADLINE_MS, () => {
     context.meta.aborted = 'deadline';
     abortController.abort();
   });
   if (outcome !== 'deadline') await delay(TRAILING_FRAMES_MS);
+  if (outcome !== 'deadline' && scenario.waitForTasks) await waitForQuiet(context);
   recorder.push({ dir: 'control', op: 'close' });
   input.close();
   session.close();
@@ -713,6 +781,7 @@ async function captureCodex(scenario, context) {
         continue;
       }
       recorder.push({ dir: 'in', frame });
+      context.lastFrameAt = Date.now();
       handleFrame(frame);
     }
   });
@@ -733,7 +802,9 @@ async function captureCodex(scenario, context) {
       runtimeWorkspaceRoots: [workspace],
       ...codexPermissionSettings(preset),
       ...(scenario.codexThreadConfig ? { config: scenario.codexThreadConfig } : {}),
-      ephemeral: true,
+      // Sub-agent threads cannot load an ephemeral parent's context, so those
+      // scenarios record a persisted thread (it lands in Codex history under the scratch root).
+      ephemeral: scenario.codexEphemeral ?? true,
       historyMode: 'paginated',
       threadSource: 'ezterminal',
     });
@@ -741,7 +812,7 @@ async function captureCodex(scenario, context) {
     const clientUserMessageId = `capture-${randomUUID()}`;
     context.meta.preset = preset;
     context.meta.launch = {
-      ephemeral: true,
+      ephemeral: scenario.codexEphemeral ?? true,
       ...(scenario.codexThreadConfig ? { threadConfig: scenario.codexThreadConfig } : {}),
       ...(scenario.codexCollaborationMode ? { collaborationMode: scenario.codexCollaborationMode } : {}),
     };
@@ -761,9 +832,10 @@ async function captureCodex(scenario, context) {
       } : {}),
     });
     turnId = turn.turn.id;
-    const outcome = await withDeadline(completed, SESSION_DEADLINE_MS, () => { context.meta.aborted = 'deadline'; });
+    const outcome = await withDeadline(completed, scenario.deadlineMs ?? SESSION_DEADLINE_MS, () => { context.meta.aborted = 'deadline'; });
     if (outcome === 'deadline' && turnId) await request('turn/interrupt', { threadId, turnId }).catch(() => undefined);
     await delay(TRAILING_FRAMES_MS);
+    if (outcome !== 'deadline' && scenario.waitForTasks) await waitForQuiet(context);
     // Same teardown request as CodexProviderAdapter.disposeSession.
     await withDeadline(request('thread/unsubscribe', { threadId }), 10_000, () => undefined);
   } catch (error) {
