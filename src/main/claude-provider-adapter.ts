@@ -1003,6 +1003,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   private readonly deltaCoalescerOptions: DeltaCoalescerOptions | undefined;
   private readonly enableTaskTools: boolean;
   private readonly discoveryControllers = new Set<AbortController>();
+  private readonly discoveries = new Map<string, Promise<ProviderCapabilityCatalog>>();
   private readonly listeners = new Set<AgentProviderEventListener>();
   private readonly sessions = new Map<string, SessionRecord>();
   private executablePromise: Promise<string | null> | null = null;
@@ -1176,18 +1177,29 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   async listCapabilities(workspaceRoot: string, signal?: AbortSignal): Promise<ProviderCapabilityCatalog> {
-    const generation = await this.enterLifecycle(signal);
-    const readiness = await abortable(this.assertReady(signal), signal);
+    this.throwIfAborted(signal);
+    // Each discovery launches a whole CLI, hooks and MCP servers included, so callers asking about
+    // one folder at once share a launch. A caller giving up leaves it running for the others.
+    const key = path.resolve(workspaceRoot);
+    let discovery = this.discoveries.get(key);
+    if (!discovery) {
+      discovery = this.discoverCapabilities(workspaceRoot).finally(() => this.discoveries.delete(key));
+      this.discoveries.set(key, discovery);
+    }
+    return abortable(discovery, signal);
+  }
+
+  private async discoverCapabilities(workspaceRoot: string): Promise<ProviderCapabilityCatalog> {
+    const generation = await this.enterLifecycle();
+    const readiness = await this.assertReady();
     if (!path.isAbsolute(workspaceRoot)) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
     const controller = new AbortController();
-    const abort = (): void => controller.abort();
-    signal?.addEventListener('abort', abort, { once: true });
     this.discoveryControllers.add(controller);
     const input = new AsyncInputQueue<SDKUserMessage>();
     let metadata: ClaudeQuerySession | undefined;
     let stream: Promise<void> | undefined;
     try {
-      this.assertLifecycleGeneration(generation, signal);
+      this.assertLifecycleGeneration(generation);
       metadata = this.queryFactory({ prompt: input, options: {
         cwd: workspaceRoot, pathToClaudeCodeExecutable: readiness.executablePath,
         abortController: controller, persistSession: false, env: readiness.environment,
@@ -1240,7 +1252,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     } catch (error) { throw classifyClaudeProviderError(error); }
     finally {
       input.close(); controller.abort(); metadata?.close();
-      signal?.removeEventListener('abort', abort); this.discoveryControllers.delete(controller);
+      this.discoveryControllers.delete(controller);
       if (stream) await Promise.race([stream, new Promise<void>((resolve) => { const timer = setTimeout(resolve, this.shutdownTimeoutMs); timer.unref?.(); })]);
     }
   }

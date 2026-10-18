@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 import type { AgentProviderEvent, ProviderSessionContext } from './agent-provider-adapter';
@@ -1343,6 +1343,38 @@ describe('Claude zero-turn capabilities', () => {
     expect(await fixture.query.input[Symbol.asyncIterator]().next()).toEqual({ done: true, value: undefined });
     expect(fixture.query.closeCount).toBe(1);
     expect(fixture.events).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('launches one CLI for callers asking about the same folder at once', async () => {
+    const fixture = makeAdapter();
+    let initialize!: () => void;
+    const initialized = new Promise<void>((resolve) => { initialize = resolve; });
+    const original = FakeClaudeQuery.prototype.initializationResult;
+    const held = vi.spyOn(FakeClaudeQuery.prototype, 'initializationResult').mockImplementation(async function (this: FakeClaudeQuery) {
+      await initialized;
+      return original.call(this);
+    });
+    onTestFinished(() => held.mockRestore());
+    const giveUp = new AbortController();
+    const first = fixture.adapter.listCapabilities(context.workspaceRoot, giveUp.signal);
+    const second = fixture.adapter.listCapabilities(context.workspaceRoot);
+    await vi.waitFor(() => expect(fixture.queries.length).toBeGreaterThan(0));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // One caller giving up does not stop the launch the others wait on.
+    giveUp.abort();
+    await expect(first).rejects.toMatchObject({ code: 'CLAUDE_OPERATION_ABORTED' });
+    initialize();
+    await expect(second).resolves.toMatchObject({ models: [expect.objectContaining({ id: 'sonnet' })] });
+    expect(fixture.queries).toHaveLength(1);
+
+    // Without a live chat, models are discovered by a launch in the app's folder.
+    const models = await Promise.all([fixture.adapter.listModels(), fixture.adapter.listModels()]);
+    expect(models).toEqual([[expect.objectContaining({ id: 'sonnet' })], [expect.objectContaining({ id: 'sonnet' })]]);
+    expect(fixture.queries.map((query) => query.inputOptions.cwd)).toEqual([context.workspaceRoot, process.cwd()]);
+    // Nothing is kept once the launch ends: a later caller sees current settings.
+    await fixture.adapter.listCapabilities(context.workspaceRoot);
+    expect(fixture.queries).toHaveLength(3);
     await fixture.adapter.dispose();
   });
 });

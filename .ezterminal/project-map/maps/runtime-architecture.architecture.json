@@ -112,16 +112,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 677,
-          "endLine": 833,
+          "startLine": 679,
+          "endLine": 835,
           "lineDigest": "sha256:14cb70fefa7bdb7b96b8be1cf75f2c9878896600f5c0329c441368e58c26ccc6",
           "claim": "Exact-envelope creation recovery retains its authority checks and same Session ID; selected skill text and references seed the created conversation without auto-submission."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 1249,
-          "endLine": 1383,
+          "startLine": 1251,
+          "endLine": 1385,
           "lineDigest": "sha256:085e9d1635c740c1ee5e24351eb81d1dccfa8147f72dfe0fb81d98cfe7814eee",
           "claim": "The shared Session surface retains transcript and encrypted drafts, exposes a scoped history entry and hand-off to a saved profile, and preserves workflow reference and send-loading gates."
         },
@@ -535,16 +535,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1661,
-          "endLine": 1707,
+          "startLine": 1673,
+          "endLine": 1719,
           "lineDigest": "sha256:fdea30a27862d84110cf412260c2e82154580564687c6bfddf562b45ef600a26",
           "claim": "Claude sessions share native user/project/local settings. Exact model, effort and permission controls remain; tool-free planning explicitly disables inherited settings, tools, MCP, plugins and agents."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1568,
-          "endLine": 1591,
+          "startLine": 1580,
+          "endLine": 1603,
           "lineDigest": "sha256:2d3f81b4bdc15a8f11d1ce8010bc9d9d6bc2f4dce7048486368d5c7bfc597e0b",
           "claim": "Deactivation aborts metadata discovery and closes live SDK queries under the serialized lifecycle; permanent disposal clears listeners after draining."
         }
@@ -1058,8 +1058,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1039,
-          "endLine": 1082,
+          "startLine": 1040,
+          "endLine": 1083,
           "lineDigest": "sha256:29cedf01d29574da23cc9c1b68d497329738f1f4e3461e1c48b3b55412a1f9c5",
           "claim": "Claude accepts only the reviewed SDK executable contract and persists consent policy without implementing an OAuth or login flow."
         }

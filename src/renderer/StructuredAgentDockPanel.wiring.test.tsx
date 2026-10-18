@@ -179,6 +179,38 @@ describe('StructuredAgentDockPanel wiring', () => {
     expect(getSnapshot.mock.calls.length).toBe(snapshots + 1);
   });
 
+  it('asks for a provider’s models once while snapshots keep changing, and keeps the answer', async () => {
+    const base = snapshotWith({ transcriptHeads: [{ sessionId: SESSION, lastSequence: 1, itemCount: 1 }] });
+    let revision = base.revision;
+    const { access, emit } = daemon(base, [item(1)], { getSnapshot: vi.fn(async () => ({ ...base, revision: ++revision })) });
+    type Listing = Awaited<ReturnType<CapabilityAccess['structuredProviders']['listModels']>>;
+    let answer!: (value: Listing) => void;
+    const listModels = vi.fn(() => new Promise<Listing>((resolve) => { answer = resolve; }));
+    mount({ ...access, structuredProviders: { ...access.structuredProviders, listModels } });
+    await flush();
+    expect(listModels).toHaveBeenCalledTimes(1);
+
+    // Claude answers by launching its CLI, which takes seconds; the daemon changes the snapshot many times meanwhile.
+    for (let index = 0; index < 3; index += 1) {
+      act(() => emit({
+        protocolVersion: 12, eventId: `event-models-${index}`, sequence: 20 + index, revision: 20 + index, occurredAt: NOW,
+        kind: 'entity.upserted', payload: { entityType: 'agent', entityId: SESSION },
+      }));
+      await flush();
+    }
+    expect(listModels).toHaveBeenCalledTimes(1);
+
+    act(() => answer({ ok: true, value: [{ id: 'opus', displayName: 'Opus from the CLI', supportsReasoning: true, isDefault: true }] }));
+    await flush();
+    expect(container.querySelector('[data-testid="structured-agent-live-model"]')?.textContent).toContain('Opus from the CLI');
+    act(() => emit({
+      protocolVersion: 12, eventId: 'event-models-after', sequence: 30, revision: 30, occurredAt: NOW,
+      kind: 'entity.upserted', payload: { entityType: 'agent', entityId: SESSION },
+    }));
+    await flush();
+    expect(listModels).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes its tab status and clears it when the panel closes', async () => {
     const { access } = daemon(snapshotWith({ transcriptHeads: [{ sessionId: SESSION, lastSequence: 1, itemCount: 1 }] }), [item(1)]);
     mount(access);

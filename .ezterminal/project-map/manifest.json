@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:195e58850103b979c9fa06e9bb7d6cd9ceb004496d382b9eb34b4e933e399f44",
+        "inputDigest": "sha256:addb48a0c60622c35fcde354d9bf78bdd8ff6b3ec37ab5b59db3f6051d0cc3b0",
         "decision": "map-updated",
-        "reason": "Reviewed: orchestration MCP adds read_agent, wait_agent (bounded; settled on revoke, stop and disconnect) and create_worktree, and create_agent takes reportBack and a same-Project workspace. Transcript helpers moved to a shared module. One claim updated, other anchors moved."
+        "reason": "Reviewed: the chat panel asks for a provider's models once per provider revision instead of on every snapshot change, and Claude discovery shares one CLI launch per folder. Session start and the 15-second deadline are unchanged. Anchors moved, claims unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2012662589390c6d3608e45f322b9407bc96229a4abaaf4f8b7cb2e27776fd79",
+        "inputDigest": "sha256:b29df276eb3f376a3bd4d9e02c9fe585ead5e867d5aebab7e1448e1375969da4",
         "decision": "map-updated",
-        "reason": "Reviewed: the MCP tool list and the Claude and Codex MCP configs changed (read, wait and worktree tools; 300-second tool timeout); the workflow capability boundary is unchanged. Anchors moved, claims unchanged."
+        "reason": "Reviewed: Claude capability discovery now shares one CLI launch between callers asking about the same folder at once; what it reads and how it closes are unchanged. One claim updated, no other anchors changed."
       }
     }
   ]

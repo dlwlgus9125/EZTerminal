@@ -22,6 +22,7 @@ import {
 } from '../shared/daemon-protocol';
 import { setStructuredAgentTabStatus, structuredTabStatus, tabProvider } from './structured-agent-tab-status';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
+import type { ProviderModel } from '../shared/daemon-provider';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
@@ -594,14 +595,19 @@ export function StructuredAgentDockPanel(
   }, [sessionId, snapshot, syncTranscript]);
 
   useEffect(() => {
-    if (!snapshot) return undefined;
-    let cancelled = false;
+    if (!snapshot) return;
     const targets = snapshot.providers.filter((provider) => (
       provider.enabled
       && provider.health === 'ready'
       && providerModelRevisionRef.current[provider.id] !== provider.revision
     ));
-    if (targets.length === 0) return undefined;
+    if (targets.length === 0) return;
+    // Claimed before asking: Claude answers by launching its CLI, which takes seconds, and the
+    // snapshot changes many times meanwhile. Asking again on each change launched a CLI each time.
+    providerModelRevisionRef.current = {
+      ...providerModelRevisionRef.current,
+      ...Object.fromEntries(targets.map((provider) => [provider.id, provider.revision])),
+    };
     void Promise.all(targets
       .map(async (provider) => {
         const result = await Promise.resolve()
@@ -610,21 +616,17 @@ export function StructuredAgentDockPanel(
         return [provider.id, provider.revision, result?.ok ? result.value : null] as const;
       }))
       .then((entries) => {
-        if (cancelled) return;
-        setProviderModelCatalogs((current) => {
-          const next = { ...current };
-          const revisions = { ...providerModelRevisionRef.current };
-          for (const [providerId, providerRevision, models] of entries) {
-            if (models) {
-              next[providerId] = models;
-              revisions[providerId] = providerRevision;
-            }
-          }
-          providerModelRevisionRef.current = revisions;
-          return next;
-        });
+        const revisions = { ...providerModelRevisionRef.current };
+        const answered: Record<string, readonly ProviderModel[]> = {};
+        for (const [providerId, providerRevision, models] of entries) {
+          // A newer provider revision was asked for meanwhile; its answer wins.
+          if (revisions[providerId] !== providerRevision) continue;
+          if (models) answered[providerId] = models;
+          else delete revisions[providerId];
+        }
+        providerModelRevisionRef.current = revisions;
+        if (Object.keys(answered).length > 0) setProviderModelCatalogs((current) => ({ ...current, ...answered }));
       });
-    return () => { cancelled = true; };
   }, [capabilities, snapshot]);
 
   useEffect(() => {
