@@ -1391,9 +1391,10 @@ export class DaemonAgentRuntime {
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
     const resolvedAt = this.isoNow();
     // Approving a plan leaves plan mode for the mode the user chose; the provider switches with it.
-    const planMode = command.payload.decision === 'allow' && command.payload.response?.kind === 'plan'
-      ? command.payload.response.mode
-      : undefined;
+    // Without a chosen mode (older clients) the CLI asks before running, and the preset says so.
+    const planMode = command.payload.decision !== 'allow' ? undefined
+      : command.payload.response?.kind === 'plan' ? command.payload.response.mode
+        : approval.request?.kind === 'plan' ? 'standard' as const : undefined;
     return { ok: true, commit: { mutations: [
       { kind: 'approval.upsert', value: this.resolvedApprovalInput(
         approval,
@@ -1928,6 +1929,7 @@ export class DaemonAgentRuntime {
           context: this.contextForTurn(selected.turn),
           reasoningEffort: this.options.preparedSessionSettings?.(selected.turn.sessionId)?.reasoningEffort
             ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
+          attended: this.attendedTurn(selected.turn),
         }, this.lifecycleAbortController.signal);
         let shouldArmTimeout = false;
         await this.transition((snapshot) => {
@@ -3105,6 +3107,17 @@ export class DaemonAgentRuntime {
       if (next === undefined || next <= afterSequence) return undefined;
       afterSequence = next;
     }
+  }
+
+  /**
+   * Whether a person sent this turn from a conversation. A delegated child's
+   * first turn carries the person's principal but runs on its own.
+   */
+  private attendedTurn(turn: DaemonTurn): boolean {
+    if (this.options.preparedSessionSettings?.(turn.sessionId)) return false;
+    const command = this.options.findCommand?.(turn.commandId);
+    if (!command || (command.principal.kind !== 'desktop' && command.principal.kind !== 'android')) return false;
+    return !(command.type === 'agent.create' && command.payload.parentSessionId);
   }
 
   /** A reply that quotes a sensitive message carries that text, so it inherits the flag. */

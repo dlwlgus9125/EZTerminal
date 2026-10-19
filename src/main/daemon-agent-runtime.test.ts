@@ -2791,6 +2791,48 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('leaves plan mode for asking before running when a client approves a plan without choosing', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan a change.',
+    });
+    const turn = h.router.getSnapshot().turns[0]!;
+    h.codex.emit({
+      kind: 'approval-requested', sessionId: 'agent-1', turnId: turn.id, providerRequestId: 'provider-plan-1', risk: 'write', title: 'Approve plan',
+      request: { v: 1, kind: 'plan', callId: 'call-plan', markdown: '- step' },
+    });
+    await h.runtime.whenIdle();
+    await h.execute('permission.resolve', { approvalId: h.router.getSnapshot().approvals[0]!.id, decision: 'allow' });
+    // The CLI leaves plan mode for asking before running; the preset must not stay `plan`.
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ permissionPreset: 'standard' });
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
+  it('tells the provider whether a person sent the turn', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan a change.',
+    });
+    expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'agent-1', attended: true }), expect.anything());
+    await h.execute('agent.create', {
+      sessionId: 'agent-phone', workspaceId: 'workspace-1', title: 'Phone', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan from the phone.',
+    }, { kind: 'android', id: 'phone' });
+    expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'agent-phone', attended: true }), expect.anything());
+    // A delegated child works on its own, although a person handed the work off.
+    await h.execute('agent.create', {
+      sessionId: 'agent-child', workspaceId: 'workspace-1', title: 'Child', providerId: 'codex', permissionPreset: 'plan',
+      initialPrompt: 'Plan the tests.', parentSessionId: 'agent-1',
+    });
+    expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'agent-child', attended: false }), expect.anything());
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
   it('absorbs synchronous and duplicate provider lifecycle events without resurrecting a terminal turn', async () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');

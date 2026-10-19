@@ -53,6 +53,12 @@ export interface ProviderSubmitInput {
   readonly turnId: string;
   readonly commandId: string;
   readonly prompt: string;
+  /**
+   * A person sent this turn from a desktop or phone conversation and can answer
+   * the provider's plan questions. Agents, schedules, planning runs and
+   * delegated first turns run unattended: plan mode then only plans, read-only.
+   */
+  readonly attended?: boolean;
 }
 
 export type AgentProviderTurnScope =

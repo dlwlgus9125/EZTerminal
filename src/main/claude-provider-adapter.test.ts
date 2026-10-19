@@ -1153,6 +1153,22 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('lets a plan turn nobody watches finish with its plan instead of waiting for approval', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-plan', commandId: 'command-plan', prompt: 'Plan it', attended: false });
+    const plan = fixture.query.inputOptions.canUseTool!('ExitPlanMode', { plan: '# Plan\n- step' }, {
+      signal: new AbortController().signal, toolUseID: 'toolu_plan', requestId: 'plan',
+    });
+    await expect(plan).resolves.toMatchObject({ behavior: 'deny', toolUseID: 'toolu_plan', message: expect.stringContaining('end your turn with the full plan') });
+    const question = fixture.query.inputOptions.canUseTool!('AskUserQuestion', { questions: [{ question: 'Which file?', multiSelect: false, options: [{ label: 'a' }] }] }, {
+      signal: new AbortController().signal, toolUseID: 'toolu_question', requestId: 'question',
+    });
+    await expect(question).resolves.toMatchObject({ behavior: 'deny', message: expect.stringContaining('state that assumption') });
+    expect(fixture.events.some((event) => event.kind === 'approval-requested')).toBe(false);
+    await fixture.adapter.dispose();
+  });
+
   it('tracks TodoWrite lists and MultiEdit file counts in structured payloads', async () => {
     const fixture = makeAdapter();
     await start(fixture);

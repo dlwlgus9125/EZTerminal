@@ -337,6 +337,8 @@ interface TurnRecord {
   readonly turnId: string;
   readonly commandId: string;
   readonly clientUuid: string;
+  /** A person sent it and can approve a plan; agents, schedules and planning runs cannot. */
+  readonly attended: boolean;
   state: TurnState;
   providerTurnId?: string;
   interruptRequested: boolean;
@@ -1302,6 +1304,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       turnId: input.turnId,
       commandId: input.commandId,
       clientUuid,
+      attended: input.attended !== false,
       state: 'submitted',
       interruptRequested: false,
     };
@@ -1482,6 +1485,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
             turnId: command.turnId,
             commandId: command.commandId,
             clientUuid: deterministicCommandUuid(command.commandId),
+            // Who sent a recovered turn is not known here; a plan keeps asking, as before.
+            attended: true,
             state: 'submitted',
             ...(command.providerTurnId ? { providerTurnId: command.providerTurnId } : {}),
             interruptRequested: false,
@@ -2270,6 +2275,22 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const turn = session.activeTurn?.state === 'submitted'
       ? session.activeTurn
       : [...session.turnsByCommand.values()].find((candidate) => candidate.state === 'submitted');
+    // Nobody can approve a plan in a run nobody watches: it ends with the plan as its answer.
+    if (toolName === 'ExitPlanMode' && turn && !turn.attended) {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: 'Nobody is here to approve this plan: this run only plans. Do not call ExitPlanMode again; end your turn with the full plan as your answer.',
+        toolUseID: request.toolUseID,
+      });
+    }
+    // Nor answer a planning question: a plan-only run decides and says what it assumed.
+    if (toolName === 'AskUserQuestion' && turn && !turn.attended && session.handle.permissionPreset === 'plan') {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: 'Nobody is here to answer questions: this run only plans. Pick the most reasonable option yourself, state that assumption in the plan, and continue.',
+        toolUseID: request.toolUseID,
+      });
+    }
     // Text streamed so far belongs before the approval it led to.
     session.coalescer.flushAll();
     let settlePromise: (result: PermissionResult) => void = () => undefined;
