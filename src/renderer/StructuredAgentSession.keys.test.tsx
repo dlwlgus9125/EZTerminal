@@ -100,6 +100,25 @@ describe('conversation keyboard', () => {
   });
 });
 
+describe('stopping with queued messages', () => {
+  it('hands queued messages back to the message box instead of dropping them', async () => {
+    const calls: string[] = [];
+    const onQueueAction = vi.fn(async (_item: unknown, action: string) => { calls.push(`queue:${action}`); return { ok: true as const }; });
+    const onCancel = vi.fn(async () => { calls.push('cancel'); return { ok: true as const }; });
+    const queued = { queuedCount: 1, queueItems: [{ turnId: 'turn-2', revision: 3, text: 'Then update the README.' }], onQueueAction, onCancel };
+    render(panel({ state: 'working', ...queued }));
+    key(input(), { key: 'Escape' });
+    await flush();
+    await flush();
+    expect(calls).toEqual(['queue:take', 'cancel']);
+    // The stop settles; the box takes input again and gets the message back.
+    render(panel({ state: 'interrupted', ...queued, queuedCount: 0, queueItems: [] }));
+    render(panel({ state: 'idle', ...queued, queuedCount: 0, queueItems: [] }));
+    await flush();
+    expect(input().value).toBe('Then update the README.');
+  });
+});
+
 describe('Codex approvals', () => {
   it('denies, then interrupts and sends the feedback, since Codex takes no feedback', async () => {
     const onResolveApproval = vi.fn(async () => ({ ok: true as const }));
@@ -117,6 +136,53 @@ describe('Codex approvals', () => {
     await flush();
     expect(onResolveApproval).toHaveBeenCalledWith('approval-command', 'deny');
     expect(onInterruptAndSend).toHaveBeenCalledWith('Keep the file; rename it instead.');
+  });
+});
+
+describe('allowing for the conversation', () => {
+  it('offers it only where the host can, and sends it as the session answer', async () => {
+    const onResolveApproval = vi.fn(async () => ({ ok: true as const }));
+    render(panel({ state: 'blocked', approvals: [commandApproval], approvalResponses: true, onResolveApproval }));
+    expect(container.querySelector('[data-testid="chat-dock-allow-session"]')).toBeNull();
+    render(panel({ state: 'blocked', approvals: [commandApproval], approvalResponses: true, approvalSession: true, onResolveApproval }));
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="chat-dock-allow-session"]')!;
+    expect(button.textContent).toBe('Allow for this conversation');
+    act(() => button.click());
+    await flush();
+    expect(onResolveApproval).toHaveBeenCalledWith('approval-command', 'allow', { kind: 'session' });
+  });
+});
+
+describe('conversation commands', () => {
+  function type(text: string): void {
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input(), text);
+      input().setSelectionRange(text.length, text.length);
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  it('runs /plan and /new from the message box instead of sending them', async () => {
+    const onChangeSettings = vi.fn(async () => ({ ok: true as const }));
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onNewConversation = vi.fn();
+    render(panel({ onChangeSettings, onSend, onNewConversation }));
+    type('/');
+    const labels = [...container.querySelectorAll('[data-testid="agent-completion"] [role="option"]')].map((option) => option.textContent ?? '');
+    expect(labels.some((label) => label.startsWith('/plan'))).toBe(true);
+    expect(labels.some((label) => label.startsWith('/model'))).toBe(true);
+    type('/plan');
+    key(input(), { key: 'Escape' });
+    key(input(), { key: 'Enter' });
+    await flush();
+    expect(onChangeSettings).toHaveBeenCalledWith({ permissionPreset: 'plan' });
+    expect(input().value).toBe('');
+    type('/new');
+    key(input(), { key: 'Escape' });
+    key(input(), { key: 'Enter' });
+    await flush();
+    expect(onNewConversation).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
 

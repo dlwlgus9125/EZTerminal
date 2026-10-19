@@ -2812,6 +2812,38 @@ describe('DaemonAgentRuntime', () => {
     await h.store.close();
   });
 
+  it('runs a plan Codex proposed once the person approves it, and retires it when they type instead', async () => {
+    const h = await harness();
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', {
+      sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'plan', initialPrompt: 'Plan a change.',
+    });
+    const propose = async (id: string): Promise<string> => {
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1' && !['completed', 'failed', 'interrupted'].includes(entry.state));
+      if (turn) h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      h.codex.emit({ kind: 'approval-requested', sessionId: 'agent-1', providerRequestId: `proposed-plan:${id}`, risk: 'write', title: 'Approve plan',
+        request: { v: 1, kind: 'plan', markdown: '- step' } });
+      await h.runtime.whenIdle();
+      return h.router.getSnapshot().approvals.find((approval) => approval.providerRequestId === `proposed-plan:${id}`)!.id;
+    };
+    const first = await propose('provider-turn-1');
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ state: 'blocked' });
+
+    // Typing instead retires the proposal, as in Codex.
+    await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Also cover the README.' });
+    expect(h.router.getSnapshot().approvals.find((approval) => approval.id === first)).toMatchObject({ state: 'expired' });
+
+    const second = await propose('provider-turn-2');
+    await h.execute('permission.resolve', { approvalId: second, decision: 'allow', response: { kind: 'plan', mode: 'standard' } });
+    await vi.waitFor(() => expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: 'agent-1', prompt: 'Implement the plan above.', attended: true,
+    }), expect.anything()));
+    expect(h.router.getSnapshot().agents[0]).toMatchObject({ permissionPreset: 'standard' });
+    await h.runtime.dispose();
+    await h.store.close();
+  });
+
   it('tells the provider whether a person sent the turn', async () => {
     const h = await harness();
     await h.enable(h.codex, 'codex');

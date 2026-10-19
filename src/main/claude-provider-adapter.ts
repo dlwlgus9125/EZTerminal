@@ -17,6 +17,7 @@ import {
   type ModelInfo,
   type Options,
   type PermissionResult,
+  type PermissionUpdate,
   type SDKMessage,
   type SDKUserMessage,
   type SessionMessage,
@@ -347,7 +348,10 @@ interface TurnRecord {
 interface PendingApproval {
   readonly requestId: string;
   readonly toolUseId: string;
+  readonly toolName: string;
   readonly input: Record<string, unknown>;
+  /** The CLI's own "don't ask again" updates for this request. */
+  readonly suggestions?: readonly PermissionUpdate[];
   readonly turnId?: string;
   readonly promise: Promise<PermissionResult>;
   settle(result: PermissionResult): void;
@@ -554,6 +558,20 @@ function permissionMode(preset: PermissionPreset): NonNullable<Options['permissi
     case 'full-access': return 'bypassPermissions';
     case 'standard': return 'default';
   }
+}
+
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+
+/**
+ * "Allow for this conversation": the CLI's own suggestions, kept to this session
+ * (a suggestion may name the project's settings file). An edit also stops asking
+ * for edits, as Claude Code's "allow all edits during this session" does.
+ */
+function sessionPermissions(pending: Pick<PendingApproval, 'toolName' | 'suggestions'>): readonly PermissionUpdate[] {
+  const kept = (pending.suggestions ?? []).map((update) => ({ ...update, destination: 'session' as const }));
+  return EDIT_TOOLS.has(pending.toolName) && !kept.some((update) => update.type === 'setMode')
+    ? [...kept, { type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+    : kept;
 }
 
 function toolRisk(toolName: string): 'read' | 'write' | 'danger' {
@@ -1402,10 +1420,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const answers = input.decision === 'allow' && response?.kind === 'answers' ? response.answers : undefined;
     const plan = input.decision === 'allow' && response?.kind === 'plan' ? response : undefined;
     const feedback = input.decision === 'deny' && response?.kind === 'feedback' ? response.message : undefined;
+    const forSession = input.decision === 'allow' && response?.kind === 'session' ? sessionPermissions(pending) : undefined;
     pending.settle(input.decision === 'allow'
       ? {
           behavior: 'allow',
           updatedInput: answers ? { ...pending.input, answers } : pending.input,
+          ...(forSession?.length ? { updatedPermissions: [...forSession] } : {}),
           toolUseID: pending.toolUseId,
         }
       : {
@@ -2305,7 +2325,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const pending: PendingApproval = {
       requestId: request.requestId,
       toolUseId: request.toolUseID,
+      toolName,
       input,
+      ...(request.suggestions?.length ? { suggestions: request.suggestions } : {}),
       turnId: turn?.turnId,
       promise,
       settle: settlePromise,

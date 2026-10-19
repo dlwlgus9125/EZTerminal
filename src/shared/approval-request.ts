@@ -61,12 +61,22 @@ export const ApprovalResponseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), mode: z.enum(['standard', 'full-access']) }).strict(),
   /** Deny with guidance the agent receives as the tool result. */
   z.object({ kind: z.literal('feedback'), message: z.string().min(1).max(4_000) }).strict(),
+  /** Allow, and stop asking for the same kind of request until this conversation restarts (`approval-session-v1`). */
+  z.object({ kind: z.literal('session') }).strict(),
 ]);
 
 export type ApprovalResponse = z.infer<typeof ApprovalResponseSchema>;
 
 export const APPROVAL_REQUEST_CAPABILITY = 'approval-request-v1';
 export const APPROVAL_RESPONSE_CAPABILITY = 'approval-response-v1';
+/** The host can allow a command or edit for the rest of a conversation. */
+export const APPROVAL_SESSION_CAPABILITY = 'approval-session-v1';
+/**
+ * The host asks about a plan Codex proposed in plan mode (Codex itself never
+ * asks), as a plan approval with no turn; clients then show no dock of their own.
+ */
+export const PLAN_PROPOSAL_CAPABILITY = 'plan-proposal-v1';
+export const PROPOSED_PLAN_REQUEST_PREFIX = 'proposed-plan:';
 
 /** Clip a body to the schema bound without splitting a surrogate pair. */
 export function clipApprovalBody(value: string, limit = 16_000): string {

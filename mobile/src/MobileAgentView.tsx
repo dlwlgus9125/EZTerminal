@@ -1465,6 +1465,8 @@ export function MobileAgentView({
           approval.sessionId === selectedDaemonSession.id
         ))}
         approvalResponses={daemonRuntimeState.snapshot?.capabilities?.includes('approval-response-v1') === true}
+        approvalSession={daemonRuntimeState.snapshot?.capabilities?.includes('approval-session-v1') === true}
+        planProposals={daemonRuntimeState.snapshot?.capabilities?.includes('plan-proposal-v1') === true}
         transcriptLoading={loadedTranscriptSessionId === selectedDaemonSession.id && transcriptLoading}
         transcriptError={visibleTranscriptError}
         disabled={disconnected || !transport || (secureChatEnabled && (chatDraft.status === 'loading' || chatDraft.status === 'unavailable'))}

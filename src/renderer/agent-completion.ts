@@ -4,7 +4,14 @@ import type { ChatComposerDraft, ChatSkillReference } from '../shared/chat-messa
 export interface CompletionToken { start: number; end: number; trigger: '/' | '$' | '@'; query: string }
 export interface AgentCompletion {
   id: string; label: string; description?: string; group: 'app' | 'skill' | 'provider' | 'file';
-  invocation?: string; skill?: ChatSkillReference; action?: 'history'; disabledReason?: string;
+  invocation?: string; skill?: ChatSkillReference; action?: 'history' | 'app'; disabledReason?: string;
+}
+/** An EZTerminal command typed as `/name`; it acts on the conversation and is never sent to the model. */
+export interface AppCommand {
+  readonly name: string;
+  readonly description: string;
+  readonly disabledReason?: string;
+  readonly run: () => void;
 }
 /** A token at the caret, never a URL, path, code span, or selected passage. */
 export function completionToken(text: string, start = text.length, end = start): CompletionToken | undefined {
@@ -27,15 +34,18 @@ export function completionToken(text: string, start = text.length, end = start):
 }
 
 export function agentCompletions(catalog: AgentCapabilityCatalog | undefined, filter: 'skills' | 'commands' | CompletionToken,
-  historyAvailable: boolean, ko: boolean): AgentCompletion[] {
+  historyAvailable: boolean, ko: boolean, appCommands: readonly AppCommand[] = []): AgentCompletion[] {
   if (typeof filter !== 'string' && filter.trigger === '@') return [];
   const query = typeof filter === 'string' ? '' : filter.query.toLocaleLowerCase();
   const skillsOnly = filter === 'skills' || (typeof filter !== 'string' && filter.trigger === '$');
   const items: AgentCompletion[] = skillsOnly ? [] : [{ id: 'app:resume', label: '/resume', group: 'app', action: 'history',
     description: ko ? '이전 대화 찾기 · 목록 열기' : 'Find previous conversations · Open history',
-    ...(!historyAvailable ? { disabledReason: ko ? '이 화면에서는 기록을 열 수 없습니다.' : 'History is unavailable in this view.' } : {}) }];
+    ...(!historyAvailable ? { disabledReason: ko ? '이 화면에서는 기록을 열 수 없습니다.' : 'History is unavailable in this view.' } : {}) },
+    ...appCommands.map((command): AgentCompletion => ({ id: `app:${command.name}`, label: `/${command.name}`, group: 'app', action: 'app',
+      description: command.description, ...(command.disabledReason ? { disabledReason: command.disabledReason } : {}) }))];
   for (const item of catalog?.items ?? []) {
-    if (!item.invocation || !['skill', 'app-skill'].includes(item.kind) || item.invocation === '/resume') continue;
+    if (!item.invocation || !['skill', 'app-skill'].includes(item.kind) || item.invocation === '/resume'
+      || appCommands.some((command) => item.invocation === `/${command.name}`)) continue;
     const isSkill = item.kind === 'skill';
     items.push({ id: `${item.kind}:${item.id}`, label: item.invocation, description: item.description,
       group: isSkill ? (catalog!.providerId === 'claude' ? 'provider' : 'skill') : 'skill', invocation: item.invocation,

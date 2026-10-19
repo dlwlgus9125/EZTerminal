@@ -1,4 +1,4 @@
-import type { ApprovalResponse } from '../shared/approval-request';
+import { PROPOSED_PLAN_REQUEST_PREFIX, type ApprovalResponse } from '../shared/approval-request';
 import { nativeChildSessionId, routedChildItem, subagentResultItem, subagentStartItems } from './native-subagent-projection';
 import { finalAssistantText, latestFinishedTurn, managedChildOriginId, reportBackRequested } from './managed-child-transcript';
 import { createHash } from 'node:crypto';
@@ -140,6 +140,8 @@ const MAX_CHILD_SUMMARY_LENGTH = 2_000;
 
 /** The host's own principal when it sends a delegated child's result to the parent. */
 const REPORT_BACK_PRINCIPAL = 'report-back-runtime';
+/** Codex's own wording after its "Implement this plan?" prompt. */
+const IMPLEMENT_PLAN_PROMPT = 'Implement the plan above.';
 
 interface ReportBackPlan {
   readonly parentSessionId: string;
@@ -943,13 +945,18 @@ export class DaemonAgentRuntime {
     const hasActiveCurrentTurn = Boolean(currentTurn && ACTIVE_TURN_STATES.has(currentTurn.state));
     const turnId = stableId('turn', command.commandId);
     const now = this.isoNow();
+    const proposals = snapshot.approvals.filter((approval) => (
+      approval.sessionId === session.id && approval.state === 'pending' && approval.providerRequestId.startsWith(PROPOSED_PLAN_REQUEST_PREFIX)
+    ));
     const mutations: DaemonStoreMutation[] = [{ kind: 'turn.upsert', value: {
       id: turnId,
       sessionId: session.id,
       commandId: command.commandId,
       enqueueSequence: command.expectedRevision + 1,
       state: 'queued',
-    } }];
+    } }, ...proposals.map((approval): DaemonStoreMutation => ({
+      kind: 'approval.upsert', value: this.resolvedApprovalInput(approval, 'expired', now),
+    }))];
     if (interruptFirst && currentTurn && hasActiveCurrentTurn) {
       mutations.push({ kind: 'turn.upsert', value: turnInput(currentTurn, {
         state: 'delivery-uncertain',
@@ -982,6 +989,10 @@ export class DaemonAgentRuntime {
       ok: true,
       commit: { mutations },
       afterCommit: () => {
+        for (const approval of proposals) {
+          if (agent.providerSessionId) this.runBackground(`retire proposed plan ${approval.id}`, () => this.resolveProviderApproval(
+            agent.providerId, session.id, agent.providerSessionId!, approval.providerRequestId, 'deny'));
+        }
         if (interruptFirst && currentTurn && hasActiveCurrentTurn && agent.providerSessionId) {
           this.runBackground(
             `interrupt Agent ${session.id}`,
@@ -1419,15 +1430,37 @@ export class DaemonAgentRuntime {
             ]),
     ] }, afterCommit: () => this.runBackground(
       `resolve approval ${approval.id}`,
-      () => this.resolveProviderApproval(
-        agent.providerId,
-        agent.sessionId,
-        agent.providerSessionId!,
-        approval.providerRequestId,
-        command.payload.decision,
-        command.payload.response,
-      ),
+      async () => {
+        await this.resolveProviderApproval(
+          agent.providerId,
+          agent.sessionId,
+          agent.providerSessionId!,
+          approval.providerRequestId,
+          command.payload.decision,
+          command.payload.response,
+        );
+        // A plan Codex proposed: running it asks Codex to implement it; asking for changes sends them, still planning.
+        if (approval.providerRequestId.startsWith(PROPOSED_PLAN_REQUEST_PREFIX)) {
+          const followUp = command.payload.decision === 'allow' ? IMPLEMENT_PLAN_PROMPT
+            : command.payload.response?.kind === 'feedback' ? command.payload.response.message : undefined;
+          if (followUp) await this.sendPlanFollowUp(approval.id, agent.sessionId, followUp, command.principal);
+        }
+      },
     ) };
+  }
+
+  /** Sends the message that follows a decision on a proposed plan, as the person who decided. */
+  private async sendPlanFollowUp(approvalId: string, sessionId: string, prompt: string, principal: DaemonPrincipal): Promise<void> {
+    if (!this.options.executeCommand) return;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const snapshot = this.options.getSnapshot();
+      const commandId = stableId('plan-follow-up', approvalId, String(snapshot.revision));
+      const receipt = await this.options.executeCommand(createDaemonCommand({
+        commandId, idempotencyKey: commandId, expectedRevision: snapshot.revision, issuedAt: this.isoNow(),
+        principal, type: 'agent.submit', payload: { sessionId, prompt },
+      }));
+      if (receipt.ok || receipt.error.code !== 'revision-conflict') return;
+    }
   }
 
   private async enableProvider(

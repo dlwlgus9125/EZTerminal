@@ -1988,6 +1988,41 @@ describe('Codex plan mode', () => {
     await adapter.dispose();
   });
 
+  it('asks about a plan Codex proposed in a person\'s plan turn, and runs it with the chosen access', async () => {
+    const { adapter, connection, events } = await planAdapter();
+    const finishWithPlan = async (turn: number, attended: boolean): Promise<void> => {
+      await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: `turn-${turn}`, commandId: `command-${turn}`, prompt: 'Plan it', attended });
+      await connection.emitNotification('item/completed', { threadId: 'thread-1', turnId: `provider-turn-${turn}`, item: { id: `plan-${turn}`, type: 'plan', text: '- Add farewell()' } });
+      await connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: `provider-turn-${turn}`, status: 'completed', error: null, items: [] } });
+    };
+    await finishWithPlan(1, false);
+    expect(events.some((event) => event.kind === 'approval-requested')).toBe(false);
+    await finishWithPlan(2, true);
+    expect(events.at(-1)).toMatchObject({
+      kind: 'approval-requested', sessionId: 'session-1', providerRequestId: 'proposed-plan:provider-turn-2', risk: 'write',
+      request: { v: 1, kind: 'plan', markdown: '- Add farewell()' },
+    });
+    expect(events.at(-1)).not.toHaveProperty('turnId');
+    await adapter.resolveApproval({
+      sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'proposed-plan:provider-turn-2', decision: 'allow',
+      response: { kind: 'plan', mode: 'full-access' },
+    });
+    expect(connection.requests.at(-1)).toMatchObject({ method: 'thread/settings/update', params: { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } } });
+    await adapter.dispose();
+  });
+
+  it('allows a command for the rest of the conversation with acceptForSession', async () => {
+    const { adapter, connection } = await planAdapter();
+    const approval = connection.serverRequest('item/commandExecution/requestApproval', 'rpc-session', {
+      threadId: 'thread-1', turnId: 'provider-turn', itemId: 'item-1', approvalId: 'session-1', command: 'pnpm test',
+    });
+    await adapter.resolveApproval({
+      sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'command:session-1', decision: 'allow', response: { kind: 'session' },
+    });
+    await expect(approval).resolves.toEqual({ decision: 'acceptForSession' });
+    await adapter.dispose();
+  });
+
   it('never stores a secret answer or waits on a question that does not block', async () => {
     const { adapter, connection, events } = await planAdapter();
     const before = events.length;

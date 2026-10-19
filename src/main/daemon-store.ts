@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, ApprovalRequestSchema, parseApprovalRequest } from '../shared/approval-request';
+import { APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, ApprovalRequestSchema, PLAN_PROPOSAL_CAPABILITY, parseApprovalRequest } from '../shared/approval-request';
 import { ChatMessageContextSchema } from '../shared/chat-message';
 import { TRANSCRIPT_PAYLOAD_CAPABILITY, TranscriptPayloadSchema, parseTranscriptPayload } from '../shared/transcript-payload';
 
@@ -898,7 +898,7 @@ export class DaemonStore {
     const runtime = this.runtimeRow(database);
     return {
       protocolVersion: DAEMON_PROTOCOL_VERSION,
-      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, 'agent-effort-v1'],
+      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1'],
       revision: runtime.revision,
       eventSequence: runtime.eventSequence,
       generatedAt: this.isoNow(),

@@ -50,7 +50,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { insertCompletion } from './agent-completion';
+import { insertCompletion, type AppCommand } from './agent-completion';
 import { useAgentCompletion, type CapabilityDiscoveryState, type ComposerFileSearch } from './use-agent-completion';
 
 import type {
@@ -151,6 +151,10 @@ interface StructuredAgentCopy {
   readonly settingsLockedDuringTurn: string;
   readonly settingsFailed: string;
   readonly decisionHint: string;
+  readonly planCommandOn: string;
+  readonly planCommandOff: string;
+  readonly modelCommand: string;
+  readonly newCommand: string;
   readonly implementPlanFailed: string;
   readonly planOn: string;
   readonly planOff: string;
@@ -270,6 +274,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settingsLockedDuringTurn: 'Model, access and plan mode can change after this turn. Esc stops it.',
     settingsFailed: 'The setting was not changed.',
     decisionHint: 'Shift+Tab goes to the waiting decision · Esc stops the turn',
+    planCommandOn: 'Turn plan mode on (Shift+Tab)',
+    planCommandOff: 'Turn plan mode off (Shift+Tab)',
+    modelCommand: 'Choose the model',
+    newCommand: 'Start a new conversation in this project',
     implementPlanFailed: 'Plan mode is off, but the request to implement the plan was not sent. It is in the message box; send it again.',
     planOn: 'Plan mode on',
     planOff: 'Plan mode off',
@@ -361,6 +369,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settingsLockedDuringTurn: '모델·권한·계획은 이 작업이 끝난 뒤 바꿀 수 있습니다. Esc로 멈춥니다.',
     settingsFailed: '설정을 바꾸지 못했습니다.',
     decisionHint: 'Shift+Tab 기다리는 결정으로 이동 · Esc 멈춤',
+    planCommandOn: '계획 모드 켜기 (Shift+Tab)',
+    planCommandOff: '계획 모드 끄기 (Shift+Tab)',
+    modelCommand: '모델 고르기',
+    newCommand: '이 프로젝트에서 새 대화 시작',
     implementPlanFailed: '계획 모드는 꺼졌지만 구현 요청을 보내지 못했습니다. 입력창에 넣어 두었으니 다시 보내세요.',
     planOn: '계획 모드 켜짐',
     planOff: '계획 모드 꺼짐',
@@ -873,6 +885,8 @@ export interface StructuredAgentTranscriptProps {
   readonly onReuse?: (text: string) => void;
   /** The access level an approved plan runs with, shared with the composer. */
   readonly planAccess?: PlanAccessChoice;
+  /** The host can allow a command or edit for the rest of the conversation. */
+  readonly approvalSession?: boolean;
   /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
   readonly planReview?: {
     readonly providerId: string;
@@ -912,6 +926,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   onReuse,
   planAccess,
   planReview,
+  approvalSession = false,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
@@ -962,6 +977,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
             ? onResolveApproval(approvalId, decision, response)
             : onResolveApproval(approvalId, decision))}
           {...(planAccess ? { planAccess } : {})}
+          canAllowForSession={approvalSession}
         />
       )}
       {!model.pending && proposal && planReview && planAccess && (
@@ -1080,7 +1096,8 @@ export interface StructuredAgentComposerProps {
   readonly supportsMessageContext?: boolean;
   readonly deliveryUncertain?: boolean;
   readonly onReconcileDelivery?: () => Promise<StructuredAgentUiResult>;
-  readonly draftAction?: { readonly id: number; readonly text?: string; readonly insert?: string; readonly skill?: ChatSkillReference; readonly replyTo?: ChatReplyReference };
+  /** `append` adds after what is already typed (queued messages handed back on stop). */
+  readonly draftAction?: { readonly id: number; readonly text?: string; readonly insert?: string; readonly append?: string; readonly skill?: ChatSkillReference; readonly replyTo?: ChatReplyReference };
   readonly variant?: 'desktop' | 'mobile';
   /** `@` file mentions; absent where the workspace cannot be searched (Android). */
   readonly fileSearch?: ComposerFileSearch;
@@ -1095,6 +1112,8 @@ export interface StructuredAgentComposerProps {
   readonly statusHint?: string;
   /** Moves focus to a pending decision above the message box; false when there is none. */
   readonly onFocusDecision?: () => boolean;
+  /** `/plan`, `/model`, `/new`: conversation commands typed in the message box. */
+  readonly appCommands?: readonly AppCommand[];
   /** Shift+Tab in the message box switches plan mode, as the plan button does. */
   readonly plan?: {
     readonly on: boolean;
@@ -1138,6 +1157,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   pathForDrop,
   statusHint,
   onFocusDecision,
+  appCommands,
   plan,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
@@ -1163,7 +1183,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     onDraftChange?.(next);
   };
   const completion = useAgentCompletion({ value, onChange: updateDraft, inputRef, catalog: capabilityCatalog,
-    discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile', ...(fileSearch ? { fileSearch } : {}) });
+    discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile', ...(fileSearch ? { fileSearch } : {}),
+    ...(appCommands ? { appCommands } : {}) });
   const [dragging, setDragging] = useState(false);
   const [announcement, setAnnouncement] = useState('');
   const recall = useRef<number | undefined>(undefined);
@@ -1186,9 +1207,15 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       inputRef.current.setSelectionRange(value.selectionStart, value.selectionEnd ?? value.selectionStart);
     }
   }, [value.selectionStart, value.selectionEnd]);
+  const appliedDraftAction = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (!draftAction || disabled) return;
+    // Applied once, as soon as the box takes input again (a stop disables it while it runs).
+    if (!draftAction || disabled || appliedDraftAction.current === draftAction.id) return;
+    appliedDraftAction.current = draftAction.id;
+    const appended = draftAction.append === undefined ? undefined
+      : valueRef.current.text.trim() ? `${valueRef.current.text.replace(/\s+$/u, '')}\n\n${draftAction.append}` : draftAction.append;
     const next = { ...valueRef.current, ...(draftAction.text !== undefined ? { text: draftAction.text } : {}),
+      ...(appended !== undefined ? { text: appended } : {}),
       ...(draftAction.insert ? insertCompletion(valueRef.current, draftAction.insert, undefined, draftAction.skill) : {}),
       ...(draftAction.skill ? { skills: [...(valueRef.current.skills ?? []).filter((skill) => skill.id !== draftAction.skill!.id), draftAction.skill] } : {}),
       ...(draftAction.replyTo ? { replyTo: draftAction.replyTo } : {}) };
@@ -1196,7 +1223,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     inputRef.current?.focus();
     // The action ID is issued only by an explicit transcript action.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftAction?.id]);
+  }, [draftAction?.id, disabled]);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
   const [attempted, setAttempted] = useState(false);
@@ -1623,6 +1650,10 @@ export interface StructuredAgentSessionPanelProps {
   readonly turns?: readonly DaemonTurn[];
   /** Host accepts answers, plan mode and deny feedback (`approval-response-v1`). */
   readonly approvalResponses?: boolean;
+  /** Host can allow a command or edit for the rest of the conversation (`approval-session-v1`). */
+  readonly approvalSession?: boolean;
+  /** Host asks about a plan Codex proposed itself (`plan-proposal-v1`); no dock of our own then. */
+  readonly planProposals?: boolean;
   /** Opens an http(s) link from chat in the system browser. */
   readonly onOpenLink?: (url: string) => void;
   readonly hasEarlier?: boolean;
@@ -1652,6 +1683,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly subagentType?: string;
   /** The parent holds an approval this subagent raised. */
   readonly parentApprovalPending?: boolean;
+  /** Opens a new conversation (`/new`). */
+  readonly onNewConversation?: () => void;
   /** Hand this conversation's work, or a review of it, to a new child agent. */
   readonly onDelegate?: (mode: 'handoff' | 'review') => void;
   readonly heartbeatControl?: ReactNode;
@@ -1735,6 +1768,8 @@ export function StructuredAgentSessionPanel({
   approvals = [],
   turns,
   approvalResponses = false,
+  approvalSession = false,
+  planProposals = false,
   onOpenLink,
   hasEarlier = false,
   loadingEarlier = false,
@@ -1763,6 +1798,7 @@ export function StructuredAgentSessionPanel({
   subagentType,
   parentApprovalPending = false,
   onDelegate,
+  onNewConversation,
   heartbeatControl,
   heartbeatActive = false,
   recoveryControl,
@@ -1971,6 +2007,18 @@ export function StructuredAgentSessionPanel({
     return sent;
   };
   const planBlockedReason = turnCurrent && !settingsLocked ? copy.settingsAfterTurn : undefined;
+  const appCommands: readonly AppCommand[] = [
+    ...(!settingsReadOnly ? [{
+      name: 'plan', description: planOn ? copy.planCommandOff : copy.planCommandOn,
+      ...(settingsLocked || turnCurrent ? { disabledReason: copy.settingsAfterTurn } : {}), run: togglePlan,
+    }, {
+      name: 'model', description: copy.modelCommand,
+      ...(settingsLocked || turnCurrent ? { disabledReason: copy.settingsAfterTurn } : {}),
+      // After the suggestion list closes, so the menu keeps focus.
+      run: () => requestAnimationFrame(() => panelRef.current?.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-model"]')?.click()),
+    }] : []),
+    ...(onNewConversation ? [{ name: 'new', description: copy.newCommand, run: onNewConversation }] : []),
+  ];
   /** Shift+Tab from the message box: the decision waiting above takes focus (its main action, or the folded strip). */
   const focusDecision = (): boolean => {
     const target = panelRef.current?.querySelector<HTMLElement>(
@@ -1979,12 +2027,28 @@ export function StructuredAgentSessionPanel({
     target?.focus();
     return Boolean(target);
   };
+  /**
+   * Stop the turn the way Claude Code and Codex do: queued messages are handed
+   * back to the message box (taken off the queue first) instead of being dropped.
+   */
+  const stopTurn = async (): Promise<void> => {
+    if (!onCancel || lifecycleBusy !== null) return;
+    const taken: string[] = [];
+    if (onQueueAction) {
+      for (const item of queueItems ?? []) {
+        const result = await onQueueAction(item, 'take').catch((): StructuredAgentUiResult => ({ ok: false, message: '' }));
+        if (result.ok && item.text.trim()) taken.push(item.text.trim());
+      }
+    }
+    await runLifecycle('cancel', onCancel);
+    if (taken.length) setDraftAction({ id: ++actionSequence.current, sessionId, append: taken.join('\n\n') });
+  };
   /** Esc anywhere in the conversation stops the turn, unless a field, menu or dialog takes it first. */
   const stopOnEscape = (event: KeyboardEvent<HTMLElement>): void => {
     if (event.key !== 'Escape' || event.defaultPrevented || !canCancel || lifecycleBusy !== null || disabled) return;
     if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], .chat-dock')) return;
     event.preventDefault();
-    void runLifecycle('cancel', onCancel);
+    void stopTurn();
   };
   /**
    * Codex takes only allow or deny, so "deny with feedback" denies, then interrupts
@@ -2194,7 +2258,7 @@ export function StructuredAgentSessionPanel({
                     disabled={disabled || settingsBusy || lifecycleBusy !== null}
                     loading={lifecycleBusy === 'cancel'}
                     loadingLabel={copy.stoppingAgent}
-                    onClick={() => void runLifecycle('cancel', onCancel)}
+                    onClick={() => void stopTurn()}
                     data-testid="structured-agent-cancel"
                   >
                     {copy.stopAgent}
@@ -2299,6 +2363,7 @@ export function StructuredAgentSessionPanel({
         skin={activeSkin}
         workspaceRoot={workspace.path}
         approvalResponses={approvalResponses}
+        approvalSession={approvalSession}
         {...(onOpenLink ? { onOpenLink } : {})}
         onReviewChanges={() => setReviewRequest((request) => request + 1)}
         hasEarlier={hasEarlier}
@@ -2314,7 +2379,7 @@ export function StructuredAgentSessionPanel({
         onReuse={!historyOnly && !composerDisabled ? (text) => setDraftAction({ id: ++actionSequence.current, sessionId, text }) : undefined}
         onOpenRelatedSession={onOpenRelatedSession}
         {...(!settingsReadOnly ? { planAccess: planAccessChoice } : {})}
-        {...(!settingsReadOnly && !composerDisabled ? {
+        {...(!settingsReadOnly && !composerDisabled && !planProposals ? {
           planReview: { providerId, permissionPreset: selectedPermission, state, onApprove: approveProposedPlan, onKeepPlanning: (message: string) => onSend(message) },
         } : {})}
       />
@@ -2368,13 +2433,14 @@ export function StructuredAgentSessionPanel({
           onInterruptAndSend={onInterruptAndSend ? (prompt, context) => sendWithCapabilities(prompt, context, onInterruptAndSend) : undefined}
           variant={variant}
           recentPrompts={recentPrompts}
-          {...(canCancel ? { onStop: () => void runLifecycle('cancel', onCancel) } : {})}
+          {...(canCancel ? { onStop: () => void stopTurn() } : {})}
           stopping={lifecycleBusy === 'cancel'}
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
           {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? copy.decisionHint : copy.settingsLockedDuringTurn } : {})}
           onFocusDecision={focusDecision}
+          appCommands={appCommands}
         />
       )}
     </section>

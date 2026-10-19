@@ -1,5 +1,5 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
-import { clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
+import { PROPOSED_PLAN_REQUEST_PREFIX, clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
 import { encodeFileChanges } from '../shared/conversation-changes';
 import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
 import { createHash, randomUUID } from 'node:crypto';
@@ -106,12 +106,16 @@ interface SessionState {
   threadMode?: 'plan' | 'default';
   /** Said once per session that this Codex cannot plan, so plan mode runs read-only. */
   planUnsupportedNoticed?: boolean;
+  /** The last plan Codex proposed in the current turn. */
+  proposedPlan?: { readonly providerTurnId: string; readonly markdown: string };
   nextTranscriptSequence: number;
   activeTurn?: {
     readonly localTurnId: string;
     readonly commandId: string;
     providerTurnId?: string;
     startedEmitted: boolean;
+    /** A person's turn in Codex plan mode: its proposed plan is asked about when it ends. */
+    planMode?: boolean;
     interruptRequest?: {
       readonly promise: Promise<void>;
       readonly resolve: () => void;
@@ -142,7 +146,7 @@ interface SessionState {
   lastAgentMessage?: string;
 }
 
-type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change' | 'user-input';
+type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change' | 'user-input' | 'proposed-plan';
 
 interface PendingApproval {
   readonly providerRequestId: string;
@@ -1167,6 +1171,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       if (!providerTurnId) throw new Error('Codex turn/start returned no turn id.');
       if (collaborationMode) state.threadMode = collaborationMode.mode;
       const activeTurn = state.activeTurn;
+      if (activeTurn && collaborationMode?.mode === 'plan') activeTurn.planMode = true;
       if (!activeTurn || activeTurn.commandId !== input.commandId) return;
       activeTurn.providerTurnId = providerTurnId;
       // The response itself authoritatively confirms this turn identity. Emit
@@ -1323,6 +1328,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       throw new Error('Codex approval does not belong to this session.');
     }
     this.pendingApprovals.delete(input.providerRequestId);
+    if (pending.kind === 'proposed-plan') {
+      // Running the plan leaves plan mode for the chosen access; the host then sends the request to implement it.
+      if (input.decision === 'allow') {
+        const mode = input.response?.kind === 'plan' ? input.response.mode : 'standard';
+        await this.setSettings({ sessionId: input.sessionId, providerSessionId: input.providerSessionId, permissionPreset: mode });
+      }
+      return;
+    }
     // Codex approvals carry only a decision; plan-mode questions also carry the answers.
     pending.resolve(this.approvalResponse(pending, input.decision, input.response));
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
@@ -1749,7 +1762,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         scope: 'turn',
       };
     }
-    return { decision: decision === 'allow' ? 'accept' : 'decline' };
+    // "Allow for this conversation" is Codex's own acceptForSession.
+    return { decision: decision === 'allow' ? response?.kind === 'session' ? 'acceptForSession' : 'accept' : 'decline' };
   }
 
   private approvalTitle(kind: ApprovalKind): string {
@@ -1766,6 +1780,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return 'Run MCP tool';
       case 'user-input':
         return 'Answer to continue';
+      case 'proposed-plan':
+        return 'Approve plan';
     }
   }
 
@@ -2215,6 +2231,32 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ? { detail: sanitizeProviderDiagnostic(asString(error?.message)).text }
         : {}),
     });
+    const proposal = state.proposedPlan?.providerTurnId === providerTurnId ? state.proposedPlan : undefined;
+    if (proposal) state.proposedPlan = undefined;
+    if (proposal && outcome === 'completed' && matchingActive?.planMode) this.proposePlan(state, providerTurnId, proposal.markdown);
+  }
+
+  /**
+   * Codex ends a plan-mode turn with a proposed plan and never asks about it; the
+   * host asks, as a plan approval that belongs to no turn, so it reaches the inbox,
+   * notifications and phones like any other decision.
+   */
+  private proposePlan(state: SessionState, providerTurnId: string, markdown: string): void {
+    const providerRequestId = `${PROPOSED_PLAN_REQUEST_PREFIX}${providerTurnId}`;
+    if (this.pendingApprovals.has(providerRequestId)) return;
+    this.pendingApprovals.set(providerRequestId, {
+      providerRequestId, kind: 'proposed-plan', sessionId: state.sessionId, providerSessionId: state.providerSessionId, params: {},
+      resolve: () => undefined,
+    });
+    this.emit({
+      kind: 'approval-requested',
+      sessionId: state.sessionId,
+      providerRequestId,
+      risk: 'write',
+      title: 'Approve plan',
+      detail: boundedText(markdown.split(/\r?\n/u).find((line) => line.trim()) ?? '', 2_000),
+      request: { v: 1, kind: 'plan', markdown: clipApprovalBody(markdown) },
+    });
   }
 
   private handleItem(
@@ -2243,6 +2285,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       if (state.startedItems.size > MAX_STARTED_ITEMS) {
         state.startedItems.delete(state.startedItems.keys().next().value as string);
       }
+    }
+    if (completed && itemType === 'plan' && !state.subagentOf) {
+      const markdown = providerTranscriptText(item.text);
+      if (markdown.trim()) state.proposedPlan = { providerTurnId, markdown };
     }
     const transcript = this.transcriptFromItem(
       state.sessionId,

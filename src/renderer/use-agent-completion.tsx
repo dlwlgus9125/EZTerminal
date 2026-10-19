@@ -3,6 +3,7 @@ import type { AgentCapabilityCatalog } from '../shared/agent-capabilities';
 import type { ChatComposerDraft } from '../shared/chat-message';
 import { agentCompletions, completionToken, insertCompletion, type AgentCompletion } from './agent-completion';
 import { useAppTranslation } from './i18n';
+import type { AppCommand } from './agent-completion';
 import { Button } from './ui';
 import './agent-completion.css';
 
@@ -11,10 +12,10 @@ export interface CapabilityDiscoveryState { loading: boolean; error?: string }
 /** Workspace-relative paths matching a query, best first. */
 export type ComposerFileSearch = (query: string) => Promise<readonly string[]>;
 
-export function useAgentCompletion({ value, onChange, inputRef, catalog, discovery, onOpenHistory, disabled, mobile = false, fileSearch }:
+export function useAgentCompletion({ value, onChange, inputRef, catalog, discovery, onOpenHistory, disabled, mobile = false, fileSearch, appCommands = [] }:
   { value: ChatComposerDraft; onChange: (next: ChatComposerDraft) => void; inputRef: RefObject<HTMLTextAreaElement>;
     catalog?: AgentCapabilityCatalog; discovery?: CapabilityDiscoveryState; onOpenHistory?: () => void; disabled?: boolean; mobile?: boolean;
-    fileSearch?: ComposerFileSearch }) {
+    fileSearch?: ComposerFileSearch; appCommands?: readonly AppCommand[] }) {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const listId = useId();
@@ -46,7 +47,7 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
   const open = !disabled && !composing && dismissed !== fingerprint && !!filter && (!mentioning || !!fileSearch);
   const items: AgentCompletion[] = !open ? [] : mentioning
     ? files.paths.map((path) => ({ id: `file:${path}`, label: path, group: 'file' as const, invocation: `@${path}` }))
-    : agentCompletions(catalog, filter!, !!onOpenHistory, ko);
+    : agentCompletions(catalog, filter!, !!onOpenHistory, ko, appCommands);
   const active = Math.min(activeIndex, Math.max(0, items.length - 1));
   useEffect(() => setActiveIndex(0), [fingerprint, manual, catalog?.revision]);
   useEffect(() => setManual(undefined), [fingerprint]);
@@ -68,6 +69,7 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
     setManual(undefined); setDismissed(`${next.text}:${next.selectionStart}:${next.selectionEnd}`);
     inputRef.current?.focus();
     if (item.action === 'history') onOpenHistory?.();
+    if (item.action === 'app') appCommands.find((command) => `/${command.name}` === item.label)?.run();
   };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (compositionRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return false;
@@ -115,6 +117,14 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
       onCompositionEnd: () => { compositionRef.current = false; setComposing(false); } },
     // Reserved app command also works after Escape or explicit Send; it is never a model prompt.
     runAppCommand: (): boolean => {
+      // `/plan`, `/model` and `/new` stand alone; anything after them would be a prompt.
+      const typed = /^\s*\/([a-z]+)\s*$/u.exec(value.text)?.[1];
+      const command = typed ? appCommands.find((entry) => entry.name === typed) : undefined;
+      if (command) {
+        if (command.disabledReason) { setManual('commands'); setDismissed(undefined); return true; }
+        onChange({ ...value, text: '', selectionStart: 0, selectionEnd: 0 }); close(); command.run();
+        return true;
+      }
       const match = /^\s*\/resume(?:\s|$)/u.exec(value.text);
       if (!match) return false;
       if (onOpenHistory) { onChange({ ...value, text: value.text.slice(match[0].length), selectionStart: 0, selectionEnd: 0 }); close(); onOpenHistory(); }

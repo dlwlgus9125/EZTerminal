@@ -33,6 +33,8 @@ export interface ApprovalDockProps {
   readonly collapsed: boolean;
   readonly onCollapsedChange: (collapsed: boolean) => void;
   readonly planAccess?: PlanAccessChoice;
+  /** The host can allow a command or edit until the conversation restarts (`approval-session-v1`). */
+  readonly canAllowForSession?: boolean;
 }
 
 /** Codex sends a new file's content and a deleted file's old content raw, not as a patch. */
@@ -231,7 +233,7 @@ function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback
  * The pending approval, docked where the composer sits. It can be collapsed to
  * a strip to keep typing without answering.
  */
-export function ApprovalDock({ pending, pendingCount, canRespond, disabled = false, onResolve, collapsed, onCollapsedChange, planAccess }: ApprovalDockProps): JSX.Element {
+export function ApprovalDock({ pending, pendingCount, canRespond, disabled = false, onResolve, collapsed, onCollapsedChange, planAccess, canAllowForSession = false }: ApprovalDockProps): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
   const { approval, request, tool } = pending;
@@ -328,6 +330,11 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
             {copy.approval.denyWithFeedback}
           </Button>}
           <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('deny')}>{copy.approval.deny}</Button>
+          {canRespond && canAllowForSession && (request?.kind === 'command' || request?.kind === 'file-change') && (
+            <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('allow', { kind: 'session' })} data-testid="chat-dock-allow-session">
+              {request.kind === 'file-change' ? copy.approval.allowEditsForSession : copy.approval.allowForSession}
+            </Button>
+          )}
           <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={() => void resolve('allow')} data-dock-primary="">
             {copy.approval.allow}
           </Button>

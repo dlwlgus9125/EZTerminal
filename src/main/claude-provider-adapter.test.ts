@@ -1169,6 +1169,26 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('allows for this conversation with the CLI suggestions kept to the session, and stops asking for edits', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-session', commandId: 'command-session', prompt: 'Edit' });
+    const write = fixture.query.inputOptions.canUseTool!('Write', { file_path: 'C:\\repo\\notes.md', content: 'one' }, {
+      signal: new AbortController().signal, toolUseID: 'toolu_write', requestId: 'write',
+      suggestions: [{ type: 'addRules', rules: [{ toolName: 'Write' }], behavior: 'allow', destination: 'localSettings' }],
+    });
+    await vi.waitFor(() => expect(fixture.events.some((event) => event.kind === 'approval-requested')).toBe(true));
+    await fixture.adapter.resolveApproval({ sessionId: context.sessionId, providerSessionId, providerRequestId: 'write', decision: 'allow', response: { kind: 'session' } });
+    await expect(write).resolves.toMatchObject({
+      behavior: 'allow',
+      updatedPermissions: [
+        { type: 'addRules', rules: [{ toolName: 'Write' }], behavior: 'allow', destination: 'session' },
+        { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+      ],
+    });
+    await fixture.adapter.dispose();
+  });
+
   it('tracks TodoWrite lists and MultiEdit file counts in structured payloads', async () => {
     const fixture = makeAdapter();
     await start(fixture);

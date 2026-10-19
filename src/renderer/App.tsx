@@ -246,6 +246,7 @@ interface StructuredAgentNavigationContextValue {
     readonly title?: string;
     readonly providerLabel?: string;
   }) => void;
+  readonly newConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
 }
 const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
 interface StructuredAgentCreateRecoveryContextValue {
@@ -516,7 +517,8 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
     } : undefined}
     renderLive={(sessionId, conversationId) => <StructuredAgentDockPanel key={sessionId} {...props}
       params={{ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), conversationId }}
-      onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings} />} />;
+      onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings}
+      onNewConversation={navigation?.newConversation} />} />;
   return isStructuredAgentDockHistoryId(historyId)
     ? (
         <StructuredAgentDockPanel
@@ -525,6 +527,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
           persistCreateRecovery={createRecovery?.persistBeforeSend}
           onOpenSession={navigation?.openSession}
           onOpenHistory={navigation?.openHistory}
+          onNewConversation={navigation?.newConversation}
           onOpenTerminal={navigation ? async (workspaceId, directory) => {
             const result = await navigation.openTerminal(workspaceId, directory);
             if (result.ok) props.api.close();
@@ -1791,6 +1794,7 @@ export function App(): JSX.Element {
       if (!opened) throw new Error('The terminal could not be opened.');
     },
     openSession: openStructuredAgentSession,
+    newConversation: (project) => openStructuredAgentDraft(project),
     openHistory: (projectId) => setConversationHistory({ projectId }),
     openSettings: () => {
       setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));

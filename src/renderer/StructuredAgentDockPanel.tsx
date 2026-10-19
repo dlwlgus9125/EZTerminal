@@ -266,6 +266,8 @@ export function StructuredAgentDockPanel(
     readonly onLaunchCli?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
     readonly onOpenSettings?: () => void;
     readonly onOpenHistory?: (projectId?: string) => void;
+    /** Opens a new conversation in a project (`/new`). */
+    readonly onNewConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
     readonly onOpenSession?: (input: {
       readonly sessionId: string;
       readonly title?: string;
@@ -1305,6 +1307,8 @@ export function StructuredAgentDockPanel(
       turns={sessionTurns}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}
       approvalResponses={snapshot?.capabilities?.includes('approval-response-v1') === true}
+      approvalSession={snapshot?.capabilities?.includes('approval-session-v1') === true}
+      planProposals={snapshot?.capabilities?.includes('plan-proposal-v1') === true}
       effortSupported={snapshot?.capabilities?.includes('agent-effort-v1') === true}
       {...(agent?.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {})}
       onOpenLink={openLink}
@@ -1366,6 +1370,9 @@ export function StructuredAgentDockPanel(
         ? () => runLifecycleCommand('agent.detach')
         : undefined}
       onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
+      {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
+        projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
+      }) } : {})}
     />
     {delegateMode && session && (
       <DelegateAgentDialog
