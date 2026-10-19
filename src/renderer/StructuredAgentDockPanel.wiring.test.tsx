@@ -254,3 +254,42 @@ describe('StructuredAgentDockPanel wiring', () => {
     expect(resolve?.payload).toEqual({ approvalId: 'approval-plan', decision: 'allow', ...(response ? { response } : {}) });
   });
 });
+
+describe('StructuredAgentDockPanel command authority', () => {
+  it('builds a command on the snapshot after the last commit, not on a read already in flight', async () => {
+    const base = snapshotWith({
+      agents: [{
+        sessionId: SESSION, providerId: 'claude', providerSessionId: 'provider-session', model: 'opus', permissionPreset: 'standard',
+        state: 'idle', queuedTurnCount: 0, orchestrationEnabled: true, revision: 2, createdAt: NOW, updatedAt: NOW,
+      }],
+      transcriptHeads: [{ sessionId: SESSION, lastSequence: 1, itemCount: 1 }],
+    });
+    let revision = base.revision;
+    let hold = false;
+    let release: (() => void) | undefined;
+    const getSnapshot = vi.fn(() => {
+      const current = { ...base, revision };
+      if (!hold) return Promise.resolve(current);
+      hold = false;
+      return new Promise<DaemonSnapshot>((resolve) => { release = () => resolve(current); });
+    });
+    const { access, sendCommand, emit } = daemon(base, [item(1)], { getSnapshot });
+    mount(access);
+    await flush();
+
+    // A refresh starts; before it answers, a command commits and the revision moves on.
+    hold = true;
+    act(() => emit({
+      protocolVersion: 12, eventId: 'event-race', sequence: 30, revision: 30, occurredAt: NOW,
+      kind: 'entity.upserted', payload: { entityType: 'agent', entityId: SESSION },
+    }));
+    await flush();
+    revision += 1;
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-plan"]')!.click());
+    await flush();
+    release?.();
+    await flush();
+    const settings = sendCommand.mock.calls.map(([command]) => command).find((command) => command.type === 'agent.set-settings');
+    expect(settings?.expectedRevision).toBe(revision);
+  });
+});

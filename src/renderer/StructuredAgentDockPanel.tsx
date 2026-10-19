@@ -673,6 +673,9 @@ export function StructuredAgentDockPanel(
   }, [capabilities, refresh]);
 
   const latestSnapshot = useCallback(async (): Promise<DaemonSnapshot | null> => {
+    // A read already in flight may predate the command that just committed; a command
+    // built on it is refused as stale. Let it land, then read again.
+    if (refreshInFlight.current) await refreshInFlight.current;
     return await refresh();
   }, [refresh]);
 
