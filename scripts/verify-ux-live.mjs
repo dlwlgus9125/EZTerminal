@@ -64,8 +64,27 @@ const SCENARIOS = [
     prompt: `셸 명령으로 ${'../'}outside-ux-live-STAGE.txt 파일을 삭제해. 도구 호출이 거부되거나 실패하면 즉시 멈추고 한 문장으로 알려 줘. 다른 것은 하지 마.`,
   },
   {
-    name: 'codex-plan', provider: 'codex', preset: 'standard',
+    // A task list (update_plan), not plan mode.
+    name: 'codex-todo', provider: 'codex', preset: 'standard',
     prompt: 'update_plan으로 세 단계(README.md 읽기, src/app.ts 읽기, greet 반환값을 한 문장으로 답하기)를 관리하면서 순서대로 진행해. 파일은 수정하지 마.',
+  },
+  {
+    // Plan mode from the composer: Shift+Tab, Full access chosen before the plan, approved from the dock.
+    name: 'claude-plan-full', provider: 'claude', preset: 'standard', viaComposer: { plan: true, access: '전체 권한' },
+    prompt: 'src/app.ts의 greet 옆에 farewell(name) 함수를 추가하는 계획을 세 줄로 세우고 ExitPlanMode로 제시해. 승인되면 그대로 구현해.',
+    expect: { presetAfter: 'full-access', fileContains: ['src/app.ts', 'farewell'] },
+  },
+  {
+    // Codex's own plan mode: it asks through request_user_input, proposes a plan, and the conversation asks to run it.
+    name: 'codex-plan-mode', provider: 'codex', preset: 'standard', viaComposer: { plan: true }, proposal: true,
+    prompt: 'src/app.ts의 greet 옆에 farewell(name) 함수를 추가하려고 해. 먼저 request_user_input 도구로 작별 문구를 "Goodbye"와 "See you" 중 무엇으로 할지 나에게 물어봐. 답을 받으면 세 줄짜리 계획을 제안해.',
+    expect: { presetAfter: 'standard', fileContains: ['src/app.ts', 'farewell'] },
+  },
+  {
+    // The same with Full access chosen before the plan: Codex runs unsandboxed after approval.
+    name: 'codex-plan-mode-full', provider: 'codex', preset: 'standard', viaComposer: { plan: true, access: '전체 권한' }, proposal: true,
+    prompt: 'src/app.ts의 greet 옆에 farewell(name) 함수를 추가하려고 해. 먼저 request_user_input 도구로 작별 문구를 "Goodbye"와 "See you" 중 무엇으로 할지 나에게 물어봐. 답을 받으면 세 줄짜리 계획을 제안해.',
+    expect: { presetAfter: 'full-access', fileContains: ['src/app.ts', 'farewell'] },
   },
   {
     // Two Agent-tool subagents and a background shell command: only the subagents get their own chats.
@@ -110,6 +129,20 @@ const SCENARIOS = [
     name: 'agent-wait-long-codex', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-wait-long-codex',
       'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: standard, 지시: "셸 명령 node -e \\"setTimeout(() => console.log(42), 90000)\\" 를 실행하고 출력된 숫자만 알려 줘"). wait_agent로 기다리고, needsAttention이 true면 사람이 승인할 때까지 기다린 뒤 wait_agent를 timeoutSeconds 200으로 다시 불러. 끝나면 서브에이전트가 알려 준 숫자를 알려 줘.',
       (snap, id) => parentSettled(snap, id), undefined, 'codex'),
+  },
+  {
+    // A plan-only child an agent started: nobody approves its plan, so it must answer with the plan instead of waiting.
+    name: 'agent-plan-child', run: (page, project, report) => runAgentMcp(page, project, report, 'agent-plan-child',
+      'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: claude, permissionPreset: plan, 지시: "src/app.ts의 greet 옆에 farewell(name) 함수를 추가하는 계획을 세워 줘. 구현하지 마."). wait_agent를 timeoutSeconds 150으로 불러 기다려. needsAttention이 true면 더 기다리지 말고 "서브에이전트가 승인을 기다립니다"라고만 답하고 끝내. 끝나면 서브에이전트의 계획을 세 줄로 요약해 줘.',
+      (snap, id) => parentSettled(snap, id), undefined, 'claude',
+      { leavePending: (approval, who) => who === 'child' && approval.request?.kind === 'plan' }),
+  },
+  {
+    // The same for a Codex child: plan mode stays read-only, with no plan-mode questions or proposal to answer.
+    name: 'codex-plan-unattended', run: (page, project, report) => runAgentMcp(page, project, report, 'codex-plan-unattended',
+      'MCP 도구 create_agent로 서브에이전트를 하나 만들어 줘(providerId: codex, permissionPreset: plan, 지시: "src/app.ts의 greet 옆에 farewell(name) 함수를 추가하는 계획을 세 줄로 세워 줘. 구현하지 마."). wait_agent를 timeoutSeconds 200으로 불러 기다려. needsAttention이 true면 더 기다리지 말고 "서브에이전트가 승인을 기다립니다"라고만 답하고 끝내. 끝나면 서브에이전트의 계획을 세 줄로 요약해 줘.',
+      (snap, id) => parentSettled(snap, id), undefined, 'claude',
+      { leavePending: (_approval, who) => who === 'child' }),
   },
   {
     // reportBack: the parent ends its turn and the result arrives once as its next message.
@@ -196,17 +229,39 @@ async function shoot(page, name, report) {
   report.push({ shot: name, files: shots });
 }
 
-async function resolvePending(page, approval) {
-  const dock = page.locator('.chat-dock').first();
+async function resolvePending(page, approval, panel = page) {
+  const dock = panel.locator('.chat-dock').first();
   const kind = approval.request?.kind;
   if (kind === 'question') {
     await dock.locator('.chat-dock__option').first().click();
     await dock.getByRole('button', { name: /답변 보내기|Submit answer|다음|Next/u }).last().click();
   } else if (kind === 'plan') {
-    await dock.getByRole('button', { name: /승인하고 시작|Approve and start/u }).click();
+    await dock.getByTestId('chat-dock-approve-plan').click();
   } else {
     await dock.getByRole('button', { name: /^(허용|Allow)$/u }).click();
   }
+}
+
+/** Plan mode the way a person turns it on: Shift+Tab in the message box, the access pill, then Enter. */
+async function sendViaComposer(page, panel, sessionId, scenario, report) {
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.waitFor({ timeout: 30_000 });
+  await input.click();
+  if (scenario.viaComposer.plan) {
+    await page.keyboard.press('Shift+Tab');
+    await poll(() => snapshot(page), (snap) => snap.agents.find((entry) => entry.sessionId === sessionId)?.permissionPreset === 'plan', 15_000, 'plan mode on');
+    const pressed = await panel.getByTestId('structured-agent-live-plan').getAttribute('aria-pressed');
+    if (pressed !== 'true') throw new Error(`${scenario.name}: the plan switch did not turn on (aria-pressed=${pressed}).`);
+  }
+  if (scenario.viaComposer.access) {
+    await panel.getByTestId('structured-agent-live-permission').click();
+    await page.getByRole('menuitemradio', { name: new RegExp(scenario.viaComposer.access, 'u') }).click();
+  }
+  await wait(400);
+  await shoot(page, `${scenario.name}-composer`, report);
+  await input.click();
+  await input.fill(scenario.prompt.replace('STAGE', stage));
+  await page.keyboard.press('Enter');
 }
 
 async function runScenario(page, project, scenario, report) {
@@ -221,13 +276,16 @@ async function runScenario(page, project, scenario, report) {
   if (scenario.outside) writeFileSync(outsideFile, 'Delete me only after approval.\n');
   const created = await command(page, 'agent.create', {
     sessionId, workspaceId: project.workspaceId, title: `UX live · ${scenario.name}`,
-    providerId: scenario.provider, permissionPreset: scenario.preset, initialPrompt: scenario.prompt.replace('STAGE', stage),
+    providerId: scenario.provider, permissionPreset: scenario.preset,
+    ...(scenario.viaComposer ? {} : { initialPrompt: scenario.prompt.replace('STAGE', stage) }),
   });
   if (!created?.ok) throw new Error(`${scenario.name}: agent.create failed ${JSON.stringify(created)}`);
   const panelId = `agent-session-${SESSION_PREFIX}${sessionId}`;
   await page.evaluate(({ id, historyId, title, projectId }) => window.__ezAddDockPanel({
     id, component: 'agent-session', title, params: { historyId, projectId },
   }, { kind: 'main-tab' }), { id: panelId, historyId: `${SESSION_PREFIX}${sessionId}`, title: scenario.name, projectId: project.projectId });
+  const panel = page.locator(`section[data-session-id="${sessionId}"]`);
+  if (scenario.viaComposer) await sendViaComposer(page, panel, sessionId, scenario, report);
   const seen = new Set();
   const handled = new Set();
   const deadline = Date.now() + 300_000;
@@ -237,10 +295,10 @@ async function runScenario(page, project, scenario, report) {
     const agent = current.agents.find((entry) => entry.sessionId === sessionId);
     const pending = current.approvals.find((entry) => entry.sessionId === sessionId && entry.state === 'pending');
     if (pending && !handled.has(pending.id)) {
-      await page.locator('.chat-dock').first().waitFor({ timeout: 15_000 }).catch(() => undefined);
+      await panel.locator('.chat-dock').first().waitFor({ timeout: 15_000 }).catch(() => undefined);
       await wait(800);
       await shoot(page, `${scenario.name}-pending-${pending.request?.kind ?? 'legacy'}`, report);
-      await resolvePending(page, pending);
+      await resolvePending(page, pending, panel);
       handled.add(pending.id);
       await wait(1500);
       continue;
@@ -252,6 +310,19 @@ async function runScenario(page, project, scenario, report) {
     }
     const turns = current.turns.filter((turn) => turn.sessionId === sessionId);
     if (turns.length > 0 && turns.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state)) && !pending) {
+      // Codex plan mode: the conversation asks to run the proposed plan; approving starts the next turn.
+      if (scenario.proposal && !seen.has('proposal')) {
+        const proposal = panel.getByTestId('chat-dock-proposed-plan');
+        if (await proposal.waitFor({ timeout: 15_000 }).then(() => true, () => false)) {
+          seen.add('proposal');
+          await wait(800);
+          await shoot(page, `${scenario.name}-proposal`, report);
+          await proposal.getByTestId('chat-dock-approve-plan').click();
+          await poll(() => snapshot(page), (snap) => snap.turns.filter((turn) => turn.sessionId === sessionId).length > turns.length, 30_000, 'implementation turn');
+          continue;
+        }
+        report.push({ scenario: scenario.name, proposal: 'not shown' });
+      }
       finalState = turns.map((turn) => turn.state).join(',');
       if (scenario.preset === 'plan') report.push({ scenario: scenario.name, permissionPresetAfter: agent?.permissionPreset });
       break;
@@ -261,8 +332,13 @@ async function runScenario(page, project, scenario, report) {
   await wait(1500);
   await shoot(page, `${scenario.name}-done`, report);
   const subagents = scenario.inspectSubagents ? await inspectSubagents(page, scenario, sessionId, report) : undefined;
+  const after = scenario.expect ? (await snapshot(page)).agents.find((entry) => entry.sessionId === sessionId) : undefined;
   report.push({ scenario: scenario.name, sessionId, finalState, approvalsResolved: handled.size,
     ...(scenario.name === 'codex-approval' || scenario.outside ? { outsideFileDeleted: !existsSync(outsideFile) } : {}),
+    ...(scenario.expect ? {
+      presetAfter: after?.permissionPreset, presetAsExpected: after?.permissionPreset === scenario.expect.presetAfter,
+      fileChanged: readFileSync(path.join(workspace, scenario.expect.fileContains[0]), 'utf8').includes(scenario.expect.fileContains[1]),
+    } : {}),
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
 }
@@ -271,7 +347,7 @@ async function runScenario(page, project, scenario, report) {
  * A parent chat that uses the orchestration MCP itself: it starts children, waits on them or lets
  * them report back, and may create a worktree. Approvals anywhere in its tree are allowed.
  */
-async function runAgentMcp(page, project, report, name, prompt, settledWhen, collect, parentProvider = 'claude') {
+async function runAgentMcp(page, project, report, name, prompt, settledWhen, collect, parentProvider = 'claude', { leavePending = () => false } = {}) {
   const ready = (await snapshot(page)).providers.filter((entry) => entry.enabled && entry.health === 'ready').map((entry) => entry.id);
   for (const provider of new Set(['claude', parentProvider])) {
     if (!ready.includes(provider)) { report.push({ scenario: name, skipped: `${provider} is not enabled and ready` }); return; }
@@ -297,11 +373,15 @@ async function runAgentMcp(page, project, report, name, prompt, settledWhen, col
       return ids;
     };
     const allowed = [];
+    const leftPending = new Map();
     const final = await poll(async () => {
       const snap = await snapshot(page);
       const ids = tree(snap);
       for (const approval of snap.approvals.filter((entry) => entry.state === 'pending' && ids.has(entry.sessionId))) {
-        allowed.push({ session: approval.sessionId === parentId ? 'parent' : 'child', title: approval.title.slice(0, 80) });
+        const who = approval.sessionId === parentId ? 'parent' : 'child';
+        // Nobody answers this one: it shows whether an unattended agent waits on a person.
+        if (leavePending(approval, who)) { leftPending.set(approval.id, { session: who, title: approval.title.slice(0, 80), kind: approval.request?.kind }); continue; }
+        allowed.push({ session: who, title: approval.title.slice(0, 80) });
         await command(page, 'permission.resolve', { approvalId: approval.id, decision: 'allow' });
       }
       return snap;
@@ -316,7 +396,7 @@ async function runAgentMcp(page, project, report, name, prompt, settledWhen, col
     const parentItems = await transcriptOf(parentId);
     const tools = parentItems.filter((item) => item.kind === 'tool-call').map((item) => item.text.slice(0, 80));
     const answer = parentItems.filter((item) => item.kind === 'assistant-message' && !item.isDelta).map((item) => item.text).at(-1) ?? '';
-    const facts = { scenario: name, parentId, allowed, tools, answer: answer.slice(0, 400),
+    const facts = { scenario: name, parentId, allowed, leftPending: [...leftPending.values()], tools, answer: answer.slice(0, 400),
       parentTurns: final.turns.filter((turn) => turn.sessionId === parentId).map((turn) => turn.state),
       children: children.map((relation) => {
         const session = final.sessions.find((entry) => entry.id === relation.childSessionId);
