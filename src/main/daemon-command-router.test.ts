@@ -42,6 +42,34 @@ function command<T extends DaemonCommandType>(
 }
 
 describe('DaemonCommandRouter', () => {
+  it('adds in-memory reply usage to the stored snapshot only when there is some', async () => {
+    const usage = { 'terminal-1': { contextPercent: 34, observedAt: 1 } };
+    const seen: string[][] = [];
+    let current: typeof usage | undefined;
+    const { store, router } = await runtime({
+      agentUsage: (sessions) => {
+        seen.push(sessions.map((session) => session.id));
+        return current;
+      },
+    });
+    await router.execute(command('project.create', { projectId: 'project-1', name: 'Demo', rootPath: 'C:\\Working\\Demo' }, 0));
+    await router.execute(command('workspace.create', {
+      workspaceId: 'workspace-1', projectId: 'project-1', name: 'Local', kind: 'local', rootPath: 'C:\\Working\\Demo',
+    }, 1));
+    await router.execute(command('session.create', { sessionId: 'terminal-1', workspaceId: 'workspace-1', kind: 'terminal', title: 'Terminal' }, 2));
+
+    try {
+      expect(router.getSnapshot()).not.toHaveProperty('agentUsage');
+      current = usage;
+      const merged = router.getSnapshot();
+      expect(merged.agentUsage).toEqual(usage);
+      expect({ ...merged, agentUsage: undefined, generatedAt: '' }).toEqual({ ...store.getSnapshot(), generatedAt: '' });
+      expect(seen.at(-1)).toEqual(['terminal-1']);
+    } finally {
+      await store.close();
+    }
+  });
+
   it('applies core hierarchy commands and publishes committed events', async () => {
     const { store, router } = await runtime();
     const events: string[] = [];

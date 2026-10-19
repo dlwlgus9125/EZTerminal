@@ -43,6 +43,11 @@ function useClock(store: ClockStore, currentTime?: number): number {
   );
 }
 
+/** Wall time that advances every 30 seconds, for countdowns shown in minutes. */
+export function useCoarseNow(currentTime?: number): number {
+  return useClock(COARSE_CLOCK, currentTime);
+}
+
 export const AgentRelativeAge = memo(function AgentRelativeAge({
   updatedAt,
   formatter,

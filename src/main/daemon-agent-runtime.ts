@@ -45,6 +45,8 @@ import {
   MAX_TRANSCRIPT_BATCH_UTF8_BYTES,
 } from './daemon-store';
 import { AgentProviderRegistry } from './agent-provider-registry';
+import { AgentUsageTracker } from './agent-usage-tracker';
+import type { AgentUsage } from '../shared/agent-usage';
 import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
@@ -372,6 +374,8 @@ export class DaemonAgentRuntime {
   private readonly providerLifecycleGenerations = new Map<string, number>();
   private readonly providerHandleOperations = new Map<string, Promise<void>>();
   private readonly attachedProviderSessions = new Set<string>();
+  /** Reply usage per session: in memory only, merged into snapshots by the router. */
+  private readonly agentUsageTracker = new AgentUsageTracker(() => this.now().getTime());
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
@@ -454,6 +458,11 @@ export class DaemonAgentRuntime {
     this.pumpRequested = false;
     for (const timer of this.turnTimers.values()) this.clearTimer(timer);
     this.turnTimers.clear();
+  }
+
+  /** Usage of the given sessions after their first reply in this app run. */
+  agentUsage(sessions: readonly DaemonSession[]): Readonly<Record<string, AgentUsage>> | undefined {
+    return this.agentUsageTracker.snapshot(sessions);
   }
 
   dispose(mode: 'explicit-quit' | 'process-loss' = 'explicit-quit'): Promise<void> {
@@ -2051,6 +2060,11 @@ export class DaemonAgentRuntime {
 
   private async handleProviderEvent(providerId: string, event: AgentProviderEvent): Promise<void> {
     if (this.disposed) return;
+    if (event.kind === 'usage') {
+      // Not stored: the turn-finished that follows it refreshes every client.
+      this.agentUsageTracker.observe(providerId, event);
+      return;
+    }
     if (event.kind === 'transcript') {
       if (event.providerChildId) {
         await this.routeSubagentTranscript(providerId, event.item, event.providerChildId);

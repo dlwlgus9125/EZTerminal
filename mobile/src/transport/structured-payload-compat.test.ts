@@ -29,6 +29,22 @@ describe('structured payload compatibility', () => {
     expect(isDaemonSnapshot(snapshot)).toBe(true);
   });
 
+  it('accepts a snapshot that carries reply usage', () => {
+    const snapshot = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION,
+      capabilities: ['agent-queue', 'agent-usage-v1'],
+      revision: 3,
+      eventSequence: 9,
+      generatedAt: '2026-10-20T00:00:00.000Z',
+      runtime: { keepRunning: true, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
+      projects: [], workspaces: [], sessions: [], agentRelations: [], turns: [], transcriptHeads: [], approvals: [],
+      providers: [], schedules: [], heartbeats: [],
+      agents: [{ sessionId: 'session-1', providerId: 'codex', permissionPreset: 'standard', state: 'idle' }],
+      agentUsage: { 'session-1': { weekly: { usedPercent: 26, resetsAt: 1_792_472_286_000 }, contextPercent: 3, observedAt: 1 } },
+    };
+    expect(isDaemonSnapshot(snapshot)).toBe(true);
+  });
+
   it('accepts transcript items that carry a structured payload', () => {
     const item = {
       id: 'item-1', sessionId: 'session-1', sequence: 4, kind: 'tool-call', text: 'Read\n{"file_path":"README.md"}',

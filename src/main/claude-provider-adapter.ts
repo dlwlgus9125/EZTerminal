@@ -53,6 +53,7 @@ import {
 } from './provider-process-security';
 import { compareSemanticVersions, semanticVersion } from './provider-version';
 import { providerTranscriptText } from './provider-transcript';
+import { claudeContextPercent, claudeInputTokens, claudeLimitsFromRateLimitInfo } from './agent-usage-readings';
 
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 15_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 5_000;
@@ -438,6 +439,8 @@ interface SessionRecord {
   initializationReceived: boolean;
   accountAuthentication?: ClaudeAccountAuthenticationEvidence;
   startupError?: ClaudeProviderError;
+  /** The main thread's last request, for the context % shown after the reply. */
+  lastMainUsage?: { readonly model: string; readonly usage: JsonObject };
 }
 
 interface ClaudeAccountAuthenticationEvidence {
@@ -1820,6 +1823,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         break;
       case 'rate_limit_event': {
         const info = asObject(raw.rate_limit_info);
+        const limits = claudeLimitsFromRateLimitInfo(info);
+        if (limits) this.emit({ kind: 'usage', limits });
         if (info?.status === 'rejected') {
           this.emitProviderError(
             session.context.sessionId,
@@ -1942,6 +1947,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
   }
 
   private handleAssistant(session: SessionRecord, message: JsonObject): void {
+    this.recordMainUsage(session, message);
     const subagent = this.subagentFor(session, message);
     if (subagent === 'held') return;
     // A subagent's rows are its own: no parent turn, no parent stream, no parent task list.
@@ -2144,6 +2150,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ?? (Array.isArray(message.errors) ? message.errors.find((entry): entry is string => typeof entry === 'string') : null)
       ?? (isError ? asString(message.result) : null);
     const classified = isError ? classifyClaudeProviderError(errorValue ?? 'unknown') : null;
+    if (!classified) this.emitReplyUsage(session, message);
     for (const turn of turns) {
       turn.providerTurnId = asString(message.uuid) ?? turn.providerTurnId;
       if (interrupted) this.finishTurn(session, turn, 'interrupted');
@@ -2158,6 +2165,28 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       sessionId: session.context.sessionId,
       state: remaining ? 'working' : classified ? 'failed' : interrupted ? 'interrupted' : 'idle',
       ...(classified ? { detail: classified.message } : {}),
+    });
+  }
+
+  /** Subagent requests and local command output (`<synthetic>`) do not fill this conversation's context. */
+  private recordMainUsage(session: SessionRecord, message: JsonObject): void {
+    if (typeof message.parent_tool_use_id === 'string') return;
+    const providerMessage = asObject(message.message);
+    const model = asString(providerMessage?.model);
+    const usage = asObject(providerMessage?.usage);
+    if (!model || model === '<synthetic>' || !usage || claudeInputTokens(usage) <= 0) return;
+    session.lastMainUsage = { model, usage };
+  }
+
+  /** The reply's usage, ahead of its turn-finished so the refreshed snapshot carries it. */
+  private emitReplyUsage(session: SessionRecord, result: JsonObject): void {
+    const last = session.lastMainUsage;
+    const contextWindow = last ? asObject(asObject(result.modelUsage)?.[last.model])?.contextWindow : undefined;
+    const contextPercent = last ? claudeContextPercent(last.usage, contextWindow) : undefined;
+    this.emit({
+      kind: 'usage',
+      sessionId: session.context.sessionId,
+      ...(contextPercent !== undefined ? { contextPercent } : {}),
     });
   }
 

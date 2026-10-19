@@ -13,6 +13,10 @@ export interface MobileOfflineChatCache {
 }
 const MAX_BYTES=8*1024*1024;
 const queues=new Map<string,Promise<void>>();
+/** Usage is live only: the phone keeps no copy of it. */
+const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => snapshot.agentUsage === undefined
+  ? snapshot
+  : Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'agentUsage')) as unknown as DaemonSnapshot;
 const keyFor=(authority:string):string => {
   if (!/^sha256:[a-f0-9]{64}$/u.test(authority)) throw new Error('Invalid offline cache authority.');
   return `ezterminal-offline-chat-v1:${authority.slice(7)}`;
@@ -37,7 +41,7 @@ export class MobileOfflineChatCacheStore {
         || !Array.isArray(items) || items.length > 2_000
         || !items.every(item => isDaemonTranscriptItem(item,sessionId))) throw new Error('Invalid cached transcript.');
     }
-    return value;
+    return {...value,snapshot:withoutUsage(value.snapshot)};
   }
 
   private update(authority:string,mutate:(current:MobileOfflineChatCache | null)=>MobileOfflineChatCache | null):Promise<void> {
@@ -59,7 +63,7 @@ export class MobileOfflineChatCacheStore {
 
   saveSnapshot(authority:string,snapshot:DaemonSnapshot):Promise<void> {
     if (!isDaemonSnapshot(snapshot)) return Promise.reject(new Error('Invalid daemon cache snapshot.'));
-    return this.update(authority,current => ({schemaVersion:1,authorityFingerprint:authority,savedAt:new Date().toISOString(),snapshot,
+    return this.update(authority,current => ({schemaVersion:1,authorityFingerprint:authority,savedAt:new Date().toISOString(),snapshot:withoutUsage(snapshot),
       transcripts:Object.fromEntries(Object.entries(current?.transcripts ?? {}).filter(([id]) => snapshot.sessions.some(session => session.id === id))),
     }));
   }

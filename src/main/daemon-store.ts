@@ -898,7 +898,7 @@ export class DaemonStore {
     const runtime = this.runtimeRow(database);
     return {
       protocolVersion: DAEMON_PROTOCOL_VERSION,
-      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1'],
+      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1', 'agent-usage-v1'],
       revision: runtime.revision,
       eventSequence: runtime.eventSequence,
       generatedAt: this.isoNow(),

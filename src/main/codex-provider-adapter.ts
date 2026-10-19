@@ -46,6 +46,7 @@ import {
 } from './provider-process-security';
 import { compareSemanticVersions, semanticVersion } from './provider-version';
 import { providerTranscriptText } from './provider-transcript';
+import { codexContextPercent, codexLimitsFromRateLimits } from './agent-usage-readings';
 
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 const MAX_MODELS = 2_000;
@@ -144,6 +145,8 @@ interface SessionState {
   readonly subagentTitle?: string;
   /** The sub-agent's latest answer, sent back to its parent when it finishes. */
   lastAgentMessage?: string;
+  /** The thread's last request against its model's window, for the context % shown after the reply. */
+  contextReading?: { readonly totalTokens: unknown; readonly contextWindow: unknown };
 }
 
 type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change' | 'user-input' | 'proposed-plan';
@@ -1801,6 +1804,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private handleNotification(method: string, value: unknown): void {
     const params = asObject(value);
     if (!params) return;
+    if (method === 'account/rateLimits/updated') {
+      // Account-wide and thread-less: one app-server serves every session.
+      const limits = codexLimitsFromRateLimits(params.rateLimits);
+      if (limits) this.emit({ kind: 'usage', limits });
+      return;
+    }
     const providerSessionId = asString(params.threadId);
     const sessionId = providerSessionId ? this.sessionIdByProviderId.get(providerSessionId) : undefined;
     const state = sessionId ? this.sessions.get(sessionId) : undefined;
@@ -1867,6 +1876,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'item/plan/delta':
         this.emitDelta(state, params, 'reasoning', { v: 1, type: 'plan' });
         return;
+      case 'thread/tokenUsage/updated': {
+        const tokenUsage = asObject(params.tokenUsage);
+        state.contextReading = {
+          totalTokens: asObject(tokenUsage?.last)?.totalTokens,
+          contextWindow: tokenUsage?.modelContextWindow,
+        };
+        return;
+      }
       default:
         return;
     }
@@ -2210,6 +2227,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const error = asObject(turn?.error);
     const summary = this.lastAssistantText(turn);
     const errorCode = this.codexErrorCode(error?.codexErrorInfo);
+    if (outcome !== 'failed') {
+      // Ahead of turn-finished so the refreshed snapshot carries it.
+      const contextPercent = state.contextReading
+        ? codexContextPercent(state.contextReading.totalTokens, state.contextReading.contextWindow)
+        : undefined;
+      this.emit({ kind: 'usage', sessionId: state.sessionId, ...(contextPercent !== undefined ? { contextPercent } : {}) });
+    }
     this.emit({
       kind: 'turn-finished',
       sessionId: state.sessionId,

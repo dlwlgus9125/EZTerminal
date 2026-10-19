@@ -1740,6 +1740,32 @@ describe('MobileAgentView', () => {
     expect(container.textContent).toContain('Reconnecting to desktop…');
   });
 
+  it('shows the conversation\'s usage under the box only while connected to the desktop', async () => {
+    const daemonSnapshot = daemonSnapshotOf({
+      agentUsage: { 'structured-session-1': { weekly: { usedPercent: 26 }, contextPercent: 3, observedAt: 1 } },
+    });
+    const transport = { sendDaemonCommand: vi.fn() } as unknown as WsEzTerminalTransport;
+    const view = (disconnected: boolean) => (
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
+        transport={transport}
+        {...noop}
+        disconnected={disconnected}
+      />
+    );
+    await render(view(false));
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
+    expect(testIds('structured-agent-usage-weekly')[0]?.textContent).toBe('wk 26%');
+    expect(testIds('structured-agent-usage-context')[0]?.textContent).toBe('ctx 3%');
+
+    // Offline the phone would count down windows it can no longer refresh.
+    await render(view(true));
+    expect(testIds('structured-agent-usage')).toHaveLength(0);
+  });
+
   it('reviews a failed validation override on mobile and forwards the bounded reason', async () => {
     const request: ManagedMergeRequest = {
       requestId: 'merge-1',

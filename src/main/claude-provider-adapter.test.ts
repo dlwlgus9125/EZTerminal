@@ -1415,6 +1415,92 @@ describe('Claude zero-turn capabilities', () => {
   });
 });
 
+describe('Claude usage', () => {
+  async function submitted(fixture: ReturnType<typeof makeAdapter>, turnId: string): Promise<string> {
+    await start(fixture);
+    const inputIterator = fixture.query.input[Symbol.asyncIterator]();
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId, commandId: `command-${turnId}`, prompt: 'Hi' });
+    return (await inputIterator.next()).value!.uuid as string;
+  }
+
+  function assistant(uuid: string, model: string, usage: Record<string, unknown>, parent: string | null = null): Record<string, unknown> {
+    return {
+      type: 'assistant', uuid, session_id: providerSessionId, parent_tool_use_id: parent,
+      message: { id: `msg-${uuid}`, model, usage, content: [{ type: 'text', text: 'ok' }] },
+    };
+  }
+
+  it('reports the plan windows, then the reply context from the main request before the turn finishes', async () => {
+    const fixture = makeAdapter();
+    const clientUuid = await submitted(fixture, 'turn-usage');
+    fixture.query.emit({
+      type: 'rate_limit_event', uuid: 'rl', session_id: providerSessionId,
+      rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.12, resetsAt: 100 }, seven_day: { utilization: 0.26, resetsAt: 200 } } },
+    });
+    fixture.query.emit({ ...assistant('main', 'claude-opus-5-5', { input_tokens: 60_000, cache_read_input_tokens: 8_000, output_tokens: 900 }), user_message_uuid: clientUuid });
+    // A subagent's request and a local command's output do not fill this conversation's context.
+    fixture.query.emit(assistant('child', 'claude-haiku-4-5', { input_tokens: 190_000 }, 'toolu_agent'));
+    fixture.query.emit(assistant('local', '<synthetic>', { input_tokens: 5 }));
+    fixture.query.emit({
+      type: 'result', subtype: 'success', uuid: 'result', session_id: providerSessionId, user_message_uuid: clientUuid, is_error: false,
+      modelUsage: { 'claude-haiku-4-5': { contextWindow: 200_000 }, 'claude-opus-5-5': { contextWindow: 200_000 } },
+    });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-usage' }));
+    });
+    const relevant = fixture.events.filter((event) => event.kind === 'usage' || event.kind === 'turn-finished');
+    expect(relevant).toEqual([
+      { kind: 'usage', limits: { fiveHour: { usedPercent: 12, resetsAt: 100_000 }, weekly: { usedPercent: 26, resetsAt: 200_000 } } },
+      { kind: 'usage', sessionId: context.sessionId, contextPercent: 34 },
+      expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-usage', outcome: 'completed' }),
+    ]);
+    await fixture.adapter.dispose();
+  });
+
+  it('sends no reply usage for a failed reply and still reports a rejected limit', async () => {
+    const fixture = makeAdapter();
+    const clientUuid = await submitted(fixture, 'turn-failed');
+    fixture.query.emit({
+      type: 'rate_limit_event', uuid: 'rl', session_id: providerSessionId,
+      rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', utilization: 1, resetsAt: 100 },
+    });
+    fixture.query.emit({
+      type: 'result', subtype: 'error_during_execution', uuid: 'result', session_id: providerSessionId,
+      user_message_uuid: clientUuid, is_error: true, errors: ['rate_limit'],
+    });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-failed', outcome: 'failed' }));
+    });
+    expect(fixture.events.filter((event) => event.kind === 'usage')).toEqual([
+      { kind: 'usage', limits: { fiveHour: { usedPercent: 100, resetsAt: 100_000 } } },
+    ]);
+    expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'provider-error', code: 'CLAUDE_RATE_LIMITED' }));
+    await fixture.adapter.dispose();
+  });
+
+  it('counts a reply stopped before any answer, without a context reading', async () => {
+    const fixture = makeAdapter();
+    const clientUuid = await submitted(fixture, 'turn-stopped');
+    fixture.query.interruptReceipt = { still_queued: [] };
+    await fixture.adapter.interrupt(context.sessionId, providerSessionId);
+    fixture.query.emit({
+      type: 'result', subtype: 'error_during_execution', uuid: 'aborted-result', session_id: providerSessionId,
+      user_message_uuid: clientUuid, is_error: true, terminal_reason: 'aborted_streaming',
+    });
+    fixture.query.emit({ type: 'system', subtype: 'task_started', uuid: 'marker', session_id: providerSessionId, task_id: 'marker', task_type: 'local_agent' });
+
+    await vi.waitFor(() => {
+      expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
+    });
+    expect(fixture.events.filter((event) => event.kind === 'usage')).toEqual([
+      { kind: 'usage', sessionId: context.sessionId },
+    ]);
+    await fixture.adapter.dispose();
+  });
+});
+
 describe('Claude error classification', () => {
   it.each([
     ['authentication_failed', 'CLAUDE_AUTHENTICATION_FAILED'],

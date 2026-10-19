@@ -194,8 +194,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 359,
-          "endLine": 445,
+          "startLine": 365,
+          "endLine": 451,
           "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
           "claim": "The exclusive router authorizes the bound principal, deduplicates by idempotency key, records provider dispatch, commits or rejects, and publishes durable events."
         }
@@ -230,8 +230,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 617,
-          "endLine": 633,
+          "startLine": 623,
+          "endLine": 639,
           "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
           "claim": "After a commit, the router reads ordered events from the store and treats observers as non-authoritative projections."
         },
@@ -290,8 +290,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1654,
-          "endLine": 1686,
+          "startLine": 1655,
+          "endLine": 1687,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -483,8 +483,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 210,
-          "endLine": 231,
+          "startLine": 216,
+          "endLine": 237,
           "lineDigest": "sha256:ae2c52bc6410a53d9fbd160fd5feeb9aaa31e96c7e09d0ed5472454964de2be8",
           "claim": "The parsed command joins the same exclusive FIFO used by every daemon client."
         }
@@ -533,8 +533,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 392,
-          "endLine": 444,
+          "startLine": 398,
+          "endLine": 450,
           "lineDigest": "sha256:524d17f1511b3f90f92e97de397a97fa3edce1c3f611e01958bf614f437980b5",
           "claim": "Outbox state and command effects settle durably before the router returns a receipt or publishes events."
         }
@@ -550,8 +550,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1654,
-          "endLine": 1686,
+          "startLine": 1655,
+          "endLine": 1687,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },
@@ -575,8 +575,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 617,
-          "endLine": 633,
+          "startLine": 623,
+          "endLine": 639,
           "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
           "claim": "Published events are read back from the durable sequence after commit rather than synthesized by a transport."
         }
@@ -626,8 +626,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 179,
-          "endLine": 197,
+          "startLine": 185,
+          "endLine": 203,
           "lineDigest": "sha256:1a2db6d9849a2167256a4b6fe331d54606b8bee1062c3a4bf5adc7b75225ac58",
           "claim": "Transports read Session transcript items through a bounded router method without access to the SQLite store itself."
         }

@@ -1,6 +1,7 @@
 import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-request';
 import type { ChatMessageContext } from '../shared/chat-message';
 import type { AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
+import type { AgentUsageLimitsReading } from '../shared/agent-usage';
 import type {
   DaemonCommand,
   DaemonTranscriptItem,
@@ -170,6 +171,15 @@ export type AgentProviderEvent =
       readonly code: string;
       readonly message: string;
       readonly recoverable: boolean;
+    }
+  | {
+      /** Sent before that reply's `turn-finished`; kept in memory only. */
+      readonly kind: 'usage';
+      /** Set when this conversation finished a reply; absent for an account-wide limits change. */
+      readonly sessionId?: string;
+      readonly limits?: AgentUsageLimitsReading;
+      /** The conversation's last request against its model's context window, 0-100. */
+      readonly contextPercent?: number;
     };
 
 export type AgentProviderEventListener = (event: AgentProviderEvent) => void;

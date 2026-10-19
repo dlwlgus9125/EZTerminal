@@ -993,6 +993,7 @@ app.on('ready', async () => {
     },
   });
   const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
+    agentUsage: (sessions) => daemonAgentRuntime.agentUsage(sessions),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),

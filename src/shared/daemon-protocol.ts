@@ -256,6 +256,8 @@ export interface DaemonSnapshot {
   readonly providers: readonly DaemonProvider[];
   readonly schedules: readonly DaemonSchedule[];
   readonly heartbeats: readonly DaemonHeartbeat[];
+  /** In-memory provider usage per session id, after that session's first reply; never stored. */
+  readonly agentUsage?: Readonly<Record<string, import('./agent-usage').AgentUsage>>;
 }
 
 export const DAEMON_COMMAND_TYPES = [

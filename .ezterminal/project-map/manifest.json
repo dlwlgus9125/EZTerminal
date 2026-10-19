@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:520e4b2e2f5d60145d1d61e1b30b9372920b4d8c6f1a9d374a46517eec2174df",
+        "inputDigest": "sha256:e1e98a8fe398e9f84d12b2b9e49c10d432b1e8b55cfb913a2fe09d8f4cde2626",
         "decision": "map-updated",
-        "reason": "Reviewed: /clear replaces a conversation's tab in place with a new conversation that starts with its AI, model, access, effort and working folder; the old one stays in history and /clear never reaches the provider. Anchors moved; one claim updated."
+        "reason": "Reviewed: providers send reply usage (plan limits, context) before turn-finished; the runtime keeps it in memory, the router merges it into snapshots and the CLI scope filters it. Durable transitions unchanged. Anchors moved; one claim updated."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6afdb4411da8cff8b04e1f396cfc403db9272fb87c71361ce45b5904b3b144fc",
+        "inputDigest": "sha256:c90a9c22b54433ed79ac239754231c23bc4296fbfe10fa5108e3121c05997b7d",
         "decision": "map-updated",
-        "reason": "Reviewed: the agent plan switch, conversation-wide approvals and the Codex plan collaboration mode do not change workbench startup, ownership or shutdown. One daemon anchor moved; claims unchanged."
+        "reason": "Reviewed: in-memory reply usage merged into daemon snapshots does not change workbench startup, ownership or shutdown. Anchors moved; claims unchanged."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0f9fb9629c2b7ab7bd100d8ec971ad3097f9ad3040d84953ba6b367de0d0240b",
+        "inputDigest": "sha256:208e2c296b4f070aa3427feb22766ab4dd4fdd8e49547a2ec6a2daac399746a7",
         "decision": "map-updated",
-        "reason": "Reviewed: main.ts gained worktree cleanup and agent worktree wiring outside the remote session path; the remote session data flow is unchanged. Anchors moved, claims unchanged."
+        "reason": "Reviewed: the daemon snapshot gains optional in-memory reply usage under capability agent-usage-v1; the remote snapshot path, event kinds and protocol versions are unchanged. Anchors moved; claims unchanged."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:08cb33f948287440bdc346a47fe480e13cc9ce7a9c5d2a99f04b8436ead4a959",
+        "inputDigest": "sha256:79a3dd310f6a59ce6bdb111dc6d03a00823eecb81978b27615cd00b9f9d1ce2a",
         "decision": "map-updated",
-        "reason": "Reviewed: the message box reserves /clear, which starts over in the same tab and waits for a running turn or is held back where it cannot run. Session identity, transcript and history picker are unchanged. Two anchors moved; claims unchanged."
+        "reason": "Reviewed: the line under the message box adds the AI's usage after the conversation's first reply. Session identity, transcript and history picker are unchanged. Two anchors moved; claims unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:39e5a54f81b0835e8a7c2bfeb6be2e0e7ff1247d53374db6928684c457e436b6",
+        "inputDigest": "sha256:136f049784a457849f941db752703b2078324aa4556168d415e78703af352c76",
         "decision": "map-updated",
-        "reason": "Reviewed: the completion list adds /clear (start over in place) next to /plan, /model and /new, and it never reaches the model; native skills, file mentions and insertion are unchanged. Anchors unchanged; one claim updated."
+        "reason": "Reviewed: the Claude and Codex adapters read usage the providers already send; native skills, commands and capability catalogs are unchanged. Anchors moved; claims unchanged."
       }
     }
   ]

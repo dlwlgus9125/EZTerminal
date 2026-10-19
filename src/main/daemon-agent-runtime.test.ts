@@ -168,7 +168,10 @@ async function harness(options: {
     })(),
     ...options,
   });
-  const router = new DaemonCommandRouter(store, { handlers: runtime.handlers() });
+  const router = new DaemonCommandRouter(store, {
+    handlers: runtime.handlers(),
+    agentUsage: (sessions) => runtime.agentUsage(sessions),
+  });
   routerRef.current = router;
   await runtime.start();
 
@@ -549,6 +552,44 @@ describe('DaemonAgentRuntime', () => {
         error: { code: 'not-found' },
       });
       expect(h.codex.submit).toHaveBeenCalledTimes(1);
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('shows a conversation\'s usage from its first reply, in the snapshot clients refetch, until it is archived', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard',
+        initialPrompt: 'Work.',
+      });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      const weekly = { usedPercent: 26, resetsAt: 1_000 };
+
+      // Account limits alone do not show anything before this conversation's reply.
+      h.codex.emit({ kind: 'usage', limits: { weekly } });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().agentUsage).toBeUndefined();
+
+      const seenOnRefresh: unknown[] = [];
+      const unsubscribe = h.router.onEvent((event) => {
+        if (event.kind === 'entity.upserted') seenOnRefresh.push(h.router.getSnapshot().agentUsage?.['agent-1']);
+      });
+      h.codex.emit({ kind: 'usage', sessionId: 'agent-1', contextPercent: 3 });
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      unsubscribe();
+
+      const expected = { weekly, contextPercent: 3, observedAt: Date.parse('2026-09-04T10:00:00.000Z') };
+      expect(seenOnRefresh[0]).toEqual(expected);
+      expect(h.router.getSnapshot().agentUsage).toEqual({ 'agent-1': expected });
+
+      await h.execute('agent.archive', { sessionId: 'agent-1' });
+      expect(h.router.getSnapshot().agentUsage).toBeUndefined();
     } finally {
       await h.runtime.dispose();
       await h.store.close();

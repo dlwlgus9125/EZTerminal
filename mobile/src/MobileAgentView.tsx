@@ -1444,6 +1444,7 @@ export function MobileAgentView({
         providerLabel={selectedDaemonProvider?.displayName
           ?? pendingSelection?.providerLabel
           ?? selectedDaemonAgent.providerId}
+        usage={disconnected ? undefined : daemonRuntimeState.snapshot?.agentUsage?.[selectedDaemonSession.id]}
         workspace={{
           id: selectedDaemonWorkspace.id,
           label: selectedDaemonWorkspace.name,

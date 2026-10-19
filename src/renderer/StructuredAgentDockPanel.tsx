@@ -1291,6 +1291,7 @@ export function StructuredAgentDockPanel(
       title={session?.title ?? createdDraft?.title ?? 'Agent session'}
       providerId={providerId}
       providerLabel={provider?.displayName ?? (providerId || 'Agent')}
+      usage={snapshot?.agentUsage?.[sessionId]}
       workspace={workspaceOption}
       model={currentModel}
       modelOptions={structuredAgentModelOptions(

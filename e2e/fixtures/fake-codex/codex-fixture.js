@@ -131,6 +131,22 @@ if (args.includes('--version')) {
                 },
               },
             });
+            // Usage arrives before the turn ends, as from the real app-server; this account has only a weekly window.
+            const tokens = { totalTokens: 19120, inputTokens: 18697, cachedInputTokens: 12416, cacheWriteInputTokens: 0, outputTokens: 423, reasoningOutputTokens: 206 };
+            write({
+              jsonrpc: '2.0',
+              method: 'thread/tokenUsage/updated',
+              params: { threadId, turnId, tokenUsage: { total: tokens, last: tokens, modelContextWindow: 258400 } },
+            });
+            write({
+              jsonrpc: '2.0',
+              method: 'account/rateLimits/updated',
+              params: { rateLimits: {
+                limitId: 'codex',
+                primary: { usedPercent: 26, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
+                secondary: null,
+              } },
+            });
             write({
               jsonrpc: '2.0',
               method: 'turn/completed',

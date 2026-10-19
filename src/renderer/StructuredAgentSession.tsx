@@ -77,6 +77,8 @@ import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSe
 import { conversationFileChanges } from '../shared/conversation-changes';
 import { SettingPill } from './chat/composer/SettingPill';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
+import { agentUsageLevel, formatUsageCountdown, type AgentUsage } from '../shared/agent-usage';
+import { useCoarseNow } from './AgentTime';
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
 import { structuredAgentEffortOptions, withCurrentModel } from './structured-agent-create';
@@ -150,6 +152,11 @@ interface StructuredAgentCopy {
   /** Model, access and plan mode change between turns; effort may change at any time. */
   readonly settingsAfterTurn: string;
   readonly planShortcutHint: string;
+  /** Usage under the message box: compact labels, then the sentence a screen reader hears. */
+  readonly usageShort: { readonly fiveHour: string; readonly weekly: string; readonly context: string };
+  readonly usageSentence: (parts: readonly string[]) => string;
+  readonly usageWindow: (window: 'fiveHour' | 'weekly', percent: number, resetIn?: string) => string;
+  readonly usageContext: (percent: number) => string;
   readonly settingsLockedDuringTurn: string;
   readonly settingsFailed: string;
   readonly decisionHint: string;
@@ -278,6 +285,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     permission: 'Access',
     settingsAfterTurn: 'You can change this after the current turn.',
     planShortcutHint: 'Shift+Tab plan mode',
+    usageShort: { fiveHour: '5h', weekly: 'wk', context: 'ctx' },
+    usageSentence: (parts) => `Usage: ${parts.join(', ')}`,
+    usageWindow: (window, percent, resetIn) => `${window === 'fiveHour' ? '5-hour' : 'weekly'} limit ${percent}% used${resetIn ? ` (resets in ${resetIn})` : ''}`,
+    usageContext: (percent) => `context ${percent}% used`,
     settingsLockedDuringTurn: 'Model, access and plan mode can change after this turn. Esc stops it.',
     settingsFailed: 'The setting was not changed.',
     decisionHint: 'Shift+Tab goes to the waiting decision · Esc stops the turn',
@@ -378,6 +389,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     permission: '권한',
     settingsAfterTurn: '현재 작업이 끝난 뒤 바꿀 수 있습니다.',
     planShortcutHint: 'Shift+Tab 계획',
+    usageShort: { fiveHour: '5h', weekly: '주간', context: 'ctx' },
+    usageSentence: (parts) => `사용량: ${parts.join(', ')}`,
+    usageWindow: (window, percent, resetIn) => `${window === 'fiveHour' ? '5시간' : '주간'} 한도 ${percent}% 사용${resetIn ? `(${resetIn} 후 초기화)` : ''}`,
+    usageContext: (percent) => `컨텍스트 ${percent}% 사용`,
     settingsLockedDuringTurn: '모델·권한·계획은 이 작업이 끝난 뒤 바꿀 수 있습니다. Esc로 멈춥니다.',
     settingsFailed: '설정을 바꾸지 못했습니다.',
     decisionHint: 'Shift+Tab 기다리는 결정으로 이동 · Esc 멈춤',
@@ -1088,10 +1103,57 @@ export function StructuredAgentChildTrack({
   );
 }
 
+const USAGE_WINDOWS = ['fiveHour', 'weekly'] as const;
+
+/**
+ * The AI's plan limits and this conversation's context, as the CLI HUDs show
+ * them. Windows whose reset has passed are hidden: their value is unknown.
+ */
+function AgentUsageReadout({ usage }: { readonly usage: AgentUsage }): JSX.Element | null {
+  const copy = useStructuredAgentCopy();
+  const now = useCoarseNow();
+  const parts: { readonly key: string; readonly percent: number; readonly text: string; readonly sentence: string }[] = [];
+  for (const key of USAGE_WINDOWS) {
+    const window = usage[key];
+    if (!window || (window.resetsAt !== undefined && window.resetsAt <= now)) continue;
+    const resetIn = window.resetsAt !== undefined ? formatUsageCountdown(window.resetsAt - now) : undefined;
+    parts.push({
+      key,
+      percent: window.usedPercent,
+      text: `${copy.usageShort[key]} ${window.usedPercent}%${resetIn ? ` · ${resetIn}` : ''}`,
+      sentence: copy.usageWindow(key, window.usedPercent, resetIn),
+    });
+  }
+  if (usage.contextPercent !== undefined) {
+    parts.push({
+      key: 'context',
+      percent: usage.contextPercent,
+      text: `${copy.usageShort.context} ${usage.contextPercent}%`,
+      sentence: copy.usageContext(usage.contextPercent),
+    });
+  }
+  if (parts.length === 0) return null;
+  const sentence = copy.usageSentence(parts.map((part) => part.sentence));
+  return (
+    <p className="structured-agent-composer__usage" title={sentence} data-testid="structured-agent-usage">
+      <span aria-hidden="true">
+        {parts.map((part) => (
+          <span key={part.key} className="structured-agent-composer__usage-part" data-level={agentUsageLevel(part.percent)} data-testid={`structured-agent-usage-${part.key}`}>
+            {part.text}
+          </span>
+        ))}
+      </span>
+      <span className="ez-ui-visually-hidden">{sentence}</span>
+    </p>
+  );
+}
+
 export interface StructuredAgentComposerProps {
   readonly toolbar?: ReactNode;
   /** The conversation's AI; the message box carries its colour. */
   readonly providerId?: string;
+  /** Shown under the box once this conversation has replied in this app run. */
+  readonly usage?: AgentUsage;
   readonly queueItems?: readonly ConversationQueueItem[];
   readonly onQueueAction?: (item: ConversationQueueItem, action: ConversationQueueAction) => Promise<StructuredAgentUiResult>;
   readonly capabilityCatalog?: AgentCapabilityCatalog;
@@ -1145,6 +1207,7 @@ export interface StructuredAgentComposerProps {
 export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   toolbar,
   providerId,
+  usage,
   queueItems = [],
   onQueueAction,
   capabilityCatalog,
@@ -1415,6 +1478,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const sendBlocked = disabled || sendDisabled || queueBusy || uncertain || readingFiles || !hasDraft || submitting !== null;
   // onStop is offered only while the turn can be stopped, including while it waits for approval.
   const showStop = !hasDraft && onStop !== undefined;
+  const hint = !disabledReason && !sendDisabledReason
+    ? statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined)
+    : undefined;
 
   return (
     <form
@@ -1619,10 +1685,11 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         </p>
       )}
       {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
-      {!disabledReason && !sendDisabledReason && (statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined)) && (
-        <p className="structured-agent-composer__hint" data-testid="structured-agent-composer-hint">
-          {statusHint ?? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}`}
-        </p>
+      {(hint || usage) && (
+        <div className="structured-agent-composer__status">
+          {hint && <p className="structured-agent-composer__hint" data-testid="structured-agent-composer-hint">{hint}</p>}
+          {usage && <AgentUsageReadout usage={usage} />}
+        </div>
       )}
       {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}
       {plan && <span className="ez-ui-visually-hidden" aria-live="polite" data-testid="structured-agent-plan-announcement">{announcement}</span>}
@@ -1656,6 +1723,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly title: string;
   readonly providerId: string;
   readonly providerLabel: string;
+  /** The AI's plan limits and this conversation's context, after its first reply in this app run. */
+  readonly usage?: AgentUsage;
   readonly workspace: StructuredAgentWorkspaceOption;
   readonly model?: string;
   readonly modelOptions?: readonly StructuredAgentModelOption[];
@@ -1778,6 +1847,7 @@ export function StructuredAgentSessionPanel({
   title,
   providerId,
   providerLabel,
+  usage,
   workspace,
   model,
   modelOptions = [],
@@ -2441,6 +2511,7 @@ export function StructuredAgentSessionPanel({
         <StructuredAgentComposer
           toolbar={settingsControls}
           providerId={providerId}
+          usage={usage}
           queueItems={queueItems}
           onQueueAction={onQueueAction}
           capabilityCatalog={capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id ? capabilityCatalog : undefined}

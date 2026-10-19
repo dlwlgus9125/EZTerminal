@@ -151,8 +151,16 @@ export function readProviderCaptureFixture(
   };
 }
 
-export async function replayProviderFixture(fixture: ProviderCaptureFixture): Promise<ProviderReplayGolden> {
-  const replay = fixture.meta.provider === 'claude' ? replayClaude(fixture) : replayCodex(fixture);
+export interface ProviderReplayOptions {
+  /** Sees every adapter event, including ones the golden does not record (usage). */
+  readonly onEvent?: (event: AgentProviderEvent) => void;
+}
+
+export async function replayProviderFixture(
+  fixture: ProviderCaptureFixture,
+  options: ProviderReplayOptions = {},
+): Promise<ProviderReplayGolden> {
+  const replay = fixture.meta.provider === 'claude' ? replayClaude(fixture, options) : replayCodex(fixture, options);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -208,6 +216,7 @@ interface ReplayHarness {
   /** Approval decisions queued by the fake provider just before it asks. */
   readonly decisions: ReplayDecision[];
   handle?: ProviderSessionHandle;
+  readonly onEvent?: (event: AgentProviderEvent) => void;
   run(operation: () => Promise<unknown>): void;
 }
 
@@ -242,12 +251,13 @@ function claudeRecordedDecision(toolName: string, response: PermissionResult): R
   return { decision: 'allow' };
 }
 
-function createHarness(fixture: ProviderCaptureFixture): ReplayHarness {
+function createHarness(fixture: ProviderCaptureFixture, options: ProviderReplayOptions): ReplayHarness {
   const harness: ReplayHarness = {
     projection: new RuntimeProjection(fixture.meta.provider, REPLAY_SESSION_ID),
     providerResponses: [],
     failures: [],
     decisions: [],
+    ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     run(operation) {
       operation().catch((error: unknown) => harness.failures.push(error));
     },
@@ -261,6 +271,7 @@ function createHarness(fixture: ProviderCaptureFixture): ReplayHarness {
  */
 function subscribeHarness(adapter: AgentProviderAdapter, harness: ReplayHarness): () => void {
   return adapter.subscribe((event) => {
+    harness.onEvent?.(event);
     const providerSessionId = harness.handle?.providerSessionId ?? '';
     const answer = harness.projection.apply(event, providerSessionId);
     if (event.kind !== 'approval-requested') return;
@@ -394,8 +405,8 @@ class ClaudeReplaySession implements ClaudeQuerySession {
   }
 }
 
-async function replayClaude(fixture: ProviderCaptureFixture): Promise<ProviderReplayGolden> {
-  const harness = createHarness(fixture);
+async function replayClaude(fixture: ProviderCaptureFixture, options: ProviderReplayOptions): Promise<ProviderReplayGolden> {
+  const harness = createHarness(fixture, options);
   const finished = deferred();
   const sessionCreated = deferred();
   const queryFactory: ClaudeQueryFactory = (input) => new ClaudeReplaySession(fixture, input, harness, {
@@ -617,8 +628,8 @@ function recordedCodexDecision(fixture: ProviderCaptureFixture, id: string | num
   return permissions && Object.keys(permissions).length > 0 ? 'allow' : 'deny';
 }
 
-async function replayCodex(fixture: ProviderCaptureFixture): Promise<ProviderReplayGolden> {
-  const harness = createHarness(fixture);
+async function replayCodex(fixture: ProviderCaptureFixture, options: ProviderReplayOptions): Promise<ProviderReplayGolden> {
+  const harness = createHarness(fixture, options);
   const connection = new CodexReplayConnection(fixture);
   const adapter = new CodexProviderAdapter({
     connection,
@@ -866,6 +877,8 @@ class RuntimeProjection {
         return undefined;
       case 'native-subagent':
         this.applySubagent(event);
+        return undefined;
+      case 'usage':
         return undefined;
     }
   }

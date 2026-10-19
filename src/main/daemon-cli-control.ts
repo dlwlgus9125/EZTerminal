@@ -382,8 +382,13 @@ export class DaemonCliControl {
       ...snapshot.agents.filter((agent) => scope.sessionIds.has(agent.sessionId)).map((agent) => agent.providerId),
       ...snapshot.schedules.filter((schedule) => scope.workspaceIds.has(schedule.workspaceId)).map((schedule) => schedule.providerId),
     ]);
+    const { agentUsage, ...rest } = snapshot;
+    const scopedUsage = agentUsage
+      ? Object.fromEntries(Object.entries(agentUsage).filter(([sessionId]) => scope.sessionIds.has(sessionId)))
+      : {};
     return {
-      ...snapshot,
+      ...rest,
+      ...(Object.keys(scopedUsage).length > 0 ? { agentUsage: scopedUsage } : {}),
       projects: snapshot.projects.filter((project) => project.id === scope.projectId),
       workspaces: snapshot.workspaces.filter((workspace) => scope.workspaceIds.has(workspace.id)),
       sessions: snapshot.sessions.filter((session) => scope.sessionIds.has(session.id)),

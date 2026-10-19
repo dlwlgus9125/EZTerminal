@@ -243,6 +243,57 @@ export const ComposerModelsLoading: Story = {
   },
 };
 
+const MINUTE = 60_000;
+const in2h10m = Date.now() + 130 * MINUTE + 30_000;
+const in2d5h = Date.now() + (53 * 60) * MINUTE + 30_000;
+
+/** After a reply the line under the box shows the AI's plan limits and context, as its CLI HUD does. */
+export const ComposerUsageClaude: Story = {
+  args: { ...ComposerClaude.args, usage: {
+    fiveHour: { usedPercent: 12, resetsAt: in2h10m }, weekly: { usedPercent: 26, resetsAt: in2d5h }, contextPercent: 34, observedAt: Date.now(),
+  } },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('structured-agent-composer-hint')).toHaveTextContent('Enter 전송');
+    await expect(canvas.getByTestId('structured-agent-usage-fiveHour')).toHaveTextContent(/^5h 12% · 2h\d+m$/);
+    await expect(canvas.getByTestId('structured-agent-usage-weekly')).toHaveTextContent(/^주간 26% · 2d\d+h$/);
+    await expect(canvas.getByTestId('structured-agent-usage-context')).toHaveTextContent('ctx 34%');
+  },
+};
+
+/** Near a limit the number turns amber from 70% and red from 90%; a window the account does not have is not shown. */
+export const ComposerUsageCodexNearLimit: Story = {
+  args: { ...ComposerCodex.args, usage: { weekly: { usedPercent: 92, resetsAt: in2d5h }, contextPercent: 74, observedAt: Date.now() } },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.queryByTestId('structured-agent-usage-fiveHour')).toBeNull();
+    await expect(canvas.getByTestId('structured-agent-usage-weekly')).toHaveAttribute('data-level', 'danger');
+    await expect(canvas.getByTestId('structured-agent-usage-context')).toHaveAttribute('data-level', 'warning');
+  },
+};
+
+/** An API-key session has no plan limits: only the context is shown. */
+export const ComposerUsageContextOnly: Story = {
+  args: { ...ComposerClaude.args, usage: { contextPercent: 8, observedAt: Date.now() } },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByTestId('structured-agent-usage')).toHaveTextContent(/^ctx 8%/);
+  },
+};
+
+/** In a split pane the hint gives way first; the usage stays on the right. */
+export const NarrowPaneUsage: Story = {
+  args: { ...ComposerUsageClaude.args },
+  render: (args) => <NarrowKorean><StructuredAgentSessionPanel {...args} /></NarrowKorean>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('structured-agent-composer-hint')).toBeVisible();
+    await expect(canvas.getByTestId('structured-agent-usage-context')).toBeVisible();
+  },
+};
+
 /** An ended conversation shows its settings as text: plan mode, then the access level. */
 export const PlanModeReadOnly: Story = { args: { permissionPreset: 'plan', state: 'done', items: [item('user-plan', 1, 'user-message', 'Plan the release notes.')] } };
 
@@ -380,6 +431,11 @@ export const MobileCliCompose: Story = {
   </AppI18nProvider>,
 };
 export const MobileBubbleCompose: Story = { ...MobileCliCompose, args: { ...MobileCliCompose.args, skin: 'bubble' } };
+/** On the phone the usage line stands alone under the box. */
+export const MobileCliComposeUsage: Story = { ...MobileCliCompose, args: { ...MobileCliCompose.args, usage: ComposerUsageClaude.args?.usage },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByTestId('structured-agent-usage-weekly')).toBeVisible();
+  } };
 export const MobileOfflineDraft: Story = { ...MobileCliCompose, args: {
   ...MobileCliCompose.args, disabled: true, allowDraftWhenDisabled: true, sendDisabled: true,
   sendDisabledReason: '오프라인입니다. 초안은 기기에 보관되며 다시 연결한 뒤 직접 전송하세요.',

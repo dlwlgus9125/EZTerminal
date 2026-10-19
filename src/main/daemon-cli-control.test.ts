@@ -108,6 +108,18 @@ describe('DaemonCliControl', () => {
     }
   });
 
+  it('keeps other Projects\' conversations out of the scoped usage', async () => {
+    const { control, setSnapshot } = fixture();
+    const usage = { contextPercent: 3, observedAt: 1 };
+    setSnapshot({ ...snapshot(), agentUsage: { 'agent-1': usage, 'agent-2': usage } });
+    const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(scoped.agentUsage).toEqual({ 'agent-1': usage });
+
+    setSnapshot({ ...snapshot(), agentUsage: { 'agent-2': usage } });
+    const foreignOnly = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(foreignOnly).not.toHaveProperty('agentUsage');
+  });
+
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
     const { control } = fixture();
     const projects = await control.handle('/v1/daemon/projects', {}, source);

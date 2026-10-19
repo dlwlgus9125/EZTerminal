@@ -2035,3 +2035,74 @@ describe('Codex plan mode', () => {
     await adapter.dispose();
   });
 });
+
+describe('Codex usage', () => {
+  async function startedTurn() {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-6-astra' };
+      if (method === 'turn/start') return { turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-10-20T00:00:00.000Z') });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await adapter.createSession(context());
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'local-turn-1', commandId: 'command-1', prompt: 'Work',
+    });
+    const tokenUsage = (threadId: string, totalTokens: number): Promise<void> => connection.emitNotification('thread/tokenUsage/updated', {
+      threadId, turnId: 'provider-turn-1', tokenUsage: { total: { totalTokens }, last: { totalTokens }, modelContextWindow: 258400 },
+    });
+    const complete = (status: string): Promise<void> => connection.emitNotification('turn/completed', {
+      threadId: 'thread-1', turn: { id: 'provider-turn-1', status, error: null, items: [] },
+    });
+    const usageAndFinish = (): AgentProviderEvent[] => events.filter((event) => event.kind === 'usage' || event.kind === 'turn-finished');
+    return { adapter, connection, tokenUsage, complete, usageAndFinish };
+  }
+
+  it('reports thread-less account limits and the reply context before the turn finishes', async () => {
+    const { adapter, connection, tokenUsage, complete, usageAndFinish } = await startedTurn();
+    await tokenUsage('thread-1', 19120);
+    await connection.emitNotification('account/rateLimits/updated', {
+      rateLimits: { limitId: 'codex', primary: { usedPercent: 26, windowDurationMins: 10080, resetsAt: 1000 }, secondary: null },
+    });
+    await complete('completed');
+
+    expect(usageAndFinish()).toEqual([
+      { kind: 'usage', limits: { fiveHour: null, weekly: { usedPercent: 26, resetsAt: 1_000_000 } } },
+      { kind: 'usage', sessionId: 'session-1', contextPercent: 3 },
+      expect.objectContaining({ kind: 'turn-finished', turnId: 'local-turn-1', outcome: 'completed' }),
+    ]);
+    await adapter.dispose();
+  });
+
+  it('ignores a sub-agent thread\'s own token usage', async () => {
+    const { adapter, connection, tokenUsage, complete, usageAndFinish } = await startedTurn();
+    await connection.emitNotification('item/started', {
+      threadId: 'thread-1', turnId: 'provider-turn-1', startedAtMs: 1,
+      item: {
+        id: 'collab-1', type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'inProgress',
+        receiverThreadIds: ['child-thread'], prompt: 'Inspect tests', agentsStates: { 'child-thread': { status: 'running', message: null } },
+      },
+    });
+    await tokenUsage('thread-1', 19120);
+    await tokenUsage('child-thread', 250_000);
+    await complete('completed');
+
+    expect(usageAndFinish()).toEqual([
+      { kind: 'usage', sessionId: 'session-1', contextPercent: 3 },
+      expect.objectContaining({ kind: 'turn-finished', outcome: 'completed' }),
+    ]);
+    await adapter.dispose();
+  });
+
+  it('sends no reply usage for a failed turn', async () => {
+    const { adapter, tokenUsage, complete, usageAndFinish } = await startedTurn();
+    await tokenUsage('thread-1', 19120);
+    await complete('failed');
+
+    expect(usageAndFinish()).toEqual([expect.objectContaining({ kind: 'turn-finished', outcome: 'failed' })]);
+    await adapter.dispose();
+  });
+});
