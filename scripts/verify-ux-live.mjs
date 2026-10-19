@@ -64,6 +64,12 @@ const SCENARIOS = [
     prompt: `셸 명령으로 ${'../'}outside-ux-live-STAGE.txt 파일을 삭제해. 도구 호출이 거부되거나 실패하면 즉시 멈추고 한 문장으로 알려 줘. 다른 것은 하지 마.`,
   },
   {
+    // "이 대화 동안 편집 자동 승인" on the first edit: the second edit runs without asking.
+    name: 'claude-session-edit', provider: 'claude', preset: 'standard', allowSession: true,
+    prompt: 'Write 도구로 notes.md와 todo.md 두 파일을 차례로 만들어 줘. 각 파일에는 "ok" 한 줄만 적어. 다른 것은 하지 마.',
+    expect: { files: ['notes.md', 'todo.md'], approvals: 1 },
+  },
+  {
     // A task list (update_plan), not plan mode.
     name: 'codex-todo', provider: 'codex', preset: 'standard',
     prompt: 'update_plan으로 세 단계(README.md 읽기, src/app.ts 읽기, greet 반환값을 한 문장으로 답하기)를 관리하면서 순서대로 진행해. 파일은 수정하지 마.',
@@ -229,9 +235,13 @@ async function shoot(page, name, report) {
   report.push({ shot: name, files: shots });
 }
 
-async function resolvePending(page, approval, panel = page) {
+async function resolvePending(page, approval, panel = page, scenario = {}) {
   const dock = panel.locator('.chat-dock').first();
   const kind = approval.request?.kind;
+  if (scenario.allowSession && (kind === 'file-change' || kind === 'command')) {
+    await dock.getByTestId('chat-dock-allow-session').click();
+    return;
+  }
   if (kind === 'question') {
     await dock.locator('.chat-dock__option').first().click();
     await dock.getByRole('button', { name: /답변 보내기|Submit answer|다음|Next/u }).last().click();
@@ -298,7 +308,8 @@ async function runScenario(page, project, scenario, report) {
       await panel.locator('.chat-dock').first().waitFor({ timeout: 15_000 }).catch(() => undefined);
       await wait(800);
       await shoot(page, `${scenario.name}-pending-${pending.request?.kind ?? 'legacy'}`, report);
-      await resolvePending(page, pending, panel);
+      await resolvePending(page, pending, panel, scenario);
+      if (pending.request?.kind === 'plan') seen.add('plan-approval');
       handled.add(pending.id);
       await wait(1500);
       continue;
@@ -311,7 +322,8 @@ async function runScenario(page, project, scenario, report) {
     const turns = current.turns.filter((turn) => turn.sessionId === sessionId);
     if (turns.length > 0 && turns.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state)) && !pending) {
       // Codex plan mode: the conversation asks to run the proposed plan; approving starts the next turn.
-      if (scenario.proposal && !seen.has('proposal')) {
+      // A host with plan-proposal-v1 asked through a plan approval (handled above); older hosts show the dock.
+      if (scenario.proposal && !seen.has('proposal') && !seen.has('plan-approval')) {
         const proposal = panel.getByTestId('chat-dock-proposed-plan');
         if (await proposal.waitFor({ timeout: 15_000 }).then(() => true, () => false)) {
           seen.add('proposal');
@@ -335,9 +347,13 @@ async function runScenario(page, project, scenario, report) {
   const after = scenario.expect ? (await snapshot(page)).agents.find((entry) => entry.sessionId === sessionId) : undefined;
   report.push({ scenario: scenario.name, sessionId, finalState, approvalsResolved: handled.size,
     ...(scenario.name === 'codex-approval' || scenario.outside ? { outsideFileDeleted: !existsSync(outsideFile) } : {}),
-    ...(scenario.expect ? {
+    ...(scenario.expect?.presetAfter ? {
       presetAfter: after?.permissionPreset, presetAsExpected: after?.permissionPreset === scenario.expect.presetAfter,
       fileChanged: readFileSync(path.join(workspace, scenario.expect.fileContains[0]), 'utf8').includes(scenario.expect.fileContains[1]),
+    } : {}),
+    ...(scenario.expect?.files ? {
+      filesWritten: scenario.expect.files.filter((file) => existsSync(path.join(workspace, file))),
+      approvalsAsExpected: handled.size === scenario.expect.approvals,
     } : {}),
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
