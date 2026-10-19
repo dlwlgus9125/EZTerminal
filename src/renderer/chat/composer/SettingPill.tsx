@@ -22,7 +22,7 @@ function placementFor(trigger: HTMLElement): 'top-start' | 'top-end' {
 }
 
 /** Compact composer setting (model, effort, permissions) as a pill that opens a menu. */
-export function SettingPill<T extends string>({ label, value, options, onChange, disabled = false, icon: Icon, testId, placeholder, hint }: {
+export function SettingPill<T extends string>({ label, value, options, onChange, disabled = false, icon: Icon, testId, placeholder, hint, prefix, status }: {
   readonly label: string;
   readonly value: T | '';
   readonly options: readonly SettingPillOption<T>[];
@@ -34,6 +34,10 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
   readonly placeholder?: string;
   /** Tooltip instead of the label, e.g. why the pill is disabled. */
   readonly hint?: string;
+  /** Whose setting this is, before the value (e.g. the AI a model belongs to). */
+  readonly prefix?: string;
+  /** A line under the options while they are incomplete (e.g. still loading). */
+  readonly status?: string;
 }): JSX.Element {
   const [placement, setPlacement] = useState<'top-start' | 'top-end'>('top-start');
   const current = options.find((option) => option.value === value);
@@ -48,6 +52,7 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
         <button type="button" className="chat-pill" disabled={disabled} data-testid={testId} aria-label={`${label}: ${shown}`} title={hint ?? label}
           onClick={place} onKeyDown={place}>
           {Icon && <Icon aria-hidden="true" />}
+          {prefix && <span className="chat-pill__prefix">{prefix}</span>}
           <span className="chat-pill__value">{shown}</span>
           <ChevronDown className="chat-pill__chevron" aria-hidden="true" />
         </button>
@@ -62,6 +67,7 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
           </span>
         </MenuRadioItem>
       ))}
+      {status && <MenuLabel className="chat-pill__status" role="status">{status}</MenuLabel>}
     </Menu>
   );
 }

@@ -15,6 +15,7 @@ import {
   LoadingState,
   Menu,
   MenuItem,
+  MenuLabel,
   MenuRadioItem,
   Popover,
   Switch,
@@ -149,6 +150,22 @@ describe('keyboard navigation and overlays', () => {
     expect(document.activeElement).toBe(items[1]);
     press(items[1], 'Enter');
     expect(second).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('takes focus into a menu with no items yet, so Escape still closes it', () => {
+    render(
+      <Menu trigger={<button type="button">Model</button>} label="Codex model">
+        <MenuLabel role="status">Loading models…</MenuLabel>
+      </Menu>,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('button')!;
+    trigger.focus();
+    act(() => trigger.click());
+    const menu = container.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(document.activeElement).toBe(menu);
+    press(menu, 'Escape');
     expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });

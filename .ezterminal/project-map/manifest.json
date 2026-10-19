@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:972ac35d3367432710be8e0e3f594d83742fb2863715501f11863c27fb3bad95",
+        "inputDigest": "sha256:7cfb9ab598a35e6e0a5d585bb97018678e34ced1f62d9912f964db5f4c4c2a78",
         "decision": "map-updated",
-        "reason": "Reviewed: planning stages keep their plan-only preset, now labelled read-only; the Session surface gains a plan switch, error banners and a keyboard stop but keeps its Session ID, transcript and history picker. Anchors moved; claims unchanged."
+        "reason": "Reviewed: the message box now names and colours the conversation's AI on its model pill and edge, says Default model, and shows when models are still loading. Session identity, transcript and history picker are unchanged. Two anchors moved; claims unchanged."
       }
     },
     {

@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import type { ReactNode } from 'react';
 
+import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
 import type { DaemonApproval, DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { encodeFileChanges } from '../shared/conversation-changes';
 import {
@@ -184,6 +185,61 @@ export const NarrowPaneWorking: Story = {
   render: (args) => <NarrowKorean><StructuredAgentSessionPanel {...args} /></NarrowKorean>,
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).getByTestId('structured-agent-composer-hint')).toHaveTextContent('이 작업이 끝난 뒤');
+  },
+};
+
+function WideKorean({ children }: { readonly children: ReactNode }): JSX.Element {
+  return (
+    <AppI18nProvider locale="ko" languages={['ko']}>
+      <div style={{ width: 760, height: 560, display: 'flex' }}>{children}</div>
+    </AppI18nProvider>
+  );
+}
+
+const codexModels = [
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' }, { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
+  { id: 'gpt-6-sol', label: 'GPT-6-Sol' }, { id: 'gpt-6-luna', label: 'GPT-6-Luna' }, { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
+];
+
+/** The message box says whose model it is: the AI's colour on its edge and its name on the model pill and menu. */
+export const ComposerCodex: Story = {
+  args: { title: '로그인 오류 메시지 개선', model: 'gpt-6-astra', modelOptions: codexModels, effortSupported: true,
+    items: [item('user-codex', 1, 'user-message', '로그인 실패 문구를 바꿔 줘.')] },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvasElement.querySelector('.chat-composer')).toHaveAttribute('data-provider', 'codex');
+    await expect(canvas.getByTestId('structured-agent-live-model')).toHaveTextContent('Codex·GPT-6-Astra');
+    await expect(canvas.getByTestId('structured-agent-live-model')).toHaveAccessibleName('Codex 모델: GPT-6-Astra');
+  },
+};
+
+export const ComposerClaude: Story = {
+  args: { ...ComposerCodex.args, providerId: 'claude', providerLabel: 'Claude Agent', model: 'claude-opus-5-5',
+    modelOptions: [{ id: 'default', label: 'Default (recommended)' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1' }, { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }] },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByTestId('structured-agent-live-model')).toHaveAccessibleName('Claude 모델: Opus 5.5');
+  },
+};
+
+const loadingCatalog: AgentCapabilitiesClient = {
+  list: () => new Promise(() => undefined),
+  manage: async () => ({ ok: false, code: 'unavailable', message: 'Not in this story.' }),
+};
+
+/** Before the AI's catalog arrives the menu says the models are still loading instead of looking incomplete. */
+export const ComposerModelsLoading: Story = {
+  args: { ...ComposerCodex.args, model: undefined, modelOptions: [], capabilityClient: loadingCatalog },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    const pill = within(canvasElement).getByTestId('structured-agent-live-model');
+    await expect(pill).toHaveAccessibleName('Codex 모델: 기본 모델');
+    await userEvent.click(pill);
+    const menu = await within(document.body).findByRole('menu');
+    await expect(within(menu).getByRole('status')).toHaveTextContent('모델 불러오는 중…');
+    await userEvent.keyboard('{Escape}');
   },
 };
 

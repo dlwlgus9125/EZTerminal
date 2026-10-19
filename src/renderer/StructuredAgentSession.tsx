@@ -139,6 +139,8 @@ interface StructuredAgentCopy {
   readonly provider: string;
   readonly model: string;
   readonly providerDefault: string;
+  readonly modelOf: (provider: string) => string;
+  readonly modelsLoading: string;
   readonly workspace: string;
   readonly workspaceHint: string;
   readonly noProviders: string;
@@ -262,7 +264,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     draftDescription: 'Create a conversation, then send a message to start.',
     provider: 'Provider',
     model: 'Model',
-    providerDefault: 'Provider default',
+    providerDefault: 'Default model',
+    modelOf: (provider) => `${provider} model`,
+    modelsLoading: 'Loading models…',
     workspace: 'Workspace',
     workspaceHint: 'The Agent reads and changes files only in this workspace.',
     noProviders: 'No ready Agent provider is available.',
@@ -357,7 +361,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     draftDescription: '대화창을 만든 뒤 메시지를 보내면 시작합니다.',
     provider: 'Provider',
     model: 'Model',
-    providerDefault: 'Provider 기본값',
+    providerDefault: '기본 모델',
+    modelOf: (provider) => `${provider} 모델`,
+    modelsLoading: '모델 불러오는 중…',
     workspace: 'Workspace',
     workspaceHint: 'Agent는 선택한 Workspace 안에서만 파일을 읽고 변경합니다.',
     noProviders: '사용 가능한 Agent provider가 없습니다.',
@@ -1075,6 +1081,8 @@ export function StructuredAgentChildTrack({
 
 export interface StructuredAgentComposerProps {
   readonly toolbar?: ReactNode;
+  /** The conversation's AI; the message box carries its colour. */
+  readonly providerId?: string;
   readonly queueItems?: readonly ConversationQueueItem[];
   readonly onQueueAction?: (item: ConversationQueueItem, action: ConversationQueueAction) => Promise<StructuredAgentUiResult>;
   readonly capabilityCatalog?: AgentCapabilityCatalog;
@@ -1127,6 +1135,7 @@ export interface StructuredAgentComposerProps {
 /** Owns the draft below the transcript so streamed items never disturb typing. */
 export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   toolbar,
+  providerId,
   queueItems = [],
   onQueueAction,
   capabilityCatalog,
@@ -1402,6 +1411,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     <form
       className="structured-agent-composer chat-composer"
       data-variant={variant}
+      data-provider={providerId || undefined}
       data-busy={busy || undefined}
       onSubmit={(event) => {
         event.preventDefault();
@@ -1825,7 +1835,10 @@ export function StructuredAgentSessionPanel({
   const listedModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
     ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName, resolvedModel: entry.resolvedModel, isDefault: entry.isDefault })) : modelOptions;
   const availableModels = withCurrentModel(listedModels, model);
-  const sendWithCapabilities = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
+  // The models arrive with the provider's catalog; until then only the current model is known.
+  const modelsLoading = capabilityDiscovery.loading && listedModels.length === 0;
+  const providerName = providerId === 'codex' ? 'Codex' : providerId === 'claude' ? 'Claude' : providerLabel;
+  const sendWithCapabilities =async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
     if (context?.skills?.some((skill) => skill.providerId !== providerId)) return { ok: false, message: 'The selected skills belong to another provider. Remove or select them again.' };
     const selected = [...selectedCapabilities.filter((item) => item.invocation && prompt.includes(item.invocation)),
       ...(context?.skills ?? []).map((skill) => ({ ...skill, kind: 'skill' as const, enabled: true, actions: [] }))];
@@ -2094,8 +2107,8 @@ export function StructuredAgentSessionPanel({
             {settingsReadOnly ? (
               <>
                 <span className="structured-agent-session-setting" data-testid="structured-agent-live-model-value">
-                  <small>{copy.model}</small>
-                  <strong>{selectedModel || copy.providerDefault}</strong>
+                  <small>{copy.modelOf(providerName)}</small>
+                  <strong>{availableModels.find((option) => option.id === selectedModel)?.label ?? (selectedModel || copy.providerDefault)}</strong>
                 </span>
                 <span className="structured-agent-session-setting" data-testid="structured-agent-live-permission-value">
                   <small>{copy.permission}</small>
@@ -2119,11 +2132,13 @@ export function StructuredAgentSessionPanel({
                   <span className="chat-pill__value">{permissionText.plan}</span>
                 </button>
                 <SettingPill
-                  label={copy.model}
+                  label={copy.modelOf(providerName)}
                   icon={Cpu}
+                  prefix={providerName}
                   value={selectedModel}
                   placeholder={copy.providerDefault}
                   options={availableModels.map((option) => ({ value: option.id, label: option.label }))}
+                  {...(modelsLoading ? { status: copy.modelsLoading } : {})}
                   disabled={settingsLocked || turnCurrent}
                   {...(turnCurrent && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
                   onChange={(next) => void updateSettings({ model: next })}
@@ -2409,6 +2424,7 @@ export function StructuredAgentSessionPanel({
       {!historyOnly && !(providerOwned && parent) && (
         <StructuredAgentComposer
           toolbar={settingsControls}
+          providerId={providerId}
           queueItems={queueItems}
           onQueueAction={onQueueAction}
           capabilityCatalog={capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id ? capabilityCatalog : undefined}

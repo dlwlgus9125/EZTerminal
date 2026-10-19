@@ -92,7 +92,8 @@ export function Menu({
     initialFocusRef.current = 'first';
     const items = menuRef.current?.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR);
     const item = initialFocus === 'last' && items ? items[items.length - 1] : items?.[0];
-    item?.focus();
+    // A menu with nothing to choose yet (e.g. still loading) takes focus itself so Escape closes it.
+    (item ?? menuRef.current)?.focus();
   }, [isOpen]);
 
   useEffect(() => {
@@ -177,6 +178,7 @@ export function Menu({
             className="ez-ui-menu__content"
             role="menu"
             aria-label={label}
+            tabIndex={-1}
             onKeyDown={handleMenuKeyDown}
           >
             {children}

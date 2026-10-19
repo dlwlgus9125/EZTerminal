@@ -1397,6 +1397,25 @@
   border-color: var(--ui-pane-active-border);
 }
 
+/*
+ * The conversation's AI, in the colour its history rows and tabs use, as a
+ * stripe on the message box's leading edge. Focus keeps the accent border, and
+ * the model pill names the AI, so colour is never the only cue.
+ */
+.chat-composer[data-provider='codex'] {
+  --agent-provider-color: var(--ui-agent-codex);
+}
+
+.chat-composer[data-provider='claude'] {
+  --agent-provider-color: var(--ui-agent-claude);
+}
+
+.chat-composer[data-provider='codex'] .chat-composer__box,
+.chat-composer[data-provider='claude'] .chat-composer__box {
+  border-inline-start: 3px solid var(--agent-provider-color);
+  padding-inline-start: calc(var(--ui-space-2) - 2px);
+}
+
 [data-chat-skin='cli'] .chat-composer__box,
 .structured-agent--live[data-skin='cli'] .chat-composer__box {
   border-radius: var(--ui-radius-md);
@@ -1444,6 +1463,7 @@
 }
 
 .structured-agent[data-compact='true'] .chat-composer__settings .chat-pill__chevron,
+.structured-agent[data-compact='true'] .chat-composer__settings .chat-pill__prefix,
 .structured-agent[data-compact='true'] .chat-composer__settings .chat-pill--plan .chat-pill__value {
   display: none;
 }
@@ -1492,6 +1512,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Whose setting it is (the model's AI), in that AI's colour; the value shortens first. */
+.chat-pill__prefix {
+  flex: none;
+  color: var(--agent-provider-color, inherit);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-pill__prefix::after {
+  content: '·';
+  margin-left: var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font-weight: 500;
+}
+
+.chat-pill-menu .chat-pill__status {
+  color: var(--ui-text-muted);
+  font-weight: 400;
 }
 
 .chat-pill__chevron {
