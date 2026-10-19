@@ -147,6 +147,10 @@ interface StructuredAgentCopy {
   readonly permission: string;
   /** Model, access and plan mode change between turns; effort may change at any time. */
   readonly settingsAfterTurn: string;
+  readonly planShortcutHint: string;
+  readonly settingsLockedDuringTurn: string;
+  readonly settingsFailed: string;
+  readonly implementPlanFailed: string;
   readonly planOn: string;
   readonly planOff: string;
   readonly firstPrompt: string;
@@ -261,6 +265,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     required: 'Choose an option to continue.',
     permission: 'Access',
     settingsAfterTurn: 'You can change this after the current turn.',
+    planShortcutHint: 'Shift+Tab plan mode',
+    settingsLockedDuringTurn: 'Model, access and plan mode can change after this turn. Esc stops it.',
+    settingsFailed: 'The setting was not changed.',
+    implementPlanFailed: 'Plan mode is off, but the request to implement the plan was not sent. It is in the message box; send it again.',
     planOn: 'Plan mode on',
     planOff: 'Plan mode off',
     firstPrompt: 'First prompt',
@@ -347,6 +355,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     required: '계속하려면 항목을 선택하세요.',
     permission: '권한',
     settingsAfterTurn: '현재 작업이 끝난 뒤 바꿀 수 있습니다.',
+    planShortcutHint: 'Shift+Tab 계획',
+    settingsLockedDuringTurn: '모델·권한·계획은 이 작업이 끝난 뒤 바꿀 수 있습니다. Esc로 멈춥니다.',
+    settingsFailed: '설정을 바꾸지 못했습니다.',
+    implementPlanFailed: '계획 모드는 꺼졌지만 구현 요청을 보내지 못했습니다. 입력창에 넣어 두었으니 다시 보내세요.',
     planOn: '계획 모드 켜짐',
     planOff: '계획 모드 꺼짐',
     firstPrompt: '첫 프롬프트',
@@ -1076,6 +1088,8 @@ export interface StructuredAgentComposerProps {
   readonly stopping?: boolean;
   /** Resolves a dropped file to a workspace path so it can be mentioned instead of uploaded. */
   readonly pathForDrop?: (file: File) => string | null;
+  /** Why the settings above cannot change right now; shown under the message box. */
+  readonly statusHint?: string;
   /** Shift+Tab in the message box switches plan mode, as the plan button does. */
   readonly plan?: {
     readonly on: boolean;
@@ -1117,6 +1131,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   onStop,
   stopping = false,
   pathForDrop,
+  statusHint,
   plan,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
@@ -1551,6 +1566,11 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
         </p>
       )}
       {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
+      {!disabledReason && !sendDisabledReason && (statusHint ?? (variant !== 'mobile' && !busy && !draft ? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}` : undefined)) && (
+        <p className="structured-agent-composer__hint" data-testid="structured-agent-composer-hint">
+          {statusHint ?? `${copy.desktopSendHint}${plan ? ` · ${copy.planShortcutHint}` : ''}`}
+        </p>
+      )}
       {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}
       {plan && <span className="ez-ui-visually-hidden" aria-live="polite" data-testid="structured-agent-plan-announcement">{announcement}</span>}
       {uncertain && <div className="structured-agent__banner" role="status"><span>{copy.uncertain}</span>
@@ -1835,7 +1855,7 @@ export function StructuredAgentSessionPanel({
     return prompts.slice(-50);
   }, [items]);
   const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<{ readonly title: string; readonly detail: string } | null>(null);
   const [lifecycleBusy, setLifecycleBusy] = useState<StructuredAgentLifecycleAction | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const busy = BUSY_AGENT_STATES.has(state);
@@ -1904,14 +1924,14 @@ export function StructuredAgentSessionPanel({
     setSettingsBusy(true);
     const result = await onChangeSettings(changes).catch((): StructuredAgentUiResult => ({
       ok: false,
-      message: 'The session settings could not be updated.',
+      message: '',
     }));
     setSettingsBusy(false);
     if (!result.ok) {
       setSelectedModel(previousModel);
       setSelectedPermission(previousPermission);
       setSelectedEffort(previousEffort);
-      setSettingsError(result.message);
+      setSettingsError({ title: copy.settingsFailed, detail: result.message });
     }
     return result;
   };
@@ -1936,7 +1956,7 @@ export function StructuredAgentSessionPanel({
     if (!sent.ok) {
       // Plan mode is already off; keep the request where the person can send it again.
       setDraftAction({ id: ++actionSequence.current, sessionId, text: prompt });
-      setSettingsError(sent.message);
+      setSettingsError({ title: copy.implementPlanFailed, detail: sent.message });
     }
     return sent;
   };
@@ -2063,7 +2083,7 @@ export function StructuredAgentSessionPanel({
               <CornerLeftUp aria-hidden="true" /><span>{parent.title}</span>
             </button>
           ) : <span className="structured-agent__eyebrow">{providerLabel}</span>}
-          <h1 id={titleId}>{title}</h1>
+          <h1 id={titleId} title={`${title} · ${providerLabel} · ${workspace.label}`}>{title}</h1>
           {subagentType && <span className="chat-chip">{subagentType}</span>}
           <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
         </div>
@@ -2203,9 +2223,22 @@ export function StructuredAgentSessionPanel({
             </Menu>
           </div>
         )}
-        {settingsError && <p className="structured-agent__form-error" role="alert">{settingsError}</p>}
-        {lifecycleError && <p className="structured-agent__form-error" role="alert">{lifecycleError}</p>}
       </header>
+      {/* Below the header, full width: a failure is read, not squeezed beside the controls. */}
+      {settingsError && (
+        <div className="structured-agent__banner structured-agent__banner--error structured-agent-session-error" role="alert" data-testid="structured-agent-session-error">
+          <AlertTriangle aria-hidden="true" />
+          <span><strong>{settingsError.title}</strong> {settingsError.detail}</span>
+          <Button variant="ghost" size="sm" onClick={() => setSettingsError(null)}>{copy.close}</Button>
+        </div>
+      )}
+      {lifecycleError && (
+        <div className="structured-agent__banner structured-agent__banner--error structured-agent-session-error" role="alert">
+          <AlertTriangle aria-hidden="true" />
+          <span><strong>{copy.lifecycleFailed}</strong> {lifecycleError === copy.lifecycleFailed ? '' : lifecycleError}</span>
+          <Button variant="ghost" size="sm" onClick={() => setLifecycleError(null)}>{copy.close}</Button>
+        </div>
+      )}
 
       {variant === 'mobile' && capabilitiesPanel}
       <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
@@ -2299,6 +2332,7 @@ export function StructuredAgentSessionPanel({
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
+          {...(!settingsReadOnly && turnCurrent ? { statusHint: copy.settingsLockedDuringTurn } : {})}
         />
       )}
     </section>

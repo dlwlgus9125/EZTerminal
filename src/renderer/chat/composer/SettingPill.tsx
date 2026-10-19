@@ -1,4 +1,5 @@
 import { ChevronDown, type LucideIcon } from 'lucide-react';
+import { useState, type SyntheticEvent } from 'react';
 
 import { Menu, MenuLabel, MenuRadioItem } from '../../ui';
 
@@ -6,6 +7,18 @@ export interface SettingPillOption<T extends string> {
   readonly value: T;
   readonly label: string;
   readonly description?: string;
+}
+
+/** The menu's width in rem; it opens toward the side that has this much room in the pane. */
+const MENU_WIDTH_REM = 18;
+
+/** Opens the menu leftward when it would run past the conversation pane's right edge, where it is clipped. */
+function placementFor(trigger: HTMLElement): 'top-start' | 'top-end' {
+  const fontSize = Number.parseFloat(getComputedStyle(trigger.ownerDocument.documentElement).fontSize) || 16;
+  const width = MENU_WIDTH_REM * fontSize;
+  const pane = (trigger.closest('.structured-agent') ?? trigger.ownerDocument.documentElement).getBoundingClientRect();
+  const rect = trigger.getBoundingClientRect();
+  return rect.left + width > pane.right && rect.right - width >= pane.left ? 'top-end' : 'top-start';
 }
 
 /** Compact composer setting (model, effort, permissions) as a pill that opens a menu. */
@@ -22,14 +35,18 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
   /** Tooltip instead of the label, e.g. why the pill is disabled. */
   readonly hint?: string;
 }): JSX.Element {
+  const [placement, setPlacement] = useState<'top-start' | 'top-end'>('top-start');
   const current = options.find((option) => option.value === value);
   const shown = current?.label ?? placeholder ?? label;
+  const place = (event: SyntheticEvent<HTMLButtonElement>): void => setPlacement(placementFor(event.currentTarget));
   return (
     <Menu
       label={label}
-      placement="top-start"
+      placement={placement}
+      className="chat-pill-menu"
       trigger={(
-        <button type="button" className="chat-pill" disabled={disabled} data-testid={testId} aria-label={`${label}: ${shown}`} title={hint ?? label}>
+        <button type="button" className="chat-pill" disabled={disabled} data-testid={testId} aria-label={`${label}: ${shown}`} title={hint ?? label}
+          onClick={place} onKeyDown={place}>
           {Icon && <Icon aria-hidden="true" />}
           <span className="chat-pill__value">{shown}</span>
           <ChevronDown className="chat-pill__chevron" aria-hidden="true" />

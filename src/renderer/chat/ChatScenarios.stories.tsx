@@ -101,15 +101,17 @@ interface ScenarioArgs {
   readonly locale?: 'ko' | 'en';
   readonly heartbeatActive?: boolean;
   readonly permissionPreset?: PermissionPreset;
+  /** A pane smaller than the window, as in a split workbench. */
+  readonly pane?: { readonly width: number; readonly height: number };
 }
 
-function Scenario({ golden, items, approvals, turnState = 'completed', state = 'idle', skin, locale = 'ko', heartbeatActive = false, permissionPreset = 'standard' }: ScenarioArgs): JSX.Element {
+function Scenario({ golden, items, approvals, turnState = 'completed', state = 'idle', skin, locale = 'ko', heartbeatActive = false, permissionPreset = 'standard', pane }: ScenarioArgs): JSX.Element {
   const shown = items ?? golden.items;
   const claude = golden.provider === 'claude';
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <HighlighterProvider>
-      <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
+      <div style={pane ? { width: pane.width, height: pane.height, display: 'flex' } : { width: '100vw', height: '100vh', display: 'flex' }}>
         <StructuredAgentSessionPanel
           sessionId={golden.items[0]?.sessionId ?? `story-${golden.provider}`}
           title={claude ? '로그인 재시도 표시 수정' : 'Codex 작업'}
@@ -198,6 +200,17 @@ export const QuestionPendingBubble: Story = { args: { golden: askGolden, ...ask,
 export const QuestionPendingCli: Story = { args: { golden: askGolden, ...ask, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
 export const PlanPendingBubble: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'bubble', permissionPreset: 'plan' } };
 export const PlanPendingCli: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'cli', permissionPreset: 'plan' } };
+/** A short split pane: the plan scrolls inside the dock, and its decision stays in view. */
+export const PlanPendingShortPane: Story = {
+  args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'bubble', permissionPreset: 'plan', pane: { width: 560, height: 560 } },
+  play: async ({ canvasElement }) => {
+    const approve = await within(canvasElement).findByTestId('chat-dock-approve-plan');
+    const pane = canvasElement.querySelector<HTMLElement>('[data-testid="structured-agent-session"]')!.getBoundingClientRect();
+    const button = approve.getBoundingClientRect();
+    await expect(button.bottom).toBeLessThanOrEqual(pane.bottom);
+    await expect(button.top).toBeGreaterThanOrEqual(pane.top);
+  },
+};
 /** Codex plan mode ends with a proposed plan; the conversation asks whether to run it. */
 export const CodexPlanProposalBubble: Story = {
   args: { golden: codexPlanMode as unknown as Golden, skin: 'bubble', permissionPreset: 'plan' },

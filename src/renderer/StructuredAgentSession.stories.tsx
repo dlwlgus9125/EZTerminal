@@ -151,6 +151,42 @@ export const PlanModeOn: Story = {
   },
 };
 
+function NarrowKorean({ children }: { readonly children: ReactNode }): JSX.Element {
+  return (
+    <AppI18nProvider locale="ko" languages={['ko']}>
+      <div style={{ width: 520, height: 560, display: 'flex' }}>{children}</div>
+    </AppI18nProvider>
+  );
+}
+
+/** A split pane: the title and state stay readable, the settings fit one row, and a failure reads as a banner. */
+export const NarrowPaneSettingFailed: Story = {
+  args: {
+    title: '로그인 오류 메시지 개선', effortSupported: true, reasoningEffort: 'high',
+    items: [item('user-narrow', 1, 'user-message', '로그인 실패 문구를 바꿔 줘.')],
+    onChangeSettings: fn(async () => ({ ok: false as const, message: 'Expected revision 41, but current revision is 42.' })),
+  },
+  render: (args) => <NarrowKorean><StructuredAgentSessionPanel {...args} /></NarrowKorean>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('structured-agent-composer-hint')).toHaveTextContent('Shift+Tab 계획');
+    await userEvent.click(canvas.getByTestId('structured-agent-live-plan'));
+    await expect(await canvas.findByTestId('structured-agent-session-error')).toHaveTextContent('설정을 바꾸지 못했습니다.');
+  },
+};
+
+/** During a turn the locked settings say why under the message box. */
+export const NarrowPaneWorking: Story = {
+  args: {
+    title: '로그인 오류 메시지 개선', state: 'working', effortSupported: true, reasoningEffort: 'high',
+    items: [item('user-narrow', 1, 'user-message', '로그인 실패 문구를 바꿔 줘.')],
+  },
+  render: (args) => <NarrowKorean><StructuredAgentSessionPanel {...args} /></NarrowKorean>,
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByTestId('structured-agent-composer-hint')).toHaveTextContent('이 작업이 끝난 뒤');
+  },
+};
+
 /** An ended conversation shows its settings as text: plan mode, then the access level. */
 export const PlanModeReadOnly: Story = { args: { permissionPreset: 'plan', state: 'done', items: [item('user-plan', 1, 'user-message', 'Plan the release notes.')] } };
 

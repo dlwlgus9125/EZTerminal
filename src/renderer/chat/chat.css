@@ -1134,6 +1134,48 @@
   overflow-y: auto;
 }
 
+/*
+ * In a short pane the open dock shrinks instead of pushing its decision out of
+ * view: the header and the actions keep their size, the body (plan, diff,
+ * options) scrolls, and the transcript keeps part of the pane.
+ */
+.chat-dock:not(.chat-dock--collapsed) {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 70%;
+}
+
+.chat-dock:not(.chat-dock--collapsed) > * {
+  flex: none;
+}
+
+.chat-dock:not(.chat-dock--collapsed) > .chat-dock__plan,
+.chat-dock:not(.chat-dock--collapsed) > .chat-dock__detail,
+.chat-dock:not(.chat-dock--collapsed) > .chat-dock__question {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-dock__plan > .chat-dock__scroll,
+.chat-dock__detail > .chat-dock__scroll {
+  flex: 0 1 auto;
+  min-height: 2.5rem;
+}
+
+.chat-dock__question > .chat-dock__options {
+  flex: 0 1 auto;
+  min-height: 2.5rem;
+  overflow-y: auto;
+}
+
+.chat-dock__question > :not(.chat-dock__options) {
+  flex: none;
+}
+
 .chat-dock__prompt {
   margin: var(--ui-space-1) 0 var(--ui-space-3);
   font-size: var(--ui-font-size-md);
@@ -1405,6 +1447,20 @@
   flex: 1 1 auto;
 }
 
+/*
+ * A narrow pane keeps the settings on one row: values shorten, chevrons go,
+ * and the plan switch shows its icon (its on state is still the accent ring).
+ * Scrolling the row instead would clip the pills' menus.
+ */
+.structured-agent[data-compact='true'] .chat-composer__settings .chat-pill {
+  max-width: 7rem;
+}
+
+.structured-agent[data-compact='true'] .chat-composer__settings .chat-pill__chevron,
+.structured-agent[data-compact='true'] .chat-composer__settings .chat-pill--plan .chat-pill__value {
+  display: none;
+}
+
 .chat-composer__plus,
 .chat-pill {
   display: inline-flex;
@@ -1493,6 +1549,17 @@
 .chat-pill__option > small {
   color: var(--ui-text-muted);
   font-size: var(--ui-font-size-xs);
+}
+
+/* A setting's menu has a fixed width and wraps its descriptions instead of cutting them. */
+.chat-pill-menu .ez-ui-menu__content {
+  inline-size: min(18rem, calc(100vw - 2rem));
+}
+
+.chat-pill-menu .chat-pill__option,
+.chat-pill-menu .chat-pill__option > * {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .chat-composer__send {

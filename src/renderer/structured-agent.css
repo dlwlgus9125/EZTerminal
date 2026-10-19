@@ -111,6 +111,19 @@
   color: var(--ui-danger);
 }
 
+/* A conversation's failure sits under its header at the chat's width. */
+.structured-agent-session-error {
+  flex: none;
+  width: min(calc(100% - 2rem), var(--ui-chat-max-width));
+  box-sizing: border-box;
+  margin: 0 auto var(--ui-space-2);
+}
+
+.structured-agent-session-error > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .structured-agent--draft > .structured-agent__banner {
   width: min(calc(100% - 3rem), 48.25rem);
   box-sizing: border-box;
@@ -877,6 +890,17 @@
   line-height: var(--ui-line-height-normal);
 }
 
+/* Shortcuts while the box is empty, or why the settings are locked during a turn. */
+.structured-agent-composer__hint {
+  margin: var(--ui-space-1) var(--ui-space-3) 0;
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .structured-agent[data-variant='mobile'] .structured-agent-session-header {
   padding: var(--ui-space-3);
 }
@@ -1297,6 +1321,11 @@
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header > .structured-agent__form-error { flex-basis: 100%; }
 /* Narrow panels keep the one row too: the title shrinks, actions stay whole. */
 .structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-controls { flex-basis: auto; }
+/* There the title and the state outrank the provider and the folder: those go first (the tab and tooltip still name them). */
+.structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__identity .structured-agent__eyebrow,
+.structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__identity p { display: none; }
+.structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__identity .structured-agent__eyebrow + h1 { margin-left: 0; }
+.structured-agent--live[data-variant='desktop'][data-compact='true'] .structured-agent-session-header__status { flex: 0 1 auto; }
 
 .chat-header-more {
   width: 2rem;
