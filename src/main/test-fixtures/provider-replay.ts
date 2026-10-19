@@ -555,7 +555,7 @@ class CodexReplayConnection implements CodexAppServerConnection {
           harness.providerResponses.push({ method, error: { code: -32601 } });
           continue;
         }
-        harness.decisions.push({ decision: recordedCodexDecision(this.fixture, frame.id) });
+        harness.decisions.push(recordedCodexReplayDecision(this.fixture, frame.id, frame.params));
         try {
           harness.providerResponses.push({ method, result: await handler(frame.params, { id: frame.id, method }) });
         } catch (error) {
@@ -586,6 +586,24 @@ class CodexReplayConnection implements CodexAppServerConnection {
       await Promise.race([this.callArrived.promise, new Promise((resolve) => setTimeout(resolve, 50))]);
     }
   }
+}
+
+/**
+ * The recorded Codex answer as the UI would send it: plan-mode questions carry
+ * the chosen labels, keyed by question text as the question card keys them.
+ */
+function recordedCodexReplayDecision(fixture: ProviderCaptureFixture, id: string | number, params: unknown): ReplayDecision {
+  const answer = fixture.lines.find((line) => line.dir === 'out' && line.frame.id === id && !line.frame.method);
+  const recorded = answer?.dir === 'out' ? (answer.frame.result as JsonObject | undefined)?.answers as Record<string, { answers?: unknown }> | undefined : undefined;
+  if (recorded && Object.keys(recorded).length > 0) {
+    const questions = ((params as { questions?: unknown } | undefined)?.questions ?? []) as readonly { id?: string; question?: string }[];
+    const answers = Object.fromEntries(questions.flatMap((question) => {
+      const chosen = question.id ? recorded[question.id]?.answers : undefined;
+      return question.question && Array.isArray(chosen) && typeof chosen[0] === 'string' ? [[question.question, chosen[0]]] : [];
+    }));
+    return { decision: 'allow', response: { kind: 'answers', answers } };
+  }
+  return { decision: recordedCodexDecision(fixture, id) };
 }
 
 function recordedCodexDecision(fixture: ProviderCaptureFixture, id: string | number): 'allow' | 'deny' {

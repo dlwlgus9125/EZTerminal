@@ -1,5 +1,5 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
-import { clipApprovalBody, type ApprovalRequest } from '../shared/approval-request';
+import { clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
 import { encodeFileChanges } from '../shared/conversation-changes';
 import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
 import { createHash, randomUUID } from 'node:crypto';
@@ -102,6 +102,10 @@ interface SessionState {
   model?: string;
   readonly reasoningEffort?: string;
   permissionPreset: PermissionPreset;
+  /** Codex's collaboration mode on this thread; a plan turn leaves it in plan until a turn asks for default. */
+  threadMode?: 'plan' | 'default';
+  /** Said once per session that this Codex cannot plan, so plan mode runs read-only. */
+  planUnsupportedNoticed?: boolean;
   nextTranscriptSequence: number;
   activeTurn?: {
     readonly localTurnId: string;
@@ -138,7 +142,7 @@ interface SessionState {
   lastAgentMessage?: string;
 }
 
-type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change';
+type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change' | 'user-input';
 
 interface PendingApproval {
   readonly providerRequestId: string;
@@ -205,6 +209,28 @@ function boundedText(value: unknown, maximum = MAX_SEMANTIC_TEXT): string {
 
 function opaqueId(namespace: string, ...parts: readonly string[]): string {
   return `${namespace}_${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 24)}`;
+}
+
+/** Codex's request_user_input questions, bounded like the question card (4 questions, 8 options). */
+function userInputQuestions(params: JsonObject): readonly {
+  readonly id: string;
+  readonly question: string;
+  readonly header?: string;
+  readonly options: readonly { readonly label: string; readonly description?: string }[];
+}[] {
+  return asArray(params.questions).flatMap((value) => {
+    const question = asObject(value);
+    const id = asString(question?.id);
+    const text = asString(question?.question);
+    if (!question || !id || !text) return [];
+    const header = asString(question.header);
+    const options = asArray(question.options).flatMap((option) => {
+      const label = asString(asObject(option)?.label);
+      const description = asString(asObject(option)?.description);
+      return label ? [{ label, ...(description ? { description } : {}) }] : [];
+    }).slice(0, 8);
+    return [{ id, question: text, ...(header ? { header } : {}), options }];
+  }).slice(0, 4);
 }
 
 function permissionStartSettings(permissionPreset: PermissionPreset): JsonObject {
@@ -716,6 +742,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   private readonly executable: string;
   private connection: CodexAppServerConnection | undefined;
+  /** Whether this app-server offers the plan collaboration mode; asked once per connection. */
+  private planCollaboration: Promise<boolean> | undefined;
   private readonly providedConnection: boolean;
   private readonly connectionFactory: (options: CodexAppServerClientOptions) => CodexAppServerConnection;
   private readonly clientOptions: CodexProviderAdapterOptions['clientOptions'];
@@ -1034,6 +1062,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       if (!providerSessionId) throw new Error('Codex thread/start returned no thread id.');
       this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, providerSessionId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
+      state.threadMode = 'default';
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
     } catch (error) {
@@ -1077,6 +1106,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       }
       this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, resumedId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
+      const resumedMode = asString(asObject(result?.collaborationMode)?.mode);
+      if (resumedMode === 'plan' || resumedMode === 'default') state.threadMode = resumedMode;
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
     } catch (error) {
@@ -1117,10 +1148,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
     try {
+      const collaborationMode = await this.collaborationModeFor(state, input);
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
         ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+        ...(collaborationMode ? { collaborationMode } : {}),
         input: [
           { type: 'text', text: promptWithChatContext(input.prompt, input.context), text_elements: [] },
           ...selectedSkills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.id })),
@@ -1132,6 +1165,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const turn = asObject(result?.turn);
       const providerTurnId = asString(turn?.id);
       if (!providerTurnId) throw new Error('Codex turn/start returned no turn id.');
+      if (collaborationMode) state.threadMode = collaborationMode.mode;
       const activeTurn = state.activeTurn;
       if (!activeTurn || activeTurn.commandId !== input.commandId) return;
       activeTurn.providerTurnId = providerTurnId;
@@ -1214,6 +1248,48 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return activeTurn.interruptRequest.promise;
   }
 
+  /**
+   * A person's plan turn runs in Codex's plan mode, which asks questions and ends
+   * with a proposed plan. Anything else runs in default mode; a thread left in plan
+   * mode is switched back. A Codex without plan mode keeps the read-only sandbox.
+   */
+  private async collaborationModeFor(state: SessionState, input: ProviderSubmitInput): Promise<{
+    readonly mode: 'plan' | 'default';
+    readonly settings: { readonly model: string; readonly reasoning_effort: string | null; readonly developer_instructions: null };
+  } | undefined> {
+    const wantsPlan = input.attended === true && state.permissionPreset === 'plan' && !state.subagentOf;
+    if (!state.model || (!wantsPlan && state.threadMode === 'default')) return undefined;
+    const supported = await this.planCollaborationSupported();
+    if (!supported) {
+      if (wantsPlan && !state.planUnsupportedNoticed) {
+        state.planUnsupportedNoticed = true;
+        this.emitTranscript(state, {
+          id: opaqueId('codex_plan_unsupported', state.sessionId),
+          sessionId: state.sessionId,
+          turnId: input.turnId,
+          sequence: this.nextSequence(state),
+          kind: 'notice',
+          text: 'This Codex version has no plan mode, so plan mode runs read-only without a plan to approve.',
+          isDelta: false,
+          isSensitive: false,
+          createdAt: this.isoNow(),
+        });
+      }
+      return undefined;
+    }
+    return {
+      mode: wantsPlan ? 'plan' : 'default',
+      settings: { model: state.model, reasoning_effort: input.reasoningEffort ?? state.reasoningEffort ?? null, developer_instructions: null },
+    };
+  }
+
+  private planCollaborationSupported(): Promise<boolean> {
+    this.planCollaboration ??= this.requireConnection().request('collaborationMode/list', {})
+      .then((result) => asArray(asObject(result)?.data).some((mask) => asObject(mask)?.mode === 'plan'))
+      .catch(() => false);
+    return this.planCollaboration;
+  }
+
   async setSettings(input: {
     readonly sessionId: string;
     readonly providerSessionId: string;
@@ -1247,8 +1323,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       throw new Error('Codex approval does not belong to this session.');
     }
     this.pendingApprovals.delete(input.providerRequestId);
-    // Codex approvals carry only a decision: answers, plan mode and deny feedback have no channel.
-    pending.resolve(this.approvalResponse(pending, input.decision));
+    // Codex approvals carry only a decision; plan-mode questions also carry the answers.
+    pending.resolve(this.approvalResponse(pending, input.decision, input.response));
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
   }
 
@@ -1488,6 +1564,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   }
 
   private installConnectionHandlers(connection: CodexAppServerConnection): void {
+    this.planCollaboration = undefined;
     this.unregister.push(
       connection.onNotification('*', (params, method) => this.handleNotification(method, params)),
       connection.onClose((event) => {
@@ -1529,6 +1606,15 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         (params, context) => this.handleApproval(kind, params, context),
       ));
     }
+    // Plan mode asks the person through request_user_input. A secret or a question that
+    // does not wait gets an empty answer: answers travel through the command outbox.
+    this.unregister.push(connection.onServerRequest('item/tool/requestUserInput', async (value, context) => {
+      const params = asObject(value);
+      const questions = asArray(params?.questions).map(asObject);
+      if (!params || params.isBlocking === false || questions.some((question) => question?.isSecret === true)
+        || !questions.some((question) => asString(question?.question))) return { answers: {} };
+      return this.handleApproval('user-input', params, context);
+    }));
     this.unregister.push(connection.onServerRequest('mcpServer/elicitation/request', async (value, context) => {
       const params = asObject(value);
       const schema = asObject(params?.requestedSchema);
@@ -1582,7 +1668,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(pending.turnId ? { turnId: this.localTurnId(sessionId, pending.turnId) } : {}),
         ...(subagent?.subagentOf ? { providerChildId: subagent.subagentOf } : {}),
         providerRequestId,
-        risk: kind === 'file-change' || kind === 'legacy-file-change' ? 'write' : 'danger',
+        risk: kind === 'user-input' ? 'read' : kind === 'file-change' || kind === 'legacy-file-change' ? 'write' : 'danger',
         title: this.approvalTitle(kind),
         ...(detail ? { detail } : {}),
         ...(request ? { request } : {}),
@@ -1603,6 +1689,15 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       ...(callId ? { callId: clip(callId) } : {}),
       ...(reason ? { reason: clip(reason) } : {}),
     };
+    if (kind === 'user-input') {
+      const questions = userInputQuestions(params).map(({ question, header, options }) => ({
+        question: clip(question),
+        ...(header ? { header: clip(header) } : {}),
+        multiSelect: false,
+        options: options.map((option) => ({ label: clip(option.label), ...(option.description ? { description: clip(option.description) } : {}) })),
+      }));
+      return questions.length ? { v: 1, ...(callId ? { callId: clip(callId) } : {}), kind: 'question', questions } : undefined;
+    }
     if (kind === 'command') {
       const command = displayCommand(params);
       const cwd = asString(params.cwd);
@@ -1622,7 +1717,17 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     };
   }
 
-  private approvalResponse(pending: PendingApproval, decision: 'allow' | 'deny'): unknown {
+  private approvalResponse(pending: PendingApproval, decision: 'allow' | 'deny', response?: ApprovalResponse): unknown {
+    if (pending.kind === 'user-input') {
+      // Answers are keyed by question text in the card and by question id for Codex.
+      const answers = decision === 'allow' && response?.kind === 'answers' ? response.answers : {};
+      return {
+        answers: Object.fromEntries(userInputQuestions(pending.params).flatMap(({ id, question }) => {
+          const answer = answers[clip(question)]?.trim();
+          return answer ? [[id, { answers: [answer] }]] : [];
+        })),
+      };
+    }
     if (pending.kind === 'mcp-tool') {
       // Omit persistent grant metadata: the user's choice applies only to this call.
       return { action: decision === 'allow' ? 'accept' : 'decline', content: decision === 'allow' ? {} : null, _meta: null };
@@ -1659,6 +1764,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return 'Grant additional permissions';
       case 'mcp-tool':
         return 'Run MCP tool';
+      case 'user-input':
+        return 'Answer to continue';
     }
   }
 
@@ -1670,6 +1777,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
     if (kind === 'command') return boundedText(displayCommand(params), 4_000) || boundedText(params.reason, 4_000);
     if (kind === 'legacy-command') return asArray(params.command).filter((value): value is string => typeof value === 'string').join(' ').slice(0, 4_000);
+    // Clients that cannot draw the question card still read what is asked.
+    if (kind === 'user-input') return userInputQuestions(params).map((question) => question.question).join('\n').slice(0, 4_000);
     return boundedText(params.reason, 4_000) || boundedText(params.grantRoot, 4_000);
   }
 
@@ -1712,6 +1821,11 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'thread/status/changed':
         this.handleThreadStatus(state, asObject(params.status));
         return;
+      case 'thread/settings/updated': {
+        const mode = asString(asObject(asObject(params.threadSettings)?.collaborationMode)?.mode);
+        if (mode === 'plan' || mode === 'default') state.threadMode = mode;
+        return;
+      }
       case 'turn/started':
         this.handleTurnStarted(state, asObject(params.turn));
         return;

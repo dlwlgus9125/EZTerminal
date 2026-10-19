@@ -127,6 +127,16 @@ const SCENARIOS = [
       : { behavior: 'deny', message: 'Plan review only; do not implement.' },
   },
   {
+    // Codex plan mode asks through request_user_input; the scripted person picks the first option.
+    name: 'plan-question',
+    providers: ['codex'],
+    codexPreset: 'plan',
+    codexCollaborationMode: 'plan',
+    prompt: 'I want to add a `farewell(name)` function next to `greet` in src/app.ts. First ask me with your '
+      + 'request_user_input tool whether the farewell should say "Goodbye" or "See you". Then propose a plan of '
+      + 'three short bullet points. Do not implement it.',
+  },
+  {
     name: 'todo',
     prompt: {
       claude: 'Use the TodoWrite tool to track these three steps and complete them in order, updating the list as you '
@@ -740,6 +750,11 @@ async function captureCodex(scenario, context) {
       // rejected exactly as CodexAppServerClient does for unhandled methods.
       if (CODEX_APPROVAL_METHODS.has(frame.method)) {
         send({ jsonrpc: '2.0', id: frame.id, result: codexApprovalResponse(frame.method, frame.params, decide(frame.method, frame.params)) });
+      } else if (frame.method === 'item/tool/requestUserInput') {
+        // Mirrors CodexProviderAdapter: answers by question id, the first option standing in for the person.
+        const answers = Object.fromEntries((frame.params?.questions ?? []).flatMap((question) => (
+          question?.id && question.options?.[0]?.label ? [[question.id, { answers: [question.options[0].label] }]] : [])));
+        send({ jsonrpc: '2.0', id: frame.id, result: { answers } });
       } else {
         send({ jsonrpc: '2.0', id: frame.id, error: { code: -32601, message: `No EZTerminal handler is registered for ${frame.method}.` } });
       }

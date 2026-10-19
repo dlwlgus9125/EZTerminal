@@ -1897,3 +1897,106 @@ describe('CodexProviderAdapter structured transcript', () => {
     await adapter.dispose();
   });
 });
+
+describe('Codex plan mode', () => {
+  async function planAdapter(list: () => unknown = () => ({ data: [{ name: 'Plan', mode: 'plan' }, { name: 'Default', mode: 'default' }] })): Promise<{
+    readonly adapter: CodexProviderAdapter;
+    readonly connection: FakeCodexConnection;
+    readonly events: AgentProviderEvent[];
+  }> {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-6-astra', reasoningEffort: 'high' };
+      if (method === 'collaborationMode/list') return list();
+      if (method === 'turn/start') return { turn: { id: `provider-turn-${connection.requests.filter((request) => request.method === 'turn/start').length}` } };
+      if (method === 'thread/settings/update') return {};
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-10-19T03:00:00.000Z') });
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    await adapter.createSession(context({ permissionPreset: 'plan' }));
+    return { adapter, connection, events };
+  }
+  const turnStarts = (connection: FakeCodexConnection): Record<string, unknown>[] => connection.requests
+    .filter((request) => request.method === 'turn/start').map((request) => request.params as Record<string, unknown>);
+  async function runTurn(adapter: CodexProviderAdapter, connection: FakeCodexConnection, turn: number, attended?: boolean): Promise<void> {
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: `turn-${turn}`, commandId: `command-${turn}`, prompt: 'Plan it',
+      ...(attended === undefined ? {} : { attended }),
+    });
+    await connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: `provider-turn-${turn}`, status: 'completed', error: null, items: [] } });
+  }
+
+  it('runs a plan turn a person sent in Codex plan mode, then switches the thread back once plan mode is off', async () => {
+    const { adapter, connection } = await planAdapter();
+    await runTurn(adapter, connection, 1, true);
+    expect(turnStarts(connection)[0]).toMatchObject({
+      collaborationMode: { mode: 'plan', settings: { model: 'gpt-6-astra', reasoning_effort: 'high', developer_instructions: null } },
+    });
+    await adapter.setSettings({ sessionId: 'session-1', providerSessionId: 'thread-1', permissionPreset: 'standard' });
+    await runTurn(adapter, connection, 2, true);
+    expect(turnStarts(connection)[1]).toMatchObject({ collaborationMode: { mode: 'default' } });
+    await runTurn(adapter, connection, 3, true);
+    expect(turnStarts(connection)[2]).not.toHaveProperty('collaborationMode');
+    expect(connection.requests.filter((request) => request.method === 'collaborationMode/list')).toHaveLength(1);
+    await adapter.dispose();
+  });
+
+  it('keeps an unattended plan turn read-only, without plan mode and its questions', async () => {
+    const { adapter, connection } = await planAdapter();
+    await runTurn(adapter, connection, 1, false);
+    await runTurn(adapter, connection, 2);
+    expect(turnStarts(connection).every((params) => !('collaborationMode' in params))).toBe(true);
+    expect(connection.requests.some((request) => request.method === 'collaborationMode/list')).toBe(false);
+    await adapter.dispose();
+  });
+
+  it('says once that this Codex cannot plan, and keeps plan mode read-only', async () => {
+    const { adapter, connection, events } = await planAdapter(() => { throw new Error('unknown method'); });
+    await runTurn(adapter, connection, 1, true);
+    await runTurn(adapter, connection, 2, true);
+    expect(turnStarts(connection).every((params) => !('collaborationMode' in params))).toBe(true);
+    const notices = events.filter((event) => event.kind === 'transcript' && event.item.kind === 'notice' && event.item.text.includes('no plan mode'));
+    expect(notices).toHaveLength(1);
+    await adapter.dispose();
+  });
+
+  it('asks plan-mode questions through the question card and answers Codex by question id', async () => {
+    const { adapter, connection, events } = await planAdapter();
+    const params = {
+      threadId: 'thread-1', turnId: 'provider-turn-1', itemId: 'item-question', isBlocking: true,
+      questions: [{ id: 'scope', header: 'Scope', question: 'Which file?', isOther: true, isSecret: false,
+        options: [{ label: 'app.ts', description: 'Main entry' }, { label: 'util.ts', description: '' }] }],
+    };
+    const answered = connection.serverRequest('item/tool/requestUserInput', 7, params);
+    expect(events.at(-2)).toMatchObject({
+      kind: 'approval-requested', providerRequestId: 'user-input:n:7', risk: 'read', detail: 'Which file?',
+      request: { v: 1, kind: 'question', callId: 'item-question', questions: [{
+        question: 'Which file?', header: 'Scope', multiSelect: false, options: [{ label: 'app.ts', description: 'Main entry' }, { label: 'util.ts' }],
+      }] },
+    });
+    await adapter.resolveApproval({
+      sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'user-input:n:7', decision: 'allow',
+      response: { kind: 'answers', answers: { 'Which file?': 'app.ts' } },
+    });
+    await expect(answered).resolves.toEqual({ answers: { scope: { answers: ['app.ts'] } } });
+
+    const declined = connection.serverRequest('item/tool/requestUserInput', 8, params);
+    await adapter.resolveApproval({ sessionId: 'session-1', providerSessionId: 'thread-1', providerRequestId: 'user-input:n:8', decision: 'deny' });
+    await expect(declined).resolves.toEqual({ answers: {} });
+    await adapter.dispose();
+  });
+
+  it('never stores a secret answer or waits on a question that does not block', async () => {
+    const { adapter, connection, events } = await planAdapter();
+    const before = events.length;
+    const question = { id: 'token', header: 'Token', question: 'Paste the token', isOther: true, isSecret: true, options: [] };
+    await expect(connection.serverRequest('item/tool/requestUserInput', 9, { threadId: 'thread-1', turnId: 't', itemId: 'i', isBlocking: true, questions: [question] }))
+      .resolves.toEqual({ answers: {} });
+    await expect(connection.serverRequest('item/tool/requestUserInput', 10, { threadId: 'thread-1', turnId: 't', itemId: 'i', isBlocking: false, questions: [{ ...question, isSecret: false }] }))
+      .resolves.toEqual({ answers: {} });
+    expect(events.slice(before).some((event) => event.kind === 'approval-requested')).toBe(false);
+    await adapter.dispose();
+  });
+});

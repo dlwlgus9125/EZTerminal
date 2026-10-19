@@ -1,0 +1,179 @@
+{
+  "provider": "codex",
+  "scenario": "plan-question",
+  "capturedWith": {
+    "cli": "codex-cli 0.162.1"
+  },
+  "items": [
+    {
+      "id": "message-4766979c10e1d6cba6410e8154063fd3",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "user-message",
+      "text": "I want to add a `farewell(name)` function next to `greet` in src/app.ts. First ask me with your request_user_input tool whether the farewell should say \"Goodbye\" or \"See you\". Then propose a plan of three short bullet points. Do not implement it.",
+      "isDelta": false,
+      "isSensitive": false,
+      "sequence": 1,
+      "createdAt": "2026-10-01T09:00:00.000Z"
+    },
+    {
+      "id": "codex_delta_0fe6eeea95ceccd7f92d6693",
+      "messageId": "codex_message_98379c5f8bc7edbf89c899e6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll check `greet` so the plan follows its existing style.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 2
+    },
+    {
+      "id": "codex_item_e896b92622ba11e59dea3e6e",
+      "messageId": "codex_message_98379c5f8bc7edbf89c899e6",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "assistant-message",
+      "text": "I’ll check `greet` so the plan follows its existing style.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 3
+    },
+    {
+      "id": "codex_item_3621c58b0759f203dfeba863",
+      "messageId": "codex_message_4dffa90585c99244d2df7876",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-call",
+      "text": "$ Get-Content src/app.ts",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-29fd642c-0c31-452f-b186-16287ea1b000",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "call",
+        "status": "running",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content src/app.ts",
+        "cwd": "<WORKSPACE>"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 4
+    },
+    {
+      "id": "codex_item_52297a938395f8df080340f5",
+      "messageId": "codex_message_4dffa90585c99244d2df7876",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "tool-result",
+      "text": "<HOME>\\Documents\\WindowsPowerShell\\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� �� ��\r\n���ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.\r\n��ġ ��:1 ����:1\r\n+ . '<HOME>\\Documents\\WindowsPowerShell\\profile.ps1'\r\n+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException\r\n    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1\r\n \r\nexport function greet(name: string): string {\r\n  return `Hello, ${name}!`;\r\n}\r\n\r\nexport function main(): void {\r\n  console.log(greet('world'));\r\n}\r\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "tool",
+        "callId": "exec-29fd642c-0c31-452f-b186-16287ea1b000",
+        "name": "commandExecution",
+        "category": "read",
+        "phase": "result",
+        "status": "completed",
+        "target": "<WORKSPACE>\\src\\app.ts",
+        "command": "Get-Content src/app.ts",
+        "cwd": "<WORKSPACE>",
+        "exitCode": 0,
+        "durationMs": 3422
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 5
+    },
+    {
+      "id": "codex_delta_e9c93243660aa28a938d7a5a",
+      "messageId": "codex_message_8245dca59c4bfb88153b03d8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "- Add exported `farewell(name: string): string` next to `greet` in `src/app.ts`.\n- Return `Goodbye, ${name}!`, matching `greet`’s formatting.\n- Verify `farewell('world')` returns `Goodbye, world!`; leave `greet` and `main` unchanged.\n",
+      "isDelta": true,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "plan"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 6
+    },
+    {
+      "id": "codex_item_3a8305546018707a878fd26d",
+      "messageId": "codex_message_8245dca59c4bfb88153b03d8",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "kind": "reasoning",
+      "text": "- Add exported `farewell(name: string): string` next to `greet` in `src/app.ts`.\n- Return `Goodbye, ${name}!`, matching `greet`’s formatting.\n- Verify `farewell('world')` returns `Goodbye, world!`; leave `greet` and `main` unchanged.\n",
+      "isDelta": false,
+      "isSensitive": true,
+      "payload": {
+        "v": 1,
+        "type": "plan",
+        "markdown": "- Add exported `farewell(name: string): string` next to `greet` in `src/app.ts`.\n- Return `Goodbye, ${name}!`, matching `greet`’s formatting.\n- Verify `farewell('world')` returns `Goodbye, world!`; leave `greet` and `main` unchanged.\n"
+      },
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "sequence": 7
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-27a52abd9b1aefdbfd5c4d94e968faf4",
+      "sessionId": "replay-session",
+      "turnId": "replay-turn-1",
+      "providerRequestId": "user-input:n:0",
+      "risk": "read",
+      "title": "Answer to continue",
+      "detail": "Should farewell(name) say \"Goodbye\" or \"See you\"?",
+      "request": {
+        "v": 1,
+        "callId": "call_bd56a4cb0b834ecaa2355283158ccd35",
+        "kind": "question",
+        "questions": [
+          {
+            "question": "Should farewell(name) say \"Goodbye\" or \"See you\"?",
+            "header": "Farewell",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Goodbye (Recommended)",
+                "description": "Use Goodbye as the farewell greeting."
+              },
+              {
+                "label": "See you",
+                "description": "Use See you as the farewell greeting."
+              }
+            ]
+          }
+        ]
+      },
+      "state": "allowed",
+      "revision": 2,
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-01T09:00:00.000Z",
+      "resolvedAt": "2026-10-01T09:00:00.000Z"
+    }
+  ],
+  "providerResponses": [
+    {
+      "method": "item/tool/requestUserInput",
+      "result": {
+        "answers": {
+          "farewell_wording": {
+            "answers": [
+              "Goodbye (Recommended)"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
