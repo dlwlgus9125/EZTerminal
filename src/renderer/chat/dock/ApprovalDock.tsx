@@ -86,7 +86,8 @@ function FeedbackForm({ label, submitLabel, busy, onSubmit, onCancel }: {
     <form className="chat-dock__feedback" onSubmit={(event) => { event.preventDefault(); if (message.trim()) onSubmit(message.trim()); }}>
       <label className="chat-dock__label">
         <span>{label}</span>
-        <textarea ref={ref} rows={2} value={message} onChange={(event) => setMessage(event.target.value)} />
+        <textarea ref={ref} rows={2} value={message} onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); onCancel(); } }} />
       </label>
       <div className="chat-dock__actions">
         <Button variant="ghost" size="sm" onClick={onCancel}>{copy.approval.cancel}</Button>
@@ -167,6 +168,16 @@ function QuestionBody({ questions, busy, disabled, onSubmit }: {
   );
 }
 
+/** Esc in a dock (outside its text fields) folds it and returns to the message box. */
+function foldOnEscape(event: KeyboardEvent<HTMLElement>, onCollapsedChange: (collapsed: boolean) => void): void {
+  if (event.key !== 'Escape' || event.defaultPrevented) return;
+  if ((event.target as HTMLElement).closest('textarea, input')) return;
+  event.preventDefault();
+  const panel = event.currentTarget.closest('.structured-agent');
+  onCollapsedChange(true);
+  requestAnimationFrame(() => panel?.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')?.focus());
+}
+
 function PlanBody({ markdown, filePath }: { readonly markdown?: string; readonly filePath?: string }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
@@ -208,7 +219,7 @@ function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback
         {canRespond
           ? <Button variant="ghost" size="sm" disabled={disabled || busy} onClick={onFeedback}>{copy.approval.keepPlanning}</Button>
           : <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={onKeepPlanning}>{copy.approval.keepPlanningPlain}</Button>}
-        <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={onApprove} data-testid="chat-dock-approve-plan">
+        <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={onApprove} data-testid="chat-dock-approve-plan" data-dock-primary="">
           {copy.approval.approvePlan}
         </Button>
       </div>
@@ -277,7 +288,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
   const plan = request?.kind === 'plan';
   const question = request?.kind === 'question';
   return (
-    <section className="chat-dock" data-risk={approval.risk} aria-label={title} role="region">
+    <section className="chat-dock" data-risk={approval.risk} aria-label={title} role="region" onKeyDown={(event) => foldOnEscape(event, onCollapsedChange)}>
       <header className="chat-dock__header">
         <Icon aria-hidden="true" />
         <div className="chat-dock__heading">
@@ -317,7 +328,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
             {copy.approval.denyWithFeedback}
           </Button>}
           <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('deny')}>{copy.approval.deny}</Button>
-          <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={() => void resolve('allow')}>
+          <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={() => void resolve('allow')} data-dock-primary="">
             {copy.approval.allow}
           </Button>
         </div>
@@ -364,7 +375,7 @@ export function ProposedPlanDock({ markdown, access, disabled = false, onApprove
     );
   }
   return (
-    <section className="chat-dock" data-risk="read" aria-label={copy.approval.planTitle} role="region" data-testid="chat-dock-proposed-plan">
+    <section className="chat-dock" data-risk="read" aria-label={copy.approval.planTitle} role="region" data-testid="chat-dock-proposed-plan" onKeyDown={(event) => foldOnEscape(event, onCollapsedChange)}>
       <header className="chat-dock__header">
         <NotebookPen aria-hidden="true" />
         <div className="chat-dock__heading"><p className="chat-dock__title">{copy.approval.planTitle}</p></div>

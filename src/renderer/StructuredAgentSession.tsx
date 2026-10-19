@@ -150,6 +150,7 @@ interface StructuredAgentCopy {
   readonly planShortcutHint: string;
   readonly settingsLockedDuringTurn: string;
   readonly settingsFailed: string;
+  readonly decisionHint: string;
   readonly implementPlanFailed: string;
   readonly planOn: string;
   readonly planOff: string;
@@ -268,6 +269,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     planShortcutHint: 'Shift+Tab plan mode',
     settingsLockedDuringTurn: 'Model, access and plan mode can change after this turn. Esc stops it.',
     settingsFailed: 'The setting was not changed.',
+    decisionHint: 'Shift+Tab goes to the waiting decision · Esc stops the turn',
     implementPlanFailed: 'Plan mode is off, but the request to implement the plan was not sent. It is in the message box; send it again.',
     planOn: 'Plan mode on',
     planOff: 'Plan mode off',
@@ -358,6 +360,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     planShortcutHint: 'Shift+Tab 계획',
     settingsLockedDuringTurn: '모델·권한·계획은 이 작업이 끝난 뒤 바꿀 수 있습니다. Esc로 멈춥니다.',
     settingsFailed: '설정을 바꾸지 못했습니다.',
+    decisionHint: 'Shift+Tab 기다리는 결정으로 이동 · Esc 멈춤',
     implementPlanFailed: '계획 모드는 꺼졌지만 구현 요청을 보내지 못했습니다. 입력창에 넣어 두었으니 다시 보내세요.',
     planOn: '계획 모드 켜짐',
     planOff: '계획 모드 꺼짐',
@@ -1090,6 +1093,8 @@ export interface StructuredAgentComposerProps {
   readonly pathForDrop?: (file: File) => string | null;
   /** Why the settings above cannot change right now; shown under the message box. */
   readonly statusHint?: string;
+  /** Moves focus to a pending decision above the message box; false when there is none. */
+  readonly onFocusDecision?: () => boolean;
   /** Shift+Tab in the message box switches plan mode, as the plan button does. */
   readonly plan?: {
     readonly on: boolean;
@@ -1132,6 +1137,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   stopping = false,
   pathForDrop,
   statusHint,
+  onFocusDecision,
   plan,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
@@ -1284,7 +1290,8 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     if (completion.composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (shiftTab && plan) {
       event.preventDefault();
-      if (plan.disabled) { if (plan.blockedReason) setAnnouncement(plan.blockedReason); return; }
+      // While plan mode cannot change, Shift+Tab goes back to the decision waiting above, as Tab order would.
+      if (plan.disabled) { if (!onFocusDecision?.() && plan.blockedReason) setAnnouncement(plan.blockedReason); return; }
       setAnnouncement(plan.on ? copy.planOff : copy.planOn);
       plan.onToggle();
       return;
@@ -1592,6 +1599,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly capabilitySessionId?: string | null;
   readonly beforeMessages?: ReactNode;
   readonly headerActions?: ReactNode;
+  /** More actions for the conversation menu, after "Previous conversations". */
+  readonly menuItems?: readonly { readonly label: string; readonly icon?: typeof History; readonly disabled?: boolean; readonly onSelect: () => void }[];
   readonly statusLabel?: string;
   readonly onOpenHistory?: () => void;
   readonly capabilityClient?: AgentCapabilitiesClient;
@@ -1705,6 +1714,7 @@ export function StructuredAgentSessionPanel({
   capabilitySessionId,
   beforeMessages,
   headerActions,
+  menuItems = [],
   statusLabel,
   capabilityClient,
   onOpenHistory,
@@ -1961,6 +1971,33 @@ export function StructuredAgentSessionPanel({
     return sent;
   };
   const planBlockedReason = turnCurrent && !settingsLocked ? copy.settingsAfterTurn : undefined;
+  /** Shift+Tab from the message box: the decision waiting above takes focus (its main action, or the folded strip). */
+  const focusDecision = (): boolean => {
+    const target = panelRef.current?.querySelector<HTMLElement>(
+      '.chat-dock:not(.chat-dock--collapsed) [data-dock-primary]:not(:disabled), .chat-dock:not(.chat-dock--collapsed) .chat-dock__option, .chat-dock--collapsed button',
+    );
+    target?.focus();
+    return Boolean(target);
+  };
+  /** Esc anywhere in the conversation stops the turn, unless a field, menu or dialog takes it first. */
+  const stopOnEscape = (event: KeyboardEvent<HTMLElement>): void => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !canCancel || lifecycleBusy !== null || disabled) return;
+    if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], .chat-dock')) return;
+    event.preventDefault();
+    void runLifecycle('cancel', onCancel);
+  };
+  /**
+   * Codex takes only allow or deny, so "deny with feedback" denies, then interrupts
+   * and sends the feedback as the next message, the way Codex's own prompt does.
+   */
+  const resolveApprovalFor = onResolveApproval && providerId === 'codex'
+    ? async (approvalId: string, decision: 'allow' | 'deny', response?: ApprovalResponse): Promise<StructuredAgentUiResult> => {
+      if (decision !== 'deny' || response?.kind !== 'feedback') return response ? onResolveApproval(approvalId, decision, response) : onResolveApproval(approvalId, decision);
+      const denied = await onResolveApproval(approvalId, 'deny');
+      if (!denied.ok) return denied;
+      return (onInterruptAndSend ?? onSend)(response.message);
+    }
+    : onResolveApproval;
   const effortOptions = structuredAgentEffortOptions(providerId);
   const effortLabel = (value: string): string => ({
     minimal: i18n.language.startsWith('ko') ? '최소' : 'Minimal',
@@ -2064,6 +2101,7 @@ export function StructuredAgentSessionPanel({
   return (
     <section
       ref={panelRef}
+      onKeyDown={stopOnEscape}
       className="structured-agent structured-agent--live"
       data-variant={variant}
       data-session-id={sessionId}
@@ -2191,6 +2229,9 @@ export function StructuredAgentSessionPanel({
               )}
             >
               {onOpenHistory && <MenuItem icon={History} onSelect={onOpenHistory}>{copy.previousConversations}</MenuItem>}
+              {menuItems.map((entry) => (
+                <MenuItem key={entry.label} {...(entry.icon ? { icon: entry.icon } : {})} disabled={entry.disabled} onSelect={entry.onSelect}>{entry.label}</MenuItem>
+              ))}
               <MenuLabel>{copy.skin}</MenuLabel>
               {(['bubble', 'cli'] as const).map((skin) => (
                 <MenuRadioItem key={skin} checked={activeSkin === skin} data-testid={`structured-agent-skin-${skin}`}
@@ -2267,7 +2308,7 @@ export function StructuredAgentSessionPanel({
         loading={transcriptLoading}
         error={transcriptError}
         onRetry={onRetryTranscript}
-        onResolveApproval={historyOnly ? undefined : onResolveApproval}
+        onResolveApproval={historyOnly ? undefined : resolveApprovalFor}
         controlsDisabled={disabled}
         onReply={!historyOnly && !composerDisabled && supportsMessageContext ? (replyTo) => setDraftAction({ id: ++actionSequence.current, sessionId, replyTo }) : undefined}
         onReuse={!historyOnly && !composerDisabled ? (text) => setDraftAction({ id: ++actionSequence.current, sessionId, text }) : undefined}
@@ -2332,7 +2373,8 @@ export function StructuredAgentSessionPanel({
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
-          {...(!settingsReadOnly && turnCurrent ? { statusHint: copy.settingsLockedDuringTurn } : {})}
+          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? copy.decisionHint : copy.settingsLockedDuringTurn } : {})}
+          onFocusDecision={focusDecision}
         />
       )}
     </section>

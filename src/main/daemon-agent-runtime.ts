@@ -3116,7 +3116,12 @@ export class DaemonAgentRuntime {
   private attendedTurn(turn: DaemonTurn): boolean {
     if (this.options.preparedSessionSettings?.(turn.sessionId)) return false;
     const command = this.options.findCommand?.(turn.commandId);
-    if (!command || (command.principal.kind !== 'desktop' && command.principal.kind !== 'android')) return false;
+    if (!command) return false;
+    // A child's report arrives in its parent's conversation: a person watches it unless that parent is itself a child.
+    if (command.principal.id === REPORT_BACK_PRINCIPAL) {
+      return !this.options.getSnapshot().agentRelations.some((relation) => relation.childSessionId === turn.sessionId && relation.detachedAt === undefined);
+    }
+    if (command.principal.kind !== 'desktop' && command.principal.kind !== 'android') return false;
     return !(command.type === 'agent.create' && command.payload.parentSessionId);
   }
 

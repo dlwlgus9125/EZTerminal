@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { SquareTerminal } from 'lucide-react';
 import type { AgentTranscriptPage } from '../shared/agent-history';
 import type { ConversationEntry } from '../shared/conversation-history';
 import type { ChatStateScope, ChatStateSnapshot } from '../shared/chat-state';
@@ -259,6 +260,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
         : text('AI와 작업 위치를 확인하세요', 'Check AI and working folder') : undefined}
       onSend={send} supportsMessageContext capabilityClient={capabilityClient} capabilitySessionId={null} variant={variant} onOpenHistory={onOpenHistory}
       onChangeSettings={async next => recovery.saveComposition({ settings: { ...settings, ...next } })}
+      effortSupported={snapshot?.capabilities?.includes('agent-effort-v1') === true} {...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {})}
       workflowContext={settingsControls} recoveryControl={<ChatRecoveryNotice controller={recovery} view={view} />}
       hasEarlier={!!page?.nextCursor && !disconnected} loadingEarlier={earlier} onLoadEarlier={() => void loadEarlier()}
       beforeMessages={<>
@@ -269,7 +271,8 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
                 onClick={() => void onReviewChange(entry, turn.id, path).catch(reason => setError(String(reason)))}>{path}</Button>) : []))}
           </details>}
       </>}
-      headerActions={entry?.historyId && onContinueCli ? <details className="conversation-start__menu"><summary aria-label={text('대화 메뉴', 'Conversation menu')}>···</summary><Button variant="ghost" disabled={busy || disconnected} onClick={() => void onContinueCli(entry).catch(reason => setError(String(reason)))}>{text('터미널에서 이어가기', 'Continue in terminal')}</Button></details> : undefined}
+      menuItems={entry?.historyId && onContinueCli ? [{ label: text('터미널에서 이어가기', 'Continue in terminal'), icon: SquareTerminal, disabled: busy || disconnected,
+        onSelect: () => void onContinueCli(entry).catch(reason => setError(String(reason))) }] : []}
     />
   </div>;
 }

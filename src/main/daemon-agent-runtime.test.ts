@@ -2418,8 +2418,9 @@ describe('DaemonAgentRuntime', () => {
         text: expect.stringMatching(/handed work to a subagent \("Review the change"\)[^]*One edge case is unhandled\./u),
         payload: { type: 'subagent', role: 'result', childSessionId: 'reviewer', title: 'Review the change', state: 'done' },
       });
+      // The report lands in a conversation a person runs: a plan there still asks the person.
       expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({
-        sessionId: 'lead', prompt: expect.stringContaining('One edge case is unhandled.'),
+        sessionId: 'lead', prompt: expect.stringContaining('One edge case is unhandled.'), attended: true,
       }), expect.any(AbortSignal));
 
       // Only the host sends a report; a client cannot label its own message as one.
