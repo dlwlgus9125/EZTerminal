@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:addb48a0c60622c35fcde354d9bf78bdd8ff6b3ec37ab5b59db3f6051d0cc3b0",
+        "inputDigest": "sha256:2675631d2e207196a3371ae379cfa5a0d205ef6e5f1e388e1c398370e8cb7ae8",
         "decision": "map-updated",
-        "reason": "Reviewed: the chat panel asks for a provider's models once per provider revision instead of on every snapshot change, and Claude discovery shares one CLI launch per folder. Session start and the 15-second deadline are unchanged. Anchors moved, claims unchanged."
+        "reason": "Reviewed: plan mode is a switch apart from access; Codex sends its plan collaboration mode only on attended plan turns, a new message retires a pending proposed plan, and approvals can cover the whole conversation. Anchors moved; two claims updated."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:72242673ae75b02f9a6da2bcff42f06be8cccf1be6a21d45a2dc4c853c2fc010",
+        "inputDigest": "sha256:6afdb4411da8cff8b04e1f396cfc403db9272fb87c71361ce45b5904b3b144fc",
         "decision": "map-updated",
-        "reason": "Reviewed: main wires worktree cleanup (archive chats, bounded provider release, live terminal list) and the agent create_worktree route; the workbench lifecycle itself is unchanged. Anchors moved, claims unchanged."
+        "reason": "Reviewed: the agent plan switch, conversation-wide approvals and the Codex plan collaboration mode do not change workbench startup, ownership or shutdown. One daemon anchor moved; claims unchanged."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:98091ef783cdcbac1facbd8422054724236d2841859cdf42fec06ae5c7234a3d",
-        "decision": "no-semantic-impact",
-        "reason": "Inputs changed: a subagent's approval is stored on its parent and labelled with the subagent; the person answers it in the same dock with the same decisions. Relocated anchors only."
+        "inputDigest": "sha256:9cd3c7a0fc7c72582940ba98f21089915874545998fba6e1f1312ec4a484526b",
+        "decision": "map-updated",
+        "reason": "Reviewed: the approval card can allow edits or commands for the rest of a conversation and a plan approval runs at the chosen access level; who decides and where is unchanged. One App anchor moved; claims unchanged."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f990ca5b4da461fc5f865da59d686ee311968095bfa2f4aa80b9fd6c2ac59bce",
+        "inputDigest": "sha256:972ac35d3367432710be8e0e3f594d83742fb2863715501f11863c27fb3bad95",
         "decision": "map-updated",
-        "reason": "Reviewed: only a run prepared with the subproject's auto-approve on records that policy, and a refused automatic decision is reported once and left to the person instead of being retried. Claims unchanged; anchors moved."
+        "reason": "Reviewed: planning stages keep their plan-only preset, now labelled read-only; the Session surface gains a plan switch, error banners and a keyboard stop but keeps its Session ID, transcript and history picker. Anchors moved; claims unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b29df276eb3f376a3bd4d9e02c9fe585ead5e867d5aebab7e1448e1375969da4",
+        "inputDigest": "sha256:edb4ca37d296839dedf06098e69ce2a45670d1f4cb8e141a465f0edf4f601f13",
         "decision": "map-updated",
-        "reason": "Reviewed: Claude capability discovery now shares one CLI launch between callers asking about the same folder at once; what it reads and how it closes are unchanged. One claim updated, no other anchors changed."
+        "reason": "Reviewed: the composer completion list adds application commands (/plan, /model, /new) next to history; native skills, file mentions and insertion are unchanged. Codex and Claude anchors moved; two claims updated."
       }
     }
   ]

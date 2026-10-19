@@ -410,8 +410,8 @@ test('explicit terminal continuation opens a Claude run rooted at the recorded p
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
   await expect(window.getByTestId('conversation-start')).toBeVisible({ timeout: 15_000 });
-  await window.getByTestId('conversation-start').locator('.conversation-start__menu summary').click();
-  await window.getByRole('button', { name: 'Continue in terminal', exact: true }).click();
+  await window.getByTestId('conversation-start').getByTestId('structured-agent-menu').click();
+  await window.getByRole('menuitem', { name: 'Continue in terminal', exact: true }).click();
   // The workspace still holds its original empty terminal tab; the resumed one
   // is the only pane carrying a run block.
   const pane = window.getByTestId('pane')
