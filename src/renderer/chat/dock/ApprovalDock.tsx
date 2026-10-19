@@ -1,9 +1,11 @@
-import { ChevronDown, ChevronUp, FileDiff, MessageCircleQuestion, NotebookPen, ShieldAlert, ShieldQuestion, SquareTerminal } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileDiff, MessageCircleQuestion, NotebookPen, ShieldAlert, ShieldCheck, ShieldQuestion, SquareTerminal } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import type { ApprovalQuestion, ApprovalResponse } from '../../../shared/approval-request';
+import { ACCESS_LEVELS, agentPermissionCopy, type AccessLevel } from '../../agent-permission-copy';
 import { Button } from '../../ui';
-import { useChatCopy, type ChatCopy } from '../copy';
+import { SettingPill } from '../composer/SettingPill';
+import { useChatCopy, useChatLocale, type ChatCopy } from '../copy';
 import { useChatContext } from '../ChatContext';
 import type { PendingInteraction } from '../model/types';
 import { DiffView } from '../parts/DiffView';
@@ -15,6 +17,12 @@ export interface ApprovalResult {
   readonly message?: string;
 }
 
+/** The access level an approved plan runs with; the composer's permission pill shares it. */
+export interface PlanAccessChoice {
+  readonly level: AccessLevel;
+  readonly onChange: (level: AccessLevel) => void;
+}
+
 export interface ApprovalDockProps {
   readonly pending: PendingInteraction;
   readonly pendingCount: number;
@@ -24,6 +32,7 @@ export interface ApprovalDockProps {
   readonly onResolve: (approvalId: string, decision: 'allow' | 'deny', response?: ApprovalResponse) => Promise<ApprovalResult>;
   readonly collapsed: boolean;
   readonly onCollapsedChange: (collapsed: boolean) => void;
+  readonly planAccess?: PlanAccessChoice;
 }
 
 /** Codex sends a new file's content and a deleted file's old content raw, not as a patch. */
@@ -158,11 +167,60 @@ function QuestionBody({ questions, busy, disabled, onSubmit }: {
   );
 }
 
+function PlanBody({ markdown, filePath }: { readonly markdown?: string; readonly filePath?: string }): JSX.Element {
+  const copy = useChatCopy();
+  const context = useChatContext();
+  return (
+    <div className="chat-dock__plan">
+      {markdown && <div className="chat-dock__scroll"><Prose markdown={markdown} variant={context.skin === 'cli' ? 'cli' : 'prose'} /></div>}
+      {filePath && <p className="chat-dock__meta">{copy.planFile}: {filePath.replace(/^.*[\\/]/u, '')}</p>}
+    </div>
+  );
+}
+
+/**
+ * Run the plan with the chosen access level, or keep planning. A host that
+ * cannot take the level starts the plan asking before running, and says so.
+ */
+function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback, onKeepPlanning }: {
+  readonly canRespond: boolean;
+  readonly access?: PlanAccessChoice;
+  readonly busy: boolean;
+  readonly disabled: boolean;
+  readonly onApprove: () => void;
+  readonly onFeedback: () => void;
+  readonly onKeepPlanning: () => void;
+}): JSX.Element {
+  const copy = useChatCopy();
+  const levels = agentPermissionCopy(useChatLocale()).levels;
+  return (
+    <>
+      {canRespond && access && (
+        <div className="chat-dock__plan-access">
+          <span>{copy.approval.planAccess}</span>
+          <SettingPill label={copy.approval.planAccess} icon={access.level === 'full-access' ? ShieldAlert : ShieldCheck} value={access.level}
+            options={ACCESS_LEVELS.map((level) => ({ value: level, label: levels[level].label, description: levels[level].hint }))}
+            disabled={disabled || busy} onChange={access.onChange} testId="chat-dock-plan-access" />
+        </div>
+      )}
+      {!canRespond && <p className="chat-dock__meta">{copy.approval.planAccessFixed}</p>}
+      <div className="chat-dock__actions">
+        {canRespond
+          ? <Button variant="ghost" size="sm" disabled={disabled || busy} onClick={onFeedback}>{copy.approval.keepPlanning}</Button>
+          : <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={onKeepPlanning}>{copy.approval.keepPlanningPlain}</Button>}
+        <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={onApprove} data-testid="chat-dock-approve-plan">
+          {copy.approval.approvePlan}
+        </Button>
+      </div>
+    </>
+  );
+}
+
 /**
  * The pending approval, docked where the composer sits. It can be collapsed to
  * a strip to keep typing without answering.
  */
-export function ApprovalDock({ pending, pendingCount, canRespond, disabled = false, onResolve, collapsed, onCollapsedChange }: ApprovalDockProps): JSX.Element {
+export function ApprovalDock({ pending, pendingCount, canRespond, disabled = false, onResolve, collapsed, onCollapsedChange, planAccess }: ApprovalDockProps): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
   const { approval, request, tool } = pending;
@@ -203,14 +261,7 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
       return <QuestionBody questions={request.questions} busy={busy} disabled={disabled || !canRespond}
         onSubmit={(answers) => void resolve('allow', { kind: 'answers', answers })} />;
     }
-    if (request?.kind === 'plan') {
-      return (
-        <div className="chat-dock__plan">
-          {request.markdown && <div className="chat-dock__scroll"><Prose markdown={request.markdown} variant={context.skin === 'cli' ? 'cli' : 'prose'} /></div>}
-          {request.filePath && <p className="chat-dock__meta">{copy.planFile}: {request.filePath.replace(/^.*[\\/]/u, '')}</p>}
-        </div>
-      );
-    }
+    if (request?.kind === 'plan') return <PlanBody markdown={request.markdown} filePath={request.filePath} />;
     return (
       <div className="chat-dock__detail">
         {command && <pre className="chat-output__command"><code>{`$ ${command}`}</code></pre>}
@@ -255,19 +306,80 @@ export function ApprovalDock({ pending, pendingCount, canRespond, disabled = fal
           onCancel={() => setFeedback(false)}
           onSubmit={(message) => void resolve('deny', { kind: 'feedback', message })}
         />
+      ) : plan ? (
+        <PlanActions canRespond={canRespond} access={planAccess} busy={busy} disabled={disabled}
+          onApprove={() => void resolve('allow', { kind: 'plan', mode: planAccess?.level ?? 'standard' })}
+          onFeedback={() => setFeedback(true)}
+          onKeepPlanning={() => void resolve('deny')} />
       ) : !question || !canRespond ? (
         <div className="chat-dock__actions">
           {canRespond && <Button variant="ghost" size="sm" disabled={disabled || busy} onClick={() => setFeedback(true)}>
-            {plan ? copy.approval.keepPlanning : copy.approval.denyWithFeedback}
+            {copy.approval.denyWithFeedback}
           </Button>}
-          {!plan && <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('deny')}>{copy.approval.deny}</Button>}
-          {plan && canRespond && <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('allow', { kind: 'plan', mode: 'full-access' })}>{copy.approval.approvePlanFull}</Button>}
-          <Button variant="primary" size="sm" disabled={disabled} loading={busy}
-            onClick={() => void resolve('allow', plan ? { kind: 'plan', mode: 'standard' } : undefined)}>
-            {plan ? copy.approval.approvePlan : copy.approval.allow}
+          <Button variant="secondary" size="sm" disabled={disabled || busy} onClick={() => void resolve('deny')}>{copy.approval.deny}</Button>
+          <Button variant="primary" size="sm" disabled={disabled} loading={busy} onClick={() => void resolve('allow')}>
+            {copy.approval.allow}
           </Button>
         </div>
       ) : null}
+      {error && <p className="chat-dock__error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+/**
+ * Codex plan mode ends its turn with a proposed plan and never asks about it.
+ * This dock asks instead: run it with the chosen access level, or keep planning.
+ */
+export function ProposedPlanDock({ markdown, access, disabled = false, onApprove, onKeepPlanning, collapsed, onCollapsedChange }: {
+  readonly markdown: string;
+  readonly access: PlanAccessChoice;
+  readonly disabled?: boolean;
+  readonly onApprove: () => Promise<ApprovalResult>;
+  readonly onKeepPlanning: (message: string) => Promise<ApprovalResult>;
+  readonly collapsed: boolean;
+  readonly onCollapsedChange: (collapsed: boolean) => void;
+}): JSX.Element {
+  const copy = useChatCopy();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [feedback, setFeedback] = useState(false);
+  const run = async (action: () => Promise<ApprovalResult>): Promise<void> => {
+    if (busy || disabled) return;
+    setBusy(true);
+    setError(undefined);
+    const result = await action().catch((): ApprovalResult => ({ ok: false, message: 'The decision could not be delivered.' }));
+    setBusy(false);
+    if (!result.ok) setError(result.message);
+  };
+  if (collapsed) {
+    return (
+      <div className="chat-dock chat-dock--collapsed" data-risk="read">
+        <NotebookPen aria-hidden="true" />
+        <span className="chat-dock__title">{copy.approval.planTitle}</span>
+        <button type="button" className="chat-link-button" onClick={() => onCollapsedChange(false)}>
+          <ChevronUp aria-hidden="true" />{copy.approval.expand}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <section className="chat-dock" data-risk="read" aria-label={copy.approval.planTitle} role="region" data-testid="chat-dock-proposed-plan">
+      <header className="chat-dock__header">
+        <NotebookPen aria-hidden="true" />
+        <div className="chat-dock__heading"><p className="chat-dock__title">{copy.approval.planTitle}</p></div>
+        <button type="button" className="chat-icon-action" aria-label={copy.approval.collapse} title={copy.approval.collapse} onClick={() => onCollapsedChange(true)}>
+          <ChevronDown aria-hidden="true" />
+        </button>
+      </header>
+      <PlanBody markdown={markdown} />
+      {feedback ? (
+        <FeedbackForm label={copy.approval.keepPlanningLabel} submitLabel={copy.approval.sendFeedback} busy={busy}
+          onCancel={() => setFeedback(false)} onSubmit={(message) => void run(() => onKeepPlanning(message))} />
+      ) : (
+        <PlanActions canRespond access={access} busy={busy} disabled={disabled}
+          onApprove={() => void run(onApprove)} onFeedback={() => setFeedback(true)} onKeepPlanning={() => setFeedback(true)} />
+      )}
       {error && <p className="chat-dock__error" role="alert">{error}</p>}
     </section>
   );

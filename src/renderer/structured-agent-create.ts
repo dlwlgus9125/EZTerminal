@@ -11,6 +11,7 @@ import type {
   StructuredAgentProviderOption,
   StructuredAgentWorkspaceOption,
 } from './StructuredAgentSession';
+import { writePlanAccess } from './agent-plan-access';
 
 export type StructuredAgentCreateCommand = DaemonCommandEnvelope<'agent.create'>;
 
@@ -193,6 +194,8 @@ export async function createStructuredAgentSession(
   const initialPrompt = input.initialPrompt?.trim();
   const createId = options.createId ?? defaultCreateId;
   const sessionId = options.sessionId ?? createId('agent');
+  // The level an approved plan runs with stays on this device; the host only stores `plan`.
+  if (input.permissionPreset === 'plan' && input.planAccess) writePlanAccess(sessionId, input.planAccess);
   const title = initialPrompt ? structuredAgentSessionTitle(initialPrompt) : input.providerId === 'claude' ? 'Claude Code' : input.providerId === 'codex' ? 'Codex' : input.providerId;
   if (input.initialPrompt !== undefined && !initialPrompt) {
     return {

@@ -246,7 +246,7 @@ describe('StructuredAgentDockPanel wiring', () => {
     mount(access);
     await flush();
 
-    const approve = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === 'Approve and start');
+    const approve = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === 'Run this plan');
     expect(approve).toBeDefined();
     act(() => approve!.click());
     await flush();

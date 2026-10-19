@@ -10,6 +10,7 @@ import {
   type PermissionPreset,
 } from '../shared/daemon-protocol';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { permissionPresetLabel } from './agent-permission-copy';
 import { useAppTranslation } from './i18n';
 import {
   Badge,
@@ -713,7 +714,8 @@ export function ScheduleSettings({
                     data-testid="schedule-permission"
                   >
                     {PERMISSION_PRESETS.map((preset) => (
-                      <option value={preset} key={preset}>{t(`agentSettings.schedulePermission_${preset}`)}</option>
+                      // A scheduled run has nobody to approve a plan: plan here means plan only.
+                      <option value={preset} key={preset}>{permissionPresetLabel(preset, (i18n.resolvedLanguage ?? i18n.language).startsWith('ko') ? 'ko' : 'en', 'automated')}</option>
                     ))}
                   </Select>
                 </Field>

@@ -88,6 +88,15 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
     const draft = window.getByTestId('conversation-start');
     await expect(draft).toBeVisible();
     await expect(draft.getByTestId('structured-agent-composer-input')).toBeVisible();
+    // Plan mode is a switch beside the permission, which offers access levels only.
+    const plan = draft.getByTestId('structured-agent-live-plan');
+    await expect(plan).toHaveAttribute('aria-pressed', 'false');
+    await draft.getByTestId('structured-agent-live-permission').click();
+    await expect(window.getByRole('menuitemradio')).toHaveCount(2);
+    await window.keyboard.press('Escape');
+    await draft.getByTestId('structured-agent-composer-input').click();
+    await window.keyboard.press('Shift+Tab');
+    await expect(plan).toHaveAttribute('aria-pressed', 'true');
 
     const after = await window.evaluate(async () => (
       globalThis.window.ezterminal.getDaemonSnapshot()

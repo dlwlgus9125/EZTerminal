@@ -2,6 +2,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { ACCESS_LEVELS, agentPermissionCopy, isAccessLevel, permissionPresetLabel, type AccessLevel } from './agent-permission-copy';
 import { useAppTranslation } from './i18n';
 import { Button, Field, IconButton, Input, Select, Switch } from './ui';
 import './agent-profiles-settings.css';
@@ -42,7 +43,8 @@ export function AgentProfilesSettings({
   const [error, setError] = useState<string>();
   const provider = providers.find((entry) => entry.id === draft?.providerId);
   const providerLabel = (id: string): string => providers.find((entry) => entry.id === id)?.label ?? id;
-  const permissionLabel = (preset: ChatAgentProfile['permissionPreset']): string => preset === 'plan' ? 'Plan' : preset === 'full-access' ? 'Full access' : 'Standard';
+  const locale = ko ? 'ko' : 'en';
+  const permissionText = agentPermissionCopy(locale);
 
   const save = async (): Promise<void> => {
     if (!draft || !draft.name.trim()) return;
@@ -92,7 +94,7 @@ export function AgentProfilesSettings({
             <li key={profile.id} className="agent-profiles-settings__item">
               <div className="agent-profiles-settings__summary">
                 <strong>{profile.name}</strong>
-                <span>{[providerLabel(profile.providerId), profile.model ?? text('기본 모델', 'Default model'), profile.reasoningEffort, permissionLabel(profile.permissionPreset)].filter(Boolean).join(' · ')}</span>
+                <span>{[providerLabel(profile.providerId), profile.model ?? text('기본 모델', 'Default model'), profile.reasoningEffort, permissionPresetLabel(profile.permissionPreset, locale)].filter(Boolean).join(' · ')}</span>
                 {profile.whenToUse && <small>{profile.whenToUse}</small>}
               </div>
               <IconButton icon={Pencil} size="sm" variant="ghost" aria-label={`${text('편집', 'Edit')}: ${profile.name}`} onClick={() => setDraft(profile)} />
@@ -124,14 +126,19 @@ export function AgentProfilesSettings({
                 {provider?.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
               </Select>
             </Field>
-            <Field label={text('권한', 'Permission')}>
-              <Select value={draft.permissionPreset} onChange={(event) => setDraft({ ...draft, permissionPreset: event.currentTarget.value as ChatAgentProfile['permissionPreset'] })}>
-                <option value="plan">Plan</option>
-                <option value="standard">Standard</option>
-                <option value="full-access">Full access</option>
+            <Field label={permissionText.access} {...(draft.permissionPreset === 'plan' ? { description: text('계획을 승인하면 승인 후 실행으로 시작합니다.', 'An approved plan starts asking before running.') } : {})}>
+              <Select value={isAccessLevel(draft.permissionPreset) ? draft.permissionPreset : 'standard'} disabled={draft.permissionPreset === 'plan'}
+                onChange={(event) => setDraft({ ...draft, permissionPreset: event.currentTarget.value as AccessLevel })}>
+                {ACCESS_LEVELS.map((level) => <option key={level} value={level}>{permissionText.levels[level].label}</option>)}
               </Select>
             </Field>
           </div>
+          <Switch
+            label={permissionText.startInPlan}
+            description={text('맡기기로 쓰면 계획만 세우고 파일은 바꾸지 않습니다.', 'When delegated to, it only plans and does not change files.')}
+            checked={draft.permissionPreset === 'plan'}
+            onChange={(event) => setDraft({ ...draft, permissionPreset: event.target.checked ? 'plan' : 'standard' })}
+          />
           <Field label={text('언제 쓰나요', 'When to use')}>
             <Input value={draft.whenToUse ?? ''} maxLength={1_000} placeholder={text('예: 바뀐 코드를 고치지 않고 검토만 할 때', 'e.g. Reviewing changes without editing')}
               onChange={(event) => setDraft({ ...draft, whenToUse: event.currentTarget.value })} />

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 import type { ReactNode } from 'react';
 
 import type { DaemonApproval, DaemonTranscriptItem } from '../shared/daemon-protocol';
@@ -115,6 +115,44 @@ export const Draft: Story = {
     </Frame>
   ),
 };
+
+/** Starting a conversation in plan mode: the plan switch, then the access level the approved plan runs with. */
+export const DraftPlanMode: Story = {
+  render: () => (
+    <Frame>
+      <StructuredAgentDraftPanel
+        providers={[{ id: 'codex', label: 'Codex', models: base.modelOptions ?? [] }]}
+        workspaces={[base.workspace]}
+        initialPermissionPreset="plan"
+        onCreate={fn(async () => ({ ok: true as const }))}
+      />
+    </Frame>
+  ),
+  play: async ({ canvasElement }) => {
+    const settings = canvasElement.querySelector<HTMLDetailsElement>('.structured-agent-draft-settings')!;
+    settings.open = true;
+    await expect(within(canvasElement).getByTestId('structured-agent-start-in-plan')).toBeChecked();
+  },
+};
+
+/** Plan mode is a switch beside the composer settings; the permission pill keeps only access levels. */
+export const PlanModeOn: Story = {
+  args: {
+    permissionPreset: 'plan',
+    items: [item('user-plan', 1, 'user-message', 'Plan how to add a farewell(name) function next to greet.')],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('structured-agent-live-plan')).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(canvas.getByTestId('structured-agent-live-permission'));
+    const options = await within(document.body).findAllByRole('menuitemradio');
+    await expect(options).toHaveLength(2);
+    await userEvent.keyboard('{Escape}');
+  },
+};
+
+/** An ended conversation shows its settings as text: plan mode, then the access level. */
+export const PlanModeReadOnly: Story = { args: { permissionPreset: 'plan', state: 'done', items: [item('user-plan', 1, 'user-message', 'Plan the release notes.')] } };
 
 export const Streaming: Story = {
   args: {

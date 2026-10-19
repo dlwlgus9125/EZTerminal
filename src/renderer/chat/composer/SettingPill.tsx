@@ -9,7 +9,7 @@ export interface SettingPillOption<T extends string> {
 }
 
 /** Compact composer setting (model, effort, permissions) as a pill that opens a menu. */
-export function SettingPill<T extends string>({ label, value, options, onChange, disabled = false, icon: Icon, testId, placeholder }: {
+export function SettingPill<T extends string>({ label, value, options, onChange, disabled = false, icon: Icon, testId, placeholder, hint }: {
   readonly label: string;
   readonly value: T | '';
   readonly options: readonly SettingPillOption<T>[];
@@ -19,6 +19,8 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
   readonly testId?: string;
   /** Shown when no option is selected (e.g. the provider default model). */
   readonly placeholder?: string;
+  /** Tooltip instead of the label, e.g. why the pill is disabled. */
+  readonly hint?: string;
 }): JSX.Element {
   const current = options.find((option) => option.value === value);
   const shown = current?.label ?? placeholder ?? label;
@@ -27,7 +29,7 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
       label={label}
       placement="top-start"
       trigger={(
-        <button type="button" className="chat-pill" disabled={disabled} data-testid={testId} aria-label={`${label}: ${shown}`} title={label}>
+        <button type="button" className="chat-pill" disabled={disabled} data-testid={testId} aria-label={`${label}: ${shown}`} title={hint ?? label}>
           {Icon && <Icon aria-hidden="true" />}
           <span className="chat-pill__value">{shown}</span>
           <ChevronDown className="chat-pill__chevron" aria-hidden="true" />

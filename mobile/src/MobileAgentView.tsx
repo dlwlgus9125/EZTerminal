@@ -24,6 +24,7 @@ import type {
   AgentResumeBootstrap,
 } from '../../src/shared/agent-history';
 import type { ConversationEntry, ConversationHistoryClient } from '../../src/shared/conversation-history';
+import type { ApprovalResponse } from '../../src/shared/approval-request';
 import { ConversationHistoryPicker } from '../../src/renderer/ConversationHistoryPicker';
 import { ConversationStartPanel } from '../../src/renderer/ConversationStartPanel';
 import type { ConversationStartAccess } from '../../src/renderer/conversation-start';
@@ -1463,6 +1464,7 @@ export function MobileAgentView({
         approvals={(daemonRuntimeState.snapshot?.approvals ?? []).filter((approval) => (
           approval.sessionId === selectedDaemonSession.id
         ))}
+        approvalResponses={daemonRuntimeState.snapshot?.capabilities?.includes('approval-response-v1') === true}
         transcriptLoading={loadedTranscriptSessionId === selectedDaemonSession.id && transcriptLoading}
         transcriptError={visibleTranscriptError}
         disabled={disconnected || !transport || (secureChatEnabled && (chatDraft.status === 'loading' || chatDraft.status === 'unavailable'))}
@@ -1522,21 +1524,22 @@ export function MobileAgentView({
         }))}
         onChangeSettings={(settings: {
           readonly model?: string;
-          readonly permissionPreset: PermissionPreset;
+          readonly permissionPreset?: PermissionPreset;
         }) => dispatchDaemonCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.set-settings',
           payload: {
             sessionId: selectedDaemonSession.id,
             ...(settings.model ? { model: settings.model } : {}),
-            permissionPreset: settings.permissionPreset,
+            ...(settings.permissionPreset ? { permissionPreset: settings.permissionPreset } : {}),
           },
         }))}
         {...(!providerOwned && !archivedHistory ? {
-          onResolveApproval: (approvalId: string, decision: 'allow' | 'deny') => dispatchDaemonCommand(createDaemonCommand({
+          onResolveApproval: (approvalId: string, decision: 'allow' | 'deny', response?: ApprovalResponse) => dispatchDaemonCommand(createDaemonCommand({
             ...buildCommandBase(),
             type: 'permission.resolve',
-            payload: { approvalId, decision },
+            // Answers, the plan's access level and feedback reach only hosts that take them.
+            payload: { approvalId, decision, ...(response && daemonRuntimeState.snapshot?.capabilities?.includes('approval-response-v1') ? { response } : {}) },
           })),
         } : {})}
         onOpenRelatedSession={selectSession}

@@ -436,7 +436,8 @@ describe('StructuredAgentSessionPanel', () => {
     const option = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find((item) => item.textContent?.includes('GPT-6'))!;
     act(() => option.click());
     await flush();
-    expect(onChangeSettings).toHaveBeenCalledWith({ model: 'gpt-6', permissionPreset: 'standard' });
+    // Only what changed: the host refuses a permission change during a turn, but not an unchanged one.
+    expect(onChangeSettings).toHaveBeenCalledWith({ model: 'gpt-6' });
     expect(model.getAttribute('aria-label')).toContain('GPT-6');
   });
 

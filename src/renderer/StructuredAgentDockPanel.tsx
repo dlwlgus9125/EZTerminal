@@ -1025,7 +1025,7 @@ export function StructuredAgentDockPanel(
 
   const changeSettings = async (settings: {
     readonly model?: string;
-    readonly permissionPreset: PermissionPreset;
+    readonly permissionPreset?: PermissionPreset;
     readonly reasoningEffort?: string;
   }): Promise<StructuredAgentUiResult> => {
     const authority = await latestSnapshot();
@@ -1040,7 +1040,7 @@ export function StructuredAgentDockPanel(
       type: 'agent.set-settings',
       payload: {
         sessionId,
-        permissionPreset: settings.permissionPreset,
+        ...(settings.permissionPreset ? { permissionPreset: settings.permissionPreset } : {}),
         ...(settings.model ? { model: settings.model } : {}),
         ...(settings.reasoningEffort && authority.capabilities?.includes('agent-effort-v1')
           ? { reasoningEffort: settings.reasoningEffort }

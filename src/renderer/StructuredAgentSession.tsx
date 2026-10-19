@@ -2,8 +2,11 @@ import type { ApprovalResponse } from '../shared/approval-request';
 import { buildChatModel, coalesceTranscript } from './chat/model/build-chat-model';
 import { ChatProvider } from './chat/ChatContext';
 import { ChatTranscript } from './chat/ChatTranscript';
-import { useChatLocale } from './chat/copy';
-import { ApprovalDock } from './chat/dock/ApprovalDock';
+import { chatCopy, useChatLocale } from './chat/copy';
+import { ApprovalDock, ProposedPlanDock, type PlanAccessChoice } from './chat/dock/ApprovalDock';
+import { proposedPlan, withoutRow } from './chat/model/proposed-plan';
+import { ACCESS_LEVELS, agentPermissionCopy, isAccessLevel, type AccessLevel } from './agent-permission-copy';
+import { readPlanAccess, writePlanAccess } from './agent-plan-access';
 import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
 import {
@@ -114,6 +117,8 @@ export interface StructuredAgentDraftInput {
   readonly model?: string;
   readonly workspaceId: string;
   readonly permissionPreset: PermissionPreset;
+  /** Starting in plan mode: the access level the approved plan runs with. Kept on this device, never sent. */
+  readonly planAccess?: AccessLevel;
   readonly initialPrompt?: string;
 }
 
@@ -140,12 +145,10 @@ interface StructuredAgentCopy {
   readonly noWorkspaces: string;
   readonly required: string;
   readonly permission: string;
-  readonly permissionPlan: string;
-  readonly permissionPlanHint: string;
-  readonly permissionStandard: string;
-  readonly permissionStandardHint: string;
-  readonly permissionFull: string;
-  readonly permissionFullHint: string;
+  /** Model, access and plan mode change between turns; effort may change at any time. */
+  readonly settingsAfterTurn: string;
+  readonly planOn: string;
+  readonly planOff: string;
   readonly firstPrompt: string;
   readonly firstPromptPlaceholder: string;
   readonly send: string;
@@ -256,13 +259,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     noProviders: 'No ready Agent provider is available.',
     noWorkspaces: 'No active workspace is available for this project.',
     required: 'Choose an option to continue.',
-    permission: 'Permission preset',
-    permissionPlan: 'Plan',
-    permissionPlanHint: 'Inspect and propose a plan without changing files.',
-    permissionStandard: 'Standard',
-    permissionStandardHint: 'Work in the selected workspace and ask before sensitive actions.',
-    permissionFull: 'Full access',
-    permissionFullHint: 'Allow broad workspace actions without routine confirmation.',
+    permission: 'Access',
+    settingsAfterTurn: 'You can change this after the current turn.',
+    planOn: 'Plan mode on',
+    planOff: 'Plan mode off',
     firstPrompt: 'First prompt',
     firstPromptPlaceholder: 'Describe the outcome you want from this Agent…',
     send: 'Send',
@@ -345,13 +345,10 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     noProviders: '사용 가능한 Agent provider가 없습니다.',
     noWorkspaces: '이 프로젝트에 활성 Workspace가 없습니다.',
     required: '계속하려면 항목을 선택하세요.',
-    permission: '권한 프리셋',
-    permissionPlan: 'Plan',
-    permissionPlanHint: '파일을 바꾸지 않고 조사한 뒤 계획을 제안합니다.',
-    permissionStandard: 'Standard',
-    permissionStandardHint: '선택한 Workspace에서 작업하며 민감한 동작은 승인받습니다.',
-    permissionFull: 'Full access',
-    permissionFullHint: '일상적인 확인 없이 Workspace의 폭넓은 동작을 허용합니다.',
+    permission: '권한',
+    settingsAfterTurn: '현재 작업이 끝난 뒤 바꿀 수 있습니다.',
+    planOn: '계획 모드 켜짐',
+    planOff: '계획 모드 꺼짐',
     firstPrompt: '첫 프롬프트',
     firstPromptPlaceholder: 'Agent에게 원하는 결과를 설명하세요…',
     send: 'Send',
@@ -422,17 +419,6 @@ function formatTemplate(template: string, values: Readonly<Record<string, string
     (text, [key, value]) => text.replace(`{{${key}}}`, String(value)),
     template,
   );
-}
-
-const PERMISSION_ORDER: readonly PermissionPreset[] = ['plan', 'standard', 'full-access'];
-
-function permissionCopy(copy: StructuredAgentCopy, preset: PermissionPreset): {
-  readonly label: string;
-  readonly hint: string;
-} {
-  if (preset === 'plan') return { label: copy.permissionPlan, hint: copy.permissionPlanHint };
-  if (preset === 'full-access') return { label: copy.permissionFull, hint: copy.permissionFullHint };
-  return { label: copy.permissionStandard, hint: copy.permissionStandardHint };
 }
 
 export interface StructuredAgentDraftPanelProps {
@@ -516,6 +502,12 @@ export function StructuredAgentDraftPanel({
     restoredForm?.draft.selectionEnd ?? draftText.length,
   ]);
   const [permissionPreset, setPermissionPreset] = useState<PermissionPreset>(restoredForm?.permissionPreset ?? initialPermissionPreset);
+  const permissionText = agentPermissionCopy(useChatLocale());
+  const [draftAccess, setDraftAccess] = useState<AccessLevel>(() => {
+    const preset = restoredForm?.permissionPreset ?? initialPermissionPreset;
+    return isAccessLevel(preset) ? preset : 'standard';
+  });
+  const draftPlan = permissionPreset === 'plan';
   const formStateCallback = useRef(onFormStateChange);
   formStateCallback.current = onFormStateChange;
   useEffect(() => {
@@ -574,6 +566,7 @@ export function StructuredAgentDraftPanel({
     setModel(initialModel);
     if (selectedWorkspaceId === undefined) setInternalWorkspaceId(initialWorkspaceId ?? '');
     setPermissionPreset(initialPermissionPreset);
+    if (isAccessLevel(initialPermissionPreset)) setDraftAccess(initialPermissionPreset);
     setDraftText(initialDraftText);
     setDraftSkills(initialDraftSkills ?? []);
   }, [
@@ -616,6 +609,8 @@ export function StructuredAgentDraftPanel({
       ...(model ? { model } : {}),
       workspaceId,
       permissionPreset,
+      // A recovered send repeats the original command; its level was kept when it was first sent.
+      ...(draftPlan && !deliveryRecovery ? { planAccess: draftAccess } : {}),
       ...(draftText ? { draftText } : {}),
       ...(draftSkills.length ? { draftSkills: draftSkills.filter((skill) => draftText.includes(skill.invocation)) } : {}),
       ...(deliveryRecovery && initialPrompt ? { initialPrompt } : {}),
@@ -735,25 +730,42 @@ export function StructuredAgentDraftPanel({
               {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
             </Select>
           </Field>
+        <label className="structured-agent-permission structured-agent-plan-start" data-selected={draftPlan || undefined}>
+          <input
+            type="checkbox"
+            checked={draftPlan}
+            disabled={loading || submitting || deliveryRecovery}
+            onChange={(event) => {
+              setPermissionPreset(event.currentTarget.checked ? 'plan' : draftAccess);
+              setSubmitError(null);
+            }}
+            data-testid="structured-agent-start-in-plan"
+          />
+          <span>
+            <strong>{permissionText.startInPlan}</strong>
+            <small>{permissionText.planHint}</small>
+          </span>
+        </label>
         <fieldset className="structured-agent-permissions" disabled={loading || submitting || deliveryRecovery}>
           <legend>{copy.permission}</legend>
           <div className="structured-agent-permissions__grid">
-            {PERMISSION_ORDER.map((preset) => {
-              const option = permissionCopy(copy, preset);
+            {ACCESS_LEVELS.map((level) => {
+              const option = permissionText.levels[level];
               return (
                 <label
-                  key={preset}
+                  key={level}
                   className="structured-agent-permission"
-                  data-preset={preset}
-                  data-selected={permissionPreset === preset || undefined}
+                  data-preset={level}
+                  data-selected={draftAccess === level || undefined}
                 >
                   <input
                     type="radio"
                     name={permissionName}
-                    value={preset}
-                    checked={permissionPreset === preset}
+                    value={level}
+                    checked={draftAccess === level}
                     onChange={() => {
-                      setPermissionPreset(preset);
+                      setDraftAccess(level);
+                      if (!draftPlan) setPermissionPreset(level);
                       setSubmitError(null);
                     }}
                   />
@@ -844,6 +856,16 @@ export interface StructuredAgentTranscriptProps {
   readonly controlsDisabled?: boolean;
   readonly onReply?: (reply: ChatReplyReference) => void;
   readonly onReuse?: (text: string) => void;
+  /** The access level an approved plan runs with, shared with the composer. */
+  readonly planAccess?: PlanAccessChoice;
+  /** Asks about a plan Codex proposed in plan mode; Codex itself never asks. */
+  readonly planReview?: {
+    readonly providerId: string;
+    readonly permissionPreset: PermissionPreset;
+    readonly state: ManagedAgentState;
+    readonly onApprove: () => Promise<StructuredAgentUiResult>;
+    readonly onKeepPlanning: (message: string) => Promise<StructuredAgentUiResult>;
+  };
 }
 
 /**
@@ -873,12 +895,18 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   controlsDisabled = false,
   onReply,
   onReuse,
+  planAccess,
+  planReview,
 }: StructuredAgentTranscriptProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
-  const model = useMemo(() => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }), [items, approvals, turns]);
+  const built = useMemo(() => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }), [items, approvals, turns]);
+  const proposal = planReview && planAccess
+    ? proposedPlan(built, { providerId: planReview.providerId, permissionPreset: planReview.permissionPreset, state: planReview.state, ...(turns ? { turns } : {}) })
+    : undefined;
+  const model = useMemo(() => withoutRow(built, proposal), [built, proposal]);
   const [dockCollapsed, setDockCollapsed] = useState(false);
-  const pendingId = model.pending?.approval.id;
+  const pendingId = model.pending?.approval.id ?? proposal?.id;
   useEffect(() => setDockCollapsed(false), [pendingId]);
   const unfinishedTodo = model.todo && model.todo.some((item) => item.status !== 'completed') ? model.todo : undefined;
   return (
@@ -918,6 +946,18 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
           onResolve={(approvalId, decision, response) => (response
             ? onResolveApproval(approvalId, decision, response)
             : onResolveApproval(approvalId, decision))}
+          {...(planAccess ? { planAccess } : {})}
+        />
+      )}
+      {!model.pending && proposal && planReview && planAccess && (
+        <ProposedPlanDock
+          markdown={proposal.markdown}
+          access={planAccess}
+          disabled={controlsDisabled}
+          collapsed={dockCollapsed}
+          onCollapsedChange={setDockCollapsed}
+          onApprove={planReview.onApprove}
+          onKeepPlanning={planReview.onKeepPlanning}
         />
       )}
     </ChatProvider>
@@ -1036,6 +1076,14 @@ export interface StructuredAgentComposerProps {
   readonly stopping?: boolean;
   /** Resolves a dropped file to a workspace path so it can be mentioned instead of uploaded. */
   readonly pathForDrop?: (file: File) => string | null;
+  /** Shift+Tab in the message box switches plan mode, as the plan button does. */
+  readonly plan?: {
+    readonly on: boolean;
+    readonly onToggle: () => void;
+    readonly disabled?: boolean;
+    /** Why it cannot switch now; announced instead of switching. */
+    readonly blockedReason?: string;
+  };
 }
 
 /** Owns the draft below the transcript so streamed items never disturb typing. */
@@ -1069,6 +1117,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   onStop,
   stopping = false,
   pathForDrop,
+  plan,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
@@ -1095,6 +1144,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   const completion = useAgentCompletion({ value, onChange: updateDraft, inputRef, catalog: capabilityCatalog,
     discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile', ...(fileSearch ? { fileSearch } : {}) });
   const [dragging, setDragging] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
   const recall = useRef<number | undefined>(undefined);
   // Grow with the text up to eight lines, then scroll inside the box.
   useLayoutEffect(() => {
@@ -1208,8 +1258,22 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   };
 
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    const shiftTab = event.key === 'Tab' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+    // An open suggestion list takes the first Shift+Tab to close, like Tab.
+    if (shiftTab && plan && completion.open) {
+      completion.keyDown(event);
+      event.preventDefault();
+      return;
+    }
     if (completion.keyDown(event)) return;
     if (completion.composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (shiftTab && plan) {
+      event.preventDefault();
+      if (plan.disabled) { if (plan.blockedReason) setAnnouncement(plan.blockedReason); return; }
+      setAnnouncement(plan.on ? copy.planOff : copy.planOn);
+      plan.onToggle();
+      return;
+    }
     if (event.key === 'Escape' && onStop && !stopping) {
       event.preventDefault();
       onStop();
@@ -1488,6 +1552,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
       )}
       {sendDisabledReason && !disabledReason && <p className="structured-agent-composer__disabled-reason" role="status">{sendDisabledReason}</p>}
       {queuedCount > 0 && <span className="ez-ui-visually-hidden" aria-live="polite">{formatTemplate(copy.queued, { count: queuedCount })}</span>}
+      {plan && <span className="ez-ui-visually-hidden" aria-live="polite" data-testid="structured-agent-plan-announcement">{announcement}</span>}
       {uncertain && <div className="structured-agent__banner" role="status"><span>{copy.uncertain}</span>
         {onReconcileDelivery && <Button type="button" variant="ghost" size="sm" disabled={disabled || sendDisabled || submitting !== null}
           onClick={() => { setSubmitting('send'); void onReconcileDelivery().then((result) => {
@@ -1567,9 +1632,10 @@ export interface StructuredAgentSessionPanelProps {
   readonly onRetryTranscript?: () => void;
   readonly onSend: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
   readonly onInterruptAndSend?: (prompt: string, context?: ChatMessageContext) => Promise<StructuredAgentUiResult>;
+  /** Receives only the settings that changed. */
   readonly onChangeSettings?: (settings: {
     readonly model?: string;
-    readonly permissionPreset: PermissionPreset;
+    readonly permissionPreset?: PermissionPreset;
     readonly reasoningEffort?: string;
   }) => Promise<StructuredAgentUiResult>;
   /** Current reasoning effort; the effort pill appears only when the host accepts it. */
@@ -1683,6 +1749,8 @@ export function StructuredAgentSessionPanel({
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const { i18n } = useAppTranslation();
+  const chatLocale = useChatLocale();
+  const permissionText = agentPermissionCopy(chatLocale);
   const stateLabel = useAgentStateLabel();
   const [capabilityCatalog, setCapabilityCatalog] = useState<AgentCapabilityCatalog>();
   const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
@@ -1796,6 +1864,13 @@ export function StructuredAgentSessionPanel({
 
   useEffect(() => setSelectedModel(model ?? ''), [model]);
   useEffect(() => setSelectedPermission(permissionPreset), [permissionPreset]);
+  // While plan mode is on the stored preset is `plan`; the level the plan runs with is remembered here.
+  const [planAccess, setPlanAccess] = useState<AccessLevel>(() => (isAccessLevel(permissionPreset) ? permissionPreset : readPlanAccess(sessionId)));
+  useEffect(() => setPlanAccess(isAccessLevel(permissionPreset) ? permissionPreset : readPlanAccess(sessionId)), [permissionPreset, sessionId]);
+  const planOn = selectedPermission === 'plan';
+  const accessLevel: AccessLevel = isAccessLevel(selectedPermission) ? selectedPermission : planAccess;
+  const turnCurrent = CANCELLABLE_AGENT_STATES.has(state);
+  const settingsLocked = disabled || settingsBusy || lifecycleBusy !== null;
   useEffect(() => {
     setLifecycleBusy(null);
     setLifecycleError(null);
@@ -1810,21 +1885,24 @@ export function StructuredAgentSessionPanel({
     }
   }, [canArchive, canCancel, canDetach, lifecycleBusy]);
 
-  const updateSettings = async (nextModel: string, nextPermission: PermissionPreset, nextEffort = selectedEffort): Promise<void> => {
+  /** Sends only what changed: the host takes an effort-only change during a turn, but nothing else. */
+  const updateSettings = async (next: { readonly model?: string; readonly permissionPreset?: PermissionPreset; readonly reasoningEffort?: string }): Promise<StructuredAgentUiResult> => {
+    const changes = {
+      ...(next.model && next.model !== selectedModel ? { model: next.model } : {}),
+      ...(next.permissionPreset && next.permissionPreset !== selectedPermission ? { permissionPreset: next.permissionPreset } : {}),
+      ...(next.reasoningEffort && next.reasoningEffort !== selectedEffort ? { reasoningEffort: next.reasoningEffort } : {}),
+    };
+    if (Object.keys(changes).length === 0) return { ok: true };
     const previousModel = selectedModel;
     const previousPermission = selectedPermission;
     const previousEffort = selectedEffort;
-    setSelectedModel(nextModel);
-    setSelectedPermission(nextPermission);
-    setSelectedEffort(nextEffort);
+    if (changes.model !== undefined) setSelectedModel(changes.model);
+    if (changes.permissionPreset !== undefined) setSelectedPermission(changes.permissionPreset);
+    if (changes.reasoningEffort !== undefined) setSelectedEffort(changes.reasoningEffort);
     setSettingsError(null);
-    if (!onChangeSettings) return;
+    if (!onChangeSettings) return { ok: true };
     setSettingsBusy(true);
-    const result = await onChangeSettings({
-      ...(nextModel ? { model: nextModel } : {}),
-      permissionPreset: nextPermission,
-      ...(nextEffort && nextEffort !== previousEffort ? { reasoningEffort: nextEffort } : {}),
-    }).catch((): StructuredAgentUiResult => ({
+    const result = await onChangeSettings(changes).catch((): StructuredAgentUiResult => ({
       ok: false,
       message: 'The session settings could not be updated.',
     }));
@@ -1835,7 +1913,34 @@ export function StructuredAgentSessionPanel({
       setSelectedEffort(previousEffort);
       setSettingsError(result.message);
     }
+    return result;
   };
+  const togglePlan = (): void => {
+    if (planOn) { void updateSettings({ permissionPreset: planAccess }); return; }
+    writePlanAccess(sessionId, accessLevel);
+    setPlanAccess(accessLevel);
+    void updateSettings({ permissionPreset: 'plan' });
+  };
+  /** In plan mode the level only matters once the plan is approved, so it changes here without a host round trip. */
+  const changeAccess = (level: AccessLevel): void => {
+    if (!planOn) { void updateSettings({ permissionPreset: level }); return; }
+    writePlanAccess(sessionId, level);
+    setPlanAccess(level);
+  };
+  const planAccessChoice: PlanAccessChoice = { level: planAccess, onChange: changeAccess };
+  const approveProposedPlan = async (): Promise<StructuredAgentUiResult> => {
+    const changed = await updateSettings({ permissionPreset: planAccess });
+    if (!changed.ok) return changed;
+    const prompt = chatCopy(chatLocale).approval.implementPlanPrompt;
+    const sent = await onSend(prompt).catch((): StructuredAgentUiResult => ({ ok: false, message: 'The message could not be sent.' }));
+    if (!sent.ok) {
+      // Plan mode is already off; keep the request where the person can send it again.
+      setDraftAction({ id: ++actionSequence.current, sessionId, text: prompt });
+      setSettingsError(sent.message);
+    }
+    return sent;
+  };
+  const planBlockedReason = turnCurrent && !settingsLocked ? copy.settingsAfterTurn : undefined;
   const effortOptions = structuredAgentEffortOptions(providerId);
   const effortLabel = (value: string): string => ({
     minimal: i18n.language.startsWith('ko') ? '최소' : 'Minimal',
@@ -1873,19 +1978,34 @@ export function StructuredAgentSessionPanel({
                 </span>
                 <span className="structured-agent-session-setting" data-testid="structured-agent-live-permission-value">
                   <small>{copy.permission}</small>
-                  <strong>{permissionCopy(copy, selectedPermission).label}</strong>
+                  <strong>{planOn ? `${permissionText.plan} · ` : ''}{permissionText.levels[accessLevel].label}</strong>
                 </span>
               </>
             ) : (
               <>
+                <button
+                  type="button"
+                  className="chat-pill chat-pill--plan"
+                  aria-pressed={planOn}
+                  aria-keyshortcuts="Shift+Tab"
+                  aria-label={permissionText.plan}
+                  title={turnCurrent && !settingsLocked ? copy.settingsAfterTurn : `${permissionText.planHint} (${permissionText.planShortcut})`}
+                  disabled={settingsLocked || turnCurrent}
+                  onClick={togglePlan}
+                  data-testid="structured-agent-live-plan"
+                >
+                  <NotebookPen aria-hidden="true" />
+                  <span className="chat-pill__value">{permissionText.plan}</span>
+                </button>
                 <SettingPill
                   label={copy.model}
                   icon={Cpu}
                   value={selectedModel}
                   placeholder={copy.providerDefault}
                   options={availableModels.map((option) => ({ value: option.id, label: option.label }))}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  onChange={(next) => void updateSettings(next, selectedPermission)}
+                  disabled={settingsLocked || turnCurrent}
+                  {...(turnCurrent && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
+                  onChange={(next) => void updateSettings({ model: next })}
                   testId="structured-agent-live-model"
                 />
                 {effortSupported && (
@@ -1896,17 +2016,18 @@ export function StructuredAgentSessionPanel({
                     placeholder={i18n.language.startsWith('ko') ? '기본 강도' : 'Default effort'}
                     options={effortOptions.map((value) => ({ value, label: effortLabel(value) }))}
                     disabled={disabled || settingsBusy}
-                    onChange={(next) => void updateSettings(selectedModel, selectedPermission, next)}
+                    onChange={(next) => void updateSettings({ reasoningEffort: next })}
                     testId="structured-agent-live-effort"
                   />
                 )}
                 <SettingPill
                   label={copy.permission}
-                  icon={selectedPermission === 'full-access' ? ShieldAlert : selectedPermission === 'plan' ? NotebookPen : ShieldCheck}
-                  value={selectedPermission}
-                  options={PERMISSION_ORDER.map((preset) => ({ value: preset, label: permissionCopy(copy, preset).label, description: permissionCopy(copy, preset).hint }))}
-                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
-                  onChange={(next) => void updateSettings(selectedModel, next)}
+                  icon={accessLevel === 'full-access' ? ShieldAlert : ShieldCheck}
+                  value={accessLevel}
+                  options={ACCESS_LEVELS.map((level) => ({ value: level, label: permissionText.levels[level].label, description: permissionText.levels[level].hint }))}
+                  disabled={settingsLocked || (turnCurrent && !planOn)}
+                  {...(turnCurrent && !planOn && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
+                  onChange={changeAccess}
                   testId="structured-agent-live-permission"
                 />
               </>
@@ -2118,6 +2239,10 @@ export function StructuredAgentSessionPanel({
         onReply={!historyOnly && !composerDisabled && supportsMessageContext ? (replyTo) => setDraftAction({ id: ++actionSequence.current, sessionId, replyTo }) : undefined}
         onReuse={!historyOnly && !composerDisabled ? (text) => setDraftAction({ id: ++actionSequence.current, sessionId, text }) : undefined}
         onOpenRelatedSession={onOpenRelatedSession}
+        {...(!settingsReadOnly ? { planAccess: planAccessChoice } : {})}
+        {...(!settingsReadOnly && !composerDisabled ? {
+          planReview: { providerId, permissionPreset: selectedPermission, state, onApprove: approveProposedPlan, onKeepPlanning: (message: string) => onSend(message) },
+        } : {})}
       />
       {childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
@@ -2173,6 +2298,7 @@ export function StructuredAgentSessionPanel({
           stopping={lifecycleBusy === 'cancel'}
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
+          {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
         />
       )}
     </section>

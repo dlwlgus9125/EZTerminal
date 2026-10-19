@@ -10,6 +10,7 @@ import type {
   HistoryResumePreparation,
   HistoryResumeRequest,
 } from '../shared/conversation-history';
+import { permissionPresetLabel } from './agent-permission-copy';
 import { useAppTranslation } from './i18n';
 import { Badge, Button, Dialog, Field, Input, Select } from './ui';
 import './conversation-history.css';
@@ -275,7 +276,7 @@ function ConversationHistoryPickerView({
         </div>
         {entry && <footer className="conversation-history__actions">
           {preparing && <p role="status">{text('이어갈 수 있는지 확인하는 중…', 'Checking whether this conversation can continue…')}</p>}
-          {preparation && preparation.action === 'resume' && <p>{preparation.model ? `${preparation.model} · ` : ''}{preparation.permissionPreset === 'plan' ? 'Plan' : preparation.permissionPreset === 'full-access' ? 'Full access' : 'Standard'}{entry.source === 'app' && entry.archived ? text(' · 원래 기록을 보존하고 이어갑니다.', ' · The original record is preserved.') : ''}</p>}
+          {preparation && preparation.action === 'resume' && <p>{preparation.model ? `${preparation.model} · ` : ''}{permissionPresetLabel(preparation.permissionPreset, ko ? 'ko' : 'en')}{entry.source === 'app' && entry.archived ? text(' · 원래 기록을 보존하고 이어갑니다.', ' · The original record is preserved.') : ''}</p>}
           {preparation?.blockedReason && <p role="status">{failureText(preparation.blockedReason, ko)}</p>}
           {actionError && <p role="alert">{failureText(actionError, ko)}</p>}
           {uncertain && <p role="status">{text('이어가기 결과를 확인하지 못했습니다. 같은 요청의 결과를 확인하세요.', 'The continuation result is unconfirmed. Check the same request.')}</p>}

@@ -1,3 +1,4 @@
+import { permissionPresetLabel } from "./agent-permission-copy";
 import { Pause, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DaemonSnapshot } from "../shared/daemon-protocol";
@@ -573,7 +574,7 @@ export function PlanningExecutionPanel({
               <strong>{task.title}</strong>
               <small>
                 {task.profile.providerId} · {task.profile.model} ·{" "}
-                {task.profile.permissionPreset} · r{task.profile.revision}
+                {permissionPresetLabel(task.profile.permissionPreset, ko ? "ko" : "en", "automated")} · r{task.profile.revision}
               </small>
             </span>
           </div>

@@ -65,7 +65,9 @@ describe('workflow project workspace', () => {
     await changeSelect('structured-agent-provider', 'claude');
     await changeSelect('structured-agent-workspace', 'review');
     await changeSelect('structured-agent-model', '');
-    await act(async () => document.querySelector<HTMLInputElement>('.structured-agent-permission input[value="plan"]')!.click());
+    // Start in plan mode (the research stage may already ask for it).
+    const startInPlan = document.querySelector<HTMLInputElement>('[data-testid="structured-agent-start-in-plan"]')!;
+    if (!startInPlan.checked) await act(async () => startInPlan.click());
     await edit('Message Agent', 'Unsent stage request');
     const composer = document.querySelector<HTMLTextAreaElement>('.structured-agent--draft textarea')!;
     await act(async () => { composer.focus(); composer.setSelectionRange(3, 8); document.dispatchEvent(new Event('selectionchange')); });
@@ -81,7 +83,7 @@ describe('workflow project workspace', () => {
     expect(document.querySelector<HTMLSelectElement>('[data-testid="structured-agent-provider"]')!.value).toBe('claude');
     expect(document.querySelector<HTMLSelectElement>('[data-testid="structured-agent-workspace"]')!.value).toBe('review');
     expect(document.querySelector<HTMLSelectElement>('[data-testid="structured-agent-model"]')!.value).toBe('');
-    expect(document.querySelector<HTMLInputElement>('.structured-agent-permission input[value="plan"]')!.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('[data-testid="structured-agent-start-in-plan"]')!.checked).toBe(true);
     expect(daemonAccess.sendDaemonCommand).not.toHaveBeenCalled(); expect(state.commands).toHaveLength(0);
   });
   it('restores an encrypted offline graph for editing, never submits it, and rejects it when another host connects', async () => {

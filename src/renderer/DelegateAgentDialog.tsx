@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
+import { permissionPresetLabel } from './agent-permission-copy';
 import { useAppTranslation } from './i18n';
 import { Button, Dialog, Field, Input, Select } from './ui';
 import './delegate-agent-dialog.css';
@@ -83,7 +84,8 @@ export function DelegateAgentDialog({
     providerLabels[entry.providerId] ?? entry.providerId,
     entry.model ?? text('기본 모델', 'Default model'),
     entry.reasoningEffort,
-    entry.permissionPreset === 'plan' ? 'Plan' : entry.permissionPreset === 'full-access' ? 'Full access' : 'Standard',
+    // A delegated agent works on its own: a plan profile only plans.
+    permissionPresetLabel(entry.permissionPreset, ko ? 'ko' : 'en', 'automated'),
   ].filter(Boolean).join(' · ');
 
   const submit = async (): Promise<void> => {

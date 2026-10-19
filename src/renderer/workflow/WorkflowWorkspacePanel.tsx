@@ -12,7 +12,7 @@ import type { PlanningConversation, PlanningWorkspaceSection } from '../Planning
 import { StructuredAgentDraftPanel, type StructuredAgentDraftFormState, type StructuredAgentDraftInput, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { createStructuredAgentSession, structuredAgentProviderOptions, structuredAgentWorkspaceOptions, type StructuredAgentCreateCommand } from '../structured-agent-create';
 import { Badge, Button, Dialog, Field, IconButton, Input, LoadingState, Select, Switch } from '../ui';
-import { WorkflowEditor, useWorkflowCopy, workflowOperationLabel, workflowOutcomeLabel, workflowStateLabel } from './WorkflowEditor';
+import { WorkflowEditor, useWorkflowCopy, workflowOperationLabel, workflowOutcomeLabel, workflowPermissionLabel, workflowStateLabel } from './WorkflowEditor';
 import { WorkflowRunView } from './WorkflowRunView';
 import { useAgentStateLabel } from '../agent-state-label';
 import './workflow.css';
@@ -392,7 +392,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       <Field label={text('독립 검토 AI', 'Independent reviewer')}><Select value={reviewer.providerId} onChange={event => setReviewer({ providerId: event.target.value, model: '' })}><option value="">{text('제공자 선택', 'Choose a provider')}</option>{daemon?.providers.filter(provider => provider.enabled).map(provider => <option key={provider.id} value={provider.id} disabled={provider.health !== 'ready'}>{provider.displayName}{provider.health !== 'ready' ? text(' · 사용 불가', ' · Unavailable') : ''}</option>)}</Select></Field>
       <Field label={text('검토 모델', 'Reviewer model')}><Select value={reviewer.model} onChange={event => setReviewer({ ...reviewer, model: event.target.value })}><option value="">{text('모델 선택', 'Choose a model')}</option>{models[reviewer.providerId]?.map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></Field>
       {!models[reviewer.providerId]?.length && <p role="status">{text('사용 가능한 검토 모델을 확인하지 못했습니다. 제공자 연결을 확인하고 다시 불러오세요.', 'No reviewer models are available. Check the provider connection and refresh.')}</p>}
-      <ul>{graph?.nodes.filter(item => item.operation === 'agent').map(item => <li key={item.id}>{item.title} · {item.providerId} · {item.model} · {item.permissionPreset}</li>)}</ul>
+      <ul>{graph?.nodes.filter(item => item.operation === 'agent').map(item => <li key={item.id}>{item.title} · {item.providerId} · {item.model} · {workflowPermissionLabel(item.permissionPreset, text)}</li>)}</ul>
     </Dialog>
   </section>;
 }

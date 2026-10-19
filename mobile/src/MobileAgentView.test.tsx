@@ -452,6 +452,47 @@ describe('MobileAgentView', () => {
     }));
   });
 
+  it.each([
+    { capabilities: ['approval-response-v1'], response: { kind: 'plan', mode: 'standard' } },
+    { capabilities: [], response: undefined },
+  ])('sends the plan approval level only to hosts that take it ($capabilities)', async ({ capabilities, response }) => {
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: true as const, status: 'applied' as const, commandId: command.commandId, revision: 9, eventSequence: 13,
+    }));
+    const daemonSnapshot = daemonSnapshotOf({
+      capabilities,
+      agents: [{
+        sessionId: 'structured-session-1', providerId: 'claude', providerSessionId: 'provider-parent',
+        model: 'opus', permissionPreset: 'plan', state: 'blocked', queuedTurnCount: 0,
+        orchestrationEnabled: true, revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      }],
+      approvals: [{
+        id: 'approval-plan', sessionId: 'structured-session-1', providerRequestId: 'request-plan', risk: 'write', title: 'Approve plan',
+        state: 'pending', request: { v: 1, kind: 'plan', callId: 'call-plan', markdown: '- Add farewell()' },
+        revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      }],
+    });
+    await render(
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
+        transport={{ sendDaemonCommand } as unknown as WsEzTerminalTransport}
+        {...noop}
+      />,
+    );
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
+    await act(async () => {
+      testIds('chat-dock-approve-plan')[0]!.click();
+      await Promise.resolve();
+    });
+    expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'permission.resolve',
+      payload: { approvalId: 'approval-plan', decision: 'allow', ...(response ? { response } : {}) },
+    }));
+  });
+
   it('creates a structured Agent from global New session only on the first Send', async () => {
     const freshSnapshot = daemonSnapshotOf({ revision: 21 });
     const getDaemonSnapshot = vi.fn(async () => freshSnapshot);

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
-import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../shared/daemon-protocol';
+import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn, PermissionPreset } from '../../shared/daemon-protocol';
 import { AppI18nProvider } from '../i18n';
 import type { AgentCapabilitiesClient } from '../../shared/agent-capabilities';
 import { StructuredAgentHeartbeat } from '../StructuredAgentHeartbeat';
@@ -21,6 +21,8 @@ import codexEditCreate from './fixtures/codex-edit-create.json';
 import codexFileApproval from './fixtures/codex-file-approval.json';
 import codexInterrupt from './fixtures/codex-interrupt.json';
 import codexMarkdown from './fixtures/codex-markdown.json';
+import codexPlanMode from './fixtures/codex-plan-mode.json';
+import codexPlanQuestion from './fixtures/codex-plan-question.json';
 import codexWeb from './fixtures/codex-web.json';
 import legacyClaudeEditCreate from './fixtures/legacy/claude-edit-create.json';
 import legacyCodexCommandOkFail from './fixtures/legacy/codex-command-ok-fail.json';
@@ -98,9 +100,10 @@ interface ScenarioArgs {
   readonly skin: 'bubble' | 'cli';
   readonly locale?: 'ko' | 'en';
   readonly heartbeatActive?: boolean;
+  readonly permissionPreset?: PermissionPreset;
 }
 
-function Scenario({ golden, items, approvals, turnState = 'completed', state = 'idle', skin, locale = 'ko', heartbeatActive = false }: ScenarioArgs): JSX.Element {
+function Scenario({ golden, items, approvals, turnState = 'completed', state = 'idle', skin, locale = 'ko', heartbeatActive = false, permissionPreset = 'standard' }: ScenarioArgs): JSX.Element {
   const shown = items ?? golden.items;
   const claude = golden.provider === 'claude';
   return (
@@ -115,7 +118,7 @@ function Scenario({ golden, items, approvals, turnState = 'completed', state = '
           workspace={{ id: 'main', label: 'demo-app', kind: 'local', path: '<WORKSPACE>' }}
           model={claude ? 'opus' : 'gpt-6-astra'}
           modelOptions={claude ? [{ id: 'opus', label: 'Opus' }] : [{ id: 'gpt-6-astra', label: 'GPT-6 Astra' }]}
-          permissionPreset="standard"
+          permissionPreset={permissionPreset}
           state={state}
           items={shown}
           approvals={approvals ?? golden.approvals}
@@ -193,8 +196,21 @@ export const StreamingBubble: Story = { args: { golden: streamingGolden, items: 
 export const StreamingCli: Story = { args: { golden: streamingGolden, items: streamingItems, turnState: 'working', state: 'working', skin: 'cli' } };
 export const QuestionPendingBubble: Story = { args: { golden: askGolden, ...ask, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
 export const QuestionPendingCli: Story = { args: { golden: askGolden, ...ask, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
-export const PlanPendingBubble: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
-export const PlanPendingCli: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
+export const PlanPendingBubble: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'bubble', permissionPreset: 'plan' } };
+export const PlanPendingCli: Story = { args: { golden: planGolden, ...plan, turnState: 'blocked', state: 'blocked', skin: 'cli', permissionPreset: 'plan' } };
+/** Codex plan mode ends with a proposed plan; the conversation asks whether to run it. */
+export const CodexPlanProposalBubble: Story = {
+  args: { golden: codexPlanMode as unknown as Golden, skin: 'bubble', permissionPreset: 'plan' },
+  play: async ({ canvasElement }) => {
+    const dock = await within(canvasElement).findByTestId('chat-dock-proposed-plan');
+    await expect(within(dock).getByTestId('chat-dock-approve-plan')).toHaveTextContent('계획대로 실행');
+  },
+};
+/** Codex plan mode asks through request_user_input; the question card answers it. */
+export const CodexPlanQuestionBubble: Story = {
+  args: { golden: codexPlanQuestion as unknown as Golden, ...pendingScenario(codexPlanQuestion as unknown as Golden), turnState: 'blocked', state: 'blocked', skin: 'bubble', permissionPreset: 'plan' },
+};
+export const CodexPlanProposalCli: Story = { args: { golden: codexPlanMode as unknown as Golden, skin: 'cli', permissionPreset: 'plan' } };
 export const CommandPendingBubble: Story = { args: { golden: denyGolden, ...deny, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };
 export const CommandPendingCli: Story = { args: { golden: denyGolden, ...deny, turnState: 'blocked', state: 'blocked', skin: 'cli' } };
 export const EditPendingBubble: Story = { args: { golden: editGolden, ...edit, turnState: 'blocked', state: 'blocked', skin: 'bubble' } };

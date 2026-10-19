@@ -1225,6 +1225,20 @@
   margin-left: var(--ui-space-2);
 }
 
+/* "Run with [access ▾]" above the plan actions; margins instead of flex gap for Android WebView 74. */
+.chat-dock__plan-access {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: var(--ui-space-3);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-sm);
+}
+
+.chat-dock__plan-access > * + * {
+  margin-left: var(--ui-space-2);
+}
+
 .chat-dock__error {
   margin: var(--ui-space-2) 0 0;
   color: var(--ui-danger);
@@ -1448,6 +1462,13 @@
 .chat-pill[aria-expanded='true'] {
   border-color: var(--ui-border-subtle);
   background: var(--ui-surface-hover);
+  color: var(--ui-text-primary);
+}
+
+/* The plan switch: on reads as a selected mode, not as a hovered menu. */
+.chat-pill[aria-pressed='true'] {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-muted);
   color: var(--ui-text-primary);
 }
 

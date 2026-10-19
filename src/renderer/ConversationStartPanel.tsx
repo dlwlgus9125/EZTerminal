@@ -10,6 +10,7 @@ import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
+import { movePlanAccess } from './agent-plan-access';
 import { historyTranscriptItems } from './chat/model/history-items';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select } from './ui';
@@ -183,11 +184,13 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       const saved = await storage.chatStateWrite(liveScope, { expectedRevision: live.snapshot.revision, state: { ...live.snapshot.state, draft: recovery.getSnapshot().draft } });
       if (!saved.ok) throw new Error(saved.message);
     }
+    // A plan started here runs, once approved, with the access level chosen here.
+    movePlanAccess(identity, sessionId);
     const resolved = await access.history.resolveConversation?.({ kind: 'session', id: sessionId });
     await onStarted(sessionId, resolved?.ok ? resolved.entry : entry);
     recovery.updateDraft({ text: '' });
     await recovery.saveComposition({ start: undefined });
-  }, [access, storage, recovery, entry, text, onStarted]);
+  }, [access, storage, recovery, entry, text, onStarted, identity]);
   const send: StructuredAgentSessionPanelPropsSend = async (prompt, context) => {
     setBusy(true); setError(undefined);
     try {
