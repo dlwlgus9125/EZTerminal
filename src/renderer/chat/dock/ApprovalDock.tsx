@@ -207,7 +207,7 @@ function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback
   const copy = useChatCopy();
   const levels = agentPermissionCopy(useChatLocale()).levels;
   return (
-    <>
+    <div className="chat-dock__decision">
       {canRespond && access && (
         <div className="chat-dock__plan-access">
           <span>{copy.approval.planAccess}</span>
@@ -225,7 +225,7 @@ function PlanActions({ canRespond, access, busy, disabled, onApprove, onFeedback
           {copy.approval.approvePlan}
         </Button>
       </div>
-    </>
+    </div>
   );
 }
 

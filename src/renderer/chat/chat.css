@@ -5,9 +5,10 @@
  * margins; grids use grid-gap. Colours come only from --ui-* tokens. */
 
 /* ── viewport ─────────────────────────────────────────────────────────── */
+/* Basis 0: the transcript takes what is left, so a short pane squeezes it before an open decision. */
 .chat-transcript {
   position: relative;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1135,45 +1136,31 @@
 }
 
 /*
- * In a short pane the open dock shrinks instead of pushing its decision out of
- * view: the header and the actions keep their size, the body (plan, diff,
- * options) scrolls, and the transcript keeps part of the pane.
+ * In a short pane the open dock shrinks with the pane and scrolls inside, so
+ * neither it nor the message box below is pushed out of view; its decision row
+ * stays pinned at the bottom of the dock while the rest scrolls behind it.
  */
 .chat-dock:not(.chat-dock--collapsed) {
-  display: flex;
   flex: 0 1 auto;
-  flex-direction: column;
   min-height: 0;
   max-height: 70%;
-}
-
-.chat-dock:not(.chat-dock--collapsed) > * {
-  flex: none;
-}
-
-.chat-dock:not(.chat-dock--collapsed) > .chat-dock__plan,
-.chat-dock:not(.chat-dock--collapsed) > .chat-dock__detail,
-.chat-dock:not(.chat-dock--collapsed) > .chat-dock__question {
-  display: flex;
-  flex: 0 1 auto;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.chat-dock__plan > .chat-dock__scroll,
-.chat-dock__detail > .chat-dock__scroll {
-  flex: 0 1 auto;
-  min-height: 2.5rem;
-}
-
-.chat-dock__question > .chat-dock__options {
-  flex: 0 1 auto;
-  min-height: 2.5rem;
   overflow-y: auto;
 }
 
-.chat-dock__question > :not(.chat-dock__options) {
-  flex: none;
+.chat-dock:not(.chat-dock--collapsed) .chat-dock__actions,
+.chat-dock:not(.chat-dock--collapsed) .chat-dock__decision {
+  position: sticky;
+  bottom: calc(-1 * var(--ui-space-3));
+  z-index: 1;
+  margin-bottom: calc(-1 * var(--ui-space-3));
+  padding-bottom: var(--ui-space-3);
+  background: var(--ui-surface-raised);
+}
+
+.chat-dock:not(.chat-dock--collapsed) .chat-dock__decision > .chat-dock__actions {
+  position: static;
+  margin-bottom: 0;
+  padding-bottom: 0;
 }
 
 .chat-dock__prompt {
