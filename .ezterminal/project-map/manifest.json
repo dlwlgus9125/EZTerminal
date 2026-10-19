@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2675631d2e207196a3371ae379cfa5a0d205ef6e5f1e388e1c398370e8cb7ae8",
+        "inputDigest": "sha256:520e4b2e2f5d60145d1d61e1b30b9372920b4d8c6f1a9d374a46517eec2174df",
         "decision": "map-updated",
-        "reason": "Reviewed: plan mode is a switch apart from access; Codex sends its plan collaboration mode only on attended plan turns, a new message retires a pending proposed plan, and approvals can cover the whole conversation. Anchors moved; two claims updated."
+        "reason": "Reviewed: /clear replaces a conversation's tab in place with a new conversation that starts with its AI, model, access, effort and working folder; the old one stays in history and /clear never reaches the provider. Anchors moved; one claim updated."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9cd3c7a0fc7c72582940ba98f21089915874545998fba6e1f1312ec4a484526b",
+        "inputDigest": "sha256:e4316380e048e17efb0ce6eebb3fa120edf3c9f4c1f9c3b6bccfb8a5b20f2123",
         "decision": "map-updated",
-        "reason": "Reviewed: the approval card can allow edits or commands for the rest of a conversation and a plan approval runs at the chosen access level; who decides and where is unchanged. One App anchor moved; claims unchanged."
+        "reason": "Reviewed: App adds the /clear navigation that puts a same-settings new conversation in the cleared tab's place; who decides and where is unchanged. One App anchor moved; claims unchanged."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:7cfb9ab598a35e6e0a5d585bb97018678e34ced1f62d9912f964db5f4c4c2a78",
+        "inputDigest": "sha256:08cb33f948287440bdc346a47fe480e13cc9ce7a9c5d2a99f04b8436ead4a959",
         "decision": "map-updated",
-        "reason": "Reviewed: the message box now names and colours the conversation's AI on its model pill and edge, says Default model, and shows when models are still loading. Session identity, transcript and history picker are unchanged. Two anchors moved; claims unchanged."
+        "reason": "Reviewed: the message box reserves /clear, which starts over in the same tab and waits for a running turn or is held back where it cannot run. Session identity, transcript and history picker are unchanged. Two anchors moved; claims unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:edb4ca37d296839dedf06098e69ce2a45670d1f4cb8e141a465f0edf4f601f13",
+        "inputDigest": "sha256:39e5a54f81b0835e8a7c2bfeb6be2e0e7ff1247d53374db6928684c457e436b6",
         "decision": "map-updated",
-        "reason": "Reviewed: the composer completion list adds application commands (/plan, /model, /new) next to history; native skills, file mentions and insertion are unchanged. Codex and Claude anchors moved; two claims updated."
+        "reason": "Reviewed: the completion list adds /clear (start over in place) next to /plan, /model and /new, and it never reaches the model; native skills, file mentions and insertion are unchanged. Anchors unchanged; one claim updated."
       }
     }
   ]

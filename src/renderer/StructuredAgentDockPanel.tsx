@@ -6,6 +6,7 @@ import type { IDockviewPanelProps } from 'dockview-react';
 import type { AgentLaunchBootstrap } from '../shared/agent-history';
 import type { ChatComposerDraft, ChatMessageContext } from '../shared/chat-message';
 import type { ChatStateAccess } from './chat-recovery';
+import type { ConversationSettings } from '../shared/conversation-start';
 import { useChatRecovery } from './use-chat-recovery';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { NewSessionDraftPanel } from './NewSessionDraftPanel';
@@ -79,6 +80,12 @@ export function structuredAgentSessionId(historyId: string): string | null {
   return historyId.startsWith(STRUCTURED_AGENT_SESSION_PREFIX)
     ? historyId.slice(STRUCTURED_AGENT_SESSION_PREFIX.length) || null
     : null;
+}
+
+/** `/clear`: the project and settings the conversation that replaces this one starts with. */
+export interface StructuredAgentClearRequest {
+  readonly project: { readonly projectId: string; readonly name: string };
+  readonly settings: ConversationSettings;
 }
 
 let fallbackId = 0;
@@ -268,6 +275,8 @@ export function StructuredAgentDockPanel(
     readonly onOpenHistory?: (projectId?: string) => void;
     /** Opens a new conversation in a project (`/new`). */
     readonly onNewConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
+    /** Replaces this tab with a new conversation that starts with these settings (`/clear`). */
+    readonly onClearConversation?: (request: StructuredAgentClearRequest) => void;
     readonly onOpenSession?: (input: {
       readonly sessionId: string;
       readonly title?: string;
@@ -1372,6 +1381,11 @@ export function StructuredAgentDockPanel(
       onDelegate={!historyOnly && owner !== 'provider-native' && session && agent && profileAccess ? setDelegateMode : undefined}
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
+      }) } : {})}
+      {...(props.onClearConversation && !historyOnly && session && agent ? { onClearConversation: () => props.onClearConversation!({
+        project: { projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId },
+        settings: { providerId: agent.providerId, workspaceId: session.workspaceId, permissionPreset: agent.permissionPreset,
+          ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}) },
       }) } : {})}
     />
     {delegateMode && session && (

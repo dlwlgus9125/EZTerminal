@@ -15,6 +15,8 @@ export type DockSplitDirection = 'right' | 'below';
 
 export type DockPanelPlacementIntent =
   | { readonly kind: 'main-tab' }
+  /** Takes the reference tab's place (same group and position); the reference closes. */
+  | { readonly kind: 'replace'; readonly referencePanelId: string }
   | {
       readonly kind: 'split';
       readonly referencePanelId: string;
@@ -79,6 +81,16 @@ export class DockWindowCoordinator {
     const reference = this.api.getPanel(placement.referencePanelId);
     if (!reference) {
       throw new Error(`Dockview reference panel '${placement.referencePanelId}' does not exist`);
+    }
+    if (placement.kind === 'replace') {
+      // Added before the reference closes, so its group, and with it the place, survives.
+      const panel = this.api.addPanel({
+        ...options,
+        position: { referencePanel: reference, direction: 'within', index: reference.group.panels.indexOf(reference) },
+      });
+      reference.api.close();
+      this.rememberPanel(panel);
+      return panel;
     }
     if (reference.api.location.type === 'grid') {
       const panel = this.api.addPanel({

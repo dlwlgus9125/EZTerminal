@@ -65,7 +65,7 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
   if (error || !ready) return <div className="structured-agent__banner" role="status"><p>{error ?? (i18n.language.startsWith('ko') ? '대화를 여는 중…' : 'Opening conversation…')}</p>{error && <Button onClick={() => setRevision(value => value + 1)}>{i18n.language.startsWith('ko') ? '다시 시도' : 'Retry'}</Button>}</div>;
   if (!isDraft && entry?.action === 'open' && entry.linkedSessionId) return <>{renderLive(entry.linkedSessionId, entry.conversationId)}</>;
   return <ConversationStartPanel key={id} identity={entry?.conversationId ?? id} entry={isDraft ? undefined : entry}
-    projectId={props.params?.projectId} workspaceId={props.params?.workspaceId} snapshot={snapshot} access={access} storage={storage} capabilityClient={capabilityClient}
+    projectId={props.params?.projectId} workspaceId={props.params?.workspaceId} {...(isDraft && props.params?.conversationSeed ? { seed: props.params.conversationSeed } : {})} snapshot={snapshot} access={access} storage={storage} capabilityClient={capabilityClient}
     onOpenHistory={() => onOpenHistory?.(entry?.projectId ?? props.params?.projectId)} onOpenSettings={onOpenSettings} onContinueCli={onContinueCli} onReviewChange={onReviewChange}
     onStarted={(sessionId, resolved) => {
       props.api.updateParameters({ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), ...(resolved ? { conversationId: resolved.conversationId } : {}) });

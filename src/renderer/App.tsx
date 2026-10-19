@@ -70,6 +70,7 @@ import {
   structuredAgentSessionHistoryId,
   structuredAgentSessionId,
   StructuredAgentDockPanel,
+  type StructuredAgentClearRequest,
 } from './StructuredAgentDockPanel';
 import { ConversationHistoryDialog } from './ConversationHistoryPicker';
 import { ConversationDockPanel } from './ConversationDockPanel';
@@ -247,6 +248,8 @@ interface StructuredAgentNavigationContextValue {
     readonly providerLabel?: string;
   }) => void;
   readonly newConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
+  /** `/clear`: the tab becomes a new conversation in the same place. */
+  readonly clearConversation?: (panelId: string, request: StructuredAgentClearRequest) => void;
 }
 const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
 interface StructuredAgentCreateRecoveryContextValue {
@@ -497,6 +500,9 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const navigation = useContext(StructuredAgentNavigationContext);
   const createRecovery = useContext(StructuredAgentCreateRecoveryContext);
   const reviewNavigation = useContext(ProjectReviewNavigationContext);
+  const clearConversation = navigation?.clearConversation
+    ? (request: StructuredAgentClearRequest) => navigation.clearConversation!(props.api.id, request)
+    : undefined;
   if (window.ezterminal.resolveConversation && !createRecovery?.registry.get(props.api.id)) return <ConversationDockPanel props={props}
     onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings} onContinueCli={navigation?.continueCli}
     onReviewChange={reviewNavigation ? async (entry, turnId, changedPath) => {
@@ -518,7 +524,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
     renderLive={(sessionId, conversationId) => <StructuredAgentDockPanel key={sessionId} {...props}
       params={{ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), conversationId }}
       onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings}
-      onNewConversation={navigation?.newConversation} />} />;
+      onNewConversation={navigation?.newConversation} onClearConversation={clearConversation} />} />;
   return isStructuredAgentDockHistoryId(historyId)
     ? (
         <StructuredAgentDockPanel
@@ -528,6 +534,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
           onOpenSession={navigation?.openSession}
           onOpenHistory={navigation?.openHistory}
           onNewConversation={navigation?.newConversation}
+          onClearConversation={clearConversation}
           onOpenTerminal={navigation ? async (workspaceId, directory) => {
             const result = await navigation.openTerminal(workspaceId, directory);
             if (result.ok) props.api.close();
@@ -1721,9 +1728,11 @@ export function App(): JSX.Element {
 
   const structuredAgentDraftSequence = useRef(0);
 
-  const openStructuredAgentDraft = useCallback((
+  const addStructuredAgentDraft = useCallback((
     project?: Pick<AgentProjectSummary, 'projectId' | 'name'>,
     target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
+    /** `/clear`: takes this tab's place and starts with these settings. */
+    replace?: { readonly panelId: string; readonly settings: StructuredAgentClearRequest['settings'] },
   ): void => {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     structuredAgentDraftSequence.current += 1;
@@ -1742,10 +1751,15 @@ export function App(): JSX.Element {
         ...(target?.workspaceId
           ? { ...(target.rootId ? { rootId: target.rootId } : {}), workspaceId: target.workspaceId }
           : {}),
+        ...(replace ? { conversationSeed: replace.settings } : {}),
       },
-    }, { kind: 'main-tab' });
+    }, replace ? { kind: 'replace', referencePanelId: replace.panelId } : { kind: 'main-tab' });
     revealOpenedSession();
   }, [i18n, sessionMirroringCoordinator, revealOpenedSession]);
+  const openStructuredAgentDraft = useCallback((
+    project?: Pick<AgentProjectSummary, 'projectId' | 'name'>,
+    target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
+  ): void => addStructuredAgentDraft(project, target), [addStructuredAgentDraft]);
 
   const openStructuredAgentSession = useCallback((input: {
     readonly sessionId: string;
@@ -1795,6 +1809,7 @@ export function App(): JSX.Element {
     },
     openSession: openStructuredAgentSession,
     newConversation: (project) => openStructuredAgentDraft(project),
+    clearConversation: (panelId, request) => addStructuredAgentDraft(request.project, undefined, { panelId, settings: request.settings }),
     openHistory: (projectId) => setConversationHistory({ projectId }),
     openSettings: () => {
       setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
@@ -1822,7 +1837,7 @@ export function App(): JSX.Element {
       const opened = workbenchCoordinator.openTerminal({ cwd: bootstrap.cwd, title: bootstrap.name, agentBootstrap: bootstrap });
       if (!opened) throw new Error(t('agentHub.projects.launchFailed'));
     },
-  }), [openStructuredAgentSession, workbenchCoordinator, t]);
+  }), [openStructuredAgentSession, addStructuredAgentDraft, workbenchCoordinator, t]);
 
   const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,

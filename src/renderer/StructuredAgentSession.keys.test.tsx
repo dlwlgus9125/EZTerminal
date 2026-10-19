@@ -184,6 +184,32 @@ describe('conversation commands', () => {
     expect(onNewConversation).toHaveBeenCalledOnce();
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it('runs /clear here, and never sends it to the model where it cannot run', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onClearConversation = vi.fn();
+    const submit = (): void => {
+      type('/clear');
+      key(input(), { key: 'Escape' });
+      key(input(), { key: 'Enter' });
+    };
+    render(panel({ onSend, onClearConversation }));
+    submit();
+    await flush();
+    expect(onClearConversation).toHaveBeenCalledOnce();
+    expect(input().value).toBe('');
+
+    // Mid-turn it waits for the turn; a surface without it (Android, a draft) holds it back.
+    render(panel({ onSend, onClearConversation, state: 'working', onInterruptAndSend: onSend }));
+    submit();
+    await flush();
+    render(panel({ onSend }));
+    submit();
+    await flush();
+    expect(onClearConversation).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input().value).toBe('/clear');
+  });
 });
 
 describe('conversation menu', () => {

@@ -157,6 +157,9 @@ interface StructuredAgentCopy {
   readonly planCommandOff: string;
   readonly modelCommand: string;
   readonly newCommand: string;
+  readonly clearCommand: string;
+  readonly clearAfterTurn: string;
+  readonly clearUnavailable: string;
   readonly implementPlanFailed: string;
   readonly planOn: string;
   readonly planOff: string;
@@ -282,6 +285,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     planCommandOff: 'Turn plan mode off (Shift+Tab)',
     modelCommand: 'Choose the model',
     newCommand: 'Start a new conversation in this project',
+    clearCommand: 'Start over in this tab with the same settings',
+    clearAfterTurn: 'You can start over after this turn. Esc stops it.',
+    clearUnavailable: 'Starting over is not available here.',
     implementPlanFailed: 'Plan mode is off, but the request to implement the plan was not sent. It is in the message box; send it again.',
     planOn: 'Plan mode on',
     planOff: 'Plan mode off',
@@ -379,6 +385,9 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     planCommandOff: '계획 모드 끄기 (Shift+Tab)',
     modelCommand: '모델 고르기',
     newCommand: '이 프로젝트에서 새 대화 시작',
+    clearCommand: '이 탭에서 같은 설정으로 새로 시작',
+    clearAfterTurn: '이 작업이 끝난 뒤 새로 시작할 수 있습니다. Esc로 멈춥니다.',
+    clearUnavailable: '이 화면에서는 새로 시작할 수 없습니다.',
     implementPlanFailed: '계획 모드는 꺼졌지만 구현 요청을 보내지 못했습니다. 입력창에 넣어 두었으니 다시 보내세요.',
     planOn: '계획 모드 켜짐',
     planOff: '계획 모드 꺼짐',
@@ -1695,6 +1704,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly parentApprovalPending?: boolean;
   /** Opens a new conversation (`/new`). */
   readonly onNewConversation?: () => void;
+  /** Replaces this conversation in place with a new one with the same settings (`/clear`). */
+  readonly onClearConversation?: () => void;
   /** Hand this conversation's work, or a review of it, to a new child agent. */
   readonly onDelegate?: (mode: 'handoff' | 'review') => void;
   readonly heartbeatControl?: ReactNode;
@@ -1809,6 +1820,7 @@ export function StructuredAgentSessionPanel({
   parentApprovalPending = false,
   onDelegate,
   onNewConversation,
+  onClearConversation,
   heartbeatControl,
   heartbeatActive = false,
   recoveryControl,
@@ -2031,6 +2043,10 @@ export function StructuredAgentSessionPanel({
       run: () => requestAnimationFrame(() => panelRef.current?.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-model"]')?.click()),
     }] : []),
     ...(onNewConversation ? [{ name: 'new', description: copy.newCommand, run: onNewConversation }] : []),
+    // Always reserved: sent on, Claude would move to a session this conversation does not follow.
+    { name: 'clear', description: copy.clearCommand, run: () => onClearConversation?.(),
+      ...(!onClearConversation ? { disabledReason: copy.clearUnavailable }
+        : settingsLocked || turnCurrent ? { disabledReason: copy.clearAfterTurn } : {}) },
   ];
   /** Shift+Tab from the message box: the decision waiting above takes focus (its main action, or the folded strip). */
   const focusDecision = (): boolean => {

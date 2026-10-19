@@ -42,6 +42,7 @@ function createHarness() {
       getWindow: () => ownerWindow,
       moveTo: vi.fn(),
       setActive: vi.fn(),
+      close: vi.fn(),
     },
   } as unknown as IDockviewPanel);
   const mainPanel = makePanel('tab-main', mainGroup, window);
@@ -106,6 +107,19 @@ describe('DockWindowCoordinator placement', () => {
       group: h.popoutPanel.group,
       position: 'bottom',
     });
+  });
+
+  it('replaces a tab in its own place, in whichever window it is', () => {
+    const h = createHarness();
+    const coordinator = new DockWindowCoordinator(h.api);
+    (h.popoutPanel.group.panels as IDockviewPanel[]).unshift({ id: 'tab-before' } as IDockviewPanel);
+
+    coordinator.addPanel({ id: 'tab-replacement', component: 'agent-session' }, { kind: 'replace', referencePanelId: h.popoutPanel.id });
+
+    expect(h.addPanel).toHaveBeenCalledWith(expect.objectContaining({
+      position: { referencePanel: h.popoutPanel, direction: 'within', index: 1 },
+    }));
+    expect(h.popoutPanel.api.close).toHaveBeenCalledOnce();
   });
 
   it('moves a tab to a new native window through the same placement owner', async () => {

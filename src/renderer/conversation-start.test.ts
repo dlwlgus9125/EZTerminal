@@ -111,4 +111,10 @@ describe('start form settings', () => {
     expect(initialConversationSettings({ recent: { providerId: 'codex', model: 'gpt-6-astra', permissionPreset: 'full-access' }, fallbackWorkspaceId: 'w' }))
       .toEqual({ providerId: 'codex', workspaceId: 'w', model: 'gpt-6-astra', permissionPreset: 'full-access' });
   });
+
+  it('starts a cleared conversation with exactly what it ran with, effort included', () => {
+    const cleared = { providerId: 'claude', workspaceId: 'cleared', model: 'claude-opus-5-5', permissionPreset: 'plan' as const, reasoningEffort: 'high' };
+    expect(initialConversationSettings({ seed: cleared, recent: { providerId: 'codex', permissionPreset: 'standard' }, fallbackWorkspaceId: 'w' }))
+      .toEqual(cleared);
+  });
 });

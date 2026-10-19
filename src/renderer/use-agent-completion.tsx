@@ -117,7 +117,7 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
       onCompositionEnd: () => { compositionRef.current = false; setComposing(false); } },
     // Reserved app command also works after Escape or explicit Send; it is never a model prompt.
     runAppCommand: (): boolean => {
-      // `/plan`, `/model` and `/new` stand alone; anything after them would be a prompt.
+      // `/plan`, `/model`, `/new` and `/clear` stand alone; anything after them would be a prompt.
       const typed = /^\s*\/([a-z]+)\s*$/u.exec(value.text)?.[1];
       const command = typed ? appCommands.find((entry) => entry.name === typed) : undefined;
       if (command) {

@@ -16,16 +16,19 @@ export interface ConversationStartAccess {
 /**
  * What the start form begins with. A previous conversation continues with what it last ran with —
  * the host's resume preparation (`source`) — never with another conversation's settings; a new
- * conversation starts from the most recent one in the project.
+ * conversation starts from the most recent one in the project, and one `/clear` opened starts with
+ * exactly what the cleared conversation ran with (`seed`).
  */
 export function initialConversationSettings(input: {
   readonly entry?: { readonly providerId: string; readonly workspaceId?: string };
+  readonly seed?: ConversationSettings;
   readonly recent?: { readonly providerId: string; readonly model?: string; readonly permissionPreset: PermissionPreset };
   readonly source?: { readonly model?: string; readonly permissionPreset: PermissionPreset } | null;
   readonly fallbackProviderId?: string;
   readonly fallbackWorkspaceId?: string;
 }): ConversationSettings {
-  const { entry, recent, source } = input;
+  const { entry, seed, recent, source } = input;
+  if (!entry && seed) return seed;
   if (entry) {
     return {
       providerId: entry.providerId,

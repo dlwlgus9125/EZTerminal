@@ -140,7 +140,7 @@
           "startLine": 36,
           "endLine": 69,
           "lineDigest": "sha256:5fec3fac777f37d182fe578b790513e983e0a2ca85dab856722be0883eea0776",
-          "claim": "Suggestions distinguish application actions (history, plan, model, new conversation) from native skills; insertion replaces only the current token and preserves other draft fields."
+          "claim": "Suggestions distinguish application actions (history, plan, model, new conversation, start over in place) from native skills; insertion replaces only the current token and preserves other draft fields."
         }
       ]
     },

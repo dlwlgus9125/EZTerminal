@@ -27,6 +27,8 @@ export interface ConversationStartPanelProps {
   readonly entry?: ConversationEntry;
   readonly projectId?: string;
   readonly workspaceId?: string;
+  /** A new conversation `/clear` opened starts with what the cleared one ran with. */
+  readonly seed?: ConversationSettings;
   readonly snapshot: DaemonSnapshot | null;
   readonly access: ConversationStartAccess;
   readonly storage: ChatStateAccess;
@@ -40,7 +42,7 @@ export interface ConversationStartPanelProps {
   readonly onStarted: (sessionId: string, entry?: ConversationEntry) => Promise<void> | void;
 }
 
-export function ConversationStartPanel({ identity, viewStateScope = 'desktop', entry: initialEntry, projectId, workspaceId, snapshot, access, storage,
+export function ConversationStartPanel({ identity, viewStateScope = 'desktop', entry: initialEntry, projectId, workspaceId, seed, snapshot, access, storage,
   capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted }: ConversationStartPanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
@@ -94,6 +96,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   }, [access, originalId, disconnected]);
   const initial: ConversationSettings = initialConversationSettings({
     ...(entry ? { entry: { providerId: entry.providerId, ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}) } } : {}),
+    ...(seed ? { seed } : {}),
     ...(recent ? { recent } : {}), source,
     fallbackProviderId: providers.find(item => !item.disabled)?.id ?? '',
     fallbackWorkspaceId: workspaceId ?? workspaces[0]?.id ?? '',

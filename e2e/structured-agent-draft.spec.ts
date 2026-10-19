@@ -269,6 +269,26 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     ]));
     await window.screenshot({ path: path.join(evidenceDirectory, 'after-first-send.png') });
     await testInfo.attach('after-first-send', { path: path.join(evidenceDirectory, 'after-first-send.png'), contentType: 'image/png' });
+
+    // `/clear` starts over in this same tab with the same settings, and never reaches the model.
+    const tabs = window.locator('.ez-dock .dv-tab');
+    const tabCount = await tabs.count();
+    const providerInput = readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8');
+    await composer.fill('/clear');
+    await composer.press('Escape');
+    await composer.press('Enter');
+    const cleared = window.getByTestId('conversation-start');
+    await expect(cleared).toBeVisible();
+    await expect(tabs).toHaveCount(tabCount);
+    await expect(cleared.getByRole('combobox', { name: 'Conversation AI' })).toHaveValue('codex');
+    await expect(cleared.getByRole('combobox', { name: 'Conversation workspace' })).toHaveValue(restoredSnapshot!.workspaces[0].id);
+    await expect(cleared.getByTestId('structured-agent-session')).not.toHaveAttribute('data-session-id', sessionId!);
+    const afterClear = await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot());
+    expect(afterClear?.sessions.find((candidate) => candidate.id === sessionId)?.state).not.toBe('archived');
+    expect(afterClear?.turns.filter((turn) => turn.sessionId === sessionId)).toHaveLength(1);
+    expect(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8')).toBe(providerInput);
+    await window.screenshot({ path: path.join(evidenceDirectory, 'after-clear.png') });
+    await testInfo.attach('after-clear', { path: path.join(evidenceDirectory, 'after-clear.png'), contentType: 'image/png' });
   } catch (error) {
     const window = await app.firstWindow();
     await window.screenshot({ path: path.join(evidenceDirectory, 'first-send-error.png') });
