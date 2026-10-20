@@ -94,6 +94,9 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       .catch(() => { if (alive) setSource(null); });
     return () => { alive = false; };
   }, [access, originalId, disconnected]);
+  // Until an AI is chosen the settings name no provider and cannot be stored; plan and access
+  // changes made meanwhile stay here and are stored with the AI once one is picked.
+  const [unsaved, setUnsaved] = useState<Partial<ConversationSettings>>({});
   const initial: ConversationSettings = initialConversationSettings({
     ...(entry ? { entry: { providerId: entry.providerId, ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}) } } : {}),
     ...(seed ? { seed } : {}),
@@ -101,7 +104,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
     fallbackProviderId: providers.find(item => !item.disabled)?.id ?? '',
     fallbackWorkspaceId: workspaceId ?? workspaces[0]?.id ?? '',
   });
-  const settings = view.settings ?? initial;
+  const settings = view.settings ?? { ...initial, ...unsaved };
   const selectedProvider = providers.find(item => item.id === settings.providerId);
   const selectedWorkspace = workspaces.find(item => item.id === settings.workspaceId);
   const activeProfile = profiles.find(profile => profile.providerId === settings.providerId && profile.model === settings.model
@@ -263,7 +266,10 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
         : entry && source === undefined ? text('이 대화의 이전 설정을 확인하는 중…', 'Checking this conversation’s settings…')
         : text('AI와 작업 위치를 확인하세요', 'Check AI and working folder') : undefined}
       onSend={send} supportsMessageContext capabilityClient={capabilityClient} capabilitySessionId={null} variant={variant} onOpenHistory={onOpenHistory}
-      onChangeSettings={async next => recovery.saveComposition({ settings: { ...settings, ...next } })}
+      onChangeSettings={async next => {
+        if (!settings.providerId) { setUnsaved(current => ({ ...current, ...next })); return { ok: true }; }
+        return recovery.saveComposition({ settings: { ...settings, ...next } });
+      }}
       effortSupported={snapshot?.capabilities?.includes('agent-effort-v1') === true} {...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {})}
       workflowContext={settingsControls} recoveryControl={<ChatRecoveryNotice controller={recovery} view={view} />}
       hasEarlier={!!page?.nextCursor && !disconnected} loadingEarlier={earlier} onLoadEarlier={() => void loadEarlier()}
