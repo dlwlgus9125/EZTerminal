@@ -354,6 +354,30 @@ test.describe("Planning and workflow project screens", () => {
   }
 });
 
+test.describe("Conversation Results tab", () => {
+  // Real Claude/Codex goldens; each story pins its own locale.
+  for (const visualCase of [
+    { name: "Claude changes with numbered hunks (Matrix)", storyId: "agents-results-tab--changes-claude", locale: "ko", theme: "matrix", scale: 100, viewport: { width: 560, height: 820 }, screenshot: "results-560x820-changes-claude-matrix-ko.png" },
+    { name: "Codex changes with a created file (Light)", storyId: "agents-results-tab--changes-codex", locale: "en", theme: "light", scale: 100, viewport: { width: 560, height: 820 }, screenshot: "results-560x820-changes-codex-light-en.png" },
+    { name: "plan, sub-agents and files summary (Dark)", storyId: "agents-results-tab--summary-plan", locale: "ko", theme: "dark", scale: 100, viewport: { width: 560, height: 820 }, screenshot: "results-560x820-summary-plan-dark-ko.png" },
+    { name: "narrow pane at 150% (Matrix)", storyId: "agents-results-tab--narrow-pane", locale: "ko", theme: "matrix", scale: 150, viewport: { width: 380, height: 760 }, screenshot: "results-380x760-narrow-matrix-ko-150.png" },
+  ] as const) {
+    test(visualCase.name, async ({ page }) => {
+      await page.setViewportSize(visualCase.viewport);
+      await openStory(page, visualCase.storyId, {
+        theme: visualCase.theme,
+        locale: visualCase.locale,
+        density: "adaptive",
+        motion: "reduced",
+        scale: visualCase.scale,
+      });
+      await expect(page.getByTestId("conversation-results")).toBeVisible();
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(visualCase.screenshot, { animations: "disabled" });
+    });
+  }
+});
+
 test.describe("Project Map creation visual contracts", () => {
   for (const visualCase of [
     {

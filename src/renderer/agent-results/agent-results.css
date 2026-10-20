@@ -229,6 +229,13 @@
   color: var(--ui-danger);
 }
 
+/* On the selected row's tint the status colours fall below 4.5:1 in Light; the +/− signs carry the meaning. */
+.results-file[aria-pressed='true'] .results-added,
+.results-file[aria-pressed='true'] .results-removed,
+.results-file[aria-pressed='true'] .results-file__kind {
+  color: var(--ui-text-primary);
+}
+
 /* Patch */
 .results-diff,
 .results-viewer {
