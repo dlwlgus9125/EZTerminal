@@ -197,7 +197,10 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
             )}
             {hasChanges && onViewChanges && <Button variant="ghost" size="sm" onClick={() => onViewChanges(selected.path)}>{copy.viewChanges}</Button>}
             <IconButton size="sm" icon={RefreshCw} aria-label={copy.refresh} onClick={() => setReload((value) => value + 1)} />
-            {absolute && services.openFileInApp && <IconButton size="sm" icon={ExternalLink} aria-label={copy.openInApp} onClick={() => void services.openFileInApp!(absolute)} />}
+            {absolute && services.openFileInApp && (kind === 'html'
+              // Interactive pages run in the person's browser, by their own click (the preview is static).
+              ? <Button variant="ghost" size="sm" leadingIcon={<ExternalLink />} onClick={() => void services.openFileInApp!(absolute)} data-testid="results-open-browser">{copy.openInBrowser}</Button>
+              : <IconButton size="sm" icon={ExternalLink} aria-label={copy.openInApp} onClick={() => void services.openFileInApp!(absolute)} />)}
             {onOpenProjectFiles && <IconButton size="sm" icon={FolderOpen} aria-label={copy.openProjectFiles} onClick={onOpenProjectFiles} />}
           </span>
         </header>

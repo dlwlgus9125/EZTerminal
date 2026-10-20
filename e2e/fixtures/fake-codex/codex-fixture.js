@@ -146,12 +146,13 @@ if (args.includes('--version')) {
               if (cwd) {
                 const html = [
                   '<!doctype html><html><head><title>Report</title><link rel="stylesheet" href="report.css"></head><body>',
-                  '<h1 id="title">Fixture report</h1><p id="script">script did not run</p><p id="bridge">bridge unknown</p><p id="network">network pending</p>',
+                  '<h1 id="title">Fixture report</h1><p id="script">script did not run</p><p id="bridge">bridge unknown</p><p id="network">network pending</p><p id="sibling">sibling pending</p>',
                   '<a id="out" href="https://example.com/">Outbound link</a>',
                   '<script>',
                   "document.getElementById('script').textContent = 'script ran';",
                   "try { document.getElementById('bridge').textContent = typeof parent.ezterminal === 'undefined' ? 'no bridge' : 'BRIDGE VISIBLE'; } catch (error) { document.getElementById('bridge').textContent = 'no bridge'; }",
                   "fetch('https://example.com/').then(function () { document.getElementById('network').textContent = 'NETWORK ALLOWED'; }, function () { document.getElementById('network').textContent = 'network blocked'; });",
+                  "fetch('report.css').then(function (response) { return response.text(); }).then(function () { document.getElementById('sibling').textContent = 'SIBLING READ'; }, function () { document.getElementById('sibling').textContent = 'sibling read blocked'; });",
                   '</script></body></html>',
                 ].join('\n');
                 // A complete PDF (cross-reference table with real byte offsets) so the viewer draws a page.

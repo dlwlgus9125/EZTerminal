@@ -21,12 +21,12 @@ describe('ArtifactFrame', () => {
     });
   };
 
-  it('shows a granted HTML page sandboxed to scripts only, and gives the grant back when closed', async () => {
+  it('shows a granted HTML page fully sandboxed (no scripts), and gives the grant back when closed', async () => {
     const access = { grant: vi.fn(async () => ({ ok: true as const, token: 't1', url: 'ezartifact://t1/report.html' })), revoke: vi.fn(async () => undefined) };
     await render(access);
     const frame = container.querySelector('iframe')!;
     expect(frame.getAttribute('src')).toBe('ezartifact://t1/report.html');
-    expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(frame.getAttribute('sandbox')).toBe('');
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(access.grant).toHaveBeenCalledWith('C:\\work\\report.html', 'html');
     act(() => root.unmount());

@@ -23,7 +23,9 @@ beforeEach(() => {
   mkdirSync(outside);
   writeFileSync(path.join(site, 'report.html'), '<!doctype html><script>document.body.textContent="hi"</script>');
   writeFileSync(path.join(site, 'assets', 'style.css'), 'body{}');
-  writeFileSync(path.join(site, '..notes.txt'), 'dots in the name are fine');
+  writeFileSync(path.join(site, 'notes.v2.txt'), 'dots inside a name are fine');
+  mkdirSync(path.join(site, '.git'));
+  writeFileSync(path.join(site, '.git', 'config.txt'), 'hidden');
   writeFileSync(path.join(site, 'secret.env'), 'TOKEN=1');
   writeFileSync(path.join(outside, 'secret.txt'), 'outside');
   writeFileSync(path.join(root, 'paper.pdf'), '%PDF-1.4\n');
@@ -46,7 +48,9 @@ describe('artifact preview grants', () => {
     expect(grant.token).toMatch(/^[0-9a-f]{32}$/u);
     await expect(registry.resolve(grant.url)).resolves.toMatchObject({ ok: true, mime: 'text/html; charset=utf-8' });
     await expect(registry.resolve(url(grant.token, 'assets/style.css'))).resolves.toMatchObject({ ok: true, mime: 'text/css; charset=utf-8' });
-    await expect(registry.resolve(url(grant.token, '..notes.txt'))).resolves.toMatchObject({ ok: true });
+    await expect(registry.resolve(url(grant.token, 'notes.v2.txt'))).resolves.toMatchObject({ ok: true });
+    // Hidden folders and files are never served.
+    expect((await registry.resolve(url(grant.token, '.git/config.txt'))).ok).toBe(false);
   });
 
   it('refuses anything outside the granted folder, however it is spelled', async () => {
@@ -56,6 +60,10 @@ describe('artifact preview grants', () => {
     for (const rest of ['../outside/secret.txt', '%2e%2e/outside/secret.txt', '..%2foutside%2fsecret.txt', '..%5coutside%5csecret.txt',
       'assets/%2e%2e/%2e%2e/outside/secret.txt', 'C:%5cWindows%5cwin.ini', '%00', 'assets', '']) {
       expect((await registry.resolve(url(grant.token, rest))).ok, rest).toBe(false);
+    }
+    // Windows reserved device names never resolve to a device.
+    for (const device of ['con', 'nul', 'aux', 'prn', 'com1', 'lpt1', 'con.html', 'assets/nul.css']) {
+      expect((await registry.resolve(url(grant.token, device))).ok, device).toBe(false);
     }
     // A file type outside the allow-list is never served.
     expect((await registry.resolve(url(grant.token, 'secret.env'))).ok).toBe(false);
@@ -110,12 +118,13 @@ describe('artifact preview grants', () => {
 });
 
 describe('artifact preview responses', () => {
-  it('sandboxes pages and assets to their own grant with no network; PDFs keep the viewer', () => {
+  it('sandboxes pages to static content from their own grant: no scripts, no network; PDFs keep the viewer', () => {
     const html = artifactResponseHeaders('a'.repeat(32), 'html', 'text/html; charset=utf-8');
-    expect(html['Content-Security-Policy']).toContain('sandbox allow-scripts;');
+    expect(html['Content-Security-Policy']).toMatch(/^sandbox;/u);
+    expect(html['Content-Security-Policy']).toContain("script-src 'none'");
     expect(html['Content-Security-Policy']).toContain("connect-src 'none'");
-    expect(html['Content-Security-Policy']).toContain(`script-src 'unsafe-inline' ezartifact://${'a'.repeat(32)}`);
-    expect(html['Content-Security-Policy']).not.toMatch(/allow-same-origin|allow-popups|allow-forms|allow-top-navigation/u);
+    expect(html['Content-Security-Policy']).toContain(`img-src ezartifact://${'a'.repeat(32)} data: blob:`);
+    expect(html['Content-Security-Policy']).not.toMatch(/allow-scripts|allow-same-origin|allow-popups|allow-forms|allow-top-navigation|unsafe-inline' ezartifact[^;]*script/u);
     expect(html).toMatchObject({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' });
     const pdf = artifactResponseHeaders('a'.repeat(32), 'pdf', 'application/pdf');
     expect(pdf['Content-Security-Policy']).toBeUndefined();
@@ -128,7 +137,7 @@ describe('artifact preview responses', () => {
     if (!grant.ok) throw new Error(grant.error);
     const ok = await handleArtifactRequest(registry, new Request(grant.url));
     expect(ok.status).toBe(200);
-    expect(ok.headers.get('content-security-policy')).toContain('sandbox allow-scripts');
+    expect(ok.headers.get('content-security-policy')).toContain("script-src 'none'");
     expect(await ok.text()).toContain('document.body');
     expect((await handleArtifactRequest(registry, new Request(grant.url, { method: 'HEAD' }))).status).toBe(200);
     expect((await handleArtifactRequest(registry, new Request(grant.url, { method: 'POST', body: 'x' }))).status).toBe(405);

@@ -191,7 +191,7 @@ test('the Results tab comes back with its conversation after a restart', async (
   }
 });
 
-test('an AI-made HTML page runs isolated (no app bridge, no network, no navigating away) and a PDF shows in the viewer', async () => {
+test('an AI-made HTML page shows as an isolated static preview (no scripts, no navigating away) and a PDF shows in the viewer', async () => {
   test.setTimeout(180_000);
   const profile = createRegisteredE2eTempDir('ezterm-results-artifacts-profile-');
   const projectRoot = createRegisteredE2eTempDir('ezterm-results-artifacts-project-');
@@ -209,13 +209,16 @@ test('an AI-made HTML page runs isolated (no app bridge, no network, no navigati
 
     const frameElement = results.getByTestId('results-artifact-frame');
     await expect(frameElement).toHaveAttribute('src', /^ezartifact:\/\/[0-9a-f]{32}\/report\.html$/u);
-    await expect(frameElement).toHaveAttribute('sandbox', 'allow-scripts');
+    await expect(frameElement).toHaveAttribute('sandbox', '');
     const frame = page.frameLocator('[data-testid="results-artifact-frame"]');
-    await expect(frame.locator('#script')).toHaveText('script ran');
-    await expect(frame.locator('#bridge')).toHaveText('no bridge');
-    await expect(frame.locator('#network')).toHaveText('network blocked', { timeout: 10_000 });
+    // Static preview: the page's own script never runs, so nothing in it can reach the network.
+    await expect(frame.locator('#title')).toHaveText('Fixture report');
+    await page.waitForTimeout(1_000);
+    await expect(frame.locator('#script')).toHaveText('script did not run');
+    await expect(frame.locator('#network')).toHaveText('network pending');
     // Its own stylesheet from the same folder loaded.
     await expect(frame.locator('#title')).toHaveCSS('color', 'rgb(200, 0, 0)');
+    await expect(results.getByTestId('results-open-browser')).toBeVisible();
     await page.screenshot({ path: path.join(evidence, 'html-preview.png') });
 
     // A link out of the preview never reaches the web; the preview offers the way back.
@@ -223,7 +226,7 @@ test('an AI-made HTML page runs isolated (no app bridge, no network, no navigati
     await expect(results.getByTestId('results-artifact-back')).toBeVisible({ timeout: 10_000 });
     expect(page.frames().map((candidate) => candidate.url()).some((url) => url.startsWith('https://example.com'))).toBe(false);
     await results.getByTestId('results-artifact-back').click();
-    await expect(page.frameLocator('[data-testid="results-artifact-frame"]').locator('#script')).toHaveText('script ran');
+    await expect(page.frameLocator('[data-testid="results-artifact-frame"]').locator('#title')).toHaveText('Fixture report');
 
     // Source view shows the page text instead.
     await results.getByRole('button', { name: 'Source' }).click();

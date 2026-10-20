@@ -16,8 +16,9 @@ export interface ArtifactPreviewAccess {
 
 /**
  * One AI-made HTML page or PDF, shown isolated: main serves it from a one-off
- * `ezartifact:` URL whose own policy sandboxes it (scripts only, no app, no
- * network, no navigation). The grant is returned as soon as the view closes.
+ * `ezartifact:` URL whose own policy sandboxes it (static: no scripts, no app,
+ * no network, no navigation out). Interactive pages open in the person's
+ * browser by their own click. The grant is returned as soon as the view closes.
  */
 export function ArtifactFrame({ path, kind, title, access, reload = 0 }: {
   readonly path: string;
@@ -67,7 +68,7 @@ export function ArtifactFrame({ path, kind, title, access, reload = 0 }: {
         </div>
       )}
       {kind === 'html'
-        ? <iframe key={frameKey} className="results-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={state.url} title={title} onLoad={onLoad} data-testid="results-artifact-frame" />
+        ? <iframe key={frameKey} className="results-frame" sandbox="" referrerPolicy="no-referrer" src={state.url} title={title} onLoad={onLoad} data-testid="results-artifact-frame" />
         : <iframe className="results-frame results-frame--pdf" referrerPolicy="no-referrer" src={state.url} title={title} data-testid="results-artifact-frame" />}
     </div>
   );

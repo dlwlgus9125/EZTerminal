@@ -9,12 +9,13 @@ import type { ArtifactGrantResult, ArtifactPreviewKind } from '../shared/artifac
  *
  * The renderer asks for a preview of one file; main answers with an
  * `ezartifact://<token>/<name>` URL. The token is random, maps to exactly one
- * folder (HTML: the page's folder, so its own css/js/images load) or one file
+ * folder (HTML: the page's folder, so its own css/images load) or one file
  * (PDF), expires when unused, and is revoked when the preview closes. Every
- * response is sandboxed by its own CSP: scripts run in an opaque origin with no
- * access to the app, no network, no forms, popups, navigation or downloads.
- * Paths never cross back to the renderer, and nothing outside the granted
- * folder can be read: `..`, encoded separators, network shares, devices and
+ * page is sandboxed by its own CSP: no scripts, an opaque origin, nothing loads
+ * but files from its own grant, no forms, popups, navigation or downloads.
+ * Interactive pages open in the person's browser by their own click. Paths
+ * never cross back to the renderer, and nothing outside the granted folder can
+ * be read: `..`, hidden names, encoded separators, network shares, devices and
  * links that resolve elsewhere are refused.
  */
 
@@ -147,7 +148,8 @@ export class ArtifactPreviewRegistry {
     for (const segment of segments) {
       let value: string;
       try { value = decodeURIComponent(segment); } catch { return { ok: false, status: 400 }; }
-      if (value === '.' || value === '..' || value.includes('/') || value.includes('\\') || value.includes('\0') || value.includes(':')) {
+      // Hidden names (`.git`, `.env`, `.ssh`, and `.`/`..`) are never served.
+      if (value.startsWith('.') || value.includes('/') || value.includes('\\') || value.includes('\0') || value.includes(':')) {
         return { ok: false, status: 400 };
       }
       decoded.push(value);
@@ -197,10 +199,12 @@ export function artifactResponseHeaders(token: string, kind: ArtifactPreviewKind
     'X-DNS-Prefetch-Control': 'off',
   };
   if (kind === 'html') {
+    // No scripts: an iframe shares the app's session, and nothing in Chromium keeps a script's
+    // WebRTC traffic in (CSP `webrtc` is unshipped). Static HTML, CSS and images only.
     headers['Content-Security-Policy'] = [
-      'sandbox allow-scripts',
+      'sandbox',
       "default-src 'none'",
-      `script-src 'unsafe-inline' ${self}`,
+      "script-src 'none'",
       `style-src 'unsafe-inline' ${self}`,
       `img-src ${self} data: blob:`,
       `font-src ${self} data:`,
