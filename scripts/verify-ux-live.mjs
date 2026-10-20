@@ -34,6 +34,8 @@ const workspace = path.join(ROOT, 'artifacts', 'ux-overhaul', `live-workspace-${
 const outsideFile = path.join(ROOT, 'artifacts', 'ux-overhaul', `outside-ux-live-${stage}.txt`);
 const SESSION_PREFIX = 'structured-session-';
 
+const RESULTS_PROMPT = 'src/app.ts에서 greet 함수 이름을 greetUser로 바꾸고 호출부도 고쳐 줘. 그다음 report.html 파일을 만들어 <h1>Greeting report</h1> 제목과 바뀐 내용을 설명하는 짧은 목록을 넣고, <style>로 제목을 파란색으로 꾸며 줘. 마지막으로 notes.md에 한 줄 요약을 적어 줘. 파일 수정과 생성은 파일 편집 도구로 해 줘(읽기는 셸을 써도 돼). 다른 것은 하지 마.';
+
 const SCENARIOS = [
   {
     name: 'claude-read', provider: 'claude', preset: 'standard',
@@ -172,6 +174,15 @@ const SCENARIOS = [
     // Run after agent-worktree: merge its worktree, see cleanup refused while a chat there waits, then clean it up.
     name: 'worktree-cleanup', run: (page, project, report) => runWorktreeCleanup(page, project, report),
   },
+  {
+    // Results tab: real edits (Claude's own hunks), a created page and note. Full access, so no approval click moves focus.
+    name: 'claude-results', provider: 'claude', preset: 'full-access', inspectResults: true, focusComposer: true,
+    prompt: RESULTS_PROMPT,
+  },
+  {
+    name: 'codex-results', provider: 'codex', preset: 'full-access', inspectResults: true, focusComposer: true,
+    prompt: RESULTS_PROMPT,
+  },
 ].filter((scenario) => only.length === 0 || only.includes(scenario.name));
 
 function prepareWorkspace() {
@@ -296,11 +307,39 @@ async function runScenario(page, project, scenario, report) {
   }, { kind: 'main-tab' }), { id: panelId, historyId: `${SESSION_PREFIX}${sessionId}`, title: scenario.name, projectId: project.projectId });
   const panel = page.locator(`section[data-session-id="${sessionId}"]`);
   if (scenario.viaComposer) await sendViaComposer(page, panel, sessionId, scenario, report);
+  if (scenario.focusComposer) {
+    // Where a person would be: in the message box (it takes a queued message while the AI works).
+    const input = panel.getByTestId('structured-agent-composer-input');
+    await input.waitFor({ timeout: 30_000 }).catch(() => undefined);
+    await poll(() => input.isEnabled().catch(() => false), Boolean, 30_000, 'message box enabled').catch(() => undefined);
+    await input.click().catch(() => undefined);
+  }
+  const cpu = scenario.inspectResults ? sampleRendererCpu() : undefined;
   const seen = new Set();
   const handled = new Set();
   const deadline = Date.now() + 300_000;
   let finalState = 'timeout';
+  let resultsAtOpen;
+  let focusBefore;
   while (Date.now() < deadline) {
+    if (scenario.inspectResults && !resultsAtOpen) {
+      const focus = await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? null);
+      // The moment the Results tab appears: where it went, and whether the message box kept focus.
+      resultsAtOpen = await page.evaluate((ownerId) => {
+        const dock = window.__ezDock;
+        const results = dock?.getPanel(`agent-results-${ownerId}`);
+        if (!results) return undefined;
+        return {
+          split: results.group !== dock.getPanel(ownerId)?.group,
+          visible: results.api.isVisible,
+          composerFocused: document.activeElement?.getAttribute('data-testid') === 'structured-agent-composer-input',
+          activePanelIsConversation: dock.activePanel?.id === ownerId,
+          focusNow: document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? null,
+        };
+      }, panelId);
+      if (resultsAtOpen) resultsAtOpen = { ...resultsAtOpen, focusBefore, focusKept: focusBefore === resultsAtOpen.focusNow };
+      else focusBefore = focus;
+    }
     const current = await snapshot(page);
     const agent = current.agents.find((entry) => entry.sessionId === sessionId);
     const pending = current.approvals.find((entry) => entry.sessionId === sessionId && entry.state === 'pending');
@@ -341,8 +380,10 @@ async function runScenario(page, project, scenario, report) {
     }
     await wait(700);
   }
+  const cpuSamples = cpu ? cpu.stop() : undefined;
   await wait(1500);
   await shoot(page, `${scenario.name}-done`, report);
+  if (scenario.inspectResults) await inspectResults(page, scenario, report, cpuSamples, resultsAtOpen, panelId);
   const subagents = scenario.inspectSubagents ? await inspectSubagents(page, scenario, sessionId, report) : undefined;
   const after = scenario.expect ? (await snapshot(page)).agents.find((entry) => entry.sessionId === sessionId) : undefined;
   report.push({ scenario: scenario.name, sessionId, finalState, approvalsResolved: handled.size,
@@ -357,6 +398,57 @@ async function runScenario(page, project, scenario, report) {
     } : {}),
     ...(subagents ? { subagents } : {}) });
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
+}
+
+/** Renderer CPU (percent of one core) every 2s while a turn runs, from Electron's own process metrics. */
+function sampleRendererCpu() {
+  const samples = [];
+  let stopped = false;
+  const tick = async () => {
+    while (!stopped) {
+      const metrics = await app.evaluate(({ app: electronApp }) => electronApp.getAppMetrics()
+        .filter((metric) => metric.type === 'Tab').map((metric) => metric.cpu.percentCPUUsage)).catch(() => []);
+      if (metrics.length) samples.push(Math.max(...metrics));
+      await wait(2000);
+    }
+  };
+  void tick();
+  return { stop: () => { stopped = true; return samples; } };
+}
+
+/** The Results tab beside the conversation: did it open on its own, keep the message box focused, show numbered changes. */
+async function inspectResults(page, scenario, report, cpuSamples, atOpen, ownerId) {
+  // A Results tab next to the conversation (narrow group) is brought forward to look at it.
+  await page.evaluate((id) => window.__ezDock?.getPanel(`agent-results-${id}`)?.api.setActive(), ownerId);
+  const results = page.locator('[data-testid="conversation-results"]:visible').first();
+  const opened = await results.waitFor({ timeout: 20_000 }).then(() => true, () => false);
+  const facts = {
+    autoOpened: Boolean(atOpen),
+    ...(atOpen ? { atOpen } : {}),
+    shown: opened,
+    ...(cpuSamples?.length ? { rendererCpuMax: Math.round(Math.max(...cpuSamples)), rendererCpuAvg: Math.round(cpuSamples.reduce((a, b) => a + b, 0) / cpuSamples.length) } : {}),
+  };
+  if (!opened) { report.push({ scenario: scenario.name, results: facts }); return; }
+  const shot = async (name) => { await wait(900); await page.screenshot({ path: path.join(output, `${scenario.name}-${name}.png`) }); report.push({ shot: `${scenario.name}-${name}` }); };
+  await results.getByTestId('results-tab-changes').click();
+  await shot('results-changes');
+  facts.numberedPatches = await results.locator('.results-patch[data-numbered]').count();
+  facts.fragmentNotes = await results.getByText(/부분 기록|Partial record/u).count();
+  facts.files = await results.locator('.results-file-list .results-file').allInnerTexts();
+  await results.getByRole('combobox', { name: /변경 범위|Change scope/u }).selectOption('git').catch(() => undefined);
+  await shot('results-git');
+  facts.gitFiles = await results.locator('.results-file-list .results-file').count();
+  await results.getByTestId('results-tab-files').click();
+  const page_ = results.getByRole('button', { name: /^report\.html/u });
+  if (await page_.count()) {
+    await page_.first().click();
+    await wait(1500);
+    facts.htmlPreview = await results.getByTestId('results-artifact-frame').getAttribute('src').catch(() => null);
+  }
+  await shot('results-files');
+  await results.getByTestId('results-tab-summary').click();
+  await shot('results-summary');
+  report.push({ scenario: scenario.name, results: facts });
 }
 
 /**

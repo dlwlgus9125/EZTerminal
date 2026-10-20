@@ -162,14 +162,20 @@ describe('Results tab placement and lifecycle (real Dockview)', () => {
 
   it('a UI scale above 100% needs a wider conversation before splitting', () => {
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= StubResizeObserver;
-    const element = document.createElement('div');
-    document.body.append(element);
-    const api = createDockview(element, { createComponent: () => ({ element: document.createElement('div'), init: () => undefined }) });
-    api.layout(1000, 800);
-    const dock = new AgentResultsDock(api, new DockWindowCoordinator(api), { isLayoutTransactionActive: () => false, uiScale: () => 1.3 });
-    const owner = conversation(api, 'agent-session-a', 's-a');
-    owner.api.setActive();
-    dock.open('agent-session-a');
-    expect(api.getPanel(resultsPanelId('agent-session-a'))!.group).toBe(owner.group);
+    const split = (width: number): boolean => {
+      const element = document.createElement('div');
+      document.body.append(element);
+      const api = createDockview(element, { createComponent: () => ({ element: document.createElement('div'), init: () => undefined }) });
+      api.layout(width, 800);
+      const dock = new AgentResultsDock(api, new DockWindowCoordinator(api), { isLayoutTransactionActive: () => false, uiScale: () => 1.3 });
+      const owner = conversation(api, `agent-session-${String(width)}`, `s-${String(width)}`);
+      owner.api.setActive();
+      dock.open(owner.id);
+      return api.getPanel(resultsPanelId(owner.id))!.group !== owner.group;
+    };
+    // 720 × 1.3 = 936 CSS px: below it the Results tab sits next to the conversation.
+    expect(split(900)).toBe(false);
+    // The live check's 1600×1000 window at 125% Windows scaling with the rail only (≈1130 CSS px) splits.
+    expect(split(1130)).toBe(true);
   });
 });

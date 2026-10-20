@@ -32,6 +32,30 @@ describe('gitDiffFileChanges', () => {
     expect(changes[1]!.patch).toBe('@@ -1 +0,0 @@\n-gone');
   });
 
+  it('splits quoted paths too (untracked files and names with spaces)', () => {
+    const quoted = [
+      'diff --git a/src/app.ts b/src/app.ts',
+      '@@ -1,1 +1,1 @@',
+      '-a',
+      '+b',
+      'diff --git "a/report.html" "b/report.html"',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ "b/report.html"',
+      '@@ -0,0 +1,1 @@',
+      '+<h1>Report</h1>',
+      'diff --git "a/my notes.md" "b/my notes.md"',
+      'new file mode 100644',
+      '@@ -0,0 +1,1 @@',
+      '+ok',
+    ].join('\n');
+    expect(gitDiffFileChanges(quoted).map((change) => [change.path, change.patch])).toEqual([
+      ['src/app.ts', '@@ -1,1 +1,1 @@\n-a\n+b'],
+      ['report.html', '@@ -0,0 +1,1 @@\n+<h1>Report</h1>'],
+      ['my notes.md', '@@ -0,0 +1,1 @@\n+ok'],
+    ]);
+  });
+
   it('returns nothing for text that is not a git diff', () => {
     expect(gitDiffFileChanges('No file changes from the base commit.')).toEqual([]);
   });

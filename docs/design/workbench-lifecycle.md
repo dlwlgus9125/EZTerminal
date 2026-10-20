@@ -61,8 +61,14 @@ snapshot에 저장한다. 기존 schema version 1 파일에서 resource profile�
 ## 패널과 분리 창
 
 - `dock-panel-capabilities.ts`가 등록 panel의 분리 가능성과 수명 tier를 소유한다. 현재
-  `terminal`, `agent-session`, `project-editor`, `openclaw-chat`은 모두 분리 가능하고,
-  terminal만 session surface이며 나머지는 passive panel이다.
+  `terminal`, `agent-session`, `project-editor`, `openclaw-chat`, `agent-results`는 모두 분리
+  가능하고, terminal만 session surface이며 나머지는 passive panel이다.
+- `agent-results`는 대화 하나의 결과물 탭이다. 저장되는 param은 owner 대화 panel id뿐이며,
+  owner가 없거나 대화가 아니면 레이아웃을 거부하지 않고 그 탭만 정리한다. 내용은 owner 대화가
+  같은 JS realm의 store에 publish한 것만 읽으므로 분리 창에서도 같다. `AgentResultsDock`이 배치,
+  활성 대화 따라가기, 대화와 함께 닫기, 사람이 닫은 경우의 기억을 소유하며 레이아웃 transaction 중
+  닫힘은 사람의 선택으로 보지 않는다. 앱 iframe은 `ezartifact:` 미리보기와 Chromium PDF 뷰어로만
+  이동할 수 있고 main·분리 창은 PDF 뷰어를 위해 `plugins: true`다.
 - panel ID와 생성 제목은 workbench 전체에서 충돌하지 않는다.
 - `DockWindowCoordinator`는 호출자의 배치 추측 대신 `main-tab` 또는 exact reference
   panel에 대한 `split` intent를 받는다. 전역 생성은 main grid를 사용하고 auxiliary

@@ -157,6 +157,16 @@ export function claudeFileChange(name: string, input: unknown): RecordedFileChan
 
 const GIT_FILE_HEADER = /^(?:index |--- |\+\+\+ |new file mode |deleted file mode |old mode |new mode |similarity index |dissimilarity index |rename from |rename to |copy from |copy to )/u;
 
+/** The inside of a C-style quoted diff path (`"b/a \"b\".md"`), escapes resolved. */
+function unquoteDiffPath(value: string): string {
+  try {
+    const parsed: unknown = JSON.parse(`"${value}"`);
+    return typeof parsed === 'string' ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
 /**
  * One numbered change per file of a multi-file `git diff`, without its header lines (the path
  * is shown separately). Header lines are only recognized before a file's first hunk, so a
@@ -171,10 +181,11 @@ export function gitDiffFileChanges(text: string): RecordedFileChange[] {
     if (path !== undefined) changes.push({ path, coverage: 'patch', patch: lines.join('\n').replace(/\n+$/u, '') });
   };
   for (const line of text.replace(/\r\n?/gu, '\n').split('\n')) {
-    const start = line.match(/^diff --git a\/(.+?) b\/(.+)$/u);
+    // Git (and the app's untracked-file patches) quote paths with spaces or special characters.
+    const start = line.match(/^diff --git (?:"a\/(?:[^"\\]|\\.)*"|a\/.+?) (?:"b\/((?:[^"\\]|\\.)*)"|b\/(.+))$/u);
     if (start) {
       flush();
-      path = start[2];
+      path = start[1] !== undefined ? unquoteDiffPath(start[1]) : start[2];
       lines = [];
       inHunk = false;
       continue;

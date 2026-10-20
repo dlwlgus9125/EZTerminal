@@ -8,8 +8,9 @@ export const AGENT_RESULTS_COMPONENT = 'agent-results';
 const CONVERSATION_COMPONENT = 'agent-session';
 
 /** Content width (at 100% UI scale) a conversation group needs before Results sits beside it. */
-const SPLIT_MIN_CONTENT_WIDTH = 840;
-const RESULTS_MIN_CONTENT_WIDTH = 340;
+// A 1536-px-wide window at 125% Windows scaling with the sidebar open, at UI scale 130, still splits.
+const SPLIT_MIN_CONTENT_WIDTH = 720;
+const RESULTS_MIN_CONTENT_WIDTH = 320;
 const RESULTS_MAX_CONTENT_WIDTH = 640;
 const RESULTS_SHARE = 0.42;
 
