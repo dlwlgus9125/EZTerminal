@@ -675,3 +675,27 @@
   outline: 2px solid var(--ui-border-strong);
   outline-offset: -2px;
 }
+
+/* Isolated preview of an AI-made page or PDF. A page without its own background
+ * shows on the light canvas a browser would give it. */
+.results-frame-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  min-width: 0;
+}
+
+.results-frame {
+  width: 100%;
+  height: 70vh;
+  min-height: 20rem;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  color-scheme: light;
+  background: Canvas;
+}
+
+.results-frame:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}

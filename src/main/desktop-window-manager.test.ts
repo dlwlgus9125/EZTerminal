@@ -146,3 +146,35 @@ describe('DesktopWindowManager native throttling transitions', () => {
     expect(main.native.webContents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
   });
 });
+
+describe('DesktopWindowManager subframe navigation', () => {
+  it('lets frames inside the app navigate only to isolated Results previews, and popouts get the PDF viewer', () => {
+    const main = rendererWindow();
+    const manager = new DesktopWindowManager({
+      auxiliaryRendererUrl: packagedRendererUrl(true),
+      preloadPath: 'preload.js',
+      isAllowedNavigation: () => true,
+      getMainWindow: () => main.window,
+      isAppQuitting: () => false,
+      handleMainWindowClose: vi.fn(),
+    });
+    manager.configureMainWindow(main.window);
+    const navigate = (url: string, isMainFrame = false) => {
+      const event = { url, isMainFrame, preventDefault: vi.fn() };
+      main.native.webContents.emit('will-frame-navigate', event);
+      return event.preventDefault.mock.calls.length > 0;
+    };
+    expect(navigate('ezartifact://0123456789abcdef0123456789abcdef/report.html')).toBe(false);
+    expect(navigate('about:blank')).toBe(false);
+    expect(navigate('https://attacker.example/')).toBe(true);
+    expect(navigate('file:///C:/Windows/win.ini')).toBe(true);
+    // The main frame keeps its own will-navigate policy.
+    expect(navigate('https://attacker.example/', true)).toBe(false);
+
+    const handler = vi.mocked(main.native.webContents.setWindowOpenHandler).mock.calls[0]![0] as (details: { url: string }) => {
+      overrideBrowserWindowOptions?: { webPreferences?: { plugins?: boolean; sandbox?: boolean } };
+    };
+    const popout = handler({ url: packagedRendererUrl(true) });
+    expect(popout.overrideBrowserWindowOptions?.webPreferences).toMatchObject({ plugins: true, sandbox: true });
+  });
+});

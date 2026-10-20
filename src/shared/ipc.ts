@@ -1515,6 +1515,12 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /**
+   * Results tab: an isolated `ezartifact:` URL for one AI-made HTML page (with its folder's
+   * assets) or PDF. Optional so older bridges and stories simply show the source instead.
+   */
+  grantArtifactPreview?: (path: string, kind: import('./artifact-preview').ArtifactPreviewKind) => Promise<import('./artifact-preview').ArtifactGrantResult>;
+  revokeArtifactPreview?: (token: string) => Promise<void>;
   /** Sender-scoped native window controls; no BrowserWindow id crosses preload. */
   getWindowState: () => Promise<DesktopWindowState>;
   /** App-wide native lifecycle state, including every Dockview popout. */

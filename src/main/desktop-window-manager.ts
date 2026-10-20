@@ -1,3 +1,4 @@
+import { isAllowedSubframeUrl } from './artifact-preview';
 import { randomUUID } from 'node:crypto';
 import {
   BrowserWindow,
@@ -218,6 +219,10 @@ export class DesktopWindowManager {
     window.webContents.on('will-navigate', (event, url) => {
       if (!this.options.isAllowedNavigation(url)) event.preventDefault();
     });
+    // Frames inside the app may only show isolated Results previews; a preview never navigates elsewhere.
+    window.webContents.on('will-frame-navigate', (event) => {
+      if (!event.isMainFrame && !isAllowedSubframeUrl(event.url)) event.preventDefault();
+    });
     this.configureWindowOpen(window);
 
     if (kind === 'auxiliary') {
@@ -256,6 +261,8 @@ export class DesktopWindowManager {
             nodeIntegration: false,
             sandbox: true,
             navigateOnDragDrop: false,
+            // A popped-out Results tab shows AI-made PDFs with Chromium's built-in viewer too.
+            plugins: true,
           },
         };
         return {

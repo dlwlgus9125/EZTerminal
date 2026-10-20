@@ -451,6 +451,8 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  grantArtifactPreview: (path, kind) => ipcRenderer.invoke('artifact-preview:grant', path, kind),
+  revokeArtifactPreview: (token) => ipcRenderer.invoke('artifact-preview:revoke', token),
   getWindowState: (): Promise<DesktopWindowState> =>
     ipcRenderer.invoke('desktop-window:get-state'),
   getWindowStates: (): Promise<DesktopWindowStatesSnapshot> =>

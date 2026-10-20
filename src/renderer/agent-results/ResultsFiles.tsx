@@ -1,5 +1,5 @@
 import { ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Globe, RefreshCw } from 'lucide-react';
-import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type { FilePreviewResult } from '../../shared/file-preview';
 import { useChatCopy } from '../chat/copy';
@@ -150,8 +150,9 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
 
   let body: ReactNode;
   if (!absolute) body = <Status variant="neutral">{copy.fileUnavailable}</Status>;
-  else if (kind === 'html' && renderHtml && mode === 'rendered') body = renderHtml(absolute);
-  else if (kind === 'pdf' && renderPdf) body = renderPdf(absolute);
+  // Refresh asks main for a new preview of the file as it is now.
+  else if (kind === 'html' && renderHtml && mode === 'rendered') body = <Fragment key={`html:${String(reload)}`}>{renderHtml(absolute)}</Fragment>;
+  else if (kind === 'pdf' && renderPdf) body = <Fragment key={`pdf:${String(reload)}`}>{renderPdf(absolute)}</Fragment>;
   else if (loading && !value) body = <LoadingState label={copy.fileLoading} />;
   else if (!value) body = <Status variant="neutral">{copy.fileUnavailable}</Status>;
   else if (isMissing(value)) body = <Status variant="warning">{copy.fileGone}</Status>;

@@ -190,3 +190,59 @@ test('the Results tab comes back with its conversation after a restart', async (
     await app.close();
   }
 });
+
+test('an AI-made HTML page runs isolated (no app bridge, no network, no navigating away) and a PDF shows in the viewer', async () => {
+  test.setTimeout(180_000);
+  const profile = createRegisteredE2eTempDir('ezterm-results-artifacts-profile-');
+  const projectRoot = createRegisteredE2eTempDir('ezterm-results-artifacts-project-');
+  const app = await launchApp(profile, fakeCodexEnvironment(profile));
+  const page = await app.firstWindow();
+  try {
+    await page.setViewportSize({ width: 1600, height: 950 });
+    await expect(page.getByTestId('cmd-input')).toBeVisible();
+    await startConversation(page, projectRoot);
+    await send(page, 'EZTERMINAL_E2E_ARTIFACTS write a report');
+    const results = page.getByTestId('conversation-results');
+    await expect(results).toBeVisible({ timeout: 30_000 });
+    await results.getByTestId('results-tab-files').click();
+    await results.getByRole('button', { name: /^report\.html/u }).click();
+
+    const frameElement = results.getByTestId('results-artifact-frame');
+    await expect(frameElement).toHaveAttribute('src', /^ezartifact:\/\/[0-9a-f]{32}\/report\.html$/u);
+    await expect(frameElement).toHaveAttribute('sandbox', 'allow-scripts');
+    const frame = page.frameLocator('[data-testid="results-artifact-frame"]');
+    await expect(frame.locator('#script')).toHaveText('script ran');
+    await expect(frame.locator('#bridge')).toHaveText('no bridge');
+    await expect(frame.locator('#network')).toHaveText('network blocked', { timeout: 10_000 });
+    // Its own stylesheet from the same folder loaded.
+    await expect(frame.locator('#title')).toHaveCSS('color', 'rgb(200, 0, 0)');
+    await page.screenshot({ path: path.join(evidence, 'html-preview.png') });
+
+    // A link out of the preview never reaches the web; the preview offers the way back.
+    await frame.locator('#out').click();
+    await expect(results.getByTestId('results-artifact-back')).toBeVisible({ timeout: 10_000 });
+    expect(page.frames().map((candidate) => candidate.url()).some((url) => url.startsWith('https://example.com'))).toBe(false);
+    await results.getByTestId('results-artifact-back').click();
+    await expect(page.frameLocator('[data-testid="results-artifact-frame"]').locator('#script')).toHaveText('script ran');
+
+    // Source view shows the page text instead.
+    await results.getByRole('button', { name: 'Source' }).click();
+    await expect(results.getByText(/getElementById\('script'\)/u)).toBeVisible();
+
+    // The PDF shows in Chromium's viewer inside the same isolated preview.
+    await results.getByRole('button', { name: /^paper\.pdf/u }).click();
+    const pdf = results.getByTestId('results-artifact-frame');
+    await expect(pdf).toHaveAttribute('src', /^ezartifact:\/\/[0-9a-f]{32}\/paper\.pdf$/u);
+    // Chromium's viewer runs as a frame inside the preview (Electron 41+: no separate WebContents).
+    await expect.poll(() => page.frames().map((candidate) => candidate.url()).some((url) => url.startsWith('chrome-extension://')), { timeout: 15_000 }).toBe(true);
+    await page.waitForTimeout(2_000);
+    console.log('PDF FRAMES', JSON.stringify(page.frames().map((candidate) => candidate.url())));
+    await page.screenshot({ path: path.join(evidence, 'pdf-preview.png') });
+  } catch (error) {
+    await page.screenshot({ path: path.join(evidence, 'artifacts-failure.png') }).catch(() => undefined);
+    console.log((await page.locator('body').innerText().catch(() => '')).slice(-4000));
+    throw error;
+  } finally {
+    await app.close();
+  }
+});

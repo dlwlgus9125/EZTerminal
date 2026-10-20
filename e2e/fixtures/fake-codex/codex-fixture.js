@@ -139,6 +139,53 @@ if (args.includes('--version')) {
                 responseText = 'Updated `results-app.ts` and wrote `results-note.md`.';
               }
             }
+            // Results tab isolation: an HTML report (inline script, its own stylesheet, a network
+            // request and an outbound link) and a PDF, written only in the working folder.
+            if (JSON.stringify(frame.params?.input).includes('EZTERMINAL_E2E_ARTIFACTS')) {
+              const cwd = threadCwds.get(threadId);
+              if (cwd) {
+                const html = [
+                  '<!doctype html><html><head><title>Report</title><link rel="stylesheet" href="report.css"></head><body>',
+                  '<h1 id="title">Fixture report</h1><p id="script">script did not run</p><p id="bridge">bridge unknown</p><p id="network">network pending</p>',
+                  '<a id="out" href="https://example.com/">Outbound link</a>',
+                  '<script>',
+                  "document.getElementById('script').textContent = 'script ran';",
+                  "try { document.getElementById('bridge').textContent = typeof parent.ezterminal === 'undefined' ? 'no bridge' : 'BRIDGE VISIBLE'; } catch (error) { document.getElementById('bridge').textContent = 'no bridge'; }",
+                  "fetch('https://example.com/').then(function () { document.getElementById('network').textContent = 'NETWORK ALLOWED'; }, function () { document.getElementById('network').textContent = 'network blocked'; });",
+                  '</script></body></html>',
+                ].join('\n');
+                // A complete PDF (cross-reference table with real byte offsets) so the viewer draws a page.
+                const objects = [
+                  '<</Type/Catalog/Pages 2 0 R>>',
+                  '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+                  '<</Type/Page/Parent 2 0 R/MediaBox[0 0 360 144]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+                  '<</Length 46>>\nstream\nBT /F1 24 Tf 40 64 Td (Fixture PDF page) Tj ET\nendstream',
+                  '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+                ];
+                let pdf = '%PDF-1.4\n';
+                const offsets = objects.map((body, index) => {
+                  const offset = Buffer.byteLength(pdf);
+                  pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+                  return offset;
+                });
+                const xref = Buffer.byteLength(pdf);
+                pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}`;
+                pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+                const files = [
+                  ['report.html', html],
+                  ['report.css', '#title { color: rgb(200, 0, 0); }\n'],
+                  ['paper.pdf', pdf],
+                ];
+                const changes = files.map(([name, content]) => {
+                  fs.writeFileSync(path.join(cwd, name), content);
+                  return { path: path.join(cwd, name), kind: { type: 'add' }, diff: content };
+                });
+                const itemId = `fixture-artifacts-${turnSequence}`;
+                write({ jsonrpc: '2.0', method: 'item/started', params: { threadId, turnId, startedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes, status: 'inProgress' } } });
+                write({ jsonrpc: '2.0', method: 'item/completed', params: { threadId, turnId, completedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes, status: 'completed' } } });
+                responseText = 'Wrote `report.html` with `report.css`, and `paper.pdf`.';
+              }
+            }
             write({
               jsonrpc: '2.0',
               method: 'item/completed',

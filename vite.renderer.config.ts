@@ -10,7 +10,8 @@ import react from '@vitejs/plugin-react';
 const CSP =
   "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; " +
-  "base-uri 'none'; form-action 'none'";
+  // Only the Results tab's isolated previews may be framed (src/main/artifact-preview.ts).
+  "frame-src 'self' ezartifact:; base-uri 'none'; form-action 'none'";
 
 function injectCspMeta(): Plugin {
   return {

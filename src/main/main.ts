@@ -26,6 +26,8 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { installAgentActionsIpc, installAgentCollaborationIpc } from './agent-collaboration-ipc';
+import { ARTIFACT_SCHEME, ARTIFACT_SCHEME_PRIVILEGES, ArtifactPreviewRegistry, handleArtifactRequest } from './artifact-preview';
+import { installArtifactPreviewIpc } from './artifact-preview-ipc';
 import { claudeSubagentRecordExists } from './claude-subagent-records';
 import { installWorkspaceWorktreeIpc } from './workspace-worktree-ipc';
 import { createWorkspaceWorktree } from './workspace-worktree-actions';
@@ -545,7 +547,13 @@ const CSP =
   "object-src 'none'; " +
   "base-uri 'none'; " +
   "frame-ancestors 'none'; " +
+  // Only the Results tab's isolated previews may be framed (see artifact-preview.ts).
+  `frame-src 'self' ${ARTIFACT_SCHEME}:; ` +
   "form-action 'none'";
+
+// Isolated previews of files an AI made. Privileged schemes must be declared before `ready`.
+protocol.registerSchemesAsPrivileged([{ scheme: ARTIFACT_SCHEME, privileges: { ...ARTIFACT_SCHEME_PRIVILEGES } }]);
+const artifactPreviews = new ArtifactPreviewRegistry();
 
 const rendererRoot = path.join(
   __dirname,
@@ -632,6 +640,8 @@ const createWindow = (): BrowserWindow => {
       nodeIntegration: false,
       sandbox: true,
       navigateOnDragDrop: false,
+      // Chromium's built-in PDF viewer is an internal plugin; the Results tab shows AI-made PDFs with it.
+      plugins: true,
     },
   });
   mainWindowRef = mainWindow;
@@ -774,6 +784,7 @@ app.on('ready', async () => {
   }
 
   installPackagedRendererProtocol();
+  protocol.handle(ARTIFACT_SCHEME, (request) => handleArtifactRequest(artifactPreviews, request));
   desktopWindowManager = new DesktopWindowManager({
     auxiliaryRendererUrl: rendererUrls.auxiliary,
     preloadPath: desktopPreloadPath,
@@ -2228,6 +2239,7 @@ app.on('ready', async () => {
     }
     return result;
   });
+  featureIpcDisposers.push(installArtifactPreviewIpc(ipcMain, artifactPreviews));
   featureIpcDisposers.push(installFileToolsIpc({
     ipc: ipcMain,
     fileService,

@@ -2,6 +2,7 @@ import type { IDockviewPanelProps } from 'dockview-react';
 import { useEffect, useMemo } from 'react';
 
 import { EmptyState, LoadingState } from '../ui';
+import { ArtifactFrame, type ArtifactPreviewAccess } from './ArtifactFrame';
 import { ConversationResults } from './ConversationResults';
 import { useResultsCopy } from './copy';
 import { useResultsNavigation, useResultsSource } from './results-source-store';
@@ -21,6 +22,13 @@ function hostServices(): ResultsServices {
   };
 }
 
+function previewAccess(): ArtifactPreviewAccess | undefined {
+  const desktop = typeof window === 'undefined' ? undefined : window.ezterminalDesktop;
+  const grant = desktop?.grantArtifactPreview;
+  const revoke = desktop?.revokeArtifactPreview;
+  return grant && revoke ? { grant: (path, kind) => grant(path, kind), revoke: (token) => revoke(token) } : undefined;
+}
+
 /** The Results tab in the workbench: reads what its conversation tab publishes. */
 export function AgentResultsDockPanel(props: IDockviewPanelProps): JSX.Element {
   const copy = useResultsCopy();
@@ -28,6 +36,13 @@ export function AgentResultsDockPanel(props: IDockviewPanelProps): JSX.Element {
   const source = useResultsSource(ownerPanelId);
   const navigation = useResultsNavigation(ownerPanelId);
   const services = useMemo(hostServices, []);
+  const previews = useMemo(previewAccess, []);
+  const renderHtml = useMemo(() => (previews
+    ? (path: string) => <ArtifactFrame path={path} kind="html" title={path} access={previews} />
+    : undefined), [previews]);
+  const renderPdf = useMemo(() => (previews
+    ? (path: string) => <ArtifactFrame path={path} kind="pdf" title={path} access={previews} />
+    : undefined), [previews]);
   const title = copy.tabTitle(source?.title ?? '');
   useEffect(() => {
     if (props.api.title !== title) props.api.setTitle(title);
@@ -45,6 +60,8 @@ export function AgentResultsDockPanel(props: IDockviewPanelProps): JSX.Element {
       source={source as typeof source & { sessionId: string }}
       services={services}
       {...(navigation ? { navigation } : {})}
+      {...(renderHtml ? { renderHtml } : {})}
+      {...(renderPdf ? { renderPdf } : {})}
     />
   );
 }
