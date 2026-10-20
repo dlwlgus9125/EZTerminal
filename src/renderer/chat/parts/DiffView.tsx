@@ -1,20 +1,12 @@
 import { FileMinus2, FilePen, FilePlus2 } from 'lucide-react';
 import { useMemo } from 'react';
 
-import { reviewLines, type RecordedFileChange } from '../../../shared/conversation-changes';
+import { diffCounts, reviewLines, type RecordedFileChange } from '../../../shared/conversation-changes';
 
 /** Max lines rendered per file before "show all"; the viewport scrolls within 288px. */
 const MAX_LINES = 400;
 
 import { workspacePath } from '../model/summary';
-
-export function diffCounts(change: RecordedFileChange): { readonly added: number; readonly removed: number } {
-  const lines = change.patch.split('\n');
-  return {
-    added: lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
-    removed: lines.filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
-  };
-}
 
 /**
  * Unified diff of one recorded change. Line numbers appear only for real

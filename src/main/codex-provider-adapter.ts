@@ -1,6 +1,6 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
 import { PROPOSED_PLAN_REQUEST_PREFIX, clipApprovalBody, type ApprovalRequest, type ApprovalResponse } from '../shared/approval-request';
-import { encodeFileChanges } from '../shared/conversation-changes';
+import { addedFileChange, deletedFileChange, encodeFileChanges, type RecordedFileChange } from '../shared/conversation-changes';
 import type { TodoItem, ToolCategory, ToolPayload, TranscriptPayload } from '../shared/transcript-payload';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -2688,12 +2688,15 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     });
   }
 
+  /** Updates arrive as numbered hunks; a created or removed file arrives as its content. */
   private fileChangeRecord(item: JsonObject): string | undefined {
-    const changes = asArray(item.changes).flatMap(value => {
-      const change = asObject(value);
-      return change && typeof change.path === 'string' && typeof change.diff === 'string'
-        ? [{ path: change.path, patch: change.diff, coverage: 'patch' as const }] : [];
-    });
+    const changes = fileChanges(item).map((change): RecordedFileChange => (
+      change.kind === 'add'
+        ? addedFileChange(change.path, change.diff)
+        : change.kind === 'delete'
+          ? deletedFileChange(change.path, change.diff)
+          : { path: change.path, patch: change.diff, coverage: 'patch' }
+    ));
     return encodeFileChanges(changes);
   }
 

@@ -132,7 +132,7 @@
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-result",
-      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\notes.md\",\"patch\":\"Renamed greet to greetUser.\\n\",\"coverage\":\"patch\"},{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"@@ -1,2 +1,2 @@\\n-export function greet(name: string): string {\\n+export function greetUser(name: string): string {\\n   return `Hello, ${name}!`;\\n@@ -5,3 +5,3 @@\\n export function main(): void {\\n-  console.log(greet('world'));\\n+  console.log(greetUser('world'));\\n }\\n\",\"coverage\":\"patch\"}]}",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\notes.md\",\"patch\":\"@@ -0,0 +1,1 @@\\n+Renamed greet to greetUser.\",\"coverage\":\"patch\"},{\"path\":\"<WORKSPACE>\\\\src\\\\app.ts\",\"patch\":\"@@ -1,2 +1,2 @@\\n-export function greet(name: string): string {\\n+export function greetUser(name: string): string {\\n   return `Hello, ${name}!`;\\n@@ -5,3 +5,3 @@\\n export function main(): void {\\n-  console.log(greet('world'));\\n+  console.log(greetUser('world'));\\n }\\n\",\"coverage\":\"patch\"}]}",
       "isDelta": false,
       "isSensitive": false,
       "payload": {

@@ -84,7 +84,7 @@
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-result",
-      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\.claude-plans\\\\plan-how-to-add-nested-dusk.md\",\"patch\":\"+# Plan: add `farewell(name)` to src/app.ts\\n+\\n+- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\\n+- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\\n+- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\",\"coverage\":\"fragment\"}]}",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<WORKSPACE>\\\\.claude-plans\\\\plan-how-to-add-nested-dusk.md\",\"patch\":\"@@ -0,0 +1,5 @@\\n+# Plan: add `farewell(name)` to src/app.ts\\n+\\n+- Add `export function farewell(name: string): string { return `Goodbye, ${name}!`; }` directly after `greet` in `src/app.ts`, matching its style.\\n+- Optionally call it from `main()` (`console.log(farewell('world'))`) so it shows up when the app runs.\\n+- Verify: run `npx tsc --noEmit` to type-check, then run the app (or a quick test) and confirm it prints `Goodbye, world!`.\",\"coverage\":\"patch\"}]}",
       "isDelta": false,
       "isSensitive": false,
       "payload": {
@@ -99,7 +99,8 @@
           {
             "path": "<WORKSPACE>\\.claude-plans\\plan-how-to-add-nested-dusk.md",
             "kind": "add",
-            "added": 5
+            "added": 5,
+            "removed": 0
           }
         ]
       },

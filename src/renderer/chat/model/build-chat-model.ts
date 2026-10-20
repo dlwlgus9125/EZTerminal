@@ -1,5 +1,5 @@
 import type { ApprovalRequest } from '../../../shared/approval-request';
-import type { RecordedFileChange } from '../../../shared/conversation-changes';
+import { describeRecordedChanges, type RecordedFileChange } from '../../../shared/conversation-changes';
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn } from '../../../shared/daemon-protocol';
 import { parseTranscriptPayload, type TodoItem, type ToolPayload, type ToolStatus } from '../../../shared/transcript-payload';
 import { decodeLegacyToolCall, decodeLegacyToolResult, unwrapShellCommand } from './legacy-decode';
@@ -105,7 +105,8 @@ function applyResult(tool: MutableTool, item: CoalescedItem): void {
   const legacy = decodeLegacyToolResult(item);
   tool.status = payload?.status ?? legacy.status;
   if (legacy.output !== undefined) tool.output = legacy.output;
-  if (legacy.changes) tool.changes = legacy.changes;
+  // Older records stored a created file's content as its patch; the payload says which.
+  if (legacy.changes) tool.changes = describeRecordedChanges(legacy.changes, payload).map((entry) => entry.change);
   const files = payload?.files ?? legacy.files;
   if (files) tool.files = files;
   const exitCode = payload?.exitCode ?? legacy.exitCode;

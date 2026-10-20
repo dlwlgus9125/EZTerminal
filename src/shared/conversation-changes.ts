@@ -8,10 +8,16 @@ const ChangeSchema = z.object({
 }).strict();
 const RecordSchema = z.object({ type: z.literal('ezterminal.file-changes.v1'), changes: z.array(ChangeSchema).max(200) }).strict();
 export type RecordedFileChange = z.infer<typeof ChangeSchema>;
+export type FileChangeKind = 'add' | 'update' | 'delete' | 'rename';
 export interface ConversationFileChange extends RecordedFileChange {
   readonly id: string;
   readonly turnId?: string;
   readonly sequence: number;
+  readonly createdAt?: string;
+  /** Created, removed or changed by this record (from the result payload, else the patch). */
+  readonly kind: FileChangeKind;
+  readonly added: number;
+  readonly removed: number;
 }
 
 /** Only provider adapters create these records, after a successful file operation. */
@@ -26,11 +32,42 @@ export function decodeFileChanges(text: string): readonly RecordedFileChange[] {
   try { const parsed = RecordSchema.safeParse(JSON.parse(text)); return parsed.success ? parsed.data.changes : []; }
   catch { return []; }
 }
+/** File kinds the result payload reported, by path; older records have none. */
+function payloadKinds(payload: unknown): ReadonlyMap<string, FileChangeKind> {
+  const kinds = new Map<string, FileChangeKind>();
+  const files = payload && typeof payload === 'object' ? (payload as { files?: unknown }).files : undefined;
+  if (!Array.isArray(files)) return kinds;
+  for (const file of files) {
+    const entry = file && typeof file === 'object' ? file as { path?: unknown; kind?: unknown } : undefined;
+    if (typeof entry?.path === 'string' && (entry.kind === 'add' || entry.kind === 'update' || entry.kind === 'delete' || entry.kind === 'rename')) {
+      kinds.set(entry.path, entry.kind);
+    }
+  }
+  return kinds;
+}
+
+/** A record's changes with numbered hunks where the kind allows, and their kind and line counts. */
+export function describeRecordedChanges(
+  changes: readonly RecordedFileChange[],
+  payload?: unknown,
+): { readonly change: RecordedFileChange; readonly kind: FileChangeKind; readonly added: number; readonly removed: number }[] {
+  const kinds = payloadKinds(payload);
+  return changes.map((recorded) => {
+    const reported = kinds.get(recorded.path);
+    const change = normalizeRecordedChange(recorded, reported);
+    return { change, kind: reported ?? patchKind(change), ...diffCounts(change) };
+  });
+}
+
 export function conversationFileChanges(items: readonly DaemonTranscriptItem[], sessionId: string): ConversationFileChange[] {
   const changes: ConversationFileChange[] = [];
   for (const item of items) {
     if (item.sessionId !== sessionId || item.kind !== 'tool-result' || item.isDelta || item.isSensitive) continue;
-    decodeFileChanges(item.text).forEach((change, index) => changes.push({ ...change, id: `${item.id}:${index}`, turnId: item.turnId, sequence: item.sequence }));
+    const decoded = decodeFileChanges(item.text);
+    if (!decoded.length) continue;
+    describeRecordedChanges(decoded, item.payload).forEach(({ change, kind, added, removed }, index) => changes.push({
+      ...change, id: `${item.id}:${index}`, turnId: item.turnId, sequence: item.sequence, createdAt: item.createdAt, kind, added, removed,
+    }));
   }
   return changes.sort((a, b) => a.sequence - b.sequence);
 }
@@ -168,4 +205,78 @@ export function reviewLines(change: RecordedFileChange): ReviewLine[] {
     else { before = undefined; after = undefined; }
     return line;
   });
+}
+
+/** Lines a change adds and removes; file headers never count. */
+export function diffCounts(change: RecordedFileChange): { readonly added: number; readonly removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of reviewLines(change)) {
+    if (line.kind === 'add') added += 1;
+    else if (line.kind === 'remove') removed += 1;
+  }
+  return { added, removed };
+}
+
+function hasHunk(patch: string): boolean {
+  return /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/mu.test(patch);
+}
+
+/** What a numbered patch did to its file: created it, removed it, or changed it. */
+export function patchKind(change: RecordedFileChange): FileChangeKind {
+  if (change.coverage !== 'patch') return 'update';
+  const first = change.patch.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/mu);
+  if (!first) return 'update';
+  if (first[1] === '0' && first[2] === '0') return 'add';
+  if (first[3] === '0' && first[4] === '0') return 'delete';
+  return 'update';
+}
+
+function hunkHeader(oldStart: number, oldLines: number, newStart: number, newLines: number): string {
+  return `@@ -${String(oldStart)},${String(oldLines)} +${String(newStart)},${String(newLines)} @@`;
+}
+
+/** A created file: every line is an addition, numbered from 1. */
+export function addedFileChange(path: string, content: string): RecordedFileChange {
+  const lines = content ? bodyLines(content) : [];
+  return { path, coverage: 'patch', patch: [hunkHeader(0, 0, lines.length ? 1 : 0, lines.length), ...lines.map((line) => `+${line}`)].join('\n') };
+}
+
+/** A removed file: every old line is a removal, numbered from 1. */
+export function deletedFileChange(path: string, content: string): RecordedFileChange {
+  const lines = content ? bodyLines(content) : [];
+  return { path, coverage: 'patch', patch: [hunkHeader(lines.length ? 1 : 0, lines.length, 0, 0), ...lines.map((line) => `-${line}`)].join('\n') };
+}
+
+const StructuredHunkSchema = z.object({
+  oldStart: z.number().int().nonnegative(),
+  oldLines: z.number().int().nonnegative(),
+  newStart: z.number().int().nonnegative(),
+  newLines: z.number().int().nonnegative(),
+  lines: z.array(z.string()),
+});
+const StructuredPatchSchema = z.array(StructuredHunkSchema).min(1);
+
+/**
+ * Claude's tool result carries the edit's real hunks (`structuredPatch`), with
+ * file line numbers. Anything that does not parse yields nothing, so the
+ * caller keeps the input-derived fragment.
+ */
+export function structuredPatchChange(path: string, structuredPatch: unknown): RecordedFileChange | undefined {
+  const parsed = StructuredPatchSchema.safeParse(structuredPatch);
+  if (!parsed.success) return undefined;
+  const lines = parsed.data.flatMap((hunk) => [hunkHeader(hunk.oldStart, hunk.oldLines, hunk.newStart, hunk.newLines), ...hunk.lines]);
+  return { path, coverage: 'patch', patch: lines.join('\n') };
+}
+
+/**
+ * Older Codex records stored a created or removed file's raw content as its
+ * patch. With the kind the result reported, that content becomes a numbered
+ * hunk; every other record is returned unchanged.
+ */
+export function normalizeRecordedChange(change: RecordedFileChange, kind?: FileChangeKind): RecordedFileChange {
+  if (change.coverage !== 'patch' || hasHunk(change.patch)) return change;
+  if (kind === 'add') return addedFileChange(change.path, change.patch);
+  if (kind === 'delete') return deletedFileChange(change.path, change.patch);
+  return change;
 }

@@ -76,7 +76,7 @@
       "sessionId": "replay-session",
       "turnId": "replay-turn-1",
       "kind": "tool-result",
-      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<CAPTURE_ROOT>\\\\outside-codex-file-approval.md\",\"patch\":\"hello\\n\",\"coverage\":\"patch\"}]}",
+      "text": "{\"type\":\"ezterminal.file-changes.v1\",\"changes\":[{\"path\":\"<CAPTURE_ROOT>\\\\outside-codex-file-approval.md\",\"patch\":\"@@ -0,0 +1,1 @@\\n+hello\",\"coverage\":\"patch\"}]}",
       "isDelta": false,
       "isSensitive": false,
       "payload": {

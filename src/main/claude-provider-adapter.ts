@@ -1,6 +1,6 @@
 import { DeltaCoalescer, type DeltaCoalescerOptions } from './delta-coalescer';
 import { clipApprovalBody, parseApprovalRequest, type ApprovalRequest } from '../shared/approval-request';
-import { claudeFileChange, encodeFileChanges, replacementLines, type RecordedFileChange } from '../shared/conversation-changes';
+import { addedFileChange, claudeFileChange, diffCounts, encodeFileChanges, replacementLines, structuredPatchChange, type RecordedFileChange } from '../shared/conversation-changes';
 import { toolCategory, toolTarget } from '../shared/tool-catalog';
 import type { TodoItem, ToolPayload, ToolStatus, TranscriptPayload } from '../shared/transcript-payload';
 import { execFile } from 'node:child_process';
@@ -652,6 +652,20 @@ function editCounts(edits: readonly (JsonObject | null)[]): { added: number; rem
   return { added, removed };
 }
 
+/**
+ * The change to record for a successful Edit/MultiEdit/Write: the SDK's own
+ * hunks (real file line numbers) or the created content when the structured
+ * result describes this file, else the fragment derived from the call input.
+ */
+export function recordedClaudeChange(change: RecordedFileChange, structured: unknown): RecordedFileChange {
+  const result = asObject(structured);
+  if (!result) return change;
+  const filePath = asString(result.filePath);
+  if (filePath !== undefined && filePath !== change.path) return change;
+  if (result.type === 'create' && typeof result.content === 'string') return addedFileChange(change.path, result.content);
+  return structuredPatchChange(change.path, result.structuredPatch) ?? change;
+}
+
 function toolResultFiles(
   name: string,
   input: unknown,
@@ -659,6 +673,11 @@ function toolResultFiles(
   structured: unknown,
 ): ToolPayload['files'] {
   const record = asObject(input);
+  // Numbered hunks count exactly, overwrites included.
+  if (change?.coverage === 'patch' && (name === 'Edit' || name === 'MultiEdit' || name === 'Write')) {
+    const created = name === 'Write' && asObject(structured)?.type === 'create';
+    return [{ path: shortText(change.path), kind: created ? 'add' : 'update', ...diffCounts(change) }];
+  }
   if (name === 'MultiEdit') {
     const filePath = asString(record?.file_path);
     if (!filePath) return undefined;
@@ -2040,8 +2059,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       if (toolId) session.toolCalls.delete(toolId);
       const name = call?.name ?? 'tool';
       const failed = block.is_error === true;
-      const change = toolId ? session.fileChanges.get(toolId) : undefined;
+      const fragment = toolId ? session.fileChanges.get(toolId) : undefined;
       if (toolId) session.fileChanges.delete(toolId);
+      const numbered = fragment && !failed ? recordedClaudeChange(fragment, structured) : undefined;
+      // A numbered record over the size limit falls back to the fragment it came from.
+      const change = numbered && encodeFileChanges([numbered]) ? numbered : fragment;
       const text = toolResultText(block.content);
       const denied = meta.some((entry) => entry?.id === toolId && entry?.non_execution_kind === 'permission-rule')
         || text === 'Denied by the user.';

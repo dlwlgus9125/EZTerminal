@@ -12,6 +12,7 @@ import {
   MemoryClaudeProviderEnablementStore,
   classifyClaudeAuthentication,
   classifyClaudeProviderError,
+  recordedClaudeChange,
   resolveClaudeExecutable,
   type ClaudeProviderEnablement,
   type ClaudeQuerySession,
@@ -1511,5 +1512,24 @@ describe('Claude error classification', () => {
     expect(error).toBeInstanceOf(ClaudeProviderError);
     expect(error.code).toBe(expected);
     expect(error.message.length).toBeGreaterThan(0);
+  });
+});
+
+describe('recorded Claude file changes', () => {
+  const fragment = { path: 'C:/w/src/app.ts', coverage: 'fragment' as const, patch: '-a\n+b' };
+
+  it('uses the SDK hunks for the same file and the created content for a new file', () => {
+    expect(recordedClaudeChange(fragment, {
+      filePath: 'C:/w/src/app.ts',
+      structuredPatch: [{ oldStart: 4, oldLines: 1, newStart: 4, newLines: 1, lines: ['-a', '+b'] }],
+    })).toEqual({ path: 'C:/w/src/app.ts', coverage: 'patch', patch: '@@ -4,1 +4,1 @@\n-a\n+b' });
+    expect(recordedClaudeChange({ ...fragment, patch: '+x' }, { type: 'create', filePath: 'C:/w/src/app.ts', content: 'x\n', structuredPatch: [] }))
+      .toEqual({ path: 'C:/w/src/app.ts', coverage: 'patch', patch: '@@ -0,0 +1,1 @@\n+x' });
+  });
+
+  it('keeps the fragment when the structured result is about another file, missing or malformed', () => {
+    expect(recordedClaudeChange(fragment, { filePath: 'C:/w/other.ts', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] }] })).toBe(fragment);
+    expect(recordedClaudeChange(fragment, undefined)).toBe(fragment);
+    expect(recordedClaudeChange(fragment, { filePath: 'C:/w/src/app.ts', structuredPatch: [{ oldStart: 'x' }] })).toBe(fragment);
   });
 });
