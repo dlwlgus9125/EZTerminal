@@ -127,6 +127,12 @@ export function ChatViewport({
     overscan: 8,
   });
 
+  // Latest rows and virtualizer for observers that outlive one render.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+
   const scrollToEnd = useCallback(() => {
     const element = scrollRef.current;
     if (!element) return;
@@ -167,14 +173,46 @@ export function ChatViewport({
 
   // Content that grows after layout (highlighting, expansion, streaming) keeps the tail pinned,
   // and so does a panel that gets shorter (an approval dock or child track opening below).
+  // A panel that gets narrower or wider (a Results tab opening beside it) keeps the row the
+  // reader was looking at in place instead of letting rewrapped text move it.
   useEffect(() => {
     const element = scrollRef.current;
     const content = element?.firstElementChild;
     if (!element || !content || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(() => { if (following.current) element.scrollTop = element.scrollHeight; });
+    let width = element.clientWidth;
+    let anchor: { readonly id: string; readonly offset: number } | undefined;
+    const capture = (): void => {
+      if (following.current) { anchor = undefined; return; }
+      const top = element.scrollTop;
+      for (const row of element.querySelectorAll<HTMLElement>('[data-row-id]')) {
+        if (row.offsetTop + row.offsetHeight > top) { anchor = { id: row.dataset.rowId ?? '', offset: row.offsetTop - top }; return; }
+      }
+    };
+    capture();
+    element.addEventListener('scroll', capture, { passive: true });
+    const observer = new ResizeObserver(() => {
+      if (following.current) {
+        element.scrollTop = element.scrollHeight;
+        width = element.clientWidth;
+        return;
+      }
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      if (!anchor?.id) return;
+      if (virtual) {
+        const index = rowsRef.current.findIndex((row) => row.id === anchor!.id);
+        if (index >= 0) virtualizerRef.current.scrollToIndex(index, { align: 'start' });
+        return;
+      }
+      const target = element.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(anchor.id)}"]`);
+      if (target) element.scrollTop = target.offsetTop - anchor.offset;
+    });
     observer.observe(content);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      element.removeEventListener('scroll', capture);
+    };
   }, [virtual]);
 
   // Find: scroll the current match into view without leaving follow mode on.

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, ListChecks } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, ListChecks } from 'lucide-react';
 
 import type { TodoItem } from '../../../shared/transcript-payload';
 import { useChatCopy } from '../copy';
@@ -13,6 +13,20 @@ export function TaskDock({ items }: { readonly items: readonly TodoItem[] }): JS
   if (!items.length) return null;
   const done = items.filter((item) => item.status === 'completed').length;
   const current = items.find((item) => item.status === 'in_progress');
+  if (context.onOpenResults) {
+    // Desktop: the full list lives in the Results tab; here stays the one line of progress.
+    const openResults = context.onOpenResults;
+    return (
+      <section className="chat-task-dock" aria-label={copy.tasks}>
+        <button type="button" className="chat-task-dock__header" onClick={() => openResults('summary')} data-testid="chat-task-dock-open-results">
+          <ListChecks aria-hidden="true" />
+          <span className="chat-task-dock__progress">{copy.tasksProgress(done, items.length)}</span>
+          {current && <span className="chat-task-dock__current">{current.active ?? current.text}</span>}
+          <ChevronRight aria-hidden="true" />
+        </button>
+      </section>
+    );
+  }
   return (
     <section className="chat-task-dock" aria-label={copy.tasks}>
       <button type="button" className="chat-task-dock__header" aria-expanded={open} onClick={() => context.setExpanded('task-dock', !open)}>

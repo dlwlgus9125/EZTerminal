@@ -281,6 +281,21 @@ export function CliChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.Ele
   const open = context.isExpanded(key, false);
   const added = row.files.reduce((total, file) => total + (file.added ?? 0), 0);
   const removed = row.files.reduce((total, file) => total + (file.removed ?? 0), 0);
+  if (context.onOpenResults) {
+    // Desktop: `+N −M` leads to this turn in the Results tab instead of expanding here.
+    const openResults = context.onOpenResults;
+    return (
+      <section className="chat-cli-line chat-cli-changes" data-results="true">
+        <span className="chat-cli-glyph" data-tone="success" aria-hidden="true">⏺</span>
+        <div className="chat-cli-line__body">
+          <button type="button" className="chat-cli-tool__call" onClick={() => openResults('changes', row.turnId ? { turnId: row.turnId } : {})} data-testid="chat-changes-open-results">
+            <span className="chat-cli-tool__name">{copy.changedFiles(row.files.length)}</span>
+            {added > 0 && <span className="chat-diff__added"> +{added}</span>}{removed > 0 && <span className="chat-diff__removed"> −{removed}</span>}
+          </button>
+        </div>
+      </section>
+    );
+  }
   return (
     <section className="chat-cli-line chat-cli-changes">
       <span className="chat-cli-glyph" data-tone="success" aria-hidden="true">⏺</span>

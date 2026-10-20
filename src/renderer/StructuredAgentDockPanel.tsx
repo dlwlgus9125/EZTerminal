@@ -1,6 +1,8 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalResponse } from '../shared/approval-request';
 import { PlanningNavigationContext } from './PlanningWorkspaceDockPanel';
+import { AgentResultsContext, AgentResultsOwnerContext, type AgentResultsOwner } from './agent-results/AgentResultsContext';
+import { ResultsPublisher } from './agent-results/ResultsPublisher';
 import { WorkflowConversationContext, WorkflowConversationUnavailable, useWorkflowConversationScope } from './workflow/WorkflowConversationContext';
 import type { IDockviewPanelProps } from 'dockview-react';
 import type { AgentLaunchBootstrap } from '../shared/agent-history';
@@ -97,6 +99,8 @@ const TRANSCRIPT_TAIL_WINDOW = 3 * TRANSCRIPT_PAGE_SIZE;
 /** The tail is extended (bounded) until it shows this many prompts, for old delta-heavy sessions. */
 const TRANSCRIPT_TAIL_MIN_PROMPTS = 2;
 const TRANSCRIPT_TAIL_MAX_EXTENSIONS = 8;
+/** A turn in progress: the Results tab's working-folder view reads again when it ends. */
+const RESULTS_ACTIVE_STATES = new Set(['starting', 'queued', 'working', 'blocked', 'delivery-uncertain']);
 const HEARTBEAT_SESSION_STATES = new Set([
   'starting',
   'queued',
@@ -333,6 +337,12 @@ export function StructuredAgentDockPanel(
   const earlyDraft = useRef<{ sessionId: string; draft: ChatComposerDraft } | null>(null);
   const authorizedProjectId = snapshot?.sessions.find((candidate) => candidate.id === sessionId)?.projectId;
   const workflowNavigation = useContext(PlanningNavigationContext);
+  // Desktop only: this tab's Results tab (Android and stories have no host).
+  const resultsHost = useContext(AgentResultsContext);
+  const resultsPanelOwnerId = props.api.id;
+  const resultsOwner = useMemo<AgentResultsOwner | null>(() => (resultsHost
+    ? { ownerPanelId: resultsPanelOwnerId, open: (request) => { resultsHost.open(resultsPanelOwnerId, request); } }
+    : null), [resultsHost, resultsPanelOwnerId]);
   const workflowAccess = useMemo(() => typeof window.ezterminal?.getWorkflowSnapshot === 'function' ? { getWorkflowSnapshot: (id: string) => window.ezterminal.getWorkflowSnapshot(id), executeWorkflowCommand: window.ezterminal.executeWorkflowCommand.bind(window.ezterminal) } : undefined, []);
   const workflowContext = useWorkflowConversationScope(workflowAccess, authorizedProjectId, sessionId);
   const chatRecovery = useChatRecovery(authorizedProjectId, sessionId, props.chatStateAccess);
@@ -1281,7 +1291,26 @@ export function StructuredAgentDockPanel(
     && agent !== undefined
     && HEARTBEAT_SESSION_STATES.has(agent.state);
 
-  return (<>
+  return (<AgentResultsOwnerContext.Provider value={resultsOwner}>
+    {resultsOwner && sessionId && (
+      <ResultsPublisher
+        key={sessionId}
+        ownerPanelId={resultsOwner.ownerPanelId}
+        sessionId={sessionId}
+        title={session?.title ?? createdDraft?.title ?? ''}
+        providerLabel={provider?.displayName ?? (providerId || 'Agent')}
+        {...(workspaceRoot ? { workspaceRoot } : {})}
+        items={transcriptItems}
+        children={directChildren}
+        transcriptFloor={transcriptFloor}
+        loaded={!transcriptLoading && snapshot !== null}
+        historyOnly={historyOnly}
+        turnActive={agent ? RESULTS_ACTIVE_STATES.has(agent.state) : false}
+        readTranscriptPage={(after, limit) => capabilities.daemon.getTranscript(sessionId, after, limit)}
+        {...(props.onOpenSession ? { openRelatedSession } : {})}
+        {...(session && workflowNavigation ? { openProjectFiles: () => workflowNavigation.openFiles(session.projectId) } : {})}
+      />
+    )}
     <StructuredAgentSessionPanel
       onOpenProjectFiles={session && workflowNavigation ? () => workflowNavigation.openFiles(session.projectId) : undefined}
       viewStateKey={props.params?.conversationId ? `desktop:conversation:${props.params.conversationId}` : undefined}
@@ -1405,5 +1434,5 @@ export function StructuredAgentDockPanel(
         onSubmit={(request) => delegate(delegateMode, request)}
       />
     )}
-  </>);
+  </AgentResultsOwnerContext.Provider>);
 }

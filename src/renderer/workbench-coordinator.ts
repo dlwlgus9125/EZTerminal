@@ -326,6 +326,11 @@ export class WorkbenchCoordinator {
     return this.recentPanelSwitch !== null;
   }
 
+  /** True while a layout is restored or replaced: panels closing then are not the person's choice. */
+  public isLayoutTransactionActive(): boolean {
+    return this.savesSuppressed;
+  }
+
   public scheduleLayoutSave(): void {
     const adapter = this.adapter;
     if (!adapter || this.savesSuppressed) return;

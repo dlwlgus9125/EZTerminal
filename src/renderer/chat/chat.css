@@ -841,6 +841,38 @@
   margin-top: var(--ui-space-2);
 }
 
+/* Desktop: each file opens its change in the Results tab. */
+.chat-changes__file {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 1.5rem;
+  padding: 0 var(--ui-space-1);
+  margin: 0 calc(var(--ui-space-1) * -1);
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-changes__file:hover {
+  background: var(--ui-surface-hover);
+}
+
+.chat-changes__file:hover .chat-changes__path {
+  color: var(--ui-text-primary);
+}
+
+.chat-changes__file:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 0;
+}
+
 .chat-notice {
   margin: 0;
   color: var(--ui-text-muted);

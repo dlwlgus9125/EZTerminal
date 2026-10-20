@@ -9,6 +9,10 @@ import { ACCESS_LEVELS, agentPermissionCopy, isAccessLevel, type AccessLevel } f
 import { readPlanAccess, writePlanAccess } from './agent-plan-access';
 import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
+import { AgentResultsOwnerContext } from './agent-results/AgentResultsContext';
+import { createResultsFileResolver } from './agent-results/results-file-links';
+import { publishResultsModel, publishResultsSession } from './agent-results/results-source-store';
+import { useResultsCopy } from './agent-results/copy';
 import {
   Activity,
   AlertTriangle,
@@ -40,6 +44,8 @@ import {
 } from 'lucide-react';
 import {
   memo,
+  useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -969,6 +975,22 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   const copy = useStructuredAgentCopy();
   const locale = useChatLocale();
   const built = useMemo(() => buildChatModel({ items, approvals, ...(turns ? { turns } : {}) }), [items, approvals, turns]);
+  // Desktop: the Results tab reads the model built here, and chat links and cards lead to it.
+  const results = useContext(AgentResultsOwnerContext);
+  useEffect(() => {
+    if (!results) return undefined;
+    publishResultsModel(results.ownerPanelId, built);
+    return undefined;
+  }, [built, results]);
+  useEffect(() => (results ? () => publishResultsModel(results.ownerPanelId, undefined) : undefined), [results]);
+  const openResults = useCallback((section: 'changes' | 'files' | 'summary', target?: { readonly turnId?: string; readonly path?: string; readonly line?: number }) => {
+    results?.open({ activate: true, target: { section, ...target } });
+  }, [results]);
+  const changedPathsKey = useMemo(() => [...new Set(built.rows.flatMap((row) => (row.kind === 'changes' ? row.files.map((file) => file.path) : [])))].join('\n'), [built]);
+  const resolveFileLink = useMemo(
+    () => createResultsFileResolver(workspaceRoot, changedPathsKey ? changedPathsKey.split('\n') : []),
+    [changedPathsKey, workspaceRoot],
+  );
   const proposal = planReview && planAccess
     ? proposedPlan(built, { providerId: planReview.providerId, permissionPreset: planReview.permissionPreset, state: planReview.state, ...(turns ? { turns } : {}) })
     : undefined;
@@ -987,7 +1009,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
       {...(onReuse ? { onReuse } : {})}
       {...(onOpenLink ? { onOpenLink } : {})}
       {...(onOpenRelatedSession ? { onOpenRelated: onOpenRelatedSession } : {})}
-      {...(onReviewChanges ? { onReviewChanges } : {})}
+      {...(results ? { onOpenResults: openResults, resolveFileLink } : onReviewChanges ? { onReviewChanges } : {})}
     >
       <ChatTranscript
         model={model}
@@ -1899,6 +1921,10 @@ export function StructuredAgentSessionPanel({
   const [heartbeatOpen, setHeartbeatOpen] = useState(false);
   // Files, not change records: two edits of one file count once, as in the turn's change card.
   const changeCount = useMemo(() => new Set(conversationFileChanges(items, sessionId).map((change) => change.path.toLowerCase())).size, [items, sessionId]);
+  // Desktop with a Results tab: changes are reviewed there, not beside or over this panel.
+  const resultsOwner = useContext(AgentResultsOwnerContext);
+  const results = variant === 'mobile' ? null : resultsOwner;
+  const resultsCopy = useResultsCopy();
   useLayoutEffect(() => {
     const element = panelRef.current;
     if (!element) return;
@@ -2074,6 +2100,22 @@ export function StructuredAgentSessionPanel({
       ...(!onClearConversation ? { disabledReason: copy.clearUnavailable }
         : settingsLocked || turnCurrent ? { disabledReason: copy.clearAfterTurn } : {}) },
   ];
+  // The Results tab puts review comments into this draft (never sends) and can point at the decision above.
+  const canInsertDraft = !historyOnly && !composerDisabled;
+  const resultsActions = useRef<{ insert: (text: string) => void; focus: () => boolean }>({ insert: () => undefined, focus: () => false });
+  resultsActions.current = {
+    insert: (text: string) => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }),
+    focus: () => focusDecision(),
+  };
+  useEffect(() => {
+    if (!results) return undefined;
+    publishResultsSession(results.ownerPanelId, {
+      ...(canInsertDraft ? { insertIntoDraft: (text: string) => resultsActions.current.insert(text) } : { draftUnavailable: historyOnly ? 'history' : 'disabled' }),
+      focusDecision: () => { resultsActions.current.focus(); },
+    });
+    return undefined;
+  }, [canInsertDraft, historyOnly, results]);
+  useEffect(() => (results ? () => publishResultsSession(results.ownerPanelId, undefined) : undefined), [results]);
   /** Shift+Tab from the message box: the decision waiting above takes focus (its main action, or the folded strip). */
   const focusDecision = (): boolean => {
     const target = panelRef.current?.querySelector<HTMLElement>(
@@ -2333,7 +2375,12 @@ export function StructuredAgentSessionPanel({
                 <Activity aria-hidden="true" />{copy.heartbeatOn}
               </button>
             )}
-            {changeCount > 0 && (
+            {results ? (
+              <Button type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />}
+                onClick={() => results.open({ activate: true, target: { section: 'changes' } })} data-testid="structured-agent-results">
+                {resultsCopy.results}{changeCount > 0 ? ` ${String(changeCount)}` : ''}
+              </Button>
+            ) : changeCount > 0 && (
               <Button type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
                 {copy.changedFiles(changeCount)}
               </Button>
@@ -2404,12 +2451,12 @@ export function StructuredAgentSessionPanel({
       )}
 
       {variant === 'mobile' && capabilitiesPanel}
-      <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
+      {!results && <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
         onAsideChange={setReviewAside}
         openRequest={reviewRequest}
         hideTrigger={variant !== 'mobile'}
         onOpenProjectFiles={onOpenProjectFiles}
-        onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />
+        onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />}
       {workflowContext}
       <StructuredAgentTranscript
         beforeMessages={beforeMessages}

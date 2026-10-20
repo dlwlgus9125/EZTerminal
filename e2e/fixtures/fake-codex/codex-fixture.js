@@ -28,6 +28,7 @@ if (args.includes('--version')) {
   let nextThread = 0;
   let nextTurn = 0;
   const threadConfigs = new Map();
+  const threadCwds = new Map();
   const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
   const respond = (frame, result) => write({ jsonrpc: '2.0', id: frame.id, result });
 
@@ -79,6 +80,7 @@ if (args.includes('--version')) {
         case 'thread/start': {
           const threadId = `fixture-thread-${++nextThread}`;
           threadConfigs.set(threadId, frame.params?.config);
+          if (typeof frame.params?.cwd === 'string') threadCwds.set(threadId, frame.params.cwd);
           respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture' });
           break;
         }
@@ -115,6 +117,27 @@ if (args.includes('--version')) {
                 if (!result.ok) throw new Error(result.message);
                 responseText = 'AI preview updated through the authenticated app tool.';
               } catch (reason) { responseText = `Preview fixture failed: ${String(reason)}`; }
+            }
+            // Results tab: the AI creates a note and edits a file in the working folder, as Codex reports it.
+            if (JSON.stringify(frame.params?.input).includes('EZTERMINAL_E2E_RESULTS')) {
+              const cwd = threadCwds.get(threadId);
+              if (cwd) {
+                const notePath = path.join(cwd, 'results-note.md');
+                const appPath = path.join(cwd, 'results-app.ts');
+                fs.writeFileSync(notePath, '# Results note\n\nCreated by the fixture.\n');
+                const before = 'export const answer = 41;\n';
+                const after = 'export const answer = 42;\n';
+                if (!fs.existsSync(appPath)) fs.writeFileSync(appPath, before);
+                fs.writeFileSync(appPath, after);
+                const changes = [
+                  { path: notePath, kind: { type: 'add' }, diff: '# Results note\n\nCreated by the fixture.\n' },
+                  { path: appPath, kind: { type: 'update', move_path: null }, diff: '@@ -1,1 +1,1 @@\n-export const answer = 41;\n+export const answer = 42;\n' },
+                ];
+                const itemId = `fixture-file-change-${turnSequence}`;
+                write({ jsonrpc: '2.0', method: 'item/started', params: { threadId, turnId, startedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes, status: 'inProgress' } } });
+                write({ jsonrpc: '2.0', method: 'item/completed', params: { threadId, turnId, completedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes, status: 'completed' } } });
+                responseText = 'Updated `results-app.ts` and wrote `results-note.md`.';
+              }
             }
             write({
               jsonrpc: '2.0',

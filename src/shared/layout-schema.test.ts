@@ -180,6 +180,33 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     });
   });
 
+  it('restores a conversation Results tab with only its owner id, and drops it when the conversation is gone', () => {
+    const owner = 'agent-session-structured-session-abc';
+    const layout = makeLayout();
+    layout.panels = {
+      [owner]: { id: owner, contentComponent: 'agent-session', params: { historyId: 'structured-session-abc' } },
+      [`agent-results-${owner}`]: { id: `agent-results-${owner}`, contentComponent: 'agent-results', params: { ownerPanelId: owner } },
+      'agent-results-orphan': { id: 'agent-results-orphan', contentComponent: 'agent-results', params: { ownerPanelId: 'agent-session-gone' } },
+      'agent-results-on-terminal': { id: 'agent-results-on-terminal', contentComponent: 'agent-results', params: { ownerPanelId: 'agent-session-x' } },
+      'agent-session-x': { id: 'agent-session-x', contentComponent: 'terminal', title: 'not a conversation' },
+    };
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env).not.toBeNull();
+    expect(env!.layout.panels[`agent-results-${owner}`]).toMatchObject({ contentComponent: 'agent-results', renderer: 'always', params: { ownerPanelId: owner } });
+    expect(env!.layout.panels['agent-results-orphan']).toBeUndefined();
+    expect(env!.layout.panels['agent-results-on-terminal']).toBeUndefined();
+  });
+
+  it('REJECTS anything but the owner id in Results tab params', () => {
+    const owner = 'agent-session-a';
+    const layout = makeLayout();
+    layout.panels = {
+      [owner]: { id: owner, contentComponent: 'agent-session', params: { historyId: 'a' } },
+      'agent-results-a': { id: 'agent-results-a', contentComponent: 'agent-results', params: { ownerPanelId: owner, path: 'C:/secret.txt' } },
+    };
+    expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
+  });
+
   it('REJECTS private provider thread ids or transcript data added to Agent history params', () => {
     const layout = makeLayout();
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];

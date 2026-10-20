@@ -42,9 +42,8 @@ export interface ResultsDockPart {
   readonly openProjectFiles?: () => void;
 }
 
-/** Published by the conversation panel (what it renders and what the composer accepts). */
+/** Published by the conversation panel (what the composer accepts). */
 export interface ResultsSessionPart {
-  readonly model?: ChatModel;
   /** Puts text into the composer draft; never sends. Absent when the draft can't change. */
   readonly insertIntoDraft?: (text: string) => void;
   /** Why the draft can't take text (history only, composer busy). */
@@ -55,6 +54,8 @@ export interface ResultsSessionPart {
 
 export interface ResultsSource extends Partial<ResultsDockPart>, ResultsSessionPart {
   readonly ownerPanelId: string;
+  /** The chat model the conversation already built for its transcript. */
+  readonly model?: ChatModel;
 }
 
 export interface ResultsNavigation {
@@ -68,6 +69,7 @@ export interface ResultsNavigation {
 interface Entry {
   dock?: ResultsDockPart;
   session?: ResultsSessionPart;
+  model?: ChatModel;
   snapshot?: ResultsSource;
   navigation?: ResultsNavigation;
 }
@@ -87,8 +89,8 @@ function notify(ownerPanelId: string): void {
 }
 
 function changed(ownerPanelId: string, value: Entry): void {
-  value.snapshot = value.dock || value.session
-    ? { ownerPanelId, ...value.dock, ...value.session }
+  value.snapshot = value.dock || value.session || value.model
+    ? { ownerPanelId, ...value.dock, ...value.session, ...(value.model ? { model: value.model } : {}) }
     : undefined;
   notify(ownerPanelId);
 }
@@ -97,7 +99,7 @@ export function publishResultsDock(ownerPanelId: string, part: ResultsDockPart |
   const value = entry(ownerPanelId);
   if (value.dock === part) return;
   // A new conversation in the same tab (/clear) starts with no stale session part.
-  if (part && value.dock && value.dock.sessionId !== part.sessionId) value.session = undefined;
+  if (part && value.dock && value.dock.sessionId !== part.sessionId) { value.session = undefined; value.model = undefined; }
   value.dock = part;
   changed(ownerPanelId, value);
 }
@@ -106,6 +108,13 @@ export function publishResultsSession(ownerPanelId: string, part: ResultsSession
   const value = entry(ownerPanelId);
   if (value.session === part) return;
   value.session = part;
+  changed(ownerPanelId, value);
+}
+
+export function publishResultsModel(ownerPanelId: string, model: ChatModel | undefined): void {
+  const value = entry(ownerPanelId);
+  if (value.model === model) return;
+  value.model = model;
   changed(ownerPanelId, value);
 }
 

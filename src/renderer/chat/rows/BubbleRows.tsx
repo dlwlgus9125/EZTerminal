@@ -287,6 +287,35 @@ export function BubbleChanges({ row }: { readonly row: RowOf<'changes'> }): JSX.
   const copy = useChatCopy();
   const key = `changes:${row.id}`;
   const open = context.isExpanded(key, false);
+  if (context.onOpenResults) {
+    // Desktop: the card leads to this turn in the Results tab instead of expanding here.
+    const openResults = context.onOpenResults;
+    const turn = row.turnId ? { turnId: row.turnId } : {};
+    return (
+      <section className="chat-card chat-changes" aria-label={copy.changedFiles(row.files.length)} data-results="true">
+        <header className="chat-changes__header">
+          <button type="button" className="chat-changes__toggle" onClick={() => openResults('changes', turn)} data-testid="chat-changes-open-results">
+            <FileDiff aria-hidden="true" />
+            <span>{copy.changedFiles(row.files.length)}</span>
+            <ChevronRight className="chat-chevron" aria-hidden="true" />
+          </button>
+        </header>
+        <ul className="chat-changes__files">
+          {row.files.map((file) => (
+            <li key={file.path}>
+              <button type="button" className="chat-changes__file" onClick={() => openResults('changes', { ...turn, path: file.path })}>
+                <span className="chat-changes__path" title={file.path}>{workspacePath(file.path, context.workspaceRoot)}</span>
+                <span className="chat-diff__counts">
+                  {(file.added ?? 0) > 0 && <span className="chat-diff__added">+{file.added}</span>}
+                  {(file.removed ?? 0) > 0 && <span className="chat-diff__removed">−{file.removed}</span>}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
   return (
     <section className="chat-card chat-changes" aria-label={copy.changedFiles(row.files.length)}>
       <header className="chat-changes__header">

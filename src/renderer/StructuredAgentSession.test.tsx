@@ -14,6 +14,8 @@ import {
   coalesceStructuredAgentTranscript,
 } from './StructuredAgentSession';
 import { AppI18nProvider } from './i18n';
+import { AgentResultsOwnerContext } from './agent-results/AgentResultsContext';
+import { readResultsSource, resetResultsSourcesForTests } from './agent-results/results-source-store';
 import { clearSessionViewStates } from './session-view-state';
 import { encodeFileChanges } from '../shared/conversation-changes';
 
@@ -645,6 +647,47 @@ describe('message-based chat skins', () => {
     await flush();
     expect(input().value).toContain('My question'); expect(input().value).toContain('src/a.ts'); expect(input().value).toContain('+new');
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('desktop with a Results tab: the header, change cards and file links open it; review comments reach the draft without sending', async () => {
+    const open = vi.fn();
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const items = [
+      transcriptItem('ask', 1, 'user-message', 'Change it', { sessionId: 'skin-session' }),
+      transcriptItem('call', 2, 'tool-call', 'apply', { sessionId: 'skin-session', payload: { v: 1, type: 'tool', callId: 'c1', name: 'fileChange', category: 'edit', phase: 'call', status: 'running' } }),
+      transcriptItem('patch', 3, 'tool-result', encodeFileChanges([{ path: 'src/a.ts', patch: '@@ -8 +8 @@\n-old\n+new', coverage: 'patch' }])!, {
+        sessionId: 'skin-session', payload: { v: 1, type: 'tool', callId: 'c1', name: 'fileChange', category: 'edit', phase: 'result', status: 'completed', files: [{ path: 'src/a.ts', kind: 'update', added: 1, removed: 1 }] },
+      }),
+      transcriptItem('answer', 4, 'assistant-message', 'Edited `src/a.ts` as asked.', { sessionId: 'skin-session' }),
+    ];
+    render(
+      <AgentResultsOwnerContext.Provider value={{ ownerPanelId: 'agent-session-x', open }}>
+        {panel({ items, onSend, skin: 'bubble', workspace: { ...workspace, path: 'C:\\work' } })}
+      </AgentResultsOwnerContext.Provider>,
+    );
+    await flush();
+    expect(container.querySelector('[data-testid="structured-agent-review-changes"]')).toBeNull();
+    expect(document.querySelector('[data-testid="conversation-change-review"]')).toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-results"]')!.click());
+    expect(open).toHaveBeenLastCalledWith({ activate: true, target: { section: 'changes' } });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="chat-changes-open-results"]')!.click());
+    expect(open).toHaveBeenLastCalledWith({ activate: true, target: { section: 'changes', turnId: 'turn-1' } });
+    act(() => container.querySelector<HTMLButtonElement>('.chat-changes__file')!.click());
+    expect(open).toHaveBeenLastCalledWith({ activate: true, target: { section: 'changes', turnId: 'turn-1', path: 'src/a.ts' } });
+    const link = Array.from(container.querySelectorAll('.chat-md button, .chat-md a')).find((element) => element.textContent === 'src/a.ts');
+    expect(link).toBeTruthy();
+    act(() => (link as HTMLElement).click());
+    expect(open).toHaveBeenLastCalledWith({ activate: true, target: { section: 'files', path: 'src/a.ts' } });
+    // The Results tab reads the model and draft access this panel publishes.
+    const source = readResultsSource('agent-session-x');
+    expect(source?.model?.rows.some((row) => row.kind === 'changes')).toBe(true);
+    setValue(input(), 'Keep my words. ');
+    act(() => source!.insertIntoDraft!('Review comments (1)\n- src/a.ts:8 — fine\n'));
+    await flush();
+    expect(input().value).toContain('Keep my words.');
+    expect(input().value).toContain('src/a.ts:8 — fine');
+    expect(onSend).not.toHaveBeenCalled();
+    resetResultsSourcesForTests();
   });
 
   it('changes only the presentation and preserves message, input, selection, tool and approval elements', () => {

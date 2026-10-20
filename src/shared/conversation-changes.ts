@@ -193,7 +193,9 @@ export function reviewLines(change: RecordedFileChange): ReviewLine[] {
   let before: number | undefined; let after: number | undefined;
   // File headers only precede the first hunk; inside one, "--- x" is a removed "-- x".
   let inHunk = false;
-  return change.patch.split('\n').map(text => {
+  // A final newline ends the last patch line; it is not an empty context line of the file.
+  const body = change.coverage === 'patch' ? change.patch.replace(/\r?\n$/u, '') : change.patch;
+  return body.split('\n').map(text => {
     const hunk = text.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
     if (hunk && change.coverage === 'patch') { inHunk = true; before = Number(hunk[1]); after = Number(hunk[2]); return { text, kind: 'header' }; }
     if (/^(?:\\ |@@)/.test(text)) { inHunk = true; return { text, kind: 'header' }; }

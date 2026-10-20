@@ -1,10 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import type { ChatReplyReference } from '../../shared/chat-message';
+import type { ResolveFileLink } from './markdown/file-links';
 import { readSessionViewState, saveSessionViewState } from '../session-view-state';
 import type { ChatLocale } from './model/summary';
 
 export type ChatSkin = 'bubble' | 'cli';
+
+/** Where the conversation's Results tab should open, and on what. */
+export interface ChatResultsTarget {
+  readonly turnId?: string;
+  readonly path?: string;
+  readonly line?: number;
+}
 
 export interface ChatContextValue {
   readonly skin: ChatSkin;
@@ -15,6 +23,13 @@ export interface ChatContextValue {
   readonly onOpenLink?: (url: string) => void;
   readonly onOpenRelated?: (sessionId: string) => void;
   readonly onReviewChanges?: () => void;
+  /**
+   * Desktop: opens the conversation's Results tab. When present, change cards
+   * and the task dock lead there instead of expanding in place.
+   */
+  readonly onOpenResults?: (section: 'changes' | 'files' | 'summary', target?: ChatResultsTarget) => void;
+  /** Which file references in messages are links (they open in the Results tab). */
+  readonly resolveFileLink?: ResolveFileLink;
   /** Disclosure state that survives virtualized unmounts and skin switches. */
   readonly isExpanded: (key: string, fallback: boolean) => boolean;
   readonly setExpanded: (key: string, open: boolean) => void;
@@ -47,7 +62,7 @@ export function ChatProvider({ children, stateKey, ...value }: Omit<ChatContextV
   }, [storageKey]);
   const context = useMemo<ChatContextValue>(() => ({ ...value, isExpanded, setExpanded }), [
     value.skin, value.locale, value.workspaceRoot, value.onReply, value.onReuse, value.onOpenLink,
-    value.onOpenRelated, value.onReviewChanges, isExpanded, setExpanded,
+    value.onOpenRelated, value.onReviewChanges, value.onOpenResults, value.resolveFileLink, isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }

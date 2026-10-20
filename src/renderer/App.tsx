@@ -120,6 +120,12 @@ import {
 import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
 import { auxiliaryPopoutUrl, isDetachablePanel, installDockviewPopoutBehavior } from './dockview-popouts';
+import { AgentResultsDock } from './agent-results/agent-results-dock';
+import { AgentResultsContext, type AgentResultsHost } from './agent-results/AgentResultsContext';
+import { AgentResultsDockPanel } from './agent-results/AgentResultsDockPanel';
+import { resultsCopy } from './agent-results/copy';
+import { readResultsSource } from './agent-results/results-source-store';
+import { getActiveUiScale } from './ui-scale';
 import {
   addAppWindowEventListener,
   getActiveAppDocument,
@@ -568,6 +574,7 @@ const components = {
   'project-editor': ProjectEditorPanel,
   'project-map': ProjectMapDockPanel,
   'planning-workspace': PlanningWorkspaceDockPanel,
+  'agent-results': AgentResultsDockPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -698,6 +705,14 @@ export function App(): JSX.Element {
   const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void; } | null>(null);
+  // Each conversation's Results tab: placement, auto-open and close follow this controller.
+  const agentResultsRef = useRef<AgentResultsDock | null>(null);
+  const languageRef = useRef(i18n.language);
+  languageRef.current = i18n.language;
+  const agentResultsHost = useMemo<AgentResultsHost>(() => ({
+    open: (ownerPanelId, request) => agentResultsRef.current?.open(ownerPanelId, request) ?? false,
+    requestAutoOpen: (ownerPanelId, sessionId) => agentResultsRef.current?.requestAutoOpen(ownerPanelId, sessionId),
+  }), []);
   const sessionMirroringConnectionRef = useRef<(() => void) | null>(null);
   const paneLifecycleCoordinatorRef = useRef<PaneLifecycleCoordinator | null>(null);
   if (paneLifecycleCoordinatorRef.current === null) {
@@ -2668,6 +2683,13 @@ export function App(): JSX.Element {
       dockWindowCoordinatorRef.current?.dispose();
       const dockWindows = new DockWindowCoordinator(api);
       dockWindowCoordinatorRef.current = dockWindows;
+      agentResultsRef.current?.dispose();
+      agentResultsRef.current = new AgentResultsDock(api, dockWindows, {
+        isLayoutTransactionActive: () => workbenchCoordinator.isLayoutTransactionActive(),
+        uiScale: () => getActiveUiScale() / 100,
+        title: (ownerPanelId) => resultsCopy(languageRef.current.toLowerCase().startsWith('ko') ? 'ko' : 'en')
+          .tabTitle(readResultsSource(ownerPanelId)?.title ?? ''),
+      });
       popoutBehaviorRef.current?.dispose();
       popoutBehaviorRef.current = installDockviewPopoutBehavior(api, {
         onOpenFailed: () => pushToast({
@@ -3166,6 +3188,7 @@ export function App(): JSX.Element {
                 <AgentOrchestrationContext.Provider value={agentOrchestrationSnapshot}>
                 <StructuredAgentCreateRecoveryContext.Provider value={structuredAgentCreateRecoveryValue}>
                 <StructuredAgentNavigationContext.Provider value={structuredAgentNavigationValue}>
+                <AgentResultsContext.Provider value={agentResultsHost}>
                 <PlanningNavigationContext.Provider value={planningNavigation}>
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
@@ -3194,6 +3217,7 @@ export function App(): JSX.Element {
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
                 </PlanningNavigationContext.Provider>
+                </AgentResultsContext.Provider>
                 </StructuredAgentNavigationContext.Provider>
                 </StructuredAgentCreateRecoveryContext.Provider>
                 </AgentOrchestrationContext.Provider>

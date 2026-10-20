@@ -122,6 +122,14 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
     params: ProjectMapParamsSchema,
   }),
   PanelBaseSchema.extend({
+    // A conversation's Results tab; it reads only what its conversation tab publishes.
+    contentComponent: z.literal('agent-results'),
+    renderer: z.literal('always').optional(),
+    params: z.strictObject({
+      ownerPanelId: z.string().min(1).max(256).startsWith('agent-session-'),
+    }),
+  }),
+  PanelBaseSchema.extend({
     contentComponent: z.literal('planning-workspace'),
     renderer: z.literal('always').optional(),
     params: z.strictObject({
@@ -510,6 +518,20 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
           ? 'onlyWhenVisible'
           : 'always';
       }
+    }
+    // A Results tab without its conversation tab has nothing to show: drop it, never the layout.
+    for (const [panelId, panel] of Object.entries(panels)) {
+      if (typeof panel !== 'object' || panel === null) continue;
+      const record = panel as Record<string, unknown>;
+      if (record.contentComponent !== 'agent-results') continue;
+      const ownerPanelId = typeof record.params === 'object' && record.params !== null
+        ? (record.params as Record<string, unknown>).ownerPanelId
+        : undefined;
+      const owner = typeof ownerPanelId === 'string' ? panels[ownerPanelId] : undefined;
+      const ownerIsConversation = typeof owner === 'object' && owner !== null
+        && (owner as Record<string, unknown>).contentComponent === 'agent-session'
+        && !transient.has(ownerPanelId as string);
+      if (!ownerIsConversation) transient.add(panelId);
     }
     for (const panelId of transient) delete panels[panelId];
     prunePanelIdsFromLayout(layout, transient);

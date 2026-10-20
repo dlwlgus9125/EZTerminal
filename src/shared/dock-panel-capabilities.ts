@@ -4,6 +4,7 @@ export const DOCK_PANEL_COMPONENTS = [
   'project-editor',
   'project-map',
   'openclaw-chat',
+  'agent-results',
 ] as const;
 
 export type DockPanelComponent = (typeof DOCK_PANEL_COMPONENTS)[number];
@@ -20,6 +21,7 @@ const CAPABILITIES: Readonly<Record<DockPanelComponent, DockPanelCapabilities>> 
   'project-editor': Object.freeze({ detachable: true, lifecycle: 'passive' }),
   'project-map': Object.freeze({ detachable: false, lifecycle: 'passive' }),
   'openclaw-chat': Object.freeze({ detachable: true, lifecycle: 'passive' }),
+  'agent-results': Object.freeze({ detachable: true, lifecycle: 'passive' }),
 });
 
 export function isDockPanelComponent(value: unknown): value is DockPanelComponent {

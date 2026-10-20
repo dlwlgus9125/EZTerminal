@@ -115,6 +115,11 @@ describe('numbered change records', () => {
     expect(diffCounts(change)).toEqual({ added: 2, removed: 1 });
   });
 
+  it('a patch ending in a newline has no extra empty context line', () => {
+    const lines = reviewLines({ path: 'a.ts', coverage: 'patch', patch: '@@ -1,1 +1,1 @@\n-a\n+b\n' });
+    expect(lines.map((line) => line.kind)).toEqual(['header', 'remove', 'add']);
+  });
+
   it('keeps the fragment when the reported hunks are missing or malformed', () => {
     expect(structuredPatchChange('a.ts', [])).toBeUndefined();
     expect(structuredPatchChange('a.ts', [{ oldStart: 1, lines: ['+x'] }])).toBeUndefined();
