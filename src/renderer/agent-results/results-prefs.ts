@@ -1,27 +1,20 @@
 /**
- * Per-conversation memory for the Results tab: whether it already opened on
- * its own, and whether the person closed it. Only these two flags are kept,
- * on this device; never file contents or paths. A closed tab never opens on
- * its own again for that conversation.
+ * Per-conversation memory for the Results tab: whether the person closed it.
+ * Only that flag is kept, on this device; never file contents or paths. A
+ * closed tab never opens on its own again for that conversation (the person
+ * can still open it). Closing the conversation tab is not closing Results.
  */
 const KEY = 'ezterminal.agent.results-tab.v1';
 const LIMIT = 500;
 
 export interface ResultsTabPrefs {
-  readonly autoOpened: boolean;
   readonly dismissed: boolean;
 }
 
-const EMPTY: ResultsTabPrefs = { autoOpened: false, dismissed: false };
+const EMPTY: ResultsTabPrefs = { dismissed: false };
 
 /** Oldest first; the newest write moves to the end. Mirrors storage so a storage failure keeps working. */
 let memory: [string, ResultsTabPrefs][] | undefined;
-
-function isPrefs(value: unknown): value is ResultsTabPrefs {
-  return typeof value === 'object' && value !== null
-    && typeof (value as ResultsTabPrefs).autoOpened === 'boolean'
-    && typeof (value as ResultsTabPrefs).dismissed === 'boolean';
-}
 
 function load(): [string, ResultsTabPrefs][] {
   if (memory) return memory;
@@ -30,8 +23,9 @@ function load(): [string, ResultsTabPrefs][] {
     const parsed: unknown = JSON.parse(localStorage.getItem(KEY) ?? '[]');
     if (Array.isArray(parsed)) {
       entries = parsed.filter((entry): entry is [string, ResultsTabPrefs] => Array.isArray(entry)
-        && typeof entry[0] === 'string' && isPrefs(entry[1]))
-        .map(([id, prefs]) => [id, { autoOpened: prefs.autoOpened, dismissed: prefs.dismissed }]);
+        && typeof entry[0] === 'string' && typeof entry[1] === 'object' && entry[1] !== null
+        && typeof (entry[1] as ResultsTabPrefs).dismissed === 'boolean')
+        .map(([id, prefs]) => [id, { dismissed: prefs.dismissed }]);
     }
   } catch { /* An unreadable store starts empty. */ }
   memory = entries.slice(-LIMIT);
@@ -47,18 +41,9 @@ export function readResultsTabPrefs(sessionId: string): ResultsTabPrefs {
   return load().find(([id]) => id === sessionId)?.[1] ?? EMPTY;
 }
 
-function write(sessionId: string, patch: Partial<ResultsTabPrefs>): void {
-  const next = { ...readResultsTabPrefs(sessionId), ...patch };
-  save([...load().filter(([id]) => id !== sessionId), [sessionId, next]]);
-}
-
-export function markResultsAutoOpened(sessionId: string): void {
-  write(sessionId, { autoOpened: true });
-}
-
 /** The person closed the tab: it stays closed until they open it again themselves. */
 export function markResultsDismissed(sessionId: string): void {
-  write(sessionId, { dismissed: true });
+  save([...load().filter(([id]) => id !== sessionId), [sessionId, { dismissed: true }]]);
 }
 
 /** Tests only: forget the in-memory mirror so the next read goes to storage. */

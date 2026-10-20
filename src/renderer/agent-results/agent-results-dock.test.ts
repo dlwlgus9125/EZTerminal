@@ -98,7 +98,7 @@ describe('Results tab placement and lifecycle (real Dockview)', () => {
     expect(api.activePanel).toBe(a);
   });
 
-  it('auto-opens once, never again after the person closes it, and waits while the conversation is hidden', () => {
+  it('auto-opens, never again after the person closes it, and waits while the conversation is hidden', () => {
     const { api, dock } = harness(1600);
     const a = conversation(api, 'agent-session-a', 's-a');
     const b = conversation(api, 'agent-session-b', 's-b', { referencePanel: 'agent-session-a', direction: 'within' });
@@ -108,7 +108,6 @@ describe('Results tab placement and lifecycle (real Dockview)', () => {
     a.api.setActive();
     return Promise.resolve().then(() => {
       expect(dock.isOpen('agent-session-a')).toBe(true);
-      expect(readResultsTabPrefs('s-a').autoOpened).toBe(true);
       api.getPanel(resultsPanelId('agent-session-a'))!.api.close();
       expect(readResultsTabPrefs('s-a').dismissed).toBe(true);
       dock.requestAutoOpen('agent-session-a', 's-a');
@@ -125,6 +124,18 @@ describe('Results tab placement and lifecycle (real Dockview)', () => {
     state.transaction = true;
     state.api.getPanel(resultsPanelId('agent-session-a'))!.api.close();
     expect(readResultsTabPrefs('s-a').dismissed).toBe(false);
+  });
+
+  it('closing the conversation is not closing Results: reopened later, a new result opens it again', async () => {
+    const { api, dock } = harness(1600);
+    conversation(api, 'agent-session-a', 's-a').api.setActive();
+    dock.requestAutoOpen('agent-session-a', 's-a');
+    expect(dock.isOpen('agent-session-a')).toBe(true);
+    api.getPanel('agent-session-a')!.api.close();
+    await Promise.resolve();
+    conversation(api, 'agent-session-b', 's-a').api.setActive();
+    dock.requestAutoOpen('agent-session-b', 's-a');
+    expect(dock.isOpen('agent-session-b')).toBe(true);
   });
 
   it('closes with its conversation and forgets what the conversation published', async () => {

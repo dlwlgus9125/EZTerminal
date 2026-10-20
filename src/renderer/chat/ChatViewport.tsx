@@ -181,12 +181,19 @@ export function ChatViewport({
     if (!element || !content || typeof ResizeObserver === 'undefined') return undefined;
     let width = element.clientWidth;
     let anchor: { readonly id: string; readonly offset: number } | undefined;
+    // Screen positions, not offsetTop: virtualized rows are placed with a transform.
     const capture = (): void => {
       if (following.current) { anchor = undefined; return; }
-      const top = element.scrollTop;
+      const viewTop = element.getBoundingClientRect().top;
       for (const row of element.querySelectorAll<HTMLElement>('[data-row-id]')) {
-        if (row.offsetTop + row.offsetHeight > top) { anchor = { id: row.dataset.rowId ?? '', offset: row.offsetTop - top }; return; }
+        const box = row.getBoundingClientRect();
+        if (box.bottom > viewTop) { anchor = { id: row.dataset.rowId ?? '', offset: box.top - viewTop }; return; }
       }
+    };
+    const restore = (): void => {
+      if (!anchor?.id) return;
+      const target = element.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(anchor.id)}"]`);
+      if (target) element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset;
     };
     capture();
     element.addEventListener('scroll', capture, { passive: true });
@@ -199,13 +206,14 @@ export function ChatViewport({
       if (element.clientWidth === width) return;
       width = element.clientWidth;
       if (!anchor?.id) return;
-      if (virtual) {
+      if (virtual && !element.querySelector(`[data-row-id="${CSS.escape(anchor.id)}"]`)) {
+        // Rewrapped rows above changed every estimate: bring the row back, then correct its offset.
         const index = rowsRef.current.findIndex((row) => row.id === anchor!.id);
         if (index >= 0) virtualizerRef.current.scrollToIndex(index, { align: 'start' });
+        requestAnimationFrame(restore);
         return;
       }
-      const target = element.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(anchor.id)}"]`);
-      if (target) element.scrollTop = target.offsetTop - anchor.offset;
+      restore();
     });
     observer.observe(content);
     observer.observe(element);

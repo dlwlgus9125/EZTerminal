@@ -1,7 +1,7 @@
 import type { DockviewApi, DockviewGroupPanel, IDockviewPanel } from 'dockview-react';
 
 import type { DockWindowCoordinator } from '../dock-window-coordinator';
-import { markResultsAutoOpened, markResultsDismissed, readResultsTabPrefs } from './results-prefs';
+import { markResultsDismissed, readResultsTabPrefs } from './results-prefs';
 import { readResultsSource, requestResultsNavigation, retractResultsSource, type ResultsNavigation } from './results-source-store';
 
 export const AGENT_RESULTS_COMPONENT = 'agent-results';
@@ -91,13 +91,12 @@ export class AgentResultsDock {
   }
 
   /**
-   * A result arrived in a conversation. Opens its tab once, beside it, if the
-   * person never closed it and the conversation is in view; otherwise waits.
+   * A new result arrived in a conversation. Opens its tab beside it unless the
+   * person closed it for this conversation; waits while the conversation is out of view.
    */
   public requestAutoOpen(ownerPanelId: string, sessionId: string): void {
     if (this.disposed || this.options.isLayoutTransactionActive()) return;
-    const prefs = readResultsTabPrefs(sessionId);
-    if (prefs.dismissed || prefs.autoOpened || this.isOpen(ownerPanelId)) return;
+    if (readResultsTabPrefs(sessionId).dismissed || this.isOpen(ownerPanelId)) return;
     const owner = this.api.getPanel(ownerPanelId);
     if (!owner) return;
     if (!owner.api.isVisible || owner.group.activePanel !== owner) {
@@ -105,7 +104,7 @@ export class AgentResultsDock {
       return;
     }
     this.pendingAuto.delete(ownerPanelId);
-    if (this.open(ownerPanelId)) markResultsAutoOpened(sessionId);
+    this.open(ownerPanelId);
   }
 
   public close(ownerPanelId: string): void {

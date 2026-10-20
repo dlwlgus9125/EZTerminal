@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeFileChanges } from '../../shared/conversation-changes';
 import type { DaemonTranscriptItem } from '../../shared/daemon-protocol';
 import { backfillConversationChanges } from './history-backfill';
-import { markResultsAutoOpened, markResultsDismissed, readResultsTabPrefs, resetResultsTabPrefsForTests } from './results-prefs';
+import { markResultsDismissed, readResultsTabPrefs, resetResultsTabPrefsForTests } from './results-prefs';
 import {
   publishResultsDock,
   publishResultsSession,
@@ -20,14 +20,12 @@ import {
 describe('results tab preferences', () => {
   beforeEach(() => { localStorage.clear(); resetResultsTabPrefsForTests(); });
 
-  it('remembers auto-open and dismissal per conversation across a reload', () => {
-    expect(readResultsTabPrefs('s1')).toEqual({ autoOpened: false, dismissed: false });
-    markResultsAutoOpened('s1');
+  it('remembers that the person closed it, per conversation, across a reload', () => {
+    expect(readResultsTabPrefs('s1')).toEqual({ dismissed: false });
     markResultsDismissed('s1');
-    markResultsAutoOpened('s2');
     resetResultsTabPrefsForTests();
-    expect(readResultsTabPrefs('s1')).toEqual({ autoOpened: true, dismissed: true });
-    expect(readResultsTabPrefs('s2')).toEqual({ autoOpened: true, dismissed: false });
+    expect(readResultsTabPrefs('s1')).toEqual({ dismissed: true });
+    expect(readResultsTabPrefs('s2')).toEqual({ dismissed: false });
   });
 
   it('ignores a corrupt store and keeps working when storage fails', () => {
@@ -40,10 +38,10 @@ describe('results tab preferences', () => {
   });
 
   it('keeps only the newest 500 conversations', () => {
-    for (let index = 0; index < 505; index += 1) markResultsAutoOpened(`s${String(index)}`);
+    for (let index = 0; index < 505; index += 1) markResultsDismissed(`s${String(index)}`);
     resetResultsTabPrefsForTests();
-    expect(readResultsTabPrefs('s0').autoOpened).toBe(false);
-    expect(readResultsTabPrefs('s504').autoOpened).toBe(true);
+    expect(readResultsTabPrefs('s0').dismissed).toBe(false);
+    expect(readResultsTabPrefs('s504').dismissed).toBe(true);
   });
 });
 
