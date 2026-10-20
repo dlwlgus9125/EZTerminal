@@ -109,8 +109,6 @@ export interface DaemonAgentRuntimeOptions {
   readonly conversationContext?: (projectId: string, sessionId: string) => Promise<ChatMessageContext['workflow']>;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
-  readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
-  readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly shutdownStepTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
   /** Keeps the last reported usage on this computer so a tab shows it as soon as it opens. */
@@ -368,11 +366,8 @@ function providerStateToSession(
  */
 export class DaemonAgentRuntime {
   private readonly now: () => Date;
-  private readonly setTimer: NonNullable<DaemonAgentRuntimeOptions['setTimer']>;
-  private readonly clearTimer: NonNullable<DaemonAgentRuntimeOptions['clearTimer']>;
   private readonly shutdownStepTimeoutMs: number;
   private readonly lifecycleAbortController = new AbortController();
-  private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly providerLifecycleOperations = new Map<string, Promise<void>>();
   private readonly providerLifecycleGenerations = new Map<string, number>();
@@ -390,8 +385,6 @@ export class DaemonAgentRuntime {
 
   constructor(private readonly options: DaemonAgentRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
-    this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
-    this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
     this.shutdownStepTimeoutMs = options.shutdownStepTimeoutMs ?? DEFAULT_SHUTDOWN_STEP_TIMEOUT_MS;
     if (!Number.isSafeInteger(this.shutdownStepTimeoutMs) || this.shutdownStepTimeoutMs < 1) {
       throw new Error('shutdownStepTimeoutMs must be a positive integer.');
@@ -449,7 +442,6 @@ export class DaemonAgentRuntime {
     if (this.disposed) return;
     await this.drainEventTail();
     if (this.disposed) return;
-    this.rearmPersistedTimeouts();
     this.queuePump();
   }
 
@@ -465,8 +457,6 @@ export class DaemonAgentRuntime {
     this.unsubscribeProviders?.();
     this.unsubscribeProviders = null;
     this.pumpRequested = false;
-    for (const timer of this.turnTimers.values()) this.clearTimer(timer);
-    this.turnTimers.clear();
   }
 
   /** Usage for a snapshot: each live conversation's AI limits and context, and each AI's limits. */
@@ -1162,7 +1152,6 @@ export class DaemonAgentRuntime {
           { kind: 'session.upsert', value: sessionInput(session, 'idle') },
         ] },
         afterCommit: () => {
-          if (activeCurrentTurn) this.clearTurnTimeout(activeCurrentTurn.id);
           this.queuePump();
         },
       };
@@ -1249,7 +1238,6 @@ export class DaemonAgentRuntime {
           { kind: 'session.upsert', value: sessionInput(session, 'idle') },
         ] },
         afterCommit: () => {
-          this.clearTurnTimeout(currentTurn.id);
           this.queuePump();
         },
       };
@@ -1982,7 +1970,6 @@ export class DaemonAgentRuntime {
             ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
           attended: this.attendedTurn(selected.turn),
         }, this.lifecycleAbortController.signal);
-        let shouldArmTimeout = false;
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
           const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
@@ -1990,7 +1977,6 @@ export class DaemonAgentRuntime {
           if (!turn || !agent || !session || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
             return undefined;
           }
-          shouldArmTimeout = ACTIVE_TURN_STATES.has(turn.state);
           if (turn.state !== 'submitting') return undefined;
           return { mutations: [
             { kind: 'turn.upsert', value: turnInput(turn, { state: 'working' }) },
@@ -1998,9 +1984,6 @@ export class DaemonAgentRuntime {
             { kind: 'session.upsert', value: sessionInput(session, 'running') },
           ] };
         });
-        if (shouldArmTimeout) {
-          this.armTurnTimeout(selected.turn.id, selected.turn.sessionId, providerSessionId);
-        }
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Provider delivery could not be confirmed.';
         if (!promptSent) {
@@ -2033,7 +2016,6 @@ export class DaemonAgentRuntime {
           });
           continue;
         }
-        let markedUncertain = false;
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
           const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
@@ -2041,7 +2023,6 @@ export class DaemonAgentRuntime {
           if (!turn || !agent || !session || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
             return undefined;
           }
-          markedUncertain = true;
           return { mutations: [
             { kind: 'turn.upsert', value: turnInput(turn, {
               state: 'delivery-uncertain',
@@ -2060,9 +2041,6 @@ export class DaemonAgentRuntime {
             }]),
           ] };
         });
-        if (markedUncertain && providerSessionId) {
-          this.armTurnTimeout(selected.turn.id, selected.turn.sessionId, providerSessionId);
-        }
       }
     }
   }
@@ -2174,10 +2152,7 @@ export class DaemonAgentRuntime {
           { kind: 'session.upsert', value: sessionInput(session, providerStateToSession(event.state)) },
         ] };
       });
-      if (failedTurnIds.length > 0) {
-        for (const turnId of failedTurnIds) this.clearTurnTimeout(turnId);
-        this.queuePump();
-      }
+      if (failedTurnIds.length > 0) this.queuePump();
       return;
     }
     if (event.kind === 'turn-started') {
@@ -2221,7 +2196,6 @@ export class DaemonAgentRuntime {
       return;
     }
     if (event.kind === 'turn-finished') {
-      let finishedTurnId: string | undefined;
       let releasedCurrent = false;
       let report: { readonly plan: ReportBackPlan; readonly summaryRow: DaemonTranscriptItemInput } | undefined;
       const resultSummary = boundedChildSummary(event.summary);
@@ -2243,7 +2217,6 @@ export class DaemonAgentRuntime {
         const failed = event.outcome === 'failed';
         const interrupted = event.outcome === 'interrupted';
         const now = this.isoNow();
-        finishedTurnId = turn.id;
         releasedCurrent = agent.currentTurnId === turn.id;
         const hasQueuedSuccessor = releasedCurrent && agent.queuedTurnCount > 0;
         const parentRelation = snapshot.agentRelations.find((relation) => (
@@ -2304,7 +2277,6 @@ export class DaemonAgentRuntime {
           ...(summaryRow && !report ? this.transcriptMutations([summaryRow]) : []),
         ] };
       });
-      if (finishedTurnId) this.clearTurnTimeout(finishedTurnId);
       if (releasedCurrent) this.queuePump();
       if (report) {
         const { plan, summaryRow } = report;
@@ -2520,10 +2492,7 @@ export class DaemonAgentRuntime {
           ...transcript,
         ] };
       });
-      if (terminalTurnIds.length > 0) {
-        for (const turnId of terminalTurnIds) this.clearTurnTimeout(turnId);
-        if (releasedCurrent || event.turnScope === undefined) this.queuePump();
-      }
+      if (terminalTurnIds.length > 0 && (releasedCurrent || event.turnScope === undefined)) this.queuePump();
     }
   }
 
@@ -2811,103 +2780,6 @@ export class DaemonAgentRuntime {
     return snapshot.approvals.some((entry) => (
       entry.sessionId === approval.sessionId && entry.id !== approval.id && entry.state === 'pending'
     ));
-  }
-
-  private rearmPersistedTimeouts(): void {
-    const snapshot = this.options.getSnapshot();
-    for (const turn of snapshot.turns) {
-      if (!ACTIVE_TURN_STATES.has(turn.state) || !turn.startedAt) continue;
-      const agent = snapshot.agents.find((entry) => entry.sessionId === turn.sessionId);
-      if (!agent?.providerSessionId) continue;
-      const elapsed = Math.max(0, this.now().valueOf() - Date.parse(turn.startedAt));
-      this.armTurnTimeout(
-        turn.id,
-        turn.sessionId,
-        agent.providerSessionId,
-        Math.max(1, DAEMON_HARD_LIMITS.backgroundTurnMs - elapsed),
-      );
-    }
-  }
-
-  private armTurnTimeout(
-    turnId: string,
-    sessionId: string,
-    providerSessionId: string,
-    delayMs = DAEMON_HARD_LIMITS.backgroundTurnMs,
-  ): void {
-    this.clearTurnTimeout(turnId);
-    // User-started planning runs end at a review/integration boundary, not an elapsed-time cap.
-    // Provider/tool liveness and explicit cancellation remain independently enforced.
-    if (this.options.preparedSessionSettings?.(sessionId)) return;
-    const timer = this.setTimer(() => {
-      this.turnTimers.delete(turnId);
-      this.eventTail = this.eventTail
-        .then(() => this.expireTurn(turnId, sessionId, providerSessionId))
-        .catch((error) => this.report('background Agent timeout failed', error));
-    }, delayMs);
-    this.turnTimers.set(turnId, timer);
-  }
-
-  private clearTurnTimeout(turnId: string): void {
-    const timer = this.turnTimers.get(turnId);
-    if (!timer) return;
-    this.turnTimers.delete(turnId);
-    this.clearTimer(timer);
-  }
-
-  private async expireTurn(
-    turnId: string,
-    sessionId: string,
-    providerSessionId: string,
-  ): Promise<void> {
-    const now = this.isoNow();
-    let providerId: string | undefined;
-    let expired = false;
-    await this.transition((snapshot) => {
-      const turn = snapshot.turns.find((entry) => entry.id === turnId);
-      const session = snapshot.sessions.find((entry) => entry.id === sessionId);
-      const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
-      if (!turn || !session || !agent || !ACTIVE_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
-        return undefined;
-      }
-      expired = true;
-      providerId = agent.providerId;
-      return { mutations: [
-        ...this.terminalTurnMutations(
-          snapshot,
-          sessionId,
-          'failed',
-          now,
-          'background-turn-timeout',
-        ),
-        ...this.expireApprovalMutations(snapshot, sessionId, undefined, now),
-        { kind: 'agent.upsert', value: agentInput(agent, {
-          state: 'error',
-          currentTurnId: undefined,
-          queuedTurnCount: 0,
-        }) },
-        { kind: 'session.upsert', value: sessionInput(session, 'failed') },
-        { kind: 'transcript.append', items: [{
-          id: stableId('turn-timeout', turnId),
-          sessionId,
-          turnId,
-          kind: 'error',
-          text: 'The background Agent turn exceeded the two-hour safety limit and was interrupted.',
-          isDelta: false,
-          isSensitive: false,
-        }] },
-      ] };
-    });
-    if (!expired || !providerId) return;
-    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
-    if (provider.ok) {
-      try {
-        await provider.value.interrupt(sessionId, providerSessionId);
-      } catch (error) {
-        this.report('provider timeout interrupt failed', error);
-      }
-    }
-    this.queuePump();
   }
 
   private async runCommand(
@@ -3589,7 +3461,6 @@ export class DaemonAgentRuntime {
           await this.transition(() => ({ mutations: [{ kind: 'transcript.append', items: batch }] }));
         }
         for (const result of reconciliation.commands) {
-          let terminalTurnId: string | undefined;
           let shouldPump = false;
           await this.transition((fresh) => {
             const turn = fresh.turns.find((candidate) => candidate.commandId === result.commandId);
@@ -3652,7 +3523,6 @@ export class DaemonAgentRuntime {
             const state = result.turnState ?? (turn.state === 'blocked' ? 'blocked' : 'working');
             if (state === 'completed' || state === 'interrupted' || state === 'failed') {
               const now = this.isoNow();
-              terminalTurnId = turn.id;
               shouldPump = currentAgent.currentTurnId === turn.id;
               return {
                 mutations: [
@@ -3699,7 +3569,6 @@ export class DaemonAgentRuntime {
               reconciledCommands: [{ commandId: result.commandId, state: 'applied' }],
             };
           });
-          if (terminalTurnId) this.clearTurnTimeout(terminalTurnId);
           if (shouldPump) this.queuePump();
         }
       } catch (error) {

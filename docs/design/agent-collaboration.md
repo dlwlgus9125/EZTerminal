@@ -201,10 +201,11 @@ child 대화로 기록한다. 지시·도구·결과는 child에만 쌓이고 pa
 작업은 서브에이전트가 아니다. 목록(프로젝트 대화 탭·이전 대화·검색·최근순·모바일)은 child를 따로
 보이지 않고 트리에서 parent 아래 접는다. read-only/provider-owned다.
 
-hard cap은 동시 managed turn 4, tree node 16, depth 4, tree당 10분 내 child 생성 12,
-background turn 2시간이다. provider-native child는 host가 예약하는 작업이 아니라 기록이므로 별도로
-루트 대화당 100개, depth 8까지 기록한다. 동시성 초과는 FIFO queue로 수용하고 node/depth/rate/time cap은 구조화된
-오류 또는 timeout 상태로 처리한다.
+hard cap은 동시 managed turn 4, tree node 16, depth 4, tree당 10분 내 child 생성 12다.
+대화 turn에는 경과 시간 제한이 없다. 사람이 멈추거나 AI가 끝낼 때까지 실행한다(2026-10-20, 2시간 제한 제거).
+provider-native child는 host가 예약하는 작업이 아니라 기록이므로 별도로
+루트 대화당 100개, depth 8까지 기록한다. 동시성 초과는 FIFO queue로 수용하고 node/depth/rate cap은 구조화된
+오류로 처리한다.
 
 ## Schedule, heartbeat와 local control
 

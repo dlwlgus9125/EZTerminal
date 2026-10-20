@@ -132,8 +132,6 @@ function fakeAdapter(
 }
 
 async function harness(options: {
-  readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
-  readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly now?: () => Date;
   readonly shutdownStepTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
@@ -4189,38 +4187,35 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
-  it('interrupts and marks a turn failed at the two-hour safety timeout', async () => {
-    let expire: (() => void) | undefined;
-    const h = await harness({
-      setTimer: ((callback: () => void) => {
-        expire = callback;
-        return 1 as unknown as ReturnType<typeof setTimeout>;
-      }),
-      clearTimer: vi.fn(),
-    });
-    await h.enable(h.codex, 'codex');
-    await h.prepareWorkspace();
-    await h.execute('agent.create', {
-      sessionId: 'agent-1',
-      workspaceId: 'workspace-1',
-      title: 'Agent',
-      providerId: 'codex',
-      permissionPreset: 'standard',
-      initialPrompt: 'Long task.',
-    });
+  it('lets a long turn run with no elapsed-time limit', async () => {
+    const timeouts = vi.spyOn(globalThis, 'setTimeout');
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', {
+        sessionId: 'agent-1',
+        workspaceId: 'workspace-1',
+        title: 'Agent',
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        initialPrompt: 'Long task.',
+      });
+      await h.runtime.whenIdle();
 
-    expect(expire).toBeTypeOf('function');
-    expire?.();
-    await h.runtime.whenIdle();
-
-    expect(h.codex.interrupt).toHaveBeenCalledOnce();
-    expect(h.router.getSnapshot()).toMatchObject({
-      sessions: [{ id: 'agent-1', state: 'failed' }],
-      agents: [{ sessionId: 'agent-1', state: 'error' }],
-      turns: [{ sessionId: 'agent-1', state: 'failed', errorCode: 'background-turn-timeout' }],
-    });
-    await h.runtime.dispose();
-    await h.store.close();
+      // The running turn gets no deadline; only the person or the AI ends it.
+      expect(timeouts.mock.calls.some(([, delay]) => (delay ?? 0) >= 60 * 60_000)).toBe(false);
+      expect(h.codex.interrupt).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot()).toMatchObject({
+        sessions: [{ id: 'agent-1', state: 'running' }],
+        agents: [{ sessionId: 'agent-1', state: 'working' }],
+        turns: [{ sessionId: 'agent-1', state: 'working' }],
+      });
+    } finally {
+      timeouts.mockRestore();
+      await h.runtime.dispose();
+      await h.store.close();
+    }
   });
 });
 

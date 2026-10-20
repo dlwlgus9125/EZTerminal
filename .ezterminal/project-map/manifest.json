@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:bab75b353fa8a885ab585346ff18a19425fac091a896a3d8908a468f9eeee49a",
+        "inputDigest": "sha256:a7e12874c7e88760c6705151c33ccd003d84255aa40fc12abb5f687ff5a14b8c",
         "decision": "map-updated",
-        "reason": "Reviewed: the conversation dock panel publishes its transcript to a per-conversation Results tab and main serves isolated ezartifact previews; session ownership, encrypted drafts, /clear and workflow gates are unchanged. Anchors moved; one range remapped."
+        "reason": "Reviewed: the Agent runtime no longer arms a two-hour turn deadline or rearms one at startup, so a conversation turn runs until the person or the AI ends it; DAEMON_HARD_LIMITS drops backgroundTurnMs. Other caps, queueing and recovery are unchanged; anchors remapped."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:deeb0150c4911297e1cad736fe591a8666d3c7a84a15378c5c0db446f7b7784a",
+        "inputDigest": "sha256:53bcb75977ac9b399e9046be1da558a2610de9a7ea35c707fb80e7f2a824ca17",
         "decision": "map-updated",
-        "reason": "Reviewed: a passive, detachable agent-results panel is registered; layouts keep only its owner id and prune orphans. Windows let subframes reach only previews and the PDF viewer, with plugins on for it. Terminal lifecycle unchanged; anchors moved."
+        "reason": "Reviewed: Agent startup no longer rearms turn deadlines because turns have no elapsed-time limit; restore, reconcile and queue resumption are unchanged. One claim updated, anchors moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b7c8fd06691c3dc4569b630d7b2df9ca075fab1cdec7fae4bc4940528eb7acf5",
+        "inputDigest": "sha256:d0a5401381720d58d56668c3e8013d0fd06db96b53f3405248af2507bb7df2d0",
         "decision": "map-updated",
-        "reason": "Reviewed: main.ts gained the preview scheme, the CSP frame-src for it and the preview IPC; the remote bridge, session mirroring and pairing paths are unchanged. Anchors only moved."
+        "reason": "Reviewed: daemon-protocol.ts lost only the backgroundTurnMs hard limit; protocol version, schemas, error codes and remote mirroring are unchanged. Anchors only moved."
       }
     },
     {
