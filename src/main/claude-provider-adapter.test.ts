@@ -1513,6 +1513,16 @@ describe('Claude error classification', () => {
     expect(error.code).toBe(expected);
     expect(error.message.length).toBeGreaterThan(0);
   });
+
+  it('labels a timeout Claude reports as Claude\'s, not as an EZTerminal deadline', () => {
+    for (const input of ['Request timed out.', { error: 'timeout', message: 'API request timeout' }]) {
+      const error = classifyClaudeProviderError(input);
+      expect(error.code).toBe('CLAUDE_REPORTED_TIMEOUT');
+      expect(error.recoverable).toBe(true);
+      expect(error.message).toContain('not an EZTerminal time limit');
+      expect(error.message).not.toContain('safety deadline');
+    }
+  });
 });
 
 describe('recorded Claude file changes', () => {

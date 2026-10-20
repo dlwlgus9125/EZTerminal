@@ -155,6 +155,7 @@ export type ClaudeProviderErrorCode =
   | 'CLAUDE_INVALID_REQUEST'
   | 'CLAUDE_OPERATION_ABORTED'
   | 'CLAUDE_OPERATION_TIMEOUT'
+  | 'CLAUDE_REPORTED_TIMEOUT'
   | 'CLAUDE_SESSION_NOT_FOUND'
   | 'CLAUDE_APPROVAL_NOT_FOUND'
   | 'CLAUDE_PROCESS_EXITED'
@@ -180,6 +181,7 @@ const ERROR_MESSAGES: Readonly<Record<ClaudeProviderErrorCode, string>> = {
   CLAUDE_INVALID_REQUEST: 'Claude rejected the request.',
   CLAUDE_OPERATION_ABORTED: 'The Claude operation was interrupted.',
   CLAUDE_OPERATION_TIMEOUT: 'The Claude operation did not finish before its safety deadline.',
+  CLAUDE_REPORTED_TIMEOUT: 'Claude reported that a request timed out. This was not an EZTerminal time limit.',
   CLAUDE_SESSION_NOT_FOUND: 'The Claude session is not active in this daemon.',
   CLAUDE_APPROVAL_NOT_FOUND: 'The Claude approval request is no longer pending.',
   CLAUDE_PROCESS_EXITED: 'The Claude process exited unexpectedly.',
@@ -838,7 +840,8 @@ function classifyErrorCode(value: unknown): ClaudeProviderErrorCode {
   if (/model_not_found|model.*not found/u.test(searchable)) return 'CLAUDE_MODEL_NOT_FOUND';
   if (/invalid_request|bad request/u.test(searchable)) return 'CLAUDE_INVALID_REQUEST';
   if (/abort|interrupt/u.test(searchable)) return 'CLAUDE_OPERATION_ABORTED';
-  if (/timeout|timed out/u.test(searchable)) return 'CLAUDE_OPERATION_TIMEOUT';
+  // Claude's own timeout text; EZTerminal's deadlines raise CLAUDE_OPERATION_TIMEOUT directly.
+  if (/timeout|timed out/u.test(searchable)) return 'CLAUDE_REPORTED_TIMEOUT';
   if (/enoent|not found.*executable/u.test(searchable)) return 'CLAUDE_EXECUTABLE_NOT_FOUND';
   return 'CLAUDE_PROVIDER_ERROR';
 }
@@ -850,6 +853,7 @@ export function classifyClaudeProviderError(value: unknown): ClaudeProviderError
     'CLAUDE_RATE_LIMITED',
     'CLAUDE_OVERLOADED',
     'CLAUDE_OPERATION_TIMEOUT',
+    'CLAUDE_REPORTED_TIMEOUT',
     'CLAUDE_PROCESS_EXITED',
     'CLAUDE_PROVIDER_ERROR',
   ].includes(code);

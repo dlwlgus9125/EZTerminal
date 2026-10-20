@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a7e12874c7e88760c6705151c33ccd003d84255aa40fc12abb5f687ff5a14b8c",
+        "inputDigest": "sha256:dd032a6d047e8651d925d48399632af57907813900f92f00da460a4f74bce36b",
         "decision": "map-updated",
-        "reason": "Reviewed: the Agent runtime no longer arms a two-hour turn deadline or rearms one at startup, so a conversation turn runs until the person or the AI ends it; DAEMON_HARD_LIMITS drops backgroundTurnMs. Other caps, queueing and recovery are unchanged; anchors remapped."
+        "reason": "Reviewed: the Claude adapter now labels a timeout Claude itself reports as CLAUDE_REPORTED_TIMEOUT instead of EZTerminal's safety-deadline code; session start, submit and event flow are unchanged. Anchors only moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a73333a6d9797be28bd738775fb026d738a57082f224d4d49e1cbdb147a9ca8c",
+        "inputDigest": "sha256:d27d767af5a5be6c114676c1220076005dbe10124c93ccc4e4840ab96138d377",
         "decision": "map-updated",
-        "reason": "Reviewed: the Claude adapter records the SDK's structured patch for edits and created files; capability discovery, model listing and provider readiness are unchanged. Anchors only moved."
+        "reason": "Reviewed: only Claude error classification changed (a reported timeout gets its own code and text); capability discovery, model listing and provider readiness are unchanged. Anchors only moved."
       }
     }
   ]
