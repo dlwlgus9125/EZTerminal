@@ -249,3 +249,45 @@ test('an AI-made HTML page shows as an isolated static preview (no scripts, no n
     await app.close();
   }
 });
+
+test('a Results tab popped out to its own window keeps its previews and is not counted as closed', async () => {
+  test.setTimeout(180_000);
+  const profile = createRegisteredE2eTempDir('ezterm-results-popout-profile-');
+  const projectRoot = createRegisteredE2eTempDir('ezterm-results-popout-project-');
+  const app = await launchApp(profile, fakeCodexEnvironment(profile));
+  const page = await app.firstWindow();
+  try {
+    await page.setViewportSize({ width: 1600, height: 950 });
+    await expect(page.getByTestId('cmd-input')).toBeVisible();
+    await startConversation(page, projectRoot);
+    await send(page, 'EZTERMINAL_E2E_ARTIFACTS write a report');
+    await expect(page.getByTestId('conversation-results')).toBeVisible({ timeout: 30_000 });
+    const opened = await page.evaluate(async () => {
+      const dock = (window as unknown as { __ezDock: { panels: { id: string; api: { component: string } }[]; addPopoutGroup(panel: unknown, options: unknown): Promise<boolean> } }).__ezDock;
+      const results = dock.panels.find((panel) => panel.api.component === 'agent-results');
+      return results ? dock.addPopoutGroup(results, { position: { left: 120, top: 80, width: 760, height: 820 } }) : false;
+    });
+    expect(opened).toBe(true);
+    await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('ez-popout=1')).length, { timeout: 15_000 }).toBe(1);
+    const popout = app.windows().find((candidate) => candidate.url().includes('ez-popout=1'))!;
+    const results = popout.getByTestId('conversation-results');
+    await expect(results).toBeVisible({ timeout: 15_000 });
+    await results.getByTestId('results-tab-files').click();
+    await results.getByRole('button', { name: /^report\.html/u }).click();
+    const frame = popout.frameLocator('[data-testid="results-artifact-frame"]');
+    await expect(frame.locator('#title')).toHaveCSS('color', 'rgb(200, 0, 0)');
+    await expect(frame.locator('#script')).toHaveText('script did not run');
+    await results.getByRole('button', { name: /^paper\.pdf/u }).click();
+    await expect.poll(() => popout.frames().map((candidate) => candidate.url()).some((url) => url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/')), { timeout: 15_000 }).toBe(true);
+    await popout.waitForTimeout(1_500);
+    await popout.screenshot({ path: path.join(evidence, 'popout-pdf.png') });
+    // Moving the tab to a window is not closing it: the conversation still opens Results on its own later.
+    const dismissed = await page.evaluate(() => localStorage.getItem('ezterminal.agent.results-tab.v1'));
+    expect(dismissed ?? '[]').not.toContain('"dismissed":true');
+  } catch (error) {
+    await page.screenshot({ path: path.join(evidence, 'popout-failure.png') }).catch(() => undefined);
+    throw error;
+  } finally {
+    await app.close();
+  }
+});
