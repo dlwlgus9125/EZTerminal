@@ -151,6 +151,7 @@ import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
 import { CodexProviderAdapter } from './codex-provider-adapter';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
+import { JsonFile } from './json-file';
 import {
   readyDaemonAuthorityAvailability,
   safeModeDaemonAuthorityAvailability,
@@ -946,8 +947,13 @@ app.on('ready', async () => {
       mainLog?.line(`${context}: ${String(error)}`);
     },
   });
+  const agentUsageFile = new JsonFile(app.getPath('userData'), 'agent-usage.json');
   const daemonAgentRuntime = new DaemonAgentRuntime({
     providers: providerRegistry,
+    agentUsageStore: {
+      load: async () => { await agentUsageFile.init(); return agentUsageFile.read(); },
+      save: (state) => agentUsageFile.enqueue(() => agentUsageFile.writeAtomic(JSON.stringify(state))),
+    },
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
     applySystemCommit: (commit) => daemonRouterRef.current!.applySystemCommit(commit),
     applySystemTransition: (transition) => daemonRouterRef.current!.applySystemTransition(transition),
@@ -993,7 +999,7 @@ app.on('ready', async () => {
     },
   });
   const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
-    agentUsage: (sessions) => daemonAgentRuntime.agentUsage(sessions),
+    agentUsage: (snapshot) => daemonAgentRuntime.agentUsage(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),

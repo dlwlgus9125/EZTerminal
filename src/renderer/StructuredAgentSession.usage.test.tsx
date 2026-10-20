@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AgentUsage } from '../shared/agent-usage';
-import { StructuredAgentComposer } from './StructuredAgentSession';
+import { StructuredAgentSessionPanel } from './StructuredAgentSession';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
 
@@ -27,11 +27,18 @@ function render(node: ReactNode, locale: 'en' | 'ko' = 'en'): void {
   ));
 }
 
-function composer(usage: AgentUsage | undefined, variant: 'desktop' | 'mobile' = 'desktop'): JSX.Element {
-  return <StructuredAgentComposer busy={false} usage={usage} variant={variant} onSend={async () => ({ ok: true })} />;
+function panel(usage: AgentUsage | undefined, overrides: { readonly state?: 'idle' | 'done'; readonly variant?: 'desktop' | 'mobile' } = {}): JSX.Element {
+  return (
+    <StructuredAgentSessionPanel
+      sessionId="usage-session" title="Usage" providerId="claude" providerLabel="Claude"
+      workspace={{ id: 'main', label: 'Main', kind: 'local' }} permissionPreset="standard" state={overrides.state ?? 'idle'}
+      items={[]} onSend={async () => ({ ok: true })} onChangeSettings={async () => ({ ok: true })}
+      usage={usage} variant={overrides.variant ?? 'desktop'}
+    />
+  );
 }
 
-const query = (testId: string): HTMLElement | null => container.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+const query = (testId: string): HTMLElement | null => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
 
 beforeEach(() => {
   clearSessionViewStates();
@@ -45,67 +52,62 @@ afterEach(() => {
   container.remove();
 });
 
-describe('usage under the message box', () => {
-  it('shows the plan windows and context like the CLI HUD, next to the unchanged hint', () => {
-    render(composer({
+describe('usage pill in the message box', () => {
+  it('shows each limit and the context as a gauge beside the settings and opens the details', () => {
+    render(panel({
       fiveHour: { usedPercent: 12, resetsAt: in2h10m() },
-      weekly: { usedPercent: 26, resetsAt: in2d5h() },
-      contextPercent: 34,
-      observedAt: Date.now(),
+      weekly: { usedPercent: 74, resetsAt: in2d5h() },
+      limitsObservedAt: Date.now() - 3 * MINUTE,
+      contextPercent: 91,
     }));
 
-    expect(query('structured-agent-composer-hint')?.textContent).toBe('Enter to send · Shift+Enter for a new line');
-    expect(query('structured-agent-usage-fiveHour')?.textContent).toBe('5h 12% · 2h10m');
-    expect(query('structured-agent-usage-weekly')?.textContent).toBe('wk 26% · 2d5h');
-    expect(query('structured-agent-usage-context')?.textContent).toBe('ctx 34%');
-    const readout = query('structured-agent-usage')!;
-    const sentence = 'Usage: 5-hour limit 12% used (resets in 2h10m), weekly limit 26% used (resets in 2d5h), context 34% used';
-    expect(readout.title).toBe(sentence);
-    expect(readout.querySelector('.ez-ui-visually-hidden')?.textContent).toBe(sentence);
-    // A countdown must not be announced and is not a stop on the keyboard path.
-    expect(readout.closest('[aria-live]')).toBeNull();
-    expect(readout.querySelector('[tabindex]')).toBeNull();
-  });
-
-  it('says it in Korean', () => {
-    render(composer({ weekly: { usedPercent: 26, resetsAt: in2d5h() }, contextPercent: 3, observedAt: Date.now() }), 'ko');
-    expect(query('structured-agent-usage-weekly')?.textContent).toBe('주간 26% · 2d5h');
-    expect(query('structured-agent-usage')?.title).toBe('사용량: 주간 한도 26% 사용(2d5h 후 초기화), 컨텍스트 3% 사용');
-  });
-
-  it('warns from 70% and alarms from 90% like the CLI HUD', () => {
-    render(composer({ fiveHour: { usedPercent: 69 }, weekly: { usedPercent: 70 }, contextPercent: 90, observedAt: 1 }));
+    const pill = query('structured-agent-usage')!;
+    expect(pill.closest('.structured-agent-session-settings')).not.toBeNull();
+    expect(pill.getAttribute('aria-label')).toBe(
+      'Claude usage: 5-hour limit 12% used (resets in 2h10m), weekly limit 74% used (resets in 2d5h), context 91% used',
+    );
     expect(query('structured-agent-usage-fiveHour')?.dataset.level).toBe('normal');
     expect(query('structured-agent-usage-weekly')?.dataset.level).toBe('warning');
     expect(query('structured-agent-usage-context')?.dataset.level).toBe('danger');
-    render(composer({ contextPercent: 89, observedAt: 1 }));
-    expect(query('structured-agent-usage-context')?.dataset.level).toBe('warning');
+    expect(query('structured-agent-usage-weekly')?.style.getPropertyValue('--chat-usage-percent')).toBe('74%');
+
+    act(() => pill.click());
+    const details = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Claude usage"]')!;
+    const rows = [...details.querySelectorAll('.chat-usage__row')].map((row) => row.textContent);
+    expect(rows).toEqual(['5-hour12%Resets in 2h10m', 'Weekly74%Resets in 2d5h', 'Context91%']);
+    expect(details.querySelector('.chat-usage__updated')?.textContent).toBe('Updated 3m ago');
   });
 
-  it('hides a window whose reset has passed, and the whole line when nothing is left', () => {
-    render(composer({
+  it('says it in Korean', () => {
+    render(panel({ weekly: { usedPercent: 26, resetsAt: in2d5h() }, limitsObservedAt: Date.now(), contextPercent: 3 }), 'ko');
+    expect(query('structured-agent-usage')?.getAttribute('aria-label')).toBe('Claude 사용량: 주간 한도 26% 사용(2d5h 후 초기화), 컨텍스트 3% 사용');
+    act(() => query('structured-agent-usage')!.click());
+    const rows = [...document.querySelectorAll('.chat-usage__row')].map((row) => row.textContent);
+    expect(rows).toEqual(['주간26%2d5h 후 초기화', '컨텍스트3%']);
+  });
+
+  it('leaves out a window whose reset has passed, and the pill when nothing is left', () => {
+    render(panel({
       fiveHour: { usedPercent: 99, resetsAt: Date.now() - MINUTE },
       weekly: { usedPercent: 26, resetsAt: in2d5h() },
-      observedAt: 1,
+      limitsObservedAt: 1,
     }));
     expect(query('structured-agent-usage-fiveHour')).toBeNull();
     expect(query('structured-agent-usage-weekly')).not.toBeNull();
 
-    render(composer({ fiveHour: { usedPercent: 99, resetsAt: Date.now() - MINUTE }, observedAt: 1 }, 'mobile'));
+    render(panel({ fiveHour: { usedPercent: 99, resetsAt: Date.now() - MINUTE }, limitsObservedAt: 1 }));
     expect(query('structured-agent-usage')).toBeNull();
-    // An empty row takes no space (`:empty` in CSS).
-    expect(container.querySelector('.structured-agent-composer__status')?.childNodes.length ?? 0).toBe(0);
   });
 
-  it('shows usage alone on the phone, where the box has no shortcut hint', () => {
-    render(composer({ contextPercent: 12, observedAt: 1 }, 'mobile'));
-    expect(query('structured-agent-composer-hint')).toBeNull();
-    expect(query('structured-agent-usage-context')?.textContent).toBe('ctx 12%');
+  it('shows nothing without a reading, and none in a read-only conversation', () => {
+    render(panel(undefined));
+    expect(query('structured-agent-usage')).toBeNull();
+    render(panel({ contextPercent: 3 }, { state: 'done' }));
+    expect(query('structured-agent-usage')).toBeNull();
   });
 
-  it('shows nothing before the conversation has replied', () => {
-    render(composer(undefined));
-    expect(query('structured-agent-usage')).toBeNull();
-    expect(query('structured-agent-composer-hint')).not.toBeNull();
+  it('shows the pill on the phone too', () => {
+    render(panel({ contextPercent: 12, contextObservedAt: 1 }, { variant: 'mobile' }));
+    expect(query('structured-agent-usage-context')).not.toBeNull();
   });
 });

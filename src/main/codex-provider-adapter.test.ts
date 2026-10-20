@@ -42,8 +42,12 @@ class FakeCodexConnection implements CodexAppServerConnection {
   disposeImpl: () => Promise<void> = async () => undefined;
   disposed = false;
 
+  /** Plan-limit reads ride beside opening conversations; tests that pin request order do not see them. */
+  readonly accountLimitReads: unknown[] = [];
+
   request(method: string, params: unknown = {}, options?: CodexRpcRequestOptions): Promise<unknown> {
-    this.requests.push({ method, params, ...(options ? { options } : {}) });
+    if (method === 'account/rateLimits/read') this.accountLimitReads.push(params);
+    else this.requests.push({ method, params, ...(options ? { options } : {}) });
     return this.requestImpl(method, params, options);
   }
 
@@ -2037,14 +2041,16 @@ describe('Codex plan mode', () => {
 });
 
 describe('Codex usage', () => {
-  async function startedTurn() {
+  async function startedTurn(rateLimits?: unknown) {
     const connection = new FakeCodexConnection();
     connection.requestImpl = async (method) => {
       if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-6-astra' };
       if (method === 'turn/start') return { turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } };
+      if (method === 'account/rateLimits/read' && rateLimits) return { rateLimits };
       throw new Error(`Unexpected request: ${method}`);
     };
-    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-10-20T00:00:00.000Z') });
+    let now = Date.parse('2026-10-20T00:00:00.000Z');
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date(now) });
     const events: AgentProviderEvent[] = [];
     adapter.subscribe((event) => events.push(event));
     await adapter.createSession(context());
@@ -2058,10 +2064,11 @@ describe('Codex usage', () => {
       threadId: 'thread-1', turn: { id: 'provider-turn-1', status, error: null, items: [] },
     });
     const usageAndFinish = (): AgentProviderEvent[] => events.filter((event) => event.kind === 'usage' || event.kind === 'turn-finished');
-    return { adapter, connection, tokenUsage, complete, usageAndFinish };
+    const advance = (ms: number): void => { now += ms; };
+    return { adapter, connection, tokenUsage, complete, usageAndFinish, advance };
   }
 
-  it('reports thread-less account limits and the reply context before the turn finishes', async () => {
+  it('reports the thread context as it arrives and thread-less account limits', async () => {
     const { adapter, connection, tokenUsage, complete, usageAndFinish } = await startedTurn();
     await tokenUsage('thread-1', 19120);
     await connection.emitNotification('account/rateLimits/updated', {
@@ -2070,8 +2077,8 @@ describe('Codex usage', () => {
     await complete('completed');
 
     expect(usageAndFinish()).toEqual([
-      { kind: 'usage', limits: { fiveHour: null, weekly: { usedPercent: 26, resetsAt: 1_000_000 } } },
       { kind: 'usage', sessionId: 'session-1', contextPercent: 3 },
+      { kind: 'usage', limits: { fiveHour: null, weekly: { usedPercent: 26, resetsAt: 1_000_000 } } },
       expect.objectContaining({ kind: 'turn-finished', turnId: 'local-turn-1', outcome: 'completed' }),
     ]);
     await adapter.dispose();
@@ -2097,12 +2104,19 @@ describe('Codex usage', () => {
     await adapter.dispose();
   });
 
-  it('sends no reply usage for a failed turn', async () => {
-    const { adapter, tokenUsage, complete, usageAndFinish } = await startedTurn();
-    await tokenUsage('thread-1', 19120);
-    await complete('failed');
-
-    expect(usageAndFinish()).toEqual([expect.objectContaining({ kind: 'turn-finished', outcome: 'failed' })]);
+  it('asks Codex for the plan limits when a conversation opens, at most once a minute', async () => {
+    const rateLimits = { limitId: 'codex', primary: { usedPercent: 41, windowDurationMins: 300, resetsAt: 2000 }, secondary: null };
+    const { adapter, connection, usageAndFinish, advance } = await startedTurn(rateLimits);
+    await vi.waitFor(() => expect(usageAndFinish()).toContainEqual({
+      kind: 'usage', limits: { fiveHour: { usedPercent: 41, resetsAt: 2_000_000 }, weekly: null },
+    }));
+    const reads = (): number => connection.accountLimitReads.length;
+    expect(reads()).toBe(1);
+    await adapter.listModels().catch(() => undefined);
+    expect(reads()).toBe(1);
+    advance(60_000);
+    await adapter.listModels().catch(() => undefined);
+    expect(reads()).toBe(2);
     await adapter.dispose();
   });
 });

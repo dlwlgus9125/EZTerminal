@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e1e98a8fe398e9f84d12b2b9e49c10d432b1e8b55cfb913a2fe09d8f4cde2626",
+        "inputDigest": "sha256:d9e645a9a376c9b2b5e63bbede5f847e8c1ea9d32181340c412d8d5d06a4bef4",
         "decision": "map-updated",
-        "reason": "Reviewed: providers send reply usage (plan limits, context) before turn-finished; the runtime keeps it in memory, the router merges it into snapshots and the CLI scope filters it. Durable transitions unchanged. Anchors moved; one claim updated."
+        "reason": "Reviewed: usage readings now show before any reply; the runtime restores and saves them in a usage file, announces changes with a refresh event, and Codex asks for plan limits when a conversation opens. Durable transitions unchanged. Anchors moved; three claims updated."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c90a9c22b54433ed79ac239754231c23bc4296fbfe10fa5108e3121c05997b7d",
+        "inputDigest": "sha256:8b59bac3fee9a4729f6e079c58b90ee9de4482b47ab2551d743764e303849dee",
         "decision": "map-updated",
-        "reason": "Reviewed: in-memory reply usage merged into daemon snapshots does not change workbench startup, ownership or shutdown. Anchors moved; claims unchanged."
+        "reason": "Reviewed: Agent startup now restores saved usage before restoring provider subscriptions; workbench ownership and shutdown are unchanged. Anchors moved; one claim updated."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:208e2c296b4f070aa3427feb22766ab4dd4fdd8e49547a2ec6a2daac399746a7",
+        "inputDigest": "sha256:14b9bf6d5a0ef3fc0d0bcdfbb2f2040d67bfd248b2254c25414db13659f89ce2",
         "decision": "map-updated",
-        "reason": "Reviewed: the daemon snapshot gains optional in-memory reply usage under capability agent-usage-v1; the remote snapshot path, event kinds and protocol versions are unchanged. Anchors moved; claims unchanged."
+        "reason": "Reviewed: the daemon snapshot gains optional per-conversation and per-provider usage under capability agent-usage-v1; the remote snapshot path, event kinds and protocol versions are unchanged. Anchors moved; claims unchanged."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:79a3dd310f6a59ce6bdb111dc6d03a00823eecb81978b27615cd00b9f9d1ce2a",
+        "inputDigest": "sha256:37431592037c7c7e09889b0d6775a5279202385b4459960be32a0c9c6598a02f",
         "decision": "map-updated",
-        "reason": "Reviewed: the line under the message box adds the AI's usage after the conversation's first reply. Session identity, transcript and history picker are unchanged. Two anchors moved; claims unchanged."
+        "reason": "Reviewed: the composer's settings row adds a usage pill with gauges and a details popover, shown from the moment a tab opens. Session identity, transcript and history picker are unchanged. Anchors unchanged; claims unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:136f049784a457849f941db752703b2078324aa4556168d415e78703af352c76",
+        "inputDigest": "sha256:1d894a8449b46d1ae2c21b22ccbdbe4bab3ca46507e553001b821ccc2c61e46f",
         "decision": "map-updated",
-        "reason": "Reviewed: the Claude and Codex adapters read usage the providers already send; native skills, commands and capability catalogs are unchanged. Anchors moved; claims unchanged."
+        "reason": "Reviewed: the Claude and Codex adapters report usage as it arrives and Codex asks for plan limits when a conversation opens; native skills, commands and capability catalogs are unchanged. Anchors moved; claims unchanged."
       }
     }
   ]

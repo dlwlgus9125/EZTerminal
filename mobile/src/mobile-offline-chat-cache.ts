@@ -13,10 +13,11 @@ export interface MobileOfflineChatCache {
 }
 const MAX_BYTES=8*1024*1024;
 const queues=new Map<string,Promise<void>>();
-/** Usage is live only: the phone keeps no copy of it. */
-const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => snapshot.agentUsage === undefined
+/** Usage is shown only while connected: the phone keeps no copy of it. */
+const USAGE_KEYS=new Set(['agentUsage','providerUsage']);
+const withoutUsage=(snapshot:DaemonSnapshot):DaemonSnapshot => snapshot.agentUsage === undefined && snapshot.providerUsage === undefined
   ? snapshot
-  : Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'agentUsage')) as unknown as DaemonSnapshot;
+  : Object.fromEntries(Object.entries(snapshot).filter(([key]) => !USAGE_KEYS.has(key))) as unknown as DaemonSnapshot;
 const keyFor=(authority:string):string => {
   if (!/^sha256:[a-f0-9]{64}$/u.test(authority)) throw new Error('Invalid offline cache authority.');
   return `ezterminal-offline-chat-v1:${authority.slice(7)}`;

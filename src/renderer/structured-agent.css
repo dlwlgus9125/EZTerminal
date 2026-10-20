@@ -890,54 +890,15 @@
   line-height: var(--ui-line-height-normal);
 }
 
-/* The line under the box: hint on the left, the AI's usage on the right. */
-.structured-agent-composer__status {
-  display: flex;
-  align-items: baseline;
-  gap: var(--ui-space-3);
-  min-width: 0;
+/* Shortcuts while the box is empty, or why the settings are locked during a turn. */
+.structured-agent-composer__hint {
   margin: var(--ui-space-1) var(--ui-space-3) 0;
+  overflow: hidden;
   color: var(--ui-text-muted);
   font-size: var(--ui-font-size-xs);
   line-height: var(--ui-line-height-normal);
-}
-
-.structured-agent-composer__status:empty {
-  display: none;
-}
-
-/* Shortcuts while the box is empty, or why the settings are locked during a turn. */
-.structured-agent-composer__hint {
-  flex: 1 1 0;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 5-hour and weekly plan limits and context, as the CLI HUDs show them. */
-.structured-agent-composer__usage {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0 0 0 auto;
-  overflow: hidden;
-  font-family: var(--ui-font-body);
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.structured-agent-composer__usage-part + .structured-agent-composer__usage-part {
-  margin-left: var(--ui-space-3);
-}
-
-.structured-agent-composer__usage-part[data-level='warning'] {
-  color: var(--ui-warning);
-}
-
-.structured-agent-composer__usage-part[data-level='danger'] {
-  color: var(--ui-danger);
 }
 
 .structured-agent[data-variant='mobile'] .structured-agent-session-header {

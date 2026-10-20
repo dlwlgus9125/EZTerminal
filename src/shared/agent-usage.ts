@@ -1,7 +1,7 @@
 /**
- * Provider usage shown under an agent's message box: the account's plan
- * limits and how full this conversation's context is. Values come only from
- * what the provider already sends with a reply; nothing here is stored.
+ * Provider usage shown in an agent's message box: the account's plan limits
+ * and how full this conversation's context is. Values are what the provider
+ * last reported, kept on this computer so a tab shows them as soon as it opens.
  */
 export interface AgentUsageWindow {
   /** Whole percent used, 0-100. */
@@ -13,10 +13,12 @@ export interface AgentUsageWindow {
 export interface AgentUsage {
   readonly fiveHour?: AgentUsageWindow;
   readonly weekly?: AgentUsageWindow;
+  /** Epoch ms the plan limits were last reported. */
+  readonly limitsObservedAt?: number;
   /** Whole percent of the model's context window the last request used. */
   readonly contextPercent?: number;
-  /** Epoch ms of the last reading. */
-  readonly observedAt: number;
+  /** Epoch ms the context was last reported. */
+  readonly contextObservedAt?: number;
 }
 
 /**

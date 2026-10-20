@@ -52,8 +52,8 @@ export type DaemonCommandHandler = (
 export interface DaemonCommandRouterOptions {
   readonly handlers?: Partial<Record<DaemonCommandType, DaemonCommandHandler>>;
   readonly now?: () => Date;
-  /** In-memory reply usage of the snapshot's sessions; never stored. */
-  readonly agentUsage?: (sessions: DaemonSnapshot['sessions']) => DaemonSnapshot['agentUsage'];
+  /** Usage for the snapshot's conversations and providers, kept beside the store. */
+  readonly agentUsage?: (snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>) => Pick<DaemonSnapshot, 'agentUsage' | 'providerUsage'>;
 }
 
 function commandError(
@@ -178,8 +178,8 @@ export class DaemonCommandRouter {
 
   getSnapshot(): DaemonSnapshot {
     const snapshot = this.store.getSnapshot();
-    const agentUsage = this.agentUsage?.(snapshot.sessions);
-    return agentUsage ? { ...snapshot, agentUsage } : snapshot;
+    const usage = this.agentUsage?.(snapshot);
+    return usage && (usage.agentUsage || usage.providerUsage) ? { ...snapshot, ...usage } : snapshot;
   }
 
   /**

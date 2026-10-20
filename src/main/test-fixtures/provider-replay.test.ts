@@ -53,8 +53,8 @@ describe('usage read from recorded provider sessions', () => {
     await replayProviderFixture(readProviderCaptureFixture(name), { onEvent: (event) => events.push(event) });
     const usage = events.filter((event) => event.kind === 'usage');
     const finished = events.findIndex((event) => event.kind === 'turn-finished');
-    const reply = events.findIndex((event) => event.kind === 'usage' && event.sessionId !== undefined);
-    return { usage, replyBeforeFinish: reply >= 0 && reply < finished };
+    const lastUsage = events.findLastIndex((event) => event.kind === 'usage');
+    return { usage, replyBeforeFinish: lastUsage >= 0 && lastUsage < finished };
   }
 
   it('Claude: plan windows from the rate-limit event and context from the main request', async () => {
@@ -73,11 +73,11 @@ describe('usage read from recorded provider sessions', () => {
     expect(replyBeforeFinish).toBe(true);
   });
 
-  it('Codex: the weekly window and the thread context before the turn finishes', async () => {
+  it('Codex: the thread context and the weekly window before the turn finishes', async () => {
     const { usage, replyBeforeFinish } = await usageEvents('codex-markdown');
     expect(usage).toEqual([
-      { kind: 'usage', limits: { fiveHour: null, weekly: { usedPercent: 72, resetsAt: 1792472286000 } } },
       { kind: 'usage', sessionId: 'replay-session', contextPercent: 3 },
+      { kind: 'usage', limits: { fiveHour: null, weekly: { usedPercent: 72, resetsAt: 1792472286000 } } },
     ]);
     expect(replyBeforeFinish).toBe(true);
   });

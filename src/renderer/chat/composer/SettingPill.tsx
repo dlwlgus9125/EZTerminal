@@ -13,7 +13,7 @@ export interface SettingPillOption<T extends string> {
 const MENU_WIDTH_REM = 18;
 
 /** Opens the menu leftward when it would run past the conversation pane's right edge, where it is clipped. */
-function placementFor(trigger: HTMLElement): 'top-start' | 'top-end' {
+export function placementFor(trigger: HTMLElement): 'top-start' | 'top-end' {
   const fontSize = Number.parseFloat(getComputedStyle(trigger.ownerDocument.documentElement).fontSize) || 16;
   const width = MENU_WIDTH_REM * fontSize;
   const pane = (trigger.closest('.structured-agent') ?? trigger.ownerDocument.documentElement).getBoundingClientRect();

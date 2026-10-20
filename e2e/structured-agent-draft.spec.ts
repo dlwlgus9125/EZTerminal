@@ -243,8 +243,9 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await window.getByRole('button', { name: 'Close previous conversations', exact: true }).click();
     await expect(composer).toHaveValue('$fixture-review ');
     await composer.fill('$fixture-review Verify the ready provider.');
-    // Usage appears only after this conversation's first reply.
-    await expect(session.getByTestId('structured-agent-usage')).toHaveCount(0);
+    // A new conversation already shows the AI's plan limits Codex reported when the tab opened; context comes with the reply.
+    await expect(session.getByTestId('structured-agent-usage-weekly')).toBeVisible();
+    await expect(session.getByTestId('structured-agent-usage-context')).toHaveCount(0);
     await window.screenshot({ path: path.join(evidenceDirectory, 'new-conversation.png') });
     await composer.press('Enter');
     await expect(window.getByTestId('conversation-start')).toHaveCount(0, { timeout: 30_000 });
@@ -270,6 +271,12 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(session.getByTestId('structured-agent-usage-weekly')).toBeVisible();
     await expect(session.getByTestId('structured-agent-usage-context')).toBeVisible();
     await expect(session.getByTestId('structured-agent-usage-fiveHour')).toHaveCount(0);
+    await session.getByTestId('structured-agent-usage').click();
+    const usageDetails = window.getByRole('dialog', { name: 'Codex usage' });
+    await expect(usageDetails).toContainText('Weekly26%');
+    await window.screenshot({ path: path.join(evidenceDirectory, 'usage-details.png') });
+    await window.keyboard.press('Escape');
+    await expect(usageDetails).toHaveCount(0);
     expect(JSON.parse(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8'))).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'skill', name: 'fixture-review', path: 'C:\\fixture\\skills\\review\\SKILL.md' }),
     ]));
@@ -289,7 +296,8 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(cleared.getByRole('combobox', { name: 'Conversation AI' })).toHaveValue('codex');
     await expect(cleared.getByRole('combobox', { name: 'Conversation workspace' })).toHaveValue(restoredSnapshot!.workspaces[0].id);
     await expect(cleared.getByTestId('structured-agent-session')).not.toHaveAttribute('data-session-id', sessionId!);
-    await expect(cleared.getByTestId('structured-agent-usage')).toHaveCount(0);
+    await expect(cleared.getByTestId('structured-agent-usage-weekly')).toBeVisible();
+    await expect(cleared.getByTestId('structured-agent-usage-context')).toHaveCount(0);
     const afterClear = await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot());
     expect(afterClear?.sessions.find((candidate) => candidate.id === sessionId)?.state).not.toBe('archived');
     expect(afterClear?.turns.filter((turn) => turn.sessionId === sessionId)).toHaveLength(1);

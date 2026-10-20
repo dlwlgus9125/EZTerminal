@@ -290,8 +290,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1655,
-          "endLine": 1687,
+          "startLine": 1661,
+          "endLine": 1693,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Main serializes exact launch, resume, and Project or worker activity with daemon sync; only direct-directory launch supplies explicit Project reactivation intent."
         }
@@ -550,8 +550,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1655,
-          "endLine": 1687,
+          "startLine": 1661,
+          "endLine": 1693,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "The shared FIFO records launch, resume, or worker activity and waits for daemon Project sync; direct-directory launch alone carries Project reactivation intent."
         },

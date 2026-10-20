@@ -45,8 +45,7 @@ import {
   MAX_TRANSCRIPT_BATCH_UTF8_BYTES,
 } from './daemon-store';
 import { AgentProviderRegistry } from './agent-provider-registry';
-import { AgentUsageTracker } from './agent-usage-tracker';
-import type { AgentUsage } from '../shared/agent-usage';
+import { AgentUsageTracker, type PersistedAgentUsage } from './agent-usage-tracker';
 import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
 import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
@@ -114,6 +113,11 @@ export interface DaemonAgentRuntimeOptions {
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly shutdownStepTimeoutMs?: number;
   readonly reportError?: (context: string, error: unknown) => void;
+  /** Keeps the last reported usage on this computer so a tab shows it as soon as it opens. */
+  readonly agentUsageStore?: {
+    readonly load: () => Promise<unknown>;
+    readonly save: (state: PersistedAgentUsage) => Promise<void>;
+  };
 }
 
 /** Only the host history resolver may construct an adoption; no renderer command accepts this ID. */
@@ -374,7 +378,7 @@ export class DaemonAgentRuntime {
   private readonly providerLifecycleGenerations = new Map<string, number>();
   private readonly providerHandleOperations = new Map<string, Promise<void>>();
   private readonly attachedProviderSessions = new Set<string>();
-  /** Reply usage per session: in memory only, merged into snapshots by the router. */
+  /** Last reported usage per provider and conversation, merged into snapshots by the router. */
   private readonly agentUsageTracker = new AgentUsageTracker(() => this.now().getTime());
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
@@ -423,6 +427,11 @@ export class DaemonAgentRuntime {
   }
 
   private async startRuntime(): Promise<void> {
+    try {
+      this.agentUsageTracker.restore(await this.options.agentUsageStore?.load());
+    } catch (error) {
+      this.report('agent usage load failed', error);
+    }
     this.unsubscribeProviders = this.options.providers.subscribe((providerId, event) => {
       this.eventTail = this.eventTail
         .then(() => this.handleProviderEvent(providerId, event))
@@ -460,9 +469,9 @@ export class DaemonAgentRuntime {
     this.turnTimers.clear();
   }
 
-  /** Usage of the given sessions after their first reply in this app run. */
-  agentUsage(sessions: readonly DaemonSession[]): Readonly<Record<string, AgentUsage>> | undefined {
-    return this.agentUsageTracker.snapshot(sessions);
+  /** Usage for a snapshot: each live conversation's AI limits and context, and each AI's limits. */
+  agentUsage(snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>): Pick<DaemonSnapshot, 'agentUsage' | 'providerUsage'> {
+    return this.agentUsageTracker.snapshot(snapshot);
   }
 
   dispose(mode: 'explicit-quit' | 'process-loss' = 'explicit-quit'): Promise<void> {
@@ -2061,8 +2070,17 @@ export class DaemonAgentRuntime {
   private async handleProviderEvent(providerId: string, event: AgentProviderEvent): Promise<void> {
     if (this.disposed) return;
     if (event.kind === 'usage') {
-      // Not stored: the turn-finished that follows it refreshes every client.
-      this.agentUsageTracker.observe(providerId, event);
+      if (!this.agentUsageTracker.observe(providerId, event)) return;
+      const store = this.options.agentUsageStore;
+      const state = this.agentUsageTracker.serialize();
+      if (store) this.runBackground('agent usage save failed', () => store.save(state));
+      // The event makes every client refetch the snapshot that carries the new usage.
+      await this.transition(() => ({ events: [{
+        kind: 'entity.upserted',
+        payload: event.sessionId
+          ? { entityType: 'agent', entityId: event.sessionId }
+          : { entityType: 'provider', entityId: providerId },
+      }] }));
       return;
     }
     if (event.kind === 'transcript') {

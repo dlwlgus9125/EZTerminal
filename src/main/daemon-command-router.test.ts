@@ -42,14 +42,14 @@ function command<T extends DaemonCommandType>(
 }
 
 describe('DaemonCommandRouter', () => {
-  it('adds in-memory reply usage to the stored snapshot only when there is some', async () => {
-    const usage = { 'terminal-1': { contextPercent: 34, observedAt: 1 } };
+  it('adds the usage kept beside the store to the snapshot only when there is some', async () => {
+    const usage = { 'terminal-1': { contextPercent: 34, contextObservedAt: 1 } };
     const seen: string[][] = [];
     let current: typeof usage | undefined;
     const { store, router } = await runtime({
-      agentUsage: (sessions) => {
-        seen.push(sessions.map((session) => session.id));
-        return current;
+      agentUsage: (snapshot) => {
+        seen.push(snapshot.sessions.map((session) => session.id));
+        return current ? { agentUsage: current } : {};
       },
     });
     await router.execute(command('project.create', { projectId: 'project-1', name: 'Demo', rootPath: 'C:\\Working\\Demo' }, 0));

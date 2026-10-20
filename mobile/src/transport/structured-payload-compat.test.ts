@@ -40,7 +40,8 @@ describe('structured payload compatibility', () => {
       projects: [], workspaces: [], sessions: [], agentRelations: [], turns: [], transcriptHeads: [], approvals: [],
       providers: [], schedules: [], heartbeats: [],
       agents: [{ sessionId: 'session-1', providerId: 'codex', permissionPreset: 'standard', state: 'idle' }],
-      agentUsage: { 'session-1': { weekly: { usedPercent: 26, resetsAt: 1_792_472_286_000 }, contextPercent: 3, observedAt: 1 } },
+      agentUsage: { 'session-1': { weekly: { usedPercent: 26, resetsAt: 1_792_472_286_000 }, limitsObservedAt: 1, contextPercent: 3, contextObservedAt: 1 } },
+      providerUsage: { codex: { weekly: { usedPercent: 26, resetsAt: 1_792_472_286_000 }, limitsObservedAt: 1 } },
     };
     expect(isDaemonSnapshot(snapshot)).toBe(true);
   });

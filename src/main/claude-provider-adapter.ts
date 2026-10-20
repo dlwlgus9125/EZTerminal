@@ -2150,7 +2150,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       ?? (Array.isArray(message.errors) ? message.errors.find((entry): entry is string => typeof entry === 'string') : null)
       ?? (isError ? asString(message.result) : null);
     const classified = isError ? classifyClaudeProviderError(errorValue ?? 'unknown') : null;
-    if (!classified) this.emitReplyUsage(session, message);
+    this.emitReplyUsage(session, message);
     for (const turn of turns) {
       turn.providerTurnId = asString(message.uuid) ?? turn.providerTurnId;
       if (interrupted) this.finishTurn(session, turn, 'interrupted');
@@ -2178,16 +2178,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     session.lastMainUsage = { model, usage };
   }
 
-  /** The reply's usage, ahead of its turn-finished so the refreshed snapshot carries it. */
+  /** The conversation's context after a reply: its last main request against that model's window. */
   private emitReplyUsage(session: SessionRecord, result: JsonObject): void {
     const last = session.lastMainUsage;
     const contextWindow = last ? asObject(asObject(result.modelUsage)?.[last.model])?.contextWindow : undefined;
     const contextPercent = last ? claudeContextPercent(last.usage, contextWindow) : undefined;
-    this.emit({
-      kind: 'usage',
-      sessionId: session.context.sessionId,
-      ...(contextPercent !== undefined ? { contextPercent } : {}),
-    });
+    if (contextPercent !== undefined) this.emit({ kind: 'usage', sessionId: session.context.sessionId, contextPercent });
   }
 
   private handleSystem(session: SessionRecord, message: JsonObject): void {

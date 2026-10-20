@@ -51,6 +51,8 @@ import { codexContextPercent, codexLimitsFromRateLimits } from './agent-usage-re
 export const CODEX_APP_SERVER_BASELINE_VERSION = '0.152.1';
 const MAX_MODELS = 2_000;
 const MAX_MODEL_PAGES = 40;
+/** Opening tabs and starting conversations ask Codex for the plan limits at most this often. */
+const ACCOUNT_LIMITS_READ_INTERVAL_MS = 60_000;
 const MAX_SEMANTIC_TEXT = 1024 * 1024;
 const MAX_PROBE_OUTPUT = 64 * 1024;
 const MAX_PRE_RESPONSE_LIFECYCLE_TURNS = 8;
@@ -145,8 +147,6 @@ interface SessionState {
   readonly subagentTitle?: string;
   /** The sub-agent's latest answer, sent back to its parent when it finishes. */
   lastAgentMessage?: string;
-  /** The thread's last request against its model's window, for the context % shown after the reply. */
-  contextReading?: { readonly totalTokens: unknown; readonly contextWindow: unknown };
 }
 
 type ApprovalKind = 'command' | 'file-change' | 'permissions' | 'mcp-tool' | 'legacy-command' | 'legacy-file-change' | 'user-input' | 'proposed-plan';
@@ -758,6 +758,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly runCommand: (command: string, argv: readonly string[], signal?: AbortSignal) => Promise<CodexCommandResult>;
   private readonly probeTimeoutMs: number;
   private readonly now: () => Date;
+  private accountLimitsReadAt = Number.NEGATIVE_INFINITY;
   private readonly idFactory: () => string;
   private readonly deltaCoalescer: DeltaCoalescerOptions | undefined;
   private readonly enableUpdatePlan: boolean;
@@ -876,6 +877,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   async listModels(signal?: AbortSignal): Promise<readonly ProviderModel[]> {
     this.assertActive();
     await this.ensureConnection(signal);
+    this.readAccountLimits();
     const models: ProviderModel[] = [];
     const seenModels = new Set<string>();
     const seenCursors = new Set<string>();
@@ -1047,6 +1049,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.assertSessionContext(context);
     this.assertActive();
     const lifecycleGeneration = await this.ensureConnection(signal);
+    this.readAccountLimits();
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
@@ -1090,6 +1093,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.assertSessionContext(context);
     this.assertActive();
     const lifecycleGeneration = await this.ensureConnection(signal);
+    this.readAccountLimits();
     if (this.sessions.has(context.sessionId)) throw new Error(`Codex session ${context.sessionId} already exists.`);
     this.emit({ kind: 'session-state', sessionId: context.sessionId, state: 'starting' });
     try {
@@ -1537,6 +1541,23 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     }
   }
 
+  /**
+   * Asks the installed Codex for the account's plan limits (its own
+   * `account/rateLimits/read`, as its TUI does), so a tab shows fresh limits
+   * before its first reply. EZTerminal itself reads no token and calls no
+   * endpoint; a Codex without the request simply leaves the last value.
+   */
+  private readAccountLimits(): void {
+    const connection = this.connection;
+    const now = this.now().getTime();
+    if (!connection || now - this.accountLimitsReadAt < ACCOUNT_LIMITS_READ_INTERVAL_MS) return;
+    this.accountLimitsReadAt = now;
+    void connection.request('account/rateLimits/read').then((result) => {
+      const limits = codexLimitsFromRateLimits(asObject(result)?.rateLimits);
+      if (limits) this.emit({ kind: 'usage', limits });
+    }, () => undefined);
+  }
+
   private requireConnection(): CodexAppServerConnection {
     if (!this.connection) throw new Error('Codex app-server is not initialized.');
     return this.connection;
@@ -1878,10 +1899,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         return;
       case 'thread/tokenUsage/updated': {
         const tokenUsage = asObject(params.tokenUsage);
-        state.contextReading = {
-          totalTokens: asObject(tokenUsage?.last)?.totalTokens,
-          contextWindow: tokenUsage?.modelContextWindow,
-        };
+        const contextPercent = codexContextPercent(asObject(tokenUsage?.last)?.totalTokens, tokenUsage?.modelContextWindow);
+        if (contextPercent !== undefined) this.emit({ kind: 'usage', sessionId: state.sessionId, contextPercent });
         return;
       }
       default:
@@ -2227,13 +2246,6 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const error = asObject(turn?.error);
     const summary = this.lastAssistantText(turn);
     const errorCode = this.codexErrorCode(error?.codexErrorInfo);
-    if (outcome !== 'failed') {
-      // Ahead of turn-finished so the refreshed snapshot carries it.
-      const contextPercent = state.contextReading
-        ? codexContextPercent(state.contextReading.totalTokens, state.contextReading.contextWindow)
-        : undefined;
-      this.emit({ kind: 'usage', sessionId: state.sessionId, ...(contextPercent !== undefined ? { contextPercent } : {}) });
-    }
     this.emit({
       kind: 'turn-finished',
       sessionId: state.sessionId,

@@ -158,6 +158,14 @@ if (args.includes('--version')) {
           }, 10);
           break;
         }
+        case 'account/rateLimits/read':
+          // This account has only a weekly window, like the one the captures came from.
+          respond(frame, { rateLimits: {
+            limitId: 'codex',
+            primary: { usedPercent: 26, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + (53 * 60 * 60) },
+            secondary: null,
+          } });
+          break;
         case 'thread/unsubscribe':
           respond(frame, { status: 'notLoaded' });
           break;

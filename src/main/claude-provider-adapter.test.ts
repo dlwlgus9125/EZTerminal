@@ -1480,7 +1480,7 @@ describe('Claude usage', () => {
     await fixture.adapter.dispose();
   });
 
-  it('counts a reply stopped before any answer, without a context reading', async () => {
+  it('reports no context for a reply stopped before any answer', async () => {
     const fixture = makeAdapter();
     const clientUuid = await submitted(fixture, 'turn-stopped');
     fixture.query.interruptReceipt = { still_queued: [] };
@@ -1494,9 +1494,7 @@ describe('Claude usage', () => {
     await vi.waitFor(() => {
       expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'native-subagent', providerChildId: 'marker' }));
     });
-    expect(fixture.events.filter((event) => event.kind === 'usage')).toEqual([
-      { kind: 'usage', sessionId: context.sessionId },
-    ]);
+    expect(fixture.events.filter((event) => event.kind === 'usage')).toEqual([]);
     await fixture.adapter.dispose();
   });
 });

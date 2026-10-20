@@ -1742,7 +1742,7 @@ describe('MobileAgentView', () => {
 
   it('shows the conversation\'s usage under the box only while connected to the desktop', async () => {
     const daemonSnapshot = daemonSnapshotOf({
-      agentUsage: { 'structured-session-1': { weekly: { usedPercent: 26 }, contextPercent: 3, observedAt: 1 } },
+      agentUsage: { 'structured-session-1': { weekly: { usedPercent: 26 }, limitsObservedAt: 1, contextPercent: 3, contextObservedAt: 1 } },
     });
     const transport = { sendDaemonCommand: vi.fn() } as unknown as WsEzTerminalTransport;
     const view = (disconnected: boolean) => (
@@ -1758,8 +1758,8 @@ describe('MobileAgentView', () => {
     await clickButtonText(container, 'EZTerminal');
     await clickButtonText(container, 'Main checkout');
     await clickButtonText(container, 'Structured mobile task');
-    expect(testIds('structured-agent-usage-weekly')[0]?.textContent).toBe('wk 26%');
-    expect(testIds('structured-agent-usage-context')[0]?.textContent).toBe('ctx 3%');
+    expect(testIds('structured-agent-usage')[0]?.getAttribute('aria-label')).toBe('Codex usage: weekly limit 26% used, context 3% used');
+    expect(testIds('structured-agent-usage-weekly')).toHaveLength(1);
 
     // Offline the phone would count down windows it can no longer refresh.
     await render(view(true));

@@ -247,50 +247,56 @@ const MINUTE = 60_000;
 const in2h10m = Date.now() + 130 * MINUTE + 30_000;
 const in2d5h = Date.now() + (53 * 60) * MINUTE + 30_000;
 
-/** After a reply the line under the box shows the AI's plan limits and context, as its CLI HUD does. */
+/** The settings row carries the AI's plan limits and this conversation's context as gauges; the details open from it. */
 export const ComposerUsageClaude: Story = {
   args: { ...ComposerClaude.args, usage: {
-    fiveHour: { usedPercent: 12, resetsAt: in2h10m }, weekly: { usedPercent: 26, resetsAt: in2d5h }, contextPercent: 34, observedAt: Date.now(),
+    fiveHour: { usedPercent: 12, resetsAt: in2h10m }, weekly: { usedPercent: 26, resetsAt: in2d5h }, limitsObservedAt: Date.now() - 3 * MINUTE,
+    contextPercent: 34, contextObservedAt: Date.now(),
   } },
   render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByTestId('structured-agent-composer-hint')).toHaveTextContent('Enter 전송');
-    await expect(canvas.getByTestId('structured-agent-usage-fiveHour')).toHaveTextContent(/^5h 12% · 2h\d+m$/);
-    await expect(canvas.getByTestId('structured-agent-usage-weekly')).toHaveTextContent(/^주간 26% · 2d\d+h$/);
-    await expect(canvas.getByTestId('structured-agent-usage-context')).toHaveTextContent('ctx 34%');
+    const pill = canvas.getByTestId('structured-agent-usage');
+    await expect(pill).toHaveAccessibleName(/^Claude 사용량: 5시간 한도 12% 사용\(2h\d+m 후 초기화\), 주간 한도 26% 사용\(2d\d+h 후 초기화\), 컨텍스트 34% 사용$/);
+    await userEvent.click(pill);
+    const details = await within(document.body).findByRole('dialog', { name: 'Claude 사용량' });
+    await expect(details).toHaveTextContent(/5시간12%2h\d+m 후 초기화/);
+    await expect(details).toHaveTextContent('컨텍스트34%');
+    await expect(details).toHaveTextContent(/갱신 3분 전/);
   },
 };
 
-/** Near a limit the number turns amber from 70% and red from 90%; a window the account does not have is not shown. */
+/** Near a limit the gauge turns amber from 70% and red from 90%; a window the account does not have is not shown. */
 export const ComposerUsageCodexNearLimit: Story = {
-  args: { ...ComposerCodex.args, usage: { weekly: { usedPercent: 92, resetsAt: in2d5h }, contextPercent: 74, observedAt: Date.now() } },
+  args: { ...ComposerCodex.args, usage: { weekly: { usedPercent: 92, resetsAt: in2d5h }, limitsObservedAt: Date.now(), contextPercent: 74, contextObservedAt: Date.now() } },
   render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.queryByTestId('structured-agent-usage-fiveHour')).toBeNull();
     await expect(canvas.getByTestId('structured-agent-usage-weekly')).toHaveAttribute('data-level', 'danger');
     await expect(canvas.getByTestId('structured-agent-usage-context')).toHaveAttribute('data-level', 'warning');
+    await userEvent.click(canvas.getByTestId('structured-agent-usage'));
+    await expect(await within(document.body).findByRole('dialog', { name: 'Codex 사용량' })).toHaveTextContent('주간92%');
   },
 };
 
-/** An API-key session has no plan limits: only the context is shown. */
+/** An API-key session has no plan limits: only the context gauge is shown. */
 export const ComposerUsageContextOnly: Story = {
-  args: { ...ComposerClaude.args, usage: { contextPercent: 8, observedAt: Date.now() } },
+  args: { ...ComposerClaude.args, usage: { contextPercent: 8, contextObservedAt: Date.now() } },
   render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByTestId('structured-agent-usage')).toHaveTextContent(/^ctx 8%/);
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('structured-agent-usage')).toHaveAccessibleName('Claude 사용량: 컨텍스트 8% 사용');
+    await expect(canvas.queryByTestId('structured-agent-usage-weekly')).toBeNull();
   },
 };
 
-/** In a split pane the hint gives way first; the usage stays on the right. */
+/** In a split pane the settings keep one row and the gauges stay in it. */
 export const NarrowPaneUsage: Story = {
   args: { ...ComposerUsageClaude.args },
   render: (args) => <NarrowKorean><StructuredAgentSessionPanel {...args} /></NarrowKorean>,
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByTestId('structured-agent-composer-hint')).toBeVisible();
-    await expect(canvas.getByTestId('structured-agent-usage-context')).toBeVisible();
+    await expect(within(canvasElement).getByTestId('structured-agent-usage')).toBeVisible();
   },
 };
 
@@ -431,10 +437,10 @@ export const MobileCliCompose: Story = {
   </AppI18nProvider>,
 };
 export const MobileBubbleCompose: Story = { ...MobileCliCompose, args: { ...MobileCliCompose.args, skin: 'bubble' } };
-/** On the phone the usage line stands alone under the box. */
+/** On the phone the usage pill sits with the other settings. */
 export const MobileCliComposeUsage: Story = { ...MobileCliCompose, args: { ...MobileCliCompose.args, usage: ComposerUsageClaude.args?.usage },
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByTestId('structured-agent-usage-weekly')).toBeVisible();
+    await expect(within(canvasElement).getByTestId('structured-agent-usage')).toBeVisible();
   } };
 export const MobileOfflineDraft: Story = { ...MobileCliCompose, args: {
   ...MobileCliCompose.args, disabled: true, allowDraftWhenDisabled: true, sendDisabled: true,

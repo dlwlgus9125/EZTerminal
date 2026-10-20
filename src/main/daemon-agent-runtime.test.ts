@@ -141,6 +141,7 @@ async function harness(options: {
   readonly conversationContext?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationContext'];
   readonly conversationWritable?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationWritable'];
   readonly subagentRecordExists?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['subagentRecordExists'];
+  readonly agentUsageStore?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['agentUsageStore'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -170,7 +171,7 @@ async function harness(options: {
   });
   const router = new DaemonCommandRouter(store, {
     handlers: runtime.handlers(),
-    agentUsage: (sessions) => runtime.agentUsage(sessions),
+    agentUsage: (snapshot) => runtime.agentUsage(snapshot),
   });
   routerRef.current = router;
   await runtime.start();
@@ -558,8 +559,15 @@ describe('DaemonAgentRuntime', () => {
     }
   });
 
-  it('shows a conversation\'s usage from its first reply, in the snapshot clients refetch, until it is archived', async () => {
-    const h = await harness();
+  it('shows the last saved usage before any reply, refreshes clients when it changes, and saves it', async () => {
+    const weekly = { usedPercent: 26, resetsAt: 1_000 };
+    const saved: unknown[] = [];
+    const h = await harness({
+      agentUsageStore: {
+        load: async () => ({ version: 1, providers: { codex: { weekly, observedAt: 5 } }, contexts: {} }),
+        save: async (state) => { saved.push(state); },
+      },
+    });
     try {
       await h.enable(h.codex, 'codex');
       await h.prepareWorkspace();
@@ -567,29 +575,28 @@ describe('DaemonAgentRuntime', () => {
         sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard',
         initialPrompt: 'Work.',
       });
-      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
-      const weekly = { usedPercent: 26, resetsAt: 1_000 };
-
-      // Account limits alone do not show anything before this conversation's reply.
-      h.codex.emit({ kind: 'usage', limits: { weekly } });
-      await h.runtime.whenIdle();
-      expect(h.router.getSnapshot().agentUsage).toBeUndefined();
+      // The saved limits show as soon as the conversation exists, and for a conversation not started yet.
+      expect(h.router.getSnapshot().agentUsage).toEqual({ 'agent-1': { weekly, limitsObservedAt: 5 } });
+      expect(h.router.getSnapshot().providerUsage).toEqual({ codex: { weekly, limitsObservedAt: 5 } });
 
       const seenOnRefresh: unknown[] = [];
       const unsubscribe = h.router.onEvent((event) => {
         if (event.kind === 'entity.upserted') seenOnRefresh.push(h.router.getSnapshot().agentUsage?.['agent-1']);
       });
       h.codex.emit({ kind: 'usage', sessionId: 'agent-1', contextPercent: 3 });
-      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
       await h.runtime.whenIdle();
       unsubscribe();
 
-      const expected = { weekly, contextPercent: 3, observedAt: Date.parse('2026-09-04T10:00:00.000Z') };
-      expect(seenOnRefresh[0]).toEqual(expected);
-      expect(h.router.getSnapshot().agentUsage).toEqual({ 'agent-1': expected });
+      const now = Date.parse('2026-09-04T10:00:00.000Z');
+      expect(seenOnRefresh).toEqual([{ weekly, limitsObservedAt: 5, contextPercent: 3, contextObservedAt: now }]);
+      expect(saved.at(-1)).toEqual({ version: 1, providers: { codex: { weekly, observedAt: 5 } }, contexts: { 'agent-1': { percent: 3, observedAt: now } } });
 
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
       await h.execute('agent.archive', { sessionId: 'agent-1' });
       expect(h.router.getSnapshot().agentUsage).toBeUndefined();
+      expect(h.router.getSnapshot().providerUsage).toEqual({ codex: { weekly, limitsObservedAt: 5 } });
     } finally {
       await h.runtime.dispose();
       await h.store.close();

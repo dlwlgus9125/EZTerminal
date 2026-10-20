@@ -110,10 +110,13 @@ describe('DaemonCliControl', () => {
 
   it('keeps other Projects\' conversations out of the scoped usage', async () => {
     const { control, setSnapshot } = fixture();
-    const usage = { contextPercent: 3, observedAt: 1 };
-    setSnapshot({ ...snapshot(), agentUsage: { 'agent-1': usage, 'agent-2': usage } });
+    const usage = { contextPercent: 3, contextObservedAt: 1 };
+    const limits = { weekly: { usedPercent: 26 }, limitsObservedAt: 1 };
+    setSnapshot({ ...snapshot(), agentUsage: { 'agent-1': usage, 'agent-2': usage }, providerUsage: { codex: limits, claude: limits } });
     const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
     expect(scoped.agentUsage).toEqual({ 'agent-1': usage });
+    // Only the AIs this Project's conversations and schedules use.
+    expect(scoped.providerUsage).toEqual({ codex: limits });
 
     setSnapshot({ ...snapshot(), agentUsage: { 'agent-2': usage } });
     const foreignOnly = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;

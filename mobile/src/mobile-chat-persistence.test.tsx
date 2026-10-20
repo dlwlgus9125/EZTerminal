@@ -176,16 +176,17 @@ describe('encrypted offline transcript cache', () => {
 
   it('keeps no usage on the phone, even from a cache an older build wrote', async () => {
     const secure = new SecureMemory(); const store = new MobileOfflineChatCacheStore(secure);
-    const agentUsage = { chat: { contextPercent: 3, observedAt: 1 } };
-    await store.saveSnapshot(AUTHORITY, { ...snapshot, agentUsage });
-    expect([...secure.values.values()].some((raw) => raw.includes('agentUsage'))).toBe(false);
+    const agentUsage = { chat: { contextPercent: 3, contextObservedAt: 1 } };
+    const providerUsage = { codex: { weekly: { usedPercent: 26 }, limitsObservedAt: 1 } };
+    await store.saveSnapshot(AUTHORITY, { ...snapshot, agentUsage, providerUsage });
+    expect([...secure.values.values()].some((raw) => raw.includes('Usage'))).toBe(false);
     expect((await store.load(AUTHORITY))?.snapshot).toEqual(snapshot);
 
     // An older build stored the whole snapshot.
     const [key] = [...secure.values.keys()];
     const stored = JSON.parse(secure.values.get(key)!) as { snapshot: DaemonSnapshot };
-    secure.values.set(key, JSON.stringify({ ...stored, snapshot: { ...stored.snapshot, agentUsage } }));
-    expect((await store.load(AUTHORITY))?.snapshot).not.toHaveProperty('agentUsage');
+    secure.values.set(key, JSON.stringify({ ...stored, snapshot: { ...stored.snapshot, agentUsage, providerUsage } }));
+    expect((await store.load(AUTHORITY))?.snapshot).toEqual(snapshot);
   });
 });
 

@@ -252,6 +252,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   return <div ref={host} className="conversation-start" data-testid="conversation-start" aria-busy={busy || undefined}>
     <StructuredAgentSessionPanel sessionId={identity} viewStateKey={`${viewStateScope}:conversation:${identity}`} title={entry?.title ?? text('새 대화', 'New conversation')}
       providerId={settings.providerId} providerLabel={selectedProvider?.label ?? entry?.providerId ?? 'AI'}
+      usage={disconnected ? undefined : snapshot?.providerUsage?.[settings.providerId]}
       workspace={selectedWorkspace ?? { id: settings.workspaceId, label: entry?.projectTitle ?? text('프로젝트', 'Project'), kind: 'local', path: entry?.roots[0] }}
       model={settings.model} modelOptions={selectedProvider?.models} permissionPreset={settings.permissionPreset} state="idle" items={items}
       statusLabel={busy ? text('메시지 준비 중…', 'Preparing message…') : entry ? text('기록 · 전송하면 이어집니다', 'History · send to continue') : text('첫 메시지를 입력하세요', 'Write your first message')}

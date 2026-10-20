@@ -256,8 +256,10 @@ export interface DaemonSnapshot {
   readonly providers: readonly DaemonProvider[];
   readonly schedules: readonly DaemonSchedule[];
   readonly heartbeats: readonly DaemonHeartbeat[];
-  /** In-memory provider usage per session id, after that session's first reply; never stored. */
+  /** Provider usage per live agent session id: plan limits last reported for its AI and its own context. */
   readonly agentUsage?: Readonly<Record<string, import('./agent-usage').AgentUsage>>;
+  /** Plan limits last reported per provider id, for a conversation that has not started yet. */
+  readonly providerUsage?: Readonly<Record<string, import('./agent-usage').AgentUsage>>;
 }
 
 export const DAEMON_COMMAND_TYPES = [
