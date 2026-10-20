@@ -12,14 +12,13 @@ import type { AgentAdapterRuntimeDescriptor } from './agent-adapter-service';
 
 const MAX_TRANSCRIPT_CHARS = 64 * 1024;
 const RPC_LINE_LIMIT = 1024 * 1024;
-const TURN_TIMEOUT_MS = 2 * 60 * 60_000;
 
 type JsonRpcId = string | number;
 
 interface PendingRequest {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  readonly timer?: ReturnType<typeof setTimeout>;
 }
 
 interface RuntimeRecord {
@@ -169,7 +168,7 @@ export class AcpWorkerRuntime {
     void this.request(record, 'session/prompt', {
       sessionId: record.acpSessionId,
       prompt: [{ type: 'text', text }],
-    }, TURN_TIMEOUT_MS).then(
+    }).then(
       () => this.hooks.setActivityState(activityId, 'done'),
       () => this.hooks.setActivityState(activityId, 'error'),
     );
@@ -208,7 +207,7 @@ export class AcpWorkerRuntime {
     void this.request(record, 'session/prompt', {
       sessionId: record.acpSessionId,
       prompt: [{ type: 'text', text: prompt }],
-    }, TURN_TIMEOUT_MS).then(async (raw) => {
+    }).then(async (raw) => {
       if (record.closed || !record.activityId) return;
       const response = raw as { readonly stopReason?: unknown };
       const succeeded = response?.stopReason === 'end_turn';
@@ -355,15 +354,16 @@ export class AcpWorkerRuntime {
     });
   }
 
-  private request(record: RuntimeRecord, method: string, params: unknown, timeoutMs: number): Promise<unknown> {
+  /** Setup requests pass a deadline; a prompt has none. */
+  private request(record: RuntimeRecord, method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
     if (record.closed) return Promise.reject(new Error('ACP adapter is closed.'));
     const id = ++record.requestId;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
         record.pending.delete(rpcKey(id));
         reject(new Error(`${method} timed out.`));
       }, timeoutMs);
-      timer.unref?.();
+      timer?.unref?.();
       record.pending.set(rpcKey(id), { resolve, reject, timer });
       try {
         this.write(record, { jsonrpc: '2.0', id, method, params });

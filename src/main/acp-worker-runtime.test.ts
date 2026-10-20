@@ -53,6 +53,7 @@ describe('AcpWorkerRuntime', () => {
     const reports: WorkerReportInput[] = [];
     const approval = vi.fn(async () => 'allow' as const);
     const ended = vi.fn();
+    const timeouts = vi.spyOn(globalThis, 'setTimeout');
     const runtime = new AcpWorkerRuntime({
       setActivityState: (_activityId, state) => { states.push(state); },
       endActivity: ended,
@@ -69,6 +70,8 @@ describe('AcpWorkerRuntime', () => {
       expect(runtime.bindActivity(prepared.sessionId, 'activity-1')).toBe(true);
       prepared.start('Inspect the project.');
       await eventually(() => expect(reports).toHaveLength(1));
+      // The task prompt has no deadline; only setup requests do.
+      expect(timeouts.mock.calls.some(([, delay]) => (delay ?? 0) >= 60 * 60_000)).toBe(false);
 
       expect(approval).toHaveBeenCalledWith(
         'activity-1',
@@ -84,6 +87,7 @@ describe('AcpWorkerRuntime', () => {
       expect(runtime.stop(prepared.sessionId)).toBe(true);
       expect(ended).toHaveBeenCalledWith('activity-1', false);
     } finally {
+      timeouts.mockRestore();
       runtime.dispose();
     }
   });
