@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { useState } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import type { DaemonApproval, DaemonTranscriptItem } from '../../shared/daemon-protocol';
@@ -107,11 +108,13 @@ interface Args {
 let storySequence = 0;
 
 function Results({ golden, section = 'changes', locale = 'ko', width = 520, git = 'ready', floor = 0, children = [], draft = 'ok', title = '인사 함수 이름 바꾸기', insertIntoDraft }: Args): JSX.Element {
-  storySequence += 1;
+  // One identity per mounted story: re-renders must not look like a new navigation.
+  const [sequence] = useState(() => { storySequence += 1; return storySequence; });
+  const [hostServices] = useState(() => services(git));
   const items = golden.items;
   const model = buildChatModel({ items, approvals: golden.approvals });
   const source: ResultsSource & { sessionId: string } = {
-    ownerPanelId: `agent-session-story-${String(storySequence)}`,
+    ownerPanelId: `agent-session-story-${String(sequence)}`,
     sessionId: items[0]?.sessionId ?? 'story',
     title,
     providerLabel: golden.provider === 'claude' ? 'Claude' : 'Codex',
@@ -130,14 +133,15 @@ function Results({ golden, section = 'changes', locale = 'ko', width = 520, git 
     focusDecision: fn(),
     ...(draft === 'ok' ? { insertIntoDraft: insertIntoDraft ?? fn() } : { draftUnavailable: 'history' as const }),
   };
+  const [navigation] = useState(() => ({ sequence, section }));
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <HighlighterProvider>
         <div style={{ width, height: '100vh', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--ui-border-subtle)' }}>
           <ConversationResults
             source={source}
-            services={services(git)}
-            navigation={{ sequence: storySequence, section }}
+            services={hostServices}
+            navigation={navigation}
           />
         </div>
       </HighlighterProvider>
@@ -162,7 +166,7 @@ export const ChangesClaude: Story = {
     const [patch] = await canvas.findAllByRole('group', { name: /app\.ts · 변경 1\/2/u });
     await expect(within(patch!).getAllByRole('button')[0]).toHaveTextContent('@@ -1,4 +1,4 @@');
     await expect(within(patch!).getByRole('button', { name: '1번 줄, 추가: export function greetUser(name: string): string {' })).toBeInTheDocument();
-    await expect(canvas.getByText('notes.md')).toBeInTheDocument();
+    await expect(canvas.getByRole('button', { name: /^notes.md/u })).toBeInTheDocument();
   },
 };
 
@@ -195,7 +199,7 @@ export const WorkingFolderGit: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.selectOptions(await canvas.findByRole('combobox', { name: '변경 범위' }), 'git');
-    await expect(await canvas.findByText('package-lock.json')).toBeInTheDocument();
+    await expect(await canvas.findByRole('button', { name: /^package-lock.json/u })).toBeInTheDocument();
     await expect(canvas.getByText(/브랜치 agent\/rename-greet/u)).toBeInTheDocument();
   },
 };

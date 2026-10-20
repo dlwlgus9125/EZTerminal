@@ -44,6 +44,15 @@ describe('paths in the working folder', () => {
     expect(resolveWorkspacePath('src/app.ts')).toBeUndefined();
   });
 
+  it('never resolves a network share, device or drive-relative path, so viewing cannot reach another machine', () => {
+    expect(resolveWorkspacePath('\\\\attacker\\share\\x.md', 'C:\\work')).toBeUndefined();
+    expect(resolveWorkspacePath('//attacker/share/x.md', 'C:\\work')).toBeUndefined();
+    expect(resolveWorkspacePath('\\\\?\\C:\\work\\x.md', 'C:\\work')).toBeUndefined();
+    expect(resolveWorkspacePath('\\\\.\\pipe\\x', 'C:\\work')).toBeUndefined();
+    expect(resolveWorkspacePath('C:x.md', 'C:\\work')).toBeUndefined();
+    expect(resolveWorkspacePath('/\\attacker/x', '/home')).toBeUndefined();
+  });
+
   it('compares Windows paths regardless of separators and case', () => {
     expect(isInsideWorkspace('C:/Work/Demo/src/a.ts', 'c:\\work\\demo')).toBe(true);
     expect(isInsideWorkspace('C:\\work\\demo-other\\a.ts', 'C:\\work\\demo')).toBe(false);

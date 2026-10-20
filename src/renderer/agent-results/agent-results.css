@@ -180,15 +180,26 @@
 }
 
 .results-file__path {
+  display: flex;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
   font-family: var(--ui-font-mono);
   font-size: var(--ui-font-size-xs);
-  text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
-  text-align: left;
+}
+
+.results-path__folder {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  text-overflow: ellipsis;
+}
+
+.results-path__name {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .results-file__kind,
@@ -230,18 +241,19 @@
 .results-diff__header {
   display: flex;
   align-items: center;
-  gap: var(--ui-space-2);
+  flex-wrap: wrap;
+  gap: var(--ui-space-1) var(--ui-space-2);
   min-width: 0;
 }
 
+/* The path keeps a readable width; the actions move to the next line in a narrow pane. */
 .results-diff__path {
-  flex: 1;
+  display: flex;
+  flex: 1 1 12rem;
   min-width: 0;
-  overflow: hidden;
   font-family: var(--ui-font-mono);
   font-size: var(--ui-font-size-xs);
   font-weight: 600;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -250,6 +262,7 @@
   align-items: center;
   flex-shrink: 0;
   gap: var(--ui-space-1);
+  margin-left: auto;
 }
 
 .results-diff__record {

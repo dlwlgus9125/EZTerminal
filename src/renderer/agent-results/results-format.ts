@@ -53,14 +53,24 @@ function separatorOf(root: string): string {
   return root.includes('\\') && !root.includes('/') ? '\\' : '/';
 }
 
-/** True for `C:\…`, `\\server\…` and `/…`. */
+/**
+ * `\\server\share`, `//server`, `\\?\…` and `\\.\…`: reading one makes Windows
+ * contact another machine (and offer the user's credentials) or a device. A
+ * path from an AI's record or message is never opened that way.
+ */
+export function isNetworkOrDevicePath(path: string): boolean {
+  return /^[\\/]{2}/u.test(path);
+}
+
+/** True for a local absolute path: `C:\…` or `/…` (never a network or device path). */
 export function isAbsolutePath(path: string): boolean {
-  return /^(?:[A-Za-z]:[\\/]|[\\/]{2}|\/)/u.test(path);
+  return /^(?:[A-Za-z]:[\\/]|\/(?![\\/]))/u.test(path);
 }
 
 /** A relative path from a chat link or `git diff` made absolute under the working folder. */
 export function resolveWorkspacePath(path: string, workspaceRoot?: string): string | undefined {
   const clean = path.replace(/<WORKSPACE>[\\/]+/gu, '');
+  if (isNetworkOrDevicePath(clean) || /^[A-Za-z]:(?![\\/])/u.test(clean)) return undefined;
   if (isAbsolutePath(clean)) return clean;
   if (!workspaceRoot) return undefined;
   if (/(?:^|[\\/])\.\.(?:[\\/]|$)/u.test(clean) || clean.startsWith('~')) return undefined;

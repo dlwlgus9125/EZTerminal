@@ -9,6 +9,7 @@ import { workspacePath } from '../chat/model/summary';
 import { FilePreviewContent } from '../FilePreviewContent';
 import { Button, EmptyState, IconButton, LoadingState, Status } from '../ui';
 import type { DerivedResults } from './derive-results';
+import { PathLabel } from './PathLabel';
 import { useResultsCopy } from './copy';
 import { fileLanguage, fileViewKind, resolveWorkspacePath, samePath, type FileViewKind } from './results-format';
 import { useResultsViewState, type ResultsServices } from './results-services';
@@ -176,7 +177,7 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
               <button type="button" className="results-file" aria-pressed={entry === selected}
                 onClick={() => setView((current) => ({ ...current, selected: entry.path, line: undefined }))}>
                 <Icon className="results-file__icon" aria-hidden="true" />
-                <span className="results-file__path" title={display(entry.path)}>{display(entry.path)}</span>
+                <PathLabel path={display(entry.path)} />
                 {entry.kind && <span className="results-file__kind">{entry.kind === 'add' ? copy.created : copy.modified}</span>}
               </button>
             </li>
@@ -185,7 +186,7 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
       </ul>
       <section className="results-viewer" aria-label={display(selected.path)}>
         <header className="results-diff__header">
-          <span className="results-diff__path" title={display(selected.path)}>{display(selected.path)}</span>
+          <PathLabel path={display(selected.path)} className="results-diff__path" />
           <span className="results-diff__actions">
             {toggleable && (
               <span className="results-segmented" role="group" aria-label={`${copy.rendered} / ${copy.source}`}>

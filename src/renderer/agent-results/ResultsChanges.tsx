@@ -9,6 +9,7 @@ import { Button, EmptyState, IconButton, LoadingState, Select, Status } from '..
 import type { BackfillState } from './ConversationResults';
 import type { DerivedResults } from './derive-results';
 import { orderedRange, PatchLineList, selectedLines, type LineRange } from './PatchLineList';
+import { PathLabel } from './PathLabel';
 import { useResultsCopy } from './copy';
 import { formatReviewComments, lineRangeLabel, REVIEW_DRAFT_LIMIT, resolveWorkspacePath, samePath, type ReviewComment } from './results-format';
 import { useResultsViewState, type ResultsServices } from './results-services';
@@ -103,8 +104,12 @@ function useGitScope(workspaceRoot: string | undefined, services: ResultsService
     if (wasActiveTurn.current && !turnActive && active) refreshRef.current();
     wasActiveTurn.current = turnActive;
   }, [active, turnActive]);
+  // Only a record that arrives while shown reads again; showing the scope already read it.
+  const seenSequence = useRef(artifactSequence);
   useEffect(() => {
-    if (!active || artifactSequence === 0) return undefined;
+    const arrived = artifactSequence > seenSequence.current;
+    seenSequence.current = artifactSequence;
+    if (!active || !arrived) return undefined;
     const timer = window.setTimeout(() => refreshRef.current(), 1_000);
     return () => window.clearTimeout(timer);
   }, [active, artifactSequence]);
@@ -142,7 +147,10 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
   const [note, setNote] = useState('');
   const [inserted, setInserted] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  const [git, refreshGit] = useGitScope(workspaceRoot, services, view.scope === 'git', turnActive, derived.artifactSequence);
+  // A remembered Working folder scope falls back when this conversation has no folder to read.
+  const gitAvailable = Boolean(workspaceRoot && services.getGitDiff && services.getGitStatus);
+  const scope: ChangeScope = view.scope === 'git' && !gitAvailable ? 'all' : view.scope;
+  const [git, refreshGit] = useGitScope(workspaceRoot, services, scope === 'git', turnActive, derived.artifactSequence);
 
   // A turn or file link from the conversation picks the scope and file it points at.
   const handled = useRef(0);
@@ -162,10 +170,10 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
   const turnId = view.turnId && derived.turns.some((turn) => turn.turnId === view.turnId) ? view.turnId : latestTurn?.turnId;
   const selectedTurn = derived.turns.find((turn) => turn.turnId === turnId);
   const entries = useMemo(() => {
-    if (view.scope === 'git') return gitEntries(git.diff);
-    const changes = view.scope === 'all' ? derived.changes : derived.changes.filter((change) => change.turnId === turnId);
+    if (scope === 'git') return gitEntries(git.diff);
+    const changes = scope === 'all' ? derived.changes : derived.changes.filter((change) => change.turnId === turnId);
     return groupRecords(changes);
-  }, [derived.changes, git.diff, turnId, view.scope]);
+  }, [derived.changes, git.diff, scope, turnId]);
   const selected = entries.find((entry) => view.path && samePath(entry.path, view.path)) ?? entries[0];
   const reviewed = new Set(view.reviewed);
   const display = (path: string): string => workspacePath(path, workspaceRoot);
@@ -211,8 +219,8 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
     line: (line: ReviewLine) => copy.patchLine(line.kind, line.after ?? line.before, line.text),
   }), [copy]);
 
-  const scopeValue = view.scope;
-  const pendingEarlier = view.scope === 'all' && transcriptFloor > 0 && backfill.phase !== 'done';
+  const scopeValue = scope;
+  const pendingEarlier = scope === 'all' && transcriptFloor > 0 && backfill.phase !== 'done';
 
   return (
     <div className="results-changes" data-testid="results-changes">
@@ -232,18 +240,18 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
             </option>
           ))}
           <option value="all">{copy.scopeAll}</option>
-          {workspaceRoot && services.getGitDiff && <option value="git">{copy.scopeGit}</option>}
+          {gitAvailable && <option value="git">{copy.scopeGit}</option>}
         </Select>
-        {view.scope === 'git' && (
+        {scope === 'git' && (
           <IconButton size="sm" icon={RefreshCw} aria-label={copy.refresh} onClick={refreshGit} disabled={git.phase === 'loading'} />
         )}
       </div>
       <p className="results-note">
-        {view.scope === 'git' ? copy.gitNotice : copy.reportedNotice}
-        {view.scope === 'git' && git.at && <> · {copy.refreshedAt(formatClock(new Date(git.at).toISOString(), locale))}</>}
-        {view.scope === 'git' && git.status?.availability === 'ready' && git.status.branch && <> · {copy.branch(git.status.branch)}</>}
+        {scope === 'git' ? copy.gitNotice : copy.reportedNotice}
+        {scope === 'git' && git.at && <> · {copy.refreshedAt(formatClock(new Date(git.at).toISOString(), locale))}</>}
+        {scope === 'git' && git.status?.availability === 'ready' && git.status.branch && <> · {copy.branch(git.status.branch)}</>}
       </p>
-      {view.scope === 'turn' && selectedTurn && view.turnId && view.turnId !== latestTurn?.turnId && selectedTurn.createdAt && (
+      {scope === 'turn' && selectedTurn && view.turnId && view.turnId !== latestTurn?.turnId && selectedTurn.createdAt && (
         <p className="results-note">{copy.scopeSelectedTurn(formatClock(selectedTurn.createdAt, locale))}</p>
       )}
       {pendingEarlier && (
@@ -255,16 +263,16 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
               : <><span>{copy.earlierPending(transcriptFloor)}</span>{onLoadEarlier && <Button variant="ghost" size="sm" onClick={onLoadEarlier}>{copy.loadEarlier}</Button>}</>}
         </div>
       )}
-      {view.scope === 'git' && git.phase === 'loading' && !git.diff && <LoadingState label={copy.gitLoading} />}
-      {view.scope === 'git' && git.phase === 'error' && <Status variant="danger">{copy.gitUnavailable}</Status>}
-      {view.scope === 'git' && git.diff && !git.diff.ok && (
+      {scope === 'git' && git.phase === 'loading' && !git.diff && <LoadingState label={copy.gitLoading} />}
+      {scope === 'git' && git.phase === 'error' && <Status variant="danger">{copy.gitUnavailable}</Status>}
+      {scope === 'git' && git.diff && !git.diff.ok && (
         <Status variant={git.diff.error === 'not-a-repository' ? 'neutral' : 'danger'}>{git.diff.error === 'not-a-repository' ? copy.gitNotRepository : copy.gitUnavailable}</Status>
       )}
-      {view.scope === 'git' && git.diff?.ok && git.diff.truncated && <Status variant="warning">{copy.gitTruncated}</Status>}
-      {view.scope === 'git' && git.diff?.ok && git.diff.omissions.length > 0 && <Status variant="neutral">{copy.gitOmitted(git.diff.omissions.length)}</Status>}
+      {scope === 'git' && git.diff?.ok && git.diff.truncated && <Status variant="warning">{copy.gitTruncated}</Status>}
+      {scope === 'git' && git.diff?.ok && git.diff.omissions.length > 0 && <Status variant="neutral">{copy.gitOmitted(git.diff.omissions.length)}</Status>}
 
       {entries.length === 0 ? (
-        view.scope === 'git'
+        scope === 'git'
           ? (git.diff?.ok && <EmptyState title={copy.gitClean} />)
           : derived.changes.length === 0
             ? <EmptyState title={copy.noChanges} description={copy.noChangesHint} />
@@ -279,13 +287,13 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
                 <li key={entry.key}>
                   <button type="button" className="results-file" aria-pressed={selected?.key === entry.key} onClick={() => choose(entry.path)} data-kind={entry.kind}>
                     <Icon className="results-file__icon" aria-hidden="true" />
-                    <span className="results-file__path" title={display(entry.path)}>{display(entry.path)}</span>
+                    <PathLabel path={display(entry.path)} />
                     {entry.kind !== 'update' && <span className="results-file__kind">{entry.kind === 'add' ? copy.created : entry.kind === 'delete' ? copy.deleted : copy.renamed}</span>}
                     <span className="results-file__counts">
                       {entry.added > 0 && <span className="results-added">+{entry.added}</span>}
                       {entry.removed > 0 && <span className="results-removed">−{entry.removed}</span>}
                     </span>
-                    {done && view.scope !== 'git' && <span className="results-file__reviewed">{copy.reviewed}</span>}
+                    {done && scope !== 'git' && <span className="results-file__reviewed">{copy.reviewed}</span>}
                   </button>
                 </li>
               );
@@ -294,12 +302,12 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
           {selected && (
             <section className="results-diff" aria-label={display(selected.path)}>
               <header className="results-diff__header">
-                <span className="results-diff__path" title={display(selected.path)}>{display(selected.path)}</span>
+                <PathLabel path={display(selected.path)} className="results-diff__path" />
                 <span className="results-diff__actions">
                   {onViewFile && selected.kind !== 'delete' && (
-                    <Button variant="ghost" size="sm" onClick={() => onViewFile(view.scope === 'git' ? resolveWorkspacePath(selected.path, workspaceRoot) ?? selected.path : selected.path)}>{copy.viewFile}</Button>
+                    <Button variant="ghost" size="sm" onClick={() => onViewFile(scope === 'git' ? resolveWorkspacePath(selected.path, workspaceRoot) ?? selected.path : selected.path)}>{copy.viewFile}</Button>
                   )}
-                  {view.scope !== 'git' && (
+                  {scope !== 'git' && (
                     <Button variant="ghost" size="sm" onClick={() => toggleReviewed(selected)}>
                       {selected.records.every((record) => reviewed.has(record.id)) ? copy.markUnread : copy.markReviewed}
                     </Button>
