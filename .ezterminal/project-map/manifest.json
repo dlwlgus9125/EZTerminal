@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d9e645a9a376c9b2b5e63bbede5f847e8c1ea9d32181340c412d8d5d06a4bef4",
+        "inputDigest": "sha256:bab75b353fa8a885ab585346ff18a19425fac091a896a3d8908a468f9eeee49a",
         "decision": "map-updated",
-        "reason": "Reviewed: usage readings now show before any reply; the runtime restores and saves them in a usage file, announces changes with a refresh event, and Codex asks for plan limits when a conversation opens. Durable transitions unchanged. Anchors moved; three claims updated."
+        "reason": "Reviewed: the conversation dock panel publishes its transcript to a per-conversation Results tab and main serves isolated ezartifact previews; session ownership, encrypted drafts, /clear and workflow gates are unchanged. Anchors moved; one range remapped."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8b59bac3fee9a4729f6e079c58b90ee9de4482b47ab2551d743764e303849dee",
+        "inputDigest": "sha256:deeb0150c4911297e1cad736fe591a8666d3c7a84a15378c5c0db446f7b7784a",
         "decision": "map-updated",
-        "reason": "Reviewed: Agent startup now restores saved usage before restoring provider subscriptions; workbench ownership and shutdown are unchanged. Anchors moved; one claim updated."
+        "reason": "Reviewed: a passive, detachable agent-results panel is registered; layouts keep only its owner id and prune orphans. Windows let subframes reach only previews and the PDF viewer, with plugins on for it. Terminal lifecycle unchanged; anchors moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:14b9bf6d5a0ef3fc0d0bcdfbb2f2040d67bfd248b2254c25414db13659f89ce2",
+        "inputDigest": "sha256:b7c8fd06691c3dc4569b630d7b2df9ca075fab1cdec7fae4bc4940528eb7acf5",
         "decision": "map-updated",
-        "reason": "Reviewed: the daemon snapshot gains optional per-conversation and per-provider usage under capability agent-usage-v1; the remote snapshot path, event kinds and protocol versions are unchanged. Anchors moved; claims unchanged."
+        "reason": "Reviewed: main.ts gained the preview scheme, the CSP frame-src for it and the preview IPC; the remote bridge, session mirroring and pairing paths are unchanged. Anchors only moved."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e4316380e048e17efb0ce6eebb3fa120edf3c9f4c1f9c3b6bccfb8a5b20f2123",
+        "inputDigest": "sha256:77e59422d4087ea196a7a2117740b24bef0bf3f88e9fa012dde10fbcb6223979",
         "decision": "map-updated",
-        "reason": "Reviewed: App adds the /clear navigation that puts a same-settings new conversation in the cleared tab's place; who decides and where is unchanged. One App anchor moved; claims unchanged."
+        "reason": "Reviewed: App wires a Results tab controller and the Claude/Codex adapters record numbered hunks in the same file-change format; approvals, delegation and orchestration are unchanged. Anchors only moved."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:37431592037c7c7e09889b0d6775a5279202385b4459960be32a0c9c6598a02f",
+        "inputDigest": "sha256:6f816dd3fdd5d7d044529b4cb2df788505176c67413e5bd7a04b3ee553c994b5",
         "decision": "map-updated",
-        "reason": "Reviewed: the composer's settings row adds a usage pill with gauges and a details popover, shown from the moment a tab opens. Session identity, transcript and history picker are unchanged. Anchors unchanged; claims unchanged."
+        "reason": "Reviewed: the session header gains a Results button and the desktop in-panel change review moves to the Results tab; Session ID, transcript, skins and the history picker are unchanged. One range remapped with its claim unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1d894a8449b46d1ae2c21b22ccbdbe4bab3ca46507e553001b821ccc2c61e46f",
+        "inputDigest": "sha256:a73333a6d9797be28bd738775fb026d738a57082f224d4d49e1cbdb147a9ca8c",
         "decision": "map-updated",
-        "reason": "Reviewed: the Claude and Codex adapters report usage as it arrives and Codex asks for plan limits when a conversation opens; native skills, commands and capability catalogs are unchanged. Anchors moved; claims unchanged."
+        "reason": "Reviewed: the Claude adapter records the SDK's structured patch for edits and created files; capability discovery, model listing and provider readiness are unchanged. Anchors only moved."
       }
     }
   ]

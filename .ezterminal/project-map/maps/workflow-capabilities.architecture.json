@@ -332,8 +332,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1202,
-          "endLine": 1283,
+          "startLine": 1221,
+          "endLine": 1302,
           "lineDigest": "sha256:a958bb4b7c0e4048efce6a81065ae8e22dd0d3cff4f23b6f56c37dc80aeea5cf",
           "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt; concurrent callers for one folder share that launch."
         }
