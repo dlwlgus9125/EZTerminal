@@ -62,6 +62,7 @@ export interface ResultsNavigation {
   readonly section: ResultsSection;
   readonly turnId?: string;
   readonly path?: string;
+  readonly line?: number;
 }
 
 interface Entry {

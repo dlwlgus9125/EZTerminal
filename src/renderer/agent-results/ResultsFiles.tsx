@@ -1,0 +1,206 @@
+import { ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Globe, RefreshCw } from 'lucide-react';
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+
+import type { FilePreviewResult } from '../../shared/file-preview';
+import { useChatCopy } from '../chat/copy';
+import { ChatMarkdown, type ChatMarkdownLabels } from '../chat/markdown/ChatMarkdown';
+import { CodeHighlighterContext } from '../chat/markdown/highlight-context';
+import { workspacePath } from '../chat/model/summary';
+import { FilePreviewContent } from '../FilePreviewContent';
+import { Button, EmptyState, IconButton, LoadingState, Status } from '../ui';
+import type { DerivedResults } from './derive-results';
+import { useResultsCopy } from './copy';
+import { fileLanguage, fileViewKind, resolveWorkspacePath, samePath, type FileViewKind } from './results-format';
+import { useResultsViewState, type ResultsServices } from './results-services';
+
+/** Above these the source shows plain, without syntax colors. */
+const HIGHLIGHT_MAX_CHARS = 200_000;
+const HIGHLIGHT_MAX_LINES = 5_000;
+
+const KIND_ICON: Record<FileViewKind, typeof FileText> = { markdown: FileText, html: Globe, pdf: FileText, image: FileImage, code: FileCode2 };
+
+interface FilesState {
+  /** Paths opened from chat links or the other sections, most recent first. */
+  readonly opened: readonly string[];
+  readonly selected?: string;
+  readonly line?: number;
+  /** Rendered or source, per path. */
+  readonly modes: Readonly<Record<string, 'rendered' | 'source'>>;
+}
+
+/** Numbered source, colored by the chat's highlighter when it is available and the file is small enough. */
+export function CodeFileView({ content, language, line }: { readonly content: string; readonly language?: string; readonly line?: number }): JSX.Element {
+  const highlighter = useContext(CodeHighlighterContext);
+  // One line per file line: a final newline ends the last line rather than adding an empty one.
+  const source = useMemo(() => content.replace(/\r\n/gu, '\n').replace(/\n$/u, ''), [content]);
+  const lines = useMemo(() => source.split('\n'), [source]);
+  const eligible = Boolean(highlighter && language && source.length <= HIGHLIGHT_MAX_CHARS && lines.length <= HIGHLIGHT_MAX_LINES);
+  const [highlighted, setHighlighted] = useState<{ readonly source: string; readonly node: ReactNode }>();
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (!eligible) return undefined;
+    let alive = true;
+    const cached = highlighter!.peek(source, language!);
+    if (cached) { setHighlighted({ source, node: cached }); return undefined; }
+    void highlighter!.highlight(source, language!).then((node) => { if (alive && node) setHighlighted({ source, node }); });
+    return () => { alive = false; };
+  }, [source, eligible, highlighter, language]);
+  const node = highlighted?.source === source ? highlighted.node : undefined;
+  useEffect(() => {
+    if (!line) return;
+    const target = ref.current?.querySelectorAll('.line')[line - 1];
+    target?.setAttribute('data-target', 'true');
+    target?.scrollIntoView?.({ block: 'center' });
+  }, [line, node]);
+  return (
+    <pre ref={ref} className="results-code" tabIndex={0} data-highlighted={node ? 'true' : undefined}>
+      <code>
+        {node ?? lines.map((text, index) => (
+          <span key={index}><span className="line">{text}</span>{index < lines.length - 1 ? '\n' : ''}</span>
+        ))}
+      </code>
+    </pre>
+  );
+}
+
+function isMissing(result: FilePreviewResult): boolean {
+  return !result.ok && /ENOENT|not found|no such file|does not exist/iu.test(result.error);
+}
+
+export function ResultsFiles({ sessionId, workspaceRoot, derived, services, target, onOpenProjectFiles, onViewChanges, renderHtml, renderPdf }: {
+  readonly sessionId: string;
+  readonly workspaceRoot?: string;
+  readonly derived: DerivedResults;
+  readonly services: ResultsServices;
+  readonly target?: { readonly sequence: number; readonly path?: string; readonly line?: number };
+  readonly onOpenProjectFiles?: () => void;
+  readonly onViewChanges?: (path: string) => void;
+  /** Isolated HTML preview; without it HTML shows as source. */
+  readonly renderHtml?: (path: string) => ReactNode;
+  readonly renderPdf?: (path: string) => ReactNode;
+}): JSX.Element {
+  const copy = useResultsCopy();
+  const chatCopy = useChatCopy();
+  const [view, setView] = useResultsViewState<FilesState>(`agent-results:files:${sessionId}`, { opened: [], modes: {} });
+  const handled = useRef(0);
+  useEffect(() => {
+    if (!target?.path || target.sequence === handled.current) return;
+    handled.current = target.sequence;
+    const path = target.path;
+    setView((current) => ({
+      ...current,
+      opened: [path, ...current.opened.filter((entry) => !samePath(entry, path))].slice(0, 50),
+      selected: path,
+      ...(target.line ? { line: target.line } : { line: undefined }),
+    }));
+  }, [setView, target]);
+
+  const files = useMemo(() => {
+    const list: { path: string; kind?: 'add' | 'update'; opened: boolean }[] = [];
+    for (const path of view.opened) list.push({ path, opened: true });
+    for (const file of derived.files) {
+      if (file.kind === 'delete') continue;
+      const existing = list.find((entry) => samePath(entry.path, file.path));
+      if (existing) existing.kind = file.kind === 'add' ? 'add' : 'update';
+      else list.push({ path: file.path, kind: file.kind === 'add' ? 'add' : 'update', opened: false });
+    }
+    return list;
+  }, [derived.files, view.opened]);
+  const selected = files.find((entry) => view.selected && samePath(entry.path, view.selected)) ?? files[0];
+  const absolute = selected ? resolveWorkspacePath(selected.path, workspaceRoot) : undefined;
+  const kind = selected ? fileViewKind(selected.path) : 'code';
+  const mode = selected ? view.modes[selected.path] ?? 'rendered' : 'rendered';
+
+  const [result, setResult] = useState<{ readonly path: string; readonly value?: FilePreviewResult; readonly loading: boolean }>();
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!absolute || !services.readFilePreview) return undefined;
+    // HTML and PDF show in their own isolated views when the host offers them.
+    if ((kind === 'html' && renderHtml && mode === 'rendered') || (kind === 'pdf' && renderPdf)) return undefined;
+    let alive = true;
+    setResult({ path: absolute, loading: true });
+    void services.readFilePreview(absolute)
+      .then((value) => { if (alive) setResult({ path: absolute, value, loading: false }); })
+      .catch((error: unknown) => { if (alive) setResult({ path: absolute, value: { ok: false, error: error instanceof Error ? error.message : String(error) }, loading: false }); });
+    return () => { alive = false; };
+  }, [absolute, kind, mode, reload, renderHtml, renderPdf, services]);
+
+  const labels = useMemo<Partial<ChatMarkdownLabels>>(() => ({
+    copyCode: chatCopy.copyCode, copied: chatCopy.copied, copyFailed: chatCopy.copyFailed,
+    wrapLines: chatCopy.wrapLines, task: chatCopy.task, blockedImage: chatCopy.blockedImage,
+  }), [chatCopy]);
+
+  if (!files.length || !selected) {
+    return (
+      <div className="results-files" data-testid="results-files">
+        <EmptyState title={copy.noFiles} description={copy.noFilesHint} />
+        {onOpenProjectFiles && <Button variant="ghost" size="sm" leadingIcon={<FolderOpen />} onClick={onOpenProjectFiles}>{copy.openProjectFiles}</Button>}
+      </div>
+    );
+  }
+
+  const current = result && result.path === absolute ? result : undefined;
+  const value = current?.value;
+  const loading = current ? current.loading : Boolean(absolute && services.readFilePreview);
+  const display = (path: string): string => workspacePath(path, workspaceRoot);
+  const setMode = (next: 'rendered' | 'source'): void => setView((current) => ({ ...current, modes: { ...current.modes, [selected.path]: next } }));
+  const hasChanges = derived.files.some((file) => samePath(file.path, selected.path));
+  const toggleable = kind === 'markdown' || (kind === 'html' && Boolean(renderHtml));
+
+  let body: ReactNode;
+  if (!absolute) body = <Status variant="neutral">{copy.fileUnavailable}</Status>;
+  else if (kind === 'html' && renderHtml && mode === 'rendered') body = renderHtml(absolute);
+  else if (kind === 'pdf' && renderPdf) body = renderPdf(absolute);
+  else if (loading && !value) body = <LoadingState label={copy.fileLoading} />;
+  else if (!value) body = <Status variant="neutral">{copy.fileUnavailable}</Status>;
+  else if (isMissing(value)) body = <Status variant="warning">{copy.fileGone}</Status>;
+  else if (!value.ok || value.kind !== 'text') body = <div className="results-preview"><FilePreviewContent result={value} {...(services.openExternalHttpUrl ? { openExternalHttpUrl: services.openExternalHttpUrl } : {})} /></div>;
+  else if (kind === 'markdown' && mode === 'rendered') {
+    body = <div className="results-markdown"><ChatMarkdown markdown={value.content} variant="prose" labels={labels} {...(services.openExternalHttpUrl ? { onOpenLink: services.openExternalHttpUrl } : {})} /></div>;
+  } else {
+    body = (
+      <>
+        {kind === 'html' && !renderHtml && <p className="results-note">{copy.htmlPending}</p>}
+        <CodeFileView content={value.content} language={fileLanguage(selected.path)} {...(view.line ? { line: view.line } : {})} />
+      </>
+    );
+  }
+
+  return (
+    <div className="results-files" data-testid="results-files">
+      <ul className="results-file-list" aria-label={copy.openedFiles}>
+        {files.map((entry) => {
+          const Icon = KIND_ICON[fileViewKind(entry.path)];
+          return (
+            <li key={entry.path}>
+              <button type="button" className="results-file" aria-pressed={entry === selected}
+                onClick={() => setView((current) => ({ ...current, selected: entry.path, line: undefined }))}>
+                <Icon className="results-file__icon" aria-hidden="true" />
+                <span className="results-file__path" title={display(entry.path)}>{display(entry.path)}</span>
+                {entry.kind && <span className="results-file__kind">{entry.kind === 'add' ? copy.created : copy.modified}</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <section className="results-viewer" aria-label={display(selected.path)}>
+        <header className="results-diff__header">
+          <span className="results-diff__path" title={display(selected.path)}>{display(selected.path)}</span>
+          <span className="results-diff__actions">
+            {toggleable && (
+              <span className="results-segmented" role="group" aria-label={`${copy.rendered} / ${copy.source}`}>
+                <button type="button" aria-pressed={mode === 'rendered'} onClick={() => setMode('rendered')}>{copy.rendered}</button>
+                <button type="button" aria-pressed={mode === 'source'} onClick={() => setMode('source')}>{copy.source}</button>
+              </span>
+            )}
+            {hasChanges && onViewChanges && <Button variant="ghost" size="sm" onClick={() => onViewChanges(selected.path)}>{copy.viewChanges}</Button>}
+            <IconButton size="sm" icon={RefreshCw} aria-label={copy.refresh} onClick={() => setReload((value) => value + 1)} />
+            {absolute && services.openFileInApp && <IconButton size="sm" icon={ExternalLink} aria-label={copy.openInApp} onClick={() => void services.openFileInApp!(absolute)} />}
+            {onOpenProjectFiles && <IconButton size="sm" icon={FolderOpen} aria-label={copy.openProjectFiles} onClick={onOpenProjectFiles} />}
+          </span>
+        </header>
+        {body}
+      </section>
+    </div>
+  );
+}
