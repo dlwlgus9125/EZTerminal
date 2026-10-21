@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Security
+
+- Update rustls to 0.23.46 and rustls-webpki to 0.103.16 in the native remote
+  host (RUSTSEC-2026-0346 to 0349 and RUSTSEC-2026-0382).
+
 ## [2.0.0] - 2026-10-13
 
 Development candidate; publication and Android device validation are pending.
