@@ -1,5 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalResponse } from '../shared/approval-request';
+import type { AccessLevel } from './agent-permission-copy';
+import { readPlanAccess } from './agent-plan-access';
 import { PlanningNavigationContext } from './PlanningWorkspaceDockPanel';
 import { AgentResultsContext, AgentResultsOwnerContext, type AgentResultsOwner } from './agent-results/AgentResultsContext';
 import { ResultsPublisher } from './agent-results/ResultsPublisher';
@@ -90,6 +92,8 @@ export interface StructuredAgentClearRequest {
   readonly settings: ConversationSettings;
   /** Text typed after `/clear`: the new conversation's message box starts with it, unsent. */
   readonly draftText?: string;
+  /** In plan mode: the level the cleared conversation's plan was set to run with. */
+  readonly planAccess?: AccessLevel;
 }
 
 let fallbackId = 0;
@@ -1419,6 +1423,7 @@ export function StructuredAgentDockPanel(
         settings: { providerId: agent.providerId, workspaceId: session.workspaceId, permissionPreset: agent.permissionPreset,
           ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}) },
         ...(draftText ? { draftText } : {}),
+        ...(agent.permissionPreset === 'plan' ? { planAccess: readPlanAccess(session.id) } : {}),
       }) } : {})}
     />
     {delegateMode && session && (

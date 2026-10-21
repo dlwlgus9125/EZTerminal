@@ -11,7 +11,7 @@ import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
-import { movePlanAccess, readLastAccess } from './agent-plan-access';
+import { inheritPlanAccess, movePlanAccess, readLastAccess } from './agent-plan-access';
 import { historyTranscriptItems } from './chat/model/history-items';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select } from './ui';
@@ -58,6 +58,9 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const view = useSyncExternalStore(recovery.subscribe, recovery.getSnapshot);
   const controller = useMemo(() => new ConversationStartController(recovery, access), [access, recovery]);
   useEffect(() => { void recovery.load(); }, [recovery]);
+  // Continuing a conversation keeps the level its plan was set to run with.
+  const linkedSessionId = initialEntry?.linkedSessionId;
+  useEffect(() => { if (linkedSessionId) inheritPlanAccess(linkedSessionId, identity); }, [linkedSessionId, identity]);
   const seedApplied = useRef(onSeedDraftApplied); seedApplied.current = onSeedDraftApplied;
   useEffect(() => {
     if (!seedDraftText) return undefined;

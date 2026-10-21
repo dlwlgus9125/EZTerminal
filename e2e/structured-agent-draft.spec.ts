@@ -288,6 +288,12 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     const tabs = window.locator('.ez-dock .dv-tab');
     const tabCount = await tabs.count();
     const providerInput = readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8');
+    // Plan mode with Full access chosen for the plan: the new conversation keeps both.
+    await session.getByTestId('structured-agent-live-plan').click();
+    await expect(session.getByTestId('structured-agent-live-plan')).toHaveAttribute('aria-pressed', 'true');
+    await session.getByTestId('structured-agent-live-permission').click();
+    await window.getByRole('menuitemradio', { name: /Full access/u }).click();
+    await expect(session.getByTestId('structured-agent-live-permission')).toHaveAttribute('aria-label', /Full access/u);
     await composer.fill('/clear keep this question');
     await composer.press('Escape');
     await composer.press('Enter');
@@ -298,6 +304,8 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(cleared.getByRole('combobox', { name: 'Conversation workspace' })).toHaveValue(restoredSnapshot!.workspaces[0].id);
     await expect(cleared.getByTestId('structured-agent-session')).not.toHaveAttribute('data-session-id', sessionId!);
     await expect(cleared.getByTestId('structured-agent-composer-input')).toHaveValue('keep this question');
+    await expect(cleared.getByTestId('structured-agent-live-plan')).toHaveAttribute('aria-pressed', 'true');
+    await expect(cleared.getByTestId('structured-agent-live-permission')).toHaveAttribute('aria-label', /Full access/u);
     await expect(cleared.getByTestId('structured-agent-usage-weekly')).toBeVisible();
     await expect(cleared.getByTestId('structured-agent-usage-context')).toHaveCount(0);
     const afterClear = await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot());

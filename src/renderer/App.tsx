@@ -182,6 +182,7 @@ import {
   type WorkbenchPanelPlacement,
 } from './workbench-coordinator';
 import { DockWindowCoordinator } from './dock-window-coordinator';
+import { writePlanAccess } from './agent-plan-access';
 import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 
@@ -1747,11 +1748,13 @@ export function App(): JSX.Element {
     project?: Pick<AgentProjectSummary, 'projectId' | 'name'>,
     target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
     /** `/clear`: takes this tab's place and starts with these settings (and any text typed after it). */
-    replace?: { readonly panelId: string; readonly settings: StructuredAgentClearRequest['settings']; readonly draftText?: string },
+    replace?: { readonly panelId: string; readonly settings: StructuredAgentClearRequest['settings']; readonly draftText?: string; readonly planAccess?: StructuredAgentClearRequest['planAccess'] },
   ): void => {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     structuredAgentDraftSequence.current += 1;
     const draftId = `${STRUCTURED_AGENT_DRAFT_PREFIX}${Date.now().toString(36)}-${structuredAgentDraftSequence.current.toString(36)}`;
+    // `/clear` in plan mode: the new conversation's plan runs with the level the cleared one chose.
+    if (replace?.planAccess) writePlanAccess(draftId, replace.planAccess);
     const korean = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('ko');
     dockWindowCoordinatorRef.current?.addPanel({
       id: `agent-session-${draftId}`,
@@ -1827,6 +1830,7 @@ export function App(): JSX.Element {
     newConversation: (project) => addStructuredAgentDraft(project),
     clearConversation: (panelId, request) => addStructuredAgentDraft(request.project, undefined, {
       panelId, settings: request.settings, ...(request.draftText ? { draftText: request.draftText } : {}),
+      ...(request.planAccess ? { planAccess: request.planAccess } : {}),
     }),
     openHistory: (projectId) => setConversationHistory({ projectId }),
     openSettings: () => {

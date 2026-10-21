@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8d68017b395464d45d101018eb12c5f577dd6705d80ed6e91e29474fbdada7fc",
+        "inputDigest": "sha256:5e0861f6bc82f793fef5ac55d017798c9c52a936a4ae348b5cee2e5c6891baf2",
         "decision": "map-updated",
-        "reason": "Reviewed: main now holds powerSaveBlocker prevent-app-suspension while an agent turn is queued/submitting/working/delivery-uncertain or a terminal agent works, released when none is (not while waiting for approval). No other flow changed. Anchors moved."
+        "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:08125caf45770a9ccb632b9dd305e5e63c1cd903a132be58db98de42511410e4",
+        "inputDigest": "sha256:13660c4f8011fa11ba3760f9a22be5141ca95980c44156d073c5f5601eeffe7f",
         "decision": "map-updated",
-        "reason": "Reviewed: clearConversation passes the optional /clear text to the replacing draft; navigation, ownership and history entries are unchanged. Anchors only moved."
+        "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d21222d360e1c13af70a13be4573e423b051acfd6380624228491bd253e114b7",
+        "inputDigest": "sha256:b2e6a5498ea7736f835dbab48fef463f4874eb912cd676b4ff97a723e79c32ce",
         "decision": "map-updated",
-        "reason": "Reviewed: the draft form now holds /clear back as an unavailable app command instead of sending it as a first prompt; draft state hand-off before history actions is unchanged. Anchors moved."
+        "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
       }
     },
     {
