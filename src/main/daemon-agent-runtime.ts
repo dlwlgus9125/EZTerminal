@@ -1089,8 +1089,12 @@ export class DaemonAgentRuntime {
         ...(nextEffort ? { reasoningEffort: nextEffort } : {}),
         permissionPreset: nextPermissionPreset,
       }) }] },
-      afterCommit: () => !effortOnly && agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId) ? this.runBackground(
+      // In the session's provider queue: a message sent right after waits for the new settings (a
+      // Claude switch to Full access may relaunch the provider session).
+      afterCommit: () => !effortOnly && agent.providerSessionId && this.attachedProviderSessions.has(agent.sessionId) ? this.runProviderHandleBackground(
         `update Agent settings ${agent.sessionId}`,
+        agent.providerId,
+        agent.providerSessionId,
         () => this.applyProviderSettings(
           agent.sessionId,
           agent.providerId,

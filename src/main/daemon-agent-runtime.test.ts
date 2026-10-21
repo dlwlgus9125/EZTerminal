@@ -4380,3 +4380,34 @@ describe('releasing an idle conversation\'s provider', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 });
+
+// Switching to Full access may relaunch the provider; a message sent right after must wait for it.
+describe('ordering a settings change before the next message', () => {
+  it('sends the next message only after the provider applied the new settings', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hello' });
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'idle' });
+      await h.runtime.whenIdle();
+      const order: string[] = [];
+      let finishSettings!: () => void;
+      const settingsHeld = new Promise<void>((resolve) => { finishSettings = resolve; });
+      const originalSetSettings = vi.mocked(h.codex.setSettings).getMockImplementation()!;
+      vi.mocked(h.codex.setSettings).mockImplementationOnce(async (input) => { order.push('settings:start'); await settingsHeld; order.push('settings:done'); return originalSetSettings(input); });
+      vi.mocked(h.codex.submit).mockImplementation(async (input) => { order.push(`submit:${input.prompt}`); });
+      await h.executeWithoutSettling('agent.set-settings', { sessionId: 'agent-1', permissionPreset: 'full-access' });
+      await h.executeWithoutSettling('agent.submit', { sessionId: 'agent-1', prompt: 'Right after' });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(order).toEqual(['settings:start']);
+      finishSettings();
+      await h.runtime.whenIdle();
+      expect(order).toEqual(['settings:start', 'settings:done', 'submit:Right after']);
+      expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')?.state).not.toBe('delivery-uncertain');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});

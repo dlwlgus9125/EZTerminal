@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f00669ae57aa374e8c066a849820bbb12916e0449690d2bf0a12f621551d90a1",
+        "inputDigest": "sha256:dd45d7a7f75722fab24f92b577a49b2ce525dfe66e88f187c9e3b65da649acaf",
         "decision": "map-updated",
-        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
+        "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8c1be2bcca08a27af6153ad2ca8a1151dd8251c3cb22427657a3de588d47310a",
+        "inputDigest": "sha256:310e55eac821a09925223feecf0c5d38b8481d44c7d278e12c5f04f089769b67",
         "decision": "map-updated",
-        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
+        "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
       }
     },
     {
