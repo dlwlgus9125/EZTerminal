@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8ed4bb6f1baea0916407ce35244bfa1f8ef61fa805b23c3a8796f05f28d59841",
+        "inputDigest": "sha256:cbc9486fad29259c40ce602213e724a80b24fbd0ccd3633670cc76879850beed",
         "decision": "map-updated",
-        "reason": "Reviewed: Claude sessions stay unarmed until Full access is chosen; after a Full access plan approval the adapter allows tool requests itself until the armed relaunch. Plan from Full access passes through default; mode changes wait for open approvals. Anchors moved."
+        "reason": "Reviewed: a lowered access level now cancels a Full access still waiting for its armed relaunch (no auto-allow, no relaunch); auto-allow requires Full access to be the current level. Flow and ownership unchanged. Anchors moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b6a603f70fe4158cea99e2c4bf42f1b8236b5447315d9996ddbb0cd60449a041",
+        "inputDigest": "sha256:82ea61433015b92ec040f4d5ab6a7e375b824054e8579fefc870aee0ca9839b1",
         "decision": "map-updated",
-        "reason": "Reviewed: only Claude permission handling changed (auto-allow until the armed relaunch, plan entry via default); capability discovery, model listing and readiness are unchanged. Anchors only moved."
+        "reason": "Reviewed: only Claude permission state handling changed (a lowered level cancels pending Full access); capability discovery, model listing and readiness are unchanged. Anchors only moved."
       }
     }
   ]

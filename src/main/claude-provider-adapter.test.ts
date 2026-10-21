@@ -1204,6 +1204,31 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('stops allowing on its own and does not relaunch armed once the person lowers the access level', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-plan', commandId: 'command-plan', prompt: 'Plan' });
+    const canUseTool = fixture.query.inputOptions.canUseTool!;
+    const ask = (tool: string, input: Record<string, unknown>, id: string): ReturnType<typeof canUseTool> => canUseTool(tool, input, {
+      signal: new AbortController().signal, toolUseID: `toolu_${id}`, requestId: id,
+    });
+    void ask('ExitPlanMode', { plan: '# Plan' }, 'p');
+    await vi.waitFor(() => expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(1));
+    await fixture.adapter.resolveApproval({ sessionId: context.sessionId, providerSessionId, providerRequestId: 'p', decision: 'allow', response: { kind: 'plan', mode: 'full-access' } });
+    await fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId, permissionPreset: 'standard' });
+    void ask('Bash', { command: 'rm notes.md' }, 'after-lowering');
+    await vi.waitFor(() => expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(2));
+    await fixture.adapter.resolveApproval({ sessionId: context.sessionId, providerSessionId, providerRequestId: 'after-lowering', decision: 'deny' });
+    const planTurn = (await fixture.query.input[Symbol.asyncIterator]().next()).value as SDKUserMessage;
+    fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'result-plan', session_id: providerSessionId,
+      user_message_uuid: planTurn.uuid, user_message_uuids: [planTurn.uuid], is_error: false });
+    await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-plan' })));
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-next', commandId: 'command-next', prompt: 'Next' });
+    expect(fixture.queries).toHaveLength(1);
+    expect(fixture.query.permissionModes).toEqual(['acceptEdits', 'default']);
+    await fixture.adapter.dispose();
+  });
+
   it('lets a plan turn nobody watches finish with its plan instead of waiting for approval', async () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession({ ...context, permissionPreset: 'plan' });
