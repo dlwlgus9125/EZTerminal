@@ -112,6 +112,16 @@ describe('start form settings', () => {
       .toEqual({ providerId: 'codex', workspaceId: 'w', model: 'gpt-6-astra', permissionPreset: 'full-access' });
   });
 
+  it('starts a new conversation with the access level last chosen, never another conversation’s plan mode', () => {
+    const recentPlan = { providerId: 'codex', model: 'gpt-6-astra', permissionPreset: 'plan' as const };
+    expect(initialConversationSettings({ recent: recentPlan, lastAccess: 'full-access', fallbackWorkspaceId: 'w' }))
+      .toEqual({ providerId: 'codex', workspaceId: 'w', model: 'gpt-6-astra', permissionPreset: 'full-access' });
+    expect(initialConversationSettings({ recent: recentPlan, fallbackWorkspaceId: 'w' }))
+      .toEqual({ providerId: 'codex', workspaceId: 'w', model: 'gpt-6-astra', permissionPreset: 'standard' });
+    expect(initialConversationSettings({ recent: { providerId: 'codex', permissionPreset: 'full-access' }, lastAccess: 'standard', fallbackWorkspaceId: 'w' }))
+      .toMatchObject({ permissionPreset: 'standard' });
+  });
+
   it('starts a cleared conversation with exactly what it ran with, effort included', () => {
     const cleared = { providerId: 'claude', workspaceId: 'cleared', model: 'claude-opus-5-5', permissionPreset: 'plan' as const, reasoningEffort: 'high' };
     expect(initialConversationSettings({ seed: cleared, recent: { providerId: 'codex', permissionPreset: 'standard' }, fallbackWorkspaceId: 'w' }))

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { movePlanAccess, readPlanAccess, resetPlanAccessForTests, writePlanAccess } from './agent-plan-access';
+import { inheritPlanAccess, movePlanAccess, readLastAccess, readPlanAccess, resetPlanAccessForTests, writeLastAccess, writePlanAccess } from './agent-plan-access';
 
 describe('plan access memory', () => {
   beforeEach(() => { window.localStorage.clear(); resetPlanAccessForTests(); });
@@ -17,6 +17,24 @@ describe('plan access memory', () => {
     resetPlanAccessForTests();
     expect(readPlanAccess('session-a')).toBe('full-access');
     expect(readPlanAccess('session-b')).toBe('standard');
+  });
+
+  it('remembers the access level the person last chose, for new conversations', () => {
+    expect(readLastAccess()).toBeUndefined();
+    writeLastAccess('full-access');
+    resetPlanAccessForTests();
+    expect(readLastAccess()).toBe('full-access');
+  });
+
+  it('gives a continued or cleared conversation its source plan level, without replacing one already chosen', () => {
+    writePlanAccess('source', 'full-access');
+    inheritPlanAccess('source', 'continued');
+    expect(readPlanAccess('continued')).toBe('full-access');
+    writePlanAccess('chosen', 'standard');
+    inheritPlanAccess('source', 'chosen');
+    expect(readPlanAccess('chosen')).toBe('standard');
+    inheritPlanAccess('missing', 'other');
+    expect(readPlanAccess('other')).toBe('standard');
   });
 
   it('moves a draft choice to the session it became', () => {

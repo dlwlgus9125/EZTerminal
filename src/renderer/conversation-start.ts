@@ -4,6 +4,7 @@ import { ChatMessageContextSchema } from '../shared/chat-message';
 import type { ConversationHistoryClient } from '../shared/conversation-history';
 import type { ConversationSettings, ConversationStart } from '../shared/conversation-start';
 import { conversationOperationId } from '../shared/conversation-start';
+import type { AccessLevel } from './agent-permission-copy';
 import { ChatRecoveryController } from './chat-recovery';
 import { structuredAgentSessionTitle } from './structured-agent-create';
 
@@ -16,14 +17,16 @@ export interface ConversationStartAccess {
 /**
  * What the start form begins with. A previous conversation continues with what it last ran with —
  * the host's resume preparation (`source`) — never with another conversation's settings; a new
- * conversation starts from the most recent one in the project, and one `/clear` opened starts with
- * exactly what the cleared conversation ran with (`seed`).
+ * conversation starts with the AI and model of the most recent one in the project and the access
+ * level the person last chose (`lastAccess`), never another conversation's plan mode; and one
+ * `/clear` opened starts with exactly what the cleared conversation ran with (`seed`).
  */
 export function initialConversationSettings(input: {
   readonly entry?: { readonly providerId: string; readonly workspaceId?: string };
   readonly seed?: ConversationSettings;
   readonly recent?: { readonly providerId: string; readonly model?: string; readonly permissionPreset: PermissionPreset };
   readonly source?: { readonly model?: string; readonly permissionPreset: PermissionPreset } | null;
+  readonly lastAccess?: AccessLevel;
   readonly fallbackProviderId?: string;
   readonly fallbackWorkspaceId?: string;
 }): ConversationSettings {
@@ -41,7 +44,7 @@ export function initialConversationSettings(input: {
     providerId: recent?.providerId ?? input.fallbackProviderId ?? '',
     workspaceId: input.fallbackWorkspaceId ?? '',
     ...(recent?.model ? { model: recent.model } : {}),
-    permissionPreset: recent?.permissionPreset ?? 'standard',
+    permissionPreset: input.lastAccess ?? (recent && recent.permissionPreset !== 'plan' ? recent.permissionPreset : 'standard'),
   };
 }
 

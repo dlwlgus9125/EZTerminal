@@ -11,7 +11,7 @@ import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
-import { movePlanAccess } from './agent-plan-access';
+import { movePlanAccess, readLastAccess } from './agent-plan-access';
 import { historyTranscriptItems } from './chat/model/history-items';
 import { useAppTranslation } from './i18n';
 import { Button, Field, Select } from './ui';
@@ -119,6 +119,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
     ...(entry ? { entry: { providerId: entry.providerId, ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}) } } : {}),
     ...(seed ? { seed } : {}),
     ...(recent ? { recent } : {}), source,
+    ...(readLastAccess() ? { lastAccess: readLastAccess() } : {}),
     fallbackProviderId: providers.find(item => !item.disabled)?.id ?? '',
     fallbackWorkspaceId: workspaceId ?? workspaces[0]?.id ?? '',
   });

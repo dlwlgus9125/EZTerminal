@@ -6,7 +6,7 @@ import { chatCopy, useChatLocale } from './chat/copy';
 import { ApprovalDock, ProposedPlanDock, type PlanAccessChoice } from './chat/dock/ApprovalDock';
 import { proposedPlan, withoutRow } from './chat/model/proposed-plan';
 import { ACCESS_LEVELS, agentPermissionCopy, isAccessLevel, type AccessLevel } from './agent-permission-copy';
-import { readPlanAccess, writePlanAccess } from './agent-plan-access';
+import { readLastAccess, readPlanAccess, writeLastAccess, writePlanAccess } from './agent-plan-access';
 import { TaskDock } from './chat/dock/TaskDock';
 import { ConversationChangeReview } from './ConversationChangeReview';
 import { AgentResultsOwnerContext } from './agent-results/AgentResultsContext';
@@ -538,7 +538,7 @@ export function StructuredAgentDraftPanel({
   selectedWorkspaceId,
   onWorkspaceChange,
   hideWorkspaceField = false,
-  initialPermissionPreset = 'standard',
+  initialPermissionPreset = readLastAccess() ?? 'standard',
   initialPrompt = '',
   deliveryRecovery = false,
   loading = false,
@@ -840,6 +840,7 @@ export function StructuredAgentDraftPanel({
                     checked={draftAccess === level}
                     onChange={() => {
                       setDraftAccess(level);
+                      writeLastAccess(level);
                       if (!draftPlan) setPermissionPreset(level);
                       setSubmitError(null);
                     }}
@@ -2073,6 +2074,8 @@ export function StructuredAgentSessionPanel({
   };
   /** In plan mode the level only matters once the plan is approved, so it changes here without a host round trip. */
   const changeAccess = (level: AccessLevel): void => {
+    // The person's own choice: new conversations start with it.
+    writeLastAccess(level);
     if (!planOn) { void updateSettings({ permissionPreset: level }); return; }
     writePlanAccess(sessionId, level);
     setPlanAccess(level);

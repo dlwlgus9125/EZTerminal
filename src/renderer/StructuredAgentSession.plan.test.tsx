@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DaemonApproval, DaemonTranscriptItem, DaemonTurn, PermissionPreset } from '../shared/daemon-protocol';
-import { readPlanAccess, resetPlanAccessForTests } from './agent-plan-access';
+import { readLastAccess, readPlanAccess, resetPlanAccessForTests } from './agent-plan-access';
 import { AppI18nProvider } from './i18n';
 import { clearSessionViewStates } from './session-view-state';
 import { StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from './StructuredAgentSession';
@@ -113,6 +113,8 @@ describe('plan mode is a switch, not a permission', () => {
     expect(onChangeSettings).not.toHaveBeenCalled();
     expect(readPlanAccess('session-plan')).toBe('full-access');
     expect(accessPill().getAttribute('aria-label')).toContain('Full access');
+    // The level the person chose is what new conversations start with.
+    expect(readLastAccess()).toBe('full-access');
   });
 
   it('switches with Shift+Tab in the message box, but not while composing or during a turn', async () => {

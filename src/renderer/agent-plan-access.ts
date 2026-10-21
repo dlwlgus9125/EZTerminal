@@ -40,6 +40,36 @@ export function writePlanAccess(sessionId: string, level: AccessLevel): void {
   save([...load().filter(([id]) => id !== sessionId), [sessionId, level]]);
 }
 
+/**
+ * A conversation continued from, or replacing (`/clear`), another one starts its plan with the
+ * level chosen there, unless a level was already chosen for it.
+ */
+export function inheritPlanAccess(fromId: string, toId: string): void {
+  const entries = load();
+  const source = entries.find(([id]) => id === fromId);
+  if (!source || fromId === toId || entries.some(([id]) => id === toId)) return;
+  save([...entries, [toId, source[1]]]);
+}
+
+const LAST_KEY = 'ezterminal.agent.last-access.v1';
+let lastMemory: AccessLevel | null | undefined;
+
+/** The access level the person last chose on this device; new conversations start with it. */
+export function readLastAccess(): AccessLevel | undefined {
+  if (lastMemory === undefined) {
+    try {
+      const stored = localStorage.getItem(LAST_KEY);
+      lastMemory = isAccessLevel(stored) ? stored : null;
+    } catch { lastMemory = null; }
+  }
+  return lastMemory ?? undefined;
+}
+
+export function writeLastAccess(level: AccessLevel): void {
+  lastMemory = level;
+  try { localStorage.setItem(LAST_KEY, level); } catch { /* Memory still holds it for this window. */ }
+}
+
 /** A draft or a start panel becomes a real session: its choice follows. */
 export function movePlanAccess(fromId: string, toId: string): void {
   const entry = load().find(([id]) => id === fromId);
@@ -50,4 +80,5 @@ export function movePlanAccess(fromId: string, toId: string): void {
 /** Tests only: forget the in-memory mirror so the next read goes to storage. */
 export function resetPlanAccessForTests(): void {
   memory = undefined;
+  lastMemory = undefined;
 }
