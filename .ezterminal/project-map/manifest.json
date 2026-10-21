@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:cbc9486fad29259c40ce602213e724a80b24fbd0ccd3633670cc76879850beed",
+        "inputDigest": "sha256:8d68017b395464d45d101018eb12c5f577dd6705d80ed6e91e29474fbdada7fc",
         "decision": "map-updated",
-        "reason": "Reviewed: a lowered access level now cancels a Full access still waiting for its armed relaunch (no auto-allow, no relaunch); auto-allow requires Full access to be the current level. Flow and ownership unchanged. Anchors moved."
+        "reason": "Reviewed: main now holds powerSaveBlocker prevent-app-suspension while an agent turn is queued/submitting/working/delivery-uncertain or a terminal agent works, released when none is (not while waiting for approval). No other flow changed. Anchors moved."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:53bcb75977ac9b399e9046be1da558a2610de9a7ea35c707fb80e7f2a824ca17",
+        "inputDigest": "sha256:b707042baa51420fc2c69d7a7c96f0fec4369c5158962004e0025d1b4c17d90a",
         "decision": "map-updated",
-        "reason": "Reviewed: Agent startup no longer rearms turn deadlines because turns have no elapsed-time limit; restore, reconcile and queue resumption are unchanged. One claim updated, anchors moved."
+        "reason": "Reviewed: main now holds powerSaveBlocker prevent-app-suspension while an agent turn is queued/submitting/working/delivery-uncertain or a terminal agent works, released when none is (not while waiting for approval). No other flow changed. Anchors moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d0a5401381720d58d56668c3e8013d0fd06db96b53f3405248af2507bb7df2d0",
+        "inputDigest": "sha256:884502b890deb6154eff31c1968741d2ff1155c96e9fbe6cb8b73e2085cf0d5d",
         "decision": "map-updated",
-        "reason": "Reviewed: daemon-protocol.ts lost only the backgroundTurnMs hard limit; protocol version, schemas, error codes and remote mirroring are unchanged. Anchors only moved."
+        "reason": "Reviewed: main now holds powerSaveBlocker prevent-app-suspension while an agent turn is queued/submitting/working/delivery-uncertain or a terminal agent works, released when none is (not while waiting for approval). No other flow changed. Anchors moved."
       }
     },
     {

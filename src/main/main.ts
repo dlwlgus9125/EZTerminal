@@ -15,6 +15,7 @@ import {
   MessageChannelMain,
   net,
   Notification,
+  powerSaveBlocker,
   protocol,
   safeStorage,
   session,
@@ -166,6 +167,7 @@ import {
 import { DaemonAutomationRuntime } from './daemon-automation-runtime';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { StructuredAgentNoticeTracker } from './structured-agent-notices';
+import { hasActiveAgentTurn, PowerSaveGuard } from './power-save-guard';
 import {
   DaemonLifecycleSettingsController
 } from './daemon-lifecycle-settings';
@@ -3746,6 +3748,20 @@ app.on('ready', async () => {
     notification.show();
   }));
   // Structured (daemon) Agent conversations: approvals waiting, turns finished or failed.
+  // Idle sleep would cut a long agent turn's stream; terminal agents (Lead run workers included)
+  // count too. A turn waiting for the person does not.
+  const powerSaveGuard = new PowerSaveGuard(powerSaveBlocker);
+  const terminalAgentsWorking = (items: readonly { readonly state: string }[]): boolean => items.some((item) => item.state === 'working');
+  powerSaveGuard.set('agent-turns', hasActiveAgentTurn(daemonCommandRouter.getSnapshot()));
+  powerSaveGuard.set('terminal-agents', terminalAgentsWorking(agentActivityService.getSnapshot().items));
+  trackLocalAgentStackSubscription(daemonCommandRouter.onEvent((event) => {
+    if (event.kind === 'transcript.appended') return;
+    powerSaveGuard.set('agent-turns', hasActiveAgentTurn(daemonCommandRouter.getSnapshot()));
+  }));
+  trackLocalAgentStackSubscription(agentActivityService.onSnapshot((snapshot) => {
+    powerSaveGuard.set('terminal-agents', terminalAgentsWorking(snapshot.items));
+  }));
+  trackLocalAgentStackSubscription(() => powerSaveGuard.dispose());
   const structuredAgentNotices = new StructuredAgentNoticeTracker();
   structuredAgentNotices.observe(daemonCommandRouter.getSnapshot());
   trackLocalAgentStackSubscription(daemonCommandRouter.onEvent((event) => {
