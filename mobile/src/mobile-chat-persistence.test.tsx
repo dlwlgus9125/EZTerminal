@@ -91,7 +91,12 @@ describe('Android draft and submit lifecycle', () => {
   const Harness = () => { latest = useMobileChatDraft({ transport, projectId: 'project', sessionId, store }); return <output>{latest.status}</output>; };
   const render = async () => {
     await act(async () => root.render(<Harness />));
+    // The record loads asynchronously (token digest, secure storage). A single fixed 10 ms wait raced
+    // it on slower CI runners, so keep waiting in 10 ms steps while it is still loading (up to 2 s).
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    for (let step = 0; step < 200 && latest.status === 'loading'; step += 1) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    }
   };
   beforeEach(() => {
     localStorage.clear(); secure = new SecureMemory(); store = new MobileChatStateStore(secure); sessionId = 'chat';
