@@ -45,6 +45,9 @@ async function setup(projectFolders: readonly string[] = ['']) {
   const repo = path.join(base, 'repo');
   mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main');
+  // The product commits as the person's own Git identity; a CI runner has none to fall back on.
+  git(repo, 'config', 'user.name', 'test');
+  git(repo, 'config', 'user.email', 'test@example.invalid');
   for (const folder of projectFolders) {
     mkdirSync(path.join(repo, folder), { recursive: true });
     writeFileSync(path.join(repo, folder, 'README.md'), 'initial\n');
