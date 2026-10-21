@@ -416,8 +416,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/project-archive-service.ts",
-          "startLine": 303,
-          "endLine": 367,
+          "startLine": 306,
+          "endLine": 370,
           "lineDigest": "sha256:e0202d101eb4f585e452cac42d7cdeea796ea5aef7e2cdecde0b946ceae435c6",
           "claim": "Restore imports scoped planning and the workflow registry into a new project, retains session links as historical only, and rejects changed partial restores."
         }

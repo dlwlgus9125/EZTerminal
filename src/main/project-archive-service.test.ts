@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,12 +14,23 @@ import { WorkflowService } from './workflow-service';
 const stores: DaemonStore[] = [];
 afterEach(async () => { for (const store of stores.splice(0)) await store.close(); });
 const NOW = '2026-10-13T00:00:00.000Z';
-async function fixture() {
+/** The DOS 8.3 alias of an existing folder, or undefined where the volume has no short names. */
+function shortPathOf(target: string): string | undefined {
+  if (process.platform !== 'win32') return undefined;
+  const short = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    '(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:EZTERMINAL_TEST_TARGET).ShortPath'],
+  { encoding: 'utf8', env: { ...process.env, EZTERMINAL_TEST_TARGET: target } }).trim();
+  return short && short.toLowerCase() !== target.toLowerCase() ? short : undefined;
+}
+async function fixture({ shortUserData = false } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-archive-'));
   const root = path.join(directory, 'original'); await fs.mkdir(root);
   const assetBytes = Buffer.from('A project-owned text asset'); await fs.writeFile(path.join(root, 'asset.txt'), assetBytes);
   await fs.writeFile(path.join(root, 'keep.txt'), 'Uncommitted user source');
-  const userDataDir = path.join(directory, 'data'); const store = new DaemonStore(userDataDir); stores.push(store); await store.init();
+  let userDataDir = path.join(directory, 'data'); let shortened = false;
+  // The app data folder given by another spelling of the same path (a DOS 8.3 alias, as TEMP is on CI).
+  if (shortUserData) { await fs.mkdir(userDataDir); const short = shortPathOf(userDataDir); if (short) { userDataDir = short; shortened = true; } }
+  const store = new DaemonStore(userDataDir); stores.push(store); await store.init();
   await store.applySystemCommit({ mutations: [
     { kind: 'project.upsert', value: { id: 'P', name: 'Original', rootPath: root, source: 'native' } },
     { kind: 'workspace.upsert', value: { id: 'W', projectId: 'P', name: 'Main', kind: 'local', rootPath: root } },
@@ -43,7 +55,7 @@ async function fixture() {
   });
   const options = { userDataDir, store, planning, ledger, registerRestoredProject: register };
   const service = new ProjectArchiveService(options);
-  return { directory, root, store, ledger, planning, service, options, register, assetBytes };
+  return { directory, root, store, ledger, planning, service, options, register, assetBytes, shortened };
 }
 
 describe('project archive authority', () => {
@@ -90,8 +102,10 @@ describe('project archive authority', () => {
     expect(source).toEqual(original); expect(exclusions).toHaveLength(2);
   });
 
-  it('includes owned capture bytes and explicitly reports unresolved capture references', async () => {
-    const f = await fixture(); const capturePath = '.ezterminal/captures/verified.png';
+  it.for([false, true])('includes owned capture bytes and explicitly reports unresolved capture references (app data by its 8.3 alias: %s)', async (shortUserData, { skip }) => {
+    const f = await fixture({ shortUserData });
+    if (shortUserData && !f.shortened) skip('8.3 names are unavailable on this volume');
+    const capturePath = '.ezterminal/captures/verified.png';
     await fs.mkdir(path.dirname(path.join(f.root, capturePath)), { recursive: true });
     const capture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4nQAAAAASUVORK5CYII=', 'base64');
     await fs.writeFile(path.join(f.root, capturePath), capture);

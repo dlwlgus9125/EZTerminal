@@ -229,7 +229,10 @@ export class ProjectArchiveService {
       }
       const assets = new Map([planning.snapshot, ...scopedPlanning.values()].flatMap(scoped => [...scoped.draft.assets, ...scoped.baselines.flatMap(baseline => baseline.draft.assets)]).map(asset => [asset.hash, asset]));
       const root = await fs.realpath(project.rootPath);
-      const captureRoots = [path.join(root, '.ezterminal', 'captures'), path.join(root, '.ezterminal', 'planning', 'captures'), path.join(this.options.userDataDir, 'planning-captures-v1', archiveHash(projectId))];
+      // Candidates are compared by real path, so the app data folder must be too (it may be spelled
+      // by an 8.3 alias). It is absent for projects without device captures.
+      const userDataDir = await fs.realpath(this.options.userDataDir).catch(() => this.options.userDataDir);
+      const captureRoots = [path.join(root, '.ezterminal', 'captures'), path.join(root, '.ezterminal', 'planning', 'captures'), path.join(userDataDir, 'planning-captures-v1', archiveHash(projectId))];
       const captureReferences = new Set(execution.runs.flatMap(run => run.evidence.flatMap(evidence => [...evidence.captureRefs])));
       for (const entry of entries.filter(entry => entry.kind === 'result' || entry.kind === 'integration')) {
         const value = parseArchiveJson(entry) as { validations?: { device?: { captureRefs?: string[] } }[] };

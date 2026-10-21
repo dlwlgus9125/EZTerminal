@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6f816dd3fdd5d7d044529b4cb2df788505176c67413e5bd7a04b3ee553c994b5",
+        "inputDigest": "sha256:69447143fd0dc4e50548b11a6f469800cdc630f751a1893ca0556a5a78776c6c",
         "decision": "map-updated",
-        "reason": "Reviewed: the session header gains a Results button and the desktop in-panel change review moves to the Results tab; Session ID, transcript, skins and the history picker are unchanged. One range remapped with its claim unchanged."
+        "reason": "Reviewed: archive export now resolves the app data capture folder to its real path before the ownership check, so device captures are kept when that folder is spelled by an 8.3 alias. Archive flow and boundaries are unchanged. Anchors only moved."
       }
     },
     {
