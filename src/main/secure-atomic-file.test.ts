@@ -229,7 +229,9 @@ describe('protectedDirectoryAcl', () => {
 
     const report = (target: string): { protected: boolean; rules: { sid: string; inherited: boolean }[] } => JSON.parse(execFileSync('powershell.exe', [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-      '$acl = Get-Acl -LiteralPath $env:EZTERMINAL_ACL_TARGET; '
+      // .NET only: under pwsh 7, Windows PowerShell inherits a module path where Get-Acl cannot load.
+      '$target = $env:EZTERMINAL_ACL_TARGET; '
+        + '$acl = if ([IO.Directory]::Exists($target)) { [IO.Directory]::GetAccessControl($target) } else { [IO.File]::GetAccessControl($target) }; '
         + '@{ protected = $acl.AreAccessRulesProtected; rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) '
         + '| ForEach-Object { @{ sid = $_.IdentityReference.Value; inherited = $_.IsInherited } }) } | ConvertTo-Json -Depth 4 -Compress',
     ], { encoding: 'utf8', env: { ...process.env, EZTERMINAL_ACL_TARGET: target } }));
