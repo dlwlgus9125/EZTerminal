@@ -166,8 +166,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-agent-runtime.ts",
-          "startLine": 421,
-          "endLine": 445,
+          "startLine": 423,
+          "endLine": 447,
           "lineDigest": "sha256:2d73213eed5cad6dd56684622ff13bbf3d93696167e8c7cebf7dfcdca0e0cb49",
           "claim": "Agent startup restores saved usage, settles provider-native children, restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, and reconciles unsettled work; turns carry no elapsed-time deadline."
         },

@@ -312,6 +312,12 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     expect(afterClear?.sessions.find((candidate) => candidate.id === sessionId)?.state).not.toBe('archived');
     expect(afterClear?.turns.filter((turn) => turn.sessionId === sessionId)).toHaveLength(1);
     expect(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8')).toBe(providerInput);
+    // The replaced conversation's provider is released rather than kept until quit.
+    const clearedThread = afterClear?.agents.find((candidate) => candidate.sessionId === sessionId)?.providerSessionId;
+    expect(clearedThread).toBeTruthy();
+    await expect.poll(() => {
+      try { return JSON.parse(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-unsubscribed.json'), 'utf8')) as string[]; } catch { return []; }
+    }, { timeout: 15_000 }).toContain(clearedThread);
     await window.screenshot({ path: path.join(evidenceDirectory, 'after-clear.png') });
     await testInfo.attach('after-clear', { path: path.join(evidenceDirectory, 'after-clear.png'), contentType: 'image/png' });
   } catch (error) {

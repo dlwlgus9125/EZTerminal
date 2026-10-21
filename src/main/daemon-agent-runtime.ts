@@ -61,6 +61,7 @@ type AgentCommandType = Extract<DaemonCommandType,
   | 'agent.cancel'
   | 'agent.archive'
   | 'agent.detach'
+  | 'agent.release'
   | 'permission.resolve'
   | 'provider.enable'
   | 'provider.disable'
@@ -405,6 +406,7 @@ export class DaemonAgentRuntime {
       'agent.cancel': (command, context) => this.runCommand(() => this.cancel(command, context)),
       'agent.archive': (command, context) => this.runCommand(() => this.archive(command, context)),
       'agent.detach': (command, context) => this.runCommand(() => this.detach(command, context)),
+      'agent.release': (command, context) => this.runCommand(() => this.release(command, context)),
       'permission.resolve': (command, context) => this.runCommand(() => this.resolveApproval(command, context)),
       'provider.enable': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
       'provider.update': (command, context) => this.runCommand(() => this.enableProvider(command, context)),
@@ -1298,6 +1300,48 @@ export class DaemonAgentRuntime {
       providerSessionId,
       () => this.disposeProviderSession(providerAdapter, session.id, providerSessionId),
     ) } : {}) };
+  }
+
+  /** Work that must finish before a conversation's provider can be released. */
+  private releaseBlocked(snapshot: DaemonSnapshot, sessionId: string): boolean {
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    if (!agent || ACTIVE_AGENT_STATES.has(agent.state) || agent.currentTurnId || agent.queuedTurnCount > 0) return true;
+    if (snapshot.turns.some((turn) => turn.sessionId === sessionId && !TERMINAL_TURN_STATES.has(turn.state))) return true;
+    if (snapshot.approvals.some((approval) => approval.sessionId === sessionId && approval.state === 'pending')) return true;
+    // A provider-native subagent still working lives in the same provider session.
+    return snapshot.agentRelations.some((relation) => relation.parentSessionId === sessionId && relation.owner === 'provider-native'
+      && !relation.detachedAt && snapshot.agents.some((child) => child.sessionId === relation.childSessionId && ACTIVE_AGENT_STATES.has(child.state)));
+  }
+
+  /**
+   * `/clear` (Desktop): stops the live provider of an idle conversation another one replaced in its
+   * tab. Nothing stored changes; the next message reattaches it, as after a restart.
+   */
+  private release(
+    command: DaemonCommand,
+    context: DaemonCommandExecutionContext,
+  ): DaemonCommandExecutionResult {
+    if (command.type !== 'agent.release') return commandError('invalid-command', 'Unexpected Agent release command.');
+    const sessionId = command.payload.sessionId;
+    const agent = context.snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    if (!agent || !context.snapshot.sessions.some((entry) => entry.id === sessionId)) return commandError('not-found', 'Agent Session was not found.');
+    if (this.releaseBlocked(context.snapshot, sessionId)) return commandError('invalid-state', 'Release the Agent only once it is idle.');
+    const providerSessionId = agent.providerSessionId;
+    const selected = providerSessionId ? this.options.providers.enabledAdapter(context.snapshot, agent.providerId) : undefined;
+    const provider = selected?.ok ? selected.value : undefined;
+    if (!providerSessionId || !provider || !this.attachedProviderSessions.has(sessionId)) return { ok: true, commit: { mutations: [] } };
+    return { ok: true, commit: { mutations: [] }, afterCommit: () => this.runProviderHandleBackground(
+      `release Agent ${sessionId}`,
+      agent.providerId,
+      providerSessionId,
+      async () => {
+        // A message may have arrived meanwhile; release only what is still idle and attached.
+        const current = this.options.getSnapshot();
+        if (!this.attachedProviderSessions.has(sessionId) || this.releaseBlocked(current, sessionId)
+          || current.agents.find((entry) => entry.sessionId === sessionId)?.providerSessionId !== providerSessionId) return;
+        await this.disposeProviderSession(provider, sessionId, providerSessionId);
+      },
+    ) };
   }
 
   private detach(

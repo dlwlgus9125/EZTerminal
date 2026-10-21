@@ -281,6 +281,7 @@ export const DAEMON_COMMAND_TYPES = [
   'agent.cancel',
   'agent.archive',
   'agent.detach',
+  'agent.release',
   'permission.resolve',
   'provider.enable',
   'provider.disable',
@@ -388,6 +389,8 @@ export interface DaemonCommandPayloads {
   readonly 'agent.cancel': { readonly sessionId: string };
   readonly 'agent.archive': { readonly sessionId: string };
   readonly 'agent.detach': { readonly sessionId: string };
+  /** Stops the live provider of an idle conversation (Desktop, after `/clear`); nothing stored changes and the next message reattaches it. */
+  readonly 'agent.release': { readonly sessionId: string };
   readonly 'permission.resolve': {
     readonly approvalId: string;
     readonly decision: 'allow' | 'deny';
@@ -659,6 +662,7 @@ const DaemonCommandPayloadSchemas: Record<DaemonCommandType, z.ZodType> = {
   'agent.cancel': SessionIdSchema,
   'agent.archive': SessionIdSchema,
   'agent.detach': SessionIdSchema,
+  'agent.release': SessionIdSchema,
   'permission.resolve': z.object({ approvalId: IdentifierSchema, decision: z.enum(['allow', 'deny']), response: ApprovalResponseSchema.optional() }).strict(),
   'provider.enable': ProviderEnableSchema,
   'provider.disable': z.object({ providerId: IdentifierSchema }).strict(),

@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'r
 import type { ApprovalResponse } from '../shared/approval-request';
 import type { AccessLevel } from './agent-permission-copy';
 import { readPlanAccess } from './agent-plan-access';
+import { releaseProviderAfterClear } from './structured-agent-release';
 import { PlanningNavigationContext } from './PlanningWorkspaceDockPanel';
 import { AgentResultsContext, AgentResultsOwnerContext, type AgentResultsOwner } from './agent-results/AgentResultsContext';
 import { ResultsPublisher } from './agent-results/ResultsPublisher';
@@ -286,7 +287,8 @@ export function StructuredAgentDockPanel(
     /** Opens a new conversation in a project (`/new`). */
     readonly onNewConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
     /** Replaces this tab with a new conversation that starts with these settings (`/clear`). */
-    readonly onClearConversation?: (request: StructuredAgentClearRequest) => void;
+    /** `/clear`: true once a new conversation took this tab's place. */
+    readonly onClearConversation?: (request: StructuredAgentClearRequest) => boolean;
     readonly onOpenSession?: (input: {
       readonly sessionId: string;
       readonly title?: string;
@@ -1418,13 +1420,17 @@ export function StructuredAgentDockPanel(
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
       }) } : {})}
-      {...(props.onClearConversation && !historyOnly && session && agent ? { onClearConversation: (draftText?: string) => props.onClearConversation!({
-        project: { projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId },
-        settings: { providerId: agent.providerId, workspaceId: session.workspaceId, permissionPreset: agent.permissionPreset,
-          ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}) },
-        ...(draftText ? { draftText } : {}),
-        ...(agent.permissionPreset === 'plan' ? { planAccess: readPlanAccess(session.id) } : {}),
-      }) } : {})}
+      {...(props.onClearConversation && !historyOnly && session && agent ? { onClearConversation: (draftText?: string) => {
+        const replaced = props.onClearConversation!({
+          project: { projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId },
+          settings: { providerId: agent.providerId, workspaceId: session.workspaceId, permissionPreset: agent.permissionPreset,
+            ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}) },
+          ...(draftText ? { draftText } : {}),
+          ...(agent.permissionPreset === 'plan' ? { planAccess: readPlanAccess(session.id) } : {}),
+        });
+        // The replaced conversation stays in history; its provider process need not live on until quit.
+        if (replaced) void releaseProviderAfterClear(capabilities.daemon, session.id, () => opaqueId('command'));
+      } } : {})}
     />
     {delegateMode && session && (
       <DelegateAgentDialog

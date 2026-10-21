@@ -57,6 +57,12 @@ describe('daemon command authorization', () => {
     expect(authorizeDaemonCommand(command('browser.open', { sessionId: 'browser', workspaceId: 'ws', url: 'https://example.com' }, android), context).allowed).toBe(false);
   });
 
+  it('keeps releasing a conversation\'s provider to the Desktop', () => {
+    expect(authorizeDaemonCommand(command('agent.release', { sessionId: 'child' }, { kind: 'android' as const, id: 'paired-phone' }), context).allowed).toBe(false);
+    expect(authorizeDaemonCommand(command('agent.release', { sessionId: 'grandchild' }, { kind: 'mcp' as const, id: 'capability', sessionId: 'parent' }), context).allowed).toBe(false);
+    expect(authorizeDaemonCommand(command('agent.release', { sessionId: 'child' }, { kind: 'desktop' as const, id: 'renderer-agent-ui' }), context).allowed).toBe(true);
+  });
+
   it('allows an MCP capability to create only a direct child and resume only a managed source', () => {
     const mcp = { kind: 'mcp' as const, id: 'capability', sessionId: 'parent' };
     expect(authorizeDaemonCommand(command('agent.create', { parentSessionId: 'parent' }, mcp), context).allowed).toBe(true);

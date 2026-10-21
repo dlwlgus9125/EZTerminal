@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5e0861f6bc82f793fef5ac55d017798c9c52a936a4ae348b5cee2e5c6891baf2",
+        "inputDigest": "sha256:f00669ae57aa374e8c066a849820bbb12916e0449690d2bf0a12f621551d90a1",
         "decision": "map-updated",
-        "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
+        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b707042baa51420fc2c69d7a7c96f0fec4369c5158962004e0025d1b4c17d90a",
+        "inputDigest": "sha256:8c1be2bcca08a27af6153ad2ca8a1151dd8251c3cb22427657a3de588d47310a",
         "decision": "map-updated",
-        "reason": "Reviewed: main now holds powerSaveBlocker prevent-app-suspension while an agent turn is queued/submitting/working/delivery-uncertain or a terminal agent works, released when none is (not while waiting for approval). No other flow changed. Anchors moved."
+        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:884502b890deb6154eff31c1968741d2ff1155c96e9fbe6cb8b73e2085cf0d5d",
+        "inputDigest": "sha256:cb473eb112977af5eb32320dda855db294b9096528f1bb8620c70f0d50804094",
         "decision": "map-updated",
-        "reason": "Reviewed: main now holds powerSaveBlocker prevent-app-suspension while an agent turn is queued/submitting/working/delivery-uncertain or a terminal agent works, released when none is (not while waiting for approval). No other flow changed. Anchors moved."
+        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:13660c4f8011fa11ba3760f9a22be5141ca95980c44156d073c5f5601eeffe7f",
+        "inputDigest": "sha256:349e60023c1d70e7c3718d6fc71b207b31a44667bccd338f6d0a4956607fb847",
         "decision": "map-updated",
-        "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
+        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
       }
     },
     {

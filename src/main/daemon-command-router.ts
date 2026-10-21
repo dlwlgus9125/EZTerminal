@@ -123,6 +123,7 @@ function providerNativeMutationTarget(
     case 'agent.cancel':
     case 'agent.archive':
     case 'agent.detach':
+    case 'agent.release':
     case 'heartbeat.configure':
     case 'heartbeat.trigger':
       return providerNativeRelation(snapshot, command.payload.sessionId)?.childSessionId;

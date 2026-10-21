@@ -265,6 +265,13 @@ if (args.includes('--version')) {
           } });
           break;
         case 'thread/unsubscribe':
+          // Records which threads the app released (an e2e checks /clear releases the old one).
+          if (process.env.TMPDIR) {
+            const marker = path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-unsubscribed.json');
+            let released = [];
+            try { released = JSON.parse(fs.readFileSync(marker, 'utf8')); } catch { released = []; }
+            fs.writeFileSync(marker, JSON.stringify([...released, frame.params?.threadId]));
+          }
           respond(frame, { status: 'notLoaded' });
           break;
         case 'turn/interrupt':

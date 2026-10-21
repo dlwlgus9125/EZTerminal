@@ -256,7 +256,8 @@ interface StructuredAgentNavigationContextValue {
   }) => void;
   readonly newConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
   /** `/clear`: the tab becomes a new conversation in the same place. */
-  readonly clearConversation?: (panelId: string, request: StructuredAgentClearRequest) => void;
+  /** `/clear`: true once the tab was replaced. */
+  readonly clearConversation?: (panelId: string, request: StructuredAgentClearRequest) => boolean;
 }
 const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
 interface StructuredAgentCreateRecoveryContextValue {
@@ -1749,14 +1750,16 @@ export function App(): JSX.Element {
     target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
     /** `/clear`: takes this tab's place and starts with these settings (and any text typed after it). */
     replace?: { readonly panelId: string; readonly settings: StructuredAgentClearRequest['settings']; readonly draftText?: string; readonly planAccess?: StructuredAgentClearRequest['planAccess'] },
-  ): void => {
-    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+  ): boolean => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return false;
+    const dockWindows = dockWindowCoordinatorRef.current;
+    if (!dockWindows) return false;
     structuredAgentDraftSequence.current += 1;
     const draftId = `${STRUCTURED_AGENT_DRAFT_PREFIX}${Date.now().toString(36)}-${structuredAgentDraftSequence.current.toString(36)}`;
     // `/clear` in plan mode: the new conversation's plan runs with the level the cleared one chose.
     if (replace?.planAccess) writePlanAccess(draftId, replace.planAccess);
     const korean = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('ko');
-    dockWindowCoordinatorRef.current?.addPanel({
+    dockWindows.addPanel({
       id: `agent-session-${draftId}`,
       component: 'agent-session',
       title: project?.name
@@ -1774,11 +1777,12 @@ export function App(): JSX.Element {
       },
     }, replace ? { kind: 'replace', referencePanelId: replace.panelId } : { kind: 'main-tab' });
     revealOpenedSession();
+    return true;
   }, [i18n, sessionMirroringCoordinator, revealOpenedSession]);
   const openStructuredAgentDraft = useCallback((
     project?: Pick<AgentProjectSummary, 'projectId' | 'name'>,
     target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
-  ): void => addStructuredAgentDraft(project, target), [addStructuredAgentDraft]);
+  ): void => { addStructuredAgentDraft(project, target); }, [addStructuredAgentDraft]);
 
   const openStructuredAgentSession = useCallback((input: {
     readonly sessionId: string;

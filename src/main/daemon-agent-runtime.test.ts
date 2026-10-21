@@ -4322,3 +4322,61 @@ describe('conversation queue management', () => {
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 });
+
+// `/clear` replaces a conversation in its tab; its provider process should not live on until quit.
+describe('releasing an idle conversation\'s provider', () => {
+  async function idleAgent(h: Awaited<ReturnType<typeof harness>>): Promise<string> {
+    await h.enable(h.codex, 'codex');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hello' });
+    const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+    h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+    await h.runtime.whenIdle();
+    h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'idle' });
+    await h.runtime.whenIdle();
+    return h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')!.providerSessionId!;
+  }
+
+  it('stops the provider without changing what is stored, once, and reattaches on the next message', async () => {
+    const h = await harness();
+    try {
+      const providerSessionId = await idleAgent(h);
+      const before = h.router.getSnapshot();
+      expect(await h.execute('agent.release', { sessionId: 'agent-1' })).toMatchObject({ ok: true });
+      await h.runtime.whenIdle();
+      expect(h.codex.disposeSession).toHaveBeenCalledWith('agent-1', providerSessionId);
+      expect(h.codex.ownerOf(providerSessionId)).toBeUndefined();
+      const after = h.router.getSnapshot();
+      expect(after.sessions).toEqual(before.sessions);
+      expect(after.agents).toEqual(before.agents);
+      expect(after.turns).toEqual(before.turns);
+      expect(await h.execute('agent.release', { sessionId: 'agent-1' })).toMatchObject({ ok: true });
+      await h.runtime.whenIdle();
+      expect(h.codex.disposeSession).toHaveBeenCalledTimes(1);
+      vi.mocked(h.codex.resumeSession).mockClear();
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Again' });
+      await h.runtime.whenIdle();
+      expect(h.codex.resumeSession).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(h.codex.submit).mock.calls.map(([input]) => input.prompt)).toContain('Again');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('refuses while a turn runs or an approval waits, leaving the provider attached', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Working' });
+      expect(await h.execute('agent.release', { sessionId: 'agent-1' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      const turn = h.router.getSnapshot().turns[0]!;
+      h.codex.emit({ kind: 'approval-requested', sessionId: 'agent-1', turnId: turn.id, providerRequestId: 'waiting', risk: 'write', title: 'Pending write' });
+      await h.runtime.whenIdle();
+      h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      if (h.router.getSnapshot().approvals.some((approval) => approval.state === 'pending')) {
+        expect(await h.execute('agent.release', { sessionId: 'agent-1' })).toMatchObject({ ok: false, error: { code: 'invalid-state' } });
+      }
+      expect(h.codex.disposeSession).not.toHaveBeenCalled();
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
