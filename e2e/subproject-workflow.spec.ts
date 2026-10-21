@@ -45,7 +45,13 @@ test('subproject creation and stage edits persist through real IPC and restart w
     await app.close(); app = await launchApp(profile); page = await app.firstWindow();
     await expect(page.getByTestId('workflow-workspace')).toBeVisible();
     const restoredItem = page.getByTestId('workflow-subproject-item').filter({ hasText: 'Login workflow' });
-    if (await restoredItem.isVisible()) await restoredItem.click();
+    // After a restart the list can render before the saved selection is restored and replaces it,
+    // so a one-off visibility check could click a row that is about to unmount. Settle on the header.
+    const selectedTitle = page.getByTestId('workflow-workspace').locator('.workflow-header h2');
+    await expect(async () => {
+      if ((await selectedTitle.textContent()) !== 'Login workflow') await restoredItem.click({ timeout: 1_000 });
+      await expect(selectedTitle).toHaveText('Login workflow', { timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
     await page.getByRole('button', { name: /단계 문서·대화|Stage documents and chats/u, exact: true }).click();
     await expect(page.getByLabel(/단계 문서|Stage document/u, { exact: true })).toHaveValue('This document belongs to the selected node.');
     const restarted = await page.evaluate(async id => window.ezterminal.getWorkflowSnapshot(id), projectId);
