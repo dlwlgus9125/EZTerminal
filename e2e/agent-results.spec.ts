@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { createDaemonCommand } from '../src/shared/daemon-protocol';
@@ -49,10 +49,12 @@ async function startConversation(page: Page, projectRoot: string): Promise<strin
   const saved = await page.evaluate((root) => window.ezterminal.saveAgentProject({ name: 'Results acceptance', primaryRoot: root, additionalRoots: [], pinned: false }), projectRoot);
   if (!saved.ok) throw new Error(saved.reason);
   await enableCodex(page);
+  // The app stores the real path; TEMP may be an 8.3 alias (as on CI).
+  const storedRoot = realpathSync.native(projectRoot).toLowerCase();
   await expect.poll(async () => (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces
-    .some((workspace) => workspace.rootPath.toLowerCase() === projectRoot.toLowerCase()), { timeout: 15_000 }).toBe(true);
+    .some((workspace) => workspace.rootPath.toLowerCase() === storedRoot), { timeout: 15_000 }).toBe(true);
   const snapshot = await page.evaluate(() => window.ezterminal.getDaemonSnapshot());
-  const workspace = snapshot!.workspaces.find((candidate) => candidate.rootPath.toLowerCase() === projectRoot.toLowerCase())!;
+  const workspace = snapshot!.workspaces.find((candidate) => candidate.rootPath.toLowerCase() === storedRoot)!;
   await page.getByTestId('rail-agents').click();
   await page.getByTestId('agent-new-run').click();
   const draft = page.getByTestId('conversation-start');

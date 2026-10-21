@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { createRegisteredE2eTempDir, expect, test } from '../e2e/test';
@@ -43,7 +43,9 @@ test('packaged project history navigation stays usable while scrolling a populat
 test('packaged previous CLI conversations open and scroll without losing project navigation', async ({ browserName }, testInfo) => {
   void browserName;
   test.setTimeout(75_000);
-  const fixtureRoot = createRegisteredE2eTempDir('ezterm-history-open-');
+  // Real path: Claude names its history folder after the cwd it saw, and the app looks it up by
+  // the saved project's real path, so an 8.3 alias of TEMP (as on CI) must not reach the fixture.
+  const fixtureRoot = realpathSync.native(createRegisteredE2eTempDir('ezterm-history-open-'));
   const projectRoot = path.join(fixtureRoot, 'project');
   const claudeHome = path.join(fixtureRoot, '.claude');
   const codexHome = path.join(fixtureRoot, 'codex');
