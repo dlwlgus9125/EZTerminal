@@ -210,6 +210,30 @@ describe('conversation commands', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(input().value).toBe('/clear');
   });
+
+  // Claude treats "/clear <text>" as its own /clear and silently starts another session.
+  it('starts over with /clear <text> and hands the text to the new conversation instead of sending it', async () => {
+    const onSend = vi.fn(async () => ({ ok: true as const }));
+    const onClearConversation = vi.fn();
+    render(panel({ onSend, onClearConversation }));
+    type('/clear fix the build');
+    key(input(), { key: 'Escape' });
+    key(input(), { key: 'Enter' });
+    await flush();
+    expect(onClearConversation).toHaveBeenCalledWith('fix the build');
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input().value).toBe('');
+
+    // Mid-turn it waits for the turn and keeps the typed text; nothing reaches the model.
+    render(panel({ onSend, onClearConversation, state: 'working', onInterruptAndSend: onSend }));
+    type('/clear fix the build');
+    key(input(), { key: 'Escape' });
+    key(input(), { key: 'Enter' });
+    await flush();
+    expect(onClearConversation).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input().value).toBe('/clear fix the build');
+  });
 });
 
 describe('conversation menu', () => {

@@ -88,6 +88,8 @@ export function structuredAgentSessionId(historyId: string): string | null {
 export interface StructuredAgentClearRequest {
   readonly project: { readonly projectId: string; readonly name: string };
   readonly settings: ConversationSettings;
+  /** Text typed after `/clear`: the new conversation's message box starts with it, unsent. */
+  readonly draftText?: string;
 }
 
 let fallbackId = 0;
@@ -1412,10 +1414,11 @@ export function StructuredAgentDockPanel(
       {...(props.onNewConversation && session ? { onNewConversation: () => props.onNewConversation!({
         projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId,
       }) } : {})}
-      {...(props.onClearConversation && !historyOnly && session && agent ? { onClearConversation: () => props.onClearConversation!({
+      {...(props.onClearConversation && !historyOnly && session && agent ? { onClearConversation: (draftText?: string) => props.onClearConversation!({
         project: { projectId: session.projectId, name: snapshot?.projects.find((project) => project.id === session.projectId)?.name ?? session.projectId },
         settings: { providerId: agent.providerId, workspaceId: session.workspaceId, permissionPreset: agent.permissionPreset,
           ...(agent.model ? { model: agent.model } : {}), ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}) },
+        ...(draftText ? { draftText } : {}),
       }) } : {})}
     />
     {delegateMode && session && (

@@ -138,6 +138,18 @@ describe('StructuredAgentDraftPanel', () => {
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ draft: expect.objectContaining({ text: 'keep my question' }) }));
     expect(create).not.toHaveBeenCalled();
   });
+  it('never sends /clear as a first prompt from a draft, where starting over is unavailable', async () => {
+    const create = vi.fn(async () => ({ ok: true as const }));
+    for (const text of ['/clear', '/clear fix the build']) {
+      render(<StructuredAgentDraftPanel
+        providers={[{ id: 'codex', label: 'Codex', models: [] }]}
+        workspaces={[{ id: 'workspace-1', label: 'Workspace', kind: 'local' }]}
+        initialDraftText={text} onCreate={create} />);
+      act(() => container.querySelector<HTMLFormElement>('form')!.requestSubmit());
+      await flush();
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
   it('creates an empty Agent only on Create and preserves selection after a failure', async () => {
     const onCreate = vi.fn(async () => ({ ok: false as const, message: 'Provider unavailable' }));
     render(

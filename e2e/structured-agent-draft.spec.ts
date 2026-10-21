@@ -283,11 +283,12 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await window.screenshot({ path: path.join(evidenceDirectory, 'after-first-send.png') });
     await testInfo.attach('after-first-send', { path: path.join(evidenceDirectory, 'after-first-send.png'), contentType: 'image/png' });
 
-    // `/clear` starts over in this same tab with the same settings, and never reaches the model.
+    // `/clear` starts over in this same tab with the same settings, and never reaches the model;
+    // text after it starts the new conversation's message box.
     const tabs = window.locator('.ez-dock .dv-tab');
     const tabCount = await tabs.count();
     const providerInput = readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8');
-    await composer.fill('/clear');
+    await composer.fill('/clear keep this question');
     await composer.press('Escape');
     await composer.press('Enter');
     const cleared = window.getByTestId('conversation-start');
@@ -296,6 +297,7 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(cleared.getByRole('combobox', { name: 'Conversation AI' })).toHaveValue('codex');
     await expect(cleared.getByRole('combobox', { name: 'Conversation workspace' })).toHaveValue(restoredSnapshot!.workspaces[0].id);
     await expect(cleared.getByTestId('structured-agent-session')).not.toHaveAttribute('data-session-id', sessionId!);
+    await expect(cleared.getByTestId('structured-agent-composer-input')).toHaveValue('keep this question');
     await expect(cleared.getByTestId('structured-agent-usage-weekly')).toBeVisible();
     await expect(cleared.getByTestId('structured-agent-usage-context')).toHaveCount(0);
     const afterClear = await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot());

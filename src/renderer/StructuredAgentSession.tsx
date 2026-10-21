@@ -599,9 +599,13 @@ export function StructuredAgentDraftPanel({
   };
   useLayoutEffect(() => { draftInputRef.current?.setSelectionRange(...draftSelection); }, [draftSelection]);
   const draftValue = { text: draftText, skills: draftSkills, selectionStart: draftSelection[0], selectionEnd: draftSelection[1] };
+  // A draft has no conversation to start over: `/clear` is held back with a reason, never sent.
+  const draftCommands = useMemo<readonly AppCommand[]>(() => [
+    { name: 'clear', description: copy.clearCommand, takesText: true, disabledReason: copy.clearUnavailable, run: () => undefined },
+  ], [copy.clearCommand, copy.clearUnavailable]);
   const completion = useAgentCompletion({ value: draftValue, onChange: updateDraftInput, inputRef: draftInputRef,
     catalog: catalog?.providerId === providerId && catalog.workspaceId === workspaceId ? catalog : undefined,
-    discovery, onOpenHistory, disabled: loading || submitting || deliveryRecovery, mobile: variant === 'mobile' });
+    discovery, onOpenHistory, disabled: loading || submitting || deliveryRecovery, mobile: variant === 'mobile', appCommands: draftCommands });
   const models = catalog?.providerId === providerId && catalog.workspaceId === workspaceId && catalog.models.length
     ? catalog.models.map((entry) => ({ id: entry.id, label: entry.displayName })) : selectedProvider?.models ?? [];
   const hasUsableProvider = deliveryRecovery ? providerId.length > 0 : hasReadyProvider;
@@ -1751,8 +1755,11 @@ export interface StructuredAgentSessionPanelProps {
   readonly parentApprovalPending?: boolean;
   /** Opens a new conversation (`/new`). */
   readonly onNewConversation?: () => void;
-  /** Replaces this conversation in place with a new one with the same settings (`/clear`). */
-  readonly onClearConversation?: () => void;
+  /**
+   * Replaces this conversation in place with a new one with the same settings (`/clear`). Text typed
+   * after `/clear` starts the new conversation's message box; it is not sent.
+   */
+  readonly onClearConversation?: (draftText?: string) => void;
   /** Hand this conversation's work, or a review of it, to a new child agent. */
   readonly onDelegate?: (mode: 'handoff' | 'review') => void;
   readonly heartbeatControl?: ReactNode;
@@ -2095,8 +2102,9 @@ export function StructuredAgentSessionPanel({
       run: () => requestAnimationFrame(() => panelRef.current?.querySelector<HTMLButtonElement>('[data-testid="structured-agent-live-model"]')?.click()),
     }] : []),
     ...(onNewConversation ? [{ name: 'new', description: copy.newCommand, run: onNewConversation }] : []),
-    // Always reserved: sent on, Claude would move to a session this conversation does not follow.
-    { name: 'clear', description: copy.clearCommand, run: () => onClearConversation?.(),
+    // Always reserved, with or without text after it: sent on, Claude would move to a session this
+    // conversation does not follow.
+    { name: 'clear', description: copy.clearCommand, takesText: true, run: (text?: string) => onClearConversation?.(text),
       ...(!onClearConversation ? { disabledReason: copy.clearUnavailable }
         : settingsLocked || turnCurrent ? { disabledReason: copy.clearAfterTurn } : {}) },
   ];

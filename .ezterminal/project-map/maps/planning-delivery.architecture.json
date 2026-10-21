@@ -122,8 +122,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 2269,
-          "endLine": 2399,
+          "startLine": 2277,
+          "endLine": 2407,
           "lineDigest": "sha256:3842a1a0e4fcb640457e31839a3ee597d6c42e6c955f0ed3785bf0c70ebcd41f",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
@@ -131,8 +131,8 @@
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
           "startLine": 593,
-          "endLine": 604,
-          "lineDigest": "sha256:3dfb280a860ff96e8649251a3ecddcb51ea1d56045a81ae5c2293b1e683cb1a2",
+          "endLine": 608,
+          "lineDigest": "sha256:761fe63a281b31152349963a78ce8249d55149a7043b339c01c71740b0fae45c",
           "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
         },
         {

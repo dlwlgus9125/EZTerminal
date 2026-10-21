@@ -1746,8 +1746,8 @@ export function App(): JSX.Element {
   const addStructuredAgentDraft = useCallback((
     project?: Pick<AgentProjectSummary, 'projectId' | 'name'>,
     target?: Pick<ProjectSessionTarget, 'workspaceId'> & Partial<Pick<ProjectSessionTarget, 'rootId'>>,
-    /** `/clear`: takes this tab's place and starts with these settings. */
-    replace?: { readonly panelId: string; readonly settings: StructuredAgentClearRequest['settings'] },
+    /** `/clear`: takes this tab's place and starts with these settings (and any text typed after it). */
+    replace?: { readonly panelId: string; readonly settings: StructuredAgentClearRequest['settings']; readonly draftText?: string },
   ): void => {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     structuredAgentDraftSequence.current += 1;
@@ -1767,6 +1767,7 @@ export function App(): JSX.Element {
           ? { ...(target.rootId ? { rootId: target.rootId } : {}), workspaceId: target.workspaceId }
           : {}),
         ...(replace ? { conversationSeed: replace.settings } : {}),
+        ...(replace?.draftText ? { conversationDraftText: replace.draftText } : {}),
       },
     }, replace ? { kind: 'replace', referencePanelId: replace.panelId } : { kind: 'main-tab' });
     revealOpenedSession();
@@ -1824,7 +1825,9 @@ export function App(): JSX.Element {
     },
     openSession: openStructuredAgentSession,
     newConversation: (project) => addStructuredAgentDraft(project),
-    clearConversation: (panelId, request) => addStructuredAgentDraft(request.project, undefined, { panelId, settings: request.settings }),
+    clearConversation: (panelId, request) => addStructuredAgentDraft(request.project, undefined, {
+      panelId, settings: request.settings, ...(request.draftText ? { draftText: request.draftText } : {}),
+    }),
     openHistory: (projectId) => setConversationHistory({ projectId }),
     openSettings: () => {
       setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));

@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:dd032a6d047e8651d925d48399632af57907813900f92f00da460a4f74bce36b",
+        "inputDigest": "sha256:1897bb480a897e609ba33a8b6d1d1f0df29067f10184621a121a4b7963a3d08d",
         "decision": "map-updated",
-        "reason": "Reviewed: the Claude adapter now labels a timeout Claude itself reports as CLAUDE_REPORTED_TIMEOUT instead of EZTerminal's safety-deadline code; session start, submit and event flow are unchanged. Anchors only moved."
+        "reason": "Reviewed: /clear now carries text typed after it into the replacing draft (clear request draftText, one-shot dock param); the same-settings restart in place is unchanged. Anchors moved; the Session surface claim still holds."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:37a1aaf3119a4ff0a9a494ab9411f100806ea11821d3e1fdd39bf1e6b9056d11",
+        "inputDigest": "sha256:08125caf45770a9ccb632b9dd305e5e63c1cd903a132be58db98de42511410e4",
         "decision": "map-updated",
-        "reason": "Reviewed: lint-only changes. The navigation context calls addStructuredAgentDraft directly for a new conversation (same behaviour), and ChatProvider names each context field for the hook rule. No flow, ownership or event change."
+        "reason": "Reviewed: clearConversation passes the optional /clear text to the replacing draft; navigation, ownership and history entries are unchanged. Anchors only moved."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:69447143fd0dc4e50548b11a6f469800cdc630f751a1893ca0556a5a78776c6c",
+        "inputDigest": "sha256:d21222d360e1c13af70a13be4573e423b051acfd6380624228491bd253e114b7",
         "decision": "map-updated",
-        "reason": "Reviewed: archive export now resolves the app data capture folder to its real path before the ownership check, so device captures are kept when that folder is spelled by an 8.3 alias. Archive flow and boundaries are unchanged. Anchors only moved."
+        "reason": "Reviewed: the draft form now holds /clear back as an unavailable app command instead of sending it as a first prompt; draft state hand-off before history actions is unchanged. Anchors moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d27d767af5a5be6c114676c1220076005dbe10124c93ccc4e4840ab96138d377",
+        "inputDigest": "sha256:3aefdfe781792d6a497baf4f4d764a874057f62776a7339a9cc9a34978d42260",
         "decision": "map-updated",
-        "reason": "Reviewed: only Claude error classification changed (a reported timeout gets its own code and text); capability discovery, model listing and provider readiness are unchanged. Anchors only moved."
+        "reason": "Reviewed: app commands may take trailing text (only /clear does); capability completion, discovery and insertion are unchanged. Anchors only moved."
       }
     }
   ]

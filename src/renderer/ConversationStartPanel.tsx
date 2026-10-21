@@ -29,6 +29,9 @@ export interface ConversationStartPanelProps {
   readonly workspaceId?: string;
   /** A new conversation `/clear` opened starts with what the cleared one ran with. */
   readonly seed?: ConversationSettings;
+  /** Text typed after `/clear`: fills an empty message box once, unsent. */
+  readonly seedDraftText?: string;
+  readonly onSeedDraftApplied?: () => void;
   readonly snapshot: DaemonSnapshot | null;
   readonly access: ConversationStartAccess;
   readonly storage: ChatStateAccess;
@@ -42,8 +45,8 @@ export interface ConversationStartPanelProps {
   readonly onStarted: (sessionId: string, entry?: ConversationEntry) => Promise<void> | void;
 }
 
-export function ConversationStartPanel({ identity, viewStateScope = 'desktop', entry: initialEntry, projectId, workspaceId, seed, snapshot, access, storage,
-  capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted }: ConversationStartPanelProps): JSX.Element {
+export function ConversationStartPanel({ identity, viewStateScope = 'desktop', entry: initialEntry, projectId, workspaceId, seed, seedDraftText, onSeedDraftApplied,
+  snapshot, access, storage, capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted }: ConversationStartPanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const text = useCallback((k: string, e: string) => ko ? k : e, [ko]);
@@ -55,6 +58,21 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const view = useSyncExternalStore(recovery.subscribe, recovery.getSnapshot);
   const controller = useMemo(() => new ConversationStartController(recovery, access), [access, recovery]);
   useEffect(() => { void recovery.load(); }, [recovery]);
+  const seedApplied = useRef(onSeedDraftApplied); seedApplied.current = onSeedDraftApplied;
+  useEffect(() => {
+    if (!seedDraftText) return undefined;
+    let alive = true;
+    void recovery.load().then(() => {
+      if (!alive) return;
+      const loaded = recovery.getSnapshot();
+      // A draft already saved for this tab wins over the text it was opened with.
+      if (loaded.status === 'ready' && !loaded.draft.text) {
+        recovery.updateDraft({ ...loaded.draft, text: seedDraftText, selectionStart: seedDraftText.length, selectionEnd: seedDraftText.length });
+      }
+      seedApplied.current?.();
+    });
+    return () => { alive = false; };
+  }, [recovery, seedDraftText]);
   const [entry, setEntry] = useState(initialEntry);
   const [page, setPage] = useState<AgentTranscriptPage>();
   const [loading, setLoading] = useState(!!initialEntry);
