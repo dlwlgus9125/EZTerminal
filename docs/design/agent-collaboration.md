@@ -159,8 +159,9 @@ OAuth에는 bare executable name이 아닌 canonical path가 필요하다. EZTer
 (provider·model·reasoning effort·permission·언제 쓰나요, desktop `chat-agent-profiles.json`)은 새 대화의
 `프로필` 선택, 대화 메뉴의 맡기기, MCP `list_profiles`/`create_agent{profileId}`가 함께 쓴다. MCP로 만든
 child도 profile permission이 호출한 Agent의 permission을 넘을 수 없다. Project별 Collaboration UI와
-별도 run graph는 없다. 관리형 child는 parent와 같은 완전한 Agent session이며 재귀와 cross-provider를
-지원한다.
+별도 run graph는 없다. 이전 협업 경로(Lead run: `ezterminal workers …`·`ezterminal-agent` CLI, 로컬
+worker HTTP API, 터미널 pane의 worker strip)는 한 메이저 릴리스 동안 호환용으로만 남아 있다(README).
+관리형 child는 parent와 같은 완전한 Agent session이며 재귀와 cross-provider를 지원한다.
 
 사람이 대화 메뉴의 `맡기기…`/`검토 맡기기…`로 만드는 child(desktop·android 주체)는 위 토글이나 parent의
 orchestration 표시와 무관하게 만들 수 있다. 관리형 상한과 같은 Project·살아 있는 parent 조건은 같다.
