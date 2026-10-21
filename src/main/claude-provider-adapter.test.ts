@@ -799,6 +799,19 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  // The app intercepts /clear (with or without text), and a real CLI probe saw no reset on plan exit;
+  // a stray reset must not move the conversation to a session the app does not follow.
+  it('keeps following its own provider session when the SDK reports a conversation reset', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const events = fixture.events.length;
+    fixture.query.emit({ type: 'conversation_reset', new_conversation_id: 'another-conversation', uuid: 'reset-1', session_id: providerSessionId } as never);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fixture.events).toHaveLength(events);
+    await expect(fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId })).resolves.toMatchObject({ providerSessionId });
+    await fixture.adapter.dispose();
+  });
+
   it('sends SDK image blocks and quoted reply context', async () => {
     const fixture = makeAdapter();
     await start(fixture);
