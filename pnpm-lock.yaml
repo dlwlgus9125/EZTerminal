@@ -263,8 +263,8 @@ importers:
   mobile:
     dependencies:
       '@capacitor/android':
-        specifier: ^6.2.0
-        version: 6.2.1(@capacitor/core@6.2.1)
+        specifier: ^6.2.2
+        version: 6.2.2(@capacitor/core@6.2.1)
       '@capacitor/app':
         specifier: ^6.0.3
         version: 6.0.3(@capacitor/core@6.2.1)
@@ -533,8 +533,8 @@ packages:
   '@blazediff/core@1.9.1':
     resolution: {integrity: sha512-ehg3jIkYKulZh+8om/O25vkvSsXXwC+skXmyA87FFx6A/45eqOkZsBltMw/TVteb0mloiGT8oGRTcjRAz66zaA==}
 
-  '@capacitor/android@6.2.1':
-    resolution: {integrity: sha512-8gd4CIiQO5LAIlPIfd5mCuodBRxMMdZZEdj8qG8m+dQ1sQ2xyemVpzHmRK8qSCHorsBUCg3D62j2cp6bEBAkdw==}
+  '@capacitor/android@6.2.2':
+    resolution: {integrity: sha512-JjIu1ryNE16PQTp51rb4NEygxP7cSCDMmUqx4f5f12xscKdGKTjO9bkEP3TroLnTa/J6p2QopIhRbrd3E/7DrA==}
     peerDependencies:
       '@capacitor/core': ^6.2.0
 
@@ -6109,7 +6109,7 @@ snapshots:
 
   '@blazediff/core@1.9.1': {}
 
-  '@capacitor/android@6.2.1(@capacitor/core@6.2.1)':
+  '@capacitor/android@6.2.2(@capacitor/core@6.2.1)':
     dependencies:
       '@capacitor/core': 6.2.1
 

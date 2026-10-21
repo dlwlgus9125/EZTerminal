@@ -14,6 +14,9 @@
   audit exceptions; neither package ships in the application.
 - Update Electron to 42.11.17 for its sandbox inheritance, `<webview>`
   Node.js integration, protocol handler CORS and preload code cache fixes.
+- Update Capacitor Android to 6.2.2 so remote content can no longer be loaded
+  at the app origin through the internal HTTP proxy path
+  (GHSA-rvm3-566m-v7fv).
 
 ## [2.0.0] - 2026-10-13
 
