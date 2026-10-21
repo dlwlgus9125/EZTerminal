@@ -24,7 +24,7 @@ test('a running agent turn holds off idle sleep and releases it when the turn en
       const start = powerSaveBlocker.start.bind(powerSaveBlocker);
       const stop = powerSaveBlocker.stop.bind(powerSaveBlocker);
       powerSaveBlocker.start = (type) => { calls.push(`start:${type}`); return start(type); };
-      powerSaveBlocker.stop = (id) => { calls.push('stop'); stop(id); };
+      powerSaveBlocker.stop = (id) => { calls.push('stop'); return stop(id); };
     });
     const saved = await page.evaluate((root) => window.ezterminal.saveAgentProject({ name: 'Power', primaryRoot: root, additionalRoots: [], pinned: false }), projectRoot);
     expect(saved.ok).toBe(true);
