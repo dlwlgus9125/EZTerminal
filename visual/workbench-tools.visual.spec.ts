@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 for (const viewport of [{ width: 1024, height: 720 }, { width: 1440, height: 900 }]) {
   test(`Tools menu remains actionable above the open sidebar at ${viewport.width}px`, async ({ page }, testInfo) => {

@@ -1,5 +1,5 @@
 import { AxeBuilder } from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 for (const width of [800, 1024, 1200, 1440]) {
   for (const scale of [100, 150]) {
