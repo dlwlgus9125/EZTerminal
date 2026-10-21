@@ -717,25 +717,29 @@ describe('ClaudeProviderAdapter sessions', () => {
       },
     ]);
     const launched = fixture.query;
-    // Every session with tools may later switch to Full access: the CLI accepts bypassPermissions
-    // only when launched with the flag. The mode itself is still the chosen one.
-    expect(launched.inputOptions).toMatchObject({ permissionMode: 'default', allowDangerouslySkipPermissions: true });
+    // Not armed until the person chooses Full access: armed, a repository's own settings or agent
+    // definitions could also ask for bypass.
+    expect(launched.inputOptions).toMatchObject({ permissionMode: 'default', allowDangerouslySkipPermissions: false });
     await expect(fixture.adapter.setSettings({
       sessionId: context.sessionId,
       providerSessionId,
       model: 'opus',
       permissionPreset: 'full-access',
     })).resolves.toMatchObject({ model: 'opus', permissionPreset: 'full-access' });
-    // Full access takes effect at once, in the same provider session.
-    expect(launched.permissionModes).toEqual(['bypassPermissions']);
-    expect(launched.closeCount).toBe(0);
-    expect(fixture.queries).toHaveLength(1);
+    // The CLI refuses bypassPermissions on a session launched without the flag, so Full access
+    // relaunches the same provider session with it armed instead of calling setPermissionMode.
+    expect(launched.permissionModes).toEqual([]);
+    expect(launched.closeCount).toBe(1);
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.query.inputOptions).toMatchObject({
+      resume: providerSessionId, model: 'opus', permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true,
+    });
     await fixture.adapter.dispose();
   });
 
-  it('keeps a session without tools unarmed', async () => {
+  it('keeps a session without tools unarmed, even in Full access', async () => {
     const fixture = makeAdapter();
-    await fixture.adapter.createSession({ ...context, toolsDisabled: true });
+    await fixture.adapter.createSession({ ...context, permissionPreset: 'full-access', toolsDisabled: true });
     expect(fixture.query.inputOptions).toMatchObject({ allowDangerouslySkipPermissions: false });
     await fixture.adapter.dispose();
   });
@@ -1174,18 +1178,29 @@ describe('ClaudeProviderAdapter sessions', () => {
       updatedInput: { ...questionInput, answers: { 'Formal or casual?': 'Casual' } } });
     await expect(plan).resolves.toMatchObject({ behavior: 'allow', updatedInput: { plan: '# Plan\n- step' } });
     await expect(write).resolves.toEqual({ behavior: 'deny', message: 'Put it under docs/ instead.', toolUseID: 'toolu_w' });
-    // A plan approved with Full access runs the rest of the turn, and every later one, in bypass:
-    // the session was launched able to switch, so nothing waits for a relaunch.
-    expect(fixture.query.permissionModes).toEqual(['bypassPermissions']);
+    // Mid-turn the unarmed session cannot enter bypass: edits are accepted, and until it relaunches
+    // armed before the next message the app itself allows what bypass would.
+    expect(fixture.query.permissionModes).toEqual(['acceptEdits']);
     await expect(fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId })).resolves.toMatchObject({ permissionPreset: 'full-access' });
     expect(fixture.queries).toHaveLength(1);
+    const requests = fixture.events.filter((event) => event.kind === 'approval-requested').length;
+    await expect(ask('Bash', { command: 'pnpm test' }, 'after-plan')).resolves.toMatchObject({ behavior: 'allow', toolUseID: 'toolu_after-plan' });
+    // Claude's own subagents ask through the same callback.
+    await expect(canUseTool('Bash', { command: 'git status' }, { signal: new AbortController().signal, toolUseID: 'toolu_sub', requestId: 'sub', agentID: 'agent-sub' }))
+      .resolves.toMatchObject({ behavior: 'allow' });
+    expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(requests);
+    // A question still reaches the person.
+    void ask('AskUserQuestion', questionInput, 'q2');
+    await vi.waitFor(() => expect(fixture.events.filter((event) => event.kind === 'approval-requested')).toHaveLength(requests + 1));
+    await decide('q2', 'allow', { kind: 'answers', answers: { 'Formal or casual?': 'Formal' } });
 
     const planTurn = (await fixture.query.input[Symbol.asyncIterator]().next()).value as SDKUserMessage;
     fixture.query.emit({ type: 'result', subtype: 'success', uuid: 'result-ask', session_id: providerSessionId,
       user_message_uuid: planTurn.uuid, user_message_uuids: [planTurn.uuid], is_error: false });
     await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: 'turn-ask' })));
     await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-next', commandId: 'command-next', prompt: 'Next' });
-    expect(fixture.queries).toHaveLength(1);
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.query.inputOptions).toMatchObject({ resume: providerSessionId, permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true });
     await fixture.adapter.dispose();
   });
 

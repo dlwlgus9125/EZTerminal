@@ -399,10 +399,16 @@ interface SubagentRecord {
 interface SessionRecord {
   readonly context: ProviderSessionContext;
   /**
-   * Launched with allowDangerouslySkipPermissions, which only lets a later Full access choice take
-   * effect at once (the CLI refuses bypassPermissions otherwise). Every session with tools has it.
+   * Launched with allowDangerouslySkipPermissions (the CLI refuses bypassPermissions otherwise).
+   * Armed only once the person chose Full access: armed, a repository's own settings or agent
+   * definitions could also ask for bypass.
    */
   readonly bypassArmed: boolean;
+  /**
+   * Full access was chosen in a session not launched for it (an approved plan): until it relaunches
+   * armed before the next message, the app allows tool requests itself, so the level applies at once.
+   */
+  relaunchArmed?: boolean;
   /** The effort the CLI is currently using, so a changed one is applied before the next message. */
   appliedEffort?: string;
   readonly enablement: ClaudeProviderEnablement;
@@ -1322,8 +1328,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   async submit(input: ProviderSubmitInput, signal?: AbortSignal): Promise<void> {
     this.throwIfAborted(signal);
-    const session = this.session(input.sessionId, input.providerSessionId);
+    let session = this.session(input.sessionId, input.providerSessionId);
     if (session.turnsByCommand.has(input.commandId)) return;
+    if (session.relaunchArmed) {
+      await this.relaunchArmed(session, session.handle.model);
+      session = this.session(input.sessionId, input.providerSessionId);
+    }
     if (input.reasoningEffort && input.reasoningEffort !== session.appliedEffort && session.query.applyFlagSettings) {
       try {
         await bounded(abortable(session.query.applyFlagSettings({ effortLevel: input.reasoningEffort }), signal), this.operationTimeoutMs);
@@ -1410,11 +1420,11 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     readonly permissionPreset?: PermissionPreset;
   }): Promise<ProviderSessionHandle> {
     const session = this.session(input.sessionId, input.providerSessionId);
-    if (input.permissionPreset !== undefined) {
-      // The CLI does not answer a mode change while one of its permission requests is open, and a
-      // session without tools was never able to enter bypass.
-      if (session.pendingApprovals.size > 0) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
-      if (input.permissionPreset === 'full-access' && !session.bypassArmed) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    // The CLI does not answer a mode change while one of its permission requests is open.
+    if (input.permissionPreset !== undefined && session.pendingApprovals.size > 0) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    if (input.permissionPreset === 'full-access' && !session.bypassArmed) {
+      if (session.context.toolsDisabled) throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+      return this.relaunchArmed(session, 'model' in input ? input.model : session.handle.model);
     }
     try {
       if ('model' in input) {
@@ -1475,10 +1485,13 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       state: session.pendingApprovals.size > 0 ? 'blocked' : 'working',
     });
     if (!plan) return;
-    // After the settle: the CLI itself leaves plan mode for `default` once ExitPlanMode is approved,
-    // then the chosen access level applies for the rest of this turn and every later one.
+    // After the settle: the CLI itself leaves plan mode for `default` once ExitPlanMode is approved.
+    // A session not launched for bypass cannot enter it mid-turn: it accepts edits, the app allows
+    // the other tool requests itself (requestApproval), and it relaunches armed before the next message.
+    const deferBypass = plan.mode === 'full-access' && !session.bypassArmed;
     try {
-      await bounded(session.query.setPermissionMode(permissionMode(plan.mode)), this.operationTimeoutMs);
+      await bounded(session.query.setPermissionMode(deferBypass ? 'acceptEdits' : permissionMode(plan.mode)), this.operationTimeoutMs);
+      if (deferBypass) session.relaunchArmed = true;
       session.handle = { ...session.handle, permissionPreset: plan.mode };
     } catch {
       // The approval itself was delivered, so this is not a delivery failure.
@@ -1587,6 +1600,29 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     };
   }
 
+  /**
+   * The CLI accepts `bypassPermissions` only on a session launched with
+   * `allowDangerouslySkipPermissions`, which is armed only once the person chose Full access.
+   * Choosing it later resumes the same provider session with the flag armed. Only between turns.
+   */
+  private async relaunchArmed(session: SessionRecord, model: string | undefined): Promise<ProviderSessionHandle> {
+    if (session.pendingApprovals.size > 0 || [...session.turnsByCommand.values()].some((turn) => turn.state === 'submitted')) {
+      throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+    }
+    const { model: launchModel, reasoningEffort: launchEffort, ...base } = session.context;
+    void launchModel;
+    void launchEffort;
+    const context: ProviderSessionContext = {
+      ...base,
+      ...(model ? { model } : {}),
+      ...(session.appliedEffort ? { reasoningEffort: session.appliedEffort } : {}),
+      permissionPreset: 'full-access',
+    };
+    const providerSessionId = session.handle.providerSessionId;
+    await this.disposeSession(session.context.sessionId, providerSessionId);
+    return this.startSession(context, providerSessionId);
+  }
+
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session || session.handle.providerSessionId !== providerSessionId) return;
@@ -1662,9 +1698,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     });
     const session: SessionRecord = {
       context,
-      // Armed so a Full access choice (a setting or an approved plan) applies at once, without a
-      // relaunch; the mode itself is the chosen one. A session without tools never needs it.
-      bypassArmed: !context.toolsDisabled,
+      bypassArmed: context.permissionPreset === 'full-access' && !context.toolsDisabled,
       ...(context.reasoningEffort ? { appliedEffort: context.reasoningEffort } : {}),
       enablement: readiness.enablement,
       handle,
@@ -2342,6 +2376,12 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         message: 'Nobody is here to answer questions: this run only plans. Pick the most reasonable option yourself, state that assumption in the plan, and continue.',
         toolUseID: request.toolUseID,
       });
+    }
+    // Full access was chosen (an approved plan) but this session is not launched for bypass yet: the
+    // app allows what bypass would, Claude's own subagents included, until it relaunches armed.
+    // Questions and plan approvals still reach the person.
+    if (session.relaunchArmed && toolName !== 'AskUserQuestion' && toolName !== 'ExitPlanMode') {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input, toolUseID: request.toolUseID });
     }
     // Text streamed so far belongs before the approval it led to.
     session.coalescer.flushAll();
