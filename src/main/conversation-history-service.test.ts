@@ -22,7 +22,9 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const now = () => new Date('2026-10-14T00:00:00.000Z');
 
 async function harness(providerId: 'codex' | 'claude' = 'codex') {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-unified-history-'));
+  // The project store keeps real paths and the app syncs those to the daemon, so the fixture
+  // must not hand the daemon an 8.3 alias of TEMP (as it is on the CI runner).
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ez-unified-history-')));
   cleanups.push(() => fs.rm(directory, { recursive: true, force: true }));
   const root = path.join(directory, 'workspace'); await fs.mkdir(root);
   const probe: ProviderProbeResult = { providerId, displayName: providerId, protocol: providerId === 'codex' ? 'codex-app-server' : 'claude-agent-sdk',

@@ -21,7 +21,8 @@ const now = () => new Date('2026-10-16T00:00:00.000Z');
 const t = (n: number) => new Date(Date.UTC(2026, 9, 15, 0, 0, n)).toISOString();
 
 async function claudeConversation(options: { readonly withModel: boolean }) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-resume-settings-'));
+  // Real path, as the app gives the daemon (TEMP may be an 8.3 alias, as on the CI runner).
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ez-resume-settings-')));
   cleanups.push(() => fs.rm(directory, { recursive: true, force: true }));
   const root = path.join(directory, 'workspace'); await fs.mkdir(root);
   const home = path.join(directory, 'home');
