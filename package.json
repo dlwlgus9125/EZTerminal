@@ -59,6 +59,12 @@
   },
   "license": "MIT",
   "pnpm": {
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-vfj7-8cjw-p6xm",
+        "GHSA-hp3w-g68c-fv3c"
+      ]
+    },
     "onlyBuiltDependencies": [
       "cap",
       "electron",
@@ -69,24 +75,29 @@
       "tmp": ">=0.2.4",
       "@capacitor/cli>tar": "7.5.21",
       "@electron/packager>extract-zip": "npm:@electron-internal/extract-zip@1.0.5",
-      "@electron/get>undici": "7.29.0",
-      "node-gyp>undici": "6.28.0",
-      "ip-address": "10.3.1",
+      "@electron/get>undici": "7.30.1",
+      "node-gyp>undici": "6.29.1",
+      "ip-address": "10.7.4",
       "js-yaml": "4.3.2",
-      "monaco-editor>dompurify": "3.4.13",
-      "brace-expansion": "5.0.9",
+      "monaco-editor>dompurify": "3.4.17",
+      "brace-expansion": "5.0.12",
       "browserslist": "4.28.7",
       "postcss": "8.5.23",
       "nanoid": "3.3.18",
-      "fast-uri": "3.1.7",
+      "fast-uri": "3.1.9",
+      "source-map-js": "1.2.2",
+      "http-cache-semantics": "4.3.0",
+      "proxy-addr": "2.0.8",
+      "hono": "4.13.13",
+      "@modelcontextprotocol/sdk": "1.32.1",
       "plist@3.1.0>@xmldom/xmldom": "0.8.15",
       "plist@3.1.1>@xmldom/xmldom": "0.9.12"
     },
     "patchedDependencies": {
       "@capacitor/cli@6.2.1": "patches/@capacitor__cli@6.2.1.patch",
-      "brace-expansion@5.0.9": "patches/brace-expansion@5.0.9.patch",
       "capacitor-secure-storage-plugin@0.10.0": "patches/capacitor-secure-storage-plugin@0.10.0.patch",
-      "dockview-core@7.0.2": "patches/dockview-core@7.0.2.patch"
+      "dockview-core@7.0.2": "patches/dockview-core@7.0.2.patch",
+      "brace-expansion@5.0.12": "patches/brace-expansion@5.0.12.patch"
     }
   },
   "devDependencies": {
@@ -125,7 +136,7 @@
     "png2icons": "^2.0.1",
     "storybook": "10.4.0",
     "typescript": "^5.5.4",
-    "vite": "^6.4.3",
+    "vite": "^6.4.4",
     "vitest": "4.1.11"
   },
   "dependencies": {

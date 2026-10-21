@@ -6,6 +6,12 @@
 
 - Update rustls to 0.23.46 and rustls-webpki to 0.103.16 in the native remote
   host (RUSTSEC-2026-0346 to 0349 and RUSTSEC-2026-0382).
+- Update the Claude Agent SDK's MCP SDK (1.32.1), hono and proxy-addr, Vite
+  6.4.4, and the pinned undici, ip-address, DOMPurify, brace-expansion,
+  fast-uri, source-map-js and http-cache-semantics versions required by the
+  dependency audits. Two build-tool-only advisories with no patched release
+  (braces GHSA-vfj7-8cjw-p6xm, sprintf-js GHSA-hp3w-g68c-fv3c) are recorded as
+  audit exceptions; neither package ships in the application.
 
 ## [2.0.0] - 2026-10-13
 

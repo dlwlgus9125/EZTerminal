@@ -1,18 +1,19 @@
 diff --git a/dist/commonjs/index.d.ts b/dist/commonjs/index.d.ts
-index 349c208..b4c973f 100644
+index 1d86e5ec52083b00be390eefad66a03f54c1bffa..8d4bc13621590d805a7dfa978e8cf008a00e7330 100644
 --- a/dist/commonjs/index.d.ts
 +++ b/dist/commonjs/index.d.ts
-@@ -5,4 +5,5 @@ export type BraceExpansionOptions = {
-     maxLength?: number;
+@@ -9,4 +9,5 @@ export type BraceExpansionOptions = {
+     maxRewrites?: number;
  };
  export declare function expand(str: string, options?: BraceExpansionOptions): string[];
 +export default expand;
  //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
 diff --git a/dist/commonjs/index.js b/dist/commonjs/index.js
-index 51dc48c..525a27d 100644
+index 48cf0d3dabc885249c65909c4912712c834786f5..aad6c51558fafcb6c422a4c1d1fad20bd9cec9af 100644
 --- a/dist/commonjs/index.js
 +++ b/dist/commonjs/index.js
-@@ -286,4 +286,13 @@ function expand_(str, max, maxLength, isTop) {
+@@ -330,4 +330,15 @@ function expand_(str, max, maxLength, maxDepth, depth, maxRewrites, isTop) {
      }
      return acc;
  }
@@ -22,25 +23,29 @@ index 51dc48c..525a27d 100644
 +Object.assign(expand, {
 +    EXPANSION_MAX: exports.EXPANSION_MAX,
 +    EXPANSION_MAX_LENGTH: exports.EXPANSION_MAX_LENGTH,
++    EXPANSION_MAX_DEPTH: exports.EXPANSION_MAX_DEPTH,
++    EXPANSION_MAX_REWRITES: exports.EXPANSION_MAX_REWRITES,
 +    expand,
 +});
 +module.exports = expand;
  //# sourceMappingURL=index.js.map
+\ No newline at end of file
 diff --git a/dist/esm/index.d.ts b/dist/esm/index.d.ts
-index 349c208..b4c973f 100644
+index 1d86e5ec52083b00be390eefad66a03f54c1bffa..8d4bc13621590d805a7dfa978e8cf008a00e7330 100644
 --- a/dist/esm/index.d.ts
 +++ b/dist/esm/index.d.ts
-@@ -5,4 +5,5 @@ export type BraceExpansionOptions = {
-     maxLength?: number;
+@@ -9,4 +9,5 @@ export type BraceExpansionOptions = {
+     maxRewrites?: number;
  };
  export declare function expand(str: string, options?: BraceExpansionOptions): string[];
 +export default expand;
  //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
 diff --git a/dist/esm/index.js b/dist/esm/index.js
-index 66621ec..688c9fa 100644
+index 0e0cc962307eb697dc8139ef4c1f86b82380e5cc..9d8a1a584da0114dcbae45ee48c0ca459302a0af 100644
 --- a/dist/esm/index.js
 +++ b/dist/esm/index.js
-@@ -282,4 +282,7 @@ function expand_(str, max, maxLength, isTop) {
+@@ -326,4 +326,7 @@ function expand_(str, max, maxLength, maxDepth, depth, maxRewrites, isTop) {
      }
      return acc;
  }
