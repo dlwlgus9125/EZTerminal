@@ -224,8 +224,8 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(playwright@1.61.1)(vite@6.4.4(@types/node@22.20.0)(jiti@2.7.0)(terser@5.48.0))(vitest@4.1.11)
       electron:
-        specifier: 42.5.1
-        version: 42.5.1
+        specifier: 42.11.17
+        version: 42.11.17
       electron-builder:
         specifier: ^26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
@@ -672,10 +672,6 @@ packages:
   '@electron-forge/tracer@7.11.2':
     resolution: {integrity: sha512-U8j5Hyj2Zt7I5PciJvPJfmEv69Gb/Da9v+k655z3Jj1cuY0UnToEJ61IhXrzlTYqo+jUKC+fgAjDJ6vltJTS0A==}
     engines: {node: '>= 14.17.5'}
-
-  '@electron-internal/extract-zip@1.0.4':
-    resolution: {integrity: sha512-Zr1Vs7E9tpCNhZHDAbFVXc2gEVCG9RqPDjrno5+bdgB6LRAuvgyMHJut4NCVyYwtAieapMzc3fiQ3CSTi75ARg==}
-    engines: {node: '>=22.12.0'}
 
   '@electron-internal/extract-zip@1.0.5':
     resolution: {integrity: sha512-+bqFCP98pLI0Tt0XQo1TmlXtwjWchISndDOxCkEcIuUgXWpBnLyRI+2DU+mesvnMMX6L1XDqYNA0lXNDHd/yiA==}
@@ -2918,8 +2914,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@42.5.1:
-    resolution: {integrity: sha512-2VFNJcHHbrhIpGsJHdkLoi/nWPZPxN3GHVPe+9At3Oz3/TJRwpr+7JL97ddBDbKyLmHGx3GfI2jvzcEQL28uFw==}
+  electron@42.11.17:
+    resolution: {integrity: sha512-6NvBpGRInn4eum5lRMebUYbrgGLY/QhRN5cBHjfGZOMmbyrTfFpWd8lRhFQl7FIs3bVOupjl6ierzGcQt2MJRQ==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -6443,8 +6439,6 @@ snapshots:
     dependencies:
       chrome-trace-event: 1.0.4
 
-  '@electron-internal/extract-zip@1.0.4': {}
-
   '@electron-internal/extract-zip@1.0.5': {}
 
   '@electron/asar@3.4.1':
@@ -8894,9 +8888,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@42.5.1:
+  electron@42.11.17:
     dependencies:
-      '@electron-internal/extract-zip': 1.0.4
+      '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.0.0
       '@types/node': 24.13.2
     transitivePeerDependencies:

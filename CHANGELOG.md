@@ -12,6 +12,8 @@
   dependency audits. Two build-tool-only advisories with no patched release
   (braces GHSA-vfj7-8cjw-p6xm, sprintf-js GHSA-hp3w-g68c-fv3c) are recorded as
   audit exceptions; neither package ships in the application.
+- Update Electron to 42.11.17 for its sandbox inheritance, `<webview>`
+  Node.js integration, protocol handler CORS and preload code cache fixes.
 
 ## [2.0.0] - 2026-10-13
 

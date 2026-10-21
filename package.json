@@ -126,7 +126,7 @@
     "@typescript-eslint/parser": "^7.18.0",
     "@vitejs/plugin-react": "^4.7.0",
     "@vitest/browser-playwright": "4.1.11",
-    "electron": "42.5.1",
+    "electron": "42.11.17",
     "electron-builder": "^26.15.3",
     "eslint": "^8.57.1",
     "eslint-import-resolver-typescript": "^3.7.0",
