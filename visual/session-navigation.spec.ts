@@ -49,7 +49,8 @@ for (const [width, height, locale] of [[1440, 900, 'en'], [800, 600, 'ko'], [390
     await page.screenshot({ path: testInfo.outputPath('terminal-cli-model.png'), animations: 'disabled' });
     await page.getByTestId('new-session-agent').click();
     await expect(page.getByTestId('new-session-cli')).toHaveCount(0);
-    await expect(page.getByTestId('structured-agent-draft').getByRole('textbox')).toHaveCount(0);
+    // 2.0: the first message is written here and sending it creates the conversation.
+    await expect(page.getByTestId('structured-agent-draft').getByRole('textbox')).toHaveCount(1);
     await expect(page.getByTestId('structured-agent-model')).not.toBeVisible();
     await expect(page.getByTestId('structured-agent-create')).toBeEnabled();
     await page.getByTestId('structured-agent-create').click({ trial: true });
