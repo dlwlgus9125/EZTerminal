@@ -7,6 +7,8 @@ export const AGENT_ORCHESTRATION_POLICY_SCHEMA_VERSION = 1 as const;
 export const MAX_ORCHESTRATION_RUNS = 128;
 export const MAX_WORKERS_PER_RUN = 12;
 export const MAX_CONCURRENT_WORKERS = 4;
+// Bounds the stored `maxDurationMs` and run `expiresAt` so saved files and older phones still
+// parse. It is not a deadline: Lead runs have no elapsed-time limit.
 export const MAX_ORCHESTRATION_DURATION_MS = 2 * 60 * 60_000;
 export const MAX_WORKER_RESULT_BYTES = 8 * 1024;
 

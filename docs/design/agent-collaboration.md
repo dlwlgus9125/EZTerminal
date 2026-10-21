@@ -203,6 +203,9 @@ child 대화로 기록한다. 지시·도구·결과는 child에만 쌓이고 pa
 
 hard cap은 동시 managed turn 4, tree node 16, depth 4, tree당 10분 내 child 생성 12다.
 대화 turn에는 경과 시간 제한이 없다. 사람이 멈추거나 AI가 끝낼 때까지 실행한다(2026-10-20, 2시간 제한 제거).
+Lead 위임 사이클(Lead run)에도 경과 시간 제한이 없다. 사이클은 stop·complete·Lead session 종료·앱 재시작에서만
+끝나며 작업자 생성 수와 동시 실행 수 한도는 그대로다. 저장 형식의 `maxDurationMs`·`expiresAt`는 기존 정책
+파일과 구형 APK 호환을 위해 남기지만 읽지 않는다(2026-10-21, 2시간 제한 제거).
 provider-native child는 host가 예약하는 작업이 아니라 기록이므로 별도로
 루트 대화당 100개, depth 8까지 기록한다. 동시성 초과는 FIFO queue로 수용하고 node/depth/rate cap은 구조화된
 오류로 처리한다.

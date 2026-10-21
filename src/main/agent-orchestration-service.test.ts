@@ -317,23 +317,29 @@ describe('AgentOrchestrationService', () => {
     await disposal;
   });
 
-  it('stops an otherwise silent delegation cycle at its hard duration limit', async () => {
+  it('lets a delegation cycle run with no elapsed-time limit', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     try {
-      const { store, service, lead } = await fixture();
+      const { store, service, lead, stopSession } = await fixture();
       const created = await service.createWorker(lead, {
-        title: 'Long worker', brief: 'Wait for the hard cycle deadline.', mode: 'read-only',
+        title: 'Long worker', brief: 'Keep working for a full day.', mode: 'read-only',
         profileId: profile.profileId,
       });
-      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error(created.message);
 
-      await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
       await store.flush();
-      expect(store.getRun(created.ok ? created.value.run.runId : '')).toMatchObject({
-        state: 'stopped',
-        tasks: [{ state: 'canceled' }],
+      const run = store.getRun(created.value.run.runId);
+      expect(run?.state).toBe('active');
+      expect(run?.tasks.map((task) => task.state)).not.toContain('canceled');
+      expect(stopSession).not.toHaveBeenCalled();
+
+      const second = await service.createWorker(lead, {
+        title: 'Next worker', brief: 'Join the same cycle a day later.', mode: 'read-only',
+        profileId: profile.profileId,
       });
+      expect(second).toMatchObject({ ok: true, value: { run: { runId: created.value.run.runId } } });
       await service.dispose();
     } finally {
       vi.useRealTimers();

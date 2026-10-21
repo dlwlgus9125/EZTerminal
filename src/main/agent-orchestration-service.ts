@@ -125,7 +125,6 @@ export class AgentOrchestrationService {
   private readonly projectOperations = new Map<string, Set<Promise<unknown>>>();
   private readonly projectStops = new Map<string, Promise<void>>();
   private readonly stoppingProjects = new Set<string>();
-  private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private revision = 0;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
@@ -277,18 +276,12 @@ export class AgentOrchestrationService {
       const saved = await this.deps.store.createRun(created);
       if (!saved.ok) return saved;
       run = saved.value;
-      this.armExpiry(run);
     }
-    this.armExpiry(run);
     if (run.projectId !== projectId || run.leadActivityId !== source.id) {
       return failure('conflict', 'The active run belongs to another Lead activity.');
     }
     if (run.policyRevision !== policy.revision) {
       return failure('stale', 'Project collaboration policy changed; complete or stop the current run.');
-    }
-    if (run.expiresAt <= now) {
-      await this.stopRun(source, run.runId);
-      return failure('unavailable', 'The Lead delegation cycle reached its two-hour limit.');
     }
     if (run.tasks.length >= policy.limits.maxCreated) {
       return failure('unavailable', 'The Lead delegation cycle reached its worker creation limit.');
@@ -484,7 +477,6 @@ export class AgentOrchestrationService {
       }, now)), now, 'stopped'),
     }));
     if (!result.ok) return result;
-    this.clearExpiry(runId);
     for (const task of result.value.tasks) {
       if (task.worker?.sessionId) this.deps.stopSession(task.worker.sessionId);
     }
@@ -505,10 +497,7 @@ export class AgentOrchestrationService {
     const result = await this.deps.store.updateRun(runId, (current) => ({
       run: runWithTasks(current, current.tasks, now, 'completed'),
     }));
-    if (result.ok) {
-      this.clearExpiry(runId);
-      this.publish();
-    }
+    if (result.ok) this.publish();
     return result;
   }
 
@@ -706,8 +695,6 @@ export class AgentOrchestrationService {
   dispose(): Promise<void> {
     if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
-    for (const timer of this.expiryTimers.values()) clearTimeout(timer);
-    this.expiryTimers.clear();
     this.listeners.clear();
     const projectIds = new Set([
       ...this.deps.store.listRuns().map((run) => run.projectId),
@@ -838,13 +825,8 @@ export class AgentOrchestrationService {
     if (this.disposed) return;
     let run = this.deps.store.getRun(runId);
     if (!run || isTerminalCollaborationRun(run.state) || this.stoppingProjects.has(run.projectId)) return;
-    this.armExpiry(run);
     const policy = this.deps.store.getPolicy(run.projectId);
     if (!policy || !policy.enabled || policy.revision !== run.policyRevision) return;
-    if (run.expiresAt <= this.now()) {
-      await this.stopRunById(runId);
-      return;
-    }
     while (run) {
       if (this.disposed || this.stoppingProjects.has(run.projectId)) return;
       const activeCount = run.tasks.filter((task) => ACTIVE_TASK_STATES.has(task.state)).length;
@@ -1062,10 +1044,7 @@ export class AgentOrchestrationService {
 
   private async stopRunById(runId: string, workerSessionsAlreadyStopped = false): Promise<void> {
     const run = this.deps.store.getRun(runId);
-    if (!run || isTerminalCollaborationRun(run.state)) {
-      this.clearExpiry(runId);
-      return;
-    }
+    if (!run || isTerminalCollaborationRun(run.state)) return;
     const now = this.now();
     const result = await this.deps.store.updateRun(runId, (current) => ({
       run: runWithTasks(current, current.tasks.map((task) => isTerminalCollaborationTask(task.state) ? task : taskWithPatch(task, {
@@ -1075,7 +1054,6 @@ export class AgentOrchestrationService {
       }, now)), now, 'stopped'),
     }));
     if (!result.ok) return;
-    this.clearExpiry(runId);
     if (!workerSessionsAlreadyStopped) {
       for (const task of result.value.tasks) if (task.worker?.sessionId) this.deps.stopSession(task.worker.sessionId);
     }
@@ -1097,22 +1075,6 @@ export class AgentOrchestrationService {
       summary: boundedSummary(summary),
       createdAt: this.now(),
     };
-  }
-
-  private armExpiry(run: CollaborationRun): void {
-    if (this.disposed || isTerminalCollaborationRun(run.state) || this.expiryTimers.has(run.runId)) return;
-    const timer = setTimeout(() => {
-      this.expiryTimers.delete(run.runId);
-      this.startBackground(this.stopRunById(run.runId));
-    }, Math.max(0, run.expiresAt - this.now()));
-    timer.unref?.();
-    this.expiryTimers.set(run.runId, timer);
-  }
-
-  private clearExpiry(runId: string): void {
-    const timer = this.expiryTimers.get(runId);
-    if (timer) clearTimeout(timer);
-    this.expiryTimers.delete(runId);
   }
 
   private publish(): void {

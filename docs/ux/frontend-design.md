@@ -585,7 +585,7 @@ child transcript를 복사하지 않고 bounded summary event와 session link만
 보내고 model과 permission preset을 바꾸며 Interrupt+Send, Cancel, Archive, Detach를 사용할 수 있다.
 busy session의 일반 Send는 FIFO이고 Interrupt+Send만 현재 turn을 중단한다. tree는 재귀와
 cross-provider를 지원하되 host hard cap인 동시 managed turn 4, tree node 16, depth 4, tree당
-10분 내 child 생성 12, background turn 2시간을 숨기지 않는다. 동시성 초과는 queue, 다른 cap은
+10분 내 child 생성 12를 숨기지 않는다. turn과 Lead 위임 사이클에는 경과 시간 제한이 없다. 동시성 초과는 queue, 다른 cap은
 구조화된 오류로 거부한다.
 
 write Agent는 dedicated managed worktree를 사용할 수 있고 diff/review와 명시적 merge는 기존
