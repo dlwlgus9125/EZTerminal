@@ -651,6 +651,7 @@ describe('DaemonStore', () => {
     expect(store.getSnapshot().approvals[0]).toMatchObject({ id: 'approval-request', request });
 
     // The runtime rebuilds the value without `request` when it resolves; the store keeps it.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { request: _omitted, ...withoutRequest } = pending;
     await store.applySystemCommit({ mutations: [{ kind: 'approval.upsert', value: { ...withoutRequest, state: 'allowed', resolvedAt: FIXED_TIME } }] });
     expect(store.getSnapshot().approvals[0]).toMatchObject({ state: 'allowed' });

@@ -209,7 +209,8 @@ export const ComposerCodex: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvasElement.querySelector('.chat-composer')).toHaveAttribute('data-provider', 'codex');
-    await expect(canvas.getByTestId('structured-agent-live-model')).toHaveTextContent('Codex·GPT-6-Astra');
+    // The separator dot is drawn by CSS ::after, so it is not part of the text.
+    await expect(canvas.getByTestId('structured-agent-live-model')).toHaveTextContent('CodexGPT-6-Astra');
     await expect(canvas.getByTestId('structured-agent-live-model')).toHaveAccessibleName('Codex 모델: GPT-6-Astra');
   },
 };
