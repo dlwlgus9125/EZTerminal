@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:77e59422d4087ea196a7a2117740b24bef0bf3f88e9fa012dde10fbcb6223979",
+        "inputDigest": "sha256:37a1aaf3119a4ff0a9a494ab9411f100806ea11821d3e1fdd39bf1e6b9056d11",
         "decision": "map-updated",
-        "reason": "Reviewed: App wires a Results tab controller and the Claude/Codex adapters record numbered hunks in the same file-change format; approvals, delegation and orchestration are unchanged. Anchors only moved."
+        "reason": "Reviewed: lint-only changes. The navigation context calls addStructuredAgentDraft directly for a new conversation (same behaviour), and ChatProvider names each context field for the hook rule. No flow, ownership or event change."
       }
     },
     {

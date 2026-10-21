@@ -1823,7 +1823,7 @@ export function App(): JSX.Element {
       if (!opened) throw new Error('The terminal could not be opened.');
     },
     openSession: openStructuredAgentSession,
-    newConversation: (project) => openStructuredAgentDraft(project),
+    newConversation: (project) => addStructuredAgentDraft(project),
     clearConversation: (panelId, request) => addStructuredAgentDraft(request.project, undefined, { panelId, settings: request.settings }),
     openHistory: (projectId) => setConversationHistory({ projectId }),
     openSettings: () => {

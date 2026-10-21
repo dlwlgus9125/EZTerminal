@@ -43,7 +43,9 @@ export function useChatContext(): ChatContextValue {
   return value;
 }
 
-export function ChatProvider({ children, stateKey, ...value }: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
+export function ChatProvider({
+  children, stateKey, skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
+}: Omit<ChatContextValue, 'isExpanded' | 'setExpanded'> & {
   readonly children: ReactNode;
   /** Persists expanded/collapsed choices per conversation in session storage. */
   readonly stateKey?: string;
@@ -60,9 +62,13 @@ export function ChatProvider({ children, stateKey, ...value }: Omit<ChatContextV
       return next;
     });
   }, [storageKey]);
-  const context = useMemo<ChatContextValue>(() => ({ ...value, isExpanded, setExpanded }), [
-    value.skin, value.locale, value.workspaceRoot, value.onReply, value.onReuse, value.onOpenLink,
-    value.onOpenRelated, value.onReviewChanges, value.onOpenResults, value.resolveFileLink, isExpanded, setExpanded,
+  // Every field is named, so the hook rule tracks each one; a field added to the type must be added here.
+  const context = useMemo<ChatContextValue>(() => ({
+    skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
+    isExpanded, setExpanded,
+  }), [
+    skin, locale, workspaceRoot, onReply, onReuse, onOpenLink, onOpenRelated, onReviewChanges, onOpenResults, resolveFileLink,
+    isExpanded, setExpanded,
   ]);
   return <ChatContext.Provider value={context}>{children}</ChatContext.Provider>;
 }
