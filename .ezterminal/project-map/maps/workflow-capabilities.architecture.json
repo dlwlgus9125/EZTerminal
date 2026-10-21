@@ -221,8 +221,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 418,
-          "endLine": 447,
+          "startLine": 419,
+          "endLine": 448,
           "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
           "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         },
@@ -565,8 +565,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 418,
-          "endLine": 447,
+          "startLine": 419,
+          "endLine": 448,
           "lineDigest": "sha256:d6ce78223b3a666462449f8fe747b6e6d91f193ce3414fa67e2a612e12eda98c",
           "claim": "Session-authorized workflow tools read, validate, preview and edit drafts, and run flows and read their results, through the same host service; caller project identity cannot retarget the capability."
         }

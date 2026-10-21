@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:4293559ab429799bbfc0f98d617513c7b0c5a75597fe404d4b3e990b2be9c18f",
+        "inputDigest": "sha256:80f2ea227c1d3435b33e8b7e944817b6082e3d557332616498e36cf4d9dd157a",
         "decision": "map-updated",
-        "reason": "Reviewed: Claude sessions with tools launch able to switch to Full access, so a setting or an approved plan applies in place instead of relaunching; plan from Full access passes through default; mode changes are refused while an approval waits. Anchors moved."
+        "reason": "Reviewed: a managed child created without a permission now inherits its owner’s level instead of defaulting to standard; the owner ceiling, profiles and creation flow are unchanged. Anchors only moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:97b99ec28a46c9ad2f78622fc96088c7abc4027e1ddd67700b48b02532cda261",
+        "inputDigest": "sha256:9b65b8d2321aded23bae7f241bd27e82b8ed68d3acbe6afc2c783e223c4c91b7",
         "decision": "map-updated",
-        "reason": "Reviewed: only Claude permission switching changed (no relaunch for Full access); capability discovery, model listing and readiness are unchanged. Anchors only moved."
+        "reason": "Reviewed: create_agent advertises the owner’s level as its default permission; tool discovery and listing are unchanged. Anchors only moved."
       }
     }
   ]

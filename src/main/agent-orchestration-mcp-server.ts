@@ -145,8 +145,9 @@ function permissionPreset(value: unknown): PermissionPreset | undefined {
   return value;
 }
 
+/** The access level the person chose for the calling conversation carries through to its children. */
 function defaultChildPermissionPreset(ownerPreset: PermissionPreset): PermissionPreset {
-  return ownerPreset === 'plan' ? 'plan' : 'standard';
+  return ownerPreset;
 }
 
 function permissionDoesNotExceed(candidate: PermissionPreset, ceiling: PermissionPreset): boolean {

@@ -446,16 +446,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 200,
-          "endLine": 304,
+          "startLine": 201,
+          "endLine": 305,
           "lineDigest": "sha256:a3f3e4fa54c59b5f3c6d16ba70623d4ce7a9b73a4d8c91f9eb9b0b24649c6911",
           "claim": "The loopback authority issues a memory-only bearer only for a live managed Session, binds its Project, and revokes one Session, every capability for a Project, or all capabilities on stop."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 754,
-          "endLine": 794,
+          "startLine": 755,
+          "endLine": 795,
           "lineDigest": "sha256:059c4c8e90089eb35d30e1d199dfe49b8a7926aed76ccccfee6cec7c28baa8c0",
           "claim": "MCP scope rechecks active project/workspace, owner session and provider; ordinary workflow tools are independently admitted while subagent orchestration keeps its own permission gate."
         }
@@ -849,8 +849,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 754,
-          "endLine": 794,
+          "startLine": 755,
+          "endLine": 795,
           "lineDigest": "sha256:059c4c8e90089eb35d30e1d199dfe49b8a7926aed76ccccfee6cec7c28baa8c0",
           "claim": "MCP scope rechecks active project/workspace, owner session and provider; ordinary workflow tools are independently admitted while subagent orchestration keeps its own permission gate."
         }
@@ -958,8 +958,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-orchestration-mcp-server.ts",
-          "startLine": 484,
-          "endLine": 750,
+          "startLine": 485,
+          "endLine": 751,
           "lineDigest": "sha256:61348b05833950788033fe3e23c2360facf07835906830aea48b69315c53ae60",
           "claim": "MCP tools create direct children (optionally from a profile or in another active workspace of the Project) within the owner's permission ceiling, read and wait on managed descendants, create worktrees, and reauthorize before mutation."
         }

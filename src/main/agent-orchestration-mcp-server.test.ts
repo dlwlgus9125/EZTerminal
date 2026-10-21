@@ -422,6 +422,34 @@ describe('AgentOrchestrationMcpServer', () => {
     expect(commands).toHaveLength(1);
   });
 
+  // The access level a person chose for a conversation carries through to the agents it creates.
+  it.each(['full-access', 'standard'] as const)('gives an omitted-permission child the %s level of its owner', async (ownerPreset) => {
+    const current = withOwnerPermission(snapshot(), ownerPreset);
+    const commands: DaemonCommand[] = [];
+    const ids = ['inherit-child', 'inherit-command'];
+    const authority = {
+      getSnapshot: () => current,
+      execute: vi.fn(async (command: DaemonCommand) => {
+        commands.push(command);
+        return applied(command);
+      }),
+    };
+    const server = new AgentOrchestrationMcpServer({ authority, createId: () => ids.shift()! });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    const listed = await post(descriptor.endpoint, descriptor.bearerToken, rpc(4, 'tools/list'));
+    const createDefinition = (listed.value?.result as { tools: Array<{ name: string; description: string }> }).tools
+      .find((tool) => tool.name === 'create_agent')!;
+    expect(createDefinition.description).toContain(`defaults to ${ownerPreset}`);
+    await post(descriptor.endpoint, descriptor.bearerToken, rpc(5, 'tools/call', {
+      name: 'create_agent',
+      arguments: { providerId: 'codex', prompt: 'Work at my level.' },
+    }));
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ type: 'agent.create', payload: { permissionPreset: ownerPreset, parentSessionId: 'lead-1' } });
+  });
+
   it('caps omitted plan-owner child permissions at plan and advertises the same ceiling', async () => {
     const current = withOwnerPermission(snapshot(), 'plan');
     const commands: DaemonCommand[] = [];
