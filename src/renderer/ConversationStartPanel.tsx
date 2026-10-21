@@ -58,9 +58,11 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const view = useSyncExternalStore(recovery.subscribe, recovery.getSnapshot);
   const controller = useMemo(() => new ConversationStartController(recovery, access), [access, recovery]);
   useEffect(() => { void recovery.load(); }, [recovery]);
-  // Continuing a conversation keeps the level its plan was set to run with.
+  // Continuing a conversation keeps the level its plan was set to run with. Done while rendering,
+  // not in an effect: the conversation panel below reads it as it mounts, and child effects run
+  // before this component's. Idempotent: it never replaces a level already chosen here.
   const linkedSessionId = initialEntry?.linkedSessionId;
-  useEffect(() => { if (linkedSessionId) inheritPlanAccess(linkedSessionId, identity); }, [linkedSessionId, identity]);
+  useMemo(() => { if (linkedSessionId) inheritPlanAccess(linkedSessionId, identity); }, [linkedSessionId, identity]);
   const seedApplied = useRef(onSeedDraftApplied); seedApplied.current = onSeedDraftApplied;
   useEffect(() => {
     if (!seedDraftText) return undefined;
