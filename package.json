@@ -36,6 +36,7 @@
     "e2e": "playwright test",
     "profile:runtime": "node scripts/profile-runtime.mjs",
     "profile:interactions": "node scripts/profile-runtime.mjs --interactions",
+    "profile:chat": "node scripts/profile-runtime.mjs --chat",
     "e2e:performance": "node scripts/run-release-performance-e2e.mjs",
     "e2e:lifecycle-soak": "node scripts/run-lifecycle-soak.mjs",
     "test:e2e:packaged": "playwright test --config playwright.packaged.config.ts",

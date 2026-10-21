@@ -20,6 +20,20 @@ if (versionFile) {
     // Most fixture consumers do not need mutable version state.
   }
 }
+// Optional streamed reply for the chat profiler: {chars, chunks, chunkDelayMs, startDelayMs}.
+// The provider environment is an allowlist, so the setting is a file beside the version file.
+const replyFile = process.env.TMPDIR
+  ? path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-reply.json')
+  : undefined;
+function readReplyConfig() {
+  if (!replyFile) return null;
+  try {
+    return JSON.parse(fs.readFileSync(replyFile, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 if (args.includes('--version')) {
   process.stdout.write(`codex-cli ${fixtureVersion}\n`, () => process.exit(0));
@@ -186,6 +200,19 @@ if (args.includes('--version')) {
                 write({ jsonrpc: '2.0', method: 'item/completed', params: { threadId, turnId, completedAtMs: Date.now(), item: { type: 'fileChange', id: itemId, changes, status: 'completed' } } });
                 responseText = 'Wrote `report.html` with `report.css`, and `paper.pdf`.';
               }
+            }
+            // Chat profiler: stream a fixed-length reply in timed deltas, ending with a sentinel.
+            const reply = readReplyConfig();
+            if (reply) {
+              const itemId = `fixture-message-${turnSequence}`;
+              const body = `${'Streamed profile reply. '.repeat(Math.ceil(reply.chars / 24)).slice(0, reply.chars)} [[end]]`;
+              const size = Math.ceil(body.length / Math.max(1, reply.chunks));
+              await sleep(reply.startDelayMs ?? 0);
+              for (let offset = 0; offset < body.length; offset += size) {
+                write({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: body.slice(offset, offset + size) } });
+                await sleep(reply.chunkDelayMs ?? 0);
+              }
+              responseText = body;
             }
             write({
               jsonrpc: '2.0',
