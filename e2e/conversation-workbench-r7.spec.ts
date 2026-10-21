@@ -11,6 +11,8 @@ test('workspaces keep live panels, independent split groups and durable membersh
     const page = await app.firstWindow();
     const bars = page.getByTestId('workbench-views');
     await expect(bars).toBeVisible();
+    // The view bar can render before the first panel is added; on a slow runner panels[0] was undefined.
+    await expect.poll(() => page.evaluate(() => (window as unknown as Partial<R7Window>).__ezDock?.panels.length ?? 0), { timeout: 15_000 }).toBeGreaterThan(0);
     await page.evaluate(() => {
       const dock = (window as unknown as R7Window).__ezDock;
       const panel = dock.panels[0];
