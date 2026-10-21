@@ -59,7 +59,7 @@ afterEach(async () => {
 });
 
 
-async function fixture(options: { running?: boolean; task?: boolean; enabled?: boolean; failStart?: boolean; foreign?: boolean; slowStart?: boolean; installStarts?: boolean } = {}) {
+async function fixture(options: { running?: boolean; task?: boolean; enabled?: boolean; failStart?: boolean; foreign?: boolean; slowStart?: boolean; installStarts?: boolean; shortTaskPath?: boolean } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-launch-'));
   temporaryDirectories.push(directory);
   const marker = (name: string) => path.join(directory, name);
@@ -113,9 +113,10 @@ async function fixture(options: { running?: boolean; task?: boolean; enabled?: b
     function Get-ScheduledTask {
       [CmdletBinding()] param([string]$TaskName)
       if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'task')) {
+        $taskRoot = if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'shortTaskPath')) { (New-Object -ComObject Scripting.FileSystemObject).GetFolder($fixtureRoot).ShortPath } else { $fixtureRoot }
         return [pscustomobject]@{ TaskName=$TaskName; State='Ready';
           Settings=[pscustomobject]@{Enabled=(Test-Path -LiteralPath (Join-Path $fixtureRoot 'enabled'))};
-          Actions=@([pscustomobject]@{Execute=(Join-Path $fixtureRoot 'gateway.vbs');Arguments=''}) }
+          Actions=@([pscustomobject]@{Execute=(Join-Path $taskRoot 'gateway.vbs');Arguments=''}) }
       }
     }
     function Enable-ScheduledTask {
@@ -224,6 +225,14 @@ describeWindows('openclaw-supervisor.ps1', { timeout: 30_000 }, () => {
 
   it('keeps an HTTP-live gateway running when management RPC is unavailable', async () => {
     const f = await fixture({ running: true, task: true, enabled: true });
+    await f.saveIntent('start');
+    await f.run();
+    expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, operation: null, issue: null });
+    expect(await f.calls()).toEqual([]);
+  });
+
+  it('owns a gateway task that names its launcher by the 8.3 alias of the state folder', async () => {
+    const f = await fixture({ running: true, task: true, enabled: true, shortTaskPath: true });
     await f.saveIntent('start');
     await f.run();
     expect(await f.runtime()).toMatchObject({ status: { state: 'running' }, operation: null, issue: null });

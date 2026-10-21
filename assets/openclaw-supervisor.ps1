@@ -350,20 +350,39 @@ function Get-GatewayTaskName {
   return 'OpenClaw Gateway'
 }
 
+function Get-FullPathOrNull {
+  param([string]$Path)
+  if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+  try {
+    $full = [IO.Path]::GetFullPath($Path)
+    # GetFullPath expands an 8.3 alias only when the whole path exists, so expand the folder on its own.
+    $parent = [IO.Path]::GetDirectoryName($full)
+    if ($parent -and (Test-Path -LiteralPath $parent -PathType Container)) {
+      return [IO.Path]::Combine([IO.Path]::GetFullPath($parent), [IO.Path]::GetFileName($full))
+    }
+    return $full
+  } catch { return $null }
+}
+
 function Test-GatewayTaskOwned {
   param($Task)
   if ($null -eq $Task) { return $false }
   $actions = @($Task.Actions)
   if ($actions.Count -ne 1) { return $false }
   $root = Get-OpenClawStateRoot
+  # Both sides are full paths, so an 8.3 alias of the same launcher still matches.
+  $execute = [string]$actions[0].Execute
+  $executePath = Get-FullPathOrNull $execute
+  # WScript/cmd tasks must name the exact launcher, not a matching substring.
+  $arguments = [string]$actions[0].Arguments
+  $argumentPath = if ($arguments -match '^/c "([^"]+)"$' -or $arguments -match '^"([^"]+)"$') {
+    Get-FullPathOrNull $Matches[1]
+  } else { Get-FullPathOrNull $arguments }
   foreach ($name in @('gateway.vbs', 'gateway.cmd')) {
-    $launcher = [IO.Path]::GetFullPath((Join-Path $root $name))
-    if ([string]$actions[0].Execute -eq $launcher) { return $true }
-    # WScript/cmd tasks must name the exact launcher, not a matching substring.
-    $arguments = [string]$actions[0].Arguments
-    if ([string]$actions[0].Execute -match '(?i)(?:^|\\)(?:wscript|cscript|cmd)(?:\.exe)?$' -and
-        ($arguments -eq "`"$launcher`"" -or $arguments -eq $launcher -or
-         $arguments -eq "/c `"$launcher`"")) { return $true }
+    $launcher = Get-FullPathOrNull (Join-Path $root $name)
+    if ($null -ne $executePath -and $executePath -eq $launcher) { return $true }
+    if ($execute -match '(?i)(?:^|\\)(?:wscript|cscript|cmd)(?:\.exe)?$' -and
+        $null -ne $argumentPath -and $argumentPath -eq $launcher) { return $true }
   }
   return $false
 }
