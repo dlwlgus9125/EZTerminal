@@ -102,7 +102,8 @@ describe('project archive authority', () => {
     expect(source).toEqual(original); expect(exclusions).toHaveLength(2);
   });
 
-  it.for([false, true])('includes owned capture bytes and explicitly reports unresolved capture references (app data by its 8.3 alias: %s)', async (shortUserData, { skip }) => {
+  // Spawning PowerShell for the 8.3 alias alone took over 5s on a loaded CI runner.
+  it.for([false, true])('includes owned capture bytes and explicitly reports unresolved capture references (app data by its 8.3 alias: %s)', { timeout: 30_000 }, async (shortUserData, { skip }) => {
     const f = await fixture({ shortUserData });
     if (shortUserData && !f.shortened) skip('8.3 names are unavailable on this volume');
     const capturePath = '.ezterminal/captures/verified.png';
