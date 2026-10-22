@@ -54,8 +54,10 @@
 
 /* One canvas surface: header, canvas and the stage panel. Fills the subproject view. */
 .workflow-flow { container-type: inline-size; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--ui-space-3); }
-.workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); gap: var(--ui-space-3); }
-.workflow-flow__canvas { min-width: 0; min-height: 26rem; display: flex; flex-direction: column; }
+/* Beside each other, canvas and panel share one bounded row: the panel scrolls inside itself and nothing
+   pushes the flow past its pane (the pane's own minimum lives on .workflow-flow-host). */
+.workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); grid-template-rows: minmax(0, 1fr); gap: var(--ui-space-3); }
+.workflow-flow__canvas { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .workflow-flow__canvas > .workflow-node-list { overflow: auto; }
 .workflow-flow__fallback { display: flex; flex-direction: column; gap: var(--ui-space-2); min-height: 0; flex: 1 1 auto; }
 .workflow-flow__fallback > .ez-ui-button { align-self: flex-start; }

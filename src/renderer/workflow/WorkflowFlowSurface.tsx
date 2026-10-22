@@ -86,6 +86,13 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const onRevealed = useCallback(() => setReveal(undefined), []);
   const cameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
   const panel = useRef<HTMLElement>(null);
+  const canvasCell = useRef<HTMLDivElement>(null);
+  /** Beside the canvas the panel scrolls on its own; only a panel stacked under it (narrow dock, Android) is brought into view. */
+  const showPanel = (block: ScrollLogicalPosition) => requestAnimationFrame(() => {
+    const target = panel.current; const cell = canvasCell.current;
+    if (!target || (cell && target.getBoundingClientRect().top < cell.getBoundingClientRect().bottom)) return;
+    target.scrollIntoView?.({ block });
+  });
   const cameraKey = `${view.mode === 'run-view' ? 'run' : 'edit'}:${view.mode === 'run-view' ? view.run?.runId : 'draft'}`;
   const issueCounts = useMemo(() => props.issues.reduce<Record<string, number>>((counts, issue) => { if (issue.nodeId) counts[issue.nodeId] = (counts[issue.nodeId] ?? 0) + 1; return counts; }, {}), [props.issues]);
   const node = selection?.kind === 'node' ? view.graph.nodes.find(item => item.id === selection.id) ?? props.archivedNodes.find(item => item.id === selection.id) : undefined;
@@ -104,7 +111,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   useEffect(() => {
     if (!revealRequest) return;
     setReveal(current => ({ nodeId: revealRequest.nodeId, key: (current?.key ?? 0) + 1 }));
-    requestAnimationFrame(() => panel.current?.scrollIntoView?.({ block: 'start' }));
+    showPanel('start');
     revealHandled.current?.();
   }, [revealRequest]);
 
@@ -112,7 +119,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const jumpTo = (nodeId: string, nextSection: WorkflowPanelSection) => {
     props.onSelectionChange({ kind: 'node', id: nodeId }); props.onSectionChange(nextSection);
     setReveal(current => ({ nodeId, key: (current?.key ?? 0) + 1 }));
-    requestAnimationFrame(() => panel.current?.scrollIntoView?.({ block: 'nearest' }));
+    showPanel('nearest');
   };
   const change = (graph: WorkflowGraph) => { if (editable) props.onGraphChange(graph); };
   const addStage = (operation: WorkflowNode['operation']) => {
@@ -149,7 +156,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
       onSaveDraft={props.onSaveDraft} onDiscardDraft={props.onDiscardDraft} onAutoLayout={tidy}
       onPrepareRun={props.onPrepareRun} onRunCommand={props.onRunCommand} onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} />
     <div className="workflow-flow__body">
-      <div className="workflow-flow__canvas">
+      <div ref={canvasCell} className="workflow-flow__canvas">
         {Renderer ? <WorkflowCanvasBoundary onRetry={props.onReloadCanvas} onFailedChange={setCanvasFailed} fallback={retry => <div className="workflow-flow__fallback">
           <p role="alert" className="workflow-notice">{text('캔버스를 불러오지 못해 간단한 그래프로 보여 줍니다. 편집은 오른쪽 패널과 목록에서 할 수 있습니다.', 'The canvas did not load, so a simple graph is shown. Edit in the panel and the list.')}</p>
           <Button size="sm" onClick={retry}>{text('캔버스 다시 불러오기', 'Reload the canvas')}</Button>

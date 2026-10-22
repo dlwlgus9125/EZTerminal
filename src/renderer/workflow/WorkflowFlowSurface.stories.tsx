@@ -36,6 +36,8 @@ interface FlowStoryProps {
   /** The selected stage was deleted from the draft; its document and chats stay reachable. */
   readonly archived?: boolean;
   readonly empty?: boolean;
+  /** Render inside the real dock structure (filled flow view) with this pane height. */
+  readonly paneHeight?: number;
 }
 
 const COLUMN = 248 + 96;
@@ -79,7 +81,9 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
 function Frame(props: FlowStoryProps): JSX.Element {
   const locale = props.locale ?? 'ko';
   return <AppI18nProvider locale={locale} languages={[locale]}>
-    <div className="workflow-workspace" data-mobile={props.mobile || undefined} style={{ width: props.width ? `${props.width}px` : '100%', height: '100vh', boxSizing: 'border-box' }}><FlowStory {...props} /></div>
+    {props.paneHeight
+      ? <div className="workflow-workspace" data-view="flow" style={{ width: props.width ? `${props.width}px` : '100%', height: `${props.paneHeight}px`, boxSizing: 'border-box' }}><div className="workflow-flow-host"><FlowStory {...props} /></div></div>
+      : <div className="workflow-workspace" data-mobile={props.mobile || undefined} style={{ width: props.width ? `${props.width}px` : '100%', height: '100vh', boxSizing: 'border-box' }}><FlowStory {...props} /></div>}
   </AppI18nProvider>;
 }
 
@@ -155,6 +159,27 @@ export const ApprovalChipOpensStage: Story = {
     await userEvent.click(await canvas.findByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
     await expect(canvas.findByRole('tab', { name: /실행 상태|Run status/u, selected: true })).resolves.toBeVisible();
     await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeEnabled();
+  },
+};
+/** A short dock pane: the flow fits the pane, and jumping to a stage scrolls nothing outside the panel. */
+export const ShortDockPane: Story = {
+  args: { scenario: 'awaiting-approval', width: 950, paneHeight: 460, camera: { column: 0, zoom: 0.6 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const pane = canvasElement.querySelector<HTMLElement>('.workflow-workspace')!;
+    const fits = () => {
+      const body = canvasElement.querySelector('.workflow-flow__body')!.getBoundingClientRect();
+      const panel = canvasElement.querySelector('.workflow-flow__panel')!.getBoundingClientRect();
+      const canvasBox = canvasElement.querySelector('.workflow-flow__canvas')!.getBoundingClientRect();
+      return { paneOverflow: pane.scrollHeight - pane.clientHeight, panelBelowBody: Math.round(panel.bottom - body.bottom), canvasBelowBody: Math.round(canvasBox.bottom - body.bottom) };
+    };
+    await waitFor(() => expect(canvasElement.querySelector('.react-flow__node')).not.toBeNull());
+    await expect(fits()).toEqual({ paneOverflow: 0, panelBelowBody: 0, canvasBelowBody: 0 });
+    await userEvent.click(await canvas.findByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
+    await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeVisible();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await expect(pane.scrollTop).toBe(0);
+    await expect(fits()).toEqual({ paneOverflow: 0, panelBelowBody: 0, canvasBelowBody: 0 });
   },
 };
 /** Drag from an output port to another stage's input adds exactly one connection. */
