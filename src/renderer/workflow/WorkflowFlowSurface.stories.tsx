@@ -182,6 +182,24 @@ export const ShortDockPane: Story = {
     await expect(fits()).toEqual({ paneOverflow: 0, panelBelowBody: 0, canvasBelowBody: 0 });
   },
 };
+/** A stage added past the visible area is centred and selected, so the person sees what they added. */
+export const AddStageRevealsIt: Story = {
+  args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(7));
+    await userEvent.click(canvas.getByRole('button', { name: /^(단계 추가|Add stage)$/u }));
+    await userEvent.click(await within(document.body).findByRole('menuitem', { name: /^(AI 작업|AI task)$/u }));
+    await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(8));
+    const pane = canvasElement.querySelector('.react-flow')!.getBoundingClientRect();
+    const added = [...canvasElement.querySelectorAll<HTMLElement>('.react-flow__node')].find(node => node.dataset.id?.startsWith('node-'))!;
+    await waitFor(() => {
+      const box = added.getBoundingClientRect();
+      expect(box.left >= pane.left && box.right <= pane.right && box.top >= pane.top && box.bottom <= pane.bottom).toBe(true);
+    });
+    await expect(canvas.findByRole('tab', { name: /설정|Settings/u, selected: true })).resolves.toBeVisible();
+  },
+};
 /** Drag from an output port to another stage's input adds exactly one connection. */
 export const ConnectByDrag: Story = {
   args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },

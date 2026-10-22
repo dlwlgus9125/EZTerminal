@@ -63,6 +63,7 @@ export interface WorkflowFlowSurfaceProps {
   readonly onRevealHandled?: () => void;
 }
 
+const NO_ISSUES: readonly WorkflowIssue[] = [];
 const OPERATION_DEFAULTS: Partial<Record<WorkflowNode['operation'], Partial<WorkflowNode>>> = { join: { joinPolicy: 'all' } };
 
 /**
@@ -94,7 +95,9 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     target.scrollIntoView?.({ block });
   });
   const cameraKey = `${view.mode === 'run-view' ? 'run' : 'edit'}:${view.mode === 'run-view' ? view.run?.runId : 'draft'}`;
-  const issueCounts = useMemo(() => props.issues.reduce<Record<string, number>>((counts, issue) => { if (issue.nodeId) counts[issue.nodeId] = (counts[issue.nodeId] ?? 0) + 1; return counts; }, {}), [props.issues]);
+  // Validation belongs to the draft; the read-only run view shows the frozen flow, which was valid when prepared.
+  const issues = view.mode === 'run-view' ? NO_ISSUES : props.issues;
+  const issueCounts = useMemo(() => issues.reduce<Record<string, number>>((counts, issue) => { if (issue.nodeId) counts[issue.nodeId] = (counts[issue.nodeId] ?? 0) + 1; return counts; }, {}), [issues]);
   const node = selection?.kind === 'node' ? view.graph.nodes.find(item => item.id === selection.id) ?? props.archivedNodes.find(item => item.id === selection.id) : undefined;
   const archived = !!node && !view.graph.nodes.some(item => item.id === node.id);
   const edge = selection?.kind === 'edge' ? view.graph.edges.find(item => item.id === selection.id) : undefined;
@@ -174,7 +177,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
               <Tab value="run">{text('실행 상태', 'Run status')}</Tab>
             </TabList>
             <TabPanel value="settings">{section === 'settings' && <WorkflowNodeSettings graph={view.graph} node={node} text={text} readOnly={!editable || archived} providers={props.providers} onChange={change} onRequestDelete={setRemoveId}
-              onMove={staticRenderer && editable ? (id, dy) => change({ ...view.graph, nodes: view.graph.nodes.map(item => item.id === id ? { ...item, position: { ...item.position, y: Math.max(0, item.position.y + dy) } } : item) }) : undefined} />}</TabPanel>
+              onMove={(staticRenderer || canvasFailed) && editable ? (id, dy) => change({ ...view.graph, nodes: view.graph.nodes.map(item => item.id === id ? { ...item, position: { ...item.position, y: Math.max(0, item.position.y + dy) } } : item) }) : undefined} />}</TabPanel>
             <TabPanel value="stage">{section === 'stage' && <WorkflowStageSection node={node} text={text} readOnly={!editable} archived={archived} links={props.stageLinks(node.id)} canStartChat={props.canStartStageChat && !props.commandsDisabled}
               onDocumentChange={document => change({ ...view.graph, nodes: view.graph.nodes.map(item => item.id === node.id ? { ...item, document } : item) })}
               onStartChat={() => props.onStartStageChat(node.id)} onOpenConversation={props.onOpenConversation} />}</TabPanel>
@@ -195,9 +198,9 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
             const status = workflowRunStatusPresentation(view.overlay!.nodes[item.id], text);
             return <li key={item.id}><Button variant="ghost" onClick={() => jumpTo(item.id, 'run')}>{item.title}</Button><Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status></li>;
           })}</ul>}
-          {props.issues.length > 0 && <section className="workflow-validation" aria-label={text('실행 전 확인', 'Before execution')}>
-            <h4><TriangleAlert aria-hidden="true" />{text(`실행 전 확인 · ${props.issues.length}`, `Before execution · ${props.issues.length}`)}</h4>
-            <ul>{props.issues.map((issue, index) => <li key={`${issue.code}-${index}`}><Button variant="ghost" onClick={() => { if (issue.nodeId) jumpTo(issue.nodeId, 'settings'); else if (issue.edgeId) select({ kind: 'edge', id: issue.edgeId }); }}>{issue.nodeId ? `${view.graph.nodes.find(item => item.id === issue.nodeId)?.title ?? issue.nodeId}: ` : ''}{workflowIssueLabel(issue, text)}</Button></li>)}</ul>
+          {issues.length > 0 && <section className="workflow-validation" aria-label={text('실행 전 확인', 'Before execution')}>
+            <h4><TriangleAlert aria-hidden="true" />{text(`실행 전 확인 · ${issues.length}`, `Before execution · ${issues.length}`)}</h4>
+            <ul>{issues.map((issue, index) => <li key={`${issue.code}-${index}`}><Button variant="ghost" onClick={() => { if (issue.nodeId) jumpTo(issue.nodeId, 'settings'); else if (issue.edgeId) select({ kind: 'edge', id: issue.edgeId }); }}>{issue.nodeId ? `${view.graph.nodes.find(item => item.id === issue.nodeId)?.title ?? issue.nodeId}: ` : ''}{workflowIssueLabel(issue, text)}</Button></li>)}</ul>
           </section>}
           <p className="workflow-hint">{help}</p>
           {view.graph.nodes.length === 0 && editable && <Button leadingIcon={<Plus />} onClick={() => addStage('agent')}>{text('첫 AI 작업 단계 추가', 'Add a first AI task')}</Button>}

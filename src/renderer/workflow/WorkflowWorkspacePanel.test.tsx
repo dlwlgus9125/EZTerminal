@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowCommandSchema, type WorkflowAccess, type WorkflowCommand } from '../../shared/workflow';
@@ -8,6 +8,7 @@ import { workflowFixture } from './workflow-fixtures';
 import { workflowCanvasFixture } from './workflow-canvas-fixtures';
 import type { WorkflowDraftAccess, WorkflowDraftState } from '../../shared/workflow-draft';
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
+import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 
 vi.mock('../i18n', () => ({ useAppTranslation: () => ({ i18n: { language: 'en' } }) }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -210,6 +211,26 @@ describe('WorkflowWorkspacePanel · one canvas', () => {
       await click('History'); await click('Flow');
       expect(scrolled.filter(([element]) => element.classList.contains('workflow-flow__panel'))).toHaveLength(1);
     } finally { Element.prototype.scrollIntoView = original; }
+  });
+  it('gives a subproject opened from elsewhere its own canvas (fit and camera), not the previous one', async () => {
+    const state = fixture(); const mounts: string[] = [];
+    function RecordingCanvas({ graph }: WorkflowCanvasRendererProps): JSX.Element {
+      const firstStage = useRef(graph.nodes[0]?.id ?? '');
+      useEffect(() => { mounts.push(firstStage.current); }, []);
+      return <div data-renderer="recording" />;
+    }
+    const open = async (subprojectId: string) => { await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} canvasRenderer={RecordingCanvas} navigationTarget={{ subprojectId, key: subprojectId }} conversations={[]} />)); };
+    await open('login'); await open('payments');
+    expect(mounts).toEqual(['login:research', 'payments:research']);
+  });
+  it('keeps the move buttons in the static graph shown when the canvas fails to load', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const state = fixture();
+    function FailingCanvas(): JSX.Element { throw new Error('chunk failed'); }
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} canvasRenderer={FailingCanvas} navigationTarget={{ subprojectId: 'login', nodeId: 'login:research', key: 'failed' }} conversations={[]} />));
+    expect(document.querySelector('[data-renderer="static"]')).not.toBeNull();
+    await click('Settings');
+    expect(button('Move up on canvas')).toBeTruthy();
   });
   it('records a save that only moved stages as a layout change', async () => {
     const state = fixture(); await state.render(true); await click('Settings');
