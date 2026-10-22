@@ -4,7 +4,7 @@ import type { WorkflowAccess } from '../../shared/workflow';
 import type { WorkflowConversationContext as ReferenceSnapshot } from '../../shared/workflow-conversation';
 import { Badge, Button } from '../ui';
 import { ChatMarkdown } from '../chat/markdown/ChatMarkdown';
-import { useWorkflowCopy } from './WorkflowEditor';
+import { useWorkflowCopy } from './workflow-copy';
 
 export interface WorkflowConversationScope {
   readonly projectId: string;

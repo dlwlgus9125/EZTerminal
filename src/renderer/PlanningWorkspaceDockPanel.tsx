@@ -1,5 +1,6 @@
 import type { IDockviewPanelProps } from "dockview-react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createFeatureModuleLoader } from "./feature-loader";
 import type { DaemonSnapshot } from "../shared/daemon-protocol";
 import {
   attachedChildSessionIds,
@@ -41,6 +42,11 @@ const access: PlanningWorkspaceAccess = {
   executePlanningCommand: (command) =>
     window.ezterminal.executePlanningCommand(command),
 };
+/** The React Flow canvas is a desktop-only lazy chunk; Android and tests never load it. */
+const workflowCanvasLoader = createFeatureModuleLoader(
+  () => import("./workflow/WorkflowFlowCanvas"),
+  (module) => module.WorkflowFlowCanvas,
+);
 const workflowAccess: WorkflowAccess = {
   getWorkflowSnapshot: projectId => window.ezterminal.getWorkflowSnapshot(projectId),
   executeWorkflowCommand: command => window.ezterminal.executeWorkflowCommand(command),
@@ -149,6 +155,20 @@ export function PlanningWorkspaceDockPanel(
     readonly PlanningConversation[]
   >([]);
   const [error, setError] = useState<string>();
+  // A hidden dock tab has no size: the canvas fits and the panel polls only while visible.
+  const [visible, setVisible] = useState(props.api.isVisible);
+  useEffect(() => {
+    setVisible(props.api.isVisible);
+    const disposable = props.api.onDidVisibilityChange((event) => setVisible(event.isVisible));
+    return () => disposable.dispose();
+  }, [props.api]);
+  // A rejected lazy import stays rejected: "다시 불러오기" resets the loader and makes a new component.
+  const [canvasGeneration, setCanvasGeneration] = useState(0);
+  const FlowCanvas = useMemo(() => {
+    void canvasGeneration;
+    return workflowCanvasLoader.lazyComponent();
+  }, [canvasGeneration]);
+  useEffect(() => { void workflowCanvasLoader.preload().catch(() => undefined); }, []);
   useEffect(() => {
     let disposed = false;
     let generation = 0;
@@ -185,6 +205,10 @@ export function PlanningWorkspaceDockPanel(
       projectId={projectId}
       projectName={projectName}
       access={workflowAccess}
+      active={visible}
+      canvasRenderer={FlowCanvas}
+      onReloadCanvas={() => { workflowCanvasLoader.reset(); setCanvasGeneration((current) => current + 1); }}
+      readPlanningResult={executionAccess.readPlanningResult}
       daemonAccess={workflowDaemonAccess}
       capabilityClient={workflowCapabilityClient}
       recoveryAccess={workflowRecoveryAccess}

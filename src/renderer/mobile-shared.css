@@ -6,14 +6,12 @@
 [data-ui-flex-gap='unsupported'] .workflow-inline,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-context,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-row,
-[data-ui-flex-gap='unsupported'] .workflow-activation,
 [data-ui-flex-gap='unsupported'] .workflow-history h3 { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-header > *,
 [data-ui-flex-gap='unsupported'] .workflow-toolbar > *,
 [data-ui-flex-gap='unsupported'] .workflow-inline > *,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-context > *,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-row > *,
-[data-ui-flex-gap='unsupported'] .workflow-activation > *,
 [data-ui-flex-gap='unsupported'] .workflow-history h3 > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
 [data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] > * { margin-right: var(--ui-space-1); }

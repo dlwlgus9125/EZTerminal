@@ -23,8 +23,8 @@ const CONVERSATION_SURFACES = [
 const AUTOMATED_SURFACES = [
   'src/renderer/ScheduleSettings.tsx',
   'src/renderer/PlanningExecutionPanel.tsx',
-  'src/renderer/workflow/WorkflowEditor.tsx',
-  'src/renderer/workflow/WorkflowRunView.tsx',
+  'src/renderer/workflow/WorkflowNodeSettings.tsx',
+  'src/renderer/workflow/workflow-copy.ts',
   'src/renderer/workflow/WorkflowWorkspacePanel.tsx',
 ];
 const SURFACES = [...CONVERSATION_SURFACES, ...AUTOMATED_SURFACES];
