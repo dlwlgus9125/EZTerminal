@@ -155,5 +155,8 @@
   .workflow-flow__panel { overflow: visible; }
   .workflow-canvas .react-flow__minimap svg { width: 8rem; height: 5.5rem; }
 }
-.workflow-flow[data-mobile] .workflow-flow__body { grid-template-columns: minmax(0, 1fr); }
+/* Android WebView 74 ignores container queries: the mobile surface always stacks and scrolls as one. */
+.workflow-flow[data-mobile] .workflow-flow__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; overflow: auto; }
+.workflow-flow[data-mobile] .workflow-flow__canvas { min-height: 0; }
+.workflow-flow[data-mobile] .workflow-flow__panel { overflow: visible; }
 @media (prefers-reduced-motion: reduce) { .workflow-node-card .is-spinning { animation: none; } }
