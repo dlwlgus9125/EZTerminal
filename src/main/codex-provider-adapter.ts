@@ -1171,6 +1171,14 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ? input.additionalRoots
         : undefined;
       if (nextRoots?.some((root) => !path.isAbsolute(root))) throw new Error('Codex workspace roots must be absolute.');
+      // An access change may have named the folders as writable roots of the thread's sandbox;
+      // that grant must follow the folders too, or a removed folder would stay writable.
+      if (nextRoots && state.permissionPreset === 'standard') {
+        requireObjectResult('thread/settings/update', await this.requireConnection().request('thread/settings/update', {
+          threadId: input.providerSessionId,
+          ...permissionUpdateSettings('standard', [state.workspaceRoot, ...nextRoots]),
+        }, { signal }));
+      }
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,

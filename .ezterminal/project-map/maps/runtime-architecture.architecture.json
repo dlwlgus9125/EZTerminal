@@ -509,15 +509,15 @@
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
           "startLine": 1141,
-          "endLine": 1273,
-          "lineDigest": "sha256:c8d7a01425a2dfcb4225c0cec856d6078bead29e3a9fcd7ebab7872b9856faa2",
+          "endLine": 1281,
+          "lineDigest": "sha256:6c4c4b16a1e7b89c17d3d1d928cadaf28da7fd38e58b00658cb5186b72a911cb",
           "claim": "Codex submit revalidates selected native skills before turn/start, sends skill path blocks alongside context/images, exact model settings and the collaboration mode (plan only for attended plan turns), then correlates the provider turn."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1479,
-          "endLine": 1547,
+          "startLine": 1487,
+          "endLine": 1555,
           "lineDigest": "sha256:921c82f86bc93698c45c2650944c809d467a65aa0010f25668a0ef0d6c263472",
           "claim": "Deactivation advances the lifecycle, settles pending interrupts, clears approvals and thread ownership, closes app-server, and leaves reviewed configuration reusable."
         }

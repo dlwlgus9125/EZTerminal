@@ -622,15 +622,42 @@ describe('CodexProviderAdapter', () => {
 
     expect((await send(1, ['C:\\Working\\shared-ui', 'C:\\Working\\docs'])).params).not.toHaveProperty('runtimeWorkspaceRoots');
     expect((await send(2, ['C:\\Working\\shared-ui'])).params).toMatchObject({ runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal', 'C:\\Working\\shared-ui'] });
+    // The sandbox's writable roots follow the folders before that turn starts: no stale grant.
+    expect(connection.requests.at(-2)).toMatchObject({
+      method: 'thread/settings/update',
+      params: { threadId: 'thread-1', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['C:\\Working\\EZTerminal', 'C:\\Working\\shared-ui'] } },
+    });
     expect((await send(3, ['C:\\Working\\shared-ui'])).params).not.toHaveProperty('runtimeWorkspaceRoots');
+    expect(connection.requests.at(-2)?.method).toBe('turn/start');
     expect((await send(4)).params).not.toHaveProperty('runtimeWorkspaceRoots');
     expect((await send(5, [])).params).toMatchObject({ runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal'] });
+    expect(connection.requests.at(-2)).toMatchObject({
+      method: 'thread/settings/update',
+      params: { sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['C:\\Working\\EZTerminal'] } },
+    });
 
     await adapter.setSettings({ sessionId: 'session-1', providerSessionId: 'thread-1', permissionPreset: 'standard' });
     expect(connection.requests.at(-1)).toMatchObject({
       method: 'thread/settings/update',
       params: { sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['C:\\Working\\EZTerminal'] } },
     });
+    await adapter.dispose();
+  });
+
+  it('changes no sandbox grant when the folders change outside Ask before running', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      if (method === 'turn/start') return { turn: { id: 'provider-turn-1' } };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    await adapter.createSession(context({ permissionPreset: 'full-access', additionalRoots: ['C:\\Working\\shared-ui'] }));
+    await adapter.submit({
+      sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: 'Work', additionalRoots: [],
+    });
+    expect(connection.requests.map((request) => request.method)).toEqual(['thread/start', 'turn/start']);
+    expect(connection.requests.at(-1)?.params).toMatchObject({ runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal'] });
     await adapter.dispose();
   });
 

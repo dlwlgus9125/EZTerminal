@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e691872deaed1426da6b4ca52ca06bb29cd6aeec9ed17d5c291e281af9d9acd5",
+        "inputDigest": "sha256:17e938506a26a7d10f5dadfcc454dfc0dc79fb804943cb9e95fd1e2ab57e2904",
         "decision": "map-updated",
         "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
       }
@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:89bd60e4f09db14630ae8077e17a4824d43fc6ac0d643316627e12ff20b2d004",
+        "inputDigest": "sha256:67e64f789e7961f333c75594b69fa5f3304452dc9fb6ac34f1f4f19d0e2c6e1d",
         "decision": "map-updated",
         "reason": "Reviewed: only Claude permission state handling changed (a lowered level cancels pending Full access); capability discovery, model listing and readiness are unchanged. Anchors only moved."
       }
