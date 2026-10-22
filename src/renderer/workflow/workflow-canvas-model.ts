@@ -237,6 +237,20 @@ export function resolveCanvasView(input: { savedGraph: WorkflowGraph; draftGraph
   return { mode: 'edit', graph: editing, run, overlay: null, editable: true, diverged: !!run && !!frozen };
 }
 
+/**
+ * Moves an existing connection's ends. A connection that still loops back keeps the retry limit the
+ * person set (new loops get the default); one that no longer loops loses it. Null when impossible.
+ */
+export function reconnectWorkflowEdge(graph: WorkflowGraph, edgeId: string, from: string, outcome: WorkflowEdge['outcome'], to: string): WorkflowGraph | null {
+  const old = graph.edges.find(edge => edge.id === edgeId);
+  if (!old) return null;
+  const rest = { ...graph, edges: graph.edges.filter(edge => edge.id !== edgeId) };
+  if (!canConnectWorkflow(rest, from, outcome, to)) return null;
+  const moved = connectWorkflowEdge(rest, from, outcome, to, edgeId).edges.at(-1)!;
+  const kept = moved.retryLimit && old.retryLimit ? { ...moved, retryLimit: old.retryLimit } : moved;
+  return { ...graph, edges: graph.edges.map(edge => edge.id === edgeId ? kept : edge) };
+}
+
 export interface WorkflowRunControls {
   readonly canStart: boolean; readonly canPause: boolean; readonly canResume: boolean; readonly canCancel: boolean; readonly canIntegrate: boolean;
   /** Paused without the person asking: nothing can proceed (e.g. a retry limit). Resume would not help. */

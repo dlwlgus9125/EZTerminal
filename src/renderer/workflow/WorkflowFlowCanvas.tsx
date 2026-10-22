@@ -7,7 +7,7 @@ import { LayoutGrid, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { WorkflowEdge, WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
-import { canConnectWorkflow, connectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 import { WORKFLOW_CARD_UNITS, useWorkflowScale } from './use-workflow-scale';
 import { WorkflowNodeCard, workflowRunStatusPresentation } from './WorkflowNodeCard';
@@ -61,20 +61,22 @@ function FitOnFirstShow({ active, skip }: { active: boolean; skip: boolean }): n
   return null;
 }
 /** Centres a stage on request (approval chip, summary list) without changing the zoom. */
-function RevealNode({ reveal }: { reveal?: WorkflowCanvasRendererProps['reveal'] }): null {
+function RevealNode({ reveal, onRevealed }: { reveal?: WorkflowCanvasRendererProps['reveal']; onRevealed?: () => void }): null {
   const flow = useReactFlow();
   useEffect(() => {
     if (!reveal) return;
     const node = flow.getInternalNode(reveal.nodeId);
-    if (!node) return;
-    const { x, y } = node.internals.positionAbsolute;
-    void flow.setCenter(x + (node.measured.width ?? 0) / 2, y + (node.measured.height ?? 0) / 2, { zoom: flow.getZoom(), duration: 0 });
-  }, [flow, reveal]);
+    if (node) {
+      const { x, y } = node.internals.positionAbsolute;
+      void flow.setCenter(x + (node.measured.width ?? 0) / 2, y + (node.measured.height ?? 0) / 2, { zoom: flow.getZoom(), duration: 0 });
+    }
+    onRevealed?.();
+  }, [flow, onRevealed, reveal]);
   return null;
 }
 const DIRECTION_KO: Record<string, string> = { up: '위', down: '아래', left: '왼', right: '오른' };
 
-export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSelect, onGraphChange, text, label, issueCounts, initialViewport, active = true, onRequestDeleteNode, reveal, onViewportChange, onTidy }: WorkflowCanvasRendererProps): JSX.Element {
+export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSelect, onGraphChange, text, label, issueCounts, initialViewport, active = true, onRequestDeleteNode, reveal, onViewportChange, onTidy, onRevealed, onCardSize }: WorkflowCanvasRendererProps): JSX.Element {
   const marker = `workflow-arrow-${useId().replace(/:/gu, '')}`;
   const scale = useWorkflowScale();
   const [dragging, setDragging] = useState<Record<string, XYPosition>>({});
@@ -82,6 +84,16 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
   // Controlled nodes must carry React Flow's measurements back, or rebuilt node objects stay
   // uninitialized: hidden and refusing to drag (React Flow error #015).
   const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({});
+  // React Flow reports the new selection before the old one's deselection, possibly in separate
+  // node/edge callbacks; this ref sees the newest choice so a late deselect cannot clear it.
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const choose = useCallback((next: typeof selection) => { selectionRef.current = next; onSelect(next); }, [onSelect]);
+  useEffect(() => {
+    const sizes = Object.values(measured);
+    if (!sizes.length || !onCardSize) return;
+    onCardSize({ width: Math.max(...sizes.map(size => size.width)) / scale, height: Math.max(...sizes.map(size => size.height)) / scale });
+  }, [measured, onCardSize, scale]);
   const titleOf = useCallback((id: string) => graph.nodes.find(node => node.id === id)?.title ?? id, [graph.nodes]);
   const depths = useMemo(() => workflowBackwardDepths(graph, WORKFLOW_CARD_UNITS.width), [graph]);
   const nodes = useMemo<StageNode[]>(() => graph.nodes.map(node => {
@@ -116,25 +128,22 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
     // Drag end and arrow-key moves both arrive as a non-dragging position change: one draft update.
     if (Object.keys(commits).length && editable) onGraphChange({ ...graph, nodes: graph.nodes.map(node => commits[node.id] ? { ...node, position: { x: Math.round(commits[node.id].x / scale), y: Math.round(commits[node.id].y / scale) } } : node) });
     const picked = changes.find(change => change.type === 'select' && change.selected);
-    if (picked && 'id' in picked) onSelect({ kind: 'node', id: picked.id });
-    // Escape (or a pane click) deselects: clear the controlled selection when this node leaves it.
-    else if (selection?.kind === 'node' && changes.some(change => change.type === 'select' && !change.selected && change.id === selection.id)) onSelect(null);
-  }, [editable, graph, onGraphChange, onSelect, scale, selection]);
+    if (picked && 'id' in picked) choose({ kind: 'node', id: picked.id });
+    // Escape deselects: clear only if the node leaving the selection is still the current one.
+    else { const current = selectionRef.current; if (current?.kind === 'node' && changes.some(change => change.type === 'select' && !change.selected && change.id === current.id)) choose(null); }
+  }, [choose, editable, graph, onGraphChange, scale]);
   const onEdgesChange = useCallback((changes: EdgeChange<FlowEdge>[]) => {
     const removed = new Set(changes.filter(change => change.type === 'remove').map(change => change.id));
-    if (removed.size && editable) { onGraphChange({ ...graph, edges: graph.edges.filter(edge => !removed.has(edge.id)) }); onSelect(null); return; }
+    if (removed.size && editable) { onGraphChange({ ...graph, edges: graph.edges.filter(edge => !removed.has(edge.id)) }); choose(null); return; }
     const picked = changes.find(change => change.type === 'select' && change.selected);
-    if (picked && 'id' in picked) onSelect({ kind: 'edge', id: picked.id });
-    else if (selection?.kind === 'edge' && changes.some(change => change.type === 'select' && !change.selected && change.id === selection.id)) onSelect(null);
-  }, [editable, graph, onGraphChange, onSelect, selection]);
+    if (picked && 'id' in picked) choose({ kind: 'edge', id: picked.id });
+    else { const current = selectionRef.current; if (current?.kind === 'edge' && changes.some(change => change.type === 'select' && !change.selected && change.id === current.id)) choose(null); }
+  }, [choose, editable, graph, onGraphChange]);
   // Dragging an existing connection's end moves it; the port it now leaves from becomes its outcome.
   const onReconnect = useCallback((old: FlowEdge, connection: Connection) => {
     if (!editable || !connection.sourceHandle) return;
-    const rest = { ...graph, edges: graph.edges.filter(edge => edge.id !== old.id) };
-    const outcome = connection.sourceHandle as WorkflowEdge['outcome'];
-    if (!canConnectWorkflow(rest, connection.source, outcome, connection.target)) return;
-    const moved = connectWorkflowEdge(rest, connection.source, outcome, connection.target, old.id).edges.at(-1)!;
-    onGraphChange({ ...graph, edges: graph.edges.map(edge => edge.id === old.id ? moved : edge) });
+    const next = reconnectWorkflowEdge(graph, old.id, connection.source, connection.sourceHandle as WorkflowEdge['outcome'], connection.target);
+    if (next) onGraphChange(next);
   }, [editable, graph, onGraphChange]);
   const onBeforeDelete = useCallback<OnBeforeDelete<StageNode, FlowEdge>>(async ({ nodes: doomed, edges: doomedEdges }) => {
     if (doomed.length) { onRequestDeleteNode?.(doomed[0].id); return false; }
@@ -161,14 +170,14 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
     <ReactFlow<StageNode, FlowEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
       onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onBeforeDelete={onBeforeDelete} onConnect={onConnect} onReconnect={onReconnect} isValidConnection={isValidConnection}
       onMoveEnd={(_event, viewport) => onViewportChange?.(viewport)}
-      onPaneClick={() => onSelect(null)} nodesDraggable={editable} nodesConnectable={editable} elementsSelectable
+      onPaneClick={() => choose(null)} nodesDraggable={editable} nodesConnectable={editable} elementsSelectable
       deleteKeyCode={editable ? ['Delete', 'Backspace'] : null} elevateNodesOnSelect={false} minZoom={0.3} maxZoom={2}
       {...(initialViewport ? { defaultViewport: initialViewport } : {})} ariaLabelConfig={ariaLabelConfig}>
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} />
       <MiniMap pannable zoomable ariaLabel={text('미니맵', 'Mini map')} nodeClassName={node => `workflow-mini workflow-mini--${(node as StageNode).data.run?.status ?? 'none'}`} />
       <CanvasControls text={text} onTidy={editable ? onTidy : undefined} />
       <FitOnFirstShow active={active} skip={!!initialViewport} />
-      <RevealNode reveal={reveal} />
+      <RevealNode reveal={reveal} onRevealed={onRevealed} />
     </ReactFlow>
   </div>;
 }

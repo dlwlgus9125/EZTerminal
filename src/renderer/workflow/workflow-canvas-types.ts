@@ -32,4 +32,8 @@ export interface WorkflowCanvasRendererProps {
   readonly onViewportChange?: (viewport: { readonly x: number; readonly y: number; readonly zoom: number }) => void;
   /** Tidy the layout (offered next to the zoom controls while editing). */
   readonly onTidy?: () => void;
+  /** Called once a reveal request was carried out, so it never replays on a later mount. */
+  readonly onRevealed?: () => void;
+  /** The largest measured card in graph units (titles wrap), for tidy spacing and overlap checks. */
+  readonly onCardSize?: (size: { readonly width: number; readonly height: number }) => void;
 }

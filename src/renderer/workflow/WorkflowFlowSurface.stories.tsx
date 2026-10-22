@@ -197,3 +197,17 @@ export const MoveStageByKeyboard: Story = {
     await expect(canvas.findByRole('heading', { name: /흐름 요약|Flow summary/u })).resolves.toBeVisible();
   },
 };
+/** Choosing a connection after a stage shows the connection, not an empty panel (selection order). */
+export const SwitchStageToConnection: Story = {
+  args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"]')).not.toBeNull());
+    await userEvent.click(canvasElement.querySelector('[data-id="login:plan"] .workflow-node-card__title')!);
+    await expect(canvas.findByRole('heading', { name: '기획' })).resolves.toBeVisible();
+    (canvasElement.querySelector('.react-flow__edge') as HTMLElement).focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(canvas.findByRole('heading', { name: /다음|Next/u })).resolves.toBeVisible();
+    await expect(canvas.findByRole('combobox', { name: /연결 조건|Connection outcome/u })).resolves.toBeVisible();
+  },
+};

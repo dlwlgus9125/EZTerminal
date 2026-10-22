@@ -1,5 +1,5 @@
 import { Plus, TriangleAlert } from 'lucide-react';
-import { Suspense, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import type { ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowGraph, WorkflowIssue, WorkflowNode } from '../../shared/workflow-graph';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
@@ -60,7 +60,6 @@ export interface WorkflowFlowSurfaceProps {
   readonly initialViewport?: WorkflowCanvasRendererProps['initialViewport'];
 }
 
-const LAYOUT_UNITS = { width: WORKFLOW_CARD_UNITS.width, height: WORKFLOW_CARD_UNITS.height + 24 };
 const OPERATION_DEFAULTS: Partial<Record<WorkflowNode['operation'], Partial<WorkflowNode>>> = { join: { joinPolicy: 'all' } };
 
 /**
@@ -74,6 +73,14 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<{ nodeId: string; key: number } | undefined>();
   const [announcement, setAnnouncement] = useState('');
+  const [canvasFailed, setCanvasFailed] = useState(false);
+  // Largest measured card in graph units; titles that wrap make cards taller than the 248x136 base.
+  const [card, setCard] = useState<{ width: number; height: number }>(WORKFLOW_CARD_UNITS);
+  const onCardSize = useCallback((size: { width: number; height: number }) => setCard(current => {
+    const next = { width: Math.max(WORKFLOW_CARD_UNITS.width, Math.ceil(size.width)), height: Math.max(WORKFLOW_CARD_UNITS.height, Math.ceil(size.height)) };
+    return next.width === current.width && next.height === current.height ? current : next;
+  }), []);
+  const onRevealed = useCallback(() => setReveal(undefined), []);
   const cameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
   const panel = useRef<HTMLElement>(null);
   const cameraKey = `${view.mode === 'run-view' ? 'run' : 'edit'}:${view.mode === 'run-view' ? view.run?.runId : 'draft'}`;
@@ -99,25 +106,25 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const change = (graph: WorkflowGraph) => { if (editable) props.onGraphChange(graph); };
   const addStage = (operation: WorkflowNode['operation']) => {
     const id = `node-${crypto.randomUUID()}`;
-    const right = view.graph.nodes.length ? Math.max(...view.graph.nodes.map(item => item.position.x)) + LAYOUT_UNITS.width + 96 : 40;
+    const right = view.graph.nodes.length ? Math.max(...view.graph.nodes.map(item => item.position.x)) + card.width + 96 : 40;
     const anchor = selection?.kind === 'node' ? view.graph.nodes.find(item => item.id === selection.id) : undefined;
     const stage: WorkflowNode = { id, title: workflowOperationLabel(operation, text), operation, role: 'implementation', instructions: '', document: '', acceptance: [], allowedPaths: [], inputs: [], retryLimit: 2, permissionPreset: 'plan',
-      position: anchor ? { x: anchor.position.x + LAYOUT_UNITS.width + 96, y: anchor.position.y + LAYOUT_UNITS.height + 48 } : { x: right, y: 40 }, ...OPERATION_DEFAULTS[operation] };
+      position: anchor ? { x: anchor.position.x + card.width + 96, y: anchor.position.y + card.height + 48 } : { x: right, y: 40 }, ...OPERATION_DEFAULTS[operation] };
     change({ ...view.graph, entryNodeId: view.graph.entryNodeId ?? id, nodes: [...view.graph.nodes, stage] });
     jumpTo(id, 'settings');
   };
-  const tidy = () => change(layoutWorkflowGraph(view.graph, LAYOUT_UNITS));
+  const tidy = () => change(layoutWorkflowGraph(view.graph, card));
   const Renderer = props.layout === 'graph' ? props.canvasRenderer ?? WorkflowStaticGraph : null;
   const staticRenderer = Renderer === WorkflowStaticGraph;
   const rendererProps: WorkflowCanvasRendererProps = {
     graph: view.graph, overlay: view.overlay, editable, selection, onSelect: select, onGraphChange: change, text, issueCounts,
-    label: text('흐름 캔버스', 'Flow canvas'), active, initialViewport: props.initialViewport ?? cameras.current[cameraKey],
+    label: text('흐름 캔버스', 'Flow canvas'), active, initialViewport: cameras.current[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
     onViewportChange: viewport => { cameras.current[cameraKey] = viewport; }, onRequestDeleteNode: editable ? setRemoveId : undefined, reveal, onTidy: editable ? tidy : undefined,
   };
   const removeNode = (id: string) => change({ ...view.graph, nodes: view.graph.nodes.filter(item => item.id !== id), edges: view.graph.edges.filter(item => item.from !== id && item.to !== id), entryNodeId: view.graph.entryNodeId === id ? null : view.graph.entryNodeId });
   const help = view.graph.nodes.length === 0
     ? text('아직 단계가 없습니다. 위에서 단계 종류를 고르고 "단계 추가"를 누르세요.', 'No stages yet. Pick a stage type above and choose "Add stage".')
-    : !staticRenderer && props.layout === 'graph' && editable
+    : !staticRenderer && !canvasFailed && props.layout === 'graph' && editable
       ? text('단계를 누르면 설정·문서·실행 상태를 여기서 봅니다. 오른쪽 동그라미(출력)를 다른 단계의 왼쪽 동그라미로 끌면 연결됩니다.', 'Select a stage to see its settings, document and run status here. Drag from a right-side output circle to another stage\'s left circle to connect.')
       : text('단계를 누르면 설정·문서·실행 상태를 여기서 봅니다.', 'Select a stage to see its settings, document and run status here.');
 
@@ -125,14 +132,14 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     <VisuallyHidden role="status" aria-live="polite">{announcement}</VisuallyHidden>
     <WorkflowCanvasHeader text={text} mode={view.mode} revision={props.revision} hasLocalDraft={!!props.draftGraph} diverged={view.diverged} run={view.run} runs={props.runs}
       editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} issueCount={props.issues.length}
-      overlapping={workflowLayoutOverlaps(view.graph, WORKFLOW_CARD_UNITS)} awaiting={awaiting}
+      overlapping={workflowLayoutOverlaps(view.graph, card)} awaiting={awaiting}
       layout={props.layout} onLayoutChange={props.onLayoutChange} onPickRun={props.onPickRun} onRunView={props.onRunViewChange}
       onJumpToNode={id => jumpTo(id, 'run')} onAddStage={addStage}
       onSaveDraft={props.onSaveDraft} onDiscardDraft={props.onDiscardDraft} onAutoLayout={tidy}
       onPrepareRun={props.onPrepareRun} onRunCommand={props.onRunCommand} onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} />
     <div className="workflow-flow__body">
       <div className="workflow-flow__canvas">
-        {Renderer ? <WorkflowCanvasBoundary onRetry={props.onReloadCanvas} fallback={retry => <div className="workflow-flow__fallback">
+        {Renderer ? <WorkflowCanvasBoundary onRetry={props.onReloadCanvas} onFailedChange={setCanvasFailed} fallback={retry => <div className="workflow-flow__fallback">
           <p role="alert" className="workflow-notice">{text('캔버스를 불러오지 못해 간단한 그래프로 보여 줍니다. 편집은 오른쪽 패널과 목록에서 할 수 있습니다.', 'The canvas did not load, so a simple graph is shown. Edit in the panel and the list.')}</p>
           <Button size="sm" onClick={retry}>{text('캔버스 다시 불러오기', 'Reload the canvas')}</Button>
           <WorkflowStaticGraph {...rendererProps} />

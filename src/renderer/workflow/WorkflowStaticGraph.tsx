@@ -13,7 +13,7 @@ const FALLBACK = { width: 248, height: 136 };
  * drawn to the measured handles. Used on Android, in tests, and when the desktop canvas chunk
  * cannot load. Selection only; stages and connections are edited in the panel and the outline.
  */
-export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text, label, issueCounts, reveal }: WorkflowCanvasRendererProps): JSX.Element {
+export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text, label, issueCounts, reveal, onRevealed, onCardSize }: WorkflowCanvasRendererProps): JSX.Element {
   const elements = useRef(new Map<string, HTMLDivElement>());
   const [anchors, setAnchors] = useState<Record<string, Anchors>>({});
   const marker = `workflow-static-arrow-${useId().replace(/:/gu, '')}`;
@@ -42,7 +42,11 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
     height: Math.max(240, ...graph.nodes.map(node => at(node.id).y + size(node.id).height + (132 + maxDepth * 32) * scale)),
   };
   const edges = graph.edges.filter(edge => graph.nodes.some(node => node.id === edge.from) && graph.nodes.some(node => node.id === edge.to));
-  useEffect(() => { if (reveal) elements.current.get(reveal.nodeId)?.scrollIntoView({ block: 'nearest', inline: 'center' }); }, [reveal]);
+  useEffect(() => { if (!reveal) return; elements.current.get(reveal.nodeId)?.scrollIntoView({ block: 'nearest', inline: 'center' }); onRevealed?.(); }, [onRevealed, reveal]);
+  useEffect(() => {
+    const sizes = Object.values(anchors);
+    if (sizes.length && onCardSize) onCardSize({ width: Math.max(...sizes.map(size => size.width)) / scale, height: Math.max(...sizes.map(size => size.height)) / scale });
+  }, [anchors, onCardSize, scale]);
   const onKey = (event: KeyboardEvent, id: string) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect({ kind: 'node', id }); } };
   return <div className="workflow-canvas" data-renderer="static" role="region" aria-label={label}>
     <div className="workflow-static" tabIndex={0} aria-label={text('흐름 그래프 · 내부 스크롤', 'Workflow graph · scrollable canvas')}>
@@ -78,10 +82,11 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
 }
 
 /** Keeps the flow usable when the desktop canvas fails: the static graph plus a way to retry. */
-export class WorkflowCanvasBoundary extends Component<{ readonly fallback: (retry: () => void) => ReactNode; readonly children: ReactNode; readonly onRetry?: () => void }, { readonly failed: boolean }> {
+export class WorkflowCanvasBoundary extends Component<{ readonly fallback: (retry: () => void) => ReactNode; readonly children: ReactNode; readonly onRetry?: () => void; readonly onFailedChange?: (failed: boolean) => void }, { readonly failed: boolean }> {
   override state = { failed: false };
   static getDerivedStateFromError(): { failed: boolean } { return { failed: true }; }
+  override componentDidCatch(): void { this.props.onFailedChange?.(true); }
   /** Retry resets the injected loader first (a lazy import keeps its rejection), then renders again. */
-  private readonly retry = (): void => { this.props.onRetry?.(); this.setState({ failed: false }); };
+  private readonly retry = (): void => { this.props.onRetry?.(); this.props.onFailedChange?.(false); this.setState({ failed: false }); };
   override render(): ReactNode { return this.state.failed ? this.props.fallback(this.retry) : this.props.children; }
 }

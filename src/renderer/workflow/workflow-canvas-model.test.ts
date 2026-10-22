@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -256,5 +256,19 @@ describe('scale and port geometry', () => {
     const tight = { ...graph, nodes: graph.nodes.map((node, index) => ({ ...node, position: { x: 80 + index * 240, y: 80 } })) };
     expect(Object.keys(workflowBackwardDepths(tight, 248))).toContain(tight.edges[0].id);
     expect(Object.keys(workflowBackwardDepths(layoutWorkflowGraph(graph, { width: 248, height: 136 }), 248))).not.toContain(graph.edges[0].id);
+  });
+});
+
+describe('reconnectWorkflowEdge', () => {
+  const laid = layoutWorkflowGraph(graph, { width: 248, height: 136 });
+  it('keeps a retry limit the person set when the connection still loops back', () => {
+    const custom = { ...laid, edges: laid.edges.map(edge => edge.id === id('retry') ? { ...edge, retryLimit: 7 } : edge) };
+    const moved = reconnectWorkflowEdge(custom, id('retry'), id('condition'), 'failed', id('design'))!;
+    expect(moved.edges.find(edge => edge.id === id('retry'))).toMatchObject({ to: id('design'), retryLimit: 7 });
+  });
+  it('drops the limit when the connection no longer loops, and refuses impossible moves', () => {
+    const forward = reconnectWorkflowEdge(laid, id('retry'), id('condition'), 'failed', id('done'))!;
+    expect(forward.edges.find(edge => edge.id === id('retry'))?.retryLimit).toBeUndefined();
+    expect(reconnectWorkflowEdge(laid, id('retry'), id('done'), 'next', id('plan'))).toBeNull();
   });
 });
