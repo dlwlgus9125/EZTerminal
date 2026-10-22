@@ -63,3 +63,9 @@ composition이 가져오지 않습니다. managed Agent 부모/자식 관계는 
 
 검토 oracle은 r3의 공통 채팅/문서 연결, r6의 승인 의도, 실제 production story와 이 후보의 행동 검사입니다.
 고정 desktop handoff와 승인 snapshot은 수정하지 않습니다. r4 캡처는 새로운 후보 증거로만 보관합니다.
+
+## 2026-10-22 보완 · 한 캔버스
+
+`흐름`과 `실행`은 한 캔버스로 합쳤다. `실행 중 + 새 초안`의 탭 표현은 캔버스 위 칩과 읽기 전용 실행 보기로,
+WorkflowEditor/WorkflowRunView 구성은 WorkflowFlowSurface(상단 바·캔버스·단계 패널)로 바뀌었다.
+현재 계약은 [frontend-design.md §16.7](../../frontend-design.md#167-소프로젝트-흐름-캔버스--2026-10-22-승인)이다.

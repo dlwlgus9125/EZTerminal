@@ -16,6 +16,20 @@
 
 ### Changed
 
+- A subproject's flow is one canvas for building and running it, like n8n.
+  The separate Flow and Runs tabs are merged. On the desktop you drag stages,
+  connect them by dragging from a stage's named output ports, zoom, pan, fit
+  and tidy the layout, with a minimap; keyboard, form and list editing still
+  work without dragging. Edits stay in the draft until you save, and never start
+  a run or approve a stage. Once a run starts from the same version, each stage
+  on the canvas shows its run state and each connection how often it was taken.
+  Run controls (start, pause, resume, cancel, allow integration, and a jump to
+  stages awaiting approval) sit above the canvas. Selecting a stage opens its
+  settings, its document and chats, and its run status, where approval stages
+  are approved or rejected. A run of an older version opens read-only. Stage
+  positions no longer depend on the UI scale. Android keeps the list view and
+  the same stage panel. The run engine, storage and workflow commands are
+  unchanged.
 - Desktop conversations show the working folder as a setting under the message
   box (`EZTerminal +2`) instead of a line in the header. Its menu lists the
   folders, says which ones are missing, and opens the project editor. A new
