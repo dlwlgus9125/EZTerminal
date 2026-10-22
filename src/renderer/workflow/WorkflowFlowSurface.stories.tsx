@@ -170,7 +170,7 @@ export const ShortDockPane: Story = {
     const fits = () => {
       const body = canvasElement.querySelector('.workflow-flow__body')!.getBoundingClientRect();
       const panel = canvasElement.querySelector('.workflow-flow__panel')!.getBoundingClientRect();
-      const canvasBox = canvasElement.querySelector('.workflow-flow__canvas')!.getBoundingClientRect();
+      const canvasBox = canvasElement.querySelector('.workflow-canvas[data-renderer]')!.getBoundingClientRect();
       return { paneOverflow: pane.scrollHeight - pane.clientHeight, panelBelowBody: Math.round(panel.bottom - body.bottom), canvasBelowBody: Math.round(canvasBox.bottom - body.bottom) };
     };
     await waitFor(() => expect(canvasElement.querySelector('.react-flow__node')).not.toBeNull());
