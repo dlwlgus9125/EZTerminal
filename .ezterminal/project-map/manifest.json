@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:67e64f789e7961f333c75594b69fa5f3304452dc9fb6ac34f1f4f19d0e2c6e1d",
-        "decision": "map-updated",
-        "reason": "Reviewed: only Claude permission state handling changed (a lowered level cancels pending Full access); capability discovery, model listing and readiness are unchanged. Anchors only moved."
+        "inputDigest": "sha256:6f8be903a5fce572cbbea138bf49284998f0128b99117825267157192ebf7a6d",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed: the subproject Flow and Runs tabs became one canvas (WorkflowFlowSurface) inside WorkflowWorkspacePanel. It sends the same workflow.patch and run commands with expectedRevision and commandId; host boundary, runtime and navigation are unchanged."
       }
     }
   ]
