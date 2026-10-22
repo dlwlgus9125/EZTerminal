@@ -87,6 +87,27 @@ export interface WorkflowPoint { readonly x: number; readonly y: number }
 export interface WorkflowEdgePath { readonly d: string; readonly labelX: number; readonly labelY: number; readonly backward: boolean }
 /** Clearance below the lower port for a connection that returns to an earlier stage. */
 export const WORKFLOW_BACKWARD_DROP = 96;
+export const WORKFLOW_BACKWARD_STEP = 32;
+
+/**
+ * Depth for every connection that returns to an earlier column (by stored positions). Shorter
+ * returns sit higher; a return whose span overlaps already placed ones goes one level lower.
+ */
+export function workflowBackwardDepths(graph: WorkflowGraph): Record<string, number> {
+  const at = new Map(graph.nodes.map(node => [node.id, node.position.x]));
+  const returns = graph.edges.flatMap(edge => {
+    const from = at.get(edge.from); const to = at.get(edge.to);
+    return from === undefined || to === undefined || to > from ? [] : [{ id: edge.id, left: to, right: from }];
+  }).sort((a, b) => (a.right - a.left) - (b.right - b.left) || a.left - b.left);
+  const placed: { left: number; right: number; depth: number }[] = [];
+  const depths: Record<string, number> = {};
+  for (const entry of returns) {
+    const taken = new Set(placed.filter(other => other.left <= entry.right && entry.left <= other.right).map(other => other.depth));
+    let depth = 0; while (taken.has(depth)) depth += 1;
+    placed.push({ ...entry, depth }); depths[entry.id] = depth;
+  }
+  return depths;
+}
 
 function cubic(a: number, b: number, c: number, d: number, t: number): number {
   const u = 1 - t;
@@ -96,14 +117,15 @@ function cubic(a: number, b: number, c: number, d: number, t: number): number {
  * One path shape for both renderers. Forward connections curve between the ports; a connection
  * whose target sits left of its source loops underneath, where its label has room.
  */
-export function workflowEdgePath(source: WorkflowPoint, target: WorkflowPoint): WorkflowEdgePath {
+export function workflowEdgePath(source: WorkflowPoint, target: WorkflowPoint, depth = 0): WorkflowEdgePath {
   const backward = target.x < source.x + 24;
   if (!backward) {
     const bend = Math.max(40, (target.x - source.x) / 2);
     const c1 = { x: source.x + bend, y: source.y }; const c2 = { x: target.x - bend, y: target.y };
     return { d: `M ${source.x} ${source.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${target.x} ${target.y}`, labelX: cubic(source.x, c1.x, c2.x, target.x, 0.5), labelY: cubic(source.y, c1.y, c2.y, target.y, 0.5), backward };
   }
-  const low = Math.max(source.y, target.y) + WORKFLOW_BACKWARD_DROP;
+  // Overlapping returns get their own depth so their paths and labels do not stack.
+  const low = Math.max(source.y, target.y) + WORKFLOW_BACKWARD_DROP + depth * WORKFLOW_BACKWARD_STEP;
   const out = 48;
   const midX = (source.x + out + target.x - out) / 2;
   const d = `M ${source.x} ${source.y} C ${source.x + out} ${source.y}, ${source.x + out} ${low}, ${source.x} ${low} L ${target.x} ${low} C ${target.x - out} ${low}, ${target.x - out} ${target.y}, ${target.x} ${target.y}`;
@@ -167,3 +189,50 @@ export function connectWorkflowEdge(graph: WorkflowGraph, from: string, outcome:
   const edge: WorkflowEdge = { id, from, to, outcome, ...(loops ? { retryLimit: 2 } : {}) };
   return { ...graph, edges: [...graph.edges, edge] };
 }
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable((value as Record<string, unknown>)[key])]));
+  return value;
+}
+/** Same flow content (documents, settings and positions included); revision numbers move for renames and links too. */
+export function sameWorkflowGraph(a: WorkflowGraph, b: WorkflowGraph): boolean {
+  return JSON.stringify(stable(a)) === JSON.stringify(stable(b));
+}
+
+const runEnded = (run: ExecutionRun) => run.state === 'completed' || run.state === 'cancelled';
+/** The newest unfinished run, else the newest run. */
+export function defaultWorkflowRun(runs: readonly ExecutionRun[]): ExecutionRun | null {
+  const newest = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return newest.find(run => !runEnded(run)) ?? newest[0] ?? null;
+}
+
+export type WorkflowCanvasMode = 'edit' | 'edit-with-run' | 'run-view';
+export interface WorkflowCanvasView {
+  readonly mode: WorkflowCanvasMode;
+  readonly graph: WorkflowGraph;
+  readonly run: ExecutionRun | null;
+  readonly overlay: WorkflowRunOverlay | null;
+  readonly editable: boolean;
+  /** A run exists but its frozen flow is not what is being edited: offer its read-only view. */
+  readonly diverged: boolean;
+}
+/**
+ * One canvas for editing and running. While the saved flow is exactly the one a run froze (and
+ * there is no unsaved draft) the run's state sits on the editable canvas. Otherwise the draft is
+ * shown plain, and the run is one click away as a read-only view of its frozen graph.
+ */
+export function resolveCanvasView(input: { savedGraph: WorkflowGraph; draftGraph: WorkflowGraph | null; runs: readonly ExecutionRun[]; pickedRunId: string | null; runView: boolean }): WorkflowCanvasView {
+  const run = input.runs.find(entry => entry.runId === input.pickedRunId) ?? defaultWorkflowRun(input.runs);
+  const frozen = run?.preparation.workflow?.graph;
+  if (run && frozen && input.runView) return { mode: 'run-view', graph: frozen, run, overlay: projectRunOverlay(run), editable: false, diverged: false };
+  const editing = input.draftGraph ?? input.savedGraph;
+  if (run && frozen && !input.draftGraph && sameWorkflowGraph(input.savedGraph, frozen)) return { mode: 'edit-with-run', graph: editing, run, overlay: projectRunOverlay(run), editable: true, diverged: false };
+  return { mode: 'edit', graph: editing, run, overlay: null, editable: true, diverged: !!run && !!frozen };
+}
+
+export type WorkflowPanelSection = 'settings' | 'stage' | 'run';
+type StoredPage = 'flow' | 'stage' | 'run';
+/** The stored view page keeps its old values: flow, stage and run now name panel sections. */
+export function sectionFromPage(page: StoredPage): WorkflowPanelSection { return page === 'flow' ? 'settings' : page; }
+export function pageFromSection(section: WorkflowPanelSection): StoredPage { return section === 'settings' ? 'flow' : section; }

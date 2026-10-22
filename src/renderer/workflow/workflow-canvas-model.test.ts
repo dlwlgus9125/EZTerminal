@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, layoutWorkflowGraph, projectRunOverlay, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, defaultWorkflowRun, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -147,5 +147,73 @@ describe('connecting stages', () => {
     expect(back.edges.at(-1)?.retryLimit).toBe(2);
     const forward = connectWorkflowEdge({ ...graph, edges: [] }, id('plan'), 'next', id('design'), 'edge-forward');
     expect(forward.edges).toEqual([{ id: 'edge-forward', from: id('plan'), to: id('design'), outcome: 'next' }]);
+  });
+});
+
+describe('one canvas: which graph and which run', () => {
+  const saved = graph;
+  const base = run('running', [activation('plan', 'active')], [task('plan', 'running')]);
+  const at = (value: ExecutionRun, runId: string, state: ExecutionRun['state'], createdAt: string, frozen = saved): ExecutionRun => ({ ...value, runId, state, createdAt, preparation: { ...value.preparation, workflow: { ...value.preparation.workflow!, graph: frozen } } });
+
+  it('compares graph content, not revision numbers or key order', () => {
+    const reordered = JSON.parse(JSON.stringify({ edges: saved.edges, nodes: saved.nodes, entryNodeId: saved.entryNodeId })) as WorkflowGraph;
+    expect(sameWorkflowGraph(saved, reordered)).toBe(true);
+    expect(sameWorkflowGraph(saved, { ...saved, nodes: saved.nodes.map((node, index) => index === 0 ? { ...node, position: { x: node.position.x + 1, y: node.position.y } } : node) })).toBe(false);
+  });
+
+  it('defaults to the newest unfinished run, else the newest run', () => {
+    const old = at(base, 'old', 'running', '2026-10-20T00:00:00.000Z');
+    const done = at(base, 'done', 'completed', '2026-10-22T00:00:00.000Z');
+    expect(defaultWorkflowRun([done, old])?.runId).toBe('old');
+    expect(defaultWorkflowRun([at(base, 'a', 'completed', '2026-10-20T00:00:00.000Z'), done])?.runId).toBe('done');
+    expect(defaultWorkflowRun([])).toBeNull();
+  });
+
+  it('shows the run on the editable canvas while the saved flow is the one it froze', () => {
+    const view = resolveCanvasView({ savedGraph: saved, draftGraph: null, runs: [base], pickedRunId: null, runView: false });
+    expect(view).toMatchObject({ mode: 'edit-with-run', editable: true, diverged: false });
+    expect(view.run?.runId).toBe('run-1');
+    expect(view.overlay?.nodes[id('plan')].status).toBe('working');
+  });
+
+  it('hides the overlay once the draft differs and offers the run view', () => {
+    const draft = { ...saved, nodes: saved.nodes.slice(0, -1) };
+    const view = resolveCanvasView({ savedGraph: saved, draftGraph: draft, runs: [base], pickedRunId: null, runView: false });
+    expect(view).toMatchObject({ mode: 'edit', overlay: null, diverged: true, graph: draft });
+  });
+
+  it('shows the frozen graph read-only in the run view', () => {
+    const frozen = { ...saved, nodes: saved.nodes.slice(1) };
+    const view = resolveCanvasView({ savedGraph: saved, draftGraph: null, runs: [at(base, 'r', 'running', base.createdAt, frozen)], pickedRunId: 'r', runView: true });
+    expect(view).toMatchObject({ mode: 'run-view', editable: false, graph: frozen });
+  });
+
+  it('edits without a run when there is none', () => {
+    expect(resolveCanvasView({ savedGraph: saved, draftGraph: null, runs: [], pickedRunId: null, runView: true })).toMatchObject({ mode: 'edit', run: null, overlay: null, diverged: false, editable: true });
+  });
+});
+
+describe('workflowBackwardDepths', () => {
+  it('stacks overlapping returns at different depths and leaves forward edges alone', () => {
+    const looped = connectWorkflowEdge(connectWorkflowEdge(graph, id('implement'), 'failed', id('implement'), 'self'), id('approval'), 'rejected', id('design'), 'long');
+    const depths = workflowBackwardDepths(looped);
+    expect(depths.self).toBe(0);
+    expect(depths[id('retry')]).toBeGreaterThanOrEqual(0);
+    expect(depths.long).toBeGreaterThan(depths[id('retry')]);
+    expect(depths[graph.edges[0].id]).toBeUndefined();
+  });
+  it('drops deeper paths lower', () => {
+    expect(workflowEdgePath({ x: 900, y: 60 }, { x: 300, y: 50 }, 1).labelY).toBeGreaterThan(workflowEdgePath({ x: 900, y: 60 }, { x: 300, y: 50 }, 0).labelY);
+  });
+});
+
+describe('panel section and the saved page', () => {
+  it('maps the stored page values both ways without new values', () => {
+    expect(sectionFromPage('flow')).toBe('settings');
+    expect(sectionFromPage('stage')).toBe('stage');
+    expect(sectionFromPage('run')).toBe('run');
+    expect(pageFromSection('settings')).toBe('flow');
+    expect(pageFromSection('stage')).toBe('stage');
+    expect(pageFromSection('run')).toBe('run');
   });
 });

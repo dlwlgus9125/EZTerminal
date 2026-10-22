@@ -50,3 +50,107 @@
 .workflow-edge-path[data-run='idle'] { stroke: var(--ui-border-strong); stroke-dasharray: 3 5; }
 .workflow-edge-path[data-run='taken'] { stroke: var(--ui-accent); stroke-width: 2; }
 .workflow-edge-path[data-selected] { stroke: var(--ui-accent); stroke-width: 2.5; }
+
+/* One canvas surface: header, canvas and the stage panel. Fills the subproject view. */
+.workflow-flow { container-type: inline-size; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--ui-space-3); }
+.workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem); gap: var(--ui-space-3); }
+.workflow-flow__canvas { min-width: 0; min-height: 26rem; display: flex; flex-direction: column; }
+.workflow-flow__canvas > .workflow-node-list { overflow: auto; }
+.workflow-flow__fallback { display: flex; flex-direction: column; gap: var(--ui-space-2); min-height: 0; flex: 1 1 auto; }
+.workflow-flow__fallback > .ez-ui-button { align-self: flex-start; }
+.workflow-flow__panel { min-width: 0; min-height: 0; overflow: auto; padding: var(--ui-space-3); border-radius: var(--ui-radius-lg); background: var(--ui-surface-inset); }
+.workflow-flow__panel .workflow-inspector { padding: 0; background: none; }
+.workflow-flow__panel-head small { color: var(--ui-text-muted); }
+.workflow-flow__panel-head h3 { margin: var(--ui-space-1) 0 var(--ui-space-2); font-size: var(--ui-font-size-lg); overflow-wrap: anywhere; }
+.workflow-workspace .workflow-flow__sections, .workflow-flow .workflow-flow__sections { margin-bottom: var(--ui-space-3); }
+.workflow-flow__summary h3 { margin: 0 0 var(--ui-space-2); }
+.workflow-flow__summary h4, .workflow-node-run h4 { display: flex; align-items: center; gap: var(--ui-space-1); margin: var(--ui-space-2) 0; font-size: var(--ui-font-size-sm); }
+.workflow-flow__summary h4 svg { width: 1rem; height: 1rem; color: var(--ui-warning); }
+.workflow-flow__states { margin: 0 0 var(--ui-space-3); padding: 0; list-style: none; display: grid; gap: var(--ui-space-1); }
+.workflow-flow__states > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ui-space-2); }
+.workflow-flow .workflow-validation { margin-top: var(--ui-space-2); }
+.workflow-flow .workflow-validation ul { margin: 0; padding-left: var(--ui-space-4); }
+.workflow-node-run { display: grid; gap: var(--ui-space-3); }
+.workflow-node-run__round { display: grid; gap: var(--ui-space-2); padding-bottom: var(--ui-space-3); border-bottom: 1px solid var(--ui-border-subtle); }
+.workflow-node-run__attempts ol { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--ui-space-3); }
+.workflow-node-run__attempts li { display: grid; gap: var(--ui-space-1); }
+.workflow-node-run__attempts p { margin: 0; overflow-wrap: anywhere; }
+.workflow-node-run .workflow-approval { display: grid; gap: var(--ui-space-2); }
+.workflow-outline .workflow-item > .ez-ui-status { display: inline-flex; }
+.workflow-edge-inspector__route { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1); margin: 0; }
+
+/* Header: draft actions, run actions and the graph/list switch on one wrapping row. */
+.workflow-canvas-header { display: grid; gap: var(--ui-space-2); }
+.workflow-canvas-header__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2) var(--ui-space-4); }
+.workflow-canvas-header__group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
+.workflow-canvas-header__run { flex: 1 1 auto; }
+.workflow-canvas-header__view { display: flex; gap: var(--ui-space-1); margin-left: auto; }
+.workflow-canvas-header [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
+.workflow-canvas-header__banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); padding: var(--ui-space-2) var(--ui-space-3); border-left: 3px solid var(--ui-info); border-radius: var(--ui-radius-md); background: var(--ui-info-muted); }
+.workflow-canvas-header__banner svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+.workflow-canvas-header__banner > span { flex: 1 1 16rem; }
+.workflow-canvas-header .workflow-hint { margin: 0; }
+
+/* Canvas frame shared by both renderers. Scoped so the old editor's .workflow-canvas cap does not apply. */
+.workflow-canvas[data-renderer] { position: relative; flex: 1 1 auto; min-height: 22rem; max-height: none; overflow: hidden; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-lg); background: var(--ui-canvas); user-select: none; }
+.workflow-canvas__controls { display: flex; gap: var(--ui-space-1); padding: var(--ui-space-1); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface-raised); box-shadow: var(--ui-shadow-raised); }
+.workflow-canvas__defs { position: absolute; width: 0; height: 0; }
+.workflow-canvas__defs marker path, .workflow-static__edges marker path { fill: var(--ui-text-muted); stroke: none; }
+.workflow-canvas__badge, .workflow-static__badge { position: absolute; }
+.workflow-static__badge { transform: translate(-50%, -50%); }
+
+/* Handles: a ring on the card edge; outputs fill when they can start a connection. */
+.workflow-canvas[data-renderer] .wf-handle { position: absolute; width: 0.75rem; height: 0.75rem; min-width: 0; min-height: 0; border: 2px solid var(--ui-border-strong); border-radius: var(--ui-radius-round); background: var(--ui-surface-raised); }
+.workflow-canvas[data-renderer] .workflow-node-card__input .wf-handle { top: 0; left: 0; transform: translate(-50%, -50%); }
+.workflow-canvas[data-renderer] .workflow-node-card__ports .wf-handle { top: 50%; right: 0; left: auto; transform: translate(50%, -50%); }
+.workflow-canvas .react-flow__handle.connectable { cursor: crosshair; }
+.workflow-canvas .react-flow__handle.connectable:hover { border-color: var(--ui-accent); background: var(--ui-accent); }
+.workflow-canvas .react-flow__handle.connectingto, .workflow-canvas .react-flow__handle.valid { border-color: var(--ui-accent); background: var(--ui-accent-muted); }
+
+/* React Flow, themed only through its variables and our tokens. */
+.workflow-canvas .react-flow {
+  --xy-background-color: var(--ui-canvas);
+  --xy-background-pattern-color: var(--ui-border-subtle);
+  --xy-edge-stroke: var(--ui-text-muted);
+  --xy-edge-stroke-selected: var(--ui-accent);
+  --xy-connectionline-stroke: var(--ui-accent);
+  --xy-handle-background-color: var(--ui-surface-raised);
+  --xy-handle-border-color: var(--ui-border-strong);
+  --xy-minimap-background-color: var(--ui-surface-raised);
+  --xy-minimap-mask-background-color: var(--ui-surface-inset);
+  --xy-minimap-mask-stroke-color: var(--ui-accent);
+  --xy-minimap-node-background-color: var(--ui-border-strong);
+  --xy-minimap-node-stroke-color: var(--ui-text-muted);
+  --xy-selection-background-color: var(--ui-accent-muted);
+  --xy-selection-border: 1px dotted var(--ui-accent);
+  --xy-node-border-selected: none;
+  --xy-attribution-background-color: var(--ui-surface-raised);
+  color: var(--ui-text-primary);
+}
+.workflow-canvas .react-flow__attribution a { color: var(--ui-text-secondary); }
+.workflow-canvas .react-flow__node { border-radius: var(--ui-radius-lg); }
+.workflow-canvas .react-flow__node:focus-visible, .workflow-static__node:focus-visible { outline: none; }
+.workflow-canvas .react-flow__node:focus-visible .workflow-node-card, .workflow-static__node:focus-visible .workflow-node-card { box-shadow: var(--ui-focus-ring); }
+.workflow-canvas .react-flow__edge:focus-visible .workflow-edge-path { stroke: var(--ui-focus); stroke-width: 3; }
+.workflow-canvas .react-flow__minimap { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); overflow: hidden; }
+.workflow-canvas .react-flow__minimap .workflow-mini { fill: var(--ui-border-strong); stroke: var(--ui-text-muted); }
+.workflow-canvas .react-flow__minimap .workflow-mini--working, .workflow-canvas .react-flow__minimap .workflow-mini--reviewing { fill: var(--ui-accent-muted); stroke: var(--ui-accent); }
+.workflow-canvas .react-flow__minimap .workflow-mini--awaiting-approval { fill: var(--ui-warning-muted); stroke: var(--ui-warning); }
+
+/* Static renderer: stored positions in a scrolling area. */
+.workflow-static { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: auto; }
+.workflow-static:focus-visible { outline: none; box-shadow: inset var(--ui-focus-ring); }
+.workflow-static__content { position: relative; }
+.workflow-static__edges { position: absolute; top: 0; left: 0; overflow: visible; }
+.workflow-static__edges .workflow-edge-path { pointer-events: none; }
+.workflow-static__edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.workflow-static__node { position: absolute; border-radius: var(--ui-radius-lg); cursor: pointer; }
+
+/* The panel goes under the canvas when the surface itself is narrow (a split dock pane counts). */
+@container (max-width: 52rem) {
+  .workflow-flow__body { grid-template-columns: minmax(0, 1fr); }
+  .workflow-flow__canvas { min-height: 24rem; }
+  .workflow-canvas .react-flow__minimap svg { width: 8rem; height: 5.5rem; }
+}
+.workflow-flow[data-mobile] .workflow-flow__body { grid-template-columns: minmax(0, 1fr); }
+@media (prefers-reduced-motion: reduce) { .workflow-node-card .is-spinning { animation: none; } }
