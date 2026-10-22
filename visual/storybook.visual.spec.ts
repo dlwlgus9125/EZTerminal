@@ -354,6 +354,35 @@ test.describe("Planning and workflow project screens", () => {
   }
 });
 
+test.describe("Subproject flow canvas", () => {
+  // Approved 2026-10-22. Each story fixes its camera, so React Flow draws the same frame every time.
+  for (const visualCase of [
+    { name: "just started on the editable canvas", storyId: "production-workflow-flow-canvas--just-started", theme: "dark", scale: 100, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-started-dark-ko.png" },
+    { name: "approval stage selected (Matrix, 150%)", storyId: "production-workflow-flow-canvas--awaiting-approval-selected", theme: "matrix", scale: 150, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-approval-matrix-150-ko.png", jumpToApproval: true },
+    { name: "frozen run view of an older version", storyId: "production-workflow-flow-canvas--frozen-run-view", theme: "light", scale: 100, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-run-view-light-ko.png" },
+    { name: "narrow dock stacks the stage panel", storyId: "production-workflow-flow-canvas--narrow", theme: "dark", scale: 100, viewport: { width: 800, height: 600 }, screenshot: "desktop-800x600-flow-canvas-narrow-dark-ko.png" },
+    { name: "Android list with run state", storyId: "production-workflow-flow-canvas--mobile-list", theme: "dark", scale: 100, viewport: { width: 390, height: 844 }, screenshot: "mobile-390x844-flow-canvas-list-dark-ko.png", list: true },
+  ] as const) {
+    test(visualCase.name, async ({ page }) => {
+      await page.setViewportSize(visualCase.viewport);
+      await openStory(page, visualCase.storyId, { theme: visualCase.theme, locale: "ko", density: "adaptive", motion: "reduced", scale: visualCase.scale });
+      await expect(page.locator(".workflow-flow")).toBeVisible();
+      if (!("list" in visualCase)) {
+        await expect(page.locator(".react-flow__node").first()).toBeVisible();
+        await expect(page.locator(".react-flow__edge").first()).toBeAttached();
+      }
+      if ("jumpToApproval" in visualCase) {
+        // The header chip centres the waiting stage: the path a user takes, and the frame that matters at 150%.
+        await page.getByRole("button", { name: "승인 대기 1" }).click();
+        await expect(page.locator('.react-flow__node[data-id="login:approval"]')).toBeInViewport();
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(visualCase.screenshot, { animations: "disabled" });
+    });
+  }
+});
+
 test.describe("Conversation Results tab", () => {
   // Real Claude/Codex goldens; each story pins its own locale.
   for (const visualCase of [
