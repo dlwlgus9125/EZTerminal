@@ -1,14 +1,13 @@
-import { ArrowLeft, Eye, FileSearch, GitBranch, Hand, LayoutGrid, List, MessageSquare, Pause, Play, Plus, Save, Square, Undo2 } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, Bot, Eye, FileSearch, Flag, GitBranch, GitMerge, Hand, LayoutGrid, List, MessageSquare, Pause, Play, Plus, Save, Split, Square, Undo2, type LucideIcon } from 'lucide-react';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowCommand, WorkflowNode } from '../../shared/workflow';
-import { Badge, Button, Select } from '../ui';
+import { Badge, Button, IconButton, Menu, MenuItem, Select } from '../ui';
 import { workflowRunControls, type WorkflowCanvasMode } from './workflow-canvas-model';
 import { workflowOperationLabel, workflowStateLabel, type WorkflowCopy } from './workflow-copy';
 
 type RunCommand = Extract<WorkflowCommand, { type: 'run.start' | 'run.pause' | 'run.resume' | 'run.approve' | 'run.cancel' | 'run.integrate' }>;
 export type WorkflowRunCommandInput<C = RunCommand> = C extends RunCommand ? Pick<C, 'type' | 'payload'> : never;
-const OPERATIONS: WorkflowNode['operation'][] = ['agent', 'approval', 'condition', 'parallel', 'join', 'complete'];
+const OPERATIONS: Array<[WorkflowNode['operation'], LucideIcon]> = [['agent', Bot], ['approval', Hand], ['condition', Split], ['parallel', Split], ['join', GitMerge], ['complete', Flag]];
 
 export interface WorkflowCanvasHeaderProps {
   readonly text: WorkflowCopy;
@@ -45,7 +44,6 @@ export interface WorkflowCanvasHeaderProps {
  */
 export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Element {
   const { text, mode, run, editLocked, commandsDisabled } = props;
-  const [operation, setOperation] = useState<WorkflowNode['operation']>('agent');
   const controls = run ? workflowRunControls(run) : null;
   const ended = run ? run.state === 'completed' || run.state === 'cancelled' : true;
   const version = run?.preparation.workflow?.revision ?? '?';
@@ -63,10 +61,9 @@ export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Elem
             <Button size="sm" variant="primary" leadingIcon={<Save />} disabled={editLocked || commandsDisabled} onClick={props.onSaveDraft}>{text('초안 저장', 'Save draft')}</Button>
             <Button size="sm" leadingIcon={<Undo2 />} disabled={editLocked} onClick={props.onDiscardDraft}>{text('변경 취소', 'Discard changes')}</Button>
           </>}
-          <span className="workflow-canvas-header__add">
-            <Select aria-label={text('추가할 단계 종류', 'New stage type')} value={operation} disabled={editLocked} onChange={event => setOperation(event.target.value as WorkflowNode['operation'])}>{OPERATIONS.map(item => <option key={item} value={item}>{workflowOperationLabel(item, text)}</option>)}</Select>
-            <Button size="sm" leadingIcon={<Plus />} disabled={editLocked} onClick={() => props.onAddStage(operation)}>{text('단계 추가', 'Add stage')}</Button>
-          </span>
+          <Menu label={text('추가할 단계 종류', 'New stage type')} trigger={<Button size="sm" leadingIcon={<Plus />} disabled={editLocked}>{text('단계 추가', 'Add stage')}</Button>}>
+            {OPERATIONS.map(([operation, icon]) => <MenuItem key={operation} icon={icon} onSelect={() => props.onAddStage(operation)}>{workflowOperationLabel(operation, text)}</MenuItem>)}
+          </Menu>
           <Button size="sm" leadingIcon={<Play />} disabled={editLocked || commandsDisabled || props.hasLocalDraft || props.issueCount > 0} onClick={props.onPrepareRun}>{run && !ended ? text('새 실행 준비', 'Prepare a new run') : text('실행 준비', 'Prepare run')}</Button>
         </div>}
       {run && controls && <div className="workflow-canvas-header__group workflow-canvas-header__run" role="group" aria-label={text('실행', 'Run')}>
@@ -88,8 +85,8 @@ export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Elem
         {props.onOpenResults && run.state !== 'prepared' && <Button size="sm" variant="ghost" leadingIcon={<FileSearch />} onClick={() => props.onOpenResults!(run.runId)}>{text('결과·검토·통합', 'Results, review, integration')}</Button>}
       </div>}
       <div className="workflow-canvas-header__view" role="group" aria-label={text('흐름 보기', 'Workflow view')}>
-        <Button size="sm" aria-pressed={props.layout === 'graph'} onClick={() => props.onLayoutChange('graph')} leadingIcon={<GitBranch />}>{text('그래프', 'Graph')}</Button>
-        <Button size="sm" aria-pressed={props.layout === 'list'} onClick={() => props.onLayoutChange('list')} leadingIcon={<List />}>{text('목록', 'List')}</Button>
+        <IconButton icon={GitBranch} aria-pressed={props.layout === 'graph'} aria-label={text('그래프', 'Graph')} onClick={() => props.onLayoutChange('graph')} />
+        <IconButton icon={List} aria-pressed={props.layout === 'list'} aria-label={text('목록', 'List')} onClick={() => props.onLayoutChange('list')} />
       </div>
     </div>
     {props.overlapping && mode !== 'run-view' && props.layout === 'graph' && <p className="workflow-canvas-header__overlap" role="status"><span>{text('겹쳐 있는 단계가 있습니다.', 'Some stages overlap.')}</span><Button size="sm" leadingIcon={<LayoutGrid />} disabled={editLocked} onClick={props.onAutoLayout}>{text('자동 정렬', 'Tidy layout')}</Button></p>}

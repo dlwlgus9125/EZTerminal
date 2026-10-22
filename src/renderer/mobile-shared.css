@@ -22,7 +22,6 @@
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__row,
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__group,
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__view,
-[data-ui-flex-gap='unsupported'] .workflow-canvas-header__add,
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__banner,
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__overlap,
 [data-ui-flex-gap='unsupported'] .workflow-flow__states > li,
@@ -40,7 +39,6 @@
 [data-ui-flex-gap='unsupported'] .workflow-node-card__run > *,
 [data-ui-flex-gap='unsupported'] .workflow-edge-inspector__route > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-1); }
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__view > *,
-[data-ui-flex-gap='unsupported'] .workflow-canvas-header__add > *,
 [data-ui-flex-gap='unsupported'] .workflow-node-card__kind > *,
 [data-ui-flex-gap='unsupported'] .workflow-node-card__issues > *,
 [data-ui-flex-gap='unsupported'] .workflow-canvas__controls > * { margin-right: var(--ui-space-1); }

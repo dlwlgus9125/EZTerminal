@@ -54,7 +54,7 @@
 
 /* One canvas surface: header, canvas and the stage panel. Fills the subproject view. */
 .workflow-flow { container-type: inline-size; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--ui-space-3); }
-.workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem); gap: var(--ui-space-3); }
+.workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); gap: var(--ui-space-3); }
 .workflow-flow__canvas { min-width: 0; min-height: 26rem; display: flex; flex-direction: column; }
 .workflow-flow__canvas > .workflow-node-list { overflow: auto; }
 .workflow-flow__fallback { display: flex; flex-direction: column; gap: var(--ui-space-2); min-height: 0; flex: 1 1 auto; }
@@ -84,10 +84,8 @@
 .workflow-canvas-header { display: grid; gap: var(--ui-space-2); }
 .workflow-canvas-header__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2) var(--ui-space-4); }
 .workflow-canvas-header__group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
-.workflow-canvas-header__run { flex: 1 1 auto; }
-.workflow-canvas-header__view { display: flex; gap: var(--ui-space-1); margin-left: auto; }
-.workflow-canvas-header__add { display: inline-flex; align-items: center; gap: var(--ui-space-1); }
-.workflow-canvas-header__add select { min-width: 7rem; }
+.workflow-canvas-header__run { flex: 1 1 100%; order: 3; }
+.workflow-canvas-header__view { display: flex; gap: var(--ui-space-1); margin-left: auto; order: 2; }
 .workflow-canvas-header [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
 .workflow-canvas-header__banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); padding: var(--ui-space-2) var(--ui-space-3); border-left: 3px solid var(--ui-info); border-radius: var(--ui-radius-md); background: var(--ui-info-muted); }
 .workflow-canvas-header__banner svg { width: 1rem; height: 1rem; flex-shrink: 0; }
@@ -137,6 +135,8 @@
 .workflow-canvas .react-flow__node:focus-visible .workflow-node-card, .workflow-static__node:focus-visible .workflow-node-card { box-shadow: var(--ui-focus-ring); }
 .workflow-canvas .react-flow__edge:focus-visible .workflow-edge-path { stroke: var(--ui-focus); stroke-width: 3; }
 .workflow-canvas .react-flow__minimap { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); overflow: hidden; }
+/* A small overview: the canvas is often a dock pane, and the map must not cover the stages. */
+.workflow-canvas .react-flow__minimap svg { width: 10rem; height: 6.5rem; }
 .workflow-canvas .react-flow__minimap .workflow-mini { fill: var(--ui-border-strong); stroke: var(--ui-text-muted); }
 .workflow-canvas .react-flow__minimap .workflow-mini--working, .workflow-canvas .react-flow__minimap .workflow-mini--reviewing { fill: var(--ui-accent-muted); stroke: var(--ui-accent); }
 .workflow-canvas .react-flow__minimap .workflow-mini--awaiting-approval { fill: var(--ui-warning-muted); stroke: var(--ui-warning); }
@@ -151,12 +151,11 @@
 .workflow-static__node { position: absolute; border-radius: var(--ui-radius-lg); cursor: pointer; }
 
 /* The panel goes under the canvas when the surface itself is narrow (a split dock pane counts). */
-@container (max-width: 52rem) {
+@container (max-width: 40rem) {
   /* Canvas and panel stack and scroll together, so the panel is never squeezed to a sliver. */
   .workflow-flow__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 24rem auto; overflow: auto; }
   .workflow-flow__canvas { min-height: 0; }
   .workflow-flow__panel { overflow: visible; }
-  .workflow-canvas .react-flow__minimap svg { width: 8rem; height: 5.5rem; }
 }
 /* Android WebView 74 ignores container queries: the mobile surface always stacks and scrolls as one. */
 .workflow-flow[data-mobile] .workflow-flow__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; overflow: auto; }

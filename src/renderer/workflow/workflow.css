@@ -73,6 +73,7 @@
 .workflow-preview li > span, .workflow-preview li > small { margin-top: var(--ui-space-1); color: var(--ui-text-muted); }
 /* The flow canvas fills the rest of the workspace; the canvas and stage panel scroll inside. */
 .workflow-workspace[data-view='flow'] { display: flex; flex-direction: column; overflow: hidden; }
+.workflow-workspace[data-view='flow'] > :not(.workflow-flow-host) { flex-shrink: 0; }
 .workflow-flow-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .workflow-flow-host > .workflow-flow { flex: 1 1 auto; }
 .workflow-workspace[data-mobile] .workflow-flow-host { min-height: 32rem; }
