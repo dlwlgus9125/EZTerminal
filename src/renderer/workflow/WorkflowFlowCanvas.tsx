@@ -1,12 +1,12 @@
 import {
-  Background, BackgroundVariant, EdgeLabelRenderer, Handle, MiniMap, Panel, Position, ReactFlow, useNodesInitialized, useReactFlow,
+  Background, BackgroundVariant, EdgeLabelRenderer, Handle, MiniMap, Panel, Position, ReactFlow, useNodesInitialized, useReactFlow, useUpdateNodeInternals,
   type Connection, type Edge, type EdgeChange, type EdgeProps, type Node, type NodeChange, type NodeProps, type OnBeforeDelete, type XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
 import './workflow-flow-canvas.css';
 import { LayoutGrid, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { WorkflowEdge, WorkflowNode } from '../../shared/workflow-graph';
+import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
 import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
@@ -23,7 +23,11 @@ type StageNode = Node<StageData, 'stage'>;
 type FlowEdgeData = { badge: string | null; run?: WorkflowEdgeRunView; retry: boolean; marker: string; depth: number; scale: number };
 type FlowEdge = Edge<FlowEdgeData, 'workflow'>;
 
-function StageNodeView({ data, selected }: NodeProps<StageNode>): JSX.Element {
+function StageNodeView({ id, data, selected }: NodeProps<StageNode>): JSX.Element {
+  // A new operation brings new ports; React Flow re-reads handles only on resize unless told.
+  const updateInternals = useUpdateNodeInternals();
+  const ports = workflowOutcomePorts(data.stage.operation).join(' ');
+  useEffect(() => { updateInternals(id); }, [id, ports, updateInternals]);
   return <WorkflowNodeCard node={data.stage} text={data.text} entry={data.entry} selected={selected} run={data.run} issueCount={data.issues}
     inputHandle={<Handle type="target" position={Position.Left} id="in" className="wf-handle" isConnectable={data.editable} />}
     outputHandle={outcome => <Handle type="source" position={Position.Right} id={outcome} className="wf-handle" isConnectable={data.editable} />} />;

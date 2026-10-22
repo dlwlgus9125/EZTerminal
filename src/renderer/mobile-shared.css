@@ -30,7 +30,11 @@
 [data-ui-flex-gap='unsupported'] .workflow-node-card__run,
 [data-ui-flex-gap='unsupported'] .workflow-node-card__issues,
 [data-ui-flex-gap='unsupported'] .workflow-canvas__controls,
-[data-ui-flex-gap='unsupported'] .workflow-edge-inspector__route { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-edge-inspector__route,
+[data-ui-flex-gap='unsupported'] .workflow-flow__summary h4,
+[data-ui-flex-gap='unsupported'] .workflow-node-run h4 { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-flow__summary h4 > svg,
+[data-ui-flex-gap='unsupported'] .workflow-node-run h4 > svg { margin-right: var(--ui-space-1); }
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__row > *,
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__group > *,
 [data-ui-flex-gap='unsupported'] .workflow-canvas-header__banner > *,

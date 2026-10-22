@@ -189,6 +189,16 @@ export function defaultWorkflowRun(runs: readonly ExecutionRun[]): ExecutionRun 
   return newest.find(run => !runEnded(run)) ?? newest[0] ?? null;
 }
 
+/**
+ * The run already on screen stays there when it finishes (a poll must not swap in an older running
+ * one); only a newer run, prepared here or by an AI, takes its place.
+ */
+export function stickyWorkflowRun(runs: readonly ExecutionRun[], shownRunId: string | null): ExecutionRun | null {
+  const shown = runs.find(run => run.runId === shownRunId);
+  const fallback = defaultWorkflowRun(runs);
+  return shown && (!fallback || fallback.createdAt <= shown.createdAt) ? shown : fallback;
+}
+
 export type WorkflowCanvasMode = 'edit' | 'edit-with-run' | 'run-view';
 export interface WorkflowCanvasView {
   readonly mode: WorkflowCanvasMode;
@@ -204,8 +214,8 @@ export interface WorkflowCanvasView {
  * there is no unsaved draft) the run's state sits on the editable canvas. Otherwise the draft is
  * shown plain, and the run is one click away as a read-only view of its frozen graph.
  */
-export function resolveCanvasView(input: { savedGraph: WorkflowGraph; draftGraph: WorkflowGraph | null; runs: readonly ExecutionRun[]; pickedRunId: string | null; runView: boolean }): WorkflowCanvasView {
-  const run = input.runs.find(entry => entry.runId === input.pickedRunId) ?? defaultWorkflowRun(input.runs);
+export function resolveCanvasView(input: { savedGraph: WorkflowGraph; draftGraph: WorkflowGraph | null; runs: readonly ExecutionRun[]; pickedRunId: string | null; runView: boolean; shownRunId?: string | null }): WorkflowCanvasView {
+  const run = input.runs.find(entry => entry.runId === input.pickedRunId) ?? stickyWorkflowRun(input.runs, input.shownRunId ?? null);
   const frozen = run?.preparation.workflow?.graph;
   if (run && frozen && input.runView) return { mode: 'run-view', graph: frozen, run, overlay: projectRunOverlay(run), editable: false, diverged: false };
   const editing = input.draftGraph ?? input.savedGraph;

@@ -250,4 +250,43 @@ describe('WorkflowWorkspacePanel · one canvas', () => {
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({ type: 'run.approve', payload: { runId: 'run-login-4', activationId: 'wf:login:approval:1', decision: 'approve' } });
   });
+  it('offers no run actions on an archived subproject (the host rejects them)', async () => {
+    const scene = workflowCanvasFixture('awaiting-approval', 'en'); const base = workflowFixture();
+    const snapshot = { ...base, subprojects: [{ ...base.subprojects[0], status: 'archived' as const, graph: scene.graph }, ...base.subprojects.slice(1)], runs: [scene.run!] };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn() };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} navigationTarget={{ subprojectId: 'login', nodeId: 'login:approval', key: 'archived' }} conversations={[]} />));
+    await click('Run status');
+    expect(button('Approve').disabled).toBe(true);
+    expect(button('Pause').disabled).toBe(true);
+    expect(button('Cancel execution').disabled).toBe(true);
+  });
+  it("keeps each subproject's canvas camera across History and back, separately per subproject", async () => {
+    const state = fixture(); const seen: unknown[] = []; let report: WorkflowCanvasRendererProps['onViewportChange'];
+    function CameraCanvas({ initialViewport, onViewportChange }: WorkflowCanvasRendererProps): JSX.Element {
+      const first = useRef(initialViewport ?? null);
+      useEffect(() => { seen.push(first.current); }, []);
+      report = onViewportChange;
+      return <div data-renderer="camera" />;
+    }
+    const open = async (subprojectId: string, key: string) => { await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} canvasRenderer={CameraCanvas} navigationTarget={{ subprojectId, key }} conversations={[]} />)); };
+    await open('login', 'a');
+    await act(async () => report?.({ x: 10, y: 20, zoom: 0.5 }));
+    await click('History'); await click('Flow');
+    await open('payments', 'b');
+    await open('login', 'c');
+    expect(seen).toEqual([null, { x: 10, y: 20, zoom: 0.5 }, null, { x: 10, y: 20, zoom: 0.5 }]);
+  });
+  it('opens an archived stage from History as that stage, even if a connection was selected', async () => {
+    const base = workflowFixture(); const login = base.subprojects[0];
+    const old = { ...login.graph.nodes[0], id: 'login:old', title: 'Old stage', document: 'Old notes' };
+    const snapshot = { ...base, subprojects: [{ ...login, archivedNodes: [old] }, ...base.subprojects.slice(1)] };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn() };
+    function EdgePicker({ graph, onSelect }: WorkflowCanvasRendererProps): JSX.Element { return <button type="button" onClick={() => onSelect({ kind: 'edge', id: graph.edges[0].id })}>Pick connection</button>; }
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} canvasRenderer={EdgePicker} navigationTarget={{ subprojectId: 'login', key: 'edge' }} conversations={[]} />));
+    await click('Pick connection');
+    expect(document.querySelector('.workflow-flow__panel')?.getAttribute('aria-label')).toBe('Connection');
+    await click('History'); await click('Old stage');
+    expect(document.querySelector('.workflow-flow__panel')?.getAttribute('aria-label')).toBe('Old stage');
+    expect((document.querySelector('.workflow-stage textarea') as HTMLTextAreaElement).value).toBe('Old notes');
+  });
 });

@@ -211,6 +211,23 @@ export const ConnectByDrag: Story = {
     await waitFor(() => expect(edges(canvasElement)).toBe(before + 1));
   },
 };
+/** Changing a stage's operation changes its ports; the new ports connect and their connections draw. */
+export const NewPortsAfterOperationChange: Story = {
+  args: { scenario: 'edit', select: { kind: 'node', key: 'plan' }, section: 'settings', camera: { column: 0, zoom: 0.9 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="next"]')).not.toBeNull());
+    // Parallel and approval cards have the same size, so React Flow sees no resize between them.
+    await userEvent.selectOptions(canvas.getByLabelText(/^(동작|Operation)$/u), 'parallel');
+    await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="failed"]')).toBeNull());
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await userEvent.selectOptions(canvas.getByLabelText(/^(동작|Operation)$/u), 'approval');
+    await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="approved"]')).not.toBeNull());
+    const before = edges(canvasElement);
+    await dragBetween(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="approved"]')!, canvasElement.querySelector('[data-id="login:design"] [data-handleid="in"]')!);
+    await waitFor(() => expect(edges(canvasElement)).toBe(before + 1));
+  },
+};
 /** Keyboard only: Tab to a connection, select it, Delete removes it. */
 export const DeleteConnectionByKeyboard: Story = {
   args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },

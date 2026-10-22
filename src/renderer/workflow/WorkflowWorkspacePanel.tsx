@@ -104,6 +104,9 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   // The one canvas: a connection can be selected besides a stage (nodeId); the run view and
   // graph/list choice live in memory. 'flow' | 'stage' | 'run' pages are its panel sections.
   const [edgeId, setEdgeId] = useState<string | null>(null);
+  // Canvas cameras per subproject and view, kept while this project is open (never stored).
+  const canvasCameras = useRef<Record<string, Record<string, { x: number; y: number; zoom: number }>>>({});
+  const camerasFor = (subprojectId: string) => { if (!canvasCameras.current[subprojectId]) canvasCameras.current[subprojectId] = {}; return canvasCameras.current[subprojectId]; };
   const [runView, setRunView] = useState(false);
   const [layout, setLayout] = useState<'graph' | 'list'>(mobile ? 'list' : 'graph');
   const [resultSelection, setResultSelection] = useState<PlanningResultSelection | null>(null);
@@ -300,7 +303,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     if (create?.previewSessionId && access.workflowPreview) { const result = await access.workflowPreview({ action: 'discard', projectId, previewId: create.id }); if (!result.ok) { setError(result.message); return; } }
     setCreationVisible(false); setCreate(null);
   };
-  const openStage = (id: string): void => { setNodeId(id); setView('stage'); };
+  const openStage = (id: string): void => { setNodeId(id); setEdgeId(null); setRunView(false); setView('stage'); };
   const startChat = (target: NonNullable<typeof chatTarget>): void => {
     if (!target.subprojectId && !target.previewId && onNewConversation) { onNewConversation(); return; }
     if (daemonAccess) { chatDraftForm.current = undefined; setChatTarget(target); }
@@ -373,7 +376,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       <div className="workflow-toolbar workflow-tabs" role="group" aria-label={text('소프로젝트 보기', 'Subproject view')}>{(['flow', 'history', ...(renderPlanning ? ['planning'] as const : [])] as const).map(tab => <Button key={tab} aria-pressed={tab === 'flow' ? flowPage : view === tab} onClick={() => setView(tab === 'flow' ? (flowPage ? view : lastFlowPage.current) : tab)}>{({ flow: text('흐름', 'Flow'), history: text('변경 기록', 'History'), planning: text('기획·설계·검토', 'Planning, design and review') })[tab]}</Button>)}</div>
       {(selected.status !== 'active' || (local && selected.revision !== local.baseRevision)) && <div className="workflow-toolbar workflow-subproject-actions">{selected.status !== 'active' && <Badge>{selected.status === 'archived' ? text('보관됨', 'Archived') : text('완료됨', 'Completed')}</Badge>}{local && selected.revision !== local.baseRevision && <span role="alert">{text('다른 창 또는 AI가 수정했습니다. 현재 입력을 보존한 채 최신 변경을 비교하세요.', 'Another window or AI changed this workflow. Your input is preserved; compare the latest changes.')}</span>}</div>}
       {flowPage && <div className="workflow-flow-host"><WorkflowFlowSurface key={selected.id} text={text} mobile={mobile} savedGraph={selected.graph} draftGraph={local?.graph ?? null} revision={selected.revision} archivedNodes={selected.archivedNodes} runs={runs}
-        editLocked={editLocked} commandsDisabled={hostLocked} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
+        editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}
         onSelectionChange={next => { setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); }}
         section={sectionFromPage(lastFlowPage.current)} onSectionChange={next => setView(pageFromSection(next))}
@@ -384,7 +387,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         stageLinks={stageLinksFor} canStartStageChat={!!daemonAccess} onStartStageChat={stageId => startChat({ subprojectId: selected.id, nodeId: stageId, scope: 'stage' })}
         onOpenConversation={onOpenConversation} onOpenResults={renderPlanning ? runId => { setAdvancedRunId(runId); setView('planning'); } : undefined}
         onOpenAttemptResult={readPlanningResult ? (_runId, attemptId) => setResultSelection({ kind: 'attempt', projectId, subprojectId: selected.id, attemptId }) : undefined}
-        canvasRenderer={canvasRenderer} onReloadCanvas={onReloadCanvas} active={active}
+        canvasRenderer={canvasRenderer} onReloadCanvas={onReloadCanvas} active={active} cameras={camerasFor(selected.id)}
         revealRequest={revealRequest} onRevealHandled={() => setRevealRequest(undefined)} /></div>}
       {view === 'history' && <div className="workflow-history"><h3><History aria-hidden="true" />{text('변경 기록', 'Change history')}</h3>{selected.history.length === 0 && <p>{text('저장된 변경이 없습니다.', 'No saved changes.')}</p>}<ol>{[...selected.history].reverse().map(change => <li key={change.id}><div><strong>v{change.revision} · {change.summary}</strong><p>{change.actor.kind === 'ai' ? 'AI' : text('사용자', 'User')} · {new Date(change.createdAt).toLocaleString()}</p><small>{change.before.nodes.length} → {change.after.nodes.length} {text('단계', 'stages')} · {change.before.edges.length} → {change.after.edges.length} {text('연결', 'connections')}{change.undoOf ? text(' · 되돌리기', ' · Undo') : ''}</small></div>{change.actor.sessionId && <Button onClick={() => onOpenConversation?.(change.actor.sessionId!)}>{text('원래 대화', 'Source conversation')}</Button>}<Button disabled={readOnly || !!local} leadingIcon={<Undo2 />} onClick={() => void execute({ type: 'workflow.undo', payload: { changeId: change.id } })}>{text('이 변경 되돌리기', 'Undo this change')}</Button></li>)}</ol>{selected.archivedNodes.length > 0 && <><h3>{text('보관된 단계', 'Archived stages')}</h3>{selected.archivedNodes.map(item => <Button key={item.id} onClick={() => openStage(item.id)}>{item.title}</Button>)}</>}</div>}
     </>}

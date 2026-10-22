@@ -58,6 +58,8 @@ export interface WorkflowFlowSurfaceProps {
   /** False while the dock tab is hidden: no fit, no dialogs left on top of another tab. */
   readonly active?: boolean;
   readonly initialViewport?: WorkflowCanvasRendererProps['initialViewport'];
+  /** Camera per view, owned by the workspace so it survives History and back (memory only). */
+  readonly cameras?: Record<string, { x: number; y: number; zoom: number }>;
   /** A stage opened from elsewhere (a chat's "Return to this stage"): show it and bring its panel into view once. */
   readonly revealRequest?: { readonly nodeId: string; readonly key: string };
   readonly onRevealHandled?: () => void;
@@ -72,7 +74,9 @@ const OPERATION_DEFAULTS: Partial<Record<WorkflowNode['operation'], Partial<Work
  */
 export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Element {
   const { text, selection, section, active = true } = props;
-  const view = resolveCanvasView({ savedGraph: props.savedGraph, draftGraph: props.draftGraph, runs: props.runs, pickedRunId: props.pickedRunId, runView: props.runView });
+  const shownRun = useRef<string | null>(null);
+  const view = resolveCanvasView({ savedGraph: props.savedGraph, draftGraph: props.draftGraph, runs: props.runs, pickedRunId: props.pickedRunId, runView: props.runView, shownRunId: shownRun.current });
+  shownRun.current = view.run?.runId ?? null;
   const editable = view.editable && !props.editLocked;
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [reveal, setReveal] = useState<{ nodeId: string; key: number } | undefined>();
@@ -85,7 +89,8 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     return next.width === current.width && next.height === current.height ? current : next;
   }), []);
   const onRevealed = useCallback(() => setReveal(undefined), []);
-  const cameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
+  const localCameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
+  const cameras = props.cameras ?? localCameras.current;
   const panel = useRef<HTMLElement>(null);
   const canvasCell = useRef<HTMLDivElement>(null);
   /** Beside the canvas the panel scrolls on its own; only a panel stacked under it (narrow dock, Android) is brought into view. */
@@ -139,8 +144,8 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const staticRenderer = Renderer === WorkflowStaticGraph;
   const rendererProps: WorkflowCanvasRendererProps = {
     graph: view.graph, overlay: view.overlay, editable, selection, onSelect: select, onGraphChange: change, text, issueCounts,
-    label: text('흐름 캔버스', 'Flow canvas'), active, initialViewport: cameras.current[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
-    onViewportChange: viewport => { cameras.current[cameraKey] = viewport; }, onRequestDeleteNode: editable ? setRemoveId : undefined, reveal, onTidy: editable ? tidy : undefined,
+    label: text('흐름 캔버스', 'Flow canvas'), active, initialViewport: cameras[cameraKey] ?? props.initialViewport, onRevealed, onCardSize,
+    onViewportChange: viewport => { cameras[cameraKey] = viewport; }, onRequestDeleteNode: editable ? setRemoveId : undefined, reveal, onTidy: editable ? tidy : undefined,
   };
   const removeNode = (id: string) => change({ ...view.graph, nodes: view.graph.nodes.filter(item => item.id !== id), edges: view.graph.edges.filter(item => item.from !== id && item.to !== id), entryNodeId: view.graph.entryNodeId === id ? null : view.graph.entryNodeId });
   const help = view.graph.nodes.length === 0
