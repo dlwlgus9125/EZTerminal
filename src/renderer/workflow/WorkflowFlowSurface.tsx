@@ -143,7 +143,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
           <p role="alert" className="workflow-notice">{text('캔버스를 불러오지 못해 간단한 그래프로 보여 줍니다. 편집은 오른쪽 패널과 목록에서 할 수 있습니다.', 'The canvas did not load, so a simple graph is shown. Edit in the panel and the list.')}</p>
           <Button size="sm" onClick={retry}>{text('캔버스 다시 불러오기', 'Reload the canvas')}</Button>
           <WorkflowStaticGraph {...rendererProps} />
-        </div>}><Suspense fallback={<LoadingState label={text('캔버스 불러오는 중', 'Loading the canvas')} />}><Renderer {...rendererProps} /></Suspense></WorkflowCanvasBoundary>
+        </div>}><Suspense fallback={<LoadingState label={text('캔버스 불러오는 중', 'Loading the canvas')} />}><Renderer key={cameraKey} {...rendererProps} /></Suspense></WorkflowCanvasBoundary>
           : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} />}
       </div>
       <aside ref={panel} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('흐름 요약', 'Flow summary')}>
