@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:dd45d7a7f75722fab24f92b577a49b2ce525dfe66e88f187c9e3b65da649acaf",
+        "inputDigest": "sha256:e691872deaed1426da6b4ca52ca06bb29cd6aeec9ed17d5c291e281af9d9acd5",
         "decision": "map-updated",
         "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
       }
@@ -369,7 +369,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:310e55eac821a09925223feecf0c5d38b8481d44c7d278e12c5f04f089769b67",
+        "inputDigest": "sha256:fb7402bf52dd02e4af1f645099d585136a3c14bd23bab781b23198850f468099",
         "decision": "map-updated",
         "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
       }
@@ -501,7 +501,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:cb473eb112977af5eb32320dda855db294b9096528f1bb8620c70f0d50804094",
+        "inputDigest": "sha256:f1a85bc4e59a06d3f9ad621364e4132ba4506f1ff767581c9a23087cd4675749",
         "decision": "map-updated",
         "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
       }
@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:349e60023c1d70e7c3718d6fc71b207b31a44667bccd338f6d0a4956607fb847",
+        "inputDigest": "sha256:87278175e1d389d501f6a3b77b4c6f911efa21e9ea07458870ff197ab18923a4",
         "decision": "map-updated",
         "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
       }
@@ -665,7 +665,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b2e6a5498ea7736f835dbab48fef463f4874eb912cd676b4ff97a723e79c32ce",
+        "inputDigest": "sha256:aad327b95ce80a59c1254d4230b64d1c9548149c8a78c0c5f8054f057ec56ab4",
         "decision": "map-updated",
         "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
       }
@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:82ea61433015b92ec040f4d5ab6a7e375b824054e8579fefc870aee0ca9839b1",
+        "inputDigest": "sha256:89bd60e4f09db14630ae8077e17a4824d43fc6ac0d643316627e12ff20b2d004",
         "decision": "map-updated",
         "reason": "Reviewed: only Claude permission state handling changed (a lowered level cancels pending Full access); capability discovery, model listing and readiness are unchanged. Anchors only moved."
       }

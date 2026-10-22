@@ -149,6 +149,7 @@ import type {
   InstalledAgentAdapter,
 } from './agent-adapter';
 import type { SessionSurfaceApi } from './session-surface';
+import type { ConversationFolders } from './conversation-folders';
 import type {
   AppUpdateOpenResult,
   AppUpdateSnapshot,
@@ -1634,6 +1635,13 @@ export interface EzTerminalDesktopApi {
 
   // Registered-project, root-contained, read-only code workbench.
   describeProjectWorkspace: (projectId: string) => Promise<ProjectWorkspaceDescriptorResult>;
+  /**
+   * The folders an agent conversation works in, as the host hands them to the AI: an existing
+   * session, or a new conversation in a project workspace. Null when the target is unknown.
+   */
+  getConversationFolders: (
+    target: { readonly sessionId: string } | { readonly projectId: string; readonly workspaceId: string },
+  ) => Promise<ConversationFolders | null>;
   /** Resolve a displayed absolute directory to exact, main-owned project terminal metadata. */
   resolveProjectTerminalDirectory: (
     request: ProjectTerminalDirectoryRequest,

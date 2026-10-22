@@ -59,8 +59,11 @@ async function startConversation(page: Page, projectRoot: string): Promise<strin
   await page.getByTestId('agent-new-run').click();
   const draft = page.getByTestId('conversation-start');
   await expect(draft).toBeVisible();
-  await expect(draft.getByRole('combobox', { name: 'Conversation AI' })).toHaveValue('codex');
-  await draft.getByRole('combobox', { name: 'Conversation workspace' }).selectOption(workspace.id);
+  // The AI and the working folder are chosen under the message box.
+  await expect(draft.getByTestId('structured-agent-live-model')).toHaveAttribute('aria-label', /^Codex model: /u);
+  await draft.getByTestId('structured-agent-folders').click();
+  await page.getByRole('menuitemradio').filter({ has: page.getByText(workspace.name, { exact: true }) }).click();
+  await expect(draft.getByTestId('structured-agent-folders')).toHaveAttribute('aria-label', `Working folder: ${workspace.name}`);
   return workspace.id;
 }
 

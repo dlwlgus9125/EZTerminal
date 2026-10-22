@@ -258,6 +258,8 @@ interface StructuredAgentNavigationContextValue {
   /** `/clear`: the tab becomes a new conversation in the same place. */
   /** `/clear`: true once the tab was replaced. */
   readonly clearConversation?: (panelId: string, request: StructuredAgentClearRequest) => boolean;
+  /** Opens the project editor (its folders) from a conversation's folder setting. */
+  readonly editProject?: (projectId: string) => void;
 }
 const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
 interface StructuredAgentCreateRecoveryContextValue {
@@ -513,6 +515,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
     : undefined;
   if (window.ezterminal.resolveConversation && !createRecovery?.registry.get(props.api.id)) return <ConversationDockPanel props={props}
     onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings} onContinueCli={navigation?.continueCli}
+    onEditProject={navigation?.editProject}
     onReviewChange={reviewNavigation ? async (entry, turnId, changedPath) => {
       if (!entry.historyId) return;
       let projectId = props.params?.projectId ?? entry.projectId;
@@ -532,7 +535,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
     renderLive={(sessionId, conversationId) => <StructuredAgentDockPanel key={sessionId} {...props}
       params={{ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), conversationId }}
       onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings}
-      onNewConversation={navigation?.newConversation} onClearConversation={clearConversation} />} />;
+      onNewConversation={navigation?.newConversation} onClearConversation={clearConversation} onEditProject={navigation?.editProject} />} />;
   return isStructuredAgentDockHistoryId(historyId)
     ? (
         <StructuredAgentDockPanel
@@ -541,6 +544,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
           persistCreateRecovery={createRecovery?.persistBeforeSend}
           onOpenSession={navigation?.openSession}
           onOpenHistory={navigation?.openHistory}
+          onEditProject={navigation?.editProject}
           onNewConversation={navigation?.newConversation}
           onClearConversation={clearConversation}
           onOpenTerminal={navigation ? async (workspaceId, directory) => {
@@ -1150,6 +1154,7 @@ export function App(): JSX.Element {
   // reflows the workspace; below that breakpoint the same shell overlays it.
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
   const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox'>('projects');
+  const [projectEditorRequest, setProjectEditorRequest] = useState<{ readonly projectId: string; readonly id: number }>();
   const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
   const openConversationHistory = useCallback((entry: ConversationEntry): void => {
     const api = apiRef.current;
@@ -1840,6 +1845,11 @@ export function App(): JSX.Element {
     openSettings: () => {
       setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
       setSidebarDestination('settings');
+    },
+    editProject: (projectId) => {
+      setProjectEditorRequest((current) => ({ projectId, id: (current?.id ?? 0) + 1 }));
+      setAgentHubView('projects');
+      setSidebarDestination('agents');
     },
     openTerminal: async (workspaceId, directory) => {
       let cwd = directory;
@@ -2985,6 +2995,7 @@ export function App(): JSX.Element {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
           },
+          ...(projectEditorRequest ? { projectEditorRequest } : {}),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}

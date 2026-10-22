@@ -218,6 +218,8 @@ export interface AgentHubProps {
   readonly onCreateWorkspaceTerminal?: (workspaceId: string) => void;
   readonly onCreateWorkspaceSession?: (projectId: string, workspaceId: string) => void;
   readonly onOpenAgentSettings?: () => void;
+  /** Another surface (a conversation's folder setting) asks to edit this project's folders. */
+  readonly projectEditorRequest?: { readonly projectId: string; readonly id: number };
   readonly onDecideManagedMerge?: (
     input: ManagedMergeDecisionInput,
   ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
@@ -274,6 +276,7 @@ export function AgentHub({
   onCreateWorkspaceTerminal,
   onCreateWorkspaceSession,
   onOpenAgentSettings,
+  projectEditorRequest,
   onDecideManagedMerge,
   onClose,
   mobile = false,
@@ -543,6 +546,21 @@ export function AgentHub({
     setProjectActionError(null);
     setProjectEditorOpen(true);
   }, []);
+
+  // Each request opens the editor once, from the loaded page or, past it, a fresh read.
+  const handledEditorRequest = useRef(0);
+  useEffect(() => {
+    if (!projectEditorRequest || handledEditorRequest.current === projectEditorRequest.id || !window.ezterminalDesktop) return;
+    handledEditorRequest.current = projectEditorRequest.id;
+    const loaded = projects.find((project) => project.projectId === projectEditorRequest.projectId);
+    if (loaded) { openProjectEditor(loaded); return; }
+    void window.ezterminal.listAgentProjects(false, undefined, 100)
+      .then((page) => {
+        const found = page.items.find((project) => project.projectId === projectEditorRequest.projectId);
+        if (found) openProjectEditor(found);
+      })
+      .catch(() => undefined);
+  }, [projectEditorRequest, projects, openProjectEditor]);
 
   const addProjectFolders = useCallback(async (): Promise<void> => {
     const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(true);

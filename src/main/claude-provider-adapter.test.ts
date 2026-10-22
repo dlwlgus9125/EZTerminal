@@ -788,6 +788,55 @@ describe('ClaudeProviderAdapter sessions', () => {
     await fixture.adapter.dispose();
   });
 
+  it('launches with the project folders as additional directories, never for a tool-free session', async () => {
+    const withFolders = makeAdapter();
+    await withFolders.adapter.createSession({ ...context, additionalRoots: ['C:\\Working\\shared-ui', 'C:\\Working\\docs'] });
+    expect(withFolders.query.inputOptions).toMatchObject({ cwd: context.workspaceRoot, additionalDirectories: ['C:\\Working\\shared-ui', 'C:\\Working\\docs'] });
+    expect(withFolders.query.inputOptions.env).not.toHaveProperty('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD');
+    await withFolders.adapter.dispose();
+
+    const single = makeAdapter();
+    await start(single);
+    expect(single.query.inputOptions).not.toHaveProperty('additionalDirectories');
+    await single.adapter.dispose();
+
+    const toolFree = makeAdapter();
+    await toolFree.adapter.createSession({ ...context, additionalRoots: ['C:\\Working\\shared-ui'], toolsDisabled: true });
+    expect(toolFree.query.inputOptions).not.toHaveProperty('additionalDirectories');
+    await toolFree.adapter.dispose();
+  });
+
+  it('resumes the same session with the changed folders before the next message, only when they changed', async () => {
+    const fixture = makeAdapter();
+    await fixture.adapter.createSession({ ...context, additionalRoots: ['C:\\Working\\shared-ui'] });
+    const send = async (id: string, additionalRoots: readonly string[]): Promise<void> => {
+      await fixture.adapter.submit({
+        sessionId: context.sessionId, providerSessionId, turnId: `turn-${id}`, commandId: `command-${id}`, prompt: 'Go', additionalRoots,
+      });
+      // Read from the query the message went to: a relaunch replaces it.
+      const uuid = (await fixture.query.input[Symbol.asyncIterator]().next()).value!.uuid as string;
+      fixture.query.emit({ type: 'result', subtype: 'success', uuid: `result-${id}`, session_id: providerSessionId, user_message_uuid: uuid, is_error: false });
+      await vi.waitFor(() => expect(fixture.events).toContainEqual(expect.objectContaining({ kind: 'turn-finished', turnId: `turn-${id}` })));
+    };
+
+    await send('1', ['C:\\Working\\shared-ui']);
+    expect(fixture.queries).toHaveLength(1);
+
+    await send('2', ['C:\\Working\\shared-ui', 'C:\\Working\\docs']);
+    expect(fixture.queries).toHaveLength(2);
+    expect(fixture.queries[0]!.closeCount).toBe(1);
+    expect(fixture.query.inputOptions).toMatchObject({
+      resume: providerSessionId, permissionMode: 'default', additionalDirectories: ['C:\\Working\\shared-ui', 'C:\\Working\\docs'],
+    });
+
+    // A folder removed from the project is out of reach from the next message on.
+    await send('3', []);
+    expect(fixture.queries).toHaveLength(3);
+    expect(fixture.query.inputOptions).toMatchObject({ resume: providerSessionId });
+    expect(fixture.query.inputOptions).not.toHaveProperty('additionalDirectories');
+    await fixture.adapter.dispose();
+  });
+
   it('switches an armed Full access session in place, without relaunching', async () => {
     const fixture = makeAdapter();
     await fixture.adapter.createSession({ ...context, permissionPreset: 'full-access' });

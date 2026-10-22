@@ -102,6 +102,8 @@ interface SessionState {
   readonly sessionId: string;
   readonly providerSessionId: string;
   readonly workspaceRoot: string;
+  /** The project's other folders the thread works in, as last sent to Codex. */
+  additionalRoots: readonly string[];
   model?: string;
   readonly reasoningEffort?: string;
   permissionPreset: PermissionPreset;
@@ -258,7 +260,7 @@ export function presetForCodexTurnContext(approvalPolicy: string | undefined, sa
   return 'standard';
 }
 
-function permissionUpdateSettings(permissionPreset: PermissionPreset, workspaceRoot: string): JsonObject {
+function permissionUpdateSettings(permissionPreset: PermissionPreset, roots: readonly string[]): JsonObject {
   switch (permissionPreset) {
     case 'plan':
       return {
@@ -270,7 +272,7 @@ function permissionUpdateSettings(permissionPreset: PermissionPreset, workspaceR
         approvalPolicy: 'on-request',
         sandboxPolicy: {
           type: 'workspaceWrite',
-          writableRoots: [workspaceRoot],
+          writableRoots: [...roots],
           networkAccess: false,
           excludeTmpdirEnvVar: false,
           excludeSlashTmp: false,
@@ -282,6 +284,10 @@ function permissionUpdateSettings(permissionPreset: PermissionPreset, workspaceR
         sandboxPolicy: { type: 'dangerFullAccess' },
       };
   }
+}
+
+function sameRoots(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((root, index) => root === right[index]);
 }
 
 function threadIdFromParams(params: JsonObject): string | undefined {
@@ -1059,7 +1065,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
       const result = asObject(await this.requireConnection().request('thread/start', {
         cwd: context.workspaceRoot,
-        runtimeWorkspaceRoots: [context.workspaceRoot],
+        runtimeWorkspaceRoots: [context.workspaceRoot, ...(context.additionalRoots ?? [])],
         ...(context.model ? { model: context.model } : {}),
         ...permissionStartSettings(context.permissionPreset),
         ...(config ? { config } : {}),
@@ -1104,7 +1110,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const result = asObject(await this.requireConnection().request('thread/resume', {
         threadId: context.providerSessionId,
         cwd: context.workspaceRoot,
-        runtimeWorkspaceRoots: [context.workspaceRoot],
+        runtimeWorkspaceRoots: [context.workspaceRoot, ...(context.additionalRoots ?? [])],
         ...(context.model ? { model: context.model } : {}),
         ...permissionStartSettings(context.permissionPreset),
         ...(config ? { config } : {}),
@@ -1160,11 +1166,17 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
     try {
       const collaborationMode = await this.collaborationModeFor(state, input);
+      // The project's folders changed since the thread last heard: they apply from this turn on.
+      const nextRoots = input.additionalRoots && !sameRoots(input.additionalRoots, state.additionalRoots)
+        ? input.additionalRoots
+        : undefined;
+      if (nextRoots?.some((root) => !path.isAbsolute(root))) throw new Error('Codex workspace roots must be absolute.');
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
         ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
+        ...(nextRoots ? { runtimeWorkspaceRoots: [state.workspaceRoot, ...nextRoots] } : {}),
         input: [
           { type: 'text', text: promptWithChatContext(input.prompt, input.context), text_elements: [] },
           ...selectedSkills.map((skill) => ({ type: 'skill', name: skill.name, path: skill.id })),
@@ -1176,6 +1188,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const turn = asObject(result?.turn);
       const providerTurnId = asString(turn?.id);
       if (!providerTurnId) throw new Error('Codex turn/start returned no turn id.');
+      if (nextRoots) state.additionalRoots = [...nextRoots];
       if (collaborationMode) state.threadMode = collaborationMode.mode;
       const activeTurn = state.activeTurn;
       if (activeTurn && collaborationMode?.mode === 'plan') activeTurn.planMode = true;
@@ -1319,7 +1332,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.permissionPreset === undefined
           ? {}
-          : permissionUpdateSettings(input.permissionPreset, state.workspaceRoot)),
+          : permissionUpdateSettings(input.permissionPreset, [state.workspaceRoot, ...state.additionalRoots])),
       }),
     );
     if (input.model !== undefined) state.model = input.model;
@@ -1970,6 +1983,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       sessionId: parent.sessionId,
       providerSessionId: threadId,
       workspaceRoot: parent.workspaceRoot,
+      additionalRoots: parent.additionalRoots,
       permissionPreset: parent.permissionPreset,
       nextTranscriptSequence: 0,
       preResponseLifecycle: new Map(),
@@ -2728,6 +2742,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       sessionId: context.sessionId,
       providerSessionId,
       workspaceRoot: context.workspaceRoot,
+      additionalRoots: context.additionalRoots ?? [],
       ...(model ? { model } : {}),
       ...(context.reasoningEffort ?? appliedEffort ? { reasoningEffort: context.reasoningEffort ?? appliedEffort! } : {}),
       permissionPreset: context.permissionPreset,
@@ -2795,6 +2810,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     if (context.toolsDisabled) throw new Error('This Codex app-server does not expose a verified tool-free mode. Choose a provider that supports tool-free planning proposals.');
     if (!context.sessionId.trim() || !context.workspaceId.trim()) throw new Error('Codex session identity is incomplete.');
     if (!path.isAbsolute(context.workspaceRoot)) throw new Error('Codex workspace root must be absolute.');
+    if (context.additionalRoots?.some((root) => !path.isAbsolute(root))) throw new Error('Codex workspace roots must be absolute.');
   }
 
   private assertActive(): void {

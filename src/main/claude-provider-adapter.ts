@@ -564,6 +564,10 @@ export function presetForClaudePermissionMode(mode: string): PermissionPreset {
   return 'standard';
 }
 
+function sameRoots(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((root, index) => root === right[index]);
+}
+
 function permissionMode(preset: PermissionPreset): NonNullable<Options['permissionMode']> {
   switch (preset) {
     case 'plan': return 'plan';
@@ -1339,6 +1343,10 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
         session.relaunchArmed = false;
       }
     }
+    if (input.additionalRoots && !session.context.toolsDisabled && !sameRoots(input.additionalRoots, session.context.additionalRoots ?? [])) {
+      await this.relaunchWithFolders(session, input.additionalRoots);
+      session = this.session(input.sessionId, input.providerSessionId);
+    }
     if (input.reasoningEffort && input.reasoningEffort !== session.appliedEffort && session.query.applyFlagSettings) {
       try {
         await bounded(abortable(session.query.applyFlagSettings({ effortLevel: input.reasoningEffort }), signal), this.operationTimeoutMs);
@@ -1613,18 +1621,41 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
    * `allowDangerouslySkipPermissions`, which is armed only once the person chose Full access.
    * Choosing it later resumes the same provider session with the flag armed. Only between turns.
    */
-  private async relaunchArmed(session: SessionRecord, model: string | undefined): Promise<ProviderSessionHandle> {
+  private relaunchArmed(session: SessionRecord, model: string | undefined): Promise<ProviderSessionHandle> {
+    return this.relaunchWith(session, { ...(model ? { model } : {}), permissionPreset: 'full-access' });
+  }
+
+  /**
+   * The SDK takes extra folders only at launch (`additionalDirectories`, its `--add-dir`). When the
+   * project's folders change, the same provider session resumes with the new ones before the next
+   * message, so a removed folder is no longer reachable from then on. Only between turns.
+   */
+  private relaunchWithFolders(session: SessionRecord, additionalRoots: readonly string[]): Promise<ProviderSessionHandle> {
+    return this.relaunchWith(session, {
+      ...(session.handle.model ? { model: session.handle.model } : {}),
+      permissionPreset: session.handle.permissionPreset,
+      additionalRoots,
+    });
+  }
+
+  private async relaunchWith(session: SessionRecord, overrides: {
+    readonly model?: string;
+    readonly permissionPreset: PermissionPreset;
+    readonly additionalRoots?: readonly string[];
+  }): Promise<ProviderSessionHandle> {
     if (session.pendingApprovals.size > 0 || [...session.turnsByCommand.values()].some((turn) => turn.state === 'submitted')) {
       throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
     }
-    const { model: launchModel, reasoningEffort: launchEffort, ...base } = session.context;
+    const { model: launchModel, reasoningEffort: launchEffort, additionalRoots: launchRoots, ...base } = session.context;
     void launchModel;
     void launchEffort;
+    const additionalRoots = overrides.additionalRoots ?? launchRoots;
     const context: ProviderSessionContext = {
       ...base,
-      ...(model ? { model } : {}),
+      ...(overrides.model ? { model: overrides.model } : {}),
       ...(session.appliedEffort ? { reasoningEffort: session.appliedEffort } : {}),
-      permissionPreset: 'full-access',
+      ...(additionalRoots?.length ? { additionalRoots } : {}),
+      permissionPreset: overrides.permissionPreset,
     };
     const providerSessionId = session.handle.providerSessionId;
     await this.disposeSession(session.context.sessionId, providerSessionId);
@@ -1767,6 +1798,9 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       settingSources: ['user', 'project', 'local'],
       ...(context.managedExecution ? { disallowedTools: ['Agent', 'Task'] } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      // The project's other folders, as `--add-dir`. CLAUDE.md stays the working folder's: the
+      // CLI reads it from added folders only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD.
+      ...(context.additionalRoots?.length && !context.toolsDisabled ? { additionalDirectories: [...context.additionalRoots] } : {}),
       // An empty allow-list is only an approval preference. Remove the actual
       // catalog, including configured MCP tools, and ignore ambient settings.
       ...(context.toolsDisabled ? { tools: [], disallowedTools: ['*'], settingSources: [], mcpServers: {}, plugins: [], agents: {} } : {}),

@@ -595,6 +595,62 @@ describe('CodexProviderAdapter', () => {
     await adapter.dispose();
   });
 
+  it('runs the thread in every project folder and sends changed folders with the next turn only', async () => {
+    const connection = new FakeCodexConnection();
+    let turn = 0;
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+      if (method === 'turn/start') return { turn: { id: `provider-turn-${++turn}` } };
+      if (method === 'thread/settings/update') return {};
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    await adapter.createSession(context({ additionalRoots: ['C:\\Working\\shared-ui', 'C:\\Working\\docs'] }));
+    expect(connection.requests[0]).toMatchObject({
+      method: 'thread/start',
+      params: { cwd: 'C:\\Working\\EZTerminal', runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal', 'C:\\Working\\shared-ui', 'C:\\Working\\docs'] },
+    });
+    const send = async (index: number, additionalRoots?: readonly string[]) => {
+      await adapter.submit({
+        sessionId: 'session-1', providerSessionId: 'thread-1', turnId: `turn-${index}`, commandId: `command-${index}`, prompt: 'Work',
+        ...(additionalRoots ? { additionalRoots } : {}),
+      });
+      const request = connection.requests.at(-1)!;
+      await connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: `provider-turn-${turn}`, status: 'completed', items: [] } });
+      return request;
+    };
+
+    expect((await send(1, ['C:\\Working\\shared-ui', 'C:\\Working\\docs'])).params).not.toHaveProperty('runtimeWorkspaceRoots');
+    expect((await send(2, ['C:\\Working\\shared-ui'])).params).toMatchObject({ runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal', 'C:\\Working\\shared-ui'] });
+    expect((await send(3, ['C:\\Working\\shared-ui'])).params).not.toHaveProperty('runtimeWorkspaceRoots');
+    expect((await send(4)).params).not.toHaveProperty('runtimeWorkspaceRoots');
+    expect((await send(5, [])).params).toMatchObject({ runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal'] });
+
+    await adapter.setSettings({ sessionId: 'session-1', providerSessionId: 'thread-1', permissionPreset: 'standard' });
+    expect(connection.requests.at(-1)).toMatchObject({
+      method: 'thread/settings/update',
+      params: { sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['C:\\Working\\EZTerminal'] } },
+    });
+    await adapter.dispose();
+  });
+
+  it('resumes a thread with every project folder and refuses relative folders', async () => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method === 'thread/resume') return { thread: { id: 'thread-existing' }, model: 'gpt-5.6-sol' };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const adapter = new CodexProviderAdapter({ connection });
+    await adapter.resumeSession({ ...context({ additionalRoots: ['D:\\Shared'] }), providerSessionId: 'thread-existing' });
+    expect(connection.requests[0]).toMatchObject({
+      method: 'thread/resume',
+      params: { runtimeWorkspaceRoots: ['C:\\Working\\EZTerminal', 'D:\\Shared'] },
+    });
+    await expect(adapter.createSession(context({ sessionId: 'session-2', additionalRoots: ['relative\\folder'] })))
+      .rejects.toThrow('Codex workspace roots must be absolute.');
+    await adapter.dispose();
+  });
+
   it('resumes the exact provider thread and does not hydrate legacy full history', async () => {
     const connection = new FakeCodexConnection();
     connection.requestImpl = async (method) => {

@@ -18,6 +18,7 @@ import { Button, Field, Select } from './ui';
 import { NewWorktreeDialog } from './WorktreeDialogs';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
+import type { ConversationFolders } from '../shared/conversation-folders';
 
 const NEW_WORKTREE = '__new-worktree__';
 
@@ -43,10 +44,17 @@ export interface ConversationStartPanelProps {
   readonly onContinueCli?: (entry: ConversationEntry) => Promise<void>;
   readonly onReviewChange?: (entry: ConversationEntry, turnId: string, path: string) => Promise<void>;
   readonly onStarted: (sessionId: string, entry?: ConversationEntry) => Promise<void> | void;
+  /**
+   * The folders a conversation in this working folder would work in. Given on desktop, the
+   * working folder is chosen from the composer's folder setting instead of a separate select.
+   */
+  readonly workspaceFolders?: (workspaceId: string) => ConversationFolders | undefined;
+  /** Opens the editor of the chosen working folder's project. */
+  readonly onEditProject?: (projectId: string) => void;
 }
 
 export function ConversationStartPanel({ identity, viewStateScope = 'desktop', entry: initialEntry, projectId, workspaceId, seed, seedDraftText, onSeedDraftApplied,
-  snapshot, access, storage, capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted }: ConversationStartPanelProps): JSX.Element {
+  snapshot, access, storage, capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted, workspaceFolders, onEditProject }: ConversationStartPanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const text = useCallback((k: string, e: string) => ko ? k : e, [ko]);
@@ -131,6 +139,20 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const settings = view.settings ?? { ...initial, ...unsaved };
   const selectedProvider = providers.find(item => item.id === settings.providerId);
   const selectedWorkspace = workspaces.find(item => item.id === settings.workspaceId);
+  const folderSetting = variant === 'desktop' && workspaceFolders !== undefined;
+  // Until the host answers, the setting shows the working folder alone; it must stay choosable.
+  const selectedFolders = folderSetting
+    ? (settings.workspaceId ? workspaceFolders(settings.workspaceId) : undefined) ?? { primary: selectedWorkspace?.path ?? '', additional: [], missing: [] }
+    : undefined;
+  const editProjectId = snapshot?.workspaces.find(item => item.id === settings.workspaceId)?.projectId ?? entry?.projectId ?? projectId;
+  const selectWorkspace = (workspaceId: string): void => {
+    if (workspaceId === NEW_WORKTREE) { setWorktreeOpen(true); return; }
+    void recovery.saveComposition({ settings: { ...settings, workspaceId } });
+  };
+  const canCreateWorktree = !!worktreeAccess && !!worktreeProject && !disconnected;
+  const selectProvider = (providerId: string): void => {
+    void recovery.saveComposition({ settings: { ...settings, providerId, model: undefined, reasoningEffort: undefined } });
+  };
   const activeProfile = profiles.find(profile => profile.providerId === settings.providerId && profile.model === settings.model
     && profile.permissionPreset === settings.permissionPreset && profile.reasoningEffort === settings.reasoningEffort);
   const canSend = !disconnected && view.status === 'ready' && !loading && !draftLoading && !draftLoadFailed && !inheritedPending && (!entry || (!!page && source !== undefined))
@@ -251,16 +273,14 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
         <option value="">{text('직접 고르기', 'Choose yourself')}</option>
         {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={!providers.some(provider => provider.id === profile.providerId && !provider.disabled)}>{profile.name}</option>)}
       </Select></Field>}
-    {!entry && <><Field label={text('AI', 'AI')}><Select aria-label={text('대화 AI', 'Conversation AI')} value={settings.providerId} disabled={busy || !!view.start}
-      onChange={event => void recovery.saveComposition({ settings: { ...settings, providerId: event.target.value, model: undefined, reasoningEffort: undefined } })}>
+    {/* On desktop with folder data, the AI and the working folder are chosen under the message box. */}
+    {!entry && !folderSetting && <><Field label={text('AI', 'AI')}><Select aria-label={text('대화 AI', 'Conversation AI')} value={settings.providerId} disabled={busy || !!view.start}
+      onChange={event => selectProvider(event.target.value)}>
       {!settings.providerId && <option value="">{text('AI 선택', 'Choose AI')}</option>}{providers.map(provider => <option key={provider.id} value={provider.id} disabled={provider.disabled}>{provider.label}</option>)}
     </Select></Field><Field label={text('작업 위치', 'Working folder')}><Select aria-label={text('대화 작업 위치', 'Conversation workspace')} value={settings.workspaceId} disabled={busy || !!view.start}
-      onChange={event => {
-        if (event.target.value === NEW_WORKTREE) { setWorktreeOpen(true); return; }
-        void recovery.saveComposition({ settings: { ...settings, workspaceId: event.target.value } });
-      }}>
+      onChange={event => selectWorkspace(event.target.value)}>
       {!settings.workspaceId && <option value="">{text('프로젝트 선택', 'Choose project')}</option>}{workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.label}</option>)}
-      {worktreeAccess && worktreeProject && !disconnected && <option value={NEW_WORKTREE}>{text('새 워크트리…', 'New worktree…')}</option>}
+      {canCreateWorktree && <option value={NEW_WORKTREE}>{text('새 워크트리…', 'New worktree…')}</option>}
     </Select></Field></>}
     {worktreeAccess && worktreeProject && <NewWorktreeDialog open={worktreeOpen} onOpenChange={setWorktreeOpen} projectName={worktreeProject.name}
       createLabel={text('만들기', 'Create')}
@@ -281,6 +301,12 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       providerId={settings.providerId} providerLabel={selectedProvider?.label ?? entry?.providerId ?? 'AI'}
       usage={disconnected ? undefined : snapshot?.providerUsage?.[settings.providerId]}
       workspace={selectedWorkspace ?? { id: settings.workspaceId, label: entry?.projectTitle ?? text('프로젝트', 'Project'), kind: 'local', path: entry?.roots[0] }}
+      {...(selectedFolders ? { folders: selectedFolders } : {})}
+      {...(selectedFolders && !entry ? { workspaceChoices: { options: workspaces, onSelect: selectWorkspace, disabled: busy || !!view.start,
+        ...(canCreateWorktree ? { onNewWorktree: () => setWorktreeOpen(true) } : {}) } } : {})}
+      {...(onEditProject && editProjectId ? { onEditProject: () => onEditProject(editProjectId) } : {})}
+      {...(folderSetting && !entry ? { providerChoices: { onSelect: selectProvider, options: providers.map(provider => ({ id: provider.id, label: provider.label,
+        ...(provider.disabled ? { disabled: true, description: provider.description ?? text('준비가 필요합니다', 'Needs setup') } : {}) })) } } : {})}
       model={settings.model} modelOptions={selectedProvider?.models} permissionPreset={settings.permissionPreset} state="idle" items={items}
       statusLabel={busy ? text('메시지 준비 중…', 'Preparing message…') : entry ? text('기록 · 전송하면 이어집니다', 'History · send to continue') : text('첫 메시지를 입력하세요', 'Write your first message')}
       awaitingFirstMessage={!entry} transcriptLoading={loading} transcriptError={page ? null : error} onRetryTranscript={() => setRevision(value => value + 1)}

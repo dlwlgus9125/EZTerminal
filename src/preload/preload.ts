@@ -636,6 +636,8 @@ const desktopApi: EzTerminalDesktopApi = {
   },
   describeProjectWorkspace: (projectId: string) =>
     ipcRenderer.invoke('project-workspace:describe', projectId),
+  getConversationFolders: (target) =>
+    ipcRenderer.invoke('agent-conversation:folders', target),
   resolveProjectTerminalDirectory: (request) =>
     ipcRenderer.invoke('project-workspace:resolve-terminal-directory', request),
   resolveProjectDocument: (request) =>

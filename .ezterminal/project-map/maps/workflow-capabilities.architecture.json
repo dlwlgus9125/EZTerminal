@@ -324,16 +324,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 920,
-          "endLine": 1009,
+          "startLine": 926,
+          "endLine": 1015,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/claude-provider-adapter.ts",
-          "startLine": 1232,
-          "endLine": 1313,
+          "startLine": 1236,
+          "endLine": 1317,
           "lineDigest": "sha256:a958bb4b7c0e4048efce6a81065ae8e22dd0d3cff4f23b6f56c37dc80aeea5cf",
           "claim": "Claude discovery starts an ephemeral empty-input SDK query with native setting sources, reads models/commands/MCP and CLI plugins, then closes it without submitting a prompt; concurrent callers for one folder share that launch."
         }
@@ -480,8 +480,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 920,
-          "endLine": 1009,
+          "startLine": 926,
+          "endLine": 1015,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }

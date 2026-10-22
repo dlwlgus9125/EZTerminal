@@ -1464,6 +1464,11 @@
   margin-left: var(--ui-space-1);
 }
 
+/* The settings take their own width and the spacer the rest; they wrap only when they do not fit. */
+.chat-composer__bar > .conversation-composer-toolbar {
+  flex: 0 1 auto;
+}
+
 .chat-composer__settings {
   display: flex;
   align-items: center;
@@ -1745,6 +1750,74 @@
 .chat-pill-menu .chat-pill__option > * {
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/* Working folder and the project's other folders: the folder name, then how many more. */
+.chat-folders__count {
+  color: var(--ui-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-pill > .chat-folders__alert {
+  color: var(--ui-warning);
+}
+
+/* In a narrow pane the name goes like the other values; the icon and the count stay. */
+.structured-agent[data-compact='true'] .chat-composer__settings .chat-pill--folders .chat-pill__value {
+  display: none;
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__path {
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xs);
+}
+
+/* Folder rows and notes are information, not headings: body type, no capitals. */
+.chat-pill-menu.chat-folders-menu .chat-folders__entry,
+.chat-pill-menu.chat-folders-menu .chat-folders__note,
+.chat-pill-menu.chat-folders-menu .chat-folders__missing {
+  font-family: var(--ui-font-body);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__entry {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--ui-space-1);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__entry > small {
+  color: var(--ui-text-muted);
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__entry--missing > span {
+  color: var(--ui-text-secondary);
+  text-decoration: line-through;
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__missing {
+  display: flex;
+  align-items: center;
+  color: var(--ui-warning);
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__missing > svg {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--ui-space-1);
+}
+
+.chat-pill-menu.chat-folders-menu .chat-folders__note {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-2xs);
+  word-break: keep-all;
 }
 
 .chat-composer__send {

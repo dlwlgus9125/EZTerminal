@@ -28,6 +28,11 @@ export interface ProviderSessionContext {
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly workspaceRoot: string;
+  /**
+   * The project's other registered folders the conversation also reads and edits, under the
+   * same permission level as `workspaceRoot`. Absolute paths; omitted when there are none.
+   */
+  readonly additionalRoots?: readonly string[];
   readonly model?: string;
   readonly permissionPreset: PermissionPreset;
   /** Ephemeral endpoint/token material; adapters must not persist either value. */
@@ -60,6 +65,12 @@ export interface ProviderSubmitInput {
    * delegated first turns run unattended: plan mode then only plans, read-only.
    */
   readonly attended?: boolean;
+  /**
+   * The conversation's additional folders as of this turn. When they differ from what the
+   * session runs with (the project's folders changed), the adapter applies them before this
+   * turn. Undefined leaves the session's folders as they are.
+   */
+  readonly additionalRoots?: readonly string[];
 }
 
 export type AgentProviderTurnScope =

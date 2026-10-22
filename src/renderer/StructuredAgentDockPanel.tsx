@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalResponse } from '../shared/approval-request';
+import type { ConversationFolders } from '../shared/conversation-folders';
 import type { AccessLevel } from './agent-permission-copy';
 import { readPlanAccess } from './agent-plan-access';
 import { releaseProviderAfterClear } from './structured-agent-release';
@@ -284,6 +285,8 @@ export function StructuredAgentDockPanel(
     readonly onLaunchCli?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
     readonly onOpenSettings?: () => void;
     readonly onOpenHistory?: (projectId?: string) => void;
+    /** Opens the project editor from the conversation's folder setting. */
+    readonly onEditProject?: (projectId: string) => void;
     /** Opens a new conversation in a project (`/new`). */
     readonly onNewConversation?: (project?: { readonly projectId: string; readonly name: string }) => void;
     /** Replaces this tab with a new conversation that starts with these settings (`/clear`). */
@@ -917,6 +920,20 @@ export function StructuredAgentDockPanel(
     } : undefined);
   }, [props.api.id, tabProviderId, tabProviderLabel, tabStatus]);
   useEffect(() => () => setStructuredAgentTabStatus(props.api.id, undefined), [props.api.id]);
+  // The folders this conversation works in, as main hands them to the AI. Asked again when the
+  // project's workspaces change (its folders were edited). Desktop only: Android keeps its header.
+  const readFolders = window.ezterminalDesktop?.getConversationFolders;
+  const folderSession = sessionId ? snapshot?.sessions.find((candidate) => candidate.id === sessionId) : undefined;
+  const folderKey = useMemo(() => folderSession ? JSON.stringify([folderSession.id, folderSession.workspaceId, ...(snapshot?.workspaces ?? [])
+    .filter((workspace) => workspace.projectId === folderSession.projectId)
+    .map((workspace) => [workspace.id, workspace.rootPath, workspace.archivedAt ?? ''])]) : '', [folderSession, snapshot?.workspaces]);
+  const [conversationFolders, setConversationFolders] = useState<ConversationFolders>();
+  useEffect(() => {
+    if (!readFolders || !folderKey || !sessionId) { setConversationFolders(undefined); return undefined; }
+    let alive = true;
+    void readFolders({ sessionId }).then((found) => { if (alive) setConversationFolders(found ?? undefined); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [readFolders, folderKey, sessionId]);
 
   if (availability?.state === 'legacy-only-safe-mode' && (sessionId || !props.onOpenTerminal)) {
     return (
@@ -988,6 +1005,10 @@ export function StructuredAgentDockPanel(
     : { id: createdDraft?.workspaceId ?? '', label: 'Workspace unavailable', kind: 'local' };
   const workspaceRoot = workspace?.rootPath;
   const fileSearch = desktopFileSearch(workspaceRoot);
+  // Until main answers, the setting shows the working folder alone, so the header never flips
+  // from the folder line to the setting as the conversation opens.
+  const shownFolders = conversationFolders
+    ?? (readFolders && workspace ? { primary: workspace.rootPath, additional: [], missing: [] } : undefined);
 
   const runSessionCommand = async (
     type: 'agent.submit' | 'agent.interrupt-and-submit',
@@ -1330,6 +1351,8 @@ export function StructuredAgentDockPanel(
       providerLabel={provider?.displayName ?? (providerId || 'Agent')}
       usage={snapshot?.agentUsage?.[sessionId]}
       workspace={workspaceOption}
+      {...(shownFolders ? { folders: shownFolders } : {})}
+      {...(session && props.onEditProject ? { onEditProject: () => props.onEditProject?.(session.projectId) } : {})}
       model={currentModel}
       modelOptions={structuredAgentModelOptions(
         provider?.capabilities ?? [],

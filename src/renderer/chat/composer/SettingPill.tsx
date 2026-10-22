@@ -1,12 +1,21 @@
 import { ChevronDown, type LucideIcon } from 'lucide-react';
 import { useState, type SyntheticEvent } from 'react';
 
-import { Menu, MenuLabel, MenuRadioItem } from '../../ui';
+import { Menu, MenuLabel, MenuRadioItem, MenuSeparator } from '../../ui';
 
 export interface SettingPillOption<T extends string> {
   readonly value: T;
   readonly label: string;
   readonly description?: string;
+  readonly disabled?: boolean;
+}
+
+/** A choice the setting depends on, listed first in its menu (e.g. the AI whose models follow). */
+export interface SettingPillLeading {
+  readonly label: string;
+  readonly value: string;
+  readonly options: readonly SettingPillOption<string>[];
+  readonly onChange: (value: string) => void;
 }
 
 /** The menu's width in rem; it opens toward the side that has this much room in the pane. */
@@ -22,7 +31,7 @@ export function placementFor(trigger: HTMLElement): 'top-start' | 'top-end' {
 }
 
 /** Compact composer setting (model, effort, permissions) as a pill that opens a menu. */
-export function SettingPill<T extends string>({ label, value, options, onChange, disabled = false, icon: Icon, testId, placeholder, hint, prefix, status }: {
+export function SettingPill<T extends string>({ label, value, options, onChange, disabled = false, icon: Icon, testId, placeholder, hint, prefix, status, leading }: {
   readonly label: string;
   readonly value: T | '';
   readonly options: readonly SettingPillOption<T>[];
@@ -38,6 +47,7 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
   readonly prefix?: string;
   /** A line under the options while they are incomplete (e.g. still loading). */
   readonly status?: string;
+  readonly leading?: SettingPillLeading;
 }): JSX.Element {
   const [placement, setPlacement] = useState<'top-start' | 'top-end'>('top-start');
   const current = options.find((option) => option.value === value);
@@ -58,9 +68,24 @@ export function SettingPill<T extends string>({ label, value, options, onChange,
         </button>
       )}
     >
+      {leading && (
+        <>
+          <MenuLabel>{leading.label}</MenuLabel>
+          {leading.options.map((option) => (
+            <MenuRadioItem key={option.value} checked={option.value === leading.value} disabled={option.disabled}
+              onSelect={() => leading.onChange(option.value)}>
+              <span className="chat-pill__option">
+                <span>{option.label}</span>
+                {option.description && <small>{option.description}</small>}
+              </span>
+            </MenuRadioItem>
+          ))}
+          <MenuSeparator />
+        </>
+      )}
       <MenuLabel>{label}</MenuLabel>
       {options.map((option) => (
-        <MenuRadioItem key={option.value} checked={option.value === value} onSelect={() => onChange(option.value)}>
+        <MenuRadioItem key={option.value} checked={option.value === value} disabled={option.disabled} onSelect={() => onChange(option.value)}>
           <span className="chat-pill__option">
             <span>{option.label}</span>
             {option.description && <small>{option.description}</small>}

@@ -210,17 +210,23 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
     const draft = window.getByTestId('conversation-start');
     await expect(draft).toBeVisible();
-    const provider = draft.getByRole('combobox', { name: 'Conversation AI' });
+    // The AI and the working folder are chosen under the message box.
+    const model = draft.getByTestId('structured-agent-live-model');
     await expect(
-      provider,
+      model,
       `Codex enable receipt: ${JSON.stringify(receipt)}`,
-    ).toHaveValue('codex');
-    await expect(provider.locator('option[value="codex"]')).toHaveText('Codex');
-    await expect(provider.locator('option[value="codex"]')).toBeEnabled();
+    ).toHaveAttribute('aria-label', /^Codex model: /u);
+    await model.click();
+    const codexChoice = window.getByRole('menuitemradio', { name: 'Codex', exact: true });
+    await expect(codexChoice).toHaveAttribute('aria-checked', 'true');
+    await expect(codexChoice).toBeEnabled();
+    await window.keyboard.press('Escape');
 
-    const workspace = draft.getByRole('combobox', { name: 'Conversation workspace' });
-    await workspace.selectOption(restoredSnapshot!.workspaces[0].id);
-    await expect(workspace).not.toHaveValue('');
+    const workspaceName = restoredSnapshot!.workspaces[0].name;
+    const folders = draft.getByTestId('structured-agent-folders');
+    await folders.click();
+    await window.getByRole('menuitemradio').filter({ has: window.getByText(workspaceName, { exact: true }) }).click();
+    await expect(folders).toHaveAttribute('aria-label', `Working folder: ${workspaceName}`);
     const session = window.getByTestId('structured-agent-session');
     await expect(session).toBeVisible();
     await expect(session).toHaveAttribute('data-provider', 'codex');
@@ -300,8 +306,8 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     const cleared = window.getByTestId('conversation-start');
     await expect(cleared).toBeVisible();
     await expect(tabs).toHaveCount(tabCount);
-    await expect(cleared.getByRole('combobox', { name: 'Conversation AI' })).toHaveValue('codex');
-    await expect(cleared.getByRole('combobox', { name: 'Conversation workspace' })).toHaveValue(restoredSnapshot!.workspaces[0].id);
+    await expect(cleared.getByTestId('structured-agent-live-model')).toHaveAttribute('aria-label', /^Codex model: /u);
+    await expect(cleared.getByTestId('structured-agent-folders')).toHaveAttribute('aria-label', `Working folder: ${workspaceName}`);
     await expect(cleared.getByTestId('structured-agent-session')).not.toHaveAttribute('data-session-id', sessionId!);
     await expect(cleared.getByTestId('structured-agent-composer-input')).toHaveValue('keep this question');
     await expect(cleared.getByTestId('structured-agent-live-plan')).toHaveAttribute('aria-pressed', 'true');

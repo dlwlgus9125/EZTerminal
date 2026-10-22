@@ -95,6 +95,10 @@ if (args.includes('--version')) {
           const threadId = `fixture-thread-${++nextThread}`;
           threadConfigs.set(threadId, frame.params?.config);
           if (typeof frame.params?.cwd === 'string') threadCwds.set(threadId, frame.params.cwd);
+          // The folders the thread works in, as EZTerminal sent them (no config: it carries a token).
+          if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-thread-start.json'), JSON.stringify({
+            cwd: frame.params?.cwd ?? null, runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null,
+          }));
           respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture' });
           break;
         }
@@ -103,6 +107,8 @@ if (args.includes('--version')) {
           const turnSequence = ++nextTurn;
           const turnId = `fixture-turn-${turnSequence}`;
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-last-input.json'), JSON.stringify(frame.params?.input));
+          if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-turns.jsonl'),
+            `${JSON.stringify({ runtimeWorkspaceRoots: frame.params?.runtimeWorkspaceRoots ?? null })}\n`);
           respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
           setTimeout(async () => {
             write({

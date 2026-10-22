@@ -140,6 +140,8 @@ async function harness(options: {
   readonly conversationWritable?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationWritable'];
   readonly subagentRecordExists?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['subagentRecordExists'];
   readonly agentUsageStore?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['agentUsageStore'];
+  readonly conversationFolders?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['conversationFolders'];
+  readonly preparedSessionSettings?: import('./daemon-agent-runtime').DaemonAgentRuntimeOptions['preparedSessionSettings'];
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-agent-runtime-'));
   temporaryDirectories.push(directory);
@@ -281,6 +283,95 @@ async function archiveWorkspaceOrProject(
     },
   }] });
 }
+
+describe('DaemonAgentRuntime conversation folders', () => {
+  const createChat = (h: RuntimeHarness, initialPrompt = 'Read both folders.') => h.execute('agent.create', {
+    sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt,
+  });
+  const finishTurn = async (h: RuntimeHarness): Promise<void> => {
+    const turn = h.router.getSnapshot().turns.filter((entry) => entry.sessionId === 'agent-1').at(-1)!;
+    h.codex.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+    await h.runtime.whenIdle();
+    h.codex.emit({ kind: 'session-state', sessionId: 'agent-1', state: 'idle' });
+    await h.runtime.whenIdle();
+  };
+
+  it('starts the provider session with the project folders and sends the current ones with every turn', async () => {
+    let additional: string[] = ['C:\\Shared'];
+    const conversationFolders = vi.fn(async () => ({ primary: 'C:\\Demo', additional, missing: [] }));
+    const h = await harness({ conversationFolders });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await createChat(h);
+      expect(conversationFolders).toHaveBeenCalledWith(expect.anything(), { projectId: 'project-1', workspaceId: 'workspace-1' });
+      expect(h.codex.createSession).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: 'C:\\Demo', additionalRoots: ['C:\\Shared'] }), expect.any(AbortSignal));
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ additionalRoots: ['C:\\Shared'] }), expect.any(AbortSignal));
+
+      await finishTurn(h);
+      additional = [];
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'The folder was removed.' });
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'The folder was removed.', additionalRoots: [] }), expect.any(AbortSignal));
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('resumes a rehydrated session with the folders as they are now', async () => {
+    let additional: string[] = ['C:\\Shared'];
+    const h = await harness({ conversationFolders: async () => ({ primary: 'C:\\Demo', additional, missing: [] }) });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await createChat(h);
+      await finishTurn(h);
+      additional = ['C:\\Shared', 'C:\\Docs'];
+      await h.execute('provider.disable', { providerId: 'codex' });
+      await h.enable(h.codex, 'codex');
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'After re-enable.' });
+      expect(h.codex.resumeSession).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'agent-1', additionalRoots: ['C:\\Shared', 'C:\\Docs'],
+      }), expect.any(AbortSignal));
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('gives a tool-free session no extra folders', async () => {
+    const h = await harness({
+      conversationFolders: async () => ({ primary: 'C:\\Demo', additional: ['C:\\Shared'], missing: [] }),
+      preparedSessionSettings: () => ({ toolsDisabled: true }),
+    });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await createChat(h);
+      expect(vi.mocked(h.codex.createSession).mock.calls[0]![0]).not.toHaveProperty('additionalRoots');
+      expect(h.codex.submit).toHaveBeenLastCalledWith(expect.objectContaining({ additionalRoots: [] }), expect.any(AbortSignal));
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+
+  it('keeps the session to its working folder when the folders cannot be read', async () => {
+    const reportError = vi.fn();
+    const h = await harness({ conversationFolders: async () => { throw new Error('store unavailable'); }, reportError });
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await createChat(h);
+      expect(vi.mocked(h.codex.createSession).mock.calls[0]![0]).not.toHaveProperty('additionalRoots');
+      expect(vi.mocked(h.codex.submit).mock.calls.at(-1)![0]).not.toHaveProperty('additionalRoots');
+      expect(reportError).toHaveBeenCalledWith('conversation folders', expect.any(Error));
+    } finally {
+      await h.runtime.dispose();
+      await h.store.close();
+    }
+  });
+});
 
 describe('DaemonAgentRuntime', () => {
   it('binds host stage references to the accepted transcript and provider turn while rejecting forged client references', async () => {

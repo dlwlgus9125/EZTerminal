@@ -47,6 +47,7 @@ import {
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { AgentUsageTracker, type PersistedAgentUsage } from './agent-usage-tracker';
 import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
+import type { ConversationFolderResolver } from './conversation-roots';
 import path from 'node:path';
 import type { HistoryResumeResult } from '../shared/conversation-history';
 
@@ -108,6 +109,8 @@ export interface DaemonAgentRuntimeOptions {
   readonly workflowToolsForSession?: (sessionId: string) => boolean;
   readonly conversationWritable?: (projectId: string, sessionId: string) => Promise<boolean>;
   readonly conversationContext?: (projectId: string, sessionId: string) => Promise<ChatMessageContext['workflow']>;
+  /** The folders a conversation works in: its workspace plus the project's other registered folders. */
+  readonly conversationFolders?: ConversationFolderResolver;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
   readonly shutdownStepTimeoutMs?: number;
@@ -1701,19 +1704,44 @@ export class DaemonAgentRuntime {
     model: string | undefined,
     permissionPreset: DaemonAgent['permissionPreset'],
     orchestrationEnabled: boolean,
+    additionalRoots?: readonly string[],
   ): ProviderSessionContext {
     const orchestration = orchestrationEnabled || this.options.workflowToolsForSession?.(sessionId)
       ? this.options.orchestrationForSession?.(sessionId)
       : undefined;
+    const prepared = this.options.preparedSessionSettings?.(sessionId);
     return {
       sessionId,
       workspaceId,
       workspaceRoot,
-      ...this.options.preparedSessionSettings?.(sessionId),
+      ...prepared,
+      // A tool-free planning proposal reads no files, so it gets no extra folders either.
+      ...(additionalRoots?.length && !prepared?.toolsDisabled ? { additionalRoots } : {}),
       ...(model ? { model } : {}),
       permissionPreset,
       ...(orchestration ? { orchestration } : {}),
     };
+  }
+
+  /**
+   * The project's other folders this session works in, read fresh for each start, resume and
+   * turn so folder edits reach a running conversation. Undefined when the host has no resolver
+   * or the lookup failed: the session then keeps the folders it has.
+   */
+  private async additionalRootsFor(
+    snapshot: Pick<DaemonSnapshot, 'projects' | 'workspaces'>,
+    session: Pick<DaemonSession, 'id' | 'projectId' | 'workspaceId'>,
+  ): Promise<readonly string[] | undefined> {
+    const resolve = this.options.conversationFolders;
+    if (!resolve) return undefined;
+    if (this.options.preparedSessionSettings?.(session.id)?.toolsDisabled) return [];
+    try {
+      const folders = await resolve(snapshot, { projectId: session.projectId, workspaceId: session.workspaceId });
+      return folders?.additional;
+    } catch (error) {
+      this.options.reportError?.('conversation folders', error);
+      return undefined;
+    }
   }
 
   /**
@@ -1954,6 +1982,7 @@ export class DaemonAgentRuntime {
       }
       let providerSessionId = selected.agent.providerSessionId;
       let promptSent = false;
+      const additionalRoots = await this.additionalRootsFor(dispatchSnapshot, selected.session);
       try {
         if (!providerSessionId) {
           const handle = await provider.value.createSession(this.sessionContext(
@@ -1963,6 +1992,7 @@ export class DaemonAgentRuntime {
             selected.agent.model,
             selected.agent.permissionPreset,
             selected.agent.orchestrationEnabled,
+            additionalRoots,
           ), this.lifecycleAbortController.signal);
           let attached = false;
           await this.transition((snapshot) => {
@@ -2017,6 +2047,7 @@ export class DaemonAgentRuntime {
           reasoningEffort: this.options.preparedSessionSettings?.(selected.turn.sessionId)?.reasoningEffort
             ?? this.options.getSnapshot().agents.find((entry) => entry.sessionId === selected.turn.sessionId)?.reasoningEffort,
           attended: this.attendedTurn(selected.turn),
+          ...(additionalRoots ? { additionalRoots } : {}),
         }, this.lifecycleAbortController.signal);
         await this.transition((snapshot) => {
           const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
@@ -3232,6 +3263,7 @@ export class DaemonAgentRuntime {
       return;
     }
     try {
+      const additionalRoots = await this.additionalRootsFor(snapshot, session);
       const handle = await provider.value.resumeSession({
         ...this.sessionContext(
           sessionId,
@@ -3240,6 +3272,7 @@ export class DaemonAgentRuntime {
           agent.model,
           agent.permissionPreset,
           agent.orchestrationEnabled,
+          additionalRoots,
         ),
         providerSessionId: agent.providerSessionId,
       }, this.lifecycleAbortController.signal);

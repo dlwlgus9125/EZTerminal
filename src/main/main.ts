@@ -154,6 +154,7 @@ import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
 import { CodexProviderAdapter } from './codex-provider-adapter';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
+import { conversationFolderTarget, createConversationFolderResolver, type ConversationFolderResolver } from './conversation-roots';
 import { JsonFile } from './json-file';
 import {
   readyDaemonAuthorityAvailability,
@@ -961,6 +962,8 @@ app.on('ready', async () => {
     },
   });
   const agentUsageFile = new JsonFile(app.getPath('userData'), 'agent-usage.json');
+  // Bound once the project workspace service exists, below; until then sessions keep one folder.
+  const conversationFoldersRef: { current?: ConversationFolderResolver } = {};
   const daemonAgentRuntime = new DaemonAgentRuntime({
     providers: providerRegistry,
     agentUsageStore: {
@@ -991,6 +994,7 @@ app.on('ready', async () => {
     workflowToolsForSession: workflowSessionAllowed,
     conversationWritable: (projectId, sessionId) => workflowRef.service?.conversationWritable(projectId, sessionId) ?? Promise.resolve(true),
     conversationContext: (projectId, sessionId) => workflowRef.service?.conversationContext(projectId, sessionId) ?? Promise.resolve(undefined),
+    conversationFolders: (snapshot, target) => conversationFoldersRef.current?.(snapshot, target) ?? Promise.resolve(undefined),
     revokeOrchestrationForSession: (sessionId) => {
       agentOrchestrationMcpServer.revokeSession(sessionId);
     },
@@ -1426,6 +1430,13 @@ app.on('ready', async () => {
     ),
     accessStore: projectWorkspaceAccessStore,
   });
+  const conversationFolders = createConversationFolderResolver({
+    registeredRoots: (projectId) => {
+      const described = projectWorkspaceService.describeProject(projectId);
+      return described.ok ? described.project.roots.map((root) => root.displayPath) : undefined;
+    },
+  });
+  conversationFoldersRef.current = conversationFolders;
   const projectMapBindingStore = new ProjectMapBindingStore(app.getPath('userData'));
   const projectMapCacheStore = new ProjectMapCacheStore(app.getPath('userData'));
   const projectMapApprovalStore = new ProjectMapApprovalStore(app.getPath('userData'));
@@ -2382,6 +2393,11 @@ app.on('ready', async () => {
     projectWorkspaceSearches,
     requestProjectWorkspaceApproval,
     requestDaemonWorkspaceRevocation,
+    readConversationFolders: async (request) => {
+      const snapshot = daemonCommandRouter.getSnapshot();
+      const target = conversationFolderTarget(request, snapshot);
+      return target ? await conversationFolders(snapshot, target) ?? null : null;
+    },
   }));
   featureIpcDisposers.push(installPlanningIpc({
     ipc: ipcMain,

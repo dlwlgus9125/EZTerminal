@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- App agent conversations (Codex and Claude) now work in every folder
+  registered to their project, like the terminal CLI launchers: the
+  conversation's working folder first, then the project's other folders.
+  Codex receives them as thread workspace roots; Claude as additional
+  directories. A worktree conversation leaves out the folder it was made from,
+  folders missing on disk are left out and shown as such, and AGENTS.md and
+  CLAUDE.md are still read from the working folder only. Editing the project's
+  folders reaches running conversations from their next message (Claude resumes
+  the same session with the new folders first).
+
+### Changed
+
+- Desktop conversations show the working folder as a setting under the message
+  box (`EZTerminal +2`) instead of a line in the header. Its menu lists the
+  folders, says which ones are missing, and opens the project editor. A new
+  conversation chooses its working folder there and its AI at the top of the
+  model menu; the separate AI and working-folder selects above it are gone.
+  Android is unchanged.
+- The composer's settings take only the width they need, so they stay on one
+  row whenever they fit.
+
 ### Security
 
 - Update rustls to 0.23.46 and rustls-webpki to 0.103.16 in the native remote

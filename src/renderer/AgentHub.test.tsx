@@ -204,6 +204,30 @@ describe('AgentHub approval integrity', () => {
   });
 });
 
+describe('AgentHub project editor requests', () => {
+  it('opens the project editor once per request from a conversation folder setting', async () => {
+    const project = {
+      projectId: 'project-folders', name: 'Folders', primaryRoot: 'C:\\Work\\app', additionalRoots: ['C:\\Work\\shared'],
+      pinned: false, saved: true, sessionCount: 0, providers: [], lastActiveAt: 20,
+    } as const;
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: { listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })), listAgentHistorySessions: vi.fn() },
+    });
+    Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: {} });
+    try {
+      await renderHub({ revision: 1, items: [] }, { projectEditorRequest: { projectId: 'project-folders', id: 1 } });
+      await flush();
+      const editor = document.body.querySelector('[data-testid="agent-project-editor"]');
+      expect(editor).not.toBeNull();
+      expect(editor?.textContent).toContain('C:\\Work\\app');
+      expect(editor?.textContent).toContain('C:\\Work\\shared');
+    } finally {
+      Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: originalEzTerminalDesktop });
+    }
+  });
+});
+
 describe('AgentHub local history paging', () => {
   it('opens project history from the overflow menu and appends the next page', async () => {
     const project = {

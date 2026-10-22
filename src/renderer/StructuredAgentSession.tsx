@@ -82,6 +82,8 @@ import { readSessionViewState, saveSessionViewState } from './session-view-state
 import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, Select } from './ui';
 import { conversationFileChanges } from '../shared/conversation-changes';
 import { SettingPill } from './chat/composer/SettingPill';
+import { FolderPill } from './chat/composer/FolderPill';
+import type { ConversationFolders } from '../shared/conversation-folders';
 import { UsagePill, type UsagePillCopy } from './chat/composer/UsagePill';
 import type { AgentUsage } from '../shared/agent-usage';
 import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityItem } from '../shared/agent-capabilities';
@@ -1709,6 +1711,25 @@ export interface StructuredAgentSessionPanelProps {
   /** The AI's last reported plan limits and this conversation's context. */
   readonly usage?: AgentUsage;
   readonly workspace: StructuredAgentWorkspaceOption;
+  /**
+   * The working folder and the project's other folders this conversation also works in. Given,
+   * they show as a composer setting on desktop instead of the folder line in the header.
+   */
+  readonly folders?: ConversationFolders;
+  /** Before the conversation starts: the working folder is chosen from the folder setting. */
+  readonly workspaceChoices?: {
+    readonly options: readonly StructuredAgentWorkspaceOption[];
+    readonly onSelect: (workspaceId: string) => void;
+    readonly onNewWorktree?: () => void;
+    readonly disabled?: boolean;
+  };
+  /** Opens the project editor, where its folders are added, removed or made the main one. */
+  readonly onEditProject?: () => void;
+  /** Before the conversation starts: the AI is chosen at the top of the model setting. */
+  readonly providerChoices?: {
+    readonly options: readonly { readonly id: string; readonly label: string; readonly disabled?: boolean; readonly description?: string }[];
+    readonly onSelect: (providerId: string) => void;
+  };
   readonly model?: string;
   readonly modelOptions?: readonly StructuredAgentModelOption[];
   readonly permissionPreset: PermissionPreset;
@@ -1835,6 +1856,10 @@ export function StructuredAgentSessionPanel({
   providerLabel,
   usage,
   workspace,
+  folders,
+  workspaceChoices,
+  onEditProject,
+  providerChoices,
   model,
   modelOptions = [],
   permissionPreset,
@@ -1922,6 +1947,11 @@ export function StructuredAgentSessionPanel({
     return context ? send(prompt, context) : send(prompt);
   };
   const titleId = useId();
+  // Android keeps the folder line in its header: the phone does not list a conversation's folders yet.
+  const folderPill = variant !== 'mobile' && folders ? (
+    <FolderPill workspace={workspace} folders={folders}
+      {...(workspaceChoices ? { choices: workspaceChoices } : {})} {...(onEditProject ? { onEditProject } : {})} />
+  ) : null;
   const panelRef = useRef<HTMLElement>(null);
   const [wideReview, setWideReview] = useState(false);
   const [reviewAside, setReviewAside] = useState(false);
@@ -2209,6 +2239,7 @@ export function StructuredAgentSessionPanel({
                   <small>{copy.permission}</small>
                   <strong>{planOn ? `${permissionText.plan} · ` : ''}{permissionText.levels[accessLevel].label}</strong>
                 </span>
+                {folderPill}
               </>
             ) : (
               <>
@@ -2234,6 +2265,13 @@ export function StructuredAgentSessionPanel({
                   placeholder={copy.providerDefault}
                   options={availableModels.map((option) => ({ value: option.id, label: option.label }))}
                   {...(modelsLoading ? { status: copy.modelsLoading } : {})}
+                  {...(providerChoices ? { leading: {
+                    label: 'AI',
+                    value: providerId,
+                    options: providerChoices.options.map((option) => ({ value: option.id, label: option.label,
+                      ...(option.disabled ? { disabled: true } : {}), ...(option.description ? { description: option.description } : {}) })),
+                    onChange: providerChoices.onSelect,
+                  } } : {})}
                   disabled={settingsLocked || turnCurrent}
                   {...(turnCurrent && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
                   onChange={(next) => void updateSettings({ model: next })}
@@ -2261,6 +2299,7 @@ export function StructuredAgentSessionPanel({
                   onChange={changeAccess}
                   testId="structured-agent-live-permission"
                 />
+                {folderPill}
                 {usage && <UsagePill usage={usage} providerName={providerName} copy={copy.usage} locale={i18n.language} />}
               </>
             )}
@@ -2298,7 +2337,8 @@ export function StructuredAgentSessionPanel({
           ) : <span className="structured-agent__eyebrow">{providerLabel}</span>}
           <h1 id={titleId} title={`${title} · ${providerLabel} · ${workspace.label}`}>{title}</h1>
           {subagentType && <span className="chat-chip">{subagentType}</span>}
-          <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>
+          {/* With the folder setting below, the header names the conversation and its state only. */}
+          {!folderPill && <p title={workspace.path}>{workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}</p>}
         </div>
         <div className="structured-agent-session-header__status">
           <span className="structured-agent-state" data-state={state}>

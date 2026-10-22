@@ -15,6 +15,8 @@ import {
 
 import { type DaemonProjectSyncOptions } from './daemon-project-sync';
 
+import type { ConversationFolders } from '../shared/conversation-folders';
+
 import { IpcRegistration, type FeatureIpc } from './ipc-registration';
 
 interface InstallProjectWorkspaceIpcOptions {
@@ -28,6 +30,8 @@ interface InstallProjectWorkspaceIpcOptions {
   readonly projectWorkspaceSearches: Map<string, AbortController>;
   readonly requestProjectWorkspaceApproval: (request: unknown) => Promise<{ readonly ok: false; readonly error: ProjectWorkspaceError; } | { readonly ok: true; readonly workspace: ProjectWorkspaceLocationDescriptor; }>;
   readonly requestDaemonWorkspaceRevocation: (request: unknown) => Promise<boolean>;
+  /** Read-only: the folders a conversation (or a new one in a workspace) works in. */
+  readonly readConversationFolders: (request: unknown) => Promise<ConversationFolders | null>;
 }
 
 export function installProjectWorkspaceIpc(dependencies: InstallProjectWorkspaceIpcOptions): () => void {
@@ -55,6 +59,10 @@ export function installProjectWorkspaceIpc(dependencies: InstallProjectWorkspace
         return { ok: false, error: 'io-error' } as const;
       }
     }));
+    ipcMain.handle('agent-conversation:folders', async (_event, request: unknown) => {
+      await dependencies.projectWorkspaceReady;
+      return dependencies.readConversationFolders(request);
+    });
     ipcMain.handle('project-documents:resolve', async (_event, request: unknown) => {
       await dependencies.projectWorkspaceReady;
       return dependencies.projectDocumentService.resolveTarget(request);
