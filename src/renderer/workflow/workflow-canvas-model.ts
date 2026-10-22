@@ -165,6 +165,11 @@ export function layoutWorkflowGraph(graph: WorkflowGraph, size: WorkflowNodeSize
   return { ...graph, nodes };
 }
 
+/** True when two stages, at the card size in graph units, cover each other (older drafts used narrower nodes). */
+export function workflowLayoutOverlaps(graph: WorkflowGraph, size: WorkflowNodeSize): boolean {
+  return graph.nodes.some((a, index) => graph.nodes.slice(index + 1).some(b => Math.abs(a.position.x - b.position.x) < size.width && Math.abs(a.position.y - b.position.y) < size.height));
+}
+
 function reaches(graph: WorkflowGraph, from: string, to: string): boolean {
   const seen = new Set<string>(); const pending = [from];
   while (pending.length) {

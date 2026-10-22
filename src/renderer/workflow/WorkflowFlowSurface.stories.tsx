@@ -10,6 +10,7 @@ import { useWorkflowCopy } from './workflow-copy';
 import { WorkflowFlowCanvas } from './WorkflowFlowCanvas';
 import { WorkflowFlowSurface } from './WorkflowFlowSurface';
 import { WorkflowStaticGraph } from './WorkflowStaticGraph';
+import { useWorkflowScale } from './use-workflow-scale';
 import '../index.css';
 import './workflow.css';
 
@@ -27,6 +28,8 @@ interface FlowStoryProps {
   /** First visible column and zoom of the fixed story camera (deterministic screenshots). */
   readonly camera?: { readonly column: number; readonly zoom: number };
   readonly width?: number;
+  /** A flow saved by the old editor: 240-unit spacing for 210px nodes. */
+  readonly legacyLayout?: boolean;
 }
 
 function Broken(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
@@ -39,16 +42,17 @@ function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
   return null;
 }
 
-function FlowStory({ scenario, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko' }: FlowStoryProps): JSX.Element {
+function FlowStory({ scenario, legacyLayout = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko' }: FlowStoryProps): JSX.Element {
   const text = useWorkflowCopy();
-  const fixture = useMemo(() => workflowCanvasFixture(scenario, locale), [scenario, locale]);
+  const fixture = useMemo(() => { const value = workflowCanvasFixture(scenario, locale); return legacyLayout ? { ...value, graph: { ...value.graph, nodes: value.graph.nodes.map((node, index) => ({ ...node, position: { x: 80 + index * 240, y: 80 } })) } } : value; }, [legacyLayout, scenario, locale]);
   const [draftGraph, setDraftGraph] = useState<WorkflowGraph | null>(() => draftOf(fixture.graph, draft));
   const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: select.kind, id: select.kind === 'edge' ? select.key : `login:${select.key}` } : null);
   const [section, setSection] = useState(initialSection);
   const [runView, setRunView] = useState(initialRunView);
   const [layout, setLayout] = useState<'graph' | 'list'>(initialLayout ?? (mobile ? 'list' : 'graph'));
   const issues = validateWorkflowGraph(draftGraph ?? fixture.graph, true);
-  const viewport = camera ? { x: 24 - (40 + camera.column * COLUMN) * camera.zoom, y: 120 - 40 * camera.zoom, zoom: camera.zoom } : undefined;
+  const scale = useWorkflowScale();
+  const viewport = camera ? { x: 24 - (40 + camera.column * COLUMN) * scale * camera.zoom, y: 120 - 40 * scale * camera.zoom, zoom: camera.zoom } : undefined;
   return <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={fixture.graph} draftGraph={draftGraph} revision={4} archivedNodes={[]} runs={fixture.run ? [fixture.run] : []}
     editLocked={false} commandsDisabled={false} issues={issues} providers={[{ id: 'codex', label: 'Codex', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }, { id: 'claude', label: 'Claude Code', models: [{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }] }] as never}
     selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={null} onPickRun={fn()} runView={runView} onRunViewChange={setRunView}
@@ -101,6 +105,7 @@ export const RetryEdgeSelected: Story = { args: { scenario: 'retry-running', sel
 export const Narrow: Story = { args: { scenario: 'awaiting-approval', select: { kind: 'node', key: 'approval' }, section: 'run', width: 800, camera: { column: 4, zoom: 0.6 } } };
 export const MobileList: Story = { args: { scenario: 'retry-running', mobile: true, renderer: 'static', width: 390 } };
 export const StaticFallback: Story = { args: { scenario: 'awaiting-approval', renderer: 'broken' } };
+export const LegacyOverlappingLayout: Story = { args: { scenario: 'edit', legacyLayout: true, camera: { column: 0, zoom: 0.72 } } };
 export const EnglishAwaitingApproval: Story = { args: { scenario: 'awaiting-approval', locale: 'en', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 
 /** Drag from an output port to another stage's input adds exactly one connection. */

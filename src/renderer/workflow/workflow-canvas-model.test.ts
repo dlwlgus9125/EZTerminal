@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, defaultWorkflowRun, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, defaultWorkflowRun, workflowLayoutOverlaps, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -215,5 +215,15 @@ describe('panel section and the saved page', () => {
     expect(pageFromSection('settings')).toBe('flow');
     expect(pageFromSection('stage')).toBe('stage');
     expect(pageFromSection('run')).toBe('run');
+  });
+});
+
+describe('workflowLayoutOverlaps', () => {
+  const size = { width: 248, height: 136 };
+  it('flags stages stored closer than one card, as older drafts were', () => {
+    expect(workflowLayoutOverlaps(graph, size)).toBe(true);
+  });
+  it('accepts the tidy layout', () => {
+    expect(workflowLayoutOverlaps(layoutWorkflowGraph(graph, size), size)).toBe(false);
   });
 });

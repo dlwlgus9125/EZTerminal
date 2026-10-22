@@ -19,6 +19,8 @@ export interface WorkflowCanvasHeaderProps {
   readonly editLocked: boolean;
   readonly commandsDisabled: boolean;
   readonly issueCount: number;
+  /** Stored positions overlap at the current card size: offer a one-click tidy. */
+  readonly overlapping: boolean;
   readonly awaiting: readonly { readonly nodeId: string; readonly title: string }[];
   readonly layout: 'graph' | 'list';
   readonly onLayoutChange: (layout: 'graph' | 'list') => void;
@@ -75,6 +77,7 @@ export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Elem
         <Button size="sm" aria-pressed={props.layout === 'list'} onClick={() => props.onLayoutChange('list')} leadingIcon={<List />}>{text('목록', 'List')}</Button>
       </div>
     </div>
+    {props.overlapping && mode !== 'run-view' && props.layout === 'graph' && <p className="workflow-canvas-header__overlap" role="status"><span>{text('겹쳐 있는 단계가 있습니다.', 'Some stages overlap.')}</span><Button size="sm" leadingIcon={<LayoutGrid />} disabled={editLocked} onClick={props.onAutoLayout}>{text('자동 정렬', 'Tidy layout')}</Button></p>}
     {mode === 'edit' && run && !ended && <p className="workflow-hint">{text('편집 내용은 다음 실행에 사용합니다. 현재 실행은 시작한 버전과 설정을 유지합니다.', 'Edits apply to the next run. The current run keeps its original version and settings.')}</p>}
   </div>;
 }

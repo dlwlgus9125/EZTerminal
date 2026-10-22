@@ -1,6 +1,7 @@
 import { Component, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, type WorkflowPoint } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
+import { useWorkflowScale } from './use-workflow-scale';
 import { WorkflowNodeCard, workflowRunStatusPresentation } from './WorkflowNodeCard';
 import { workflowOperationLabel } from './workflow-copy';
 
@@ -17,6 +18,7 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
   const [anchors, setAnchors] = useState<Record<string, Anchors>>({});
   const marker = `workflow-static-arrow-${useId().replace(/:/gu, '')}`;
   const depths = useMemo(() => workflowBackwardDepths(graph), [graph]);
+  const scale = useWorkflowScale();
   useLayoutEffect(() => {
     const next: Record<string, Anchors> = {};
     for (const [id, element] of elements.current) {
@@ -27,15 +29,15 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
       next[id] = { width: box.width || FALLBACK.width, height: box.height || FALLBACK.height, input: centre(element.querySelector('[data-handle-in]')) ?? { x: 0, y: (box.height || FALLBACK.height) / 2 }, outputs };
     }
     setAnchors(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
-  }, [graph, overlay, issueCounts]);
+  }, [graph, overlay, issueCounts, scale]);
   const size = (id: string) => anchors[id] ?? { ...FALLBACK, input: { x: 0, y: FALLBACK.height / 2 }, outputs: {} };
-  const at = (id: string) => graph.nodes.find(node => node.id === id)!.position;
+  const at = (id: string) => { const position = graph.nodes.find(node => node.id === id)!.position; return { x: position.x * scale, y: position.y * scale }; };
   const out = (id: string, outcome: string): WorkflowPoint => { const local = size(id).outputs[outcome] ?? { x: size(id).width, y: size(id).height / 2 }; return { x: at(id).x + local.x, y: at(id).y + local.y }; };
   const into = (id: string): WorkflowPoint => ({ x: at(id).x + size(id).input.x, y: at(id).y + size(id).input.y });
   const maxDepth = Math.max(0, ...Object.values(depths));
   const extent = {
-    width: Math.max(320, ...graph.nodes.map(node => node.position.x + size(node.id).width + 48)),
-    height: Math.max(240, ...graph.nodes.map(node => node.position.y + size(node.id).height + 132 + maxDepth * 32)),
+    width: Math.max(320, ...graph.nodes.map(node => at(node.id).x + size(node.id).width + 48)),
+    height: Math.max(240, ...graph.nodes.map(node => at(node.id).y + size(node.id).height + 132 + maxDepth * 32)),
   };
   const edges = graph.edges.filter(edge => graph.nodes.some(node => node.id === edge.from) && graph.nodes.some(node => node.id === edge.to));
   const onKey = (event: KeyboardEvent, id: string) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect({ kind: 'node', id }); } };
@@ -59,7 +61,7 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
         })}
         {graph.nodes.map(node => {
           const run = overlay?.nodes[node.id]; const chosen = selection?.kind === 'node' && selection.id === node.id;
-          return <div key={node.id} ref={element => { if (element) elements.current.set(node.id, element); else elements.current.delete(node.id); }} className="workflow-static__node" style={{ left: node.position.x, top: node.position.y }}
+          return <div key={node.id} ref={element => { if (element) elements.current.set(node.id, element); else elements.current.delete(node.id); }} className="workflow-static__node" style={{ left: at(node.id).x, top: at(node.id).y }}
             role="button" tabIndex={0} aria-pressed={chosen} aria-label={[node.title, workflowOperationLabel(node.operation, text), run ? workflowRunStatusPresentation(run, text).label : ''].filter(Boolean).join(', ')}
             onClick={() => onSelect({ kind: 'node', id: node.id })} onKeyDown={event => onKey(event, node.id)}>
             <WorkflowNodeCard node={node} text={text} entry={graph.entryNodeId === node.id} selected={chosen} run={run} issueCount={issueCounts?.[node.id] ?? 0}

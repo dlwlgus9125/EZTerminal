@@ -4,7 +4,7 @@ import type { ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowGraph, WorkflowIssue, WorkflowNode } from '../../shared/workflow-graph';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
 import { Button, Dialog, Status } from '../ui';
-import { layoutWorkflowGraph, resolveCanvasView, type WorkflowPanelSection } from './workflow-canvas-model';
+import { layoutWorkflowGraph, resolveCanvasView, workflowLayoutOverlaps, type WorkflowPanelSection } from './workflow-canvas-model';
 import type { CanvasSelection, WorkflowCanvasRendererProps } from './workflow-canvas-types';
 import { WorkflowCanvasHeader, type WorkflowRunCommandInput } from './WorkflowCanvasHeader';
 import { WorkflowNodeRunSection, WorkflowStageSection, type WorkflowStageLink } from './WorkflowNodeSections';
@@ -13,6 +13,7 @@ import { workflowRunStatusPresentation } from './WorkflowNodeCard';
 import { WorkflowOutline } from './WorkflowOutline';
 import { WorkflowCanvasBoundary, WorkflowStaticGraph } from './WorkflowStaticGraph';
 import { workflowIssueLabel, workflowOperationLabel, workflowOutcomeLabel, type WorkflowCopy } from './workflow-copy';
+import { WORKFLOW_CARD_UNITS } from './use-workflow-scale';
 import './workflow-canvas.css';
 
 export interface WorkflowFlowSurfaceProps {
@@ -54,10 +55,6 @@ export interface WorkflowFlowSurfaceProps {
   readonly initialViewport?: WorkflowCanvasRendererProps['initialViewport'];
 }
 
-function cardSize(): { width: number; height: number } {
-  const rem = typeof document === 'undefined' ? 16 : parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-  return { width: 15.5 * rem, height: 8.5 * rem };
-}
 
 /**
  * The subproject flow as one canvas: build it, run it and act on its stages in one place.
@@ -86,10 +83,10 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
 
   return <div className="workflow-flow" data-mode={view.mode} data-mobile={props.mobile || undefined}>
     <WorkflowCanvasHeader text={text} mode={view.mode} revision={props.revision} hasLocalDraft={!!props.draftGraph} diverged={view.diverged} run={view.run} runs={props.runs}
-      editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} issueCount={props.issues.length} awaiting={awaiting}
+      editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} issueCount={props.issues.length} overlapping={workflowLayoutOverlaps(view.graph, WORKFLOW_CARD_UNITS)} awaiting={awaiting}
       layout={props.layout} onLayoutChange={props.onLayoutChange} onPickRun={props.onPickRun} onRunView={props.onRunViewChange}
       onJumpToNode={id => { select({ kind: 'node', id }); props.onSectionChange('run'); }}
-      onSaveDraft={props.onSaveDraft} onDiscardDraft={props.onDiscardDraft} onAutoLayout={() => change(layoutWorkflowGraph(view.graph, cardSize()))}
+      onSaveDraft={props.onSaveDraft} onDiscardDraft={props.onDiscardDraft} onAutoLayout={() => change(layoutWorkflowGraph(view.graph, WORKFLOW_CARD_UNITS))}
       onPrepareRun={props.onPrepareRun} onRunCommand={props.onRunCommand} onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} />
     <div className="workflow-flow__body">
       <div className="workflow-flow__canvas">

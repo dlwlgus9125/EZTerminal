@@ -2,6 +2,7 @@ import type { ExecutionAttempt, ExecutionReview, ExecutionRun, ExecutionTask, Pr
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
 import { layoutWorkflowGraph } from './workflow-canvas-model';
+import { WORKFLOW_CARD_UNITS } from './use-workflow-scale';
 
 /**
  * Storybook/test data for the one-canvas flow: the "Login improvements" subproject and runs in the
@@ -87,7 +88,7 @@ function buildRun(graph: WorkflowGraph, steps: readonly Step[], state: Execution
 
 const roundOne = [done('plan'), done('design'), done('implement'), done('review', 1, 'failed'), { node: 'condition', round: 1, state: 'completed', outcome: 'failed' } as Step];
 /** A canvas scenario: the graph to edit and, unless editing, the run to overlay. */
-export function workflowCanvasFixture(scenario: WorkflowCanvasScenario, locale: 'ko' | 'en' = 'ko', size = { width: 248, height: 136 }): { graph: WorkflowGraph; run?: ExecutionRun } {
+export function workflowCanvasFixture(scenario: WorkflowCanvasScenario, locale: 'ko' | 'en' = 'ko', size: { width: number; height: number } = WORKFLOW_CARD_UNITS): { graph: WorkflowGraph; run?: ExecutionRun } {
   if (scenario === 'parallel-join') {
     const graph = workflowCanvasGraph('parallel', locale, size);
     return { graph, run: buildRun(graph, [done('plan'), { node: 'fork', round: 1, state: 'completed', outcome: 'next' }, done('ui'), { node: 'api', round: 1, state: 'active', attempt: 'running' }, { node: 'join', round: 1, state: 'waiting', from: ['ui'] }], 'running') };

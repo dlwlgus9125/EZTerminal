@@ -90,6 +90,7 @@
 .workflow-canvas-header__banner svg { width: 1rem; height: 1rem; flex-shrink: 0; }
 .workflow-canvas-header__banner > span { flex: 1 1 16rem; }
 .workflow-canvas-header .workflow-hint { margin: 0; }
+.workflow-canvas-header__overlap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); margin: 0; padding: var(--ui-space-1) var(--ui-space-3); border-left: 3px solid var(--ui-warning); border-radius: var(--ui-radius-md); background: var(--ui-warning-muted); }
 
 /* Canvas frame shared by both renderers. Scoped so the old editor's .workflow-canvas cap does not apply. */
 .workflow-canvas[data-renderer] { position: relative; flex: 1 1 auto; min-height: 22rem; max-height: none; overflow: hidden; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-lg); background: var(--ui-canvas); user-select: none; }
@@ -148,8 +149,10 @@
 
 /* The panel goes under the canvas when the surface itself is narrow (a split dock pane counts). */
 @container (max-width: 52rem) {
-  .workflow-flow__body { grid-template-columns: minmax(0, 1fr); }
-  .workflow-flow__canvas { min-height: 24rem; }
+  /* Canvas and panel stack and scroll together, so the panel is never squeezed to a sliver. */
+  .workflow-flow__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 24rem auto; overflow: auto; }
+  .workflow-flow__canvas { min-height: 0; }
+  .workflow-flow__panel { overflow: visible; }
   .workflow-canvas .react-flow__minimap svg { width: 8rem; height: 5.5rem; }
 }
 .workflow-flow[data-mobile] .workflow-flow__body { grid-template-columns: minmax(0, 1fr); }

@@ -9,6 +9,7 @@ import type { WorkflowEdge, WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
 import { canConnectWorkflow, connectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
+import { useWorkflowScale } from './use-workflow-scale';
 import { WorkflowNodeCard, workflowRunStatusPresentation } from './WorkflowNodeCard';
 import { workflowOperationLabel, workflowOutcomeLabel, type WorkflowCopy } from './workflow-copy';
 
@@ -61,6 +62,7 @@ function FitOnFirstShow({ active, skip }: { active: boolean; skip: boolean }): n
 
 export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSelect, onGraphChange, text, label, issueCounts, initialViewport, active = true, onRequestDeleteNode }: WorkflowCanvasRendererProps): JSX.Element {
   const marker = `workflow-arrow-${useId().replace(/:/gu, '')}`;
+  const scale = useWorkflowScale();
   const [dragging, setDragging] = useState<Record<string, XYPosition>>({});
   const draggingRef = useRef(dragging);
   // Controlled nodes must carry React Flow's measurements back, or rebuilt node objects stay
@@ -71,14 +73,14 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
   const nodes = useMemo<StageNode[]>(() => graph.nodes.map(node => {
     const run = overlay?.nodes[node.id];
     return {
-      id: node.id, type: 'stage', position: dragging[node.id] ?? node.position,
+      id: node.id, type: 'stage', position: dragging[node.id] ?? { x: node.position.x * scale, y: node.position.y * scale },
       draggable: editable, connectable: editable, deletable: editable && !!onRequestDeleteNode,
       ...(measured[node.id] ? { measured: measured[node.id] } : {}),
       selected: selection?.kind === 'node' && selection.id === node.id,
       ariaLabel: [node.title, workflowOperationLabel(node.operation, text), run ? workflowRunStatusPresentation(run, text).label : ''].filter(Boolean).join(', '),
       data: { stage: node, entry: graph.entryNodeId === node.id, run, text, editable, issues: issueCounts?.[node.id] ?? 0 },
     };
-  }), [dragging, editable, graph.entryNodeId, graph.nodes, issueCounts, measured, onRequestDeleteNode, overlay, selection, text]);
+  }), [dragging, editable, graph.entryNodeId, graph.nodes, issueCounts, measured, onRequestDeleteNode, overlay, scale, selection, text]);
   const edges = useMemo<FlowEdge[]>(() => graph.edges.filter(edge => graph.nodes.some(node => node.id === edge.from) && graph.nodes.some(node => node.id === edge.to)).map(edge => ({
     id: edge.id, source: edge.from, target: edge.to, sourceHandle: edge.outcome, targetHandle: 'in', type: 'workflow', deletable: editable,
     selected: selection?.kind === 'edge' && selection.id === edge.id,
@@ -98,10 +100,10 @@ export function WorkflowFlowCanvas({ graph, overlay, editable, selection, onSele
     }
     if (moved) { draggingRef.current = moving; setDragging(moving); }
     // Drag end and arrow-key moves both arrive as a non-dragging position change: one draft update.
-    if (Object.keys(commits).length && editable) onGraphChange({ ...graph, nodes: graph.nodes.map(node => commits[node.id] ? { ...node, position: { x: Math.round(commits[node.id].x), y: Math.round(commits[node.id].y) } } : node) });
+    if (Object.keys(commits).length && editable) onGraphChange({ ...graph, nodes: graph.nodes.map(node => commits[node.id] ? { ...node, position: { x: Math.round(commits[node.id].x / scale), y: Math.round(commits[node.id].y / scale) } } : node) });
     const picked = changes.find(change => change.type === 'select' && change.selected);
     if (picked && 'id' in picked) onSelect({ kind: 'node', id: picked.id });
-  }, [editable, graph, onGraphChange, onSelect]);
+  }, [editable, graph, onGraphChange, onSelect, scale]);
   const onEdgesChange = useCallback((changes: EdgeChange<FlowEdge>[]) => {
     const removed = new Set(changes.filter(change => change.type === 'remove').map(change => change.id));
     if (removed.size && editable) { onGraphChange({ ...graph, edges: graph.edges.filter(edge => !removed.has(edge.id)) }); onSelect(null); return; }
