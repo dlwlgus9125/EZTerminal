@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowCommandSchema, type WorkflowAccess, type WorkflowCommand } from '../../shared/workflow';
 import { WorkflowWorkspacePanel } from './WorkflowWorkspacePanel';
 import { workflowFixture } from './workflow-fixtures';
+import { workflowCanvasFixture } from './workflow-canvas-fixtures';
 import type { WorkflowDraftAccess, WorkflowDraftState } from '../../shared/workflow-draft';
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
 
@@ -120,12 +121,12 @@ describe('workflow project workspace', () => {
     const state = fixture(); await state.render(); await click('New subproject'); await edit('Name', 'Cancelled plan'); await click('Cancel'); expect(state.commands).toHaveLength(0);
   });
   it('preserves node identity and stage document while renaming and switching views', async () => {
-    const state = fixture(); await state.render(true); await edit('Stage document', 'Document before navigation'); await click('Flow'); await edit('Stage title', 'Renamed stage'); await click('Stage documents and chats');
+    const state = fixture(); await state.render(true); await edit('Stage document', 'Document before navigation'); await click('Settings'); await edit('Stage title', 'Renamed stage'); await click('Stage documents and chats');
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Document before navigation'); await click('Save draft');
     const command = state.commands[0]; expect(command.type).toBe('workflow.patch'); if (command.type === 'workflow.patch') { expect(command.payload.graph.nodes[0].id).toBe('login:research'); expect(command.payload.graph.nodes[0].title).toBe('Renamed stage'); expect(command.payload.graph.nodes[0].document).toBe('Document before navigation'); }
   });
   it('normalizes blank lines only on save and keeps editable invalid connections', async () => {
-    const state = fixture(); await state.render(true); await click('Flow'); await edit('Acceptance criteria · one per line', 'First\n\nSecond\n'); await edit('Allowed paths · one per line', 'src\n');
+    const state = fixture(); await state.render(true); await click('Settings'); await edit('Acceptance criteria · one per line', 'First\n\nSecond\n'); await edit('Allowed paths · one per line', 'src\n');
     await click('Save draft'); const command = state.commands[0]; if (command.type !== 'workflow.patch') throw new Error('Wrong command'); expect(command.payload.graph.nodes[0].acceptance).toEqual(['First', 'Second']); expect(command.payload.graph.nodes[0].allowedPaths).toEqual(['src']);
   });
   it('opens the same stage conversation instead of duplicating its transcript', async () => {
@@ -182,5 +183,35 @@ describe('workflow project workspace', () => {
     expect(container.querySelector('h2')?.textContent).toBe('Login improvements');
     expect(container.querySelector('textarea')?.value).toBe('Unsaved draft');
     expect(container.querySelector('section')?.scrollTop).toBe(77); expect(state.commands).toHaveLength(0);
+  });
+});
+
+describe('WorkflowWorkspacePanel · one canvas', () => {
+  it('restores a stored "run" page as the run status of the selected stage', async () => {
+    const state = fixture(); const snapshot = workflowFixture(); const node = snapshot.subprojects[0].graph.nodes[0];
+    const saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, view: { subprojectId: 'login', nodeId: node.id, page: 'run', scrollTop: 0 } };
+    const recovery: WorkflowDraftAccess = { workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: saved } }), workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={state.access} recoveryAccess={recovery} conversations={[]} />));
+    expect(button('Flow').getAttribute('aria-pressed')).toBe('true');
+    expect(button('Run status').getAttribute('aria-selected')).toBe('true');
+    expect(document.body.textContent).toContain('This flow has not run yet.');
+  });
+  it('records a save that only moved stages as a layout change', async () => {
+    const state = fixture(); await state.render(true); await click('Settings');
+    await click('Move down on canvas'); await click('Save draft');
+    const command = state.commands[0];
+    expect(command).toMatchObject({ type: 'workflow.patch', payload: { summary: 'Layout change' } });
+  });
+  it('approves the waiting stage of a run from its stage panel with the exact activation', async () => {
+    const commands: WorkflowCommand[] = []; const scene = workflowCanvasFixture('awaiting-approval', 'en'); const base = workflowFixture();
+    const snapshot = { ...base, subprojects: [{ ...base.subprojects[0], graph: scene.graph }, ...base.subprojects.slice(1)], runs: [scene.run!] };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot, commandId: command.commandId }; } };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} navigationTarget={{ subprojectId: 'login', key: 'run' }} conversations={[]} />));
+    expect(document.body.textContent).toContain('Awaiting approval · action needed');
+    await click('1 awaiting approval');
+    expect(button('Run status').getAttribute('aria-selected')).toBe('true');
+    await click('Approve');
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ type: 'run.approve', payload: { runId: 'run-login-4', activationId: 'wf:login:approval:1', decision: 'approve' } });
   });
 });

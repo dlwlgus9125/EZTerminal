@@ -117,6 +117,42 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false): 
   return issues;
 }
 
+/** One stage card in scale-free graph units (renderers multiply by the UI scale). */
+export const WORKFLOW_LAYOUT_CARD = { width: 248, height: 136 } as const;
+interface WorkflowNodeSize { readonly width: number; readonly height: number }
+const LAYOUT_GAP = { x: 96, y: 48 } as const;
+const LAYOUT_ORIGIN = 40;
+/**
+ * Layered layout from the entry: a stage sits one column after its furthest predecessor
+ * (retry edges excluded, so loops do not stretch the flow). Unreachable stages get a last
+ * column. Only positions change; coordinates never imply execution order.
+ */
+export function layoutWorkflowGraph(graph: WorkflowGraph, size: WorkflowNodeSize): WorkflowGraph {
+  const forward = graph.edges.filter(edge => !edge.retryLimit && edge.from !== edge.to);
+  const column = new Map<string, number>();
+  if (graph.entryNodeId && graph.nodes.some(node => node.id === graph.entryNodeId)) {
+    column.set(graph.entryNodeId, 0);
+    // Longest path on the acyclic forward edges; the bound stops any unbounded cycle a draft may hold.
+    for (let round = 0, changed = true; changed && round < graph.nodes.length; round += 1) {
+      changed = false;
+      for (const edge of forward) {
+        const from = column.get(edge.from);
+        if (from === undefined) continue;
+        if ((column.get(edge.to) ?? -1) < from + 1) { column.set(edge.to, from + 1); changed = true; }
+      }
+    }
+  }
+  const lastColumn = column.size ? Math.max(...column.values()) + 1 : 0;
+  const rows = new Map<number, number>();
+  const nodes = graph.nodes.map(node => {
+    const x = column.get(node.id) ?? lastColumn;
+    const y = rows.get(x) ?? 0; rows.set(x, y + 1);
+    return { ...node, position: { x: LAYOUT_ORIGIN + x * (size.width + LAYOUT_GAP.x), y: LAYOUT_ORIGIN + y * (size.height + LAYOUT_GAP.y) } };
+  });
+  return { ...graph, nodes };
+}
+
+
 export const WORKFLOW_PRESETS = [
   { id: 'feature', title: '기능 개발' }, { id: 'fix', title: '문제 수정' },
   { id: 'research', title: '조사' }, { id: 'parallel', title: '병렬 구현' }, { id: 'custom', title: '직접 구성' },
@@ -144,7 +180,8 @@ export function createWorkflowGraph(preset: WorkflowPresetId, prefix: string): W
     edges.find(edge => edge.from === condition.id)!.outcome = 'passed';
     edges.push({ id: `${prefix}:retry`, from: condition.id, to: `${prefix}:implement`, outcome: 'failed', retryLimit: 2 });
   }
-  return { entryNodeId: nodes[0].id, nodes, edges };
+  // Presets start tidy at the canvas card size, so a new subproject never opens with overlapping stages.
+  return layoutWorkflowGraph({ entryNodeId: nodes[0].id, nodes, edges }, WORKFLOW_LAYOUT_CARD);
 }
 
 export const WorkflowFrozenSchema = z.object({

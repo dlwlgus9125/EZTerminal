@@ -42,7 +42,7 @@ export function WorkflowStaticGraph({ graph, overlay, selection, onSelect, text,
     height: Math.max(240, ...graph.nodes.map(node => at(node.id).y + size(node.id).height + (132 + maxDepth * 32) * scale)),
   };
   const edges = graph.edges.filter(edge => graph.nodes.some(node => node.id === edge.from) && graph.nodes.some(node => node.id === edge.to));
-  useEffect(() => { if (!reveal) return; elements.current.get(reveal.nodeId)?.scrollIntoView({ block: 'nearest', inline: 'center' }); onRevealed?.(); }, [onRevealed, reveal]);
+  useEffect(() => { if (!reveal) return; elements.current.get(reveal.nodeId)?.scrollIntoView?.({ block: 'nearest', inline: 'center' }); onRevealed?.(); }, [onRevealed, reveal]);
   useEffect(() => {
     const sizes = Object.values(anchors);
     if (sizes.length && onCardSize) onCardSize({ width: Math.max(...sizes.map(size => size.width)) / scale, height: Math.max(...sizes.map(size => size.height)) / scale });

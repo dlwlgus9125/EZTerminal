@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowLayoutOnlyChange, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -222,7 +222,8 @@ describe('panel section and the saved page', () => {
 describe('workflowLayoutOverlaps', () => {
   const size = { width: 248, height: 136 };
   it('flags stages stored closer than one card, as older drafts were', () => {
-    expect(workflowLayoutOverlaps(graph, size)).toBe(true);
+    const legacy = { ...graph, nodes: graph.nodes.map((node, index) => ({ ...node, position: { x: 80 + index * 240, y: 80 } })) };
+    expect(workflowLayoutOverlaps(legacy, size)).toBe(true);
   });
   it('accepts the tidy layout', () => {
     expect(workflowLayoutOverlaps(layoutWorkflowGraph(graph, size), size)).toBe(false);
@@ -270,5 +271,17 @@ describe('reconnectWorkflowEdge', () => {
     const forward = reconnectWorkflowEdge(laid, id('retry'), id('condition'), 'failed', id('done'))!;
     expect(forward.edges.find(edge => edge.id === id('retry'))?.retryLimit).toBeUndefined();
     expect(reconnectWorkflowEdge(laid, id('retry'), id('done'), 'next', id('plan'))).toBeNull();
+  });
+});
+
+describe('workflowLayoutOnlyChange', () => {
+  it('is true only when stage positions are all that changed', () => {
+    const moved = { ...graph, nodes: graph.nodes.map((node, index) => index === 0 ? { ...node, position: { x: 999, y: 1 } } : node) };
+    expect(workflowLayoutOnlyChange(graph, moved)).toBe(true);
+    expect(workflowLayoutOnlyChange(graph, graph)).toBe(false);
+    expect(workflowLayoutOnlyChange(graph, { ...moved, nodes: moved.nodes.map((node, index) => index === 1 ? { ...node, title: 'x' } : node) })).toBe(false);
+  });
+  it('survives a JSON round trip of the frozen graph (same content, any key order)', () => {
+    expect(sameWorkflowGraph(graph, JSON.parse(JSON.stringify(structuredClone(graph))) as WorkflowGraph)).toBe(true);
   });
 });

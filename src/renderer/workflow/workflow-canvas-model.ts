@@ -134,37 +134,7 @@ export function workflowEdgePath(source: WorkflowPoint, target: WorkflowPoint, d
 }
 
 export interface WorkflowNodeSize { readonly width: number; readonly height: number }
-const LAYOUT_GAP = { x: 96, y: 48 } as const;
-const LAYOUT_ORIGIN = 40;
-/**
- * Layered layout from the entry: a stage sits one column after its furthest predecessor
- * (retry edges excluded, so loops do not stretch the flow). Unreachable stages get a last
- * column. Only positions change; coordinates never imply execution order.
- */
-export function layoutWorkflowGraph(graph: WorkflowGraph, size: WorkflowNodeSize): WorkflowGraph {
-  const forward = graph.edges.filter(edge => !edge.retryLimit && edge.from !== edge.to);
-  const column = new Map<string, number>();
-  if (graph.entryNodeId && graph.nodes.some(node => node.id === graph.entryNodeId)) {
-    column.set(graph.entryNodeId, 0);
-    // Longest path on the acyclic forward edges; the bound stops any unbounded cycle a draft may hold.
-    for (let round = 0, changed = true; changed && round < graph.nodes.length; round += 1) {
-      changed = false;
-      for (const edge of forward) {
-        const from = column.get(edge.from);
-        if (from === undefined) continue;
-        if ((column.get(edge.to) ?? -1) < from + 1) { column.set(edge.to, from + 1); changed = true; }
-      }
-    }
-  }
-  const lastColumn = column.size ? Math.max(...column.values()) + 1 : 0;
-  const rows = new Map<number, number>();
-  const nodes = graph.nodes.map(node => {
-    const x = column.get(node.id) ?? lastColumn;
-    const y = rows.get(x) ?? 0; rows.set(x, y + 1);
-    return { ...node, position: { x: LAYOUT_ORIGIN + x * (size.width + LAYOUT_GAP.x), y: LAYOUT_ORIGIN + y * (size.height + LAYOUT_GAP.y) } };
-  });
-  return { ...graph, nodes };
-}
+export { layoutWorkflowGraph } from '../../shared/workflow-graph';
 
 /** True when two stages, at the card size in graph units, cover each other (older drafts used narrower nodes). */
 export function workflowLayoutOverlaps(graph: WorkflowGraph, size: WorkflowNodeSize): boolean {
@@ -204,6 +174,12 @@ function stable(value: unknown): unknown {
 /** Same flow content (documents, settings and positions included); revision numbers move for renames and links too. */
 export function sameWorkflowGraph(a: WorkflowGraph, b: WorkflowGraph): boolean {
   return JSON.stringify(stable(a)) === JSON.stringify(stable(b));
+}
+
+/** Only stage positions differ: the save is recorded as a layout change ("배치 변경"). */
+export function workflowLayoutOnlyChange(before: WorkflowGraph, after: WorkflowGraph): boolean {
+  const unplaced = (graph: WorkflowGraph) => ({ ...graph, nodes: graph.nodes.map(node => ({ ...node, position: { x: 0, y: 0 } })) });
+  return !sameWorkflowGraph(before, after) && sameWorkflowGraph(unplaced(before), unplaced(after));
 }
 
 const runEnded = (run: ExecutionRun) => run.state === 'completed' || run.state === 'cancelled';

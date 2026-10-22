@@ -101,7 +101,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const jumpTo = (nodeId: string, nextSection: WorkflowPanelSection) => {
     props.onSelectionChange({ kind: 'node', id: nodeId }); props.onSectionChange(nextSection);
     setReveal(current => ({ nodeId, key: (current?.key ?? 0) + 1 }));
-    requestAnimationFrame(() => panel.current?.scrollIntoView({ block: 'nearest' }));
+    requestAnimationFrame(() => panel.current?.scrollIntoView?.({ block: 'nearest' }));
   };
   const change = (graph: WorkflowGraph) => { if (editable) props.onGraphChange(graph); };
   const addStage = (operation: WorkflowNode['operation']) => {
