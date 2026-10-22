@@ -20,6 +20,33 @@
 [data-ui-flex-gap='unsupported'] .workflow-item { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-item > * + * { margin-left: var(--ui-space-3); }
 [data-ui-flex-gap='unsupported'] .workflow-node-list .workflow-item > * + * { margin-left: 0; }
+/* One-canvas flow surface (WorkflowFlowSurface): header rows, cards, summary and canvas controls. */
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__row,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__group,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__view,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__add,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__banner,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__overlap,
+[data-ui-flex-gap='unsupported'] .workflow-flow__states > li,
+[data-ui-flex-gap='unsupported'] .workflow-flow__fallback,
+[data-ui-flex-gap='unsupported'] .workflow-node-card__kind,
+[data-ui-flex-gap='unsupported'] .workflow-node-card__run,
+[data-ui-flex-gap='unsupported'] .workflow-node-card__issues,
+[data-ui-flex-gap='unsupported'] .workflow-canvas__controls,
+[data-ui-flex-gap='unsupported'] .workflow-edge-inspector__route { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__row > *,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__group > *,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__banner > *,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__overlap > *,
+[data-ui-flex-gap='unsupported'] .workflow-flow__states > li > *,
+[data-ui-flex-gap='unsupported'] .workflow-node-card__run > *,
+[data-ui-flex-gap='unsupported'] .workflow-edge-inspector__route > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__view > *,
+[data-ui-flex-gap='unsupported'] .workflow-canvas-header__add > *,
+[data-ui-flex-gap='unsupported'] .workflow-node-card__kind > *,
+[data-ui-flex-gap='unsupported'] .workflow-node-card__issues > *,
+[data-ui-flex-gap='unsupported'] .workflow-canvas__controls > * { margin-right: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .workflow-flow__fallback > * { margin-bottom: var(--ui-space-2); }
 /* Planning (MobilePlanningNavigator): the project header, its actions and the planning tool row. */
 [data-ui-flex-gap='unsupported'] .planning-workspace__header,
 [data-ui-flex-gap='unsupported'] .planning-workspace__identity,

@@ -2,7 +2,7 @@ import { FileSearch, MessageSquare, MessageSquarePlus, ScanSearch } from 'lucide
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowNode } from '../../shared/workflow-graph';
 import { Badge, Button, Status } from '../ui';
-import type { WorkflowNodeRunView } from './workflow-canvas-model';
+import { workflowRunControls, type WorkflowNodeRunView } from './workflow-canvas-model';
 import { workflowRunStatusPresentation } from './WorkflowNodeCard';
 import { workflowOutcomeLabel, workflowStateLabel, type WorkflowCopy } from './workflow-copy';
 
@@ -31,6 +31,9 @@ export function WorkflowNodeRunSection({ run, node, view, text, commandsDisabled
   readonly onOpenAttemptResult?: (attemptId: string) => void;
 }): JSX.Element {
   const ended = run.state === 'completed' || run.state === 'cancelled';
+  const controls = workflowRunControls(run);
+  const stopped = run.state === 'cancelled' || controls.cancelling;
+  const finished = (state: string) => state === 'completed' || state === 'rejected' || state === 'retry-exhausted';
   const activations = (run.workflowRuntime?.activations ?? []).filter(entry => entry.nodeId === node.id).sort((a, b) => b.iteration - a.iteration);
   const attempts = run.attempts.filter(attempt => attempt.taskId === node.id).sort((a, b) => b.number - a.number);
   const status = view ? workflowRunStatusPresentation(view, text) : null;
@@ -38,14 +41,14 @@ export function WorkflowNodeRunSection({ run, node, view, text, commandsDisabled
     {status && <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status>}
     {activations.length === 0 && <p className="workflow-hint">{ended ? text('이 실행은 이 단계에 도달하지 않았습니다.', 'This run never reached this stage.') : text('앞 단계가 끝나면 시작합니다.', 'Starts when the stages before it finish.')}</p>}
     {activations.map(activation => <section key={activation.id} className="workflow-node-run__round" aria-label={text(`회차 ${activation.iteration + 1}`, `Round ${activation.iteration + 1}`)}>
-      <div className="workflow-inline"><Badge>{text(`회차 ${activation.iteration + 1}`, `Round ${activation.iteration + 1}`)}</Badge><span>{workflowStateLabel(activation.state, text)}{activation.outcome ? ` · ${workflowOutcomeLabel(activation.outcome, text)}` : ''}</span>
+      <div className="workflow-inline"><Badge>{text(`회차 ${activation.iteration + 1}`, `Round ${activation.iteration + 1}`)}</Badge><span>{stopped && !finished(activation.state) ? (run.state === 'cancelled' ? text('취소됨', 'Cancelled') : text('취소 처리 중', 'Cancelling')) : workflowStateLabel(activation.state, text)}{activation.outcome ? ` · ${workflowOutcomeLabel(activation.outcome, text)}` : ''}</span>
         {activation.resolvedBy === PLANNING_AUTO_APPROVAL_PRINCIPAL && <Badge variant="warning">{text('자동 승인됨', 'Auto-approved')}</Badge>}</div>
       {node.operation === 'join' && view?.arrivals && activation === activations[0] && <p>{text(`도착한 입력 ${view.arrivals.arrived}/${view.arrivals.expected}`, `Arrived inputs ${view.arrivals.arrived}/${view.arrivals.expected}`)}</p>}
       {activation.state === 'awaiting-approval' && <div className="workflow-approval">
         <p>{node.instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')}</p>
         <div className="workflow-inline">
-          <Button variant="primary" disabled={commandsDisabled || ended} onClick={() => onApprove(activation.id, 'approve')}>{text('허용', 'Approve')}</Button>
-          <Button disabled={commandsDisabled || ended} onClick={() => onApprove(activation.id, 'reject')}>{text('거절', 'Reject')}</Button>
+          <Button variant="primary" disabled={commandsDisabled || !controls.approvalsOpen} onClick={() => onApprove(activation.id, 'approve')}>{text('허용', 'Approve')}</Button>
+          <Button disabled={commandsDisabled || !controls.approvalsOpen} onClick={() => onApprove(activation.id, 'reject')}>{text('거절', 'Reject')}</Button>
         </div>
       </div>}
       {activation.state === 'retry-exhausted' && <p className="workflow-notice">{text('자동 재시도 한도에 도달했습니다. 기록을 확인하고 초안을 수정해 새 실행을 준비하세요.', 'The retry limit was reached. Review the records, edit the draft, and prepare a new run.')}</p>}

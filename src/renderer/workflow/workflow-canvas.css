@@ -8,7 +8,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   color: var(--ui-text-primary);
   background: var(--ui-surface-raised);
-  border: 1px solid var(--ui-border-mid);
+  /* border-strong keeps the card edge at 3:1 or more against the canvas in every theme. */
+  border: 1px solid var(--ui-border-strong);
   border-radius: var(--ui-radius-lg);
   box-shadow: var(--ui-shadow-raised);
   font: var(--ui-font-size-sm)/var(--ui-line-height-normal) var(--ui-font-body);
@@ -85,6 +86,8 @@
 .workflow-canvas-header__group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
 .workflow-canvas-header__run { flex: 1 1 auto; }
 .workflow-canvas-header__view { display: flex; gap: var(--ui-space-1); margin-left: auto; }
+.workflow-canvas-header__add { display: inline-flex; align-items: center; gap: var(--ui-space-1); }
+.workflow-canvas-header__add select { min-width: 7rem; }
 .workflow-canvas-header [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
 .workflow-canvas-header__banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); padding: var(--ui-space-2) var(--ui-space-3); border-left: 3px solid var(--ui-info); border-radius: var(--ui-radius-md); background: var(--ui-info-muted); }
 .workflow-canvas-header__banner svg { width: 1rem; height: 1rem; flex-shrink: 0; }

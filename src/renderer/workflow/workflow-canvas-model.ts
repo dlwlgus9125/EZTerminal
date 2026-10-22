@@ -93,11 +93,12 @@ export const WORKFLOW_BACKWARD_STEP = 32;
  * Depth for every connection that returns to an earlier column (by stored positions). Shorter
  * returns sit higher; a return whose span overlaps already placed ones goes one level lower.
  */
-export function workflowBackwardDepths(graph: WorkflowGraph): Record<string, number> {
+export function workflowBackwardDepths(graph: WorkflowGraph, cardWidth = 248): Record<string, number> {
   const at = new Map(graph.nodes.map(node => [node.id, node.position.x]));
+  // Same test the path uses on ports: the target's input is left of the source's output (+ a little room).
   const returns = graph.edges.flatMap(edge => {
     const from = at.get(edge.from); const to = at.get(edge.to);
-    return from === undefined || to === undefined || to > from ? [] : [{ id: edge.id, left: to, right: from }];
+    return from === undefined || to === undefined || to >= from + cardWidth + 24 ? [] : [{ id: edge.id, left: Math.min(to, from), right: from + cardWidth }];
   }).sort((a, b) => (a.right - a.left) - (b.right - b.left) || a.left - b.left);
   const placed: { left: number; right: number; depth: number }[] = [];
   const depths: Record<string, number> = {};
@@ -117,16 +118,16 @@ function cubic(a: number, b: number, c: number, d: number, t: number): number {
  * One path shape for both renderers. Forward connections curve between the ports; a connection
  * whose target sits left of its source loops underneath, where its label has room.
  */
-export function workflowEdgePath(source: WorkflowPoint, target: WorkflowPoint, depth = 0): WorkflowEdgePath {
-  const backward = target.x < source.x + 24;
+export function workflowEdgePath(source: WorkflowPoint, target: WorkflowPoint, depth = 0, scale = 1): WorkflowEdgePath {
+  const backward = target.x < source.x + 24 * scale;
   if (!backward) {
-    const bend = Math.max(40, (target.x - source.x) / 2);
+    const bend = Math.max(40 * scale, (target.x - source.x) / 2);
     const c1 = { x: source.x + bend, y: source.y }; const c2 = { x: target.x - bend, y: target.y };
     return { d: `M ${source.x} ${source.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${target.x} ${target.y}`, labelX: cubic(source.x, c1.x, c2.x, target.x, 0.5), labelY: cubic(source.y, c1.y, c2.y, target.y, 0.5), backward };
   }
   // Overlapping returns get their own depth so their paths and labels do not stack.
-  const low = Math.max(source.y, target.y) + WORKFLOW_BACKWARD_DROP + depth * WORKFLOW_BACKWARD_STEP;
-  const out = 48;
+  const low = Math.max(source.y, target.y) + (WORKFLOW_BACKWARD_DROP + depth * WORKFLOW_BACKWARD_STEP) * scale;
+  const out = 48 * scale;
   const midX = (source.x + out + target.x - out) / 2;
   const d = `M ${source.x} ${source.y} C ${source.x + out} ${source.y}, ${source.x + out} ${low}, ${source.x} ${low} L ${target.x} ${low} C ${target.x - out} ${low}, ${target.x - out} ${target.y}, ${target.x} ${target.y}`;
   return { d, labelX: midX, labelY: low, backward };
@@ -234,6 +235,31 @@ export function resolveCanvasView(input: { savedGraph: WorkflowGraph; draftGraph
   const editing = input.draftGraph ?? input.savedGraph;
   if (run && frozen && !input.draftGraph && sameWorkflowGraph(input.savedGraph, frozen)) return { mode: 'edit-with-run', graph: editing, run, overlay: projectRunOverlay(run), editable: true, diverged: false };
   return { mode: 'edit', graph: editing, run, overlay: null, editable: true, diverged: !!run && !!frozen };
+}
+
+export interface WorkflowRunControls {
+  readonly canStart: boolean; readonly canPause: boolean; readonly canResume: boolean; readonly canCancel: boolean; readonly canIntegrate: boolean;
+  /** Paused without the person asking: nothing can proceed (e.g. a retry limit). Resume would not help. */
+  readonly blocked: boolean;
+  /** Cancellation was requested and the host has not finished it: every action is closed. */
+  readonly cancelling: boolean;
+  readonly approvalsOpen: boolean;
+}
+/** Which run actions can succeed now, from what the ledger records (it rejects the rest). */
+export function workflowRunControls(run: ExecutionRun): WorkflowRunControls {
+  const ended = runEnded(run);
+  const cancelling = !!run.cancelRequested && !ended;
+  const live = run.state === 'running' || run.state === 'awaiting-review' || run.state === 'reconciling';
+  return {
+    canStart: run.state === 'prepared' && !cancelling,
+    canPause: live && !run.dispatchPaused && !cancelling,
+    canResume: run.state === 'paused' && !!run.dispatchPaused && !cancelling,
+    canCancel: !ended && !cancelling,
+    canIntegrate: run.state === 'completed' && !run.integrationAuthorized,
+    blocked: run.state === 'paused' && !run.dispatchPaused && !cancelling,
+    cancelling,
+    approvalsOpen: !ended && !cancelling,
+  };
 }
 
 export type WorkflowPanelSection = 'settings' | 'stage' | 'run';

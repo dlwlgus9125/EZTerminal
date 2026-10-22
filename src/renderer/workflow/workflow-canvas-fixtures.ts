@@ -11,7 +11,7 @@ import { WORKFLOW_CARD_UNITS } from './use-workflow-scale';
  */
 export type WorkflowCanvasScenario =
   | 'edit' | 'prepared' | 'just-started' | 'retry-running' | 'awaiting-approval' | 'retry-exhausted'
-  | 'completed' | 'integrated-auto' | 'cancelled' | 'parallel-join';
+  | 'completed' | 'integrated-auto' | 'cancelled' | 'parallel-join' | 'cancel-pending' | 'reviewing';
 
 const TITLES: Record<string, readonly [string, string]> = {
   plan: ['기획', 'Planning'], design: ['디자인', 'Design'], implement: ['구현', 'Implementation'], review: ['검토', 'Review'],
@@ -43,7 +43,7 @@ export function workflowCanvasGraph(preset: 'feature' | 'parallel', locale: 'ko'
   }) }, size);
 }
 
-interface Step { readonly node: string; readonly round: number; readonly state: WorkflowActivation['state']; readonly outcome?: WorkflowActivation['outcome']; readonly attempt?: ExecutionAttempt['state']; readonly review?: 'approve' | 'reject'; readonly auto?: boolean; readonly from?: readonly string[] }
+interface Step { readonly node: string; readonly round: number; readonly state: WorkflowActivation['state']; readonly outcome?: WorkflowActivation['outcome']; readonly attempt?: ExecutionAttempt['state']; readonly review?: 'approve' | 'reject'; readonly auto?: boolean; readonly from?: readonly string[]; readonly task?: ExecutionTask['state'] }
 const done = (node: string, round = 1, outcome: WorkflowActivation['outcome'] = 'passed'): Step => ({ node, round, state: 'completed', outcome, ...(AGENTS[node] ? { attempt: outcome === 'failed' ? 'failed' : 'succeeded', review: outcome === 'failed' ? 'reject' : 'approve' } : {}) });
 
 function buildRun(graph: WorkflowGraph, steps: readonly Step[], state: ExecutionRun['state'], extra: Partial<ExecutionRun> & { approvalPolicy?: 'user' | 'auto' } = {}): ExecutionRun {
@@ -60,7 +60,7 @@ function buildRun(graph: WorkflowGraph, steps: readonly Step[], state: Execution
   const latest = (node: string) => [...steps].reverse().find(step => step.node === node);
   const tasks: ExecutionTask[] = Object.keys(AGENTS).filter(node => graph.nodes.some(item => item.id === `login:${node}`)).map(node => {
     const step = latest(node);
-    const taskState: ExecutionTask['state'] = !step ? 'waiting' : step.attempt === 'running' ? 'running' : step.state === 'active' ? 'ready' : step.outcome === 'failed' ? 'failed' : state === 'cancelled' && step.state !== 'completed' ? 'cancelled' : 'completed';
+    const taskState: ExecutionTask['state'] = step?.task ? step.task : !step ? 'waiting' : step.attempt === 'running' ? 'running' : step.state === 'active' ? 'ready' : step.outcome === 'failed' ? 'failed' : state === 'cancelled' && step.state !== 'completed' ? 'cancelled' : 'completed';
     return { taskId: `login:${node}`, state: taskState, retriesUsed: Math.max(0, (step?.round ?? 1) - 1), ...(step?.attempt ? { currentAttemptId: `attempt-${node}-${step.round}` } : {}) };
   });
   // Same routing rule as advanceWorkflowRun: the exact outcome port, else an agent's `next` port
@@ -106,5 +106,16 @@ export function workflowCanvasFixture(scenario: WorkflowCanvasScenario, locale: 
     case 'completed': return { graph, run: buildRun(graph, [...passedRoundTwo, approval('completed', 'approved'), { node: 'done', round: 2, state: 'completed', outcome: 'next' }], 'completed') };
     case 'integrated-auto': return { graph, run: buildRun(graph, [...passedRoundTwo, approval('completed', 'approved', true), { node: 'done', round: 2, state: 'completed', outcome: 'next' }], 'completed', { approvalPolicy: 'auto', integrationAuthorized: { by: PLANNING_AUTO_APPROVAL_PRINCIPAL, at: AT } }) };
     case 'cancelled': return { graph, run: buildRun(graph, [done('plan'), done('design'), { node: 'implement', round: 1, state: 'active', attempt: 'interrupted' }], 'cancelled') };
+    case 'cancel-pending': return { graph, run: buildRun(graph, [...passedRoundTwo, approval('awaiting-approval')], 'awaiting-review', { cancelRequested: true }) };
+    case 'reviewing': return { graph, run: buildRun(graph, [done('plan'), done('design'), { node: 'implement', round: 1, state: 'active', attempt: 'succeeded', task: 'awaiting-review' }], 'awaiting-review') };
   }
+}
+
+/** Two runs of the same flow: v3 finished earlier, v4 is the one in progress (the header shows a run picker). */
+export function workflowCanvasRuns(locale: 'ko' | 'en' = 'ko'): { graph: WorkflowGraph; runs: ExecutionRun[] } {
+  const current = workflowCanvasFixture('retry-running', locale);
+  const earlier = workflowCanvasFixture('completed', locale).run!;
+  const older: ExecutionRun = { ...earlier, runId: 'run-login-3', createdAt: '2026-10-21T15:00:00.000Z', updatedAt: '2026-10-21T16:00:00.000Z', startedAt: '2026-10-21T15:00:00.000Z',
+    preparation: { ...earlier.preparation, workflow: { ...earlier.preparation.workflow!, revision: 3 } } };
+  return { graph: current.graph, runs: [older, current.run!] };
 }

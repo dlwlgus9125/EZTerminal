@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, defaultWorkflowRun, workflowLayoutOverlaps, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -195,7 +195,8 @@ describe('one canvas: which graph and which run', () => {
 
 describe('workflowBackwardDepths', () => {
   it('stacks overlapping returns at different depths and leaves forward edges alone', () => {
-    const looped = connectWorkflowEdge(connectWorkflowEdge(graph, id('implement'), 'failed', id('implement'), 'self'), id('approval'), 'rejected', id('design'), 'long');
+    const laid = layoutWorkflowGraph(graph, { width: 248, height: 136 });
+    const looped = connectWorkflowEdge(connectWorkflowEdge(laid, id('implement'), 'failed', id('implement'), 'self'), id('approval'), 'rejected', id('design'), 'long');
     const depths = workflowBackwardDepths(looped);
     expect(depths.self).toBe(0);
     expect(depths[id('retry')]).toBeGreaterThanOrEqual(0);
@@ -225,5 +226,35 @@ describe('workflowLayoutOverlaps', () => {
   });
   it('accepts the tidy layout', () => {
     expect(workflowLayoutOverlaps(layoutWorkflowGraph(graph, size), size)).toBe(false);
+  });
+});
+
+describe('workflowRunControls', () => {
+  const at = (state: ExecutionRun['state'], extra: Partial<ExecutionRun> = {}) => workflowRunControls({ ...run(state, []), ...extra });
+  it('offers resume only for a run the person paused', () => {
+    expect(at('paused', { dispatchPaused: true })).toMatchObject({ canResume: true, blocked: false });
+    expect(at('paused')).toMatchObject({ canResume: false, blocked: true, canPause: false });
+  });
+  it('closes every action while a cancellation is pending', () => {
+    expect(at('running', { cancelRequested: true })).toMatchObject({ cancelling: true, canPause: false, canCancel: false, approvalsOpen: false });
+  });
+  it('keeps approvals open while the run waits for review, and closes them once it ends', () => {
+    expect(at('awaiting-review')).toMatchObject({ approvalsOpen: true, canPause: true });
+    expect(at('completed')).toMatchObject({ approvalsOpen: false, canIntegrate: true, canCancel: false });
+    expect(at('completed', { integrationAuthorized: { by: 'desktop', at: 'x' } }).canIntegrate).toBe(false);
+    expect(at('prepared')).toMatchObject({ canStart: true, canPause: false });
+  });
+});
+
+describe('scale and port geometry', () => {
+  it('grows the return clearance with the UI scale', () => {
+    const at100 = workflowEdgePath({ x: 900, y: 60 }, { x: 300, y: 50 }, 1, 1);
+    const at150 = workflowEdgePath({ x: 900, y: 60 }, { x: 300, y: 50 }, 1, 1.5);
+    expect(at150.labelY - 60).toBeCloseTo((at100.labelY - 60) * 1.5);
+  });
+  it('treats stages closer than one card as a return, as the ports route them', () => {
+    const tight = { ...graph, nodes: graph.nodes.map((node, index) => ({ ...node, position: { x: 80 + index * 240, y: 80 } })) };
+    expect(Object.keys(workflowBackwardDepths(tight, 248))).toContain(tight.edges[0].id);
+    expect(Object.keys(workflowBackwardDepths(layoutWorkflowGraph(graph, { width: 248, height: 136 }), 248))).not.toContain(graph.edges[0].id);
   });
 });

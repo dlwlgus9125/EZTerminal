@@ -26,4 +26,10 @@ export interface WorkflowCanvasRendererProps {
   readonly active?: boolean;
   /** Deleting a stage goes through the panel's confirmation, never straight from a key press. */
   readonly onRequestDeleteNode?: (nodeId: string) => void;
+  /** Bring this stage into view when the key changes (e.g. the approval chip), keeping the zoom. */
+  readonly reveal?: { readonly nodeId: string; readonly key: number };
+  /** The camera after the user pans or zooms, so the parent can restore it when the canvas remounts. */
+  readonly onViewportChange?: (viewport: { readonly x: number; readonly y: number; readonly zoom: number }) => void;
+  /** Tidy the layout (offered next to the zoom controls while editing). */
+  readonly onTidy?: () => void;
 }

@@ -1,10 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useMemo, useState, type ComponentType } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
-import { validateWorkflowGraph, type WorkflowGraph } from '../../shared/workflow-graph';
+import type { ExecutionRun } from '../../shared/planning-execution';
+import { validateWorkflowGraph, type WorkflowGraph, type WorkflowNode } from '../../shared/workflow-graph';
 import { AppI18nProvider } from '../i18n';
 import type { WorkflowPanelSection } from './workflow-canvas-model';
-import { workflowCanvasFixture, type WorkflowCanvasScenario } from './workflow-canvas-fixtures';
+import { workflowCanvasFixture, workflowCanvasRuns, type WorkflowCanvasScenario } from './workflow-canvas-fixtures';
 import type { CanvasSelection, WorkflowCanvasRendererProps } from './workflow-canvas-types';
 import { useWorkflowCopy } from './workflow-copy';
 import { WorkflowFlowCanvas } from './WorkflowFlowCanvas';
@@ -24,47 +25,61 @@ interface FlowStoryProps {
   readonly runView?: boolean;
   readonly mobile?: boolean;
   readonly layout?: 'graph' | 'list';
-  readonly renderer?: 'react-flow' | 'static' | 'broken';
+  /** 'flaky' fails once like a rejected lazy chunk, then loads after "다시 불러오기". */
+  readonly renderer?: 'react-flow' | 'static' | 'flaky';
   /** First visible column and zoom of the fixed story camera (deterministic screenshots). */
   readonly camera?: { readonly column: number; readonly zoom: number };
   readonly width?: number;
   /** A flow saved by the old editor: 240-unit spacing for 210px nodes. */
   readonly legacyLayout?: boolean;
+  readonly twoRuns?: boolean;
+  /** The selected stage was deleted from the draft; its document and chats stay reachable. */
+  readonly archived?: boolean;
+  readonly empty?: boolean;
 }
 
-function Broken(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
-const RENDERERS: Record<NonNullable<FlowStoryProps['renderer']>, ComponentType<WorkflowCanvasRendererProps>> = { 'react-flow': WorkflowFlowCanvas, static: WorkflowStaticGraph, broken: Broken };
 const COLUMN = 248 + 96;
-
 function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
   if (draft === 'invalid') return { ...graph, nodes: graph.nodes.map(node => node.id === 'login:implement' ? { ...node, model: undefined } : node) };
   if (draft === 'diverged') return { ...graph, nodes: graph.nodes.map(node => node.id === 'login:design' ? { ...node, instructions: `${node.instructions} (+)`, position: { x: node.position.x, y: node.position.y + 180 } } : node) };
   return null;
 }
+function Failing(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
 
-function FlowStory({ scenario, legacyLayout = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko' }: FlowStoryProps): JSX.Element {
+function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko' }: FlowStoryProps): JSX.Element {
   const text = useWorkflowCopy();
-  const fixture = useMemo(() => { const value = workflowCanvasFixture(scenario, locale); return legacyLayout ? { ...value, graph: { ...value.graph, nodes: value.graph.nodes.map((node, index) => ({ ...node, position: { x: 80 + index * 240, y: 80 } })) } } : value; }, [legacyLayout, scenario, locale]);
+  const fixture = useMemo(() => {
+    if (twoRuns) { const value = workflowCanvasRuns(locale); return { graph: value.graph, runs: value.runs, archivedNodes: [] as WorkflowNode[] }; }
+    const value = workflowCanvasFixture(scenario, locale);
+    let graph = legacyLayout ? { ...value.graph, nodes: value.graph.nodes.map((node, index) => ({ ...node, position: { x: 80 + index * 240, y: 80 } })) } : value.graph;
+    let archivedNodes: WorkflowNode[] = [];
+    if (archived) { archivedNodes = graph.nodes.filter(node => node.id === 'login:design'); graph = { ...graph, nodes: graph.nodes.filter(node => node.id !== 'login:design'), edges: graph.edges.filter(edge => edge.from !== 'login:design' && edge.to !== 'login:design') }; }
+    if (empty) graph = { entryNodeId: null, nodes: [], edges: [] };
+    return { graph, runs: value.run ? [value.run] as ExecutionRun[] : [], archivedNodes };
+  }, [archived, empty, legacyLayout, locale, scenario, twoRuns]);
   const [draftGraph, setDraftGraph] = useState<WorkflowGraph | null>(() => draftOf(fixture.graph, draft));
   const [selection, setSelection] = useState<CanvasSelection>(select ? { kind: select.kind, id: select.kind === 'edge' ? select.key : `login:${select.key}` } : null);
   const [section, setSection] = useState(initialSection);
   const [runView, setRunView] = useState(initialRunView);
+  const [pickedRunId, setPickedRunId] = useState<string | null>(null);
   const [layout, setLayout] = useState<'graph' | 'list'>(initialLayout ?? (mobile ? 'list' : 'graph'));
-  const issues = validateWorkflowGraph(draftGraph ?? fixture.graph, true);
+  const [reloaded, setReloaded] = useState(false);
   const scale = useWorkflowScale();
+  const issues = validateWorkflowGraph(draftGraph ?? fixture.graph, true);
   const viewport = camera ? { x: 24 - (40 + camera.column * COLUMN) * scale * camera.zoom, y: 120 - 40 * scale * camera.zoom, zoom: camera.zoom } : undefined;
-  return <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={fixture.graph} draftGraph={draftGraph} revision={4} archivedNodes={[]} runs={fixture.run ? [fixture.run] : []}
+  const Renderer: ComponentType<WorkflowCanvasRendererProps> = renderer === 'static' ? WorkflowStaticGraph : renderer === 'flaky' && !reloaded ? Failing : WorkflowFlowCanvas;
+  return <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={fixture.graph} draftGraph={draftGraph} revision={4} archivedNodes={fixture.archivedNodes} runs={fixture.runs}
     editLocked={false} commandsDisabled={false} issues={issues} providers={[{ id: 'codex', label: 'Codex', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }, { id: 'claude', label: 'Claude Code', models: [{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }] }] as never}
-    selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={null} onPickRun={fn()} runView={runView} onRunViewChange={setRunView}
+    selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={pickedRunId} onPickRun={setPickedRunId} runView={runView} onRunViewChange={setRunView}
     layout={layout} onLayoutChange={setLayout} onGraphChange={setDraftGraph} onSaveDraft={fn()} onDiscardDraft={() => setDraftGraph(null)} onPrepareRun={fn()} onRunCommand={fn()}
-    stageLinks={nodeId => nodeId === 'login:implement' ? [{ sessionId: 'chat-impl', title: locale === 'ko' ? '로그인 오류 처리 방향 논의' : 'Discuss login error handling', graphRevision: 3 }] : []}
+    stageLinks={nodeId => nodeId === 'login:implement' || nodeId === 'login:design' ? [{ sessionId: 'chat-impl', title: locale === 'ko' ? '로그인 오류 처리 방향 논의' : 'Discuss login error handling', graphRevision: 3 }] : []}
     canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()} onOpenResults={fn()} onOpenAttemptResult={fn()}
-    canvasRenderer={RENDERERS[renderer]} initialViewport={viewport} />;
+    canvasRenderer={Renderer} onReloadCanvas={() => setReloaded(true)} initialViewport={viewport} />;
 }
 function Frame(props: FlowStoryProps): JSX.Element {
   const locale = props.locale ?? 'ko';
   return <AppI18nProvider locale={locale} languages={[locale]}>
-    <div className="workflow-workspace" style={{ width: props.width ? `${props.width}px` : '100%', height: '100vh', boxSizing: 'border-box' }}><FlowStory {...props} /></div>
+    <div className="workflow-workspace" data-mobile={props.mobile || undefined} style={{ width: props.width ? `${props.width}px` : '100%', height: '100vh', boxSizing: 'border-box' }}><FlowStory {...props} /></div>
   </AppI18nProvider>;
 }
 
@@ -90,24 +105,58 @@ async function dragBetween(from: Element, to: Element): Promise<void> {
 export const JustStarted: Story = { args: { scenario: 'just-started', camera: { column: 0, zoom: 0.72 } } };
 export const AwaitingApprovalSelected: Story = { args: { scenario: 'awaiting-approval', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 export const RetryRoundTwo: Story = { args: { scenario: 'retry-running', select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 1, zoom: 0.6 } } };
+export const IndependentReview: Story = { args: { scenario: 'reviewing', select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 0, zoom: 0.72 } } };
 export const RetryLimitReached: Story = { args: { scenario: 'retry-exhausted', select: { kind: 'node', key: 'condition' }, section: 'run', camera: { column: 1, zoom: 0.6 } } };
 export const CompletedAwaitingIntegration: Story = { args: { scenario: 'completed', camera: { column: 2, zoom: 0.6 } } };
 export const IntegratedByAutoApprove: Story = { args: { scenario: 'integrated-auto', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
-export const Cancelled: Story = { args: { scenario: 'cancelled', camera: { column: 0, zoom: 0.6 } } };
+export const CancellationPending: Story = { args: { scenario: 'cancel-pending', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
+export const Cancelled: Story = { args: { scenario: 'cancelled', select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 0, zoom: 0.6 } } };
 export const ParallelJoin: Story = { args: { scenario: 'parallel-join', select: { kind: 'node', key: 'join' }, section: 'run', camera: { column: 1, zoom: 0.62 } } };
 export const Prepared: Story = { args: { scenario: 'prepared', camera: { column: 0, zoom: 0.6 } } };
+export const TwoRunsWithPicker: Story = { args: { scenario: 'retry-running', twoRuns: true, camera: { column: 1, zoom: 0.6 } } };
 export const DraftWithIssue: Story = { args: { scenario: 'edit', draft: 'invalid', camera: { column: 1, zoom: 0.72 } } };
 export const EditingStageSettings: Story = { args: { scenario: 'edit', select: { kind: 'node', key: 'implement' }, section: 'settings', camera: { column: 1, zoom: 0.72 } } };
 export const StageDocumentAndChats: Story = { args: { scenario: 'edit', select: { kind: 'node', key: 'implement' }, section: 'stage', camera: { column: 1, zoom: 0.72 } } };
+export const ArchivedStageSelected: Story = { args: { scenario: 'edit', archived: true, select: { kind: 'node', key: 'design' }, section: 'stage', camera: { column: 0, zoom: 0.72 } } };
 export const DraftDiffersFromRun: Story = { args: { scenario: 'retry-running', draft: 'diverged', camera: { column: 0, zoom: 0.6 } } };
 export const FrozenRunView: Story = { args: { scenario: 'retry-running', draft: 'diverged', runView: true, select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 1, zoom: 0.6 } } };
 export const RetryEdgeSelected: Story = { args: { scenario: 'retry-running', select: { kind: 'edge', key: 'login:retry' }, camera: { column: 1, zoom: 0.6 } } };
+export const LegacyOverlappingLayout: Story = { args: { scenario: 'edit', legacyLayout: true, camera: { column: 0, zoom: 0.72 } } };
 export const Narrow: Story = { args: { scenario: 'awaiting-approval', select: { kind: 'node', key: 'approval' }, section: 'run', width: 800, camera: { column: 4, zoom: 0.6 } } };
 export const MobileList: Story = { args: { scenario: 'retry-running', mobile: true, renderer: 'static', width: 390 } };
-export const StaticFallback: Story = { args: { scenario: 'awaiting-approval', renderer: 'broken' } };
-export const LegacyOverlappingLayout: Story = { args: { scenario: 'edit', legacyLayout: true, camera: { column: 0, zoom: 0.72 } } };
 export const EnglishAwaitingApproval: Story = { args: { scenario: 'awaiting-approval', locale: 'en', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 
+/** The lazy canvas failed once: the static graph keeps the flow usable, and reloading recovers. */
+export const CanvasRecoversAfterReload: Story = {
+  args: { scenario: 'awaiting-approval', renderer: 'flaky', camera: { column: 3, zoom: 0.72 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByRole('alert')).resolves.toBeVisible();
+    await expect(canvasElement.querySelector('[data-renderer="static"]')).not.toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: /캔버스 다시 불러오기|Reload the canvas/u }));
+    await waitFor(() => expect(canvasElement.querySelector('[data-renderer="react-flow"]')).not.toBeNull());
+  },
+};
+/** No stages yet: the panel offers the first one, which is added, selected and opened in settings. */
+export const EmptyFlowAddFirstStage: Story = {
+  args: { scenario: 'edit', empty: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole('button', { name: /첫 AI 작업 단계 추가|Add a first AI task/u }));
+    await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(1));
+    await expect(canvas.findByRole('tab', { name: /설정|Settings/u, selected: true })).resolves.toBeVisible();
+  },
+};
+/** The approval chip selects the waiting stage and opens its run status. */
+export const ApprovalChipOpensStage: Story = {
+  args: { scenario: 'awaiting-approval', camera: { column: 0, zoom: 0.6 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
+    await expect(canvas.findByRole('tab', { name: /실행 상태|Run status/u, selected: true })).resolves.toBeVisible();
+    await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeEnabled();
+  },
+};
 /** Drag from an output port to another stage's input adds exactly one connection. */
 export const ConnectByDrag: Story = {
   args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
@@ -131,7 +180,7 @@ export const DeleteConnectionByKeyboard: Story = {
     await waitFor(() => expect(edges(canvasElement)).toBe(before - 1));
   },
 };
-/** Keyboard only: select a stage and move it with the arrow keys; the draft records the move. */
+/** Keyboard only: select a stage and move it with the arrow keys; Escape clears the selection. */
 export const MoveStageByKeyboard: Story = {
   args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
@@ -144,5 +193,7 @@ export const MoveStageByKeyboard: Story = {
     await userEvent.keyboard('{ArrowDown}{ArrowDown}');
     await waitFor(() => expect(node.style.transform).not.toBe(before));
     await expect(canvas.findByText(/미저장 변경|Unsaved changes/u)).resolves.toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    await expect(canvas.findByRole('heading', { name: /흐름 요약|Flow summary/u })).resolves.toBeVisible();
   },
 };

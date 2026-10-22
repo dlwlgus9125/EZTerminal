@@ -4,7 +4,7 @@ import { validateWorkflowGraph } from '../../shared/workflow-graph';
 import { projectRunOverlay } from './workflow-canvas-model';
 import { workflowCanvasFixture, type WorkflowCanvasScenario } from './workflow-canvas-fixtures';
 
-const scenarios: WorkflowCanvasScenario[] = ['prepared', 'just-started', 'retry-running', 'awaiting-approval', 'retry-exhausted', 'completed', 'integrated-auto', 'cancelled', 'parallel-join'];
+const scenarios: WorkflowCanvasScenario[] = ['prepared', 'just-started', 'retry-running', 'awaiting-approval', 'retry-exhausted', 'completed', 'integrated-auto', 'cancelled', 'parallel-join', 'cancel-pending', 'reviewing'];
 const status = (scenario: WorkflowCanvasScenario, node: string) => projectRunOverlay(workflowCanvasFixture(scenario).run!)!.nodes[`login:${node}`];
 
 describe('workflow canvas fixtures', () => {
@@ -26,6 +26,7 @@ describe('workflow canvas fixtures', () => {
     expect(status('completed', 'done').status).toBe('completed');
     expect(status('cancelled', 'implement').status).toBe('cancelled');
     expect(status('cancelled', 'review').status).toBe('not-reached');
+    expect(status('reviewing', 'implement').status).toBe('reviewing');
     expect(status('parallel-join', 'join')).toMatchObject({ status: 'waiting', arrivals: { arrived: 1, expected: 2 } });
   });
 
