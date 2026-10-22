@@ -29,6 +29,17 @@ export const WorkflowGraphSchema = z.object({
 export type WorkflowGraph = z.infer<typeof WorkflowGraphSchema>;
 export interface WorkflowIssue { readonly code: string; readonly message: string; readonly nodeId?: string; readonly edgeId?: string }
 
+/** The outcomes a stage of this kind can route along; a completion stage routes nowhere. */
+export function workflowOutcomePorts(operation: WorkflowNode['operation']): readonly WorkflowEdge['outcome'][] {
+  switch (operation) {
+    case 'agent': return ['next', 'passed', 'failed'];
+    case 'condition': return ['passed', 'failed'];
+    case 'approval': return ['approved', 'rejected'];
+    case 'complete': return [];
+    default: return ['next'];
+  }
+}
+
 /** Invalid drafts remain editable. Only execution preparation requires a runnable graph. */
 export function validateWorkflowGraph(graph: WorkflowGraph, execution = false): WorkflowIssue[] {
   const issues: WorkflowIssue[] = [];
@@ -54,7 +65,8 @@ export function validateWorkflowGraph(graph: WorkflowGraph, execution = false): 
     seen.add(edge.id);
     if (!nodes.has(edge.from) || !nodes.has(edge.to)) add('missing-node', 'A connection points to a missing stage.', undefined, edge.id);
     const source = nodes.get(edge.from);
-    const ports = source?.operation === 'condition' ? ['passed', 'failed'] : source?.operation === 'approval' ? ['approved', 'rejected'] : source?.operation === 'agent' ? ['next', 'passed', 'failed'] : ['next'];
+    // A missing source reports 'missing-node' and a completion source 'complete-output'; neither adds a port error.
+    const ports: readonly string[] = source && source.operation !== 'complete' ? workflowOutcomePorts(source.operation) : ['next'];
     if (!ports.includes(edge.outcome)) add('invalid-port', 'This outcome port is unavailable on the source stage.', edge.from, edge.id);
     if (edge.retryLimit && !['failed', 'rejected'].includes(edge.outcome)) add('retry-port', 'A bounded retry must follow an explicit failure or rejection.', edge.from, edge.id);
   }

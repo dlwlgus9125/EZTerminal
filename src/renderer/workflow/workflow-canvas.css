@@ -1,0 +1,52 @@
+/* Stage card shared by both canvas renderers. Width is in rem so it follows the UI scale;
+   layout spacing is computed from the measured size, never assumed. */
+.workflow-node-card {
+  position: relative;
+  width: 15.5rem;
+  min-height: 7rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-raised);
+  font: var(--ui-font-size-sm)/var(--ui-line-height-normal) var(--ui-font-body);
+  text-align: left;
+}
+.workflow-node-card__body { min-width: 0; display: grid; align-content: start; gap: var(--ui-space-1); padding: var(--ui-space-3); }
+.workflow-node-card__kind { display: flex; align-items: center; gap: var(--ui-space-1); color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-node-card__kind svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+.workflow-node-card__entry { margin-left: auto; padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-pill); color: var(--ui-text-secondary); }
+.workflow-node-card__title { font-size: var(--ui-font-size-md); font-weight: 600; overflow-wrap: anywhere; }
+.workflow-node-card__detail { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-node-card__run { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1) var(--ui-space-2); margin-top: var(--ui-space-1); font-size: var(--ui-font-size-xs); }
+.workflow-node-card__meta { color: var(--ui-text-secondary); }
+.workflow-node-card__issues { display: flex; align-items: center; gap: var(--ui-space-1); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); }
+.workflow-node-card__issues svg { width: 0.875rem; height: 0.875rem; color: var(--ui-warning); }
+
+/* Outputs sit on the card's right edge, each with its outcome written beside its handle. */
+.workflow-node-card__ports { margin: 0; padding: var(--ui-space-2) 0; list-style: none; display: grid; align-content: center; gap: var(--ui-space-1); border-left: 1px solid var(--ui-border-subtle); }
+.workflow-node-card__ports > li { position: relative; display: flex; align-items: center; justify-content: flex-end; min-height: 1.5rem; padding: 0 var(--ui-space-3) 0 var(--ui-space-2); color: var(--ui-text-secondary); font-size: var(--ui-font-size-xs); white-space: nowrap; }
+.workflow-node-card__input { position: absolute; top: 50%; left: 0; }
+
+.workflow-node-card[data-selected] { border-color: var(--ui-accent); box-shadow: 0 0 0 2px var(--ui-accent), var(--ui-shadow-raised); }
+.workflow-node-card[data-run-state='working'],
+.workflow-node-card[data-run-state='reconciling'],
+.workflow-node-card[data-run-state='reviewing'] { border-color: var(--ui-accent); border-width: 2px; }
+.workflow-node-card[data-run-state='awaiting-approval'] { border-color: var(--ui-warning); border-width: 2px; box-shadow: 0 0 0 3px var(--ui-warning-ring), var(--ui-shadow-raised); }
+.workflow-node-card[data-run-state='needs-attention'] { border-color: var(--ui-warning-border); border-width: 2px; }
+.workflow-node-card[data-run-state='rejected'],
+.workflow-node-card[data-run-state='retry-exhausted'] { border-color: var(--ui-danger-border); border-width: 2px; }
+.workflow-node-card[data-run-state='pending'],
+.workflow-node-card[data-run-state='not-reached'],
+.workflow-node-card[data-run-state='cancelled'] { border-style: dashed; box-shadow: none; background: var(--ui-surface); }
+.workflow-node-card[data-selected][data-run-state] { box-shadow: 0 0 0 2px var(--ui-accent), var(--ui-shadow-raised); }
+
+/* Connection badges carry only what a port cannot say (retry bound, rounds, repeats). */
+.workflow-edge-badge { padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface-raised); color: var(--ui-text-secondary); font: var(--ui-font-size-xs)/var(--ui-line-height-normal) var(--ui-font-body); white-space: nowrap; pointer-events: none; }
+.workflow-edge-path { fill: none; stroke: var(--ui-text-muted); stroke-width: 1.5; }
+.workflow-edge-path[data-retry] { stroke-dasharray: 6 4; }
+.workflow-edge-path[data-run='idle'] { stroke: var(--ui-border-strong); stroke-dasharray: 3 5; }
+.workflow-edge-path[data-run='taken'] { stroke: var(--ui-accent); stroke-width: 2; }
+.workflow-edge-path[data-selected] { stroke: var(--ui-accent); stroke-width: 2.5; }
