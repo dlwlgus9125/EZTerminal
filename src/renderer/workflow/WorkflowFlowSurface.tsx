@@ -58,6 +58,9 @@ export interface WorkflowFlowSurfaceProps {
   /** False while the dock tab is hidden: no fit, no dialogs left on top of another tab. */
   readonly active?: boolean;
   readonly initialViewport?: WorkflowCanvasRendererProps['initialViewport'];
+  /** A stage opened from elsewhere (a chat's "Return to this stage"): show it and bring its panel into view once. */
+  readonly revealRequest?: { readonly nodeId: string; readonly key: string };
+  readonly onRevealHandled?: () => void;
 }
 
 const OPERATION_DEFAULTS: Partial<Record<WorkflowNode['operation'], Partial<WorkflowNode>>> = { join: { joinPolicy: 'all' } };
@@ -96,6 +99,14 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const announced = useRef(summary);
   useEffect(() => { if (summary !== announced.current) { announced.current = summary; setAnnouncement(summary); } }, [summary]);
   useEffect(() => { if (!active) setRemoveId(null); }, [active]);
+  const { revealRequest } = props;
+  const revealHandled = useRef(props.onRevealHandled); revealHandled.current = props.onRevealHandled;
+  useEffect(() => {
+    if (!revealRequest) return;
+    setReveal(current => ({ nodeId: revealRequest.nodeId, key: (current?.key ?? 0) + 1 }));
+    requestAnimationFrame(() => panel.current?.scrollIntoView?.({ block: 'start' }));
+    revealHandled.current?.();
+  }, [revealRequest]);
 
   const select = (next: CanvasSelection) => { props.onSelectionChange(next); if (next?.kind === 'node' && view.overlay?.nodes[next.id]?.status === 'awaiting-approval') props.onSectionChange('run'); };
   const jumpTo = (nodeId: string, nextSection: WorkflowPanelSection) => {

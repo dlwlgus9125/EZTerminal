@@ -2,7 +2,7 @@
 .workflow-workspace *, .workflow-workspace *::before, .workflow-workspace *::after { box-sizing: border-box; }
 .workflow-header, .workflow-toolbar, .workflow-inline { display: flex; align-items: center; gap: var(--ui-space-2); flex-wrap: wrap; }
 .workflow-header { padding-bottom: var(--ui-space-3); border-bottom: 1px solid var(--ui-border-subtle); margin-bottom: var(--ui-space-3); }
-.workflow-header > div { flex: 1; min-width: 0; }
+.workflow-header__title { flex: 1 1 12rem; min-width: 0; }
 .workflow-header h2 { margin: 0; font: inherit; font-size: var(--ui-font-size-xl); font-weight: 600; overflow-wrap: anywhere; }
 .workflow-header small, .workflow-item small { display: block; color: var(--ui-text-muted); }
 .workflow-conversation-context { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); padding: var(--ui-space-2) var(--ui-space-3); color: var(--ui-text-secondary); background: var(--ui-surface-inset); border-bottom: 1px solid var(--ui-border-subtle); overflow-wrap: anywhere; }

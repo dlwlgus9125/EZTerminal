@@ -196,6 +196,21 @@ describe('WorkflowWorkspacePanel · one canvas', () => {
     expect(button('Run status').getAttribute('aria-selected')).toBe('true');
     expect(document.body.textContent).toContain('This flow has not run yet.');
   });
+  it('brings the stage panel into view when a stage is opened from elsewhere, once', async () => {
+    // Android stacks the panel under the stage list: "Return to this stage" must land on the stage, not the list.
+    const scrolled: Array<[Element, ScrollIntoViewOptions | boolean | undefined]> = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element, options?: ScrollIntoViewOptions | boolean) { scrolled.push([this, options]); };
+    try {
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callback(0); return 0; });
+      const state = fixture(); await state.render(true, true);
+      const panel = document.querySelector('.workflow-flow__panel');
+      expect(scrolled.filter(([element]) => element === panel)).toEqual([[panel, { block: 'start' }]]);
+      expect(button('Stage documents and chats').getAttribute('aria-selected')).toBe('true');
+      await click('History'); await click('Flow');
+      expect(scrolled.filter(([element]) => element.classList.contains('workflow-flow__panel'))).toHaveLength(1);
+    } finally { Element.prototype.scrollIntoView = original; }
+  });
   it('records a save that only moved stages as a layout change', async () => {
     const state = fixture(); await state.render(true); await click('Settings');
     await click('Move down on canvas'); await click('Save draft');
