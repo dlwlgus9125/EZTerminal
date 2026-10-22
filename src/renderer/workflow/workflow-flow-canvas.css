@@ -1,0 +1,36 @@
+/* React Flow theme for the desktop canvas chunk only (imported by WorkflowFlowCanvas), so the
+   shared surface and Android never carry these selectors. Tokens only. */
+.workflow-canvas .react-flow__handle.connectable { cursor: crosshair; }
+.workflow-canvas .react-flow__handle.connectable:hover { border-color: var(--ui-accent); background: var(--ui-accent); }
+.workflow-canvas .react-flow__handle.connectingto, .workflow-canvas .react-flow__handle.valid { border-color: var(--ui-accent); background: var(--ui-accent-muted); }
+/* React Flow, themed only through its variables and our tokens. */
+.workflow-canvas .react-flow {
+  --xy-background-color: var(--ui-canvas);
+  --xy-background-pattern-color: var(--ui-border-subtle);
+  --xy-edge-stroke: var(--ui-text-muted);
+  --xy-edge-stroke-selected: var(--ui-accent);
+  --xy-connectionline-stroke: var(--ui-accent);
+  --xy-handle-background-color: var(--ui-surface-raised);
+  --xy-handle-border-color: var(--ui-border-strong);
+  --xy-minimap-background-color: var(--ui-surface-raised);
+  --xy-minimap-mask-background-color: var(--ui-surface-inset);
+  --xy-minimap-mask-stroke-color: var(--ui-accent);
+  --xy-minimap-node-background-color: var(--ui-border-strong);
+  --xy-minimap-node-stroke-color: var(--ui-text-muted);
+  --xy-selection-background-color: var(--ui-accent-muted);
+  --xy-selection-border: 1px dotted var(--ui-accent);
+  --xy-node-border-selected: none;
+  --xy-attribution-background-color: var(--ui-surface-raised);
+  color: var(--ui-text-primary);
+}
+.workflow-canvas .react-flow__attribution a { color: var(--ui-text-secondary); }
+.workflow-canvas .react-flow__node { border-radius: var(--ui-radius-lg); }
+.workflow-canvas .react-flow__node:focus-visible { outline: none; }
+.workflow-canvas .react-flow__node:focus-visible .workflow-node-card { box-shadow: var(--ui-focus-ring); }
+.workflow-canvas .react-flow__edge:focus-visible .workflow-edge-path { stroke: var(--ui-focus); stroke-width: 3; }
+.workflow-canvas .react-flow__minimap { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); overflow: hidden; }
+/* A small overview: the canvas is often a dock pane, and the map must not cover the stages. */
+.workflow-canvas .react-flow__minimap svg { width: 10rem; height: 6.5rem; }
+.workflow-canvas .react-flow__minimap .workflow-mini { fill: var(--ui-border-strong); stroke: var(--ui-text-muted); }
+.workflow-canvas .react-flow__minimap .workflow-mini--working, .workflow-canvas .react-flow__minimap .workflow-mini--reviewing { fill: var(--ui-accent-muted); stroke: var(--ui-accent); }
+.workflow-canvas .react-flow__minimap .workflow-mini--awaiting-approval { fill: var(--ui-warning-muted); stroke: var(--ui-warning); }

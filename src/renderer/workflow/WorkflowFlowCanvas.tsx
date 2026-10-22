@@ -3,6 +3,7 @@ import {
   type Connection, type Edge, type EdgeChange, type EdgeProps, type Node, type NodeChange, type NodeProps, type OnBeforeDelete, type XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
+import './workflow-flow-canvas.css';
 import { LayoutGrid, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { WorkflowEdge, WorkflowNode } from '../../shared/workflow-graph';
