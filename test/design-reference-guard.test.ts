@@ -68,14 +68,37 @@ function approved(overrides: Record<string, unknown> = {}) {
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 
+/** A visual spec that executes the approved case on every promised axis. */
+const VISUAL_CASE = '{ storyId: "shell-2-0--desktop-shell", screenshot: "shell-desktop.png", readySelector: "[data-testid=shell2]", locale: "ko", viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }] }';
+const VISUAL_LOOP = [
+  'for (const referenceCase of designReferenceCases) {',
+  '  test(referenceCase.storyId, async ({ page }) => {',
+  '    const alternateLocale = referenceCase.locale === "ko" ? "en" : "ko";',
+  '    await openStory(page, referenceCase.storyId, { locale: referenceCase.locale });',
+  '    await expectNoAccessibilityViolations(page);',
+  '    await expect(page).toHaveScreenshot(referenceCase.screenshot);',
+  '    await page.keyboard.press("Tab");',
+  '    await page.keyboard.press("Shift+Tab");',
+  '    for (const size of referenceCase.viewports) {',
+  '      await page.setViewportSize(size);',
+  '      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);',
+  '    }',
+  '    await openStory(page, referenceCase.storyId, { locale: alternateLocale });',
+  '    await expectNoAccessibilityViolations(page);',
+  '  });',
+  '}',
+].join('\n');
+const visualSpec = (cases = VISUAL_CASE, loop = VISUAL_LOOP) => `const designReferenceCases = [${cases}];\n${loop}`;
+const APPROVAL = ['# ux2 기록', '', '## Gate 2 shell', '', '| 화면 | 결정 | 답 |', '|---|---|---|', '| shell-desktop | 셸 구성 | B안, 레일 5칸 |'].join('\n');
+
 function approvedEvidence(overrides: Record<string, unknown> = {}) {
   return {
     storySource: 'export const DesktopShell: Story = {};',
-    visualSource: 'const cases = [{ storyId: "shell-2-0--desktop-shell", screenshot: "shell-desktop.png" }];',
+    visualSource: visualSpec(),
     availableSnapshots: new Set(['shell-desktop.png']),
     captureBytes: PNG,
     captureSha256: SHA,
-    approvalSource: ['# ux2 기록', '', '## Gate 2 shell', '', '결정 답변'].join('\n'),
+    approvalSource: APPROVAL,
     ...overrides,
   };
 }
@@ -119,12 +142,41 @@ describe('2.0 design reference manifest', () => {
     const entry = approved();
     expect(() => validateApprovedSurface(entry, approvedEvidence())).not.toThrow();
     expect(() => validateApprovedSurface(entry, approvedEvidence({ storySource: ['// export const DesktopShell = 1;', 'const DesktopShell = {};'].join('\n') }))).toThrow('DesktopShell');
-    expect(() => validateApprovedSurface(entry, approvedEvidence({ visualSource: 'const cases = [{ storyId: "other" }];' }))).toThrow('visual case');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ visualSource: visualSpec('{ storyId: "other", screenshot: "other.png", readySelector: "x", locale: "ko", viewports: [{ width: 1, height: 1 }, { width: 2, height: 2 }] }') }))).toThrow('exactly one case');
     expect(() => validateApprovedSurface(entry, approvedEvidence({ availableSnapshots: new Set() }))).toThrow('shell-desktop.png');
     expect(() => validateApprovedSurface(entry, approvedEvidence({ captureSha256: 'b'.repeat(64) }))).toThrow('capture');
     expect(() => validateApprovedSurface(entry, approvedEvidence({ captureBytes: new Uint8Array([1, 2, 3]) }))).toThrow('PNG');
     expect(() => validateApprovedSurface(entry, approvedEvidence({ approvalSource: ['# ux2 기록', '', '## Gate 1'].join('\n') }))).toThrow('gate-2-shell');
     expect(() => validateApprovedSurface(approved({ approval: { record: 'docs/ux/overhaul/approvals.md#gate-2-shell', decidedAt: 'soon' } }), approvedEvidence())).toThrow('decidedAt');
+  });
+
+  it('rejects the loopholes of a string-only check: loose strings, impossible dates, a heading without an answer', () => {
+    const entry = approved();
+    // The story id and snapshot appear, but in an array no test runs.
+    const loose = `const unrelated = ["shell-2-0--desktop-shell", "shell-desktop.png"];\n${VISUAL_LOOP}`;
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ visualSource: loose }))).toThrow('designReferenceCases');
+    expect(() => validateApprovedSurface(approved({ approval: { record: 'docs/ux/overhaul/approvals.md#gate-2-shell', decidedAt: '2026-99-99' } }), approvedEvidence())).toThrow('real YYYY-MM-DD');
+    expect(() => validateApprovedSurface(approved({ approval: { record: 'docs/ux/overhaul/approvals.md#gate-2-shell', decidedAt: '2026-02-30' } }), approvedEvidence())).toThrow('real YYYY-MM-DD');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ approvalSource: ['# ux2 기록', '', '## Gate 2 shell', '', '결정 답변'].join('\n') }))).toThrow('no row for shell-desktop');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ approvalSource: APPROVAL.replace('B안, 레일 5칸', ' ') }))).toThrow('no recorded answer');
+    // A row under a sibling heading does not count for this record.
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ approvalSource: APPROVAL.replace('## Gate 2 shell', '## Gate 2 shell\n\n## Other') }))).toThrow('no row for shell-desktop');
+  });
+
+  it.each([
+    { axis: 'axe in both locales', loop: VISUAL_LOOP.replaceAll('await expectNoAccessibilityViolations(page);', ''), message: 'axe' },
+    { axis: 'the screenshot', loop: VISUAL_LOOP.replace('await expect(page).toHaveScreenshot(referenceCase.screenshot);', ''), message: 'screenshot' },
+    { axis: 'keyboard focus', loop: VISUAL_LOOP.replace('await page.keyboard.press("Shift+Tab");', ''), message: 'keyboard focus' },
+    { axis: 'the viewports', loop: VISUAL_LOOP.replace('await page.setViewportSize(size);', ''), message: 'viewports' },
+    { axis: 'horizontal overflow', loop: VISUAL_LOOP.replace('document.documentElement.scrollWidth <= window.innerWidth', 'true'), message: 'overflow' },
+    { axis: 'the other locale', loop: VISUAL_LOOP.replace('await openStory(page, referenceCase.storyId, { locale: alternateLocale });', ''), message: 'both its locale' },
+  ])('rejects an approved case whose test loop drops $axis', ({ loop, message }) => {
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: visualSpec(VISUAL_CASE, loop) }))).toThrow(message);
+  });
+
+  it('rejects an approved case with fewer than two viewports', () => {
+    const single = VISUAL_CASE.replace(', { width: 1024, height: 720 }', '');
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: visualSpec(single) }))).toThrow('two literal viewports');
   });
 
   it('retires the story and visual checks of a replaced 1.0 surface but keeps the rest', () => {

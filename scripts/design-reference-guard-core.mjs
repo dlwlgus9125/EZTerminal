@@ -613,33 +613,98 @@ export function validateDesignReferenceManifest(manifest, legacyManifest) {
   return { approved: [...manifest.approved], legacy, retired };
 }
 
-/** Same slug rule as scripts/docs-contract-check-core.mjs, for approval-record anchors. */
-function headingSlugs(source) {
-  const slugs = new Set();
+/**
+ * Headings of a Markdown file keyed by the same slug rule as scripts/docs-contract-check-core.mjs,
+ * each with the text up to the next heading of the same or a higher level.
+ */
+function headingSections(source) {
+  const sections = new Map();
   const counts = new Map();
-  for (const match of source.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gmu)) {
-    const base = match[1].trim().toLocaleLowerCase('en-US')
+  const lines = source.split(/\r?\n/u);
+  const headings = [];
+  lines.forEach((line, index) => {
+    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
+    if (!match) return;
+    const base = match[2].trim().toLocaleLowerCase('en-US')
       .replace(/[`*_~]/gu, '').replace(/[^\p{Letter}\p{Number}\s-]/gu, '').replace(/\s+/gu, '-').replace(/-+/gu, '-');
     const count = counts.get(base) ?? 0;
     counts.set(base, count + 1);
-    slugs.add(count === 0 ? base : `${base}-${count}`);
-  }
-  return slugs;
+    headings.push({ slug: count === 0 ? base : `${base}-${count}`, level: match[1].length, index });
+  });
+  headings.forEach((heading, position) => {
+    const next = headings.slice(position + 1).find((item) => item.level <= heading.level);
+    sections.set(heading.slug, lines.slice(heading.index + 1, next ? next.index : lines.length).join('\n'));
+  });
+  return sections;
+}
+
+/** A calendar date that exists, written YYYY-MM-DD. */
+function isCalendarDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value ?? '');
+  if (!match) return false;
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/**
+ * The approval record must hold the user's answer for this surface: a table row in the anchored
+ * section that names the surface id and whose last cell (the answer) is filled in.
+ */
+function assertDecisionRecorded(entry, approvalSource) {
+  const anchor = entry.approval.record.split('#')[1];
+  const section = anchor ? headingSections(approvalSource).get(anchor) : undefined;
+  assert(section !== undefined, `Approved surface ${entry.id}: approval record has no heading #${anchor}.`);
+  const row = section.split('\n').find((line) => line.trim().startsWith('|') && !/^\|[\s|:-]+\|$/u.test(line.trim())
+    && line.includes(entry.id));
+  assert(row, `Approved surface ${entry.id}: approval record #${anchor} has no row for ${entry.id}.`);
+  const answer = row.trim().replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim()).at(-1) ?? '';
+  assert(answer.length > 0 && !/^(?:-|—|tbd|todo|\?)$/iu.test(answer), `Approved surface ${entry.id}: approval record #${anchor} has no recorded answer.`);
+}
+
+/**
+ * The approved story must be one literal case of `designReferenceCases`, and that list must be run by a
+ * test loop that renders both locales, runs axe in each, takes the screenshot, moves keyboard focus both
+ * ways, and resizes through the case's viewports without horizontal overflow.
+ */
+function validateApprovedVisualCase(entry, visualFile) {
+  const cases = objectElements(arrayVariable(visualFile, 'designReferenceCases'), 'designReferenceCases');
+  const matches = cases.filter((visualCase) => stringValue(propertyValue(visualCase, 'storyId')) === entry.visual.storyId);
+  assert(matches.length === 1, `Approved surface ${entry.id}: designReferenceCases needs exactly one case for ${entry.visual.storyId}.`);
+  const [visualCase] = matches;
+  assert(stringValue(propertyValue(visualCase, 'screenshot')) === entry.visual.snapshot,
+    `Approved surface ${entry.id}: its visual case does not render into ${entry.visual.snapshot}.`);
+  const readySelector = stringValue(propertyValue(visualCase, 'readySelector'));
+  assert(typeof readySelector === 'string' && readySelector.length > 0, `Approved surface ${entry.id}: its visual case needs a readySelector.`);
+  const locale = stringValue(propertyValue(visualCase, 'locale'));
+  assert(locale === 'ko' || locale === 'en', `Approved surface ${entry.id}: its visual case needs a supported locale.`);
+  const viewports = propertyValue(visualCase, 'viewports');
+  const sizes = viewports && ts.isArrayLiteralExpression(viewports) ? objectElements(viewports, `${entry.id} viewports`) : [];
+  assert(sizes.length >= 2 && sizes.every((size) => numberValue(propertyValue(size, 'width')) && numberValue(propertyValue(size, 'height'))),
+    `Approved surface ${entry.id}: its visual case needs at least two literal viewports.`);
+
+  const loop = findForOf(visualFile, 'designReferenceCases');
+  assert(loop, 'designReferenceCases must be executed by a for-of test loop.');
+  const calls = callsWithin(loop);
+  assert(calls.filter((call) => directCallName(call) === 'openStory').length >= 2, 'Each approved surface must render both its locale and the other one.');
+  assert(calls.filter((call) => directCallName(call) === 'expectNoAccessibilityViolations').length >= 2, 'Each approved surface must run axe in both locales.');
+  assert(calls.some((call) => methodCallName(call) === 'toHaveScreenshot'), 'Each approved surface must have a screenshot assertion.');
+  assert(calls.some((call) => methodCallName(call) === 'setViewportSize'), 'Each approved surface must be checked at its viewports.');
+  const strings = stringLiteralsWithin(loop);
+  assert(strings.has('Tab') && strings.has('Shift+Tab'), 'Each approved surface must move keyboard focus forward and back.');
+  const identifiers = identifiersWithin(loop);
+  assert(identifiers.has('scrollWidth') && identifiers.has('innerWidth'), 'Each approved surface must assert that it has no horizontal overflow.');
 }
 
 /**
  * An approved surface must still be the thing the user approved: a real story
- * export (syntax tree, not text), a visual case that renders that story into the
- * named snapshot, the approved capture bytes, and a recorded decision.
+ * export (syntax tree, not text), an executed visual case with its axes, the
+ * approved capture bytes, and the user's recorded answer.
  */
 export function validateApprovedSurface(entry, { storySource, visualSource, availableSnapshots, captureBytes, captureSha256, approvalSource }) {
   const exports = exportedConstNames(parseTsx(storySource, entry.story.file));
   assert(exports.has(entry.story.export), `Approved surface ${entry.id}: story export ${entry.story.export} is missing.`);
-  const literals = stringLiteralsWithin(parseTsx(visualSource, 'storybook.visual.spec.ts'));
-  assert(
-    literals.has(entry.visual.storyId) && literals.has(entry.visual.snapshot),
-    `Approved surface ${entry.id}: no visual case renders ${entry.visual.storyId} into ${entry.visual.snapshot}.`,
-  );
+  validateApprovedVisualCase(entry, parseTsx(visualSource, 'storybook.visual.spec.ts'));
   assert(
     availableSnapshots.has(entry.visual.snapshot),
     `Approved surface ${entry.id}: visual snapshot ${entry.visual.snapshot} is missing.`,
@@ -649,9 +714,8 @@ export function validateApprovedSurface(entry, { storySource, visualSource, avai
     captureSha256 === entry.capture.sha256,
     `Approved surface ${entry.id}: capture ${entry.capture.file} differs from the approved bytes.`,
   );
-  assert(/^\d{4}-\d{2}-\d{2}$/u.test(entry.approval.decidedAt), `Approved surface ${entry.id}: approval.decidedAt must be YYYY-MM-DD.`);
-  const anchor = entry.approval.record.split('#')[1];
-  assert(anchor && headingSlugs(approvalSource).has(anchor), `Approved surface ${entry.id}: approval record has no heading #${anchor}.`);
+  assert(isCalendarDate(entry.approval.decidedAt), `Approved surface ${entry.id}: approval.decidedAt must be a real YYYY-MM-DD date.`);
+  assertDecisionRecorded(entry, approvalSource);
 }
 
 /**

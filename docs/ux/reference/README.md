@@ -17,4 +17,8 @@
 - `desktop-handoff/` 원본은 수정하지 않는다.
 - `2.0/` 승인 항목과 그 캡처는 사용자가 승인한 결정 기록(`docs/ux/overhaul/approvals.md`)이 있을 때만
   추가·교체한다. Snapshot은 승인 기준과 나란히 검토한 경우에만 갱신한다.
+- 승인 항목 하나는 다음을 모두 갖춰야 가드를 통과한다: production story export, `visual/storybook.visual.spec.ts`의
+  `designReferenceCases` 안 literal case 하나(storyId·screenshot·readySelector·locale·viewports 2개 이상)와 그 목록을
+  도는 테스트(두 언어 렌더·두 언어 axe·screenshot·Tab/Shift+Tab 초점 이동·viewport별 가로 넘침 검사), 실앱 캡처
+  SHA-256, 실제 날짜의 `decidedAt`, 그리고 승인 기록 anchor 절 안에 그 항목 id를 담고 마지막 칸(답)이 채워진 표 행.
 - 1.0 surface는 그것을 대체하는 2.0 승인 항목의 `replaces`에 들어갈 때만 `legacy`에서 빠진다.
