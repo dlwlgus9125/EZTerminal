@@ -192,8 +192,8 @@ export class PlanningResultService {
     if (record.error) return;
     if (record.review) { await this.autoDecide(run, attempt, record); return; }
     const root = record.validationWorkspace ?? await this.repository.validationWorkspace(record);
-    record = { ...record, validationWorkspace: root };
-    await this.repository.saveResult(record);
+    // Every pass starts here; write only when the workspace is new, not on each re-check.
+    if (record.validationWorkspace !== root) { record = { ...record, validationWorkspace: root }; await this.repository.saveResult(record); }
     for (const validation of task.validations) {
       if (this.stopped) return;
       if (validation.method === 'inspection' || record.validations.some(entry => entry.validationId === validation.validationId)) continue;

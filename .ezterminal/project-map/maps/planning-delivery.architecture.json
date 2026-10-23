@@ -348,7 +348,7 @@
           "relativePath": "src/main/planning-result-service.ts",
           "startLine": 189,
           "endLine": 240,
-          "lineDigest": "sha256:e85853d244838efd9d4323329ba294e5b75a8d0c02b43ba564a3676c4beb26a9",
+          "lineDigest": "sha256:882f1c6d3d5aa6f7de93d04f5168efc9404fc4f11637a28e578a257203166805",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         },
         {
@@ -389,8 +389,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-repository.ts",
-          "startLine": 351,
-          "endLine": 360,
+          "startLine": 361,
+          "endLine": 370,
           "lineDigest": "sha256:86403cd971203f1fd8fdcad0e5550a5be1e6419bbb83e1c0f24be06f2b510906",
           "claim": "Adoption requires a clean candidate and updates its dedicated integration ref only from the expected previous successful commit."
         }
@@ -522,7 +522,7 @@
           "relativePath": "src/main/planning-result-service.ts",
           "startLine": 189,
           "endLine": 240,
-          "lineDigest": "sha256:e85853d244838efd9d4323329ba294e5b75a8d0c02b43ba564a3676c4beb26a9",
+          "lineDigest": "sha256:882f1c6d3d5aa6f7de93d04f5168efc9404fc4f11637a28e578a257203166805",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         }
       ]

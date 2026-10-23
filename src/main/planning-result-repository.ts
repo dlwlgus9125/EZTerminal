@@ -55,10 +55,20 @@ export class PlanningResultRepository {
     const target = this.file(kind, identity);
     await fs.mkdir(path.dirname(target), { recursive: true });
     const temporary = `${target}.${randomUUID()}.tmp`;
-    const handle = await fs.open(temporary, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
-    finally { await handle.close(); }
-    await fs.rename(temporary, target);
+    try {
+      const handle = await fs.open(temporary, 'wx', 0o600);
+      try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
+      finally { await handle.close(); }
+      // Windows refuses to replace a file another handle has open (a concurrent read of the same
+      // result): retry briefly instead of failing the review that is saving it.
+      for (let attempt = 0; ; attempt++) {
+        try { await fs.rename(temporary, target); return; }
+        catch (error) {
+          if (attempt >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+          await new Promise(resolve => setTimeout(resolve, 15 * 2 ** attempt));
+        }
+      }
+    } finally { await fs.rm(temporary, { force: true }).catch(() => undefined); }
   }
   async readResult(projectId: string, attemptId: string): Promise<PlanningResultRecord | null> {
     const value = await this.read<PlanningResultRecord>('attempt', [projectId, attemptId]);

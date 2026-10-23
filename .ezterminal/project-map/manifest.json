@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1d1c9fb7abd806b51e73db6048100592919d3a4e52720c00cf4d715dfa8180b4",
+        "inputDigest": "sha256:2a90e72eae5131121950343ea36520345b5c3658427198f1b819dff267da31db",
         "decision": "map-updated",
-        "reason": "Reviewed: a review asked for while its previous pass is still running now gets another pass instead of waiting for an unrelated event; replies are read whatever their sensitivity marker. Claims hold; anchors moved."
+        "reason": "Reviewed: result files retry a replace that Windows refuses while the file is being read, and a review pass writes only when its workspace is new. Claims hold; anchors moved."
       }
     },
     {
