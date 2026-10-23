@@ -207,8 +207,23 @@ if (args.includes('--version')) {
                 responseText = 'Wrote `report.html` with `report.css`, and `paper.pdf`.';
               }
             }
+            // Independent reviewer: judge the exact frozen result its prompt quotes (baseline,
+            // artifacts, inspection validations), as a reviewer must, and approve it. No delay.
+            const inputText = (Array.isArray(frame.params?.input) ? frame.params.input : []).map(entry => (typeof entry === 'string' ? entry : entry?.text ?? '')).join('\n');
+            let reviewing = false;
+            if (inputText.includes('EZTERMINAL_REVIEW_JSON')) {
+              const quoted = inputText.split('\n\n').map(part => { try { return JSON.parse(part); } catch { return null; } })
+                .find(value => value && value.baseline && Array.isArray(value.artifacts));
+              if (quoted) {
+                reviewing = true;
+                responseText = `EZTERMINAL_REVIEW_JSON\n${JSON.stringify({ schemaVersion: 1, baselineFingerprint: quoted.baseline.fingerprint,
+                  artifactIds: quoted.artifacts.map(artifact => artifact.artifactId), decision: 'approve', summary: 'Fixture review: the frozen result answers the task.',
+                  inspections: (quoted.task?.validations ?? []).filter(validation => validation.method === 'inspection')
+                    .map(validation => ({ validationId: validation.validationId, status: 'passed', summary: 'Inspected by the fixture reviewer.' })) })}`;
+              }
+            }
             // Chat profiler: stream a fixed-length reply in timed deltas, ending with a sentinel.
-            const reply = readReplyConfig();
+            const reply = reviewing ? null : readReplyConfig();
             if (reply) {
               const itemId = `fixture-message-${turnSequence}`;
               const body = `${'Streamed profile reply. '.repeat(Math.ceil(reply.chars / 24)).slice(0, reply.chars)} [[end]]`;

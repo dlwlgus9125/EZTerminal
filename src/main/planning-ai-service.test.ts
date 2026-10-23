@@ -49,11 +49,14 @@ async function fixture(ownsSubproject?: PlanningAiServiceOptions['ownsSubproject
       decrypt: bytes => { const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12)); cipher.setAuthTag(bytes.subarray(-16)); return Buffer.concat([cipher.update(bytes.subarray(12, -16)), cipher.final()]).toString('utf8'); } } };
   current = new PlanningAiService(options); await current.init(); await runtime.start();
   cleanups.push(async () => { await current.dispose(); await runtime.dispose('process-loss'); await store.close(); await planning.flush(); });
-  const complete = async (output?: unknown) => {
+  const complete = async (output?: unknown, realProvider = false) => {
     await vi.waitFor(() => expect(adapter.submit).toHaveBeenCalledOnce()); await runtime.whenIdle();
     const turn = daemon.getSnapshot().turns[0];
     const value = output ?? { summary: 'Clarify the requirement', operation: { op: 'item.put', value: { id: 'requirement', revision: 1, title: 'Clear private request', kind: 'requirement', body: 'Improved private body', status: 'draft', acceptance: [] } } };
-    for (const listener of listeners) listener({ kind: 'transcript', item: { id: 'response', sessionId: turn.sessionId, turnId: turn.id, sequence: 1, kind: 'assistant-message', text: JSON.stringify(value), isDelta: false, isSensitive: false, createdAt: new Date().toISOString() } });
+    // A real provider marks its reply sensitive (metadata) and streams it before the final row.
+    const text = JSON.stringify(value); const half = Math.floor(text.length / 2);
+    const rows = realProvider ? [{ text: text.slice(0, half), isDelta: true }, { text: text.slice(half), isDelta: true }, { text, isDelta: false }] : [{ text, isDelta: false }];
+    rows.forEach((row, index) => { for (const listener of listeners) listener({ kind: 'transcript', item: { id: `response-${index}`, sessionId: turn.sessionId, turnId: turn.id, sequence: index + 1, kind: 'assistant-message', text: row.text, isDelta: row.isDelta, isSensitive: realProvider, ...(realProvider ? { messageId: 'response' } : {}), createdAt: new Date().toISOString() } }); });
     for (const listener of listeners) listener({ kind: 'turn-finished', sessionId: turn.sessionId, turnId: turn.id, outcome: 'completed' });
     await runtime.whenIdle();
   };
@@ -81,6 +84,12 @@ describe('planning AI generation authority', () => {
     const applied = await f.service.request({ type: 'apply', projectId: 'P', requestId: request.requestId }, 'desktop-user');
     expect(applied).toMatchObject({ ok: true, mutation: { ok: true, revision: 2, duplicate: false } });
     expect(await f.service.request({ type: 'apply', projectId: 'P', requestId: request.requestId }, 'desktop-user')).toMatchObject({ ok: true, mutation: { ok: true, duplicate: true } });
+  });
+  it('reads a real provider proposal (marked sensitive and streamed) as one reply', async () => {
+    const f = await fixture();
+    expect(job(await f.service.request({ type: 'start', request }, 'desktop-user')).state).toBe('prepared');
+    await f.complete(undefined, true);
+    expect(job(await f.service.request({ type: 'read', projectId: 'P' }, 'desktop-user')).state).toBe('ready');
   });
   it('persists encrypted input and recovers the same request after restart without another submission', async () => {
     const f = await fixture(); await f.service.request({ type: 'start', request }, 'desktop-user'); await f.complete();

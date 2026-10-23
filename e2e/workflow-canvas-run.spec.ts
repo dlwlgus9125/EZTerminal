@@ -11,7 +11,9 @@ import { createRegisteredE2eTempDir, expect, test } from './test';
  * chunk loads, a run is prepared and started from the canvas header, the approval stage shows
  * its state on the canvas, it is approved from the stage panel, the AI stage starts working and
  * its task conversation opens from the same panel. The fake Codex answers slowly so the stage
- * stays observable while it works; no real provider or account is used.
+ * stays observable while it works; no real provider or account is used. Its reply goes through the
+ * real Codex adapter, which marks replies sensitive like every real provider, and the stage's result
+ * is captured and independently reviewed from that reply.
  */
 const FAKE_CODEX_DIR = path.resolve(__dirname, 'fixtures', 'fake-codex');
 const evidence = path.resolve('artifacts/workflow-canvas/e2e');
@@ -33,7 +35,7 @@ const graph: WorkflowGraph = {
 };
 
 test('one canvas: prepare, start, approve on the canvas and open the working stage conversation', async () => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const profile = createRegisteredE2eTempDir('ezterm-canvas-profile-');
   const projectRoot = createRegisteredE2eTempDir('ezterm-canvas-project-');
   // The fake Codex reads its reply timing from TMPDIR: hold every turn long enough to watch it.
@@ -98,5 +100,29 @@ test('one canvas: prepare, start, approve on the canvas and open the working sta
     await open.click();
     await expect(page.locator(`[data-testid="structured-agent-session"][data-session-id="${sessionId}"]`)).toBeVisible({ timeout: 30_000 });
     await page.screenshot({ path: path.join(evidence, '04-task-conversation.png') });
+
+    // The (sensitive-marked) reply is captured as the stage's result and the reviewer's decision is read.
+    await expect.poll(async () => {
+      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
+      return result.ok ? result.snapshot.runs[0]?.attempts[0]?.state ?? null : null;
+    }, { timeout: 90_000 }).toBe('succeeded');
+    const attemptId = after.snapshot.runs[0].attempts[0].attemptId;
+    // The reviewer's judgment, read from its own (sensitive-marked) reply, is the recorded decision.
+    await expect.poll(async () => {
+      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
+      const review = result.ok ? result.snapshot.runs[0]?.reviews.find(entry => entry.attemptId === attemptId) : undefined;
+      return review ? `${review.decision}: ${review.detail}` : null;
+    }, { timeout: 60_000 }).toBe('approve: Fixture review: the frozen result answers the task.');
+    const record = await page.evaluate(query => window.ezterminal.readPlanningResult(query), { kind: 'attempt' as const, projectId, subprojectId: 'canvas-flow', attemptId });
+    if (!record.ok || record.kind !== 'attempt' || !record.result) throw new Error('No captured result');
+    expect(record.result.transcript?.filter(item => item.kind === 'assistant-message')).toHaveLength(1);
+    // Accepted, the stage completes on the canvas and the run finishes (back on the canvas tab).
+    await page.locator('.dv-tab').filter({ hasText: 'Canvas acceptance' }).first().click();
+    await expect(build.locator('.workflow-node-card')).toHaveAttribute('data-run-state', 'completed', { timeout: 60_000 });
+    await expect.poll(async () => {
+      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
+      return result.ok ? result.snapshot.runs[0]?.state ?? null : null;
+    }, { timeout: 60_000 }).toBe('completed');
+    await page.screenshot({ path: path.join(evidence, '05-run-completed.png') });
   } finally { await app.close(); }
 });

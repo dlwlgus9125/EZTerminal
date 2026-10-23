@@ -115,7 +115,7 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
     expect(await send('attempt.finish', { attemptId: 'A', outcome: 'succeeded', artifacts, summary: 'Result' }, 'runtime')).toMatchObject({ ok: true });
     return artifacts;
   };
-  const review = async (decision = 'approve', fingerprint = baseline.fingerprint) => {
+  const review = async (decision = 'approve', fingerprint = baseline.fingerprint, realProvider = false) => {
     await service.processReview(current(), preparation.tasks[0], current().attempts[0]); await service.whenIdle();
     await vi.waitFor(() => expect(vi.mocked(adapter.submit).mock.calls.length).toBeGreaterThan(0));
     await runtime.whenIdle();
@@ -124,8 +124,12 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
     const output = `EZTERMINAL_REVIEW_JSON\n${JSON.stringify({ schemaVersion: 1, baselineFingerprint: fingerprint,
       artifactIds: record!.artifacts.map(entry => entry.artifactId), decision, summary: 'Independent exact result inspection',
       inspections: preparation.tasks[0].validations.filter(entry => entry.method === 'inspection').map(entry => ({ validationId: entry.validationId, status: 'passed', summary: 'Inspected exact diff' })) })}`;
-    for (const listener of listeners) listener({ kind: 'transcript', item: { id: `review-output-${turn.id}`, sessionId: turn.sessionId, turnId: turn.id, sequence: 1,
-      kind: 'assistant-message', text: output, isDelta: false, isSensitive: false, createdAt: NOW } });
+    const half = Math.floor(output.length / 2);
+    const rows = realProvider
+      ? [{ text: output.slice(0, half), isDelta: true }, { text: output.slice(half), isDelta: true }, { text: output, isDelta: false }]
+      : [{ text: output, isDelta: false }];
+    rows.forEach((row, index) => { for (const listener of listeners) listener({ kind: 'transcript', item: { id: `review-output-${turn.id}-${index}`, sessionId: turn.sessionId, turnId: turn.id, sequence: index + 1,
+      kind: 'assistant-message', text: row.text, isDelta: row.isDelta, isSensitive: realProvider, ...(realProvider ? { messageId: `review-message-${turn.id}` } : {}), createdAt: NOW } }); });
     for (const listener of listeners) listener({ kind: 'turn-finished', sessionId: turn.sessionId, turnId: turn.id, outcome: 'completed' });
     await runtime.whenIdle();
     await vi.waitFor(() => expect(daemon.getSnapshot().turns.find(entry => entry.id === turn.id)?.state).toBe('completed'));
@@ -146,6 +150,26 @@ describe('planning result authority', () => {
     expect(record?.transcript).toEqual(expect.arrayContaining([expect.objectContaining({ text: 'Approved planning output: use a durable inbox.' })]));
     expect(artifacts.some(artifact => artifact.artifactId.startsWith('transcript:'))).toBe(true);
   }, 30_000);
+  it('captures a real provider reply once (marked sensitive, streamed) without its command output, and reads its sensitive review', async () => {
+    const f = await fixture({ validations: [validations[1]] });
+    const task = { ...f.preparation.tasks[0], profile: { ...f.preparation.tasks[0].profile, permissionPreset: 'plan' as const }, allowedPaths: [] };
+    // Codex and Claude mark every user, assistant and reasoning row sensitive (metadata, not a hide rule) and stream deltas.
+    const row = (sequence: number, kind: 'user-message' | 'assistant-message' | 'tool-result', text: string, extra: { isDelta?: boolean; messageId?: string } = {}) =>
+      ({ id: `real-${sequence}`, sessionId: 'S', turnId: 'worker-turn', sequence, kind, text, isDelta: false, isSensitive: true, createdAt: NOW, ...extra });
+    await f.daemon.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [
+      row(1, 'user-message', 'Summarise the folder.'),
+      row(2, 'assistant-message', 'I will read ', { isDelta: true, messageId: 'm1' }), row(3, 'assistant-message', 'the files.', { isDelta: true, messageId: 'm1' }),
+      row(4, 'assistant-message', 'I will read the files.', { messageId: 'm1' }),
+      row(5, 'tool-result', 'command output that stays out of results'),
+      row(6, 'assistant-message', 'Two-line ', { isDelta: true, messageId: 'm2' }), row(7, 'assistant-message', 'summary.', { isDelta: true, messageId: 'm2' }),
+    ] }] });
+    const artifacts = await f.service.captureResult(f.current(), task, f.current().attempts[0]);
+    const record = await f.service.readResult('P', 'A');
+    expect(record?.transcript?.map(item => [item.kind, item.text])).toEqual([['assistant-message', 'I will read the files.'], ['assistant-message', 'Two-line summary.']]);
+    expect(await f.send('attempt.finish', { attemptId: 'A', outcome: 'succeeded', artifacts, summary: 'Result' }, 'runtime')).toMatchObject({ ok: true });
+    await f.review('approve', undefined, true);
+    expect((await f.service.readResult('P', 'A'))?.review?.decision).toBe('approve');
+  }, 30_000);
   it('quotes only exact accepted activation text, retains outer-loop inputs and blocks tampered or oversized output', async () => {
     const f = await fixture({ validations: [validations[1]] });
     const template = createWorkflowGraph('research', 'input').nodes[0];
@@ -154,7 +178,8 @@ describe('planning result authority', () => {
     const chosen = [{ node: 'source', attempt: 'old', text: 'OLD LOOP OUTPUT' }, { node: 'source', attempt: 'chosen', text: 'CURRENT ACCEPTED OUTPUT' }, { node: 'outer', attempt: 'retained', text: 'ACCEPTED OUTSIDE LOOP' }, { node: 'other', attempt: 'unselected', text: 'UNSELECTED BRANCH OUTPUT' }];
     const attempts = []; const reviews = [];
     for (const input of chosen) {
-      const transcript = [{ id: `text-${input.attempt}`, sessionId: 'S', turnId: 'worker-turn', sequence: 1, kind: 'assistant-message' as const, text: input.text, isDelta: false, isSensitive: false, createdAt: NOW }];
+      // 'outer' was answered by a real provider: its reply carries the sensitive marker and is still quoted.
+      const transcript = [{ id: `text-${input.attempt}`, sessionId: 'S', turnId: 'worker-turn', sequence: 1, kind: 'assistant-message' as const, text: input.text, isDelta: false, isSensitive: input.node === 'outer', createdAt: NOW }];
       const artifacts = [{ artifactId: `transcript:${resultHash(transcript)}`, revision: 0 }];
       attempts.push({ ...original.attempts[0], taskId: input.node, attemptId: input.attempt, state: 'succeeded' as const, artifacts });
       reviews.push({ reviewId: `review-${input.attempt}`, attemptId: input.attempt, baseline: original.preparation.baseline, reviewerSessionId: 'reviewer', reviewerTurnId: 'review-turn', decidedBy: 'reviewer', artifacts, evidenceIds: [], decision: 'approve' as const, detail: 'Accepted exact result', decidedAt: NOW });

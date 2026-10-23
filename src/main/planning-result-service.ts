@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { createDaemonCommand, type DaemonCommand } from '../shared/daemon-protocol';
+import { createDaemonCommand, type DaemonCommand, type DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { ExecutionArtifact, ExecutionAttempt, ExecutionRun, PlanningExecutionCommand, PlanningExecutionReceipt, PreparedExecutionTask } from '../shared/planning-execution';
 import type { PlanningRunRequest } from '../shared/planning-run';
 import { PlanningDeviceEvidenceInputSchema } from '../shared/planning-device-evidence';
@@ -13,6 +13,7 @@ import { PlanningResultRepository, resultHash, type PlanningResultRecord, type P
 import type { GitRunner, WorktreeService } from './worktree-service';
 import { isRunReviewer, planningReviewerId } from './planning-review-identity';
 import { workflowTaskInputs } from './workflow-runtime';
+import { turnReplies } from './planning-transcript';
 
 const judgmentSchema = z.object({
   schemaVersion: z.literal(1), baselineFingerprint: z.string(), artifactIds: z.array(z.string()),
@@ -132,7 +133,7 @@ export class PlanningResultService {
       }
       const artifactId = `transcript:${resultHash(record.transcript)}`;
       if (!record.artifacts.some(artifact => artifact.artifactId === artifactId)
-        || record.transcript.some(item => item.sessionId !== attempt.sessionId || item.turnId !== attempt.turnId || item.isSensitive)) {
+        || record.transcript.some(item => item.sessionId !== attempt.sessionId || item.turnId !== attempt.turnId || (item.isSensitive && item.kind !== 'assistant-message'))) {
         throw new Error(`The captured text for ${input.nodeId} failed its artifact identity check.`);
       }
       outputs.push({ nodeId: input.nodeId, runId: run.runId, attemptId: attempt.attemptId, sessionId: attempt.sessionId, artifactId,
@@ -232,15 +233,16 @@ export class PlanningResultService {
       return;
     }
     if (record.commit) await this.repository.assertCleanRevision(root, record.commit);
-    let output = '';
+    const reviewItems: DaemonTranscriptItem[] = [];
     let cursor = 0;
     for (let page = 0; page < 100; page++) {
       const items = this.options.daemon.readTranscript(sessionId, cursor, 500);
-      output += items.filter(item => item.turnId === turn.id && item.kind === 'assistant-message' && !item.isSensitive).map(item => item.text).join('');
+      reviewItems.push(...items.filter(item => item.turnId === turn.id));
       if (items.length < 500) break;
       cursor = items.at(-1)!.sequence;
       if (page === 99) throw new Error('Independent review exceeded the verifiable transcript limit.');
     }
+    const output = turnReplies(reviewItems).map(item => item.text).join('\n');
     const marker = output.lastIndexOf('EZTERMINAL_REVIEW_JSON');
     if (marker < 0) throw new Error('Independent review returned no verifiable decision.');
     const raw = output.slice(marker + 'EZTERMINAL_REVIEW_JSON'.length).trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '');

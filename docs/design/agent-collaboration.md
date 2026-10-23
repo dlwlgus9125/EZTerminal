@@ -108,7 +108,9 @@ schema v7은 `transcript_items.payload_json`, `approvals.request_json`, `agents.
 - 승인 `request`([`approval-request.ts`](../../src/shared/approval-request.ts))는 명령, diff, 질문과
   계획 같은 도구 입력을 64KB 상한으로 담는다. snapshot은 대기 중인 승인에만 request를 노출하므로
   백업 archive에는 포함되지 않는다. 민감도(`isSensitive`)는 메타데이터다. 기록과 미리보기는 민감 행을
-  보여 주고, archive는 민감 행의 본문, 첨부와 payload를 비운다.
+  보여 주고, archive는 민감 행의 본문, 첨부와 payload를 비운다. 실행 결과(읽기 전용 단계의 결과 캡처,
+  독립 검토 판정, 다음 단계 입력)와 AI 기획 제안은 같은 턴의 답변을 민감 표시와 관계없이 쓰며,
+  같은 `messageId`의 delta는 답변 하나로 합친다. 명령 실행 결과처럼 민감한 도구 출력은 넣지 않는다.
 - Claude는 대화 세션에서 partial message를 스트리밍한다. 두 adapter의 DeltaCoalescer가 delta를 약
   80ms 또는 2KB 단위로 묶어 기록하고, 블록의 최종 메시지가 같은 `messageId`로 delta를 대체한다.
   non-delta row, 승인 요청과 turn 종료 전에는 항상 flush한다.

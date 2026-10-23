@@ -7,6 +7,7 @@ import type { ExecutionArtifact, ExecutionAttempt, ExecutionRun, PreparedExecuti
 import { PlanningResultRecordSchema, PlanningIntegrationRecordSchema, type PlanningResultRecord, type PlanningIntegrationRecord } from '../shared/planning-result';
 import type { GitRunner, WorktreeService } from './worktree-service';
 import type { PlanningDeviceEvidenceInput } from '../shared/planning-device-evidence';
+import { turnReplies } from './planning-transcript';
 
 export const resultHash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const commitPattern = /^[a-f0-9]{40,64}$/u;
@@ -258,15 +259,18 @@ export class PlanningResultRepository {
     let transcript: DaemonTranscriptItem[] | undefined;
     if (!run.preparation.baseCommit || task.profile.permissionPreset === 'plan') {
       if (!run.preparation.baseCommit && task.profile.permissionPreset !== 'plan') throw new Error('Writable results require an isolated Git workspace.');
-      const items: DaemonTranscriptItem[] = [];
+      const turnItems: DaemonTranscriptItem[] = [];
       let cursor = 0;
       for (let page = 0; page < 100; page++) {
         const next = this.options.readTranscript(attempt.sessionId, cursor, 500);
-        items.push(...next.filter(item => item.turnId === attempt.turnId && !item.isSensitive));
+        turnItems.push(...next.filter(item => item.turnId === attempt.turnId));
         if (next.length < 500) break;
         cursor = next.at(-1)!.sequence;
         if (page === 99) throw new Error('Result transcript is too large to capture without truncation.');
       }
+      // The replies themselves (once each, whatever their sensitivity marker) plus the turn's other
+      // non-sensitive rows; sensitive tool output such as command results stays out of results.
+      const items = [...turnItems.filter(item => item.kind !== 'assistant-message' && !item.isSensitive), ...turnReplies(turnItems)].sort((a, b) => a.sequence - b.sequence);
       if (!items.some(item => item.kind === 'assistant-message' && item.text.trim())) throw new Error('The completed turn has no reviewable assistant result.');
       transcript = items;
     }

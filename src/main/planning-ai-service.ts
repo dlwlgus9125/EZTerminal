@@ -176,7 +176,8 @@ export class PlanningAiService {
       const texts = new Map<string, string>(); let cursor = 0; let bytes = 0;
       for (let page = 0; page < 100; page++) {
         const items = this.options.daemon.readTranscript(turn.sessionId, cursor, 500);
-        for (const item of items) if (item.turnId === turn.id && item.kind === 'assistant-message' && !item.isSensitive) {
+        // The reply counts whatever its sensitivity marker (metadata; real providers mark every reply).
+        for (const item of items) if (item.turnId === turn.id && item.kind === 'assistant-message') {
           const key = item.messageId ?? item.id;
           texts.set(key, item.isDelta ? (texts.get(key) ?? '') + item.text : item.text);
           bytes += Buffer.byteLength(item.text); if (bytes > 2 * 1024 * 1024) throw new Error('AI proposal output exceeds the verifiable size limit.');
