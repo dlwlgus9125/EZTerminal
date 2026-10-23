@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:aad327b95ce80a59c1254d4230b64d1c9548149c8a78c0c5f8054f057ec56ab4",
+        "inputDigest": "sha256:74add9b97487fe0edacef6cf941fa81e7ef3d46a3ec1ba1db6e49aa1f5d921b6",
         "decision": "map-updated",
-        "reason": "Reviewed: permission levels follow the person: new conversations start with the access level last chosen, /clear and continued conversations keep the plan access level, and /clear text still opens the new draft. Session surface and flows unchanged. Anchors moved."
+        "reason": "Reviewed: result capture, the reviewer read, downstream inputs and AI proposals now use a turn’s replies whatever their sensitivity marker (deltas joined into one reply); sensitive tool output still stays out of results. Claims hold; anchors moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:79523028b0d0ac76ba970a7d8a83254a24ac08c18e8c14fc7accabfdbfc4329e",
+        "inputDigest": "sha256:7980479ddd458cb9a0f10e222483fa4914244d9655290753ee3e4dd7680b3339",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed: the subproject Flow and Runs tabs became one canvas (WorkflowFlowSurface) inside WorkflowWorkspacePanel. It sends the same workflow.patch and run commands with expectedRevision and commandId; host boundary, runtime and navigation are unchanged."
+        "reason": "Reviewed: the stage panel narrows in small docks and can be hidden from the canvas header; header actions wrap as one group. Commands, host boundary, runtime and navigation are unchanged."
       }
     }
   ]
