@@ -23,7 +23,8 @@
   채워진 행.
 - visual spec은 case를 나눠 주기만 한다: 파일 맨 위의 `for (const item of designReferenceCases)` 안에
   `test(item.storyId, async ({ page }) => { await checkReferenceSurface(page, item); })` 한 문장만 두고, 파일 어디에도
-  skip·fixme·fail·only를 쓰지 않는다. 검증은 모두 `manifest.json`의 `approvedChecker`가 SHA-256으로 고정한 helper 하나가
+  skip·fixme·fail·only를 쓰지 않는다. `designReferenceCases`는 맨 위 `const` 하나로 이 반복문만 읽고,
+  `checkReferenceSurface`는 고정된 helper 파일에서 이름 그대로 import해 이 호출 한 곳에서만 쓴다. 검증은 모두 `manifest.json`의 `approvedChecker`가 SHA-256으로 고정한 helper 하나가
   한다(그 case story를 case 언어와 다른 언어로 렌더하고 각각 axe, case screenshot, Tab/Shift+Tab, case viewport마다
   `expect`로 가로 넘침 검사). helper를 바꾸면 고정값이 깨지므로 검토를 거쳐 다시 고정한다. 정적 검사는 드리프트를 막는
   장치이고, 실제 실행 증거는 CI의 `pnpm test:visual`이다.

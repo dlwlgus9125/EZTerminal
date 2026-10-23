@@ -77,7 +77,8 @@ const DISPATCH = [
   '  });',
   '}',
 ].join('\n');
-const visualSpec = (cases = VISUAL_CASE, dispatch = DISPATCH) => `const designReferenceCases = [${cases}];\n${dispatch}`;
+const CHECKER_IMPORT = 'import { checkReferenceSurface } from "./design-reference-checks";';
+const visualSpec = (cases = VISUAL_CASE, dispatch = DISPATCH, prelude = CHECKER_IMPORT) => `${prelude}\nconst designReferenceCases = [${cases}];\n${dispatch}`;
 /** The pinned checker: every axis, for the case it is given. */
 const CHECKER = [
   'export async function checkReferenceSurface(page: Page, item: ReferenceCase): Promise<void> {',
@@ -194,11 +195,29 @@ describe('2.0 design reference manifest', () => {
     { loophole: 'a loop inside a describe', dispatch: `test.describe("reference", () => {\n${DISPATCH}\n});`, message: 'top-level statement' },
     { loophole: 'an early return in the test', dispatch: DISPATCH.replace('    await checkReferenceSurface(page, referenceCase);', '    return;\n    await checkReferenceSurface(page, referenceCase);'), message: 'exactly one statement' },
     { loophole: 'a second statement in the test', dispatch: DISPATCH.replace('    await checkReferenceSurface(page, referenceCase);', '    await page.goto("about:blank");\n    await checkReferenceSurface(page, referenceCase);'), message: 'exactly one statement' },
-    { loophole: 'a test that never calls the checker', dispatch: DISPATCH.replace('await checkReferenceSurface(page, referenceCase);', 'await openStory(page, referenceCase.storyId);'), message: 'exactly one statement' },
+    { loophole: 'a test that never calls the checker', dispatch: DISPATCH.replace('await checkReferenceSurface(page, referenceCase);', 'await openStory(page, referenceCase.storyId);'), message: 'may only be imported and called once' },
     { loophole: 'a test named after another story', dispatch: DISPATCH.replace('test(referenceCase.storyId', 'test("other"'), message: 'exactly test(referenceCase.storyId' },
-    { loophole: 'the checker called with another case', dispatch: DISPATCH.replace('checkReferenceSurface(page, referenceCase)', 'checkReferenceSurface(page, designReferenceCases[0])'), message: 'exactly one statement' },
+    { loophole: 'the checker called with another case', dispatch: DISPATCH.replace('checkReferenceSurface(page, referenceCase)', 'checkReferenceSurface(page, designReferenceCases[0])'), message: 'may only be declared and read by its dispatch loop' },
   ])('rejects $loophole in the visual spec', ({ dispatch, message }) => {
     expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: visualSpec(VISUAL_CASE, dispatch) }))).toThrow(message);
+  });
+
+  it.each([
+    { bypass: 'a local look-alike checker', prelude: 'async function checkReferenceSurface() { return; }', message: 'must import { checkReferenceSurface }' },
+    { bypass: 'a look-alike defined next to the import', prelude: `${CHECKER_IMPORT}\nconst shadow = () => { const checkReferenceSurface = async () => undefined; return checkReferenceSurface; };`, message: 'may only be imported and called once' },
+    { bypass: 'the checker imported from another file', prelude: 'import { checkReferenceSurface } from "./other-checks";', message: 'must import { checkReferenceSurface }' },
+    { bypass: 'another export renamed to the checker', prelude: 'import { quickCheck as checkReferenceSurface } from "./design-reference-checks";', message: 'must import { checkReferenceSurface }' },
+    { bypass: 'emptying the case list before the loop', prelude: `${CHECKER_IMPORT}\ndesignReferenceCases.length = 0;`, message: 'may only be declared and read by its dispatch loop' },
+  ])('rejects $bypass', ({ prelude, message }) => {
+    const source = prelude.includes('designReferenceCases.length')
+      ? `${CHECKER_IMPORT}\nconst designReferenceCases = [${VISUAL_CASE}];\ndesignReferenceCases.length = 0;\n${DISPATCH}`
+      : visualSpec(VISUAL_CASE, DISPATCH, prelude);
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: source }))).toThrow(message);
+  });
+
+  it('rejects a case list that is not one top-level const', () => {
+    const mutable = `${CHECKER_IMPORT}\nlet designReferenceCases = [${VISUAL_CASE}];\n${DISPATCH}`;
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: mutable }))).toThrow('top-level const');
   });
 
   it('rejects a checker that differs from its pin', () => {

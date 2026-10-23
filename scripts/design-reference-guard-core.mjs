@@ -1,3 +1,5 @@
+import { posix } from 'node:path';
+
 import ts from 'typescript';
 
 const EXPECTED_AXES = {
@@ -697,15 +699,40 @@ function isPropertyRead(node, name, property) {
 
 const SKIPPING = new Set(['skip', 'fixme', 'fail', 'only']);
 const CHECKER_NAME = 'checkReferenceSurface';
+const VISUAL_SPEC_DIR = 'visual';
 
 /**
  * The visual spec only dispatches: a top-level `for (const item of designReferenceCases)` whose body is
  * exactly `test(item.storyId, async ({ page }) => { await checkReferenceSurface(page, item); })`, and no
  * skip/fixme/fail/only anywhere in the file. Every check lives in the pinned checker.
  */
-function validateApprovedDispatch(visualFile) {
+function validateApprovedDispatch(visualFile, checker) {
   const skipping = visit(visualFile, (node) => ts.isPropertyAccessExpression(node) && SKIPPING.has(node.name.text));
   assert(skipping.length === 0, 'The visual spec must not skip, fixme, fail or focus (only) any test while approved surfaces exist.');
+
+  // The case list is one top-level const that only the dispatch loop reads: nothing can empty or swap it.
+  const lists = visit(visualFile, (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'designReferenceCases');
+  const list = lists[0];
+  assert(lists.length === 1 && ts.isVariableDeclarationList(list.parent) && (list.parent.flags & ts.NodeFlags.Const) !== 0
+    && ts.isVariableStatement(list.parent.parent) && ts.isSourceFile(list.parent.parent.parent),
+  'designReferenceCases must be declared once, as a top-level const.');
+  const listUses = visit(visualFile, (node) => ts.isIdentifier(node) && node.text === 'designReferenceCases');
+  assert(listUses.length === 2, 'designReferenceCases may only be declared and read by its dispatch loop (no other use or mutation).');
+
+  // The checker is the pinned file's export: imported once by name, never declared or shadowed in the spec.
+  const imported = visualFile.statements.filter((statement) => ts.isImportDeclaration(statement)
+    && statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
+    && statement.importClause.namedBindings.elements.some((element) => element.name.text === CHECKER_NAME));
+  const element = imported[0]?.importClause.namedBindings.elements.find((item) => item.name.text === CHECKER_NAME);
+  const specifier = imported[0] && ts.isStringLiteral(imported[0].moduleSpecifier) ? imported[0].moduleSpecifier.text : '';
+  const withoutExtension = (file) => file.replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+  const resolved = specifier.startsWith('.') ? withoutExtension(posix.normalize(posix.join(VISUAL_SPEC_DIR, specifier))) : '';
+  assert(imported.length === 1 && element && !element.propertyName && !element.isTypeOnly && !imported[0].importClause.isTypeOnly
+    && checker && resolved === withoutExtension(checker.file),
+  `The visual spec must import { ${CHECKER_NAME} } from the pinned checker ${checker?.file}.`);
+  const checkerUses = visit(visualFile, (node) => ts.isIdentifier(node) && node.text === CHECKER_NAME);
+  assert(checkerUses.length === 2, `${CHECKER_NAME} may only be imported and called once in the visual spec (no local definition or shadowing).`);
+
   const loop = findForOf(visualFile, 'designReferenceCases');
   assert(loop, 'designReferenceCases must be executed by a for-of test loop.');
   assert(ts.isSourceFile(loop.parent), 'The designReferenceCases loop must be a top-level statement of the visual spec.');
@@ -816,7 +843,7 @@ export function validateApprovedSurface(entry, {
   assert(exports.has(entry.story.export), `Approved surface ${entry.id}: story export ${entry.story.export} is missing.`);
   const visualFile = parseTsx(visualSource, 'storybook.visual.spec.ts');
   validateApprovedVisualCase(entry, visualFile);
-  validateApprovedDispatch(visualFile);
+  validateApprovedDispatch(visualFile, checker);
   assert(checker && checkerSha256 === checker.sha256,
     `The approved-surface checker ${checker?.file} differs from its pinned SHA-256; re-pin it only after reviewing the change.`);
   validateChecker(parseTsx(checkerSource, checker.file));
