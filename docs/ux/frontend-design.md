@@ -399,6 +399,21 @@ mobile root가 한 번만 소유한다.
   의미를 유지한다. `Ctrl/Cmd+Shift+P`는 전역 alias다. Ctrl+Tab은 최근 패널 전환, Alt+Shift+=/- 는 분할이다.
 - 새 단축키 후보(Ctrl+N 새 대화, Ctrl+Shift+` 새 터미널, Ctrl+B 사이드바, Ctrl+P 파일, Ctrl+1…n 레일 목적지)는
   크롬·composer·편집기·PTY별 우선순위와 함께 D①-6에서 정한다. 터미널 안 키 동작은 바꾸지 않는다.
+  **결정 대기(D①-6) 제안표** — 칸은 그 맥락에 초점이 있을 때 키를 누가 받는지다.
+
+  | 키 | 앱 크롬(목록·탭·버튼) | 입력창·입력칸(textarea·input) | 문서 편집기 | 터미널(xterm) |
+  |---|---|---|---|---|
+  | Ctrl+K | Command Center | 양보(지금과 같음) | 편집기 | 셸 |
+  | Ctrl+Shift+P | Command Center | Command Center | Command Center | Command Center |
+  | Ctrl+N | 새 대화 | 새 대화 | 편집기가 쓰면 편집기, 아니면 새 대화 | 셸(다음 기록) |
+  | Ctrl+P | 파일 찾기 | 파일 찾기 | 편집기가 쓰면 편집기, 아니면 파일 찾기 | 셸(이전 기록) |
+  | Ctrl+B | 사이드바 | 사이드바 | 편집기가 쓰면 편집기, 아니면 사이드바 | 셸(커서 뒤로) |
+  | Ctrl+1…n | 레일 목적지 | 레일 목적지 | 레일 목적지 | 셸 |
+  | Ctrl+Shift+` | 새 터미널 | 새 터미널 | 새 터미널 | 새 터미널 |
+
+  원칙: 터미널 안에서는 Ctrl+문자·숫자 단일 조합을 모두 셸로 보내고 앱은 Ctrl+Shift 조합만 가져간다. 입력창과
+  입력칸에서 위 Ctrl 키는 지금 편집 의미가 없으므로 앱이 받되, Ctrl+K는 지금처럼 양보한다. 확정되면 이 표가
+  `command-center-shortcut.ts`의 맥락 판정과 단축키 테스트의 근거가 된다.
 
 ## 9. 개편 진행
 
