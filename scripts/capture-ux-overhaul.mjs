@@ -10,9 +10,10 @@
  * While the app runs, any provider process under it aborts the capture, and
  * afterwards HEAD/refs/worktrees of every real repository must be unchanged.
  *
- *   node scripts/capture-ux-overhaul.mjs <stage> [--build]
+ *   node scripts/capture-ux-overhaul.mjs <stage> [--build] [--measure]
  *
  * Output: artifacts/ux-overhaul/<stage>/*.png + isolation.json
+ * (+ <pass>-chrome.json and <pass>-measure-<w>x<h>.png with --measure)
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -29,6 +30,7 @@ import {
   repositoryRoots,
   sanitizeCopiedDatabase,
 } from './capture-profile-isolation.mjs';
+import { measureChromeBands } from './chrome-bands.mjs';
 
 const { _electron: electron } = playwright;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,6 +41,8 @@ const output = path.join(ROOT, 'artifacts', 'ux-overhaul', stage);
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 const source = process.env.EZTERMINAL_CAPTURE_SOURCE_PROFILE ?? path.join(process.env.APPDATA ?? '', 'EZTerminal');
 const isolation = { providerPaths: [], roots: [], before: {}, violations: [], sanitized: undefined };
+/** --measure also records the chrome bands around the open conversation (ux2 baseline). */
+const MEASURE = process.argv.includes('--measure');
 
 function newestMtime(dir, pattern) {
   let newest = 0;
@@ -99,16 +103,33 @@ function copyProfile() {
   writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
 }
 
-async function capturePass(page, label) {
+async function capturePass(app, page, label) {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(3500);
   await page.screenshot({ path: path.join(output, `${label}-workbench.png`) });
+  if (MEASURE) await measurePass(app, page, label);
   const conversation = page.locator('[data-testid="project-conversation-tree"] [role="treeitem"][aria-level="2"]').first();
   if (await conversation.count()) {
     await conversation.click();
     await page.waitForTimeout(2500);
     await page.screenshot({ path: path.join(output, `${label}-conversation.png`) });
   }
+}
+
+/** --measure: chrome bands around the open conversation at three window sizes. */
+async function measurePass(app, page, label) {
+  const results = [];
+  for (const [width, height] of [[1600, 1000], [1280, 800], [1024, 720]]) {
+    await app.evaluate(({ BrowserWindow }, size) => {
+      BrowserWindow.getAllWindows()[0]?.setBounds({ x: 40, y: 40, ...size });
+    }, { width, height });
+    await page.waitForTimeout(1200);
+    const bands = await page.evaluate(measureChromeBands);
+    await page.screenshot({ path: path.join(output, `${label}-measure-${width}x${height}.png`) });
+    results.push({ bounds: { width, height }, bands });
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ x: 40, y: 40, width: 1600, height: 1000 }));
+  writeFileSync(path.join(output, `${label}-chrome.json`), JSON.stringify(results, null, 2));
 }
 
 async function launch() {
@@ -163,12 +184,12 @@ copyProfile();
 
 // Pass 1: the user's own appearance (theme, effects, skin from Local Storage).
 let app = await launch();
-try { await capturePass(await app.firstWindow(), 'user'); } finally { await closeChecked(app); }
+try { await capturePass(app, await app.firstWindow(), 'user'); } finally { await closeChecked(app); }
 
-// Pass 2: product default appearance — Dark theme, bubble skin, no effects.
+// Pass 2: product default appearance — Dark theme, bubble skin, no effects, 100% UI scale.
 const settingsFile = path.join(profile, 'settings.json');
 const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
-Object.assign(settings, { theme: 'dark', effectToggles: {} });
+Object.assign(settings, { theme: 'dark', effectToggles: {}, uiScale: 100 });
 writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
 app = await launch();
 try {
@@ -176,7 +197,7 @@ try {
   await page.waitForLoadState('domcontentloaded');
   await page.evaluate(() => localStorage.setItem('ezterminal.chat.skin', 'bubble'));
   await page.reload();
-  await capturePass(page, 'default');
+  await capturePass(app, page, 'default');
 } finally { await closeChecked(app); }
 
 assertRepositoriesUnchanged();

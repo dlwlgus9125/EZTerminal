@@ -6,6 +6,7 @@ import path from 'node:path';
 import { OwnedDesktopProfileRegistry } from '../../e2e/owned-desktop-profile.ts';
 import { APP_ID, closeMobileE2eResources, closeWebViewDevtools, connectAndAuth, evaluateWebView, launchDesktop,
   runAdb, runAdbBinary, setTestIdTextValue, sleep, tapTestId, tapTestIdOnce, waitForTestId, waitForTestIdHidden } from './lib.ts';
+import { CHROME_BANDS_PROBE } from './chrome-probe.ts';
 
 const artifacts = path.resolve(process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR ?? 'artifacts/conversation-ux/android');
 const input = '[data-testid="structured-agent-composer-input"]';
@@ -101,7 +102,8 @@ async function main(): Promise<void> {
     await waitFor(`!!document.querySelector('.mobile-v2-draft-status[data-state="saved"]')`, 'live composer recovery ready');
     await waitFor(`document.querySelector(${JSON.stringify(input)}).value === ''`, 'accepted draft cleared');
     await capture('04-after-first-send');
-    await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ ok: true, androidApi: runAdb(['shell', 'getprop', 'ro.build.version.sdk']).trim(), provider: 'deterministic Codex fixture', checks: ['CLI history opens directly', 'reading starts no provider', 'full process restart retains draft', 'restart sends nothing', 'explicit first send creates one session and turn'], inputMethod: 'native Android navigation taps and controlled WebView composer input' }, null, 2));
+    const chrome = await evaluateWebView(CHROME_BANDS_PROBE);
+    await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ ok: true, androidApi: runAdb(['shell', 'getprop', 'ro.build.version.sdk']).trim(), provider: 'deterministic Codex fixture', chrome, checks: ['CLI history opens directly', 'reading starts no provider', 'full process restart retains draft', 'restart sends nothing', 'explicit first send creates one session and turn'], inputMethod: 'native Android navigation taps and controlled WebView composer input' }, null, 2));
   } catch (error) {
     await capture('failure').catch(() => undefined);
     const text = await evaluateWebView<string>('document.body.innerText').catch(() => 'WebView unavailable');
