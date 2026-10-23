@@ -57,6 +57,9 @@
 /* Beside each other, canvas and panel share one bounded row: the panel scrolls inside itself and nothing
    pushes the flow past its pane (the pane's own minimum lives on .workflow-flow-host). */
 .workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); grid-template-rows: minmax(0, 1fr); gap: var(--ui-space-3); }
+/* In a narrow dock the panel gives way to the canvas (about a third of the width, never under 16rem). */
+.workflow-flow__body { grid-template-columns: minmax(0, 1fr) minmax(16rem, min(22rem, 34%)); }
+.workflow-flow__body[data-panel='collapsed'] { grid-template-columns: minmax(0, 1fr); }
 .workflow-flow__canvas { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* The renderer fills the bounded cell; only an auto-height row (Android) needs the renderer's own minimum. */
 .workflow-flow__canvas .workflow-canvas[data-renderer] { min-height: 0; }

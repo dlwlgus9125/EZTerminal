@@ -38,6 +38,8 @@ interface FlowStoryProps {
   readonly empty?: boolean;
   /** Render inside the real dock structure (filled flow view) with this pane height. */
   readonly paneHeight?: number;
+  /** Start with the stage panel hidden (the header toggle brings it back). */
+  readonly panelCollapsed?: boolean;
 }
 
 const COLUMN = 248 + 96;
@@ -48,7 +50,7 @@ function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
 }
 function Failing(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
 
-function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko' }: FlowStoryProps): JSX.Element {
+function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false }: FlowStoryProps): JSX.Element {
   const text = useWorkflowCopy();
   const fixture = useMemo(() => {
     if (twoRuns) { const value = workflowCanvasRuns(locale); return { graph: value.graph, runs: value.runs, archivedNodes: [] as WorkflowNode[] }; }
@@ -66,6 +68,7 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
   const [pickedRunId, setPickedRunId] = useState<string | null>(null);
   const [layout, setLayout] = useState<'graph' | 'list'>(initialLayout ?? (mobile ? 'list' : 'graph'));
   const [reloaded, setReloaded] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(!panelCollapsed);
   const scale = useWorkflowScale();
   const issues = validateWorkflowGraph(draftGraph ?? fixture.graph, true);
   const viewport = camera ? { x: 24 - (40 + camera.column * COLUMN) * scale * camera.zoom, y: 120 - 40 * scale * camera.zoom, zoom: camera.zoom } : undefined;
@@ -76,7 +79,7 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
     layout={layout} onLayoutChange={setLayout} onGraphChange={setDraftGraph} onSaveDraft={fn()} onDiscardDraft={() => setDraftGraph(null)} onPrepareRun={fn()} onRunCommand={fn()}
     stageLinks={nodeId => nodeId === 'login:implement' || nodeId === 'login:design' ? [{ sessionId: 'chat-impl', title: locale === 'ko' ? '로그인 오류 처리 방향 논의' : 'Discuss login error handling', graphRevision: 3 }] : []}
     canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()} onOpenResults={fn()} onOpenAttemptResult={fn()}
-    canvasRenderer={Renderer} onReloadCanvas={() => setReloaded(true)} initialViewport={viewport} />;
+    canvasRenderer={Renderer} onReloadCanvas={() => setReloaded(true)} initialViewport={viewport} panelOpen={panelOpen} onPanelOpenChange={setPanelOpen} />;
 }
 function Frame(props: FlowStoryProps): JSX.Element {
   const locale = props.locale ?? 'ko';
@@ -116,6 +119,19 @@ export const IntegratedByAutoApprove: Story = { args: { scenario: 'integrated-au
 export const CancellationPending: Story = { args: { scenario: 'cancel-pending', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 export const Cancelled: Story = { args: { scenario: 'cancelled', select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 0, zoom: 0.6 } } };
 export const ParallelJoin: Story = { args: { scenario: 'parallel-join', select: { kind: 'node', key: 'join' }, section: 'run', camera: { column: 1, zoom: 0.62 } } };
+/** The stage panel hidden for a wider canvas; the header toggle (and going to a stage) brings it back. */
+export const PanelCollapsed: Story = { args: { scenario: 'awaiting-approval', panelCollapsed: true, camera: { column: 2, zoom: 0.72 } } };
+/** Hidden panel: the approval chip goes to the stage and shows its panel again. */
+export const CollapsedPanelOpensOnJump: Story = {
+  args: { scenario: 'awaiting-approval', panelCollapsed: true, camera: { column: 2, zoom: 0.72 } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvasElement.querySelector('.workflow-flow__panel')).not.toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
+    await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeVisible();
+    await expect(canvas.getByRole('button', { name: /단계 패널 접기|Hide stage panel/u })).toHaveAttribute('aria-expanded', 'true');
+  },
+};
 export const Prepared: Story = { args: { scenario: 'prepared', camera: { column: 0, zoom: 0.6 } } };
 export const TwoRunsWithPicker: Story = { args: { scenario: 'retry-running', twoRuns: true, camera: { column: 1, zoom: 0.6 } } };
 export const DraftWithIssue: Story = { args: { scenario: 'edit', draft: 'invalid', camera: { column: 1, zoom: 0.72 } } };

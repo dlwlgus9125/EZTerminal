@@ -360,6 +360,7 @@ test.describe("Subproject flow canvas", () => {
     { name: "just started on the editable canvas", storyId: "production-workflow-flow-canvas--just-started", theme: "dark", scale: 100, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-started-dark-ko.png" },
     { name: "approval stage selected (Matrix, 150%)", storyId: "production-workflow-flow-canvas--awaiting-approval-selected", theme: "matrix", scale: 150, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-approval-matrix-150-ko.png", jumpToApproval: true },
     { name: "frozen run view of an older version", storyId: "production-workflow-flow-canvas--frozen-run-view", theme: "light", scale: 100, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-run-view-light-ko.png" },
+    { name: "stage panel collapsed for a wider canvas", storyId: "production-workflow-flow-canvas--panel-collapsed", theme: "dark", scale: 100, viewport: { width: 1200, height: 800 }, screenshot: "desktop-1200x800-flow-canvas-panel-collapsed-dark-ko.png" },
     { name: "narrow dock stacks the stage panel", storyId: "production-workflow-flow-canvas--narrow", theme: "dark", scale: 100, viewport: { width: 800, height: 600 }, screenshot: "desktop-800x600-flow-canvas-narrow-dark-ko.png" },
     { name: "Android list with run state", storyId: "production-workflow-flow-canvas--mobile-list", theme: "dark", scale: 100, viewport: { width: 390, height: 844 }, screenshot: "mobile-390x844-flow-canvas-list-dark-ko.png", list: true },
   ] as const) {

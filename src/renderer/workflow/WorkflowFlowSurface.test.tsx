@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { validateWorkflowGraph, type WorkflowGraph } from '../../shared/workflow-graph';
 import { WorkflowFlowSurface, type WorkflowFlowSurfaceProps } from './WorkflowFlowSurface';
 import { workflowCanvasFixture } from './workflow-canvas-fixtures';
+import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root; let container: HTMLDivElement;
@@ -52,5 +53,32 @@ describe('WorkflowFlowSurface', () => {
     const newest = { ...run!, runId: 'run-c', createdAt: '2026-10-23T00:00:00.000Z', state: 'prepared' as const };
     await act(async () => root.render(<WorkflowFlowSurface {...props({ savedGraph: graph, runs: [older, { ...newer, state: 'completed' }, newest] })} />));
     expect(shown()).toBe('run-c');
+  });
+  it('collapses the stage panel for a wider canvas; going to a stage opens it, canvas clicks do not', async () => {
+    const { graph, run } = workflowCanvasFixture('awaiting-approval', 'en');
+    let open = true; const onPanelOpenChange = vi.fn((next: boolean) => { open = next; });
+    function PickCanvas({ onSelect }: WorkflowCanvasRendererProps): JSX.Element { return <button type="button" onClick={() => onSelect({ kind: 'node', id: 'login:plan' })}>Pick stage</button>; }
+    const draw = async (mobile = false) => act(async () => root.render(<WorkflowFlowSurface {...props({ savedGraph: graph, runs: [run!], canvasRenderer: PickCanvas, panelOpen: open, onPanelOpenChange, mobile })} />));
+    const toggle = () => container.querySelector<HTMLButtonElement>('.workflow-canvas-header__view button[aria-controls]');
+    const press = async (label: string) => act(async () => [...container.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === label || item.getAttribute('aria-label') === label)!.click());
+    await draw();
+    expect(toggle()?.getAttribute('aria-label')).toBe('Hide stage panel');
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('#' + toggle()!.getAttribute('aria-controls'))).not.toBeNull();
+    await press('Hide stage panel'); await draw();
+    expect(open).toBe(false);
+    expect(container.querySelector('.workflow-flow__panel')?.hasAttribute('hidden')).toBe(true);
+    expect(container.querySelector('.workflow-flow__body')?.getAttribute('data-panel')).toBe('collapsed');
+    expect(toggle()?.getAttribute('aria-label')).toBe('Show stage panel');
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('false');
+    // Picking or dragging on the canvas keeps the wide canvas.
+    await press('Pick stage');
+    expect(onPanelOpenChange).not.toHaveBeenCalledWith(true);
+    // Going to a stage on purpose (the approval chip) opens it again.
+    await press('1 awaiting approval');
+    expect(onPanelOpenChange).toHaveBeenLastCalledWith(true);
+    // Android stacks the panel under the canvas: no toggle there.
+    await draw(true);
+    expect(toggle()).toBeNull();
   });
 });

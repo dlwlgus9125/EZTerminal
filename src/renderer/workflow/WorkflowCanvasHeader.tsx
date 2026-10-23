@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Eye, FileSearch, Flag, GitBranch, GitMerge, Hand, LayoutGrid, List, MessageSquare, Pause, Play, Plus, Save, Split, Square, Undo2, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Bot, Eye, FileSearch, Flag, GitBranch, GitMerge, Hand, LayoutGrid, List, MessageSquare, PanelRightClose, PanelRightOpen, Pause, Play, Plus, Save, Split, Square, Undo2, type LucideIcon } from 'lucide-react';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowCommand, WorkflowNode } from '../../shared/workflow';
 import { Badge, Button, IconButton, Menu, MenuItem, Select } from '../ui';
@@ -36,6 +36,8 @@ export interface WorkflowCanvasHeaderProps {
   readonly onRunCommand: (command: WorkflowRunCommandInput) => void;
   readonly onOpenConversation?: (sessionId: string) => void;
   readonly onOpenResults?: (runId: string) => void;
+  /** The stage panel beside the canvas can be hidden for a wider canvas (absent on Android). */
+  readonly panelToggle?: { readonly open: boolean; readonly controls: string; readonly onToggle: () => void };
 }
 
 /**
@@ -87,6 +89,8 @@ export function WorkflowCanvasHeader(props: WorkflowCanvasHeaderProps): JSX.Elem
       <div className="workflow-canvas-header__view" role="group" aria-label={text('흐름 보기', 'Workflow view')}>
         <IconButton icon={GitBranch} aria-pressed={props.layout === 'graph'} aria-label={text('그래프', 'Graph')} onClick={() => props.onLayoutChange('graph')} />
         <IconButton icon={List} aria-pressed={props.layout === 'list'} aria-label={text('목록', 'List')} onClick={() => props.onLayoutChange('list')} />
+        {props.panelToggle && <IconButton icon={props.panelToggle.open ? PanelRightClose : PanelRightOpen} aria-expanded={props.panelToggle.open} aria-controls={props.panelToggle.controls}
+          aria-label={props.panelToggle.open ? text('단계 패널 접기', 'Hide stage panel') : text('단계 패널 펼치기', 'Show stage panel')} onClick={props.panelToggle.onToggle} />}
       </div>
     </div>
     {props.overlapping && mode !== 'run-view' && props.layout === 'graph' && <p className="workflow-canvas-header__overlap" role="status"><span>{text('겹쳐 있는 단계가 있습니다.', 'Some stages overlap.')}</span><Button size="sm" leadingIcon={<LayoutGrid />} disabled={editLocked} onClick={props.onAutoLayout}>{text('자동 정렬', 'Tidy layout')}</Button></p>}

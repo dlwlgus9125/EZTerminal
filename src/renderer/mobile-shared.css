@@ -2,17 +2,20 @@
 
 /* Measured by the Android bootstrap: Chrome 74 accepts grid gap but ignores flex gap. */
 [data-ui-flex-gap='unsupported'] .workflow-header,
+[data-ui-flex-gap='unsupported'] .workflow-header__actions,
 [data-ui-flex-gap='unsupported'] .workflow-toolbar,
 [data-ui-flex-gap='unsupported'] .workflow-inline,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-context,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-row,
 [data-ui-flex-gap='unsupported'] .workflow-history h3 { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-header > *,
+[data-ui-flex-gap='unsupported'] .workflow-header__actions > *,
 [data-ui-flex-gap='unsupported'] .workflow-toolbar > *,
 [data-ui-flex-gap='unsupported'] .workflow-inline > *,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-context > *,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-row > *,
 [data-ui-flex-gap='unsupported'] .workflow-history h3 > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .workflow-header > .workflow-header__actions { margin-right: 0; margin-bottom: 0; }
 /* The subproject tab strip has no gap by design (underline tabs): no fallback margins either. */
 [data-ui-flex-gap='unsupported'] .workflow-tabs > * { margin-right: 0; margin-bottom: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] { gap: 0; }

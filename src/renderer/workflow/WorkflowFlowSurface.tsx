@@ -1,5 +1,5 @@
 import { Plus, TriangleAlert } from 'lucide-react';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType } from 'react';
 import type { ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowGraph, WorkflowIssue, WorkflowNode } from '../../shared/workflow-graph';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
@@ -63,6 +63,9 @@ export interface WorkflowFlowSurfaceProps {
   /** A stage opened from elsewhere (a chat's "Return to this stage"): show it and bring its panel into view once. */
   readonly revealRequest?: { readonly nodeId: string; readonly key: string };
   readonly onRevealHandled?: () => void;
+  /** The stage panel beside the canvas; the workspace keeps the choice. Always open on Android. */
+  readonly panelOpen?: boolean;
+  readonly onPanelOpenChange?: (open: boolean) => void;
 }
 
 const NO_ISSUES: readonly WorkflowIssue[] = [];
@@ -92,6 +95,11 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const localCameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
   const cameras = props.cameras ?? localCameras.current;
   const panel = useRef<HTMLElement>(null);
+  const panelId = `workflow-panel-${useId().replace(/:/gu, '')}`;
+  const panelOpen = props.mobile ? true : props.panelOpen ?? true;
+  // Going to a stage on purpose (chip, summary, add, a chat's return) shows its panel; canvas clicks do not.
+  const openPanel = () => { if (!panelOpen) props.onPanelOpenChange?.(true); };
+  const openPanelRef = useRef(openPanel); openPanelRef.current = openPanel;
   const canvasCell = useRef<HTMLDivElement>(null);
   /** Beside the canvas the panel scrolls on its own; only a panel stacked under it (narrow dock, Android) is brought into view. */
   const showPanel = (block: ScrollLogicalPosition) => requestAnimationFrame(() => {
@@ -119,13 +127,14 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   useEffect(() => {
     if (!revealRequest) return;
     setReveal(current => ({ nodeId: revealRequest.nodeId, key: (current?.key ?? 0) + 1 }));
+    openPanelRef.current();
     showPanel('start');
     revealHandled.current?.();
   }, [revealRequest]);
 
   const select = (next: CanvasSelection) => { props.onSelectionChange(next); if (next?.kind === 'node' && view.overlay?.nodes[next.id]?.status === 'awaiting-approval') props.onSectionChange('run'); };
   const jumpTo = (nodeId: string, nextSection: WorkflowPanelSection) => {
-    props.onSelectionChange({ kind: 'node', id: nodeId }); props.onSectionChange(nextSection);
+    props.onSelectionChange({ kind: 'node', id: nodeId }); props.onSectionChange(nextSection); openPanel();
     setReveal(current => ({ nodeId, key: (current?.key ?? 0) + 1 }));
     showPanel('nearest');
   };
@@ -162,8 +171,9 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
       layout={props.layout} onLayoutChange={props.onLayoutChange} onPickRun={props.onPickRun} onRunView={props.onRunViewChange}
       onJumpToNode={id => jumpTo(id, 'run')} onAddStage={addStage}
       onSaveDraft={props.onSaveDraft} onDiscardDraft={props.onDiscardDraft} onAutoLayout={tidy}
-      onPrepareRun={props.onPrepareRun} onRunCommand={props.onRunCommand} onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} />
-    <div className="workflow-flow__body">
+      onPrepareRun={props.onPrepareRun} onRunCommand={props.onRunCommand} onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults}
+      panelToggle={props.mobile || !props.onPanelOpenChange ? undefined : { open: panelOpen, controls: panelId, onToggle: () => props.onPanelOpenChange?.(!panelOpen) }} />
+    <div className="workflow-flow__body" data-panel={panelOpen ? undefined : 'collapsed'}>
       <div ref={canvasCell} className="workflow-flow__canvas">
         {Renderer ? <WorkflowCanvasBoundary onRetry={props.onReloadCanvas} onFailedChange={setCanvasFailed} fallback={retry => <div className="workflow-flow__fallback">
           <p role="alert" className="workflow-notice">{text('캔버스를 불러오지 못해 간단한 그래프로 보여 줍니다. 편집은 오른쪽 패널과 목록에서 할 수 있습니다.', 'The canvas did not load, so a simple graph is shown. Edit in the panel and the list.')}</p>
@@ -172,7 +182,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
         </div>}><Suspense fallback={<LoadingState label={text('캔버스 불러오는 중', 'Loading the canvas')} />}><Renderer key={cameraKey} {...rendererProps} /></Suspense></WorkflowCanvasBoundary>
           : <WorkflowOutline graph={view.graph} overlay={view.overlay} selection={selection} onSelect={select} text={text} />}
       </div>
-      <aside ref={panel} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('흐름 요약', 'Flow summary')}>
+      <aside ref={panel} id={panelId} hidden={!panelOpen} className="workflow-flow__panel" aria-label={node ? node.title : edge ? text('연결', 'Connection') : text('흐름 요약', 'Flow summary')}>
         {node ? <>
           <div className="workflow-flow__panel-head"><small>{workflowOperationLabel(node.operation, text)}{view.graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</small><h3>{node.title}</h3></div>
           <Tabs value={section} onValueChange={value => props.onSectionChange(value as WorkflowPanelSection)} className="workflow-flow__sections">
