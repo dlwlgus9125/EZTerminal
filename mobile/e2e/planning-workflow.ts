@@ -331,9 +331,14 @@ async function main(): Promise<void> {
     await clickLabel('.workflow-conversation-context button', ['Return to this stage', '이 단계로 돌아가기']);
     await waitForCondition('unsaved stage preserved through chat return', `(document.querySelector('.workflow-stage textarea') || {}).value === 'Android unsaved stage draft'`);
     await assertWorkflowHealthy('Stage chat return');
-    const spacing = await evaluateWebView<{ token: string; actualGap: number; fallback: string | null }>(`(() => { const buttons = document.querySelectorAll('.workflow-tabs > button'); const a = buttons[0].getBoundingClientRect(), b = buttons[1].getBoundingClientRect(); return { token: getComputedStyle(document.documentElement).getPropertyValue('--ui-space-2'), actualGap: Math.abs(a.top - b.top) < 1 ? b.left - a.right : b.top - a.bottom, fallback: document.documentElement.getAttribute('data-ui-flex-gap') }; })()`);
+    // Underline tab strip: buttons sit edge to edge (no flex gap by design); their padding separates the
+    // labels, and the selected underline must rest on the strip's border in every WebView (API 29 uses the
+    // flex-gap fallback, which must not add margins here).
+    const spacing = await evaluateWebView<{ token: string; sameRow: boolean; overlap: number; padding: number; underlineOffset: number; fallback: string | null }>(`(() => { const strip = document.querySelector('.workflow-tabs'); const buttons = strip.querySelectorAll(':scope > button'); const a = buttons[0].getBoundingClientRect(), b = buttons[1].getBoundingClientRect(); const style = getComputedStyle(buttons[0]); const selected = strip.querySelector(':scope > button[aria-pressed="true"]').getBoundingClientRect(); return { token: getComputedStyle(document.documentElement).getPropertyValue('--ui-space-2'), sameRow: Math.abs(a.top - b.top) < 1, overlap: a.right - b.left, padding: parseFloat(style.paddingLeft) + parseFloat(style.paddingRight), underlineOffset: strip.getBoundingClientRect().bottom - selected.bottom, fallback: document.documentElement.getAttribute('data-ui-flex-gap') }; })()`);
     report.workflowSpacing = spacing;
-    assert.ok(spacing.actualGap >= 4, 'Stage navigation buttons must have a visible gap in the actual WebView');
+    assert.ok(spacing.sameRow && spacing.overlap <= 0.5, 'Subproject tabs sit in one row without overlapping');
+    assert.ok(spacing.padding >= 8, 'Tab padding keeps adjacent labels visibly apart');
+    assert.ok(spacing.underlineOffset >= 0 && spacing.underlineOffset <= 1.5, `The selected tab's underline rests on the strip border (offset ${spacing.underlineOffset}px)`);
     await writeFile(path.join(artifactDir, 'r4-stage-chat-return.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     phases.push('r4 subproject create/save acknowledged; same session and unsent chat draft survive stage linking; unsaved stage document survives chat return');
     await host.evaluate(() => window.ezterminal.setRemoteEnabled(false)); await waitForTestId('mobile-reconnect-scrim');

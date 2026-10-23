@@ -13,6 +13,8 @@
 [data-ui-flex-gap='unsupported'] .workflow-conversation-context > *,
 [data-ui-flex-gap='unsupported'] .workflow-conversation-row > *,
 [data-ui-flex-gap='unsupported'] .workflow-history h3 > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+/* The subproject tab strip has no gap by design (underline tabs): no fallback margins either. */
+[data-ui-flex-gap='unsupported'] .workflow-tabs > * { margin-right: 0; margin-bottom: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] { gap: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-toolbar [role='group'] > * { margin-right: var(--ui-space-1); }
 [data-ui-flex-gap='unsupported'] .workflow-item { gap: 0; }
