@@ -37,6 +37,14 @@ function seedDatabase(file: string): void {
     INSERT INTO providers VALUES ('claude', 'C:/Users/me/.local/bin/claude.exe', 'ready', NULL);
     INSERT INTO schedules VALUES ('nightly', 1);
     INSERT INTO command_outbox VALUES ('a', 'pending', NULL), ('b', 'sent', NULL), ('c', 'delivery-uncertain', NULL), ('d', 'applied', NULL);
+    CREATE TABLE planning_execution_projects (project_id TEXT PRIMARY KEY, revision INTEGER NOT NULL) STRICT;
+    CREATE TABLE planning_execution_runs (run_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, state_json TEXT NOT NULL) STRICT;
+    CREATE TABLE planning_execution_attempt_refs (attempt_id TEXT PRIMARY KEY, run_id TEXT NOT NULL) STRICT;
+    CREATE TABLE planning_execution_receipts (receipt_id TEXT PRIMARY KEY, run_id TEXT NOT NULL) STRICT;
+    INSERT INTO planning_execution_projects VALUES ('p', 3);
+    INSERT INTO planning_execution_runs VALUES ('run-1', 'p', '{}'), ('run-2', 'p', '{}');
+    INSERT INTO planning_execution_attempt_refs VALUES ('attempt-1', 'run-1');
+    INSERT INTO planning_execution_receipts VALUES ('receipt-1', 'run-1');
   `);
   db.close();
 }
@@ -56,6 +64,7 @@ describe('capture profile isolation', () => {
     seedDatabase(file);
 
     const summary = sanitizeCopiedDatabase(file, inert);
+    expect(summary.planningRuns).toBe(2);
 
     expect(summary.originalProviderPaths).toEqual([
       'C:/Users/me/.local/bin/claude.exe',
@@ -70,6 +79,10 @@ describe('capture profile isolation', () => {
         expect(provider.health).toBe('unavailable');
       }
       expect(db.prepare('SELECT enabled FROM schedules').all()).toEqual([{ enabled: 0 }]);
+      // A recovered run can integrate results into the real repository without any provider: none survive.
+      for (const table of ['planning_execution_projects', 'planning_execution_runs', 'planning_execution_attempt_refs', 'planning_execution_receipts']) {
+        expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get(), table).toEqual({ n: 0 });
+      }
       expect(db.prepare('SELECT command_id, state FROM command_outbox ORDER BY command_id').all()).toEqual([
         { command_id: 'a', state: 'failed' },
         { command_id: 'b', state: 'failed' },

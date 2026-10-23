@@ -28,6 +28,12 @@ export const PROFILE_COPY_SKIP = new Set([
 ]);
 
 const PROVIDER_PROCESS_NAME = /^(?:codex|claude)(?:\.exe|\.cmd)?$/iu;
+const PLANNING_EXECUTION_TABLES = [
+  'planning_execution_receipts',
+  'planning_execution_attempt_refs',
+  'planning_execution_runs',
+  'planning_execution_projects',
+];
 
 function normalize(value) {
   return String(value ?? '').replaceAll('\\', '/').toLowerCase();
@@ -67,7 +73,15 @@ export function sanitizeCopiedDatabase(file, inertDirectory) {
         "UPDATE command_outbox SET state = 'failed', detail = 'Capture copy: not replayed.' WHERE state IN ('pending', 'sent', 'delivery-uncertain')",
       ).run().changes);
     }
-    return { originalProviderPaths: originalProviderPaths.sort(), providers, schedules, outbox };
+    // A recovered subproject run can prepare worktrees, apply artifacts, run validation and
+    // integrate into the real repository without starting any provider. The copy keeps none.
+    let planningRuns = 0;
+    for (const table of PLANNING_EXECUTION_TABLES) {
+      if (!hasTable(db, table)) continue;
+      const deleted = Number(db.prepare(`DELETE FROM ${table}`).run().changes);
+      if (table === 'planning_execution_runs') planningRuns = deleted;
+    }
+    return { originalProviderPaths: originalProviderPaths.sort(), providers, schedules, outbox, planningRuns };
   } finally {
     db.close();
   }

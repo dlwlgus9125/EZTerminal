@@ -40,7 +40,7 @@ if (!stage || !/^[\w.-]+$/u.test(stage)) throw new Error('Usage: capture-ux-over
 const output = path.join(ROOT, 'artifacts', 'ux-overhaul', stage);
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 const source = process.env.EZTERMINAL_CAPTURE_SOURCE_PROFILE ?? path.join(process.env.APPDATA ?? '', 'EZTerminal');
-const isolation = { providerPaths: [], roots: [], before: {}, violations: [], sanitized: undefined };
+const isolation = { providerPaths: [], roots: [], before: {}, violations: [], observationErrors: 0, observations: 0, sanitized: undefined };
 /** --measure also records the chrome bands around the open conversation (ux2 baseline). */
 const MEASURE = process.argv.includes('--measure');
 
@@ -155,7 +155,9 @@ function watchProviders(app) {
   const pid = app.process().pid;
   const check = () => {
     let found = [];
-    try { found = providerDescendants(listProcesses(), pid, isolation.providerPaths); } catch { return; }
+    // A check that could not look is not evidence that nothing ran: it fails the capture.
+    try { found = providerDescendants(listProcesses(), pid, isolation.providerPaths); } catch { isolation.observationErrors += 1; return; }
+    isolation.observations += 1;
     if (found.length === 0) return;
     isolation.violations.push(...found);
     try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* already gone */ }
@@ -169,6 +171,9 @@ async function closeChecked(app) {
   await app.close().catch(() => undefined);
   if (isolation.violations.length > 0) {
     throw new Error(`Capture copy started provider processes: ${JSON.stringify(isolation.violations, null, 2)}`);
+  }
+  if (isolation.observationErrors > 0 || isolation.observations === 0) {
+    throw new Error(`The process watch could not observe the app (${isolation.observationErrors} failed, ${isolation.observations} succeeded).`);
   }
 }
 
