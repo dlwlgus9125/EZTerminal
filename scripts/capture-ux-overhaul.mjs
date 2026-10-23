@@ -4,9 +4,15 @@
  * `VACUUM INTO`, and settings that would touch the OS (login item, remote
  * bridge, keep-running) are switched off in the copy.
  *
+ * The copy is also made inert (scripts/capture-profile-isolation.mjs): its
+ * providers point at a missing executable, schedules are off, queued commands
+ * are settled, and startup work that acts on real repositories is not copied.
+ * While the app runs, any provider process under it aborts the capture, and
+ * afterwards HEAD/refs/worktrees of every real repository must be unchanged.
+ *
  *   node scripts/capture-ux-overhaul.mjs <stage> [--build]
  *
- * Output: artifacts/ux-overhaul/<stage>/*.png
+ * Output: artifacts/ux-overhaul/<stage>/*.png + isolation.json
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -15,6 +21,14 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
+import {
+  PROFILE_COPY_SKIP,
+  listProcesses,
+  providerDescendants,
+  repositoryFingerprint,
+  repositoryRoots,
+  sanitizeCopiedDatabase,
+} from './capture-profile-isolation.mjs';
 
 const { _electron: electron } = playwright;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,14 +38,7 @@ if (!stage || !/^[\w.-]+$/u.test(stage)) throw new Error('Usage: capture-ux-over
 const output = path.join(ROOT, 'artifacts', 'ux-overhaul', stage);
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 const source = process.env.EZTERMINAL_CAPTURE_SOURCE_PROFILE ?? path.join(process.env.APPDATA ?? '', 'EZTerminal');
-
-/** Profile entries that are caches, locks, logs, or credentials the copy must not reuse. */
-const SKIP = new Set([
-  'Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'Crashpad', 'blob_storage',
-  'Shared Dictionary', 'DevToolsActivePort', 'lockfile', 'logs', 'remote-token.json', 'remote-token.json.corrupt',
-  'Network', 'Partitions', 'Session Storage', 'SharedStorage', 'SharedStorage-wal', 'DIPS', 'DIPS-wal', 'Dictionaries',
-  'orchestration.sqlite3', 'orchestration.sqlite3-wal', 'orchestration.sqlite3-shm',
-]);
+const isolation = { providerPaths: [], roots: [], before: {}, violations: [], sanitized: undefined };
 
 function newestMtime(dir, pattern) {
   let newest = 0;
@@ -67,7 +74,7 @@ function copyProfile() {
   rmSync(profile, { recursive: true, force: true });
   mkdirSync(profile, { recursive: true });
   for (const entry of readdirSync(source)) {
-    if (SKIP.has(entry)) continue;
+    if (PROFILE_COPY_SKIP.has(entry)) continue;
     // A running installed app holds Chromium LOCK files; a locked file is not
     // product state, so the copy skips it instead of failing.
     cpSync(path.join(source, entry), path.join(profile, entry), {
@@ -78,7 +85,14 @@ function copyProfile() {
     });
   }
   const database = path.join(source, 'orchestration.sqlite3');
-  if (existsSync(database)) snapshotDatabase(database, path.join(profile, 'orchestration.sqlite3'));
+  const copy = path.join(profile, 'orchestration.sqlite3');
+  if (existsSync(database)) {
+    snapshotDatabase(database, copy);
+    isolation.sanitized = sanitizeCopiedDatabase(copy, path.join(profile, 'capture-disabled-providers'));
+    isolation.providerPaths = isolation.sanitized.originalProviderPaths;
+    isolation.roots = repositoryRoots(copy).filter((root) => existsSync(root));
+    for (const root of isolation.roots) isolation.before[root] = repositoryFingerprint(root);
+  }
   const settingsFile = path.join(profile, 'settings.json');
   const settings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')) : { schemaVersion: 1, startup: { mode: 'last' } };
   Object.assign(settings, { remoteEnabled: false, keepRunning: false, startAtLogin: false, bootIntro: false });
@@ -107,11 +121,40 @@ async function launch() {
     EZTERMINAL_REMOTE_PORT: '47999',
   });
   const app = await electron.launch({ args: [MAIN_ENTRY, '--lang=ko-KR'], env });
+  watchProviders(app);
   await app.evaluate(({ BrowserWindow }) => {
     const [window] = BrowserWindow.getAllWindows();
     window?.setBounds({ x: 40, y: 40, width: 1600, height: 1000 });
   });
   return app;
+}
+
+/** Aborts the capture as soon as a provider process appears under the app. */
+function watchProviders(app) {
+  const pid = app.process().pid;
+  const check = () => {
+    let found = [];
+    try { found = providerDescendants(listProcesses(), pid, isolation.providerPaths); } catch { return; }
+    if (found.length === 0) return;
+    isolation.violations.push(...found);
+    try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* already gone */ }
+  };
+  const timer = setInterval(check, 2000);
+  app.on('close', () => { clearInterval(timer); });
+  app.process().once('exit', () => clearInterval(timer));
+}
+
+async function closeChecked(app) {
+  await app.close().catch(() => undefined);
+  if (isolation.violations.length > 0) {
+    throw new Error(`Capture copy started provider processes: ${JSON.stringify(isolation.violations, null, 2)}`);
+  }
+}
+
+function assertRepositoriesUnchanged() {
+  const changed = isolation.roots.filter((root) => repositoryFingerprint(root) !== isolation.before[root]);
+  writeFileSync(path.join(output, 'isolation.json'), JSON.stringify({ ...isolation, before: undefined, changed }, null, 2));
+  if (changed.length > 0) throw new Error(`HEAD, refs or worktrees changed during the capture: ${changed.join(', ')}`);
 }
 
 ensureBuild();
@@ -120,7 +163,7 @@ copyProfile();
 
 // Pass 1: the user's own appearance (theme, effects, skin from Local Storage).
 let app = await launch();
-try { await capturePass(await app.firstWindow(), 'user'); } finally { await app.close(); }
+try { await capturePass(await app.firstWindow(), 'user'); } finally { await closeChecked(app); }
 
 // Pass 2: product default appearance — Dark theme, bubble skin, no effects.
 const settingsFile = path.join(profile, 'settings.json');
@@ -134,6 +177,7 @@ try {
   await page.evaluate(() => localStorage.setItem('ezterminal.chat.skin', 'bubble'));
   await page.reload();
   await capturePass(page, 'default');
-} finally { await app.close(); }
+} finally { await closeChecked(app); }
 
+assertRepositoriesUnchanged();
 process.stdout.write(`${JSON.stringify({ stage, output, files: readdirSync(output) })}\n`);

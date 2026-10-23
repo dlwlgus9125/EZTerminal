@@ -6,7 +6,11 @@
  * plan, done) in both chat skins. Costs provider tokens; dev-only.
  *
  *   node scripts/capture-ux-overhaul.mjs <stage> --build   # copies + migrates the profile
- *   node scripts/verify-ux-live.mjs <stage> [--appearance=user|dark] [scenario...]
+ *   node scripts/verify-ux-live.mjs <stage> [--appearance=user|dark] [--allow-skips] [scenario...]
+ *
+ * Exits non-zero when a requested scenario throws, is skipped (unless
+ * --allow-skips), never runs, or a scenario name is unknown. The verdict is
+ * the first field of live-report.json.
  *
  * --appearance=user restores the theme and effects of the real profile (read
  * only) into the copy; capture-ux-overhaul's second pass leaves it on Dark.
@@ -18,6 +22,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
+import { liveReportVerdict } from './live-report-verdict.mjs';
 
 const { _electron: electron } = playwright;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,6 +30,8 @@ const MAIN_ENTRY = path.join(ROOT, '.vite', 'build', 'main.js');
 const [stage, ...rest] = process.argv.slice(2);
 const appearance = rest.find((arg) => arg.startsWith('--appearance='))?.slice('--appearance='.length) ?? 'dark';
 const only = rest.filter((arg) => !arg.startsWith('--'));
+/** Skipped scenarios (provider not ready, prerequisite missing) fail the run unless this is passed. */
+const allowSkips = rest.includes('--allow-skips');
 if (!stage || !/^[\w.-]+$/u.test(stage)) throw new Error('Usage: verify-ux-live.mjs <stage> [scenario...]');
 const profile = path.join(ROOT, 'artifacts', 'ux-overhaul', `profile-${stage}`);
 if (!existsSync(profile)) throw new Error(`Run capture-ux-overhaul.mjs ${stage} first: ${profile} is missing.`);
@@ -36,7 +43,7 @@ const SESSION_PREFIX = 'structured-session-';
 
 const RESULTS_PROMPT = 'src/app.ts에서 greet 함수 이름을 greetUser로 바꾸고 호출부도 고쳐 줘. 그다음 report.html 파일을 만들어 <h1>Greeting report</h1> 제목과 바뀐 내용을 설명하는 짧은 목록을 넣고, <style>로 제목을 파란색으로 꾸며 줘. 마지막으로 notes.md에 한 줄 요약을 적어 줘. 파일 수정과 생성은 파일 편집 도구로 해 줘(읽기는 셸을 써도 돼). 다른 것은 하지 마.';
 
-const SCENARIOS = [
+const ALL_SCENARIOS = [
   {
     name: 'claude-read', provider: 'claude', preset: 'standard',
     prompt: 'README.md와 src/app.ts를 읽고 greet 함수가 무엇을 하는지 두 문장으로 설명한 뒤, 짧은 TypeScript 예시 코드 블록을 하나 보여 줘. 파일은 수정하지 마.',
@@ -183,7 +190,9 @@ const SCENARIOS = [
     name: 'codex-results', provider: 'codex', preset: 'full-access', inspectResults: true, focusComposer: true,
     prompt: RESULTS_PROMPT,
   },
-].filter((scenario) => only.length === 0 || only.includes(scenario.name));
+];
+const SCENARIOS = ALL_SCENARIOS.filter((scenario) => only.length === 0 || only.includes(scenario.name));
+const unknownScenarios = only.filter((name) => !ALL_SCENARIOS.some((scenario) => scenario.name === name));
 
 function prepareWorkspace() {
   rmSync(workspace, { recursive: true, force: true });
@@ -873,6 +882,7 @@ const app = await electron.launch({
   },
 });
 const report = [];
+let verdict = { ok: false, failures: ['the run stopped before any verdict'] };
 try {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setBounds({ x: 40, y: 40, width: 1600, height: 1000 }));
   const page = await app.firstWindow();
@@ -887,13 +897,19 @@ try {
   for (const scenario of SCENARIOS) {
     try {
       await runScenario(page, project, scenario, report);
+      report.push({ scenario: scenario.name, completed: true });
     } catch (error) {
       report.push({ scenario: scenario.name, error: String(error?.message ?? error) });
       await page.screenshot({ path: path.join(output, `${scenario.name}-error.png`) }).catch(() => undefined);
     }
   }
 } finally {
-  writeFileSync(path.join(output, 'live-report.json'), JSON.stringify(report, null, 2));
+  verdict = liveReportVerdict(report, { requested: SCENARIOS.map((scenario) => scenario.name), unknown: unknownScenarios, allowSkips });
+  writeFileSync(path.join(output, 'live-report.json'), JSON.stringify({ verdict, report }, null, 2));
   await app.close();
 }
-process.stdout.write(`${JSON.stringify({ stage, output, report }, null, 1)}\n`);
+process.stdout.write(`${JSON.stringify({ stage, output, verdict, report }, null, 1)}\n`);
+if (!verdict.ok) {
+  process.stderr.write(`verify-ux-live failed:\n${verdict.failures.map((failure) => `  - ${failure}`).join('\n')}\n`);
+  process.exitCode = 1;
+}
