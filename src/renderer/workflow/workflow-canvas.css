@@ -72,6 +72,8 @@
 .workflow-flow__panel-head small { color: var(--ui-text-muted); }
 .workflow-flow__panel-head h3 { margin: var(--ui-space-1) 0 var(--ui-space-2); font-size: var(--ui-font-size-lg); overflow-wrap: anywhere; }
 .workflow-workspace .workflow-flow__sections, .workflow-flow .workflow-flow__sections { margin-bottom: var(--ui-space-3); }
+/* The panel can be 16rem wide: tighter tab padding keeps its three sections in view without scrolling. */
+.workflow-flow__sections .ez-ui-tab { padding-inline: var(--ui-space-2); }
 .workflow-flow__summary h3 { margin: 0 0 var(--ui-space-2); }
 .workflow-flow__summary h4, .workflow-node-run h4 { display: flex; align-items: center; gap: var(--ui-space-1); margin: var(--ui-space-2) 0; font-size: var(--ui-font-size-sm); }
 .workflow-flow__summary h4 svg { width: 1rem; height: 1rem; color: var(--ui-warning); }
