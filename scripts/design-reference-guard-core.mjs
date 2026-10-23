@@ -655,17 +655,28 @@ function assertDecisionRecorded(entry, approvalSource) {
   const anchor = entry.approval.record.split('#')[1];
   const section = anchor ? headingSections(approvalSource).get(anchor) : undefined;
   assert(section !== undefined, `Approved surface ${entry.id}: approval record has no heading #${anchor}.`);
+  const cells = (line) => line.trim().replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim());
+  // The row must name exactly this surface in one of its cells (`shell-desktop-old` is not `shell-desktop`).
   const row = section.split('\n').find((line) => line.trim().startsWith('|') && !/^\|[\s|:-]+\|$/u.test(line.trim())
-    && line.includes(entry.id));
+    && cells(line).some((cell) => cell.replace(/^`|`$/gu, '') === entry.id));
   assert(row, `Approved surface ${entry.id}: approval record #${anchor} has no row for ${entry.id}.`);
-  const answer = row.trim().replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim()).at(-1) ?? '';
+  const answer = cells(row).at(-1) ?? '';
   assert(answer.length > 0 && !/^(?:-|—|tbd|todo|\?)$/iu.test(answer), `Approved surface ${entry.id}: approval record #${anchor} has no recorded answer.`);
 }
 
+/** True when `node` reads `<name>.<property>` somewhere inside it. */
+function readsProperty(node, name, property) {
+  return visit(node, (item) => ts.isPropertyAccessExpression(item)
+    && ts.isIdentifier(item.expression) && item.expression.text === name && item.name.text === property).length > 0;
+}
+
+const SKIPPING = new Set(['skip', 'fixme', 'fail', 'only']);
+
 /**
  * The approved story must be one literal case of `designReferenceCases`, and that list must be run by a
- * test loop that renders both locales, runs axe in each, takes the screenshot, moves keyboard focus both
- * ways, and resizes through the case's viewports without horizontal overflow.
+ * test loop that is not skipped and that, for the loop's own case, renders the case story in the case
+ * locale and in the other locale, runs axe after each, takes the case screenshot, moves keyboard focus
+ * both ways, and resizes through the case viewports checking horizontal overflow at each.
  */
 function validateApprovedVisualCase(entry, visualFile) {
   const cases = objectElements(arrayVariable(visualFile, 'designReferenceCases'), 'designReferenceCases');
@@ -685,15 +696,42 @@ function validateApprovedVisualCase(entry, visualFile) {
 
   const loop = findForOf(visualFile, 'designReferenceCases');
   assert(loop, 'designReferenceCases must be executed by a for-of test loop.');
+  const declaration = ts.isVariableDeclarationList(loop.initializer) ? loop.initializer.declarations[0] : undefined;
+  assert(declaration && ts.isIdentifier(declaration.name), 'The designReferenceCases loop must name its case variable.');
+  const item = declaration.name.text;
+
+  // Not skipped: neither the loop body nor anything around it may use skip/fixme/fail/only.
+  const skippedInside = visit(loop, (node) => ts.isPropertyAccessExpression(node) && SKIPPING.has(node.name.text));
+  let skippedAround = false;
+  for (let node = loop.parent; node; node = node.parent) {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && SKIPPING.has(node.expression.name.text)) skippedAround = true;
+  }
+  assert(skippedInside.length === 0 && !skippedAround, 'The designReferenceCases tests must not be skipped, marked fixme/fail or focused with only.');
   const calls = callsWithin(loop);
-  assert(calls.filter((call) => directCallName(call) === 'openStory').length >= 2, 'Each approved surface must render both its locale and the other one.');
+  assert(calls.some((call) => directCallName(call) === 'test'), 'designReferenceCases must be run by test(...).');
+
+  // Both locales of the case's own story.
+  const opens = calls.filter((call) => directCallName(call) === 'openStory');
+  assert(opens.length >= 2, 'Each approved surface must render both its locale and the other one.');
+  assert(opens.every((call) => readsProperty(call, item, 'storyId')), `Each approved surface must render its own story (${item}.storyId).`);
+  const alternate = visit(loop, (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'alternateLocale')[0];
+  const alternateValues = alternate?.initializer ? stringLiteralsWithin(alternate.initializer) : new Set();
+  assert(alternate?.initializer && readsProperty(alternate.initializer, item, 'locale') && alternateValues.has('ko') && alternateValues.has('en'),
+    'The loop must derive alternateLocale from the case locale, switching between Korean and English.');
+  assert(opens.some((call) => readsProperty(call, item, 'locale')) && opens.some((call) => identifiersWithin(call).has('alternateLocale')),
+    'Each approved surface must render both its locale and the other one.');
   assert(calls.filter((call) => directCallName(call) === 'expectNoAccessibilityViolations').length >= 2, 'Each approved surface must run axe in both locales.');
-  assert(calls.some((call) => methodCallName(call) === 'toHaveScreenshot'), 'Each approved surface must have a screenshot assertion.');
-  assert(calls.some((call) => methodCallName(call) === 'setViewportSize'), 'Each approved surface must be checked at its viewports.');
+  assert(calls.some((call) => methodCallName(call) === 'toHaveScreenshot' && readsProperty(call, item, 'screenshot')),
+    `Each approved surface must have a screenshot assertion of ${item}.screenshot.`);
   const strings = stringLiteralsWithin(loop);
   assert(strings.has('Tab') && strings.has('Shift+Tab'), 'Each approved surface must move keyboard focus forward and back.');
-  const identifiers = identifiersWithin(loop);
-  assert(identifiers.has('scrollWidth') && identifiers.has('innerWidth'), 'Each approved surface must assert that it has no horizontal overflow.');
+
+  // Every viewport of the case, with the overflow check inside that loop.
+  const viewportLoop = visit(loop, (node) => ts.isForOfStatement(node) && readsProperty(node.expression, item, 'viewports'))[0];
+  assert(viewportLoop && callsWithin(viewportLoop).some((call) => methodCallName(call) === 'setViewportSize'),
+    `Each approved surface must be checked at its viewports (for-of over ${item}.viewports with setViewportSize).`);
+  const sizeIdentifiers = identifiersWithin(viewportLoop);
+  assert(sizeIdentifiers.has('scrollWidth') && sizeIdentifiers.has('innerWidth'), 'Each approved surface must assert that it has no horizontal overflow at each viewport.');
 }
 
 /**

@@ -174,6 +174,25 @@ describe('2.0 design reference manifest', () => {
     expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: visualSpec(VISUAL_CASE, loop) }))).toThrow(message);
   });
 
+  it.each([
+    { loophole: 'a skipped test', loop: VISUAL_LOOP.replace('  test(referenceCase.storyId', '  test.skip(referenceCase.storyId'), message: 'must not be skipped' },
+    { loophole: 'a skip inside the test', loop: VISUAL_LOOP.replace('const alternateLocale', 'test.skip(true, "later");\n    const alternateLocale'), message: 'must not be skipped' },
+    { loophole: 'a skipped describe around the loop', loop: `test.describe.skip("reference", () => {\n${VISUAL_LOOP}\n});`, message: 'must not be skipped' },
+    { loophole: 'another story', loop: VISUAL_LOOP.replace('openStory(page, referenceCase.storyId, { locale: referenceCase.locale })', 'openStory(page, "shell-2-0--other", { locale: referenceCase.locale })'), message: 'its own story' },
+    { loophole: 'another screenshot', loop: VISUAL_LOOP.replace('toHaveScreenshot(referenceCase.screenshot)', 'toHaveScreenshot("other.png")'), message: 'referenceCase.screenshot' },
+    { loophole: 'the same locale twice', loop: VISUAL_LOOP.replace('{ locale: alternateLocale }', '{ locale: referenceCase.locale }'), message: 'both its locale' },
+    { loophole: 'an alternate locale that is not derived from the case', loop: VISUAL_LOOP.replace('referenceCase.locale === "ko" ? "en" : "ko"', '"ko"'), message: 'alternateLocale' },
+    { loophole: 'an overflow check outside the viewport loop', loop: VISUAL_LOOP.replace('      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);\n', '').replace('    await openStory(page, referenceCase.storyId, { locale: alternateLocale });', '    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);\n    await openStory(page, referenceCase.storyId, { locale: alternateLocale });'), message: 'at each viewport' },
+  ])('rejects $loophole', ({ loop, message }) => {
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: visualSpec(VISUAL_CASE, loop) }))).toThrow(message);
+  });
+
+  it('matches the approval row by the exact surface id', () => {
+    const near = APPROVAL.replace('| shell-desktop |', '| shell-desktop-old |');
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ approvalSource: near }))).toThrow('no row for shell-desktop');
+    expect(() => validateApprovedSurface(approved(), approvedEvidence({ approvalSource: APPROVAL.replace('| shell-desktop |', '| `shell-desktop` |') }))).not.toThrow();
+  });
+
   it('rejects an approved case with fewer than two viewports', () => {
     const single = VISUAL_CASE.replace(', { width: 1024, height: 720 }', '');
     expect(() => validateApprovedSurface(approved(), approvedEvidence({ visualSource: visualSpec(single) }))).toThrow('two literal viewports');
