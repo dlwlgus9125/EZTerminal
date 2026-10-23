@@ -957,7 +957,7 @@ try {
     Invoke-Checked 'pnpm' @('guard:pty-routing')
     Invoke-Checked 'pnpm' @('guard:approval-privacy')
     Invoke-Checked 'pnpm' @('guard:pairing-offline')
-    Invoke-Checked 'pnpm' @('guard:desktop-handoff')
+    Invoke-Checked 'pnpm' @('guard:design-reference')
     Invoke-Checked 'pnpm' @('test:e2e:packaged')
     if ($RunPerformanceMeasurement) {
         Invoke-Checked 'pnpm' @('e2e:performance')

@@ -169,9 +169,10 @@ production story/component 순서로 읽는다. 판단이 충돌하면 시각 �
 flow·state·responsive·accessibility는 UX 계약, 정확한 값은 runtime token/theme가
 우선한다.
 
-Storybook과 visual snapshot은 구현 증거이지 별도 규범 원천이 아니다. 고정 desktop
-handoff는 의도 비교용 oracle이며, snapshot은 reference와 side-by-side 검토한 뒤에만
-갱신한다. 외부 content와 remote media는 결정적으로 mask한다.
+Storybook과 visual snapshot은 구현 증거이지 별도 규범 원천이 아니다. 의도 비교 기준은
+사용자가 승인한 [2.0 reference](docs/ux/reference/2.0/manifest.json)이며, 아직 대체되지 않은
+화면은 보관된 1.0 desktop handoff를 기준으로 한다. Snapshot은 기준과 side-by-side 검토한
+뒤에만 갱신한다. 외부 content와 remote media는 결정적으로 mask한다.
 
 ## 근거 소스
 
@@ -180,7 +181,7 @@ handoff는 의도 비교용 oracle이며, snapshot은 reference와 side-by-side 
 - [`src/renderer/ui/`](src/renderer/ui/)
 - [`src/renderer/workbench/`](src/renderer/workbench/)
 - [`mobile/src/mobile-shell.css`](mobile/src/mobile-shell.css)
-- [`docs/ux/reference/desktop-handoff/manifest.json`](docs/ux/reference/desktop-handoff/manifest.json)
+- [`docs/ux/reference/2.0/manifest.json`](docs/ux/reference/2.0/manifest.json)
 
 ## 검증
 

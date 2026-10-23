@@ -549,6 +549,82 @@ function validateElectronGeometryAndFocus(e2eSource) {
   );
 }
 
+const LEGACY_MANIFEST_PATH = 'docs/ux/reference/desktop-handoff/manifest.json';
+const SHA256 = /^[a-f0-9]{64}$/u;
+const IDENTIFIER = /^[a-z0-9][a-z0-9-]*$/u;
+
+function requireString(value, label) {
+  assert(typeof value === 'string' && value.trim().length > 0, `2.0 reference ${label} is required.`);
+}
+
+/**
+ * The 2.0 design reference: approved surfaces plus the archived 1.0 handoff
+ * surfaces that are still guarded as legacy. Every 1.0 surface must be either
+ * still legacy or replaced by exactly one approved surface, so nothing drops
+ * out of the guard while the overhaul replaces screens one bundle at a time.
+ */
+export function validateDesignReferenceManifest(manifest, legacyManifest) {
+  assert(manifest?.schemaVersion === 1, '2.0 reference manifest must use schemaVersion 1.');
+  assert(manifest.status === 'active', '2.0 reference manifest must be active.');
+  assert(
+    manifest.legacy?.manifest === LEGACY_MANIFEST_PATH,
+    `2.0 reference must name the archived handoff manifest ${LEGACY_MANIFEST_PATH}.`,
+  );
+  assert(Array.isArray(manifest.legacy.surfaces), '2.0 reference legacy.surfaces must be a list.');
+  assert(Array.isArray(manifest.approved), '2.0 reference approved must be a list.');
+
+  const handoffIds = new Set((legacyManifest?.surfaces ?? []).map((surface) => surface.id));
+  const legacy = [...manifest.legacy.surfaces];
+  const approvedIds = new Set();
+  const retired = [];
+  for (const entry of manifest.approved) {
+    requireString(entry?.id, 'approved[].id');
+    assert(IDENTIFIER.test(entry.id), `2.0 reference approved id ${entry.id} must be kebab-case.`);
+    assert(!approvedIds.has(entry.id), `2.0 reference approved id ${entry.id} is duplicated.`);
+    approvedIds.add(entry.id);
+    requireString(entry.title, `${entry.id}.title`);
+    requireString(entry.story?.file, `${entry.id}.story.file`);
+    requireString(entry.story?.export, `${entry.id}.story.export`);
+    requireString(entry.visual?.snapshot, `${entry.id}.visual.snapshot`);
+    requireString(entry.capture?.file, `${entry.id}.capture.file`);
+    assert(SHA256.test(entry.capture?.sha256 ?? ''), `2.0 reference ${entry.id}.capture.sha256 must be a lowercase SHA-256.`);
+    requireString(entry.approval?.record, `${entry.id}.approval.record`);
+    requireString(entry.approval?.decidedAt, `${entry.id}.approval.decidedAt`);
+    assert(Array.isArray(entry.replaces ?? []), `2.0 reference ${entry.id}.replaces must be a list.`);
+    for (const id of entry.replaces ?? []) {
+      assert(handoffIds.has(id), `2.0 reference ${entry.id} replaces unknown 1.0 surface ${id}.`);
+      assert(!retired.includes(id), `1.0 surface ${id} is replaced by more than one approved surface.`);
+      assert(!legacy.includes(id), `1.0 surface ${id} is both legacy and replaced.`);
+      retired.push(id);
+    }
+  }
+  for (const id of legacy) {
+    assert(handoffIds.has(id), `2.0 reference lists unknown legacy surface ${id}.`);
+  }
+  assert(new Set(legacy).size === legacy.length, '2.0 reference legacy surfaces are duplicated.');
+  for (const id of handoffIds) {
+    assert(
+      legacy.includes(id) || retired.includes(id),
+      `1.0 surface ${id} is neither legacy nor replaced by an approved surface.`,
+    );
+  }
+  return { approved: [...manifest.approved], legacy, retired };
+}
+
+/** An approved surface must still match its story export, snapshot and capture bytes. */
+export function validateApprovedSurface(entry, { storySource, availableSnapshots, captureSha256 }) {
+  const exportPattern = new RegExp(`export\\s+const\\s+${entry.story.export}\\b`, 'u');
+  assert(exportPattern.test(storySource), `Approved surface ${entry.id}: story export ${entry.story.export} is missing.`);
+  assert(
+    availableSnapshots.has(entry.visual.snapshot),
+    `Approved surface ${entry.id}: visual snapshot ${entry.visual.snapshot} is missing.`,
+  );
+  assert(
+    captureSha256 === entry.capture.sha256,
+    `Approved surface ${entry.id}: capture ${entry.capture.file} differs from the approved bytes.`,
+  );
+}
+
 /**
  * Validates that the handoff manifest names real Storybook exports and that
  * every promised matrix/accessibility axis is exercised by executable tests.

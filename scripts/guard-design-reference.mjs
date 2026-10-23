@@ -4,8 +4,10 @@ import { resolve } from 'node:path';
 
 import {
   assertCanonicalPng,
+  validateApprovedSurface,
+  validateDesignReferenceManifest,
   validateDesktopHandoffContract,
-} from './desktop-handoff-guard-core.mjs';
+} from './design-reference-guard-core.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const referenceRoot = resolve(root, 'docs/ux/reference/desktop-handoff');
@@ -16,6 +18,9 @@ const snapshotRoot = resolve(
 const manifest = JSON.parse(
   await readFile(resolve(referenceRoot, 'manifest.json'), 'utf8'),
 );
+const reference = JSON.parse(
+  await readFile(resolve(root, 'docs/ux/reference/2.0/manifest.json'), 'utf8'),
+);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -25,6 +30,7 @@ async function sha256(path) {
   return createHash('sha256').update(await readFile(path)).digest('hex');
 }
 
+// The archived 1.0 handoff stays byte-identical: its pins are the proof.
 for (const surface of manifest.surfaces ?? []) {
   assert(
     Object.hasOwn(manifest.extractedFiles, surface.reference),
@@ -40,8 +46,9 @@ for (const [name, expected] of Object.entries(manifest.extractedFiles ?? {})) {
   );
 }
 
-const [designContract, e2eSource, storySource, visualSource] = await Promise.all([
+const [designContract, referenceIndex, e2eSource, storySource, visualSource] = await Promise.all([
   readFile(resolve(root, 'docs/ux/frontend-design.md'), 'utf8'),
+  readFile(resolve(root, 'docs/ux/reference/README.md'), 'utf8'),
   readFile(resolve(root, 'e2e/workbench-shell.spec.ts'), 'utf8'),
   readFile(resolve(root, 'src/renderer/workbench/DesktopHandoff.stories.tsx'), 'utf8'),
   readFile(resolve(root, 'visual/storybook.visual.spec.ts'), 'utf8'),
@@ -51,9 +58,25 @@ const availableSnapshots = new Set(
   snapshotEntries.filter((entry) => entry.isFile()).map((entry) => entry.name),
 );
 assert(
-  designContract.includes('docs/ux/reference/desktop-handoff/manifest.json'),
-  'Frontend design contract does not name the desktop handoff manifest.',
+  designContract.includes('docs/ux/reference/2.0/manifest.json'),
+  'Frontend design contract does not name the 2.0 design reference manifest.',
 );
+assert(
+  referenceIndex.includes('desktop-handoff/manifest.json'),
+  'docs/ux/reference/README.md does not name the archived desktop handoff manifest.',
+);
+
+// 2.0 reference: approved surfaces plus the 1.0 surfaces still guarded as legacy.
+const { approved, legacy } = validateDesignReferenceManifest(reference, manifest);
+for (const entry of approved) {
+  validateApprovedSurface(entry, {
+    storySource: await readFile(resolve(root, entry.story.file), 'utf8'),
+    availableSnapshots,
+    captureSha256: await sha256(resolve(root, entry.capture.file)),
+  });
+}
+
+// Legacy 1.0 surfaces keep their story, visual, accessibility and Electron contracts.
 const { canonicalSnapshots } = validateDesktopHandoffContract({
   availableSnapshots,
   e2eSource,
@@ -72,5 +95,6 @@ for (const snapshot of canonicalSnapshots) {
 }
 
 console.log(
-  'guard:desktop-handoff OK: 14 surfaces / 19 pinned source files map to real stories and executable visual/accessibility contracts.',
+  `guard:design-reference OK: ${approved.length} approved 2.0 surfaces; ${legacy.length} legacy 1.0 surfaces / `
+  + `${Object.keys(manifest.extractedFiles ?? {}).length} pinned source files still map to real stories and executable visual/accessibility contracts.`,
 );

@@ -658,8 +658,8 @@ jobs:
         run: pnpm guard:approval-privacy
       - name: Verify offline pairing invariants
         run: pnpm guard:pairing-offline
-      - name: Verify desktop handoff source and visual mapping
-        run: pnpm guard:desktop-handoff
+      - name: Verify design reference (2.0 approved + archived 1.0 handoff) mapping
+        run: pnpm guard:design-reference
       - name: Packaged app smoke tests
         run: pnpm test:e2e:packaged
 

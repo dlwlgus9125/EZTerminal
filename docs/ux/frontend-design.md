@@ -692,15 +692,16 @@ Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, ex
 - [`mobile/src/MobileTabBar.tsx`](../../mobile/src/MobileTabBar.tsx)
 - [`mobile/src/mobile-shell.css`](../../mobile/src/mobile-shell.css)
 - [`docs/ux/reference/desktop-handoff/manifest.json`](reference/desktop-handoff/manifest.json)
+- [`docs/ux/reference/2.0/manifest.json`](reference/2.0/manifest.json)
 
 ## 검증
 
-- [`scripts/guard-desktop-handoff.mjs`](../../scripts/guard-desktop-handoff.mjs)
+- [`scripts/guard-design-reference.mjs`](../../scripts/guard-design-reference.mjs)
 - [`src/renderer/workbench/DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)
 - [`e2e/workbench-shell.spec.ts`](../../e2e/workbench-shell.spec.ts)
 - [`e2e/popout-window.spec.ts`](../../e2e/popout-window.spec.ts)
 - [`visual/storybook.visual.spec.ts`](../../visual/storybook.visual.spec.ts)
-- [`test/desktop-handoff-guard.test.ts`](../../test/desktop-handoff-guard.test.ts)
+- [`test/design-reference-guard.test.ts`](../../test/design-reference-guard.test.ts)
 - [`mobile/src/MobileWorkbenchCoordinator.test.tsx`](../../mobile/src/MobileWorkbenchCoordinator.test.tsx)
 - [`mobile/src/MobileUiPreferencesProvider.test.tsx`](../../mobile/src/MobileUiPreferencesProvider.test.tsx)
 

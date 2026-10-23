@@ -8,8 +8,9 @@
 - `DESIGN.md`는 visual identity와 판단 기준, frontend UX 계약은 정보 구조·flow·state·
   responsive·accessibility, theme/token source는 정확한 runtime 값을 소유한다. 같은
   규칙이나 값을 두 문서에 복사하지 않는다.
-- 고정 desktop handoff 원본은 수정하지 않으며 snapshot은 reference와 나란히 검토한
-  경우에만 갱신한다.
+- 보관된 1.0 desktop handoff 원본(`docs/ux/reference/desktop-handoff/`)은 byte 그대로
+  두고, 승인된 2.0 reference(`docs/ux/reference/2.0/manifest.json`)의 고정 capture는
+  수정하지 않으며 snapshot은 승인 reference와 나란히 검토한 경우에만 갱신한다.
 
 - Ordinary development validation uses `pnpm e2e`; the release performance
   benchmark is excluded from that command.

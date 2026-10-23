@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "status": "active",
+  "authority": "Approved 2.0 design reference. Each approved surface pins a production Storybook story, its visual snapshot and a real-app capture, and links the user's recorded decision. Surfaces of the archived 1.0 desktop handoff stay guarded as legacy until an approved surface replaces them.",
+  "legacy": {
+    "manifest": "docs/ux/reference/desktop-handoff/manifest.json",
+    "surfaces": [
+      "boot",
+      "workbench-agent-hub",
+      "command-center",
+      "monitor",
+      "remote",
+      "pairing-qr",
+      "pairing-detected",
+      "openclaw-console",
+      "openclaw-chat",
+      "paste-warning",
+      "risky-close",
+      "settings",
+      "english-workbench",
+      "explorer-breadcrumb"
+    ]
+  },
+  "approved": []
+}

@@ -5,8 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertCanonicalPng,
+  validateApprovedSurface,
+  validateDesignReferenceManifest,
   validateDesktopHandoffContract,
-} from '../scripts/desktop-handoff-guard-core.mjs';
+} from '../scripts/design-reference-guard-core.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const snapshotRoot = resolve(
@@ -42,7 +44,78 @@ function replaceLast(source: string, search: string, replacement: string): strin
     : `${source.slice(0, index)}${replacement}${source.slice(index + search.length)}`;
 }
 
-describe('desktop handoff structural guard', () => {
+function readReference() {
+  return {
+    manifest: JSON.parse(readFileSync(resolve(root, 'docs/ux/reference/2.0/manifest.json'), 'utf8')),
+    legacyManifest: JSON.parse(readFileSync(resolve(root, 'docs/ux/reference/desktop-handoff/manifest.json'), 'utf8')),
+  };
+}
+
+const SHA = 'a'.repeat(64);
+
+function approved(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'shell-desktop',
+    title: 'Desktop shell',
+    story: { file: 'src/renderer/shell/Shell2.stories.tsx', export: 'DesktopShell' },
+    visual: { snapshot: 'shell-desktop.png' },
+    capture: { file: 'docs/ux/reference/2.0/captures/shell-desktop.png', sha256: SHA },
+    approval: { record: 'docs/ux/overhaul/approvals.md#gate-2', decidedAt: '2026-11-01' },
+    replaces: ['workbench-agent-hub'],
+    ...overrides,
+  };
+}
+
+describe('2.0 design reference manifest', () => {
+  it('accepts the checked-in manifest: every 1.0 handoff surface is still guarded as legacy', () => {
+    const { manifest, legacyManifest } = readReference();
+    const result = validateDesignReferenceManifest(manifest, legacyManifest);
+    expect(result.legacy).toHaveLength(14);
+    expect(result.approved).toHaveLength(0);
+  });
+
+  it('rejects a 1.0 surface that silently drops out of the guard', () => {
+    const { manifest, legacyManifest } = readReference();
+    const next = structuredClone(manifest);
+    next.legacy.surfaces = next.legacy.surfaces.filter((id: string) => id !== 'monitor');
+    expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('monitor');
+  });
+
+  it('lets an approved surface retire the legacy surfaces it replaces, once', () => {
+    const { manifest, legacyManifest } = readReference();
+    const next = structuredClone(manifest);
+    next.legacy.surfaces = next.legacy.surfaces.filter((id: string) => id !== 'workbench-agent-hub');
+    next.approved = [approved()];
+    expect(validateDesignReferenceManifest(next, legacyManifest).retired).toEqual(['workbench-agent-hub']);
+
+    next.legacy.surfaces.push('workbench-agent-hub');
+    expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('both legacy and replaced');
+  });
+
+  it('rejects an approved surface without a recorded user decision or pinned capture', () => {
+    const { manifest, legacyManifest } = readReference();
+    const next = structuredClone(manifest);
+    next.approved = [approved({ approval: { decidedAt: '2026-11-01' }, replaces: [] })];
+    expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('approval.record');
+    next.approved = [approved({ capture: { file: 'x.png', sha256: 'nope' }, replaces: [] })];
+    expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('capture.sha256');
+  });
+
+  it('checks an approved surface against its story export, visual snapshot and capture bytes', () => {
+    const entry = approved();
+    const ok = {
+      storySource: 'export const DesktopShell: Story = {};',
+      availableSnapshots: new Set(['shell-desktop.png']),
+      captureSha256: SHA,
+    };
+    expect(() => validateApprovedSurface(entry, ok)).not.toThrow();
+    expect(() => validateApprovedSurface(entry, { ...ok, storySource: 'const DesktopShell = {};' })).toThrow('DesktopShell');
+    expect(() => validateApprovedSurface(entry, { ...ok, availableSnapshots: new Set() })).toThrow('shell-desktop.png');
+    expect(() => validateApprovedSurface(entry, { ...ok, captureSha256: 'b'.repeat(64) })).toThrow('capture');
+  });
+});
+
+describe('desktop handoff structural guard (legacy 1.0 surfaces)', () => {
   it('rejects a canonical snapshot with a corrupted PNG signature', () => {
     expect(() => assertCanonicalPng(
       new Uint8Array([0x00, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
