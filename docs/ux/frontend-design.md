@@ -51,6 +51,10 @@ Android는 같은 PC 작업을 확인·승인·이어가는 companion이다. 개
 7. keyboard, pointer, touch와 assistive technology가 같은 작업을 끝낼 수 있어야 한다.
 8. 한국어와 영어를 동등한 제품 언어로 취급하며, 한 언어 화면에 다른 언어 라벨을 섞지 않는다.
 
+범위 밖: 개편은 기능을 정돈할 뿐 새 기능(파일 편집, 독립 로드맵 메뉴·간트차트 등)을 추가하지 않는다. 일반 대화와
+터미널에 기획 작성을 강제하지 않는다. 새 설치 기본 테마·채팅 스킨은 [`DESIGN.md`](../../DESIGN.md)가 소유하며
+관문 ②에서 새 설치 기본을 Matrix로 바꾸고, 기존 사용자의 보기·테마·세션·기록은 덮어쓰지 않는다.
+
 ## 2. 용어
 
 > 구현 상태: ②(라벨)·B1–B5(문구 전체). **결정 대기(D①-3)**.
@@ -100,7 +104,8 @@ Android는 같은 PC 작업을 확인·승인·이어가는 companion이다. 개
   바, 도크 탭, 대화 헤더)이었다([기준선](overhaul/journeys-baseline.md)).
 - 좁아지면 부가 조작은 메뉴로 옮기고 **줄을 늘리지 않는다**. 입력창의 설정 칩도 줄 수를 늘리지 않고 접는다.
 - 승인·질문은 입력창 인접 영역, 오류는 해당 내용 영역에 표시한다. 고정 크롬에 상태 문장 줄을 추가하지 않는다.
-- 정확한 높이와 대화 본문 비율 목표는 [성공 신호](overhaul/success-signals.md)가 소유한다(관문 ②에서 확정).
+- 정확한 높이와 대화 본문 비율 목표는 [성공 신호](overhaul/success-signals.md)가 소유한다. **결정 대기(D①-7)**:
+  줄 수 상한은 관문 ①에서, 본문 비율과 Android 비율은 관문 ②에서 확정한다.
 
 지원 viewport는 800×600, 1024×720, 1200×800, 1440×900과 1920 reference다. 100%와 150% UI scale 모두에서
 document-level 가로 scroll, terminal overlap, 접근 불가능한 primary action이 없어야 한다.
@@ -111,7 +116,9 @@ document-level 가로 scroll, terminal overlap, 접근 불가능한 primary acti
 
 - **새 대화**는 split button이다. 본체는 현재 프로젝트의 새 대화(§6.1), ▾ 메뉴는 새 터미널, 새 소프로젝트,
   워크트리에서 새 대화다. 개편 전 헤더의 새 터미널 주 버튼과 로봇 아이콘은 이것으로 대체한다.
-- **현재 프로젝트**는 새 대화의 기본 프로젝트를 결정적으로 보여 주고 프로젝트 홈으로 가는 링크다.
+- **현재 프로젝트**는 새 대화의 기본 프로젝트를 결정적으로 보여 주고 프로젝트 홈으로 가는 링크다. 여러
+  프로젝트의 탭이 열려 있을 때 무엇이 현재 프로젝트인지는 **결정 대기(D①-10)**: 후보는 "활성 탭의 프로젝트,
+  프로젝트 없는 탭(터미널 등)이 활성이면 직전 값 유지".
 - 받은 요청·에이전트 알림 버튼, FX·NEON, 버전 칩은 타이틀바에 두지 않는다(받은 요청은 레일 배지 하나,
   효과는 상태 표시줄, 버전은 정보 화면).
 - 창 제어의 accessible name은 현재 언어로 번역한다.
@@ -154,8 +161,9 @@ document-level 가로 scroll, terminal overlap, 접근 불가능한 primary acti
   새 탭과 background/session 진입은 main 창의 탭으로 열린다. drag가 어려운 사용자는 탭 메뉴의 `새 창으로
   이동`·`메인 창으로 이동`을 쓴다. 이동은 같은 panel instance를 옮기며 session, draft, selection과 실행 중
   명령을 다시 만들지 않는다.
-- **맥락 줄**: 대화 탭에서는 제목 · 작업 폴더 · AI · 상태 · [결과] · ⋯, 캔버스·파일 탭에서는 각자의 맥락과
-  동작. 좁아지면 부가 항목은 ⋯로 들어가고 제목이 우선한다.
+- **맥락 줄**: 대화 탭에서는 지금의 한 줄 대화 헤더(제목 · 상태 · [결과] · ⋯)가 이 줄이다. 작업 폴더·AI·권한은
+  여기 두지 않고 입력창 칩에서 보인다(§23). 캔버스·파일 탭에서는 각자의 맥락과 동작. 좁아지면 부가 항목은 ⋯로
+  들어가고 제목이 우선한다.
 - 프로젝트에서 연 터미널 탭은 프로젝트 이름과 항상 보이는 compact Badge(활성 Agent면 `Codex`·`Claude`·설정된
   generic Agent 이름, 없거나 완료·오류면 localized `Terminal`)를 함께 표시한다. 같은 프로젝트·같은 Badge의
   자동 제목은 `Project`, `Project 2` 순서로 번호를 붙이고, 사용자가 정한 제목은 덮어쓰지 않으며 번호 계산에서도
@@ -224,7 +232,7 @@ snapshot의 상세는 [`terminal-clipboard.md`](../design/terminal-clipboard.md)
 | 확인할 일 | 확인할 일 목적지: 승인·질문·입력 대기·실패·계획 검토·흐름 단계 승인 | 레일 배지, OS 알림 | 대화 안 승인 카드 | B1 |
 | 위임 | 대화 입력창의 위임 시트(같은 composer) | 대화 ⋯ | — | B1 |
 | 결과·변경 검토 | **결과 탭**(범위: 이번 응답 / 대화 / 작업 폴더 / 실행 단계, diff는 모드) | 맥락 줄 [결과], 턴 변경 요약, 워크트리 행 | — | B2 |
-| 파일 | 파일 목적지(루트: 프로젝트 먼저, 그다음 전체 FS) + **파일 탭**(보기·편집·diff) | 레일, Ctrl+P(D①-6), 프로젝트 홈, 결과·터미널 링크 | 결과 탭 안 미리보기 | B2 |
+| 파일 | 파일 목적지(루트: 프로젝트 먼저, 그다음 전체 FS) + **파일 탭**(보기·diff, 읽기 전용 — 편집 기능은 추가하지 않음, §18) | 레일, Ctrl+P(D①-6), 프로젝트 홈, 결과·터미널 링크 | 결과 탭 안 미리보기 | B2 |
 | 프로젝트 | **프로젝트 홈 탭**: 소프로젝트 목록, 작업 폴더·워크트리, 프로젝트 설정(루트), Project Map, 파일 링크 | 목록의 프로젝트 행, 타이틀바 현재 프로젝트 | — | B3 |
 | 소프로젝트·캔버스·실행 | **소프로젝트 탭**: 흐름(캔버스 + run bar + 실행 서랍) / 문서 / 기록 | 프로젝트 홈, 목록 | — | B3 |
 | AI 프로필 | 설정 → AI 목록 하나, 어디서나 같은 picker | 설정, picker | — | B3 |
@@ -310,6 +318,9 @@ snapshot의 상세는 [`terminal-clipboard.md`](../design/terminal-clipboard.md)
 그 자리에서 켜도록 안내한다. 구형 Android 앱이 새 PC와 프로토콜이 맞지 않으면 양쪽에 "Android 앱 업데이트
 필요"와 경로를 보인다.
 
+**결정 대기(D①-9)**: 반대 방향, 즉 새 Android 앱이 구 PC(원격 프로토콜 16 이하)와도 계속 연결되게 할지. 후보는
+"연결 유지(역방향 지원)"이며, 그 경우 새 앱은 구 PC에서 새 기능을 숨기고 기존 기능만 쓴다.
+
 ## 7. Android 셸
 
 > 구현 상태: ②(셸)·B1–B4(내용). 탭 구성 **결정 대기(D①-2)**.
@@ -331,6 +342,8 @@ snapshot의 상세는 [`terminal-clipboard.md`](../design/terminal-clipboard.md)
   있어 drag에 의존하지 않는다.
 - 결과·변경 검토는 대화에서 전체 화면 결과 페이지로 들어가고, 뒤로 가면 같은 메시지·초안·scroll을 복원한다.
 - 터미널은 항상 mounted인 TerminalLayer(§7.1)이며 PC 제어는 명시적 Start로 시작하는 immersive 화면이다.
+- 앱을 열 때 어디로 갈지의 우선순위는 **결정 대기(D①-11)**: 후보는 (1) 알림으로 열면 그 요청 위치 → (2) 응답이
+  필요한 요청이 있으면 확인할 일 → (3) 마지막 작업 복원 → (4) 대화 목록.
 - 인증 후 마지막 작업을 복원하고, 복원할 작업이 없으면 첫 화면으로 간다. 인증 host별로 열린 terminal ID,
   활성 terminal/Agent ID와 마지막 작업 화면만 device-local에 저장하고 원문·prompt·credential·draft는 넣지 않는다.
   사라진 세션은 다시 만들지 않으며 저장 실패에도 새 터미널은 쓸 수 있다. 사용자가 이미 이동했으면 늦은 복원이
@@ -398,8 +411,10 @@ mobile root가 한 번만 소유한다.
 
 # 2부 · 기능 영역 계약
 
-> 구현 상태: 현행. 배치와 무관한 규칙이며, 1부 목표 IA가 구현되어도 유지된다. 각 영역의 출처 줄은 개편 전
-> 원문의 절 번호다. 영역 안에서 배치(어느 레일·사이드바·탭에서 여는지)를 말하던 문장은 1부로 옮겼다.
+> 구현 상태: 현행. 지금 제품의 기능 영역 규칙이며 개편 뒤에도 유지가 원칙이다. 1부 목표가 바꾸는 규칙은 그 줄에
+> **대체 예정(묶음)**과 목표 절을 함께 적었고, 그 묶음이 구현될 때 이 줄을 목표 내용으로 바꾼다. 대체되는 화면
+> 규칙 안에 있던 안전 규칙(검증·재시도·중복 방지·복구)은 대체 뒤에도 유지한다. 각 영역의 출처 줄은 개편 전 원문의
+> 절 번호다. 영역 안에서 배치(어느 레일·사이드바·탭에서 여는지)를 말하던 문장은 1부로 옮겼다.
 
 - §10 Design token과 typography
 - §11 공유 component와 overlay
@@ -537,7 +552,21 @@ mobile root가 한 번만 소유한다.
 
 ## 14. Project·Workspace·Session, 워크트리와 관리 머지
 
-> 출처: 이전 §10.2, 이전 §10.3 (원본 보존: docs/ux/reviews/2026-10-23-ux2-baseline/frontend-design.md)
+> 출처: 이전 §10.2, 이전 §10.3, 이전 §10(앞부분) (원본 보존: docs/ux/reviews/2026-10-23-ux2-baseline/frontend-design.md)
+
+### 작업 폴더와 함께 보는 폴더
+
+- 대화의 작업 위치가 primary이고 project의 나머지 등록 폴더가 additional이다(Codex `runtimeWorkspaceRoots`,
+  Claude `additionalDirectories`). 대화마다 따로 고르지 않으며 권한 단계는 모든 폴더에 같게 적용된다.
+- 워크트리 대화는 그 워크트리를 만든 원본 폴더를 빼서 격리를 지킨다.
+- 디스크에 없는 폴더는 AI에 넘기지 않고 `찾을 수 없음 · 이 대화에서 빠짐`으로 보인다.
+- AGENTS.md·CLAUDE.md는 작업 위치의 것만 읽는다(Claude는 추가 폴더의 `.claude/` 스킬·명령은 읽는다).
+- project 폴더를 바꾸면 진행 중 대화에도 다음 메시지부터 반영하며, Claude는 그 메시지 전에 같은 세션을 다시
+  이어 연다.
+- 실행 위치는 saved/observed project와 직접 고른 host 폴더를 제공한다. 선택이나 취소만으로 project를 쓰지 않으며
+  성공한 direct-directory 실행만 unpinned observed project가 된다.
+- Codex/Claude는 primary/additional roots를 받고 generic launcher는 primary만 쓰며, 무시되는 root 수를 실행 전에
+  알린다.
 
 ### 데이터 맥락
 
@@ -634,6 +663,10 @@ mobile root가 한 번만 소유한다.
   의미를 유지한다.
 
 ### Android Agent 생성
+
+> 현행: Android 복구·구 host 경로의 `Agent 만들기`(빈 세션을 먼저 만들고 첫 메시지를 따로 보냄).
+> **대체 예정(B1)**: 1부 §6.1처럼 첫 전송이 대화를 만든다. 아래 snapshot 검증, idempotency 재조회, revision
+> 재시도, 중복 금지, 이전 복구 명령 표시 규칙은 대체 뒤에도 유지한다.
 
 - Agent draft는 선택만으로 어떤 entity나 terminal surface도 만들지 않는다.
 - `Agent 만들기`는 최신 daemon snapshot으로 active Project·Workspace와 ready provider를 검증한 뒤 첫 prompt
@@ -824,6 +857,8 @@ mobile root가 한 번만 소유한다.
 
 - 시각 합격 기준은 [`DESIGN.md`](../../DESIGN.md), 화면·상태·responsive 합격 기준은 이 문서가 소유한다.
 - 두 문서의 내용을 snapshot 설명에 복사하지 않는다.
+- 시안 데이터, 가짜 AI 응답, 자동 캡처는 실제 provider·PTY·Android 복구 검증으로 인정하지 않는다. 그런 검증은
+  실제 앱(격리 프로필)과 실제 기기·에뮬레이터에서 따로 남긴다.
 - 시각 비교 기준 화면은 [2.0 reference manifest](reference/2.0/manifest.json)가 고정한다. 승인된 2.0 화면은
   production story·visual snapshot·실앱 capture를, 아직 대체되지 않은 1.0 surface(`legacy` 목록)는
   [`DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)의 실제 product
@@ -845,9 +880,15 @@ mobile root가 한 번만 소유한다.
 
 > 출처: 이전 §13.4–이전 §13.11 (원본 보존: docs/ux/reviews/2026-10-23-ux2-baseline/frontend-design.md)
 
+> 배치: 현행은 Project Explorer가 프로젝트 사이드바를 대신하는 구조다. **대체 예정(B2)**: 1부 §5의 파일 목적지와
+> 파일 탭으로 옮기며, 아래 문서 정체성·비교 렌즈·tree·editor·상태·lifecycle 규칙은 파일 탭에 그대로 적용한다.
+> 개편은 편집 기능을 추가하지 않는다(기능 유지 범위).
+
 ### 범위
 
 - Project 문서 surface는 read-only 탐색이다. 편집·저장, LSP, stage, revert, commit과 모바일 구현은 범위 밖이다.
+- 이미 열린 path는 새 tab을 만들지 않고 그 tab과 요청 위치를 재사용하며, preview tab·double-click pinning·
+  Keep Open은 두지 않는다.
  
 
 ### 문서 정체성
@@ -1116,6 +1157,20 @@ mobile root가 한 번만 소유한다.
 >
 > 승인: v2 r6 2026-10-13 ([승인 기록](reference/v2/APPROVAL.md)), R7.1 2026-10-14
 
+### 대화 내용과 AI 연결
+
+> 출처: 이전 §10(앞부분)
+
+- Agent의 사용자 메시지, 답변, 명령 인자와 도구 결과는 원문을 표시하고 host session history에도 원문을 보관한다.
+  민감 표시가 있다는 이유로 내용을 숨기지 않는다. 진단 로그의 sanitization은 별도 경계다.
+- 긴 도구 출력은 펼칠 수 있고, 같은 provider message의 delta와 완료 event는 한 메시지로 표시한다.
+- 이전에 내용이 삭제·요약되어 저장된 기록은 복구된 것처럼 꾸미지 않는다.
+- CLI 설치 탐색은 앱 대화 SDK 버전·인증·hook 준비와 분리한다. 앱 대화가 준비되지 않았어도 설치된 Codex/Claude
+  CLI는 터미널에서 실행할 수 있고, 앱 대화 자리에는 짧은 안내와 AI 설정으로 가는 동작을 둔다. 실제 실행 권한과
+  위험 작업 승인은 그대로 유지한다.
+- 기록 행은 provider 이름 글자와 3px 시작 쪽 띠로 출처를 보이며, 색은 provider identity token에서 테마별로
+  대비 보정한 값을 쓴다. provider 의미를 색에만 맡기지 않고, 진행 상태 표시는 provider와 무관한 색을 쓴다.
+
 ### 스킨
 
 - 말풍선과 CLI 스킨은 같은 Session/Turn/message ID, transcript, 초안, 첨부, 답장, 도구 결과, 승인과 대기열을
@@ -1248,7 +1303,8 @@ mobile root가 한 번만 소유한다.
 - 시작한 대화의 pill 메뉴는 작업 위치(바꿀 수 없음), 함께 보는 폴더, 찾을 수 없는 폴더, 지침 파일 안내와
   `프로젝트 편집…`(project 편집 창)을 보인다.
 - 좁은 창에서 작업 위치 pill은 아이콘과 `+N`만 남는다.
-- Android는 대화 헤더에 작업 위치를 보인다.
+- Android는 대화 헤더에 작업 위치를 보인다. **대체 예정(B1)**: 1부 §7의 한 줄 채팅 헤더로 바뀌며 작업 위치는 ⋯
+  시트와 입력창 칩에서 보인다.
 
 ### 모델·권한·계획
 
@@ -1285,7 +1341,8 @@ mobile root가 한 번만 소유한다.
 ### 좁은 창과 오류 표시
 
 - 좁은 창(600px 미만)에서 설정은 한 줄을 유지하고 값은 줄이며 계획 스위치는 아이콘만 보인다.
-- 대화 헤더는 제공자(와 Android의 작업 위치)를 먼저 숨기고 제목과 상태를 남긴다.
+- 대화 헤더는 제공자(와 Android의 작업 위치)를 먼저 숨기고 제목과 상태를 남긴다(Android 작업 위치는 B1에서
+  헤더 밖으로 옮겨진다).
 - 설정·세션 동작 실패는 대화 헤더 아래 전체 폭 알림 띠로 보인다.
 
 ### 대화 명령과 단축키
