@@ -99,6 +99,12 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const edges = (root: HTMLElement) => root.querySelectorAll('.react-flow__edge').length;
+/** Edges draw after their stages are measured (later on a slow runner): wait until the count holds still. */
+async function settledEdges(root: HTMLElement): Promise<number> {
+  let last = -1;
+  await waitFor(() => { const now = edges(root); const held = now === last && now > 0; last = now; expect(held).toBe(true); }, { interval: 200, timeout: 10_000 });
+  return last;
+}
 const centre = (element: Element) => { const box = element.getBoundingClientRect(); return { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }; };
 async function dragBetween(from: Element, to: Element): Promise<void> {
   const start = centre(from); const end = centre(to);
@@ -222,7 +228,7 @@ export const ConnectByDrag: Story = {
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(7));
     await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] .react-flow__handle-right[data-handleid="failed"]')).not.toBeNull());
-    const before = edges(canvasElement);
+    const before = await settledEdges(canvasElement);
     await dragBetween(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="failed"]')!, canvasElement.querySelector('[data-id="login:design"] [data-handleid="in"]')!);
     await waitFor(() => expect(edges(canvasElement)).toBe(before + 1));
   },
@@ -239,7 +245,7 @@ export const NewPortsAfterOperationChange: Story = {
     await new Promise(resolve => setTimeout(resolve, 300));
     await userEvent.selectOptions(canvas.getByLabelText(/^(동작|Operation)$/u), 'approval');
     await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="approved"]')).not.toBeNull());
-    const before = edges(canvasElement);
+    const before = await settledEdges(canvasElement);
     await dragBetween(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="approved"]')!, canvasElement.querySelector('[data-id="login:design"] [data-handleid="in"]')!);
     await waitFor(() => expect(edges(canvasElement)).toBe(before + 1));
   },
@@ -248,8 +254,7 @@ export const NewPortsAfterOperationChange: Story = {
 export const DeleteConnectionByKeyboard: Story = {
   args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
-    await waitFor(() => expect(edges(canvasElement)).toBeGreaterThan(0));
-    const before = edges(canvasElement);
+    const before = await settledEdges(canvasElement);
     (canvasElement.querySelector('.react-flow__edge') as HTMLElement).focus();
     await userEvent.keyboard('{Enter}');
     await userEvent.keyboard('{Delete}');
