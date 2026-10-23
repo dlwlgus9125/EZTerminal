@@ -222,7 +222,7 @@ root에서 통합 검수를 완료했다. [최신 검수 기록](ux/reviews/2026
 
 ## 대화 결과물 탭 · 2026-10-20
 
-AI 대화마다 오른쪽 Dockview 탭에 변경 내역·파일·계획·작업을 모은다(계약 [frontend-design §16.6](ux/frontend-design.md#166-대화-결과물-탭--2026-10-20),
+AI 대화마다 오른쪽 Dockview 탭에 변경 내역·파일·계획·작업을 모은다(계약 [frontend-design §24](ux/frontend-design.md#24-대화-결과물),
 기록 [구현 기록](ux/reviews/2026-10-20-agent-results-implementation.md)). Claude 편집은 SDK hunk로 줄 번호를 갖고 Codex 새 파일은 번호 붙은 추가가 됐다.
 데스크톱의 기존 변경 검토 aside·대화상자와 턴 카드 인라인 diff는 결과물 탭으로 합쳤고 Android는 바뀌지 않는다.
 AI가 만든 HTML은 앱 안에서 스크립트 없이 격리된 정적 미리보기로만 보이고, 상호작용은 사람이 브라우저로 연다.
