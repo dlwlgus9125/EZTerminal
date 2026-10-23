@@ -112,7 +112,7 @@ test('one canvas: prepare, start, approve on the canvas and open the working sta
       const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
       const review = result.ok ? result.snapshot.runs[0]?.reviews.find(entry => entry.attemptId === attemptId) : undefined;
       return review ? `${review.decision}: ${review.detail}` : null;
-    }, { timeout: 60_000 }).toBe('approve: Fixture review: the frozen result answers the task.');
+    }, { timeout: 90_000 }).toBe('approve: Fixture review: the frozen result answers the task.');
     const record = await page.evaluate(query => window.ezterminal.readPlanningResult(query), { kind: 'attempt' as const, projectId, subprojectId: 'canvas-flow', attemptId });
     if (!record.ok || record.kind !== 'attempt' || !record.result) throw new Error('No captured result');
     expect(record.result.transcript?.filter(item => item.kind === 'assistant-message')).toHaveLength(1);

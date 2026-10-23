@@ -43,6 +43,7 @@ export interface PlanningResultServiceOptions {
 export class PlanningResultService {
   readonly repository: PlanningResultRepository;
   private readonly running = new Map<string, Promise<void>>();
+  private readonly reviewAgain = new Set<string>();
   private readonly integrationGate = new AsyncMutationGate();
   private readonly validationGate = new AsyncMutationGate();
   private readonly retryGate = new AsyncMutationGate();
@@ -167,7 +168,10 @@ export class PlanningResultService {
     return record.artifacts;
   }
   async processReview(run: ExecutionRun, task: PreparedExecutionTask, attempt: ExecutionAttempt): Promise<void> {
-    if (this.stopped || this.current(run.projectId, run.runId).cancelRequested || this.running.has(attempt.attemptId)) return;
+    if (this.stopped || this.current(run.projectId, run.runId).cancelRequested) return;
+    // A fast reviewer can finish while the pass that started it is still running: remember the
+    // request and wake execution once that pass ends, instead of waiting for an unrelated event.
+    if (this.running.has(attempt.attemptId)) { this.reviewAgain.add(attempt.attemptId); return; }
     const revision = this.options.ledger.read(run.projectId).revision;
     const work = this.review(run, task, attempt).catch(async error => {
       try {
@@ -177,7 +181,8 @@ export class PlanningResultService {
       this.options.reportError?.(error);
     }).finally(() => {
       this.running.delete(attempt.attemptId);
-      if (this.options.ledger.read(run.projectId).revision !== revision) this.options.wakeExecution?.();
+      const again = this.reviewAgain.delete(attempt.attemptId);
+      if (again || this.options.ledger.read(run.projectId).revision !== revision) this.options.wakeExecution?.();
     });
     this.running.set(attempt.attemptId, work);
   }

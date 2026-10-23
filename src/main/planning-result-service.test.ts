@@ -74,8 +74,9 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
       outputTail: `${stdout}${stderr}`, outputTruncated: false, timedOut: false, cancelled: false }));
   })) };
   const errors: unknown[] = [];
+  const wakeExecution = vi.fn();
   const service = new PlanningResultService({ userDataDir, store, daemon, ledger, git, worktrees, validationRunner: runner,
-    wakeQueuedTurns: () => runtime.wakeQueuedTurns(), reportError: error => errors.push(error) });
+    wakeQueuedTurns: () => runtime.wakeQueuedTurns(), reportError: error => errors.push(error), wakeExecution });
   await store.applySystemCommit({ mutations: [
     { kind: 'project.upsert', value: { id: 'P', name: 'Project', source: 'native', rootPath: root } },
     { kind: 'workspace.upsert', value: { id: 'W', projectId: 'P', name: 'Worker', kind: 'worktree', rootPath: worker } },
@@ -137,7 +138,7 @@ async function fixture(options: { policy?: ExecutionPreparation['progressPolicy'
   };
   const approve = () => service.decideReview({ commandId: 'user-approve', projectId: 'P', expectedRevision: ledger.read('P').revision,
     type: 'review', payload: { runId: 'R', attemptId: 'A', decision: 'approve', detail: 'Accept independently checked result' } }, { kind: 'desktop', id: 'test' });
-  return { root, worker, git, service, current, preparation, capture, review, approve, errors, runner, adapter, send, daemon, baseCommit, worktrees, userDataDir, revision: () => ledger.read('P').revision };
+  return { root, worker, git, service, current, preparation, capture, review, approve, errors, runner, adapter, send, daemon, baseCommit, worktrees, userDataDir, wakeExecution, revision: () => ledger.read('P').revision };
 }
 
 describe('planning result authority', () => {
@@ -169,6 +170,17 @@ describe('planning result authority', () => {
     expect(await f.send('attempt.finish', { attemptId: 'A', outcome: 'succeeded', artifacts, summary: 'Result' }, 'runtime')).toMatchObject({ ok: true });
     await f.review('approve', undefined, true);
     expect((await f.service.readResult('P', 'A'))?.review?.decision).toBe('approve');
+  }, 30_000);
+  it('gives a review another pass when it was asked for while the previous pass was still running', async () => {
+    // A fast reviewer can finish before the pass that started it returns; that completion's request
+    // must not be lost, or the stage waits in review for an unrelated later event.
+    const f = await fixture({ validations: [validations[1]] });
+    await f.capture();
+    f.wakeExecution.mockClear();
+    void f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]);
+    void f.service.processReview(f.current(), f.preparation.tasks[0], f.current().attempts[0]);
+    await f.service.whenIdle();
+    expect(f.wakeExecution).toHaveBeenCalled();
   }, 30_000);
   it('quotes only exact accepted activation text, retains outer-loop inputs and blocks tampered or oversized output', async () => {
     const f = await fixture({ validations: [validations[1]] });

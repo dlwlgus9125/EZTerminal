@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:74add9b97487fe0edacef6cf941fa81e7ef3d46a3ec1ba1db6e49aa1f5d921b6",
+        "inputDigest": "sha256:1d1c9fb7abd806b51e73db6048100592919d3a4e52720c00cf4d715dfa8180b4",
         "decision": "map-updated",
-        "reason": "Reviewed: result capture, the reviewer read, downstream inputs and AI proposals now use a turn’s replies whatever their sensitivity marker (deltas joined into one reply); sensitive tool output still stays out of results. Claims hold; anchors moved."
+        "reason": "Reviewed: a review asked for while its previous pass is still running now gets another pass instead of waiting for an unrelated event; replies are read whatever their sensitivity marker. Claims hold; anchors moved."
       }
     },
     {
