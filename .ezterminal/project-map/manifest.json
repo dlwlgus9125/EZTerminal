@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:17e938506a26a7d10f5dadfcc454dfc0dc79fb804943cb9e95fd1e2ab57e2904",
+        "inputDigest": "sha256:a189207325166a0e9d4edc37a732310bd12d745fbbdd937c002daaf446925187",
         "decision": "map-updated",
-        "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
+        "reason": "Reviewed: Codex now holds item, delta and plan notifications that race ahead of the turn/start response and replays them on the confirmed turn before its end, as it already did for lifecycle events. Claims hold; anchors moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:7980479ddd458cb9a0f10e222483fa4914244d9655290753ee3e4dd7680b3339",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed: the stage panel narrows in small docks and can be hidden from the canvas header; header actions wrap as one group. Commands, host boundary, runtime and navigation are unchanged."
+        "inputDigest": "sha256:3e747e720e1f5a8ba1119556575e3a8dfbb392008df952543c5dfa79b282f36c",
+        "decision": "map-updated",
+        "reason": "Reviewed: Codex now holds item, delta and plan notifications that race ahead of the turn/start response and replays them on the confirmed turn before its end, as it already did for lifecycle events. Claims hold; anchors moved."
       }
     }
   ]

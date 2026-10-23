@@ -500,24 +500,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1054,
-          "endLine": 1083,
+          "startLine": 1059,
+          "endLine": 1088,
           "lineDigest": "sha256:ce1ca4f33c93813ca61be0a3a96c0ba9baeb3c81dd73f8d3b0d8677648c3877d",
           "claim": "Codex thread creation uses the reviewed model, reasoning effort, sandbox, supplied environment, and managed-execution native delegation restriction, then reports the model and effort the thread runs at with its Session identity."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1141,
-          "endLine": 1281,
-          "lineDigest": "sha256:6c4c4b16a1e7b89c17d3d1d928cadaf28da7fd38e58b00658cb5186b72a911cb",
+          "startLine": 1146,
+          "endLine": 1300,
+          "lineDigest": "sha256:6b43544f9382de98fed65ec5def83bebbf3236be110c41e3a52fea4f73334758",
           "claim": "Codex submit revalidates selected native skills before turn/start, sends skill path blocks alongside context/images, exact model settings and the collaboration mode (plan only for attended plan turns), then correlates the provider turn."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 1487,
-          "endLine": 1555,
+          "startLine": 1506,
+          "endLine": 1574,
           "lineDigest": "sha256:921c82f86bc93698c45c2650944c809d467a65aa0010f25668a0ef0d6c263472",
           "claim": "Deactivation advances the lifecycle, settles pending interrupts, clears approvals and thread ownership, closes app-server, and leaves reviewed configuration reusable."
         }
@@ -1025,8 +1025,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 455,
-          "endLine": 483,
+          "startLine": 460,
+          "endLine": 488,
           "lineDigest": "sha256:c96ece4b5f9ef9029668a55bedef5e88d7376569dcba6247b9e6cc0bab7ef34f",
           "claim": "Codex accepts only its labeled stable semantic version at or above the observed app-server baseline, while malformed output, prereleases, and older versions fail closed."
         },
@@ -1041,8 +1041,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 805,
-          "endLine": 860,
+          "startLine": 810,
+          "endLine": 865,
           "lineDigest": "sha256:d9cbbe05b3b11bb23c8cc8ffa7758344f85331ba087514e59488b8cd873c6f13",
           "claim": "Codex accepts only an absolute reviewed app-server launch descriptor with the fixed process contract and stable version floor, then reports the current compatible version and capabilities."
         }
