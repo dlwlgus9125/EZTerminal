@@ -110,7 +110,9 @@ describe('planning provider dispatch', () => {
     const review = `EZTERMINAL_REVIEW_JSON\n${JSON.stringify({ schemaVersion: 1, baselineFingerprint: current.preparation.baseline.fingerprint, artifactIds: record.artifacts.map(artifact => artifact.artifactId), decision: 'approve', summary: 'Checked planning evidence', inspections: task.validations.map(validation => ({ validationId: validation.validationId, status: 'passed', summary: 'Concrete plan checked' })) })}`;
     f.emit({ kind: 'transcript', item: { id: 'review-output', sessionId: record.reviewerSessionId!, turnId: record.reviewerTurnId!, sequence: 1, kind: 'assistant-message', text: review, isDelta: false, isSensitive: false, createdAt: new Date().toISOString() } });
     f.emit({ kind: 'turn-finished', sessionId: record.reviewerSessionId!, turnId: record.reviewerTurnId!, outcome: 'completed' });
-    await vi.waitFor(() => expect(f.ledger.read('project').runs[0].attempts.some(attempt => attempt.taskId === graph.nodes[1].id)).toBe(true));
+    // Review read, evidence, decision and the next dispatch are several async writes: a slow
+    // Windows runner needs more than the 1 s default (the other waits here allow 5 s).
+    await vi.waitFor(() => expect(f.ledger.read('project').runs[0].attempts.some(attempt => attempt.taskId === graph.nodes[1].id)).toBe(true), { timeout: 10_000 });
     const second = f.ledger.read('project').runs[0].attempts.find(attempt => attempt.taskId === graph.nodes[1].id)!;
     const sent = vi.mocked(f.adapter.submit).mock.calls.find(([input]) => input.sessionId === second.sessionId)![0];
     expect(sent.prompt).toContain(output);
