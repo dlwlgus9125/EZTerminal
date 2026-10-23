@@ -223,9 +223,8 @@ if (args.includes('--version')) {
               }
             }
             // Chat profiler: stream a fixed-length reply in timed deltas, ending with a sentinel.
-            // A provider's reply never lands in the same burst as its turn/start response; answering
-            // instantly here would race the adapter's turn mapping (a separate, reported finding).
-            if (reviewing) await sleep(150);
+            // The reviewer answers instantly, in the same burst as its turn/start response: the
+            // adapter must still keep the reply on its turn (pre-response item buffering).
             const reply = reviewing ? null : readReplyConfig();
             if (reply) {
               const itemId = `fixture-message-${turnSequence}`;

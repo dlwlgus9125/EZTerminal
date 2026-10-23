@@ -56,6 +56,9 @@ const ACCOUNT_LIMITS_READ_INTERVAL_MS = 60_000;
 const MAX_SEMANTIC_TEXT = 1024 * 1024;
 const MAX_PROBE_OUTPUT = 64 * 1024;
 const MAX_PRE_RESPONSE_LIFECYCLE_TURNS = 8;
+/** Item notifications held while a turn's identity is unconfirmed; past this they pass through unmapped. */
+const MAX_PRE_RESPONSE_ITEMS = 2_000;
+const TURN_ITEM_METHODS = new Set(['item/started', 'item/completed', 'turn/plan/updated', 'item/agentMessage/delta', 'item/reasoning/summaryTextDelta', 'item/reasoning/textDelta', 'item/plan/delta']);
 const MAX_STARTED_ITEMS = 64;
 const MAX_SUBMITTED_COMMANDS = 64;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
@@ -131,6 +134,8 @@ interface SessionState {
   };
   readonly preResponseLifecycle: Map<string, PreResponseLifecycleRecord>;
   preResponseLifecycleOverflowed: boolean;
+  /** Items, deltas and plan updates that raced ahead of the turn/start response, by provider turn. */
+  readonly preResponseItems: Map<string, Array<{ readonly method: string; readonly params: JsonObject }>>;
   readonly completedItemKeys: Set<string>;
   readonly nativeStateByChild: Map<string, string>;
   readonly deltas: DeltaCoalescer;
@@ -1206,7 +1211,20 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       // that ownership before replaying any notification that raced ahead.
       this.emitTurnStarted(state, activeTurn);
       const buffered = this.takePreResponseLifecycle(state, providerTurnId);
+      const heldItems = state.preResponseItems.get(providerTurnId) ?? [];
+      // Items held for another (earlier) turn pass through unmapped, as they did before buffering.
+      const otherItems = [...state.preResponseItems.entries()].filter(([id]) => id !== providerTurnId).flatMap(([, frames]) => frames);
+      state.preResponseItems.clear();
+      for (const frame of otherItems) this.handleTurnItemNotification(state, frame.method, frame.params);
+      const replayItems = () => {
+        for (const frame of heldItems.splice(0)) {
+          if (state.activeTurn !== activeTurn) return;
+          this.handleTurnItemNotification(state, frame.method, frame.params);
+        }
+      };
       for (const event of buffered.events) {
+        if (state.activeTurn !== activeTurn) break;
+        if (event.kind === 'completed' || (event.kind === 'error' && !event.recoverable)) replayItems();
         if (state.activeTurn !== activeTurn) break;
         switch (event.kind) {
           case 'started':
@@ -1220,6 +1238,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
             break;
         }
       }
+      if (state.activeTurn === activeTurn) replayItems();
       if (state.activeTurn !== activeTurn) return;
       if (buffered.overflowedWithoutMatch) {
         const error = new Error('Codex pre-response lifecycle buffer overflowed before turn identity was confirmed.');
@@ -1884,6 +1903,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       return;
     }
     if (!state) return;
+    if (TURN_ITEM_METHODS.has(method)) {
+      const itemTurnId = asString(params.turnId);
+      if (itemTurnId && state.activeTurn && !state.activeTurn.providerTurnId && this.bufferPreResponseItem(state, itemTurnId, method, params)) return;
+      this.handleTurnItemNotification(state, method, params);
+      return;
+    }
     switch (method) {
       case 'thread/status/changed':
         this.handleThreadStatus(state, asObject(params.status));
@@ -1899,6 +1924,19 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'turn/completed':
         this.handleTurnCompleted(state, asObject(params.turn));
         return;
+      case 'thread/tokenUsage/updated': {
+        const tokenUsage = asObject(params.tokenUsage);
+        const contextPercent = codexContextPercent(asObject(tokenUsage?.last)?.totalTokens, tokenUsage?.modelContextWindow);
+        if (contextPercent !== undefined) this.emit({ kind: 'usage', sessionId: state.sessionId, contextPercent });
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  private handleTurnItemNotification(state: SessionState, method: string, params: JsonObject): void {
+    switch (method) {
       case 'item/started':
         this.handleItem(state, asString(params.turnId), asObject(params.item), false, nonNegativeInteger(params.startedAtMs));
         return;
@@ -1918,15 +1956,18 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       case 'item/plan/delta':
         this.emitDelta(state, params, 'reasoning', { v: 1, type: 'plan' });
         return;
-      case 'thread/tokenUsage/updated': {
-        const tokenUsage = asObject(params.tokenUsage);
-        const contextPercent = codexContextPercent(asObject(tokenUsage?.last)?.totalTokens, tokenUsage?.modelContextWindow);
-        if (contextPercent !== undefined) this.emit({ kind: 'usage', sessionId: state.sessionId, contextPercent });
-        return;
-      }
-      default:
-        return;
     }
+  }
+
+  /** Holds an item for a turn whose id the response has not confirmed; false when the buffer is full. */
+  private bufferPreResponseItem(state: SessionState, providerTurnId: string, method: string, params: JsonObject): boolean {
+    let held = 0;
+    for (const frames of state.preResponseItems.values()) held += frames.length;
+    if (held >= MAX_PRE_RESPONSE_ITEMS) return false;
+    const frames = state.preResponseItems.get(providerTurnId) ?? [];
+    frames.push({ method, params });
+    state.preResponseItems.set(providerTurnId, frames);
+    return true;
   }
 
   /**
@@ -1996,6 +2037,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       nextTranscriptSequence: 0,
       preResponseLifecycle: new Map(),
       preResponseLifecycleOverflowed: false,
+      preResponseItems: new Map(),
       completedItemKeys: new Set(),
       nativeStateByChild: new Map(),
       deltas: new DeltaCoalescer((item) => this.emitTranscript(state, item), this.deltaCoalescer),
@@ -2124,6 +2166,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private clearPreResponseLifecycle(state: SessionState): void {
     state.preResponseLifecycle.clear();
     state.preResponseLifecycleOverflowed = false;
+    state.preResponseItems.clear();
   }
 
   private handleTurnStarted(
@@ -2757,6 +2800,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       nextTranscriptSequence: 0,
       preResponseLifecycle: new Map(),
       preResponseLifecycleOverflowed: false,
+      preResponseItems: new Map(),
       completedItemKeys: new Set(),
       nativeStateByChild: new Map(),
       deltas: new DeltaCoalescer((item) => this.emit({ kind: 'transcript', item }), this.deltaCoalescer),

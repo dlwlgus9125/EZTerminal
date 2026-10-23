@@ -1045,6 +1045,38 @@ describe('CodexProviderAdapter', () => {
     }
   });
 
+  it('keeps a reply that arrives before the turn/start response on its turn', async () => {
+    // A fast provider can stream and finish its reply in the same burst as the turn/start response.
+    // Those items must be stored on the turn, not without one (a planning review would find nothing).
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    let resolveTurnStart!: (value: unknown) => void;
+    const turnStart = new Promise<unknown>((resolve) => { resolveTurnStart = resolve; });
+    connection.requestImpl = async (method) => {
+      if (method === 'turn/start') return turnStart;
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    const submitting = adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: 'Review' });
+    await vi.waitFor(() => expect(connection.requests.some((request) => request.method === 'turn/start')).toBe(true));
+    await connection.emitNotification('turn/started', { threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'inProgress', items: [] } });
+    await connection.emitNotification('item/agentMessage/delta', { threadId: 'thread-1', turnId: 'provider-turn-1', itemId: 'message-1', delta: 'EZTERMINAL_REVIEW_JSON ' });
+    await connection.emitNotification('item/completed', { threadId: 'thread-1', turnId: 'provider-turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'EZTERMINAL_REVIEW_JSON {}' } });
+    await connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'provider-turn-1', status: 'completed', items: [] } });
+    resolveTurnStart({ turn: { id: 'provider-turn-1' } });
+    await submitting;
+    await vi.waitFor(() => expect(events.some((event) => event.kind === 'turn-finished')).toBe(true));
+    const replies = events.flatMap((event) => event.kind === 'transcript' && event.item.kind === 'assistant-message' ? [event.item] : []);
+    expect(replies.length).toBeGreaterThan(0);
+    expect(replies.every((item) => item.turnId === 'turn-1')).toBe(true);
+    expect(replies.some((item) => !item.isDelta && item.text === 'EZTERMINAL_REVIEW_JSON {}')).toBe(true);
+    // The reply lands before the turn ends, as it would have without the race.
+    const finished = events.findIndex((event) => event.kind === 'turn-finished');
+    expect(events.findIndex((event) => event.kind === 'transcript' && event.item.kind === 'assistant-message' && !event.item.isDelta)).toBeLessThan(finished);
+    await adapter.dispose();
+  });
+
   it('settles a pending interrupt without dispatch when the provider completes first', async () => {
     const { adapter, connection, submitting, interrupting, resolveTurnStart } = await pendingTurnFixture();
     const events: AgentProviderEvent[] = [];
