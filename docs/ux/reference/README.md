@@ -18,8 +18,13 @@
 - `2.0/` 승인 항목과 그 캡처는 사용자가 승인한 결정 기록(`docs/ux/overhaul/approvals.md`)이 있을 때만
   추가·교체한다. Snapshot은 승인 기준과 나란히 검토한 경우에만 갱신한다.
 - 승인 항목 하나는 다음을 모두 갖춰야 가드를 통과한다: production story export, `visual/storybook.visual.spec.ts`의
-  `designReferenceCases` 안 literal case 하나(storyId·screenshot·readySelector·locale·viewports 2개 이상)와 그 목록을
-  도는 건너뛰지 않은 테스트(그 case의 story를 case 언어와 다른 언어로 렌더, 두 언어 axe, 그 case의 screenshot,
-  Tab/Shift+Tab 초점 이동, case viewport마다 가로 넘침 검사), 실앱 캡처 SHA-256, 실제 날짜의 `decidedAt`, 그리고 승인
-  기록 anchor 절 안에 그 항목 id와 정확히 같은 칸이 있고 마지막 칸(답)이 채워진 표 행.
+  `designReferenceCases` 안 literal case 하나(storyId·screenshot·readySelector·locale·viewports 2개 이상), 실앱 캡처
+  SHA-256, 실제 날짜의 `decidedAt`, 그리고 승인 기록 anchor 절의 표에서 그 항목 id와 정확히 같은 칸이 있고 `답` 열이
+  채워진 행.
+- visual spec은 case를 나눠 주기만 한다: 파일 맨 위의 `for (const item of designReferenceCases)` 안에
+  `test(item.storyId, async ({ page }) => { await checkReferenceSurface(page, item); })` 한 문장만 두고, 파일 어디에도
+  skip·fixme·fail·only를 쓰지 않는다. 검증은 모두 `manifest.json`의 `approvedChecker`가 SHA-256으로 고정한 helper 하나가
+  한다(그 case story를 case 언어와 다른 언어로 렌더하고 각각 axe, case screenshot, Tab/Shift+Tab, case viewport마다
+  `expect`로 가로 넘침 검사). helper를 바꾸면 고정값이 깨지므로 검토를 거쳐 다시 고정한다. 정적 검사는 드리프트를 막는
+  장치이고, 실제 실행 증거는 CI의 `pnpm test:visual`이다.
 - 1.0 surface는 그것을 대체하는 2.0 승인 항목의 `replaces`에 들어갈 때만 `legacy`에서 빠진다.

@@ -610,7 +610,11 @@ export function validateDesignReferenceManifest(manifest, legacyManifest) {
       `1.0 surface ${id} is neither legacy nor replaced by an approved surface.`,
     );
   }
-  return { approved: [...manifest.approved], legacy, retired };
+  if (manifest.approved.length > 0) {
+    requireString(manifest.approvedChecker?.file, 'approvedChecker.file');
+    assert(SHA256.test(manifest.approvedChecker?.sha256 ?? ''), '2.0 reference approvedChecker.sha256 must be a lowercase SHA-256.');
+  }
+  return { approved: [...manifest.approved], legacy, retired, checker: manifest.approvedChecker };
 }
 
 /**
@@ -647,20 +651,35 @@ function isCalendarDate(value) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
+/** Cells of a Markdown table row, without the outer pipes. */
+function tableCells(line) {
+  return line.trim().replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim());
+}
+
+const TABLE_SEPARATOR = /^\|[\s|:-]+\|$/u;
+
 /**
- * The approval record must hold the user's answer for this surface: a table row in the anchored
- * section that names the surface id and whose last cell (the answer) is filled in.
+ * The approval record must hold the user's answer for this surface: in the anchored section, a table
+ * whose header has a `답` (Answer) column, with a row naming exactly this surface and a filled answer cell.
  */
 function assertDecisionRecorded(entry, approvalSource) {
   const anchor = entry.approval.record.split('#')[1];
   const section = anchor ? headingSections(approvalSource).get(anchor) : undefined;
   assert(section !== undefined, `Approved surface ${entry.id}: approval record has no heading #${anchor}.`);
-  const cells = (line) => line.trim().replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim());
-  // The row must name exactly this surface in one of its cells (`shell-desktop-old` is not `shell-desktop`).
-  const row = section.split('\n').find((line) => line.trim().startsWith('|') && !/^\|[\s|:-]+\|$/u.test(line.trim())
-    && cells(line).some((cell) => cell.replace(/^`|`$/gu, '') === entry.id));
-  assert(row, `Approved surface ${entry.id}: approval record #${anchor} has no row for ${entry.id}.`);
-  const answer = cells(row).at(-1) ?? '';
+  const lines = section.split('\n').map((line) => line.trim());
+  let header = null;
+  let found = null;
+  lines.forEach((line, index) => {
+    if (!line.startsWith('|')) { header = null; return; }
+    if (TABLE_SEPARATOR.test(line)) return;
+    if (TABLE_SEPARATOR.test(lines[index + 1] ?? '')) { header = tableCells(line); return; }
+    // A row names exactly this surface (`shell-desktop-old` is not `shell-desktop`).
+    if (!found && tableCells(line).some((cell) => cell.replace(/^`|`$/gu, '') === entry.id)) found = { header, cells: tableCells(line) };
+  });
+  assert(found, `Approved surface ${entry.id}: approval record #${anchor} has no row for ${entry.id}.`);
+  const column = found.header ? found.header.findIndex((cell) => cell === '답' || cell.toLowerCase() === 'answer') : -1;
+  assert(column >= 0, `Approved surface ${entry.id}: the approval table in #${anchor} has no 답 column.`);
+  const answer = found.cells[column] ?? '';
   assert(answer.length > 0 && !/^(?:-|—|tbd|todo|\?)$/iu.test(answer), `Approved surface ${entry.id}: approval record #${anchor} has no recorded answer.`);
 }
 
@@ -670,14 +689,104 @@ function readsProperty(node, name, property) {
     && ts.isIdentifier(item.expression) && item.expression.text === name && item.name.text === property).length > 0;
 }
 
+function isPropertyRead(node, name, property) {
+  const target = node ? unwrap(node) : null;
+  return Boolean(target && ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)
+    && target.expression.text === name && target.name.text === property);
+}
+
 const SKIPPING = new Set(['skip', 'fixme', 'fail', 'only']);
+const CHECKER_NAME = 'checkReferenceSurface';
 
 /**
- * The approved story must be one literal case of `designReferenceCases`, and that list must be run by a
- * test loop that is not skipped and that, for the loop's own case, renders the case story in the case
- * locale and in the other locale, runs axe after each, takes the case screenshot, moves keyboard focus
- * both ways, and resizes through the case viewports checking horizontal overflow at each.
+ * The visual spec only dispatches: a top-level `for (const item of designReferenceCases)` whose body is
+ * exactly `test(item.storyId, async ({ page }) => { await checkReferenceSurface(page, item); })`, and no
+ * skip/fixme/fail/only anywhere in the file. Every check lives in the pinned checker.
  */
+function validateApprovedDispatch(visualFile) {
+  const skipping = visit(visualFile, (node) => ts.isPropertyAccessExpression(node) && SKIPPING.has(node.name.text));
+  assert(skipping.length === 0, 'The visual spec must not skip, fixme, fail or focus (only) any test while approved surfaces exist.');
+  const loop = findForOf(visualFile, 'designReferenceCases');
+  assert(loop, 'designReferenceCases must be executed by a for-of test loop.');
+  assert(ts.isSourceFile(loop.parent), 'The designReferenceCases loop must be a top-level statement of the visual spec.');
+  const declaration = ts.isVariableDeclarationList(loop.initializer) ? loop.initializer.declarations[0] : undefined;
+  assert(declaration && ts.isIdentifier(declaration.name), 'The designReferenceCases loop must name its case variable.');
+  const item = declaration.name.text;
+  const statements = ts.isBlock(loop.statement) ? loop.statement.statements : [loop.statement];
+  const testCall = statements.length === 1 && ts.isExpressionStatement(statements[0]) ? unwrap(statements[0].expression) : null;
+  assert(testCall && ts.isCallExpression(testCall) && directCallName(testCall) === 'test' && testCall.arguments.length === 2
+    && isPropertyRead(testCall.arguments[0], item, 'storyId'),
+  `The designReferenceCases loop body must be exactly test(${item}.storyId, …).`);
+  const callback = unwrap(testCall.arguments[1]);
+  assert((ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) && ts.isBlock(callback.body) && callback.body.statements.length === 1,
+    `Each approved test must contain exactly one statement: await ${CHECKER_NAME}(page, ${item}).`);
+  const [parameter] = callback.parameters;
+  const pageBinding = parameter && ts.isObjectBindingPattern(parameter.name)
+    ? parameter.name.elements.find((element) => ts.isIdentifier(element.name) && element.name.text === 'page') : undefined;
+  const [statement] = callback.body.statements;
+  const awaited = ts.isExpressionStatement(statement) ? unwrap(statement.expression) : null;
+  const call = awaited && ts.isAwaitExpression(awaited) ? unwrap(awaited.expression) : null;
+  assert(pageBinding && call && ts.isCallExpression(call) && directCallName(call) === CHECKER_NAME && call.arguments.length === 2
+    && ts.isIdentifier(unwrap(call.arguments[0])) && unwrap(call.arguments[0]).text === 'page'
+    && ts.isIdentifier(unwrap(call.arguments[1])) && unwrap(call.arguments[1]).text === item,
+  `Each approved test must contain exactly one statement: await ${CHECKER_NAME}(page, ${item}).`);
+}
+
+/**
+ * The pinned checker runs every axis for the case it is given: the case story in the case locale and in
+ * the other locale with axe after each render, the case screenshot, keyboard focus both ways, and each
+ * case viewport with an asserted horizontal-overflow check. Weakening it changes its pinned hash.
+ */
+function validateChecker(checkerFile) {
+  const checker = visit(checkerFile, (node) => ts.isFunctionDeclaration(node) && node.name?.text === CHECKER_NAME
+    && node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))[0];
+  assert(checker?.body && checker.parameters.length === 2 && ts.isIdentifier(checker.parameters[1].name),
+    `The checker must export function ${CHECKER_NAME}(page, item).`);
+  const item = checker.parameters[1].name.text;
+  const calls = callsWithin(checker.body);
+
+  const alternate = visit(checker.body, (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'alternateLocale')[0];
+  const conditional = alternate?.initializer ? unwrap(alternate.initializer) : null;
+  const condition = conditional && ts.isConditionalExpression(conditional) ? unwrap(conditional.condition) : null;
+  const compared = condition && ts.isBinaryExpression(condition) && condition.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    && isPropertyRead(condition.left, item, 'locale') ? stringValue(unwrap(condition.right)) : null;
+  const whenTrue = conditional && ts.isConditionalExpression(conditional) ? stringValue(unwrap(conditional.whenTrue)) : null;
+  const whenFalse = conditional && ts.isConditionalExpression(conditional) ? stringValue(unwrap(conditional.whenFalse)) : null;
+  const other = { ko: 'en', en: 'ko' };
+  assert(compared && other[compared] && whenTrue === other[compared] && whenFalse === compared,
+    `The checker must set alternateLocale = ${item}.locale === 'ko' ? 'en' : 'ko' (the other locale).`);
+
+  // Renders in order, each followed by axe before the next render.
+  const ordered = calls.filter((call) => ['openStory', 'expectNoAccessibilityViolations'].includes(directCallName(call)))
+    .sort((left, right) => left.getStart() - right.getStart());
+  const opens = ordered.filter((call) => directCallName(call) === 'openStory');
+  assert(opens.length >= 2, 'The checker must render both the case locale and the other one.');
+  assert(opens.every((call) => isPropertyRead(call.arguments[1], item, 'storyId')), `The checker must render the case story (${item}.storyId).`);
+  assert(opens.some((call) => readsProperty(call, item, 'locale')) && opens.some((call) => identifiersWithin(call).has('alternateLocale')),
+    'The checker must render both the case locale and the other one.');
+  ordered.forEach((call, index) => {
+    if (directCallName(call) !== 'openStory') return;
+    assert(directCallName(ordered[index + 1] ?? call) === 'expectNoAccessibilityViolations', 'The checker must run axe after each render, in both locales.');
+  });
+  assert(calls.some((call) => methodCallName(call) === 'toHaveScreenshot' && isPropertyRead(call.arguments[0], item, 'screenshot')),
+    `The checker must assert the case screenshot (${item}.screenshot).`);
+  const pressed = new Set(calls.filter((call) => methodCallName(call) === 'press').map((call) => stringValue(call.arguments[0] ? unwrap(call.arguments[0]) : null)));
+  assert(pressed.has('Tab') && pressed.has('Shift+Tab'), 'The checker must move keyboard focus forward and back.');
+
+  const viewportLoop = visit(checker.body, (node) => ts.isForOfStatement(node) && isPropertyRead(node.expression, item, 'viewports'))[0];
+  const size = viewportLoop && ts.isVariableDeclarationList(viewportLoop.initializer) ? viewportLoop.initializer.declarations[0]?.name : undefined;
+  assert(viewportLoop && size && ts.isIdentifier(size) && callsWithin(viewportLoop).some((call) => methodCallName(call) === 'setViewportSize'
+    && ts.isIdentifier(unwrap(call.arguments[0])) && unwrap(call.arguments[0]).text === size.text),
+  `The checker must call setViewportSize with each of ${item}.viewports.`);
+  const overflow = callsWithin(viewportLoop).some((call) => {
+    const target = ts.isPropertyAccessExpression(call.expression) ? unwrap(call.expression.expression) : null;
+    return Boolean(target && ts.isCallExpression(target) && directCallName(target) === 'expect'
+      && identifiersWithin(target).has('scrollWidth') && identifiersWithin(target).has('innerWidth'));
+  });
+  assert(overflow, 'The checker must assert (expect(…).matcher) that there is no horizontal overflow at each viewport.');
+}
+
+/** The approved story is exactly one literal case of `designReferenceCases`. */
 function validateApprovedVisualCase(entry, visualFile) {
   const cases = objectElements(arrayVariable(visualFile, 'designReferenceCases'), 'designReferenceCases');
   const matches = cases.filter((visualCase) => stringValue(propertyValue(visualCase, 'storyId')) === entry.visual.storyId);
@@ -693,56 +802,24 @@ function validateApprovedVisualCase(entry, visualFile) {
   const sizes = viewports && ts.isArrayLiteralExpression(viewports) ? objectElements(viewports, `${entry.id} viewports`) : [];
   assert(sizes.length >= 2 && sizes.every((size) => numberValue(propertyValue(size, 'width')) && numberValue(propertyValue(size, 'height'))),
     `Approved surface ${entry.id}: its visual case needs at least two literal viewports.`);
-
-  const loop = findForOf(visualFile, 'designReferenceCases');
-  assert(loop, 'designReferenceCases must be executed by a for-of test loop.');
-  const declaration = ts.isVariableDeclarationList(loop.initializer) ? loop.initializer.declarations[0] : undefined;
-  assert(declaration && ts.isIdentifier(declaration.name), 'The designReferenceCases loop must name its case variable.');
-  const item = declaration.name.text;
-
-  // Not skipped: neither the loop body nor anything around it may use skip/fixme/fail/only.
-  const skippedInside = visit(loop, (node) => ts.isPropertyAccessExpression(node) && SKIPPING.has(node.name.text));
-  let skippedAround = false;
-  for (let node = loop.parent; node; node = node.parent) {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && SKIPPING.has(node.expression.name.text)) skippedAround = true;
-  }
-  assert(skippedInside.length === 0 && !skippedAround, 'The designReferenceCases tests must not be skipped, marked fixme/fail or focused with only.');
-  const calls = callsWithin(loop);
-  assert(calls.some((call) => directCallName(call) === 'test'), 'designReferenceCases must be run by test(...).');
-
-  // Both locales of the case's own story.
-  const opens = calls.filter((call) => directCallName(call) === 'openStory');
-  assert(opens.length >= 2, 'Each approved surface must render both its locale and the other one.');
-  assert(opens.every((call) => readsProperty(call, item, 'storyId')), `Each approved surface must render its own story (${item}.storyId).`);
-  const alternate = visit(loop, (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'alternateLocale')[0];
-  const alternateValues = alternate?.initializer ? stringLiteralsWithin(alternate.initializer) : new Set();
-  assert(alternate?.initializer && readsProperty(alternate.initializer, item, 'locale') && alternateValues.has('ko') && alternateValues.has('en'),
-    'The loop must derive alternateLocale from the case locale, switching between Korean and English.');
-  assert(opens.some((call) => readsProperty(call, item, 'locale')) && opens.some((call) => identifiersWithin(call).has('alternateLocale')),
-    'Each approved surface must render both its locale and the other one.');
-  assert(calls.filter((call) => directCallName(call) === 'expectNoAccessibilityViolations').length >= 2, 'Each approved surface must run axe in both locales.');
-  assert(calls.some((call) => methodCallName(call) === 'toHaveScreenshot' && readsProperty(call, item, 'screenshot')),
-    `Each approved surface must have a screenshot assertion of ${item}.screenshot.`);
-  const strings = stringLiteralsWithin(loop);
-  assert(strings.has('Tab') && strings.has('Shift+Tab'), 'Each approved surface must move keyboard focus forward and back.');
-
-  // Every viewport of the case, with the overflow check inside that loop.
-  const viewportLoop = visit(loop, (node) => ts.isForOfStatement(node) && readsProperty(node.expression, item, 'viewports'))[0];
-  assert(viewportLoop && callsWithin(viewportLoop).some((call) => methodCallName(call) === 'setViewportSize'),
-    `Each approved surface must be checked at its viewports (for-of over ${item}.viewports with setViewportSize).`);
-  const sizeIdentifiers = identifiersWithin(viewportLoop);
-  assert(sizeIdentifiers.has('scrollWidth') && sizeIdentifiers.has('innerWidth'), 'Each approved surface must assert that it has no horizontal overflow at each viewport.');
 }
 
 /**
- * An approved surface must still be the thing the user approved: a real story
- * export (syntax tree, not text), an executed visual case with its axes, the
- * approved capture bytes, and the user's recorded answer.
+ * An approved surface must still be the thing the user approved: a real story export (syntax tree, not
+ * text), a literal visual case dispatched to the hash-pinned checker that runs every axis, the approved
+ * capture bytes, a real decision date and the user's recorded answer.
  */
-export function validateApprovedSurface(entry, { storySource, visualSource, availableSnapshots, captureBytes, captureSha256, approvalSource }) {
+export function validateApprovedSurface(entry, {
+  storySource, visualSource, checker, checkerSource, checkerSha256, availableSnapshots, captureBytes, captureSha256, approvalSource,
+}) {
   const exports = exportedConstNames(parseTsx(storySource, entry.story.file));
   assert(exports.has(entry.story.export), `Approved surface ${entry.id}: story export ${entry.story.export} is missing.`);
-  validateApprovedVisualCase(entry, parseTsx(visualSource, 'storybook.visual.spec.ts'));
+  const visualFile = parseTsx(visualSource, 'storybook.visual.spec.ts');
+  validateApprovedVisualCase(entry, visualFile);
+  validateApprovedDispatch(visualFile);
+  assert(checker && checkerSha256 === checker.sha256,
+    `The approved-surface checker ${checker?.file} differs from its pinned SHA-256; re-pin it only after reviewing the change.`);
+  validateChecker(parseTsx(checkerSource, checker.file));
   assert(
     availableSnapshots.has(entry.visual.snapshot),
     `Approved surface ${entry.id}: visual snapshot ${entry.visual.snapshot} is missing.`,

@@ -67,12 +67,19 @@ assert(
 );
 
 // 2.0 reference: approved surfaces plus the 1.0 surfaces still guarded as legacy.
-const { approved, legacy, retired } = validateDesignReferenceManifest(reference, manifest);
+const { approved, legacy, retired, checker } = validateDesignReferenceManifest(reference, manifest);
+// The one helper every approved visual test runs, pinned so weakening it is a visible manifest change.
+const checkerPath = checker ? resolve(root, checker.file) : null;
+const checkerSource = checkerPath ? await readFile(checkerPath, 'utf8') : '';
+const checkerSha256 = checkerPath ? await sha256(checkerPath) : '';
 for (const entry of approved) {
   const capturePath = resolve(root, entry.capture.file);
   validateApprovedSurface(entry, {
     storySource: await readFile(resolve(root, entry.story.file), 'utf8'),
     visualSource,
+    checker,
+    checkerSource,
+    checkerSha256,
     availableSnapshots,
     captureBytes: await readFile(capturePath),
     captureSha256: await sha256(capturePath),
