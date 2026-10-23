@@ -58,10 +58,24 @@ function approved(overrides: Record<string, unknown> = {}) {
     id: 'shell-desktop',
     title: 'Desktop shell',
     story: { file: 'src/renderer/shell/Shell2.stories.tsx', export: 'DesktopShell' },
-    visual: { snapshot: 'shell-desktop.png' },
+    visual: { storyId: 'shell-2-0--desktop-shell', snapshot: 'shell-desktop.png' },
     capture: { file: 'docs/ux/reference/2.0/captures/shell-desktop.png', sha256: SHA },
-    approval: { record: 'docs/ux/overhaul/approvals.md#gate-2', decidedAt: '2026-11-01' },
+    approval: { record: 'docs/ux/overhaul/approvals.md#gate-2-shell', decidedAt: '2026-11-01' },
     replaces: ['workbench-agent-hub'],
+    ...overrides,
+  };
+}
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+
+function approvedEvidence(overrides: Record<string, unknown> = {}) {
+  return {
+    storySource: 'export const DesktopShell: Story = {};',
+    visualSource: 'const cases = [{ storyId: "shell-2-0--desktop-shell", screenshot: "shell-desktop.png" }];',
+    availableSnapshots: new Set(['shell-desktop.png']),
+    captureBytes: PNG,
+    captureSha256: SHA,
+    approvalSource: ['# ux2 기록', '', '## Gate 2 shell', '', '결정 답변'].join('\n'),
     ...overrides,
   };
 }
@@ -101,17 +115,26 @@ describe('2.0 design reference manifest', () => {
     expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('capture.sha256');
   });
 
-  it('checks an approved surface against its story export, visual snapshot and capture bytes', () => {
+  it('checks an approved surface against a real story export, visual case, capture and recorded decision', () => {
     const entry = approved();
-    const ok = {
-      storySource: 'export const DesktopShell: Story = {};',
-      availableSnapshots: new Set(['shell-desktop.png']),
-      captureSha256: SHA,
+    expect(() => validateApprovedSurface(entry, approvedEvidence())).not.toThrow();
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ storySource: ['// export const DesktopShell = 1;', 'const DesktopShell = {};'].join('\n') }))).toThrow('DesktopShell');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ visualSource: 'const cases = [{ storyId: "other" }];' }))).toThrow('visual case');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ availableSnapshots: new Set() }))).toThrow('shell-desktop.png');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ captureSha256: 'b'.repeat(64) }))).toThrow('capture');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ captureBytes: new Uint8Array([1, 2, 3]) }))).toThrow('PNG');
+    expect(() => validateApprovedSurface(entry, approvedEvidence({ approvalSource: ['# ux2 기록', '', '## Gate 1'].join('\n') }))).toThrow('gate-2-shell');
+    expect(() => validateApprovedSurface(approved({ approval: { record: 'docs/ux/overhaul/approvals.md#gate-2-shell', decidedAt: 'soon' } }), approvedEvidence())).toThrow('decidedAt');
+  });
+
+  it('retires the story and visual checks of a replaced 1.0 surface but keeps the rest', () => {
+    const fixture = readFixture();
+    const withoutMonitor = {
+      ...fixture,
+      storySource: fixture.storySource.replace('export const Monitor: Story', 'const Monitor: Story'),
     };
-    expect(() => validateApprovedSurface(entry, ok)).not.toThrow();
-    expect(() => validateApprovedSurface(entry, { ...ok, storySource: 'const DesktopShell = {};' })).toThrow('DesktopShell');
-    expect(() => validateApprovedSurface(entry, { ...ok, availableSnapshots: new Set() })).toThrow('shell-desktop.png');
-    expect(() => validateApprovedSurface(entry, { ...ok, captureSha256: 'b'.repeat(64) })).toThrow('capture');
+    expect(() => validateDesktopHandoffContract(withoutMonitor)).toThrow('Monitor');
+    expect(() => validateDesktopHandoffContract({ ...withoutMonitor, retiredSurfaceIds: ['monitor'] })).not.toThrow();
   });
 });
 

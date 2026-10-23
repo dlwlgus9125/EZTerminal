@@ -296,15 +296,16 @@ function validateStories(manifest, storySource) {
   assert(title, 'Desktop handoff stories must keep the manifest-bound Storybook title.');
 }
 
-function validateCanonicalCases(manifest, sourceFile, availableSnapshots) {
+function validateCanonicalCases(manifest, sourceFile, availableSnapshots, retiredStoryIds = new Set()) {
   assert(
     availableSnapshots instanceof Set,
     'Desktop handoff guard requires the availableSnapshots file set.',
   );
+  // A retired surface's old case may linger until it is deleted; it is no longer the reference.
   const cases = objectElements(
     arrayVariable(sourceFile, 'desktopHandoffCases'),
     'desktopHandoffCases',
-  );
+  ).filter((visualCase) => !retiredStoryIds.has(stringValue(propertyValue(visualCase, 'storyId'))));
   assert(
     cases.length === manifest.surfaces.length,
     'Canonical visual cases must map one-to-one to manifest surfaces.',
@@ -585,6 +586,7 @@ export function validateDesignReferenceManifest(manifest, legacyManifest) {
     requireString(entry.title, `${entry.id}.title`);
     requireString(entry.story?.file, `${entry.id}.story.file`);
     requireString(entry.story?.export, `${entry.id}.story.export`);
+    requireString(entry.visual?.storyId, `${entry.id}.visual.storyId`);
     requireString(entry.visual?.snapshot, `${entry.id}.visual.snapshot`);
     requireString(entry.capture?.file, `${entry.id}.capture.file`);
     assert(SHA256.test(entry.capture?.sha256 ?? ''), `2.0 reference ${entry.id}.capture.sha256 must be a lowercase SHA-256.`);
@@ -611,18 +613,45 @@ export function validateDesignReferenceManifest(manifest, legacyManifest) {
   return { approved: [...manifest.approved], legacy, retired };
 }
 
-/** An approved surface must still match its story export, snapshot and capture bytes. */
-export function validateApprovedSurface(entry, { storySource, availableSnapshots, captureSha256 }) {
-  const exportPattern = new RegExp(`export\\s+const\\s+${entry.story.export}\\b`, 'u');
-  assert(exportPattern.test(storySource), `Approved surface ${entry.id}: story export ${entry.story.export} is missing.`);
+/** Same slug rule as scripts/docs-contract-check-core.mjs, for approval-record anchors. */
+function headingSlugs(source) {
+  const slugs = new Set();
+  const counts = new Map();
+  for (const match of source.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gmu)) {
+    const base = match[1].trim().toLocaleLowerCase('en-US')
+      .replace(/[`*_~]/gu, '').replace(/[^\p{Letter}\p{Number}\s-]/gu, '').replace(/\s+/gu, '-').replace(/-+/gu, '-');
+    const count = counts.get(base) ?? 0;
+    counts.set(base, count + 1);
+    slugs.add(count === 0 ? base : `${base}-${count}`);
+  }
+  return slugs;
+}
+
+/**
+ * An approved surface must still be the thing the user approved: a real story
+ * export (syntax tree, not text), a visual case that renders that story into the
+ * named snapshot, the approved capture bytes, and a recorded decision.
+ */
+export function validateApprovedSurface(entry, { storySource, visualSource, availableSnapshots, captureBytes, captureSha256, approvalSource }) {
+  const exports = exportedConstNames(parseTsx(storySource, entry.story.file));
+  assert(exports.has(entry.story.export), `Approved surface ${entry.id}: story export ${entry.story.export} is missing.`);
+  const literals = stringLiteralsWithin(parseTsx(visualSource, 'storybook.visual.spec.ts'));
+  assert(
+    literals.has(entry.visual.storyId) && literals.has(entry.visual.snapshot),
+    `Approved surface ${entry.id}: no visual case renders ${entry.visual.storyId} into ${entry.visual.snapshot}.`,
+  );
   assert(
     availableSnapshots.has(entry.visual.snapshot),
     `Approved surface ${entry.id}: visual snapshot ${entry.visual.snapshot} is missing.`,
   );
+  assertCanonicalPng(captureBytes, entry.capture.file);
   assert(
     captureSha256 === entry.capture.sha256,
     `Approved surface ${entry.id}: capture ${entry.capture.file} differs from the approved bytes.`,
   );
+  assert(/^\d{4}-\d{2}-\d{2}$/u.test(entry.approval.decidedAt), `Approved surface ${entry.id}: approval.decidedAt must be YYYY-MM-DD.`);
+  const anchor = entry.approval.record.split('#')[1];
+  assert(anchor && headingSlugs(approvalSource).has(anchor), `Approved surface ${entry.id}: approval record has no heading #${anchor}.`);
 }
 
 /**
@@ -633,20 +662,30 @@ export function validateDesktopHandoffContract({
   availableSnapshots,
   e2eSource,
   manifest,
+  retiredSurfaceIds = [],
   storySource,
   visualSource,
 }) {
+  // The archived manifest itself is immutable and always complete.
   validateManifest(manifest);
-  validateStories(manifest, storySource);
+  // A 1.0 surface replaced by an approved 2.0 surface retires its story and visual case.
+  const retired = new Set(retiredSurfaceIds);
+  const active = { ...manifest, surfaces: manifest.surfaces.filter((surface) => !retired.has(surface.id)) };
+  validateStories(active, storySource);
   const visualFile = parseTsx(visualSource, 'storybook.visual.spec.ts');
+  const retiredStoryIds = new Set(manifest.surfaces.filter((surface) => retired.has(surface.id)).map((surface) => surface.storyId));
   const canonicalSnapshots = validateCanonicalCases(
-    manifest,
+    active,
     visualFile,
     availableSnapshots,
+    retiredStoryIds,
   );
-  validateResponsiveAxes(visualFile);
-  validateFixtureIntegrity(visualFile);
-  validateReducedMotion(visualFile);
-  validateElectronGeometryAndFocus(e2eSource);
+  // Shell-wide axes stay guarded while any 1.0 surface is still the reference.
+  if (active.surfaces.length > 0) {
+    validateResponsiveAxes(visualFile);
+    validateFixtureIntegrity(visualFile);
+    validateReducedMotion(visualFile);
+    validateElectronGeometryAndFocus(e2eSource);
+  }
   return { canonicalSnapshots };
 }

@@ -67,12 +67,16 @@ assert(
 );
 
 // 2.0 reference: approved surfaces plus the 1.0 surfaces still guarded as legacy.
-const { approved, legacy } = validateDesignReferenceManifest(reference, manifest);
+const { approved, legacy, retired } = validateDesignReferenceManifest(reference, manifest);
 for (const entry of approved) {
+  const capturePath = resolve(root, entry.capture.file);
   validateApprovedSurface(entry, {
     storySource: await readFile(resolve(root, entry.story.file), 'utf8'),
+    visualSource,
     availableSnapshots,
-    captureSha256: await sha256(resolve(root, entry.capture.file)),
+    captureBytes: await readFile(capturePath),
+    captureSha256: await sha256(capturePath),
+    approvalSource: await readFile(resolve(root, entry.approval.record.split('#')[0]), 'utf8'),
   });
 }
 
@@ -81,6 +85,7 @@ const { canonicalSnapshots } = validateDesktopHandoffContract({
   availableSnapshots,
   e2eSource,
   manifest,
+  retiredSurfaceIds: retired,
   storySource,
   visualSource,
 });
