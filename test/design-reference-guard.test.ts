@@ -115,11 +115,11 @@ function approvedEvidence(overrides: Record<string, unknown> = {}) {
 }
 
 describe('2.0 design reference manifest', () => {
-  it('accepts the checked-in manifest: the I1 shell is approved and every 1.0 handoff surface is still guarded as legacy', () => {
+  it('accepts the checked-in manifest: the I1 shell and the I2 flow are approved and every 1.0 handoff surface is still guarded as legacy', () => {
     const { manifest, legacyManifest } = readReference();
     const result = validateDesignReferenceManifest(manifest, legacyManifest);
     expect(result.legacy).toHaveLength(14);
-    expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual(['shell-board', 'shell-work-mode']);
+    expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual(['shell-board', 'shell-work-mode', 'flow-run-view']);
     expect(result.retired).toEqual([]);
   });
 

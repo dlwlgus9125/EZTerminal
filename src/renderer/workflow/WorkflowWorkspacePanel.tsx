@@ -23,7 +23,8 @@ import { useAgentStateLabel } from '../agent-state-label';
 import './workflow.css';
 
 type CommandInput<C = WorkflowCommand> = C extends WorkflowCommand ? Pick<C, 'type' | 'payload'> : never;
-type EditDraft = { graph: WorkflowGraph; baseRevision: number };
+/** `reduced`: an older version's reduced view, rebased on the host once it answers (see WorkflowDraftStateSchema). */
+type EditDraft = { graph: WorkflowGraph; baseRevision: number; reduced?: true };
 export interface WorkflowDaemonAccess {
   getDaemonSnapshot(): Promise<DaemonSnapshot | null>;
   sendDaemonCommand(command: StructuredAgentCreateCommand): Promise<DaemonCommandReceipt>;
@@ -155,29 +156,27 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [compareGraph, setCompareGraph] = useState(false);
   const hostId = snapshot?.hostId;
   const recovery = useMemo(() => recoveryAccess && hostId ? new WorkflowRecovery(projectId, hostId, recoveryAccess) : null, [projectId, hostId, recoveryAccess]);
-  /** The restored recovery came from an older version and is not rebased on the host yet (see the rebase effect). */
-  const olderState = useRef(false);
-  const [rebaseRequest, setRebaseRequest] = useState(0);
+  /** The shown flow is an older version's cached copy (a reduced view) and the host has not answered yet. */
+  const olderSnapshot = useRef(false);
   /**
-   * Takes a stored recovery in. An older version's one is a reduced view: it stays marked until its drafts are
-   * rebased on the host, and its unconfirmed graph save becomes a draft (resent from here it would drop what
-   * that version could not see).
+   * Takes a stored recovery in. What an older version kept (read from its place) is a reduced view: each of its
+   * drafts is marked for a rebase on the host, and its unconfirmed graph save becomes such a draft (resent from
+   * here it would drop what that version could not see). Drafts kept from this screen keep their own marks.
    */
   const adoptRecovery = (saved: WorkflowDraftState, older: boolean, kept?: Record<string, EditDraft>): { drafts: Record<string, EditDraft>; pendingCommand: WorkflowCommand | null } => {
-    let next = kept ?? saved.drafts; let pendingCommand = saved.pendingCommand;
-    const reduced = older || saved.olderVersion === true;
-    if (reduced && pendingCommand?.type === 'workflow.patch' && pendingCommand.subprojectId) {
+    let next: Record<string, EditDraft> = kept ?? (older ? Object.fromEntries(Object.entries(saved.drafts).map(([id, draft]) => [id, { ...draft, reduced: true as const }])) : saved.drafts);
+    let pendingCommand = saved.pendingCommand;
+    if (older && pendingCommand?.type === 'workflow.patch' && pendingCommand.subprojectId) {
       const id = pendingCommand.subprojectId;
-      next = { ...next, [id]: next[id] ?? { graph: pendingCommand.payload.graph, baseRevision: pendingCommand.expectedRevision } };
+      next = { ...next, [id]: next[id] ?? { graph: pendingCommand.payload.graph, baseRevision: pendingCommand.expectedRevision, reduced: true } };
       pendingCommand = null;
     }
-    if (reduced) { olderState.current = true; setRebaseRequest(count => count + 1); }
     return { drafts: next, pendingCommand };
   };
   const recoveryExtras = useRef<Pick<WorkflowDraftState, 'creation' | 'view' | 'snapshot'>>({});
   recoveryExtras.current = { snapshot: snapshot ?? undefined, creation: create ?? undefined, view: { subprojectId: selectedId ?? undefined, nodeId: nodeId ?? undefined, page: view, scrollTop },
-    // Kept with every save until the drafts are rebased on the host (an offline save or a restart must not lose it).
-    ...(olderState.current ? { olderVersion: true as const } : {}) };
+    // Kept with every save of that cached copy (an offline save or a restart must not lose it).
+    ...(olderSnapshot.current ? { olderVersion: true as const } : {}) };
   const cachedRevision = snapshot ? `${snapshot.hostId}:${snapshot.registryRevision}:${snapshot.subprojects.map(item => `${item.id}:${item.revision}`).join(',')}:${snapshot.runs.map(run => `${run.runId}:${run.revision}`).join(',')}` : '';
   const persist = useCallback(async (state: WorkflowDraftState): Promise<void> => {
     if (!recovery) return;
@@ -188,7 +187,6 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     if (!recovery) return;
     let current = true; setRecoveryReady(false);
     void recovery.read().then(saved => { if (current) { if (saved) {
-      olderState.current = false;
       const restored = adoptRecovery(saved, recovery.olderVersion);
       setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) { setConversationRecovery(saved.pendingConversation); setChatPending(saved.pendingConversation.command); setChatTarget({ subprojectId: saved.pendingConversation.subprojectId, nodeId: saved.pendingConversation.nodeId, scope: saved.pendingConversation.scope, previewId: saved.pendingConversation.previewId }); } } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
@@ -198,24 +196,22 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     const timer = window.setTimeout(() => { void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
     return () => window.clearTimeout(timer);
   }, [drafts, pending, conversationRecovery, create, selectedId, nodeId, view, scrollTop, recoveryReady, persist, projectId, hostId, cachedRevision, recoveryError]);
-  // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too):
-  // every draft, including one made offline from that copy, and only once the host has answered.
+  // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too), once the
+  // host has answered: only the drafts marked so, never one made or kept on this version's full view.
+  const reducedDrafts = Object.values(drafts).some(draft => draft.reduced);
   useEffect(() => {
-    if (!snapshot || !authorityReady || !recoveryReady || !olderState.current) return;
-    olderState.current = false;
+    if (!snapshot || !authorityReady || !recoveryReady || !reducedDrafts) return;
     setDrafts(current => {
       let next = current;
-      for (const id of Object.keys(current)) {
-        const draft = current[id]; const saved = snapshot.subprojects.find(item => item.id === id);
-        if (!draft || !saved) continue;
-        const graph = withHiddenFlowFields(draft.graph, saved.graph);
-        if (graph !== draft.graph) { if (next === current) next = { ...current }; next[id] = { ...draft, graph }; }
+      for (const [id, draft] of Object.entries(current)) {
+        const saved = draft.reduced ? snapshot.subprojects.find(item => item.id === id) : undefined;
+        if (!saved) continue;
+        if (next === current) next = { ...current };
+        next[id] = { graph: withHiddenFlowFields(draft.graph, saved.graph), baseRevision: draft.baseRevision };
       }
       return next;
     });
-    // The recovery read finishes after the host's first answer, and a recovery taken in by hand comes later
-    // still: both trigger this too.
-  }, [snapshot, authorityReady, recoveryReady, rebaseRequest]);
+  }, [snapshot, authorityReady, recoveryReady, reducedDrafts]);
   useEffect(() => { if (recoveryReady && restoreScroll.current !== undefined && scrollElement.current) { scrollElement.current.scrollTop = restoreScroll.current; restoreScroll.current = undefined; } }, [recoveryReady, selectedId, view]);
   const mutating = useRef(false);
   const refreshGeneration = useRef(0);
@@ -229,7 +225,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       const result = WorkflowDraftResultSchema.parse(value);
       if (!current || currentHost.current || !result.ok || result.snapshot.projectId !== projectId) return;
       const cached = result.snapshot.state?.snapshot;
-      if (cached && cached.projectId === projectId && cached.hostId === result.snapshot.state?.hostId) { setSnapshot(cached); setLoading(false); }
+      if (cached && cached.projectId === projectId && cached.hostId === result.snapshot.state?.hostId) { olderSnapshot.current = result.snapshot.olderVersion === true || result.snapshot.state?.olderVersion === true; setSnapshot(cached); setLoading(false); }
     }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
   }, [disabled, hostId, projectId, recoveryAccess]);
@@ -267,7 +263,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         }
         const previousSnapshot = recoveryExtras.current.snapshot;
         setDrafts(current => rebaseUnchangedGraphs(current, previousSnapshot, result.snapshot));
-        currentHost.current = result.snapshot.hostId; setAuthorityReady(true); setSnapshot(result.snapshot); setError(null);
+        currentHost.current = result.snapshot.hostId; olderSnapshot.current = false; setAuthorityReady(true); setSnapshot(result.snapshot); setError(null);
       }
       else { setAuthorityReady(false); setError(result.message); }
     } catch (reason) { if (generation === refreshGeneration.current) { setAuthorityReady(false); setError(String(reason)); } }
@@ -346,7 +342,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     } catch (reason) { setError(`${text('응답을 확인하지 못했습니다. 같은 요청으로 확인하세요.', 'No confirmed receipt. Reconcile the same request.')} ${String(reason)}`); return false; }
     finally { mutating.current = false; setBusy(false); }
   };
-  const updateGraph = (value: WorkflowGraph): void => { if (selected && !editLocked) setDrafts(current => ({ ...current, [selected.id]: { graph: value, baseRevision: current[selected.id]?.baseRevision ?? selected.revision } })); };
+  // A draft keeps its own mark; one started on an older version's cached flow is marked too (see the rebase effect).
+  const updateGraph = (value: WorkflowGraph): void => {
+    if (selected && !editLocked) setDrafts(current => { const draft = current[selected.id]; return { ...current, [selected.id]: { graph: value, baseRevision: draft?.baseRevision ?? selected.revision, ...((draft ? draft.reduced : olderSnapshot.current) ? { reduced: true as const } : {}) } }; });
+  };
   const saveGraph = async (): Promise<void> => {
     if (!selected || !local) return;
     const next = cleanGraph(local.graph);

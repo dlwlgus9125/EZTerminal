@@ -13,12 +13,13 @@ const recoveryGraph = WorkflowGraphSchema.extend({ nodes: z.array(WorkflowNodeSc
 export const WorkflowDraftStateSchema = z.object({
   projectId: WorkflowIdSchema, hostId: WorkflowIdSchema,
   snapshot: z.custom<WorkflowSnapshot>(value => WorkflowSnapshotSchema.safeParse(value).success).optional(),
-  drafts: z.record(WorkflowIdSchema, z.object({ baseRevision: revision, graph: recoveryGraph }).strict()),
-  pendingCommand: WorkflowCommandSchema.nullable(),
   /**
-   * This recovery (its cached flow and every draft made from it) comes from an app before remote protocol
-   * v17 and is not rebased on the host yet: kept across saves and restarts until it is.
+   * `reduced`: this draft is an older version's reduced view (made by an app before remote protocol v17, or
+   * here on such an app's cached flow) and is not rebased on the host yet: kept across saves and restarts until it is.
    */
+  drafts: z.record(WorkflowIdSchema, z.object({ baseRevision: revision, graph: recoveryGraph, reduced: z.literal(true).optional() }).strict()),
+  pendingCommand: WorkflowCommandSchema.nullable(),
+  /** The cached flow (`snapshot`) is an older version's reduced view: a draft started on it is `reduced`. */
   olderVersion: z.literal(true).optional(),
   creation: z.object({ id: WorkflowIdSchema, title: z.string().max(300), goal: z.string().max(65_536), preset: z.enum(['feature', 'fix', 'research', 'parallel', 'custom']), mode: z.enum(['preset', 'conversation']), graph: recoveryGraph, previewSessionId: WorkflowIdSchema.optional(), previewRevision: revision.optional(), linkSessionId: WorkflowIdSchema.optional() }).strict().optional(),
   view: z.object({ subprojectId: WorkflowIdSchema.optional(), nodeId: WorkflowIdSchema.optional(), page: z.enum(['flow', 'stage', 'history', 'run', 'planning']), scrollTop: z.number().finite().nonnegative() }).strict().optional(),

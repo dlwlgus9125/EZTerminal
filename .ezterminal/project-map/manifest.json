@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:45ce9077685a345863f3c9e98d81c3fa923e91e971a529360f010dc75aa42e46",
+        "inputDigest": "sha256:317e1c918d769bbee00f7bf73f9094b172b71706ecc4c913ecf4cec5788263b1",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 checkpoint A): an older app's recovery stays marked (olderVersion in the saved state) through offline saves and restarts until every draft is rebased on the host's flow. Claims hold."
+        "reason": "Reviewed (I2-4 checkpoint A): an older app's drafts are marked one by one (reduced) and only those are rebased on the host once it answers; drafts kept from this version are never refilled. Claims hold."
       }
     }
   ]

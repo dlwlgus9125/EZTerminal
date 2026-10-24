@@ -224,7 +224,7 @@ describe('workflow project workspace', () => {
     await edit('Stage document', 'Offline edit on the older copy');
     await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
     expect(stored.state.olderVersion).toBe(true);
-    expect(stored.state.drafts.login).toBeDefined();
+    expect(stored.state.drafts.login?.reduced).toBe(true);
     // Restarted and online: the draft is rebased before it is saved.
     await act(async () => root.render(<WorkflowWorkspacePanel key="online" projectId={snapshot.projectId} projectName="Project" access={online} recoveryAccess={recovery} conversations={[]} />));
     await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
@@ -236,6 +236,38 @@ describe('workflow project workspace', () => {
     // Rebased: later saves no longer carry the mark.
     await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
     expect(stored.state.olderVersion).toBeUndefined();
+    expect(Object.values(stored.state.drafts).some(draft => draft.reduced)).toBe(false);
+  });
+  it('keeps current input as it is when an older recovery turns up on a storage conflict', async () => {
+    const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
+    const hostSnapshot = { ...snapshot, subprojects: snapshot.subprojects.map((item, index) => index === 0 ? { ...item, graph: { ...item.graph, nodes: item.graph.nodes.map(node => node.id === stage.id ? { ...node, reasoningEffort: 'high' } : node) } } : item) };
+    const reduced = snapshot.subprojects[0]!.graph;
+    const withDocument = (document: string) => ({ ...reduced, nodes: reduced.nodes.map(node => node.id === stage.id ? { ...node, document } : node) });
+    const view = { subprojectId: 'login', nodeId: stage.id, page: 'stage' as const, scrollTop: 0 };
+    // This version's draft took the effort off on purpose.
+    const current: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, pendingCommand: null, view, drafts: { login: { baseRevision: hostSnapshot.subprojects[0]!.revision, graph: withDocument('Current edit') } } };
+    const olderDraft = { projectId: snapshot.projectId, hostId: snapshot.hostId, pendingCommand: null, view, drafts: { login: { baseRevision: 2, graph: withDocument('Older app edit') } } };
+    // Another writer saved first: an older version's recovery, by its place or by its mark.
+    for (const [key, stored, olderPlace] of [['place', olderDraft, true], ['mark', { ...olderDraft, olderVersion: true as const }, false]] as const) {
+      const commands: WorkflowCommand[] = [];
+      const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot: hostSnapshot }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot: hostSnapshot, commandId: command.commandId }; } };
+      let reads = 0; let writes = 0;
+      const recovery: WorkflowDraftAccess = {
+        workflowDraftRead: async () => { reads += 1; return reads === 1 ? { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: current } } : { ok: true, snapshot: { projectId: snapshot.projectId, revision: 2, state: stored as WorkflowDraftState, ...(olderPlace ? { olderVersion: true as const } : {}) } }; },
+        workflowDraftWrite: async (_, request) => { writes += 1; return writes === 1 ? { ok: false, error: 'stale', message: 'Changed elsewhere' } : { ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }; },
+      };
+      await act(async () => root.render(<WorkflowWorkspacePanel key={key} projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+      await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+      await click('Read stored draft');
+      await click('Keep current input');
+      expect(stageDocument()).toBe('Current edit');
+      await click('Save draft');
+      const command = commands.at(-1);
+      if (command?.type !== 'workflow.patch') throw new Error('No graph save');
+      const node = command.payload.graph.nodes.find(item => item.id === stage.id)!;
+      expect(node.document).toBe('Current edit');
+      expect(node).not.toHaveProperty('reasoningEffort');
+    }
   });
   it('rebases an older app’s recovery taken in by hand after a failed read', async () => {
     const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
