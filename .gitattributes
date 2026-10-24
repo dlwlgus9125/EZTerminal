@@ -20,3 +20,6 @@ mobile/android/gradlew text eol=lf
 /docs/ux/reference/desktop-handoff/*.js text eol=lf
 /docs/ux/reference/desktop-handoff/*.json text eol=lf
 /docs/ux/reference/desktop-handoff/*.png binary
+# The approved 2.0 references pin the checker and captures by SHA-256, so their bytes must not depend on checkout settings.
+/visual/design-reference-checks.ts text eol=lf
+/docs/ux/reference/2.0/captures/*.png binary

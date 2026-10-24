@@ -1,109 +1,31 @@
-import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "./test";
+import { checkReferenceSurface, expectNoAccessibilityViolations, openStory, type Locale } from "./design-reference-checks";
 
-const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
+// Approved 2.0 design references (docs/ux/reference/2.0/manifest.json). This
+// spec only dispatches them; every check lives in the hash-pinned checker.
+const designReferenceCases = [
+  {
+    storyId: "compositions-shell-2-0--board-reference",
+    screenshot: "reference-2-0-shell-board-matrix-ko.png",
+    readySelector: "[data-testid='shell-flow-card']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+  {
+    storyId: "compositions-shell-2-0--work-mode-reference",
+    screenshot: "reference-2-0-shell-work-mode-matrix-ko.png",
+    readySelector: "[data-testid='shell-top-waits']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
+] as const;
 
-type Theme = "matrix" | "dark" | "light" | "high-contrast";
-type Density = "adaptive" | "compact" | "comfortable";
-type Locale = "en" | "ko";
-type Motion = "default" | "reduced";
-
-interface StoryOptions {
-  readonly density: Density;
-  /** Leave product motion CSS untouched for assertions about reduced motion. */
-  readonly freezeAnimations?: boolean;
-  readonly locale: Locale;
-  readonly motion: Motion;
-  readonly scale?: 100 | 150;
-  readonly theme: Theme;
-}
-
-async function openStory(
-  page: Page,
-  storyId: string,
-  options: StoryOptions,
-): Promise<void> {
-  const scale = options.scale ?? 100;
-  const globals = `theme:${options.theme};locale:${options.locale};density:${options.density};uiScale:${scale}`;
-  const readyKey = `${storyId}|${options.theme}|${options.locale}|${options.density}|${scale}`;
-  await page.emulateMedia({
-    reducedMotion: options.motion === "reduced" ? "reduce" : "no-preference",
+for (const item of designReferenceCases) {
+  test(item.storyId, async ({ page }) => {
+    await checkReferenceSurface(page, item);
   });
-  await page.goto(
-    `/iframe.html?id=${storyId}&viewMode=story&globals=${encodeURIComponent(globals)}`,
-    {
-      // StoryReadyBoundary below is the product-specific readiness authority.
-      // Waiting for Vite/Storybook's dev-server network to go fully idle makes
-      // the first visual case depend on dependency warm-up and HMR traffic.
-      waitUntil: "domcontentloaded",
-    },
-  );
-  await expect(page.locator("html")).toHaveAttribute("data-story-ready", readyKey, {
-    timeout: 60_000,
-  });
-  await expect(page.locator("#storybook-root")).toBeVisible();
-  if (options.freezeAnimations !== false) {
-    await page.addStyleTag({
-      content: `
-        *, *::before, *::after {
-          animation-delay: 0s !important;
-          animation-duration: 0s !important;
-          caret-color: transparent !important;
-          transition-delay: 0s !important;
-          transition-duration: 0s !important;
-        }
-        html[data-effect-crt-rollbar="on"] body::after {
-          animation: none !important;
-          background-position: 0 35vh !important;
-        }
-      `,
-    });
-  }
-
-  const root = page.locator("html");
-  await expect(root).toHaveAttribute("data-theme", options.theme);
-  await expect(root).toHaveAttribute("data-density", options.density);
-  await expect(root).toHaveAttribute("lang", options.locale);
-  await expect(root).toHaveAttribute(
-    "data-ui-scale",
-    String(scale),
-  );
-  expect(
-    await page.evaluate(
-      () => matchMedia("(prefers-reduced-motion: reduce)").matches,
-    ),
-  ).toBe(options.motion === "reduced");
-  if (options.scale === 150) {
-    expect(
-      await root.evaluate((element) => getComputedStyle(element).fontSize),
-    ).toBe("24px");
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-  }
-}
-
-async function expectNoAccessibilityViolations(page: Page): Promise<void> {
-  let results: Awaited<ReturnType<AxeBuilder["analyze"]>> | null = null;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
-      break;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("Axe is already running") || attempt === 39) throw error;
-      // Storybook's accessibility addon can start its own audit on story load.
-      // Wait for that authoritative run rather than racing a second axe.run().
-      await page.waitForTimeout(250);
-    }
-  }
-  if (!results) throw new Error("Accessibility audit did not return a result");
-
-  expect(results.violations, "Story must satisfy WCAG 2.1 A/AA checks").toEqual(
-    [],
-  );
 }
 
 // Left-to-right order across the four header zones. The FX intensity control sits

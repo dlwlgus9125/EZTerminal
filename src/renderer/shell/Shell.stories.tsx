@@ -8,6 +8,7 @@ import { ShellTopBar } from './ShellTopBar';
 import { projectTabs } from './navigation-store';
 import { shellSnapshot, shellWorkflow } from './shell-fixtures';
 import { otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
+import { useSidebarReflow } from '../workbench/use-sidebar-overlay';
 import '../index.css';
 import '../structured-agent.css';
 import './shell.css';
@@ -38,11 +39,15 @@ interface ShellStoryArgs {
   readonly mode: 'board' | 'work';
   readonly project: 'p-ez' | null;
   readonly waiting: boolean;
+  /** Fill the viewport instead of the fixed 1440×900 frame (approved 2.0 reference stories). */
+  readonly fluid?: boolean;
   readonly onDecide: (approvalId: string, decision: 'allow' | 'deny') => void;
   readonly onOpenConversation: (sessionId: string) => void;
 }
 
 function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly locale: 'ko' | 'en' }): JSX.Element {
+  // The app folds the work list to a strip below 1100px; a fluid reference follows the same rule.
+  const workListRoom = useSidebarReflow('(min-width: 1100px)');
   const snapshot = shellSnapshot({ waiting: args.waiting });
   const projectId = args.project;
   const conversations = projectId ? projectConversations(snapshot, projectId) : [];
@@ -58,7 +63,7 @@ function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly 
   const ko = locale === 'ko';
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
-      <div className="ez-shell" style={{ width: 1440, height: 900 }} data-testid="shell-story">
+      <div className="ez-shell" style={args.fluid ? { width: '100vw', height: '100vh' } : { width: 1440, height: 900 }} data-testid="shell-story">
         <ShellTopBar
           mode={args.mode}
           projects={projectTabs(PROJECTS, projectId, 4)}
@@ -99,6 +104,7 @@ function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly 
         ) : (
           <div style={{ display: 'flex', flex: '1 1 auto', minHeight: 0 }}>
             <LiveList
+              folded={Boolean(args.fluid) && !workListRoom}
               projectName="EZTerminal"
               projectDetail="main"
               conversations={conversations}
@@ -177,5 +183,34 @@ export const WorkMode: Story = {
     await expect(rows[0]).toHaveAttribute('aria-current', 'true');
     await userEvent.click(rows[1]!);
     await expect(args.onOpenConversation).toHaveBeenCalledWith('s-pdf');
+  },
+};
+
+/**
+ * Approved 2.0 references (docs/ux/reference/2.0/manifest.json). They pin neither
+ * locale nor theme, so the reference checker can render them in both languages,
+ * and they fill the viewport so every checked size is a real layout.
+ */
+export const BoardReference: Story = {
+  args: { fluid: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getAllByTestId('shell-need')).toHaveLength(2);
+    await expect(canvas.getAllByTestId('shell-conversation-card')).toHaveLength(4);
+    await expect(canvas.getByTestId('shell-flow-card')).toHaveTextContent('#4');
+  },
+};
+
+export const WorkModeReference: Story = {
+  args: { mode: 'work', fluid: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId('shell-top-waits')).toHaveTextContent('2');
+    // A column from 1100px, a folded strip below — the same rule as the app.
+    if (window.matchMedia('(min-width: 1100px)').matches) {
+      await expect(canvas.getAllByTestId('shell-live-row')[0]).toHaveAttribute('aria-current', 'true');
+    } else {
+      await expect(canvas.getByTestId('shell-live-strip')).toBeVisible();
+    }
   },
 };

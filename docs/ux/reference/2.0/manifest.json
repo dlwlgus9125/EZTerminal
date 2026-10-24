@@ -21,5 +21,52 @@
       "explorer-breadcrumb"
     ]
   },
-  "approved": []
+  "approvedChecker": {
+    "file": "visual/design-reference-checks.ts",
+    "sha256": "45ac3bdf4f0141f1b6abd4399b2dc94fafd36b3ab758a90cb3c5a10a4d326927"
+  },
+  "approved": [
+    {
+      "id": "shell-board",
+      "title": "Project board (Board + Desk)",
+      "story": {
+        "file": "src/renderer/shell/Shell.stories.tsx",
+        "export": "BoardReference"
+      },
+      "visual": {
+        "storyId": "compositions-shell-2-0--board-reference",
+        "snapshot": "reference-2-0-shell-board-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/shell-board.png",
+        "sha256": "d9f1f37a5a0e25ea258f217f989621c7a360e679a1683916781adcd015645972"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i1-셸",
+        "decidedAt": "2026-10-24"
+      },
+      "replaces": []
+    },
+    {
+      "id": "shell-work-mode",
+      "title": "Work mode shell (top bar, work list, tool row)",
+      "story": {
+        "file": "src/renderer/shell/Shell.stories.tsx",
+        "export": "WorkModeReference"
+      },
+      "visual": {
+        "storyId": "compositions-shell-2-0--work-mode-reference",
+        "snapshot": "reference-2-0-shell-work-mode-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/shell-work-mode.png",
+        "sha256": "b2fcf8eb961950df1093dae9b5f248d4e3eaabc1d4f3908faefdfb7a377b9ac5"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i1-셸",
+        "decidedAt": "2026-10-24"
+      },
+      "replaces": []
+    }
+  ]
 }
