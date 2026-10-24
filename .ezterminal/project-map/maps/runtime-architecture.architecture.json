@@ -147,25 +147,25 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1874,
-          "endLine": 1911,
+          "startLine": 1878,
+          "endLine": 1915,
           "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
           "claim": "The remote bridge binds an authenticated Android identity to each parsed v12-compatible daemon command and returns the authority receipt."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 494,
-          "endLine": 501,
+          "startLine": 496,
+          "endLine": 503,
           "lineDigest": "sha256:5015b8b9e8feaf09e40477ac1997ee3f8075408e28e6592a536a1b3799600ff0",
           "claim": "The remote history source records a successful launch with its exact target and a successful resume with its exact history identity."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/shared/remote-protocol.ts",
-          "startLine": 153,
-          "endLine": 177,
-          "lineDigest": "sha256:a26390aa09d2f97ffb90005d5a7f2b353dee10c65b84d13d98d66b27f65e2b32",
+          "startLine": 158,
+          "endLine": 183,
+          "lineDigest": "sha256:3490858c51cbb899185c8c190591c6d33e5354517441f025bf4b9da225276d67",
           "claim": "One baseline-v12 auth may offer a bounded supported-version list. New hosts choose the highest shared version; absent offers keep the requested supported version and existing feature floors."
         }
       ]
@@ -210,9 +210,9 @@
           "rootAlias": "app",
           "relativePath": "src/preload/preload.ts",
           "startLine": 199,
-          "endLine": 266,
-          "lineDigest": "sha256:445bbef99861677d65495505c141d605cd0c2e660e2aa37f4f82684a49d34e4d",
-          "claim": "The isolated preload exposes typed daemon, navigation-summary, workflow, capability, planning and encrypted draft calls bound to the application surface."
+          "endLine": 271,
+          "lineDigest": "sha256:54b8969f759a688d89494791f929cbfb9d26ef49c706c869f76625937769aeee",
+          "claim": "The isolated preload exposes typed daemon, navigation-summary, workflow (with run-change notices), capability, planning and encrypted draft calls bound to the application surface."
         },
         {
           "rootAlias": "app",
@@ -590,9 +590,9 @@
           "rootAlias": "app",
           "relativePath": "src/preload/preload.ts",
           "startLine": 199,
-          "endLine": 266,
-          "lineDigest": "sha256:445bbef99861677d65495505c141d605cd0c2e660e2aa37f4f82684a49d34e4d",
-          "claim": "The isolated preload exposes typed daemon, navigation-summary, workflow, capability, planning and encrypted draft calls bound to the application surface."
+          "endLine": 271,
+          "lineDigest": "sha256:54b8969f759a688d89494791f929cbfb9d26ef49c706c869f76625937769aeee",
+          "claim": "The isolated preload exposes typed daemon, navigation-summary, workflow (with run-change notices), capability, planning and encrypted draft calls bound to the application surface."
         },
         {
           "rootAlias": "app",
@@ -639,8 +639,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1116,
-          "endLine": 1231,
+          "startLine": 1118,
+          "endLine": 1233,
           "lineDigest": "sha256:a03a5abaea7d1253cc5e798f2c8af93ec0f7e18b0bfd9bf12364a047befc328c",
           "claim": "A single auth offer negotiates a supported version after validating credentials and client identity. Failed negotiation consumes no pairing code and returns failure instead of retrying a lower version."
         }

@@ -125,9 +125,16 @@ function useWorkflow(projectId: string | null, revision: number | undefined): Wo
     };
     readRef.current = read;
     read();
-    // A run moves through its stages without changing the daemon revision every time: read again now and then.
+    // A run moves through its stages without changing the daemon revision: the host says when this
+    // project's runs changed; the slow timer only covers a missed notice.
+    // An active run commits often: coalesce a burst of notices into one read.
+    let pending: number | undefined;
+    const unsubscribe = window.ezterminal.onWorkflowRunsChanged?.((changed) => {
+      if (changed !== projectId || pending !== undefined) return;
+      pending = window.setTimeout(() => { pending = undefined; read(); }, 300);
+    });
     const timer = window.setInterval(read, 10_000);
-    return () => { alive = false; window.clearInterval(timer); };
+    return () => { alive = false; window.clearInterval(timer); if (pending !== undefined) window.clearTimeout(pending); unsubscribe?.(); };
   }, [projectId]);
   useEffect(() => {
     if (revision === undefined) return undefined;

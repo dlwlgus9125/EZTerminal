@@ -4,7 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import {
   WorkflowCommandSchema, WorkflowRegistrySchema, WorkflowSubprojectSchema, createWorkflowGraph, validateWorkflowGraph, LEGACY_SUBPROJECT_ID,
-  WorkflowPreviewRequestSchema, WorkflowGraphSchema, type WorkflowPreview, type WorkflowPreviewResult,
+  WorkflowPreviewRequestSchema, WorkflowGraphSchema, workflowPrincipalIdentity, type WorkflowPreview, type WorkflowPreviewResult,
   type WorkflowCommand, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowResult, type WorkflowSubproject,
   type WorkflowNavigationResult, type WorkflowNavigationSnapshot,
 } from '../shared/workflow';
@@ -12,6 +12,7 @@ import type { ExecutionRun } from '../shared/planning-execution';
 import type { WorkflowConversationContext } from '../shared/workflow-conversation';
 import { PlanningSnapshotSchema } from '../shared/planning';
 import { copyWorkflowPlanning } from './workflow-planning-copy';
+import { flowV17Fields } from '../shared/workflow-protocol-projection';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 
@@ -181,18 +182,28 @@ export class WorkflowService {
     const result = await this.read(projectId);
     return result.ok && result.snapshot.subprojects.some(entry => entry.id === subprojectId && (!writing || entry.status !== 'archived'));
   }
+  /** `owns` for callers holding the execution gate: reads the committed file without this service's gate. */
+  async ownsCommitted(projectId: string, subprojectId: string, writing = false): Promise<boolean> {
+    try {
+      const registry = await this.readCommitted(projectId);
+      return registry.subprojects.some(entry => entry.id === subprojectId && (!writing || entry.status !== 'archived'));
+    } catch { return false; }
+  }
+  // The daemon asks these two while a stage or review prompt is being submitted, which can happen under
+  // the execution gate: they read the committed file and never wait for this service's gate.
   async conversationWritable(projectId: string, sessionId: string): Promise<boolean> {
-    const result = await this.read(projectId);
-    if (!result.ok) return false;
-    const link = this.conversationLink(result.snapshot, sessionId);
+    let registry: WorkflowRegistry;
+    try { registry = await this.readCommitted(projectId); } catch { return false; }
+    const link = this.conversationLink(registry, sessionId);
     if (!link) return true;
-    const owner = result.snapshot.subprojects.find(entry => entry.id === link.subprojectId);
+    const owner = registry.subprojects.find(entry => entry.id === link.subprojectId);
     return Boolean(owner && owner.status !== 'archived' && (!link.nodeId || owner.graph.nodes.some(node => node.id === link.nodeId)));
   }
   async conversationContext(projectId: string, sessionId: string): Promise<WorkflowConversationContext | undefined> {
-    const result = await this.read(projectId);
-    if (!result.ok) throw new Error(result.message);
-    const link = this.conversationLink(result.snapshot, sessionId);
+    let registry: WorkflowRegistry;
+    try { registry = await this.readCommitted(projectId); }
+    catch (error) { throw new Error(error instanceof Error ? error.message : 'Workflow state is unavailable.'); }
+    const link = this.conversationLink(registry, sessionId);
     if (!link || link.scope !== 'stage') return undefined;
     if (!link.referenceSnapshot) throw new Error('Refresh the saved stage references before sending.');
     return structuredClone(link.referenceSnapshot);
@@ -235,7 +246,7 @@ export class WorkflowService {
       try {
         if (command.hostId !== this.options.hostId) return failure('wrong-host', 'This command belongs to another execution host. Reconnect and read its state.');
         let loaded = await this.load(command.projectId);
-        const fingerprint = workflowDigest({ command, principal });
+        const fingerprint = workflowDigest({ command, principal: workflowPrincipalIdentity(principal) });
         const previous = loaded.file.receipts.find(entry => entry.commandId === command.commandId);
         if (previous && previous.fingerprint !== fingerprint) return failure('command-conflict', 'This command ID already belongs to a different edit.');
         if (previous && !previous.pending) return this.result(loaded.file.registry, command.commandId, true);
@@ -294,6 +305,7 @@ export class WorkflowService {
           Object.assign(subproject!, command.payload); subproject!.revision += 1; subproject!.updatedAt = now; registry.registryRevision += 1;
         } else if (command.type === 'workflow.patch' || command.type === 'workflow.undo') {
           const before = structuredClone(subproject!.graph);
+          const v17Before = flowV17Fields(subproject!);
           let graph; let undoOf: string | undefined; let summary: string;
           if (command.type === 'workflow.undo') {
             const change = subproject!.history.find(entry => entry.id === command.payload.changeId);
@@ -321,7 +333,10 @@ export class WorkflowService {
             subproject!.archivedNodes = [...subproject!.archivedNodes.filter(node => node.id !== removed.id), removed];
           }
           subproject!.archivedNodes = subproject!.archivedNodes.filter(node => !graph.nodes.some(active => active.id === node.id));
-          subproject!.graph = structuredClone(graph); subproject!.revision += 1; subproject!.updatedAt = now;
+          subproject!.graph = structuredClone(graph);
+          // A v16 reader sees a reduced view without the v17 fields; its edit must not silently drop or change them.
+          if (principal.reducedFlowView && flowV17Fields(subproject!) !== v17Before) return failure('unsupported', 'Update the Android app to edit this flow: it uses settings this app version cannot show.');
+          subproject!.revision += 1; subproject!.updatedAt = now;
           subproject!.history.push({ id: command.commandId, commandId: command.commandId, revision: subproject!.revision, createdAt: now, actor, summary, before, after: structuredClone(graph), ...(undoOf ? { undoOf } : {}) });
         } else if (command.type === 'session.link' || command.type === 'session.unlink' || command.type === 'session.refresh') {
           const session = this.options.session(command.payload.sessionId);
@@ -436,6 +451,30 @@ export class WorkflowService {
     const bytesHash = bytes ? createHash('sha256').update(bytes).digest('hex') : null;
     if (this.observed.has(target) && this.observed.get(target) !== bytesHash) throw new WorkflowFailure('external-change', 'Workflow data changed outside this host. Preserve edits and restart to reconcile the external file.');
     this.observed.set(target, bytesHash);
+    return { file: await this.parse(projectId, target, bytes, navigation), target, bytesHash };
+  }
+  /**
+   * The last committed registry without the project gate. Writes replace the file atomically, so a
+   * plain read sees one whole committed version. For callers that already hold the execution gate,
+   * which a gated read could deadlock against (WorkflowService.execute holds this gate while it waits
+   * for the execution gate).
+   */
+  private async readCommitted(projectId: string): Promise<WorkflowRegistry> {
+    const target = await this.target(projectId);
+    for (let attempt = 0; ; attempt += 1) {
+      const bytes = await fs.readFile(target).catch(error => { if (missing(error)) return null; throw error; });
+      const bytesHash = bytes ? createHash('sha256').update(bytes).digest('hex') : null;
+      // Same external-change rule as load(), without recording anything: a version this host never
+      // wrote or read is refused. A commit that just replaced the file records its hash right after
+      // the rename, so a mismatch is read once more before it counts.
+      if (this.observed.has(target) && this.observed.get(target) !== bytesHash) {
+        if (attempt === 0) { await new Promise(resolve => setImmediate(resolve)); continue; }
+        throw new WorkflowFailure('external-change', 'Workflow data changed outside this host. Preserve edits and restart to reconcile the external file.');
+      }
+      return (await this.parse(projectId, target, bytes, false)).registry;
+    }
+  }
+  private async parse(projectId: string, target: string, bytes: Buffer | null, navigation: boolean): Promise<WorkflowFile> {
     if (bytes) {
       if (bytes.length > MAX_BYTES) throw new WorkflowFailure('unavailable', 'The workflow registry exceeds the editing limit.');
       const parsed = fileSchema.safeParse(JSON.parse(bytes.toString('utf8')));
@@ -446,10 +485,10 @@ export class WorkflowService {
         if (!legacy.ok) throw new WorkflowFailure(legacy.error, legacy.message);
         for (const baseline of legacy.snapshot.baselines) parsed.data.registry.legacyBaselineOwners[baseline.id] = baseline.purpose === 'quick-task' ? null : LEGACY_SUBPROJECT_ID;
       }
-      return { file: parsed.data, target, bytesHash };
+      return parsed.data;
     }
     const legacy = await this.options.planning.read(projectId);
-    if (!legacy.ok && navigation) return { file: wrap({ schemaVersion: 1, projectId, registryRevision: 0, subprojects: [], sessionLinks: [], legacyBaselineOwners: {} }, []), target, bytesHash };
+    if (!legacy.ok && navigation) return wrap({ schemaVersion: 1, projectId, registryRevision: 0, subprojects: [], sessionLinks: [], legacyBaselineOwners: {} }, []);
     if (!legacy.ok) throw new WorkflowFailure(legacy.error, legacy.message);
     const hasLegacy = legacy.snapshot.revision > 0 || legacy.snapshot.baselines.length > 0 || Object.values(legacy.snapshot.draft).some(value => Array.isArray(value) && value.length > 0);
     const registry: WorkflowRegistry = { schemaVersion: 1, projectId, registryRevision: 0, subprojects: [], sessionLinks: [], legacyBaselineOwners: {} };
@@ -463,7 +502,7 @@ export class WorkflowService {
         createdAt, updatedAt, presetId: 'feature', graph: createWorkflowGraph('feature', LEGACY_SUBPROJECT_ID), history: [], archivedNodes: [], legacyPlanning: true });
       registry.legacyBaselineOwners = Object.fromEntries(legacy.snapshot.baselines.map(baseline => [baseline.id, baseline.purpose === 'quick-task' ? null : LEGACY_SUBPROJECT_ID]));
     }
-    return { file: wrap(registry, []), target, bytesHash };
+    return wrap(registry, []);
   }
   private async write(target: string, file: WorkflowFile, expectedHash: string | null): Promise<void> {
     this.validateRegistry(file.registry);

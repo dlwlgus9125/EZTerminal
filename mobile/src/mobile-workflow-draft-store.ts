@@ -11,27 +11,34 @@ async function exclusive<T>(secure: SecureStorageLike, key: string, work: () => 
   try { return await next; } finally { if (store.get(key) === next) store.delete(key); }
 }
 
-/** Android owns its encrypted workflow recovery; it never writes a desktop window's draft. */
+/**
+ * Android owns its encrypted workflow recovery; it never writes a desktop window's draft.
+ * This version saves under the `-v2` key: recovery may hold remote protocol v17 flow fields that an
+ * older app's strict schema rejects, so an older app keeps its own `-v1` value. A project with no
+ * v2 value yet reads the v1 value once and moves to v2 on the next save.
+ */
 export function mobileWorkflowDraftAccess(getToken: () => Promise<string>, secure: SecureStorageLike = SecureStoragePlugin): WorkflowDraftAccess {
   const capture = async (projectId: string) => {
     const token = await getToken();
     const authority = await mobileAgentCreateAuthorityFingerprint(token);
     const check = async (): Promise<void> => { if (await getToken() !== token) throw new Error('The connected authority changed. Reopen workflow recovery for this host.'); };
     await check();
-    const storageKey = `ezterminal-workflow-draft-v1:${authority.slice(7)}:${encodeURIComponent(projectId)}`;
+    const storageKey = `ezterminal-workflow-draft-v2:${authority.slice(7)}:${encodeURIComponent(projectId)}`;
+    const legacyKey = `ezterminal-workflow-draft-v1:${authority.slice(7)}:${encodeURIComponent(projectId)}`;
     const platform = await secure.getPlatform(); await check();
     if (platform.value !== 'android') throw new Error('Android secure workflow storage is unavailable.');
-    return { storageKey, check };
+    return { storageKey, legacyKey, check };
   };
   type Scope = Awaited<ReturnType<typeof capture>>;
-  const readCaptured = async (projectId: string, { storageKey, check }: Scope): Promise<WorkflowDraftResult> => {
+  const readCaptured = async (projectId: string, { storageKey, legacyKey, check }: Scope): Promise<WorkflowDraftResult> => {
     await check(); const keys = await secure.keys(); await check();
-    if (!keys.value.includes(storageKey)) return { ok: true, snapshot: { projectId, revision: 0, state: null } };
-    const raw = (await secure.get({ key: storageKey })).value; await check();
+    const key = keys.value.includes(storageKey) ? storageKey : keys.value.includes(legacyKey) ? legacyKey : null;
+    if (!key) return { ok: true, snapshot: { projectId, revision: 0, state: null } };
+    const raw = (await secure.get({ key })).value; await check();
     if (new TextEncoder().encode(raw).byteLength > 16 * 1024 * 1024) throw new Error('Workflow recovery is too large.');
     const stored = JSON.parse(raw) as { scope: string; revision: number; state: unknown };
     const state = WorkflowDraftStateSchema.parse(stored.state);
-    if (stored.scope !== storageKey || state.projectId !== projectId || !Number.isSafeInteger(stored.revision) || stored.revision < 0) throw new Error('Workflow recovery scope mismatch.');
+    if (stored.scope !== key || state.projectId !== projectId || !Number.isSafeInteger(stored.revision) || stored.revision < 0) throw new Error('Workflow recovery scope mismatch.');
     return { ok: true, snapshot: { projectId, revision: stored.revision, state } };
   };
   const failure = (reason: unknown): WorkflowDraftResult => ({ ok: false, error: 'unavailable', message: String(reason) });

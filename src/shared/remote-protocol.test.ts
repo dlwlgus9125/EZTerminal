@@ -4,6 +4,7 @@ import {
   base64ToUint8Array,
   decodeFrame,
   encodeFrame,
+  REMOTE_PROTOCOL_AUTH_BASELINE,
   REMOTE_PROTOCOL_VERSION,
   negotiateRemoteProtocol,
   uint8ArrayToBase64,
@@ -17,6 +18,9 @@ describe('single-offer remote protocol negotiation', () => {
   it('selects the highest shared version, retaining exact legacy requests without an offer', () => {
     expect(negotiateRemoteProtocol(12, [12, 14, 15, 13])).toBe(15);
     expect(negotiateRemoteProtocol(12, [16, 15, 12])).toBe(16);
+    expect(negotiateRemoteProtocol(12, [17, 16, 15, 14, 13, 12])).toBe(17);
+    // A new phone's single baseline offer still reaches an old host that only knows v12–v16.
+    expect(REMOTE_PROTOCOL_AUTH_BASELINE).toBe(12);
     expect(negotiateRemoteProtocol(14, undefined)).toBe(14);
     expect(negotiateRemoteProtocol(12, undefined)).toBe(12);
   });

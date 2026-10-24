@@ -76,6 +76,44 @@ async function fixture(directory = mkdtempSync(path.join(os.tmpdir(), 'eztermina
   return { directory, authority, ledger, send, makeTurn, prepare, start };
 }
 
+describe('PlanningExecutionStore commit notices', () => {
+  it('notifies after each new receipt, accepted or refused, and after restart recovery, never for a replay', async () => {
+    const f = await fixture();
+    const notices: string[] = [];
+    f.ledger.onCommitted((projectId) => notices.push(projectId));
+    const flushNotices = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(await f.send('run.prepare', { preparation }, 'desktop', { commandId: 'prepare-1' })).toMatchObject({ ok: true });
+    await flushNotices(); expect(notices).toEqual(['P1']);
+    // A replay of the same command writes nothing new.
+    expect(await f.send('run.prepare', { preparation }, 'desktop', { commandId: 'prepare-1', expectedRevision: 0 })).toMatchObject({ replayed: true });
+    await flushNotices(); expect(notices).toEqual(['P1']);
+    // A refused command is still a durable receipt others may be waiting on.
+    expect(await f.send('run.start', {}, 'desktop', { commandId: 'stale', expectedRevision: 0 })).toMatchObject({ ok: false, error: 'revision-conflict' });
+    await flushNotices(); expect(notices).toEqual(['P1', 'P1']);
+    // A command ID reused for another request writes no receipt.
+    expect(await f.send('run.start', {}, 'desktop', { commandId: 'prepare-1' })).toMatchObject({ ok: false, error: 'command-conflict' });
+    await flushNotices(); expect(notices).toEqual(['P1', 'P1']);
+    expect(await f.send('run.start', {})).toMatchObject({ ok: true });
+    await f.start();
+    await flushNotices(); notices.length = 0;
+    expect(await f.ledger.recoverInterrupted()).toBe(1);
+    await flushNotices(); expect(notices).toEqual(['P1']);
+  });
+
+  it('keeps a failing listener away from the ledger', async () => {
+    const f = await fixture();
+    f.ledger.onCommitted(() => { throw new Error('listener failed'); });
+    const seen: string[] = []; const stop = f.ledger.onCommitted((projectId) => seen.push(projectId));
+    expect(await f.send('run.prepare', { preparation })).toMatchObject({ ok: true });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(seen).toEqual(['P1']);
+    stop();
+    expect(await f.send('run.start', {})).toMatchObject({ ok: true });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(seen).toEqual(['P1']);
+  });
+});
+
 describe('PlanningExecutionStore', () => {
   it('cancels prepared runs and waits for active cancellation acknowledgement without losing evidence', async () => {
     const f = await fixture(); await f.prepare();

@@ -578,6 +578,39 @@ describe('planning over the authenticated bridge', () => {
   });
 });
 
+describe('flow replies for remote protocol v16 readers', () => {
+  // A v17 host's workflow snapshot as the service returns it: one stage carries a v17 field.
+  const v17Snapshot = () => ({ schemaVersion: 1, projectId: 'project', registryRevision: 1, hostId: 'host', runs: [], sessionLinks: [], legacyBaselineOwners: {},
+    repeatStatus: { next: '2026-10-26T00:00:00.000Z' },
+    subprojects: [{ id: 'sub', title: 'Login', goal: '', status: 'active', revision: 1, createdAt: '2026-10-24T00:00:00.000Z', updatedAt: '2026-10-24T00:00:00.000Z', presetId: 'feature',
+      runSettings: { reviewer: { providerId: 'codex', model: 'm' } }, history: [], archivedNodes: [],
+      graph: { entryNodeId: 'plan', edges: [], nodes: [{ id: 'plan', title: 'Plan', reasoningEffort: 'high' }] } }] });
+  const workflowCommand = { commandId: 'edit-1', projectId: 'project', hostId: 'host', expectedRevision: 1, subprojectId: 'sub', type: 'workflow.undo', payload: { changeId: 'change-1' } };
+
+  it('sends a v16 phone the reduced view and marks its writes, and a v17 phone everything', async () => {
+    const source = { read: vi.fn(async () => ({ ok: true, snapshot: v17Snapshot() })), execute: vi.fn(async () => ({ ok: true, snapshot: v17Snapshot(), commandId: 'edit-1' })) };
+    const { options } = makeOptions({ workflowSource: source as never });
+    const legacy = new FakeWs(); attachConnection(legacy, options);
+    legacy.clientSend({ ...authMessage(), protocolVersion: 16 }); await flush();
+    legacy.clientSend({ kind: 'workflow-read', requestId: 'read-16', projectId: 'project' });
+    legacy.clientSend({ kind: 'workflow-execute', requestId: 'edit-16', command: workflowCommand }); await flush();
+    const legacyReplies = legacy.sent.filter((message) => message.kind === 'workflow-read-reply' || message.kind === 'workflow-execute-reply');
+    expect(legacyReplies).toHaveLength(2);
+    expect(JSON.stringify(legacyReplies)).not.toMatch(/reasoningEffort|runSettings|repeatStatus/u);
+    expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001', reducedFlowView: true });
+    legacy.close();
+
+    const current = new FakeWs(); await authed(current, options);
+    current.clientSend({ kind: 'workflow-read', requestId: 'read-17', projectId: 'project' });
+    current.clientSend({ kind: 'workflow-execute', requestId: 'edit-17', command: workflowCommand }); await flush();
+    const currentReplies = current.sent.filter((message) => message.kind === 'workflow-read-reply' || message.kind === 'workflow-execute-reply');
+    expect(JSON.stringify(currentReplies)).toMatch(/reasoningEffort/u);
+    expect(JSON.stringify(currentReplies)).toMatch(/repeatStatus/u);
+    expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001' });
+    current.close();
+  });
+});
+
 describe('planning extension bridge authority', () => {
   it('declines every scoped workflow/planning request from protocol 13 while keeping the authenticated connection', async () => {
     const request = vi.fn(); const read = vi.fn(); const execute = vi.fn(); const readResult = vi.fn();

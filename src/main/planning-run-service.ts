@@ -15,7 +15,7 @@ import { preparePlanningExecution } from './planning-preparation';
 import type { PlanningDraft } from '../shared/planning';
 import type { PlanningEnvironmentService } from './planning-environment-service';
 import { readPlanningFileReference } from './planning-file-reference';
-import type { WorkflowCommand, WorkflowPrincipal, WorkflowSubproject } from '../shared/workflow';
+import { workflowPrincipalIdentity, type WorkflowCommand, type WorkflowPrincipal, type WorkflowSubproject } from '../shared/workflow';
 import { workflowDigest } from './workflow-service';
 import { workflowPlanningInput } from './workflow-preparation';
 import { workflowTaskInputs } from './workflow-runtime';
@@ -173,7 +173,7 @@ export class PlanningRunService {
         if (previous) {
           if (request.type === 'run.prepare') {
             const original = this.options.ledger.read(command.projectId).runs.find(run => run.runId === request.payload.runId);
-            if (!original || original.preparation.requestFingerprint !== workflowDigest({ command, principal })) return { ok: false, error: 'command-conflict', message: 'This workflow command ID belongs to different execution inputs.' };
+            if (!original || original.preparation.requestFingerprint !== workflowDigest({ command, principal: workflowPrincipalIdentity(principal) })) return { ok: false, error: 'command-conflict', message: 'This workflow command ID belongs to different execution inputs.' };
           } else {
             const types = { 'run.start': 'run.start', 'run.pause': 'run.pause', 'run.resume': 'run.continue', 'run.approve': 'workflow.approve', 'run.cancel': 'run.cancel', 'run.integrate': 'workflow.integrate' } as const;
             const replay = await this.options.ledger.execute({ ...common, expectedRevision: previous.ok ? previous.revision - 1 : previous.revision, type: types[request.type], payload: request.payload });
@@ -199,7 +199,7 @@ export class PlanningRunService {
           });
           if (!prepared.ok) return prepared;
           receipt = await this.options.ledger.execute({ ...common, type: 'run.prepare', payload: { runId: request.payload.runId, preparation: {
-            ...prepared.preparation, subprojectId: subproject.id, requestFingerprint: workflowDigest({ command, principal }),
+            ...prepared.preparation, subprojectId: subproject.id, requestFingerprint: workflowDigest({ command, principal: workflowPrincipalIdentity(principal) }),
             // Only an opted-in run carries the policy (absent reads as the person's), so older clients keep parsing runs.
             ...(subproject.autoApprove ? { approvalPolicy: 'auto' as const } : {}),
             ...(principal.kind === 'ai' && principal.sessionId ? { startedBy: { sessionId: principal.sessionId } } : {}),

@@ -76,7 +76,12 @@ export const WorkflowCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('run.approve'), payload: z.object({ runId: id, activationId: id, decision: z.enum(['approve', 'reject']) }).strict() }).strict(),
 ]);
 export type WorkflowCommand = z.infer<typeof WorkflowCommandSchema>;
-export type WorkflowPrincipal = { readonly kind: 'desktop' | 'android' | 'ai'; readonly id: string; readonly sessionId?: string };
+/** `reducedFlowView`: a remote reader on protocol v16 or older, which only sees flows without the v17 fields. */
+export type WorkflowPrincipal = { readonly kind: 'desktop' | 'android' | 'ai'; readonly id: string; readonly sessionId?: string; readonly reducedFlowView?: true };
+/** Who sent a command, for receipt fingerprints: how it was connected is not part of it, so a phone's retry still matches after an app update. */
+export function workflowPrincipalIdentity(principal: WorkflowPrincipal): Omit<WorkflowPrincipal, 'reducedFlowView'> {
+  return { kind: principal.kind, id: principal.id, ...(principal.sessionId ? { sessionId: principal.sessionId } : {}) };
+}
 export const WorkflowResultSchema = z.union([
   z.object({ ok: z.literal(true), snapshot: WorkflowSnapshotSchema, commandId: id.optional(), duplicate: z.boolean().optional() }).strict(),
   z.object({ ok: z.literal(false), error: z.string(), message: z.string(), revision: revision.optional(),
@@ -88,6 +93,8 @@ export interface WorkflowAccess {
   getWorkflowSnapshot(projectId: string): Promise<WorkflowResult>;
   executeWorkflowCommand(command: WorkflowCommand): Promise<WorkflowResult>;
   workflowPreview?(request: WorkflowPreviewRequest): Promise<WorkflowPreviewResult>;
+  /** Desktop only: a project's runs changed (a stage started, finished or waits for approval). */
+  onWorkflowRunsChanged?(listener: (projectId: string) => void): () => void;
 }
 
 export const WorkflowPreviewSchema = z.object({ id, projectId: id, sessionId: id, revision, graph: WorkflowGraphSchema }).strict();

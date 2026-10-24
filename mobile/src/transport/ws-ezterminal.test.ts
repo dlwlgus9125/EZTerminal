@@ -222,6 +222,26 @@ describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
     expect(await oldTransport.getWorkflowSnapshot('project')).toMatchObject({ ok: false, error: 'unsupported' });
     oldTransport.disconnect();
   });
+  it('says a flow reply it cannot parse needs an app update, without holding conversations', async () => {
+    const { createSocket, sockets } = makeCreateSocket(); const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const pending = transport.getWorkflowSnapshot('project'); const request = sockets[0].lastSent() as { kind: string; requestId: string };
+    expect(request.kind).toBe('workflow-read');
+    // A newer PC's flow carries a field this app has never seen.
+    sockets[0].triggerMessage({ kind: 'workflow-read-reply', requestId: request.requestId, result: { ok: true, snapshot: { schemaVersion: 1, projectId: 'project', registryRevision: 0, hostId: 'host',
+      subprojects: [], sessionLinks: [], legacyBaselineOwners: {}, runs: [], fieldFromTheFuture: true } } });
+    // 'unsupported' (not 'unavailable') lets the conversation screen stop waiting for flow context.
+    expect(await pending).toMatchObject({ ok: false, error: 'unsupported' });
+    const mismatch = transport.getWorkflowSnapshot('project'); const second = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'workflow-read-reply', requestId: second.requestId, result: { ok: true, snapshot: { schemaVersion: 1, projectId: 'other', registryRevision: 0, hostId: 'host', subprojects: [], sessionLinks: [], legacyBaselineOwners: {}, runs: [] } } });
+    expect(await mismatch).toMatchObject({ ok: false, error: 'unavailable' });
+    // A write the PC may already have committed stays unconfirmed, so the exact pending command is kept.
+    const write = transport.executeWorkflowCommand({ commandId: 'edit-1', projectId: 'project', hostId: 'host', expectedRevision: 0, subprojectId: 'sub', type: 'workflow.undo', payload: { changeId: 'change-1' } });
+    const third = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'workflow-execute-reply', requestId: third.requestId, result: { ok: true, commandId: 'edit-1', snapshot: { schemaVersion: 1, projectId: 'project', registryRevision: 0, hostId: 'host', subprojects: [], sessionLinks: [], legacyBaselineOwners: {}, runs: [], fieldFromTheFuture: true } } });
+    expect(await write).toMatchObject({ ok: false, error: 'unavailable' });
+    transport.disconnect();
+  });
   it('gates discovery at v14 and sends no legacy mutation', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

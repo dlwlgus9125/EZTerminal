@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkflowService } from './workflow-service';
+import { WorkflowService, workflowDigest } from './workflow-service';
 import { PlanningService } from './planning-service';
 import { createWorkflowGraph, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
 
@@ -152,6 +152,60 @@ describe('workflow authority and storage', () => {
     expect((await service.execute(command, user)).ok).toBe(true); expect(executeRun).toHaveBeenCalledTimes(2);
     // The execution adapter receives exactly the same command/graph, allowing its durable receipt to reconcile.
     expect(executeRun.mock.calls[0]).toEqual(executeRun.mock.calls[1]);
+  });
+  it('replays a phone’s pending run command after the phone updated from a v16 to a v17 connection', async () => {
+    const executeRun = vi.fn<(...args: unknown[]) => Promise<{ ok: true }>>(async () => ({ ok: true as const }));
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, executeRun });
+    const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'claude', model: 'model', instructions: 'Research', acceptance: ['Report evidence'] };
+    await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user);
+    const originalRename = fs.rename.bind(fs); let calls = 0;
+    vi.spyOn(fs, 'rename').mockImplementation(async (...args) => { calls++; if (calls === 2) throw new Error('reply lost'); return originalRename(...args); });
+    const command: WorkflowCommand = { ...base, subprojectId: 'a', commandId: 'phone-prepare', type: 'run.prepare', payload: { runId: 'run', reviewer: { providerId: 'claude', model: 'model' } } };
+    const phone = { kind: 'android' as const, id: 'android:phone' };
+    expect(await service.execute(command, { ...phone, reducedFlowView: true })).toMatchObject({ ok: false });
+    // The same phone, updated, retries the same command: same request, not a conflict.
+    expect(await service.execute(command, phone)).toMatchObject({ ok: true });
+    expect(executeRun.mock.calls[1]![0]).toEqual(executeRun.mock.calls[0]![0]);
+  });
+  it('answers ownership from the committed file while a run command holds the workflow gate', async () => {
+    // The execution service checks ownership under its own gate; a run command holds this gate while it
+    // waits for that one. A gated read here would wait forever.
+    let ownedDuringRun: boolean | undefined; let gatedDuringRun: 'answered' | 'waiting' | undefined; let writableDuringRun: boolean | undefined;
+    const executeRun = vi.fn(async () => {
+      ownedDuringRun = await service.ownsCommitted('project', 'a', true);
+      // The daemon asks these while the pump submits a stage or review prompt under the execution gate.
+      writableDuringRun = await service.conversationWritable('project', 'chat');
+      expect(await service.conversationContext('project', 'chat')).toBeUndefined();
+      gatedDuringRun = await Promise.race([service.owns('project', 'a').then(() => 'answered' as const), new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), 50))]);
+      return { ok: true as const };
+    });
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, executeRun });
+    const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'claude', model: 'model', instructions: 'Research', acceptance: ['Report evidence'] };
+    await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user);
+    const command: WorkflowCommand = { ...base, subprojectId: 'a', commandId: 'prepare', type: 'run.prepare', payload: { runId: 'run', reviewer: { providerId: 'claude', model: 'model' } } };
+    expect(await service.execute(command, user)).toMatchObject({ ok: true });
+    expect(ownedDuringRun).toBe(true);
+    expect(writableDuringRun).toBe(true);
+    expect(gatedDuringRun).toBe('waiting');
+    expect(await service.ownsCommitted('project', 'missing')).toBe(false);
+    expect(await service.execute({ ...base, commandId: 'archive', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { status: 'archived' } }, user)).toMatchObject({ ok: true });
+    expect(await service.ownsCommitted('project', 'a')).toBe(true);
+    expect(await service.ownsCommitted('project', 'a', true)).toBe(false);
+  });
+  it('refuses a registry another writer replaced, also for gate-free reads', async () => {
+    expect((await service.execute(create('a'), user)).ok).toBe(true);
+    expect(await service.ownsCommitted('project', 'a')).toBe(true);
+    // A different, internally valid registry written by someone else.
+    const file = path.join(directory, '.ezterminal', 'planning', 'workflows.json');
+    const stored = JSON.parse(await fs.readFile(file, 'utf8')) as { registry: { subprojects: { title: string }[] }; receipts: unknown[]; integrity: string };
+    stored.registry.subprojects[0]!.title = 'Changed elsewhere';
+    stored.integrity = workflowDigest({ registry: stored.registry, receipts: stored.receipts });
+    await fs.writeFile(file, `${JSON.stringify(stored, null, 2)}
+`);
+    expect(await service.read('project')).toMatchObject({ ok: false, error: 'external-change' });
+    expect(await service.ownsCommitted('project', 'a')).toBe(false);
+    expect(await service.conversationWritable('project', 'chat')).toBe(false);
+    await expect(service.conversationContext('project', 'chat')).rejects.toThrow(/changed outside/u);
   });
   it('lets a project conversation run its flow while approvals, integration and 자동 승인 stay with the person', async () => {
     const executeRun = vi.fn(async () => ({ ok: true as const }));

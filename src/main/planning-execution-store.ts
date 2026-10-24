@@ -143,7 +143,27 @@ function markRepairExhausted(run: ExecutionRun, taskId: string, now: string): Ex
 
 /** Durable execution ledger. Provider dispatch is deliberately outside database transactions. */
 export class PlanningExecutionStore {
+  private readonly committed = new Set<(projectId: string) => void>();
   constructor(private readonly authority: DaemonStore, private readonly now: () => Date = () => new Date()) {}
+
+  /**
+   * Called after a ledger write commits: a new receipt (accepted or refused) or a restart recovery,
+   * never a replayed receipt. Listeners run after the write, outside the ledger transaction.
+   */
+  onCommitted(listener: (projectId: string) => void): () => void {
+    this.committed.add(listener);
+    return () => { this.committed.delete(listener); };
+  }
+
+  private notifyCommitted(projectIds: Iterable<string>): void {
+    const ids = [...new Set(projectIds)];
+    if (ids.length === 0 || this.committed.size === 0) return;
+    queueMicrotask(() => {
+      for (const projectId of ids) for (const listener of this.committed) {
+        try { listener(projectId); } catch { /* a listener failure never reaches the ledger */ }
+      }
+    });
+  }
 
   read(projectId: string): PlanningExecutionSnapshot {
     return this.authority.readPlanningExecution((database) => ({
@@ -171,7 +191,8 @@ export class PlanningExecutionStore {
       error: 'invalid-command', message: 'The execution command is invalid.',
     });
     const command = parsed.data;
-    return this.authority.writePlanningExecution((database) => {
+    let written = false;
+    return this.authority.writePlanningExecution<PlanningExecutionReceipt>((database) => {
       const revision = readRevision(database, command.projectId);
       const digest = fingerprint(command);
       const previous = database.prepare('SELECT command_fingerprint, receipt_json FROM planning_execution_receipts WHERE command_id = ?')
@@ -207,6 +228,10 @@ export class PlanningExecutionStore {
       }
       database.prepare('INSERT INTO planning_execution_receipts (command_id, project_id, command_fingerprint, receipt_json) VALUES (?, ?, ?, ?)')
         .run(command.commandId, command.projectId, digest, JSON.stringify(receipt));
+      written = true;
+      return receipt;
+    }).then((receipt) => {
+      if (written) this.notifyCommitted([command.projectId]);
       return receipt;
     });
   }
@@ -216,6 +241,7 @@ export class PlanningExecutionStore {
     return this.authority.writePlanningExecution((database) => {
       const rows = database.prepare('SELECT * FROM planning_execution_runs').all() as unknown as RunRow[];
       let recovered = 0;
+      const projects: string[] = [];
       const now = this.now().toISOString();
       for (const row of rows) {
         const run = runFromRow(row);
@@ -234,7 +260,11 @@ export class PlanningExecutionStore {
         writeRun(database, projectRunState(next, database));
         database.prepare('UPDATE planning_execution_projects SET revision = ? WHERE project_id = ?').run(revision, run.projectId);
         recovered += running.size;
+        projects.push(run.projectId);
       }
+      return { recovered, projects };
+    }).then(({ recovered, projects }) => {
+      this.notifyCommitted(projects);
       return recovered;
     });
   }

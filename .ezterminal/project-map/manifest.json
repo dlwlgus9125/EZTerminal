@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:4d745ea52b62cca8fff1c4aa6a2fe2c5c9443a6f171c2b48e6e37aa7054c4ee4",
+        "inputDigest": "sha256:f8764f6a3417ac0d17d0667e99ff33f7dc60744155760f64df547a66e844d477",
         "decision": "map-updated",
-        "reason": "Reviewed: the Board + Desk shell (I1) wraps conversation tabs for the preview place and tab actions; the dock panel keeps transcript, encrypted drafts, history, hand-off, /clear and send gates. Claims hold; anchors moved."
+        "reason": "Reviewed (I2-0): remote protocol v17 with the baseline-v12 offer; v16-and-older readers get a reduced flow view; the preload adds run-change notices. Claims updated where they changed; other anchors moved."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fb7402bf52dd02e4af1f645099d585136a3c14bd23bab781b23198850f468099",
-        "decision": "map-updated",
-        "reason": "Reviewed: an Agent settings change is applied in the session’s provider handle queue, so a message sent right after waits for it (a Claude switch to Full access may relaunch). No other flow changed. Anchors moved."
+        "inputDigest": "sha256:021f7bc17dcc08e9bb020fa97e4b7d1c9f260b0098ac8ff03d89b0c6a38a0f99",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed (I2-0): the shell re-reads a project's flows on the host's run-change notice (coalesced) besides its timer; lifecycle, focus and panel ownership are unchanged."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f1a85bc4e59a06d3f9ad621364e4132ba4506f1ff767581c9a23087cd4675749",
+        "inputDigest": "sha256:29dd86a2edcf1231b3a5429b0758bf7c84db03ea3aee1a64f927e197267de580",
         "decision": "map-updated",
-        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
+        "reason": "Reviewed (I2-0): v17 negotiation keeps the single baseline-v12 auth; workflow, preview, run and archive replies to v16-and-older readers are reduced; an unparseable flow read on the phone reports an update. Anchors moved."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9f0e0dc2ace0c1e6c0bc2c01503d907d3a227846b4ecc4e29c36c35bbf24898d",
+        "inputDigest": "sha256:0904ada2872d296a804160a5778ab3b11f1e15a22815613a7bc20a16823bcbf2",
         "decision": "map-updated",
-        "reason": "Reviewed: the Session header gains a keep-open pin and a Tab section (split, window, close) when its tab strip is hidden; Session ID, transcript, skin and the history picker are unchanged. Claims hold; anchor moved."
+        "reason": "Reviewed (I2-0): the bridge marks v16 writers for write protection; the run ledger notifies listeners after new receipts and restart recovery; fingerprints ignore the transport flag. Claims updated."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3e747e720e1f5a8ba1119556575e3a8dfbb392008df952543c5dfa79b282f36c",
+        "inputDigest": "sha256:ee66ef2d68ee583e0bdfc83263fec5b62f700b2d9e43f92b4e48f2393ae8cf5a",
         "decision": "map-updated",
-        "reason": "Reviewed: Codex now holds item, delta and plan notifications that race ahead of the turn/start response and replays them on the confirmed turn before its end, as it already did for lifecycle events. Claims hold; anchors moved."
+        "reason": "Reviewed (I2-0): ownership and stage-conversation reads use the committed registry without the workflow gate (with the external-change rule); v16 edits that would drop v17 fields are refused. Claims updated."
       }
     }
   ]

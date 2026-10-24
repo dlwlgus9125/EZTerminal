@@ -2,6 +2,7 @@ import { createRemoteOpenClawSession, type RemoteOpenClawSource } from './remote
 export type { RemoteOpenClawSource, OpenClawChatTicketResult } from './remote-openclaw-session';
 import { isRecord, isRemoteClientIdentity, isDispatchableClientMessage } from './remote-message-validation';
 import type { WorkflowAuthority } from './workflow-authority';
+import { legacyPlanningRunResult, legacyProjectArchiveResult, legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
 import type { ConversationHistoryClient, HistoryResumeRequest, HistoryResumeResult } from '../shared/conversation-history';
 import type { PlanningAuthority } from './planning-authority';
@@ -54,6 +55,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
+  REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
   REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
   REMOTE_PROTOCOL_VERSION_CONVERSATION_HISTORY,
   REMOTE_PROTOCOL_VERSION_PLANNING,
@@ -1746,7 +1748,7 @@ export function attachConnection(
       case 'workflow-preview': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowPreviewSource && clientIdentity
           ? options.workflowPreviewSource.preview(msg.request) : Promise.resolve({ ok: false, message: 'Update the authenticated host and client to use workflow previews.' } as const);
-        void result.then(value => { if (authed) send({ kind: 'workflow-preview-reply', requestId: msg.requestId, result: value }); });
+        void result.then(value => { if (authed) send({ kind: 'workflow-preview-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyWorkflowPreviewResult(value) : value }); });
         break;
       }
       case 'conversation-history-resolve':
@@ -1788,9 +1790,10 @@ export function attachConnection(
       case 'workflow-read':
       case 'workflow-execute': {
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_WORKFLOW && options.workflowSource && clientIdentity
-          ? msg.kind === 'workflow-read' ? options.workflowSource.read(msg.projectId) : options.workflowSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}` })
+          ? msg.kind === 'workflow-read' ? options.workflowSource.read(msg.projectId) : options.workflowSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}`,
+            ...(negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? { reducedFlowView: true as const } : {}) })
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use subproject workflows.' } as const);
-        void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: value }); });
+        void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyWorkflowResult(value) : value }); });
         break;
       }
       case 'agent-capabilities-list': {
@@ -1836,7 +1839,7 @@ export function attachConnection(
         const result = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_PLANNING && options.projectArchiveSource && clientIdentity
           ? options.projectArchiveSource.request(msg.request, `android:${clientIdentity.clientId}`)
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Connect to an updated authenticated PC to manage project records.' } as const);
-        void result.then(value => { if (authed) send({ kind: 'project-archive-reply', requestId: msg.requestId, result: value }); });
+        void result.then(value => { if (authed) send({ kind: 'project-archive-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyProjectArchiveResult(value) : value }); });
         break;
       }
       case 'planning-run-read':
@@ -1850,7 +1853,8 @@ export function attachConnection(
               : options.planningRunSource.execute(msg.command, { kind: 'android', id: `android:${clientIdentity.clientId}` })
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Planning execution requires a compatible authenticated connection.' } as const);
         void result.then((value) => { if (authed) send({ kind: 'planning-run-reply', requestId: msg.requestId, result: value.ok && negotiatedProtocol < REMOTE_PROTOCOL_VERSION_WORKFLOW
-          ? { ...value, snapshot: { ...value.snapshot, runs: value.snapshot.runs.filter(run => !run.preparation.subprojectId && !run.preparation.workflow) } } : value }); });
+          ? { ...value, snapshot: { ...value.snapshot, runs: value.snapshot.runs.filter(run => !run.preparation.subprojectId && !run.preparation.workflow) } }
+          : negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyPlanningRunResult(value) : value }); });
         break;
       }
       case 'planning-result-read': {

@@ -1257,6 +1257,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_WORKFLOW) return Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the PC to use subprojects and workflow editing.' });
     return this.requestPlanningExtension(message, `${message.kind}-reply`, value => {
       const parsed = WorkflowResultSchema.safeParse(value);
+      // A read this app cannot parse comes from a newer PC: say so, and do not hold conversations waiting
+      // for it. A write stays unconfirmed so its exact pending command is kept for reconciliation.
+      if (!parsed.success && value !== undefined && message.kind === 'workflow-read') return { ok: false, error: 'unsupported', message: 'Update the Android app to read the flows of this project from the connected PC.' };
       return parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === projectId && (!commandId || parsed.data.commandId === commandId) && (!hostId || parsed.data.snapshot.hostId === hostId))
         ? parsed.data : { ok: false, error: 'unavailable', message: 'The workflow receipt could not be verified. Reconcile the same command after reconnecting.' };
     });

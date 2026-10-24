@@ -3139,6 +3139,8 @@ app.on('ready', async () => {
   });
   const validationRunner = new AgentValidationRunner(broker);
   const planningExecutionStore = new PlanningExecutionStore(daemonStore);
+  // Flow screens and the board re-read a project's runs as soon as a stage starts, finishes or waits.
+  planningExecutionStore.onCommitted((projectId) => broadcast('workflow:runs-changed', projectId));
   const planningEnvironments = new PlanningEnvironmentService(app.getPath('userData'), () => {
     daemonAgentRuntime.wakeQueuedTurns();
     planningRuntimeRef.current?.requestTick();
@@ -3153,7 +3155,8 @@ app.on('ready', async () => {
     reportError: (error) => mainLog?.line(`planning result: ${String(error)}`),
   });
   const planningRunService = new PlanningRunService({
-    ownsSubproject: (projectId, subprojectId, writing) => workflowService.owns(projectId, subprojectId, writing),
+    // Called under the execution gate: a gated workflow read could wait on a workflow command that waits on this gate.
+    ownsSubproject: (projectId, subprojectId, writing) => workflowService.ownsCommitted(projectId, subprojectId, writing),
     planning: planningService, ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
     providers: providerRegistry, worktrees: worktreeService, git: agentCollaborationGitRunner,
     environments: planningEnvironments,

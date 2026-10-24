@@ -213,6 +213,11 @@ const api: EzTerminalApi = {
   getWorkflowNavigation: (projectId) => ipcRenderer.invoke('workflow:navigation', sessionSurfaceClientId, projectId),
   executeWorkflowCommand: (command) => ipcRenderer.invoke('workflow:execute', sessionSurfaceClientId, command),
   workflowPreview: (request) => ipcRenderer.invoke('workflow:preview', sessionSurfaceClientId, request),
+  onWorkflowRunsChanged: (listener): (() => void) => {
+    const handler = (_event: unknown, projectId: string): void => listener(projectId);
+    ipcRenderer.on('workflow:runs-changed', handler);
+    return () => ipcRenderer.removeListener('workflow:runs-changed', handler);
+  },
   workflowDraftRead: (projectId) => ipcRenderer.invoke('workflow-draft:read', sessionSurfaceClientId, projectId),
   workflowDraftWrite: (projectId, request) => ipcRenderer.invoke('workflow-draft:write', sessionSurfaceClientId, projectId, request),
   agentCapabilitiesList: (request) => ipcRenderer.invoke('agent-capabilities:list', sessionSurfaceClientId, request),

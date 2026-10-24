@@ -17,6 +17,19 @@ function fixture() {
   return { access, secure, values, state, token: (value: string) => { token = value; }, getToken: async () => token };
 }
 describe('encrypted mobile workflow recovery', () => {
+  it('keeps an older app v1 recovery for that app and moves saves of this version to the v2 key', async () => {
+    const f = fixture();
+    expect(await f.access.workflowDraftWrite('project', { expectedRevision: 0, state: f.state })).toMatchObject({ ok: true, snapshot: { revision: 1 } });
+    const [v2Key] = [...f.values.keys()]; expect(v2Key).toMatch(/^ezterminal-workflow-draft-v2:/u);
+    // Pretend an older app saved it: same record under its v1 key, with its own scope.
+    const v1Key = v2Key!.replace('-v2:', '-v1:'); const stored = JSON.parse(f.values.get(v2Key!)!) as { scope: string };
+    f.values.delete(v2Key!); f.values.set(v1Key, JSON.stringify({ ...stored, scope: v1Key })); const v1Value = f.values.get(v1Key);
+    expect(await f.access.workflowDraftRead('project')).toMatchObject({ ok: true, snapshot: { revision: 1 } });
+    expect(await f.access.workflowDraftWrite('project', { expectedRevision: 1, state: { ...f.state, drafts: {} } })).toMatchObject({ ok: true, snapshot: { revision: 2 } });
+    expect([...f.values.keys()].sort()).toEqual([v1Key, v2Key].sort());
+    expect(f.values.get(v1Key)).toBe(v1Value);
+    expect(await f.access.workflowDraftRead('project')).toMatchObject({ ok: true, snapshot: { revision: 2 } });
+  });
   it('serializes CAS across access objects sharing the same native storage', async () => {
     const f = fixture(); const other = mobileWorkflowDraftAccess(f.getToken, f.secure);
     const results = await Promise.all([f.access.workflowDraftWrite('project', { expectedRevision: 0, state: f.state }), other.workflowDraftWrite('project', { expectedRevision: 0, state: f.state })]);

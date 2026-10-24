@@ -165,10 +165,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1786,
-          "endLine": 1870,
-          "lineDigest": "sha256:864c59ad553d205cc6edb06458a3266fd5ecb9ce1ce9d3cbce72c920257291f1",
-          "claim": "Authenticated v14-or-later clients use workflow/capability handlers, v13 retains planning, and explicit subproject writes remain bound to the authenticated Android principal."
+          "startLine": 1788,
+          "endLine": 1874,
+          "lineDigest": "sha256:6a6f762b4e23e1d004c2936f089d45a2cd936a114bf9a1c06daec8c4ba1b5af1",
+          "claim": "Authenticated v14+ clients use workflow/capability handlers; v16-and-older readers get the reduced flow view and are marked for write protection; v13 keeps planning; subproject writes stay bound to the Android principal."
         }
       ]
     },
@@ -275,7 +275,7 @@
           "relativePath": "src/main/planning-run-service.ts",
           "startLine": 152,
           "endLine": 282,
-          "lineDigest": "sha256:6aeac6fdb98e9da1c760aba370ad88148fdf69234499fbb2f9a6a2dd027f73bd",
+          "lineDigest": "sha256:85e77a9ab70ab29602e788fd0e0fda52cea28a643eb13cfd3c1832999db1f004",
           "claim": "User or project-agent run commands freeze a graph, planning baseline and auto-approve policy into the ledger; agents cannot approve or integrate; durable fingerprints prevent replay under changed inputs."
         },
         {
@@ -301,9 +301,9 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
           "startLine": 144,
-          "endLine": 212,
-          "lineDigest": "sha256:9db6212d02876728b5c9c442b07f19d4b6d1ff380b052eda52475ce5c35df81c",
-          "claim": "SQLite savepoints persist command identity, revisions and projected run state together; workflow activations are projected through the same durable execution ledger."
+          "endLine": 237,
+          "lineDigest": "sha256:7aacc6b701f1b11de82fb8acb4746e1d40ac89571ced7d1383e15ce731e75fbe",
+          "claim": "SQLite savepoints persist command identity, revisions and run state together; workflow activations use the same durable ledger; new receipts and restart recoveries notify listeners after the write."
         }
       ]
     },
@@ -471,7 +471,7 @@
           "relativePath": "src/main/planning-run-service.ts",
           "startLine": 152,
           "endLine": 282,
-          "lineDigest": "sha256:6aeac6fdb98e9da1c760aba370ad88148fdf69234499fbb2f9a6a2dd027f73bd",
+          "lineDigest": "sha256:85e77a9ab70ab29602e788fd0e0fda52cea28a643eb13cfd3c1832999db1f004",
           "claim": "User or project-agent run commands freeze a graph, planning baseline and auto-approve policy into the ledger; agents cannot approve or integrate; durable fingerprints prevent replay under changed inputs."
         }
       ]
@@ -487,9 +487,9 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
           "startLine": 144,
-          "endLine": 212,
-          "lineDigest": "sha256:9db6212d02876728b5c9c442b07f19d4b6d1ff380b052eda52475ce5c35df81c",
-          "claim": "SQLite savepoints persist command identity, revisions and projected run state together; workflow activations are projected through the same durable execution ledger."
+          "endLine": 237,
+          "lineDigest": "sha256:7aacc6b701f1b11de82fb8acb4746e1d40ac89571ced7d1383e15ce731e75fbe",
+          "claim": "SQLite savepoints persist command identity, revisions and run state together; workflow activations use the same durable ledger; new receipts and restart recoveries notify listeners after the write."
         }
       ]
     },
