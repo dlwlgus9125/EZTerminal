@@ -242,6 +242,20 @@ describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
     expect(await write).toMatchObject({ ok: false, error: 'unavailable' });
     transport.disconnect();
   });
+  it('keeps flow settings an older PC cannot accept on the phone instead of sending them', async () => {
+    const { createSocket, sockets } = makeCreateSocket(); const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 16 });
+    const before = sockets[0].sent.length;
+    const graph = { entryNodeId: 'a', edges: [], nodes: [{ id: 'a', title: 'Plan', operation: 'agent', role: 'planning', instructions: '', document: '', reasoningEffort: 'high', permissionPreset: 'plan', acceptance: [], allowedPaths: [], retryLimit: 2, position: { x: 0, y: 0 }, inputs: [] }] };
+    expect(await transport.executeWorkflowCommand({ commandId: 'save', projectId: 'project', hostId: 'host', expectedRevision: 0, subprojectId: 'sub', type: 'workflow.patch', payload: { graph, summary: 'Save' } } as never)).toMatchObject({ ok: false, error: 'older-host' });
+    expect(await transport.workflowPreview({ action: 'open', projectId: 'project', sessionId: 'chat', previewId: 'preview', graph } as never)).toMatchObject({ ok: false, message: expect.stringMatching(/older/u) });
+    expect(sockets[0].sent).toHaveLength(before);
+    // Without v17 fields the same edit still goes to the older PC.
+    const plain = { ...graph, nodes: graph.nodes.map((node) => { const copy: Record<string, unknown> = { ...node }; delete copy.reasoningEffort; return copy; }) };
+    void transport.executeWorkflowCommand({ commandId: 'save-plain', projectId: 'project', hostId: 'host', expectedRevision: 0, subprojectId: 'sub', type: 'workflow.patch', payload: { graph: plain, summary: 'Save' } } as never);
+    expect((sockets[0].lastSent() as { kind: string }).kind).toBe('workflow-execute');
+    transport.disconnect();
+  });
   it('gates discovery at v14 and sends no legacy mutation', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

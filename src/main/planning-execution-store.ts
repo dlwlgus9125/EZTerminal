@@ -6,6 +6,7 @@ import {
   PLANNING_AUTO_APPROVAL_PRINCIPAL,
   PLANNING_EXECUTION_VERSION,
   PlanningExecutionCommandSchema,
+  taskMatchesStage,
   type ExecutionArtifact,
   type ExecutionAttempt,
   type ExecutionRun,
@@ -291,11 +292,8 @@ export class PlanningExecutionStore {
         requireState(preparation.workflow.graph.nodes.filter(node => node.operation === 'agent').every(node => preparation.tasks.some(task => task.taskId === node.id))
           && preparation.tasks.every(task => preparation.workflow!.graph.nodes.some(node => node.id === task.taskId && node.operation === 'agent')),
         'invalid-reference', 'Execution tasks must exactly match frozen AI stages.');
-        requireState(preparation.tasks.every(task => { const node = preparation.workflow!.graph.nodes.find(entry => entry.id === task.taskId)!;
-          return task.profile.providerId === node.providerId && task.profile.model === node.model && task.profile.permissionPreset === node.permissionPreset
-            && task.stage === node.role && canonical(task.allowedPaths ?? []) === canonical(node.allowedPaths)
-            && canonical(task.acceptance.map(entry => entry.description)) === canonical(node.acceptance);
-        }), 'invalid-reference', 'Prepared settings must match the frozen graph stages.');
+        requireState(preparation.tasks.every(task => taskMatchesStage(task, preparation.workflow!.graph.nodes.find(entry => entry.id === task.taskId)!)),
+          'invalid-reference', 'Prepared settings must match the frozen graph stages.');
       }
       requireState(!database.prepare('SELECT run_id FROM planning_execution_runs WHERE run_id = ?').get(payload.runId),
         'invalid-transition', 'The run already exists; prepare a new run to change its configuration.');

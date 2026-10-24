@@ -300,8 +300,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 144,
-          "endLine": 237,
+          "startLine": 145,
+          "endLine": 238,
           "lineDigest": "sha256:7aacc6b701f1b11de82fb8acb4746e1d40ac89571ced7d1383e15ce731e75fbe",
           "claim": "SQLite savepoints persist command identity, revisions and run state together; workflow activations use the same durable ledger; new receipts and restart recoveries notify listeners after the write."
         }
@@ -486,8 +486,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 144,
-          "endLine": 237,
+          "startLine": 145,
+          "endLine": 238,
           "lineDigest": "sha256:7aacc6b701f1b11de82fb8acb4746e1d40ac89571ced7d1383e15ce731e75fbe",
           "claim": "SQLite savepoints persist command identity, revisions and run state together; workflow activations use the same durable ledger; new receipts and restart recoveries notify listeners after the write."
         }

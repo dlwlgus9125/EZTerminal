@@ -157,8 +157,8 @@
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
           "startLine": 241,
-          "endLine": 306,
-          "lineDigest": "sha256:4c7f5d5e81f16940e7843aa786f0209c6fefd52f75d050d1bd02532e071250c4",
+          "endLine": 312,
+          "lineDigest": "sha256:589f7af666b7c80ccb73a54722e1ba80bd7466d7aa3879c176ce7635e23d72d1",
           "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts and prepare, start, pause, resume or cancel runs, but cannot approve, integrate, archive, change ownership or set auto-approve."
         }
       ]
@@ -379,8 +379,8 @@
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
           "startLine": 241,
-          "endLine": 306,
-          "lineDigest": "sha256:4c7f5d5e81f16940e7843aa786f0209c6fefd52f75d050d1bd02532e071250c4",
+          "endLine": 312,
+          "lineDigest": "sha256:589f7af666b7c80ccb73a54722e1ba80bd7466d7aa3879c176ce7635e23d72d1",
           "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts and prepare, start, pause, resume or cancel runs, but cannot approve, integrate, archive, change ownership or set auto-approve."
         }
       ]
@@ -583,8 +583,8 @@
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
           "startLine": 241,
-          "endLine": 306,
-          "lineDigest": "sha256:4c7f5d5e81f16940e7843aa786f0209c6fefd52f75d050d1bd02532e071250c4",
+          "endLine": 312,
+          "lineDigest": "sha256:589f7af666b7c80ccb73a54722e1ba80bd7466d7aa3879c176ce7635e23d72d1",
           "claim": "One serialized host boundary validates project/host/revision and exact receipts. AI may edit graph drafts and prepare, start, pause, resume or cancel runs, but cannot approve, integrate, archive, change ownership or set auto-approve."
         }
       ]

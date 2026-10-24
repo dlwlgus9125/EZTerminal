@@ -1,7 +1,7 @@
 import type { ExecutionRun, PlanningExecutionSnapshot } from './planning-execution';
 import type { PlanningRunResult } from './planning-run';
 import type { ProjectArchiveResult } from './project-archive';
-import type { WorkflowPreviewResult, WorkflowRegistry, WorkflowResult, WorkflowSnapshot, WorkflowSubproject } from './workflow';
+import type { WorkflowCommand, WorkflowPreviewRequest, WorkflowPreviewResult, WorkflowRegistry, WorkflowResult, WorkflowSnapshot, WorkflowSubproject } from './workflow';
 
 /**
  * Flow fields added with remote protocol v17. Installed v16-and-older readers
@@ -26,8 +26,33 @@ function legacyNode<T extends object>(node: T): T {
   return without(node, FLOW_V17_NODE_FIELDS);
 }
 
-function legacyGraph<T extends { readonly nodes: readonly object[] }>(graph: T): T {
+/** A graph as a v16 reader sees it. */
+export function legacyWorkflowGraph<T extends { readonly nodes: readonly object[] }>(graph: T): T {
   return { ...graph, nodes: graph.nodes.map(legacyNode) };
+}
+const legacyGraph = legacyWorkflowGraph;
+
+/** Command types added with remote protocol v17 (later I2 steps add theirs). */
+export const FLOW_V17_COMMAND_TYPES: readonly string[] = [];
+
+function graphCarriesV17(graph: { readonly nodes: readonly object[] } | undefined): boolean {
+  return Boolean(graph?.nodes.some((node) => FLOW_V17_NODE_FIELDS.some((key) => Object.hasOwn(node, key))));
+}
+
+/**
+ * True when a command a client is about to send uses something a v16 host cannot accept (its
+ * strict schema would reject it). A newer client keeps such a command and its draft instead.
+ */
+export function flowCommandNeedsV17(command: WorkflowCommand): boolean {
+  if (FLOW_V17_COMMAND_TYPES.includes(command.type)) return true;
+  const payload = command.payload as Record<string, unknown>;
+  if (command.type === 'subproject.update' && FLOW_V17_SUBPROJECT_FIELDS.some((key) => Object.hasOwn(payload, key))) return true;
+  return graphCarriesV17(payload.graph as { nodes: readonly object[] } | undefined);
+}
+
+/** The same check for a creation preview a client is about to open on the host. */
+export function flowPreviewNeedsV17(request: WorkflowPreviewRequest): boolean {
+  return request.action === 'open' && graphCarriesV17(request.graph);
 }
 
 function legacySubproject(subproject: WorkflowSubproject): WorkflowSubproject {

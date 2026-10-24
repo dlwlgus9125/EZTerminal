@@ -8,6 +8,8 @@ export const WorkflowNodeSchema = z.object({
   role: z.enum(['planning', 'design', 'implementation', 'review', 'integration']).default('implementation'),
   instructions: z.string().max(65_536).default(''), document: z.string().max(200_000).default(''),
   providerId: id.optional(), model: z.string().max(256).optional(),
+  /** The stage's reasoning effort; one of its model's advertised levels. Stored only when chosen (remote protocol v17). */
+  reasoningEffort: z.string().min(1).max(32).optional(),
   permissionPreset: z.enum(['plan', 'standard', 'full-access']).default('plan'),
   acceptance: z.array(z.string().min(1).max(4_000)).max(200).default([]),
   allowedPaths: z.array(z.string().min(1).max(1_024)).max(200).default([]),

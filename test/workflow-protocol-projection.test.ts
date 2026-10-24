@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { workflowCanvasRuns } from '../src/renderer/workflow/workflow-canvas-fixtures';
 import type { ExecutionRun } from '../src/shared/planning-execution';
 import type { ProjectArchiveResult } from '../src/shared/project-archive';
-import type { WorkflowResult, WorkflowSnapshot, WorkflowSubproject } from '../src/shared/workflow';
+import { WorkflowResultSchema, type WorkflowResult, type WorkflowSnapshot, type WorkflowSubproject } from '../src/shared/workflow';
 import {
   flowV17Fields,
   legacyPlanningRunResult,
@@ -95,6 +95,15 @@ describe('the reduced flow view for remote protocol v16 readers', () => {
     expect(V16ProjectArchiveResult.safeParse(legacyProjectArchiveResult(history)).success).toBe(true);
   });
 
+  it('a flow whose stages carry an effort is valid for this version and reduced for v16 (I2-1)', () => {
+    const { snapshot } = fixture();
+    const subproject = snapshot.subprojects[0]!;
+    const withEffort: WorkflowResult = { ok: true, snapshot: { ...snapshot, subprojects: [{ ...subproject,
+      graph: { ...subproject.graph, nodes: subproject.graph.nodes.map((node) => ({ ...node, reasoningEffort: 'high' })) } }] } };
+    expect(WorkflowResultSchema.safeParse(withEffort).success).toBe(true);
+    expect(V16WorkflowResult.safeParse(withEffort).success).toBe(false);
+    expect(V16WorkflowResult.safeParse(legacyWorkflowResult(withEffort)).success).toBe(true);
+  });
   it('passes failures through untouched', () => {
     const failure = { ok: false, error: 'unavailable', message: 'Later.' } as const;
     expect(legacyWorkflowResult(failure)).toBe(failure);

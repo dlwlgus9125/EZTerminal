@@ -5,14 +5,14 @@ import { z } from 'zod';
 import {
   WorkflowCommandSchema, WorkflowRegistrySchema, WorkflowSubprojectSchema, createWorkflowGraph, validateWorkflowGraph, LEGACY_SUBPROJECT_ID,
   WorkflowPreviewRequestSchema, WorkflowGraphSchema, workflowPrincipalIdentity, type WorkflowPreview, type WorkflowPreviewResult,
-  type WorkflowCommand, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowResult, type WorkflowSubproject,
+  type WorkflowCommand, type WorkflowGraph, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowResult, type WorkflowSubproject,
   type WorkflowNavigationResult, type WorkflowNavigationSnapshot,
 } from '../shared/workflow';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { WorkflowConversationContext } from '../shared/workflow-conversation';
 import { PlanningSnapshotSchema } from '../shared/planning';
 import { copyWorkflowPlanning } from './workflow-planning-copy';
-import { flowV17Fields } from '../shared/workflow-protocol-projection';
+import { flowV17Fields, legacyWorkflowGraph } from '../shared/workflow-protocol-projection';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 
@@ -268,15 +268,21 @@ export class WorkflowService {
         const now = (this.options.now?.() ?? new Date()).toISOString();
         const actor = { kind: principal.kind === 'ai' ? 'ai' as const : 'user' as const, id: principal.id, ...(principal.sessionId ? { sessionId: principal.sessionId } : {}) };
         if (command.type === 'subproject.create') {
+          let createdGraph = command.payload.graph;
           if (command.payload.previewId) {
             const preview = this.previews.get(command.payload.previewId);
+            // A v16 reader saw the preview without its v17 fields: it confirms that reduced view, and the
+            // flow is created from the host's own preview so nothing it could not see is lost.
+            const confirmed = (graph: WorkflowGraph | undefined) => Boolean(preview && graph && (workflowDigest(preview.graph) === workflowDigest(graph)
+              || principal.reducedFlowView && workflowDigest(legacyWorkflowGraph(preview.graph)) === workflowDigest(graph)));
             if (!preview || preview.projectId !== command.projectId || preview.revision !== command.payload.previewRevision
-              || !command.payload.graph || workflowDigest(preview.graph) !== workflowDigest(command.payload.graph)) return failure('preview-conflict', 'The creation preview changed or was discarded. Review the current preview before creating.');
+              || !confirmed(command.payload.graph)) return failure('preview-conflict', 'The creation preview changed or was discarded. Review the current preview before creating.');
+            createdGraph = structuredClone(preview.graph);
           }
           if (registry.subprojects.some(entry => entry.id === command.payload.id) || command.payload.id === LEGACY_SUBPROJECT_ID) return failure('conflict', 'This subproject ID is already reserved.');
           registry.subprojects.push({ id: command.payload.id, title: command.payload.title, goal: command.payload.goal, status: 'active', revision: 0,
             createdAt: now, updatedAt: now, presetId: command.payload.presetId,
-            graph: command.payload.graph ?? createWorkflowGraph(command.payload.presetId, command.payload.id), history: [], archivedNodes: [] });
+            graph: createdGraph ?? createWorkflowGraph(command.payload.presetId, command.payload.id), history: [], archivedNodes: [] });
           registry.registryRevision += 1;
         } else if (command.type === 'subproject.copy') {
           if (registry.subprojects.some(entry => entry.id === command.payload.id) || command.payload.id === LEGACY_SUBPROJECT_ID) return failure('conflict', 'Choose a new subproject identity.');

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { WorkflowService, workflowDigest } from './workflow-service';
 import { PlanningService } from './planning-service';
 import { createWorkflowGraph, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
+import { legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
 
 let directory: string; let planning: PlanningService; let service: WorkflowService;
 const user = { kind: 'desktop' as const, id: 'surface' };
@@ -206,6 +207,49 @@ describe('workflow authority and storage', () => {
     expect(await service.ownsCommitted('project', 'a')).toBe(false);
     expect(await service.conversationWritable('project', 'chat')).toBe(false);
     await expect(service.conversationContext('project', 'chat')).rejects.toThrow(/changed outside/u);
+  });
+  it('keeps a stage’s effort through copy and undo, and refuses v16 phone edits that would drop or change it', async () => {
+    const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0]!, reasoningEffort: 'high' };
+    expect((await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user)).ok).toBe(true);
+    expect((await service.execute({ ...create('b'), expectedRevision: 1 }, user)).ok).toBe(true);
+    const phone = { kind: 'android' as const, id: 'android:phone', reducedFlowView: true as const };
+    const seen = async (id: string) => { const result = legacyWorkflowResult(await service.read('project')); if (!result.ok) throw new Error(result.message); return result.snapshot.subprojects.find(entry => entry.id === id)!; };
+    // What a v16 phone sees has no effort; saving that graph back would erase it.
+    const reduced = await seen('a'); expect(JSON.stringify(reduced.graph)).not.toContain('reasoningEffort');
+    const moved = { ...reduced.graph, nodes: reduced.graph.nodes.map((node, index) => index === 1 ? { ...node, position: { x: 999, y: 9 } } : node) };
+    expect(await service.execute({ ...base, commandId: 'phone-move', subprojectId: 'a', type: 'workflow.patch', payload: { graph: moved, summary: 'move' } }, phone)).toMatchObject({ ok: false, error: 'unsupported' });
+    // A flow without v17 fields stays editable from the old phone.
+    const plain = await seen('b');
+    expect(await service.execute({ ...base, commandId: 'phone-edit-b', subprojectId: 'b', type: 'workflow.patch', payload: { graph: { ...plain.graph, nodes: plain.graph.nodes.map((node, index) => index === 0 ? { ...node, title: 'Renamed' } : node) }, summary: 'rename' } }, phone)).toMatchObject({ ok: true });
+    // Deleting the stage that carries the effort keeps it intact among removed stages.
+    const without = { ...reduced.graph, entryNodeId: reduced.graph.entryNodeId === graph.nodes[0]!.id ? reduced.graph.nodes[1]!.id : reduced.graph.entryNodeId,
+      nodes: reduced.graph.nodes.slice(1), edges: reduced.graph.edges.filter(edge => edge.from !== graph.nodes[0]!.id && edge.to !== graph.nodes[0]!.id) };
+    expect(await service.execute({ ...base, commandId: 'phone-delete', subprojectId: 'a', type: 'workflow.patch', payload: { graph: without, summary: 'delete' } }, phone)).toMatchObject({ ok: true });
+    expect((await snapshot()).subprojects.find(entry => entry.id === 'a')!.archivedNodes[0]).toMatchObject({ id: graph.nodes[0]!.id, reasoningEffort: 'high' });
+    // Undo restores it on the desktop; an old phone may not undo an effort change it cannot see.
+    const restore = await service.execute({ ...base, expectedRevision: 1, commandId: 'desktop-undo', subprojectId: 'a', type: 'workflow.undo', payload: { changeId: 'phone-delete' } }, user);
+    expect(restore).toMatchObject({ ok: true });
+    const restored = (await snapshot()).subprojects.find(entry => entry.id === 'a')!;
+    expect(restored.graph.nodes.find(node => node.id === graph.nodes[0]!.id)).toMatchObject({ reasoningEffort: 'high' });
+    const raised = { ...restored.graph, nodes: restored.graph.nodes.map(node => node.id === graph.nodes[0]!.id ? { ...node, reasoningEffort: 'max' } : node) };
+    expect(await service.execute({ ...base, expectedRevision: 2, commandId: 'desktop-max', subprojectId: 'a', type: 'workflow.patch', payload: { graph: raised, summary: 'max' } }, user)).toMatchObject({ ok: true });
+    expect(await service.execute({ ...base, expectedRevision: 3, commandId: 'phone-undo', subprojectId: 'a', type: 'workflow.undo', payload: { changeId: 'desktop-max' } }, phone)).toMatchObject({ ok: false, error: 'unsupported' });
+    // Copies keep it.
+    expect(await service.execute({ ...base, expectedRevision: 3, commandId: 'copy-a', subprojectId: 'a', type: 'subproject.copy', payload: { id: 'c', title: 'Copy' } }, user)).toMatchObject({ ok: true });
+    expect((await snapshot()).subprojects.find(entry => entry.id === 'c')!.graph.nodes.some(node => node.reasoningEffort === 'max')).toBe(true);
+  });
+  it('lets a v16 phone create from a creation preview it sees without effort, keeping the effort', async () => {
+    const graph = createWorkflowGraph('research', 'p'); graph.nodes[0] = { ...graph.nodes[0]!, reasoningEffort: 'high' };
+    expect(await service.preview({ action: 'open', projectId: 'project', sessionId: 'chat', previewId: 'preview-p', graph })).toMatchObject({ ok: true });
+    const read = legacyWorkflowPreviewResult(await service.preview({ action: 'read', projectId: 'project', previewId: 'preview-p' }));
+    if (!read.ok || !read.preview) throw new Error('preview missing');
+    expect(JSON.stringify(read.preview.graph)).not.toContain('reasoningEffort');
+    const create = (principal: { kind: 'android'; id: string; reducedFlowView?: true }, commandId: string): Promise<unknown> => service.execute({ ...base, commandId, type: 'subproject.create',
+      payload: { id: 'p', title: 'From preview', goal: '', presetId: 'research', graph: read.preview!.graph, previewId: 'preview-p', previewRevision: read.preview!.revision } }, principal);
+    // A v17 client must confirm the exact preview; the reduced one is only accepted from a v16 reader.
+    expect(await create({ kind: 'android', id: 'android:new' }, 'create-new')).toMatchObject({ ok: false, error: 'preview-conflict' });
+    expect(await create({ kind: 'android', id: 'android:old', reducedFlowView: true }, 'create-old')).toMatchObject({ ok: true });
+    expect((await snapshot()).subprojects.find(entry => entry.id === 'p')!.graph.nodes[0]).toMatchObject({ reasoningEffort: 'high' });
   });
   it('lets a project conversation run its flow while approvals, integration and 자동 승인 stay with the person', async () => {
     const executeRun = vi.fn(async () => ({ ok: true as const }));

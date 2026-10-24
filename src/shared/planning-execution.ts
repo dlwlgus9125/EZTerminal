@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PlanningExecutionEnvironmentSchema } from './planning';
-import { WorkflowFrozenSchema, WorkflowRuntimeSchema, type WorkflowRuntime } from './workflow-graph';
+import { WorkflowFrozenSchema, WorkflowRuntimeSchema, type WorkflowNode, type WorkflowRuntime } from './workflow-graph';
 
 /** Planning execution shares the daemon database, but has a project-local revision. */
 export const PLANNING_EXECUTION_VERSION = 1 as const;
@@ -55,6 +55,18 @@ export const PreparedExecutionTaskSchema = z.object({
   }).strict()).min(1).max(200),
 }).strict();
 export type PreparedExecutionTask = z.infer<typeof PreparedExecutionTaskSchema>;
+
+/**
+ * A prepared workflow task carries exactly its stage's settings: provider, model, reasoning effort,
+ * permission, role, writable paths and completion criteria (in order).
+ */
+export function taskMatchesStage(task: PreparedExecutionTask, node: WorkflowNode): boolean {
+  const same = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((value, index) => value === right[index]);
+  return task.profile.providerId === node.providerId && task.profile.model === node.model
+    && (task.profile.reasoningEffort ?? null) === (node.reasoningEffort ?? null)
+    && task.profile.permissionPreset === node.permissionPreset && task.stage === node.role
+    && same(task.allowedPaths ?? [], node.allowedPaths) && same(task.acceptance.map((entry) => entry.description), node.acceptance);
+}
 
 export const ExecutionPreparationSchema = z.object({
   workflow: WorkflowFrozenSchema.optional(),

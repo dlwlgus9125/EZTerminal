@@ -23,7 +23,8 @@ export function workflowPlanningInput(subproject: WorkflowSubproject, baselineId
       featureIds: [], screenIds: [], inputRefs: [], dependencyIds: [...ancestors].filter(id => subproject.graph.nodes.find(entry => entry.id === id)?.operation === 'agent'), allowedPaths: node.allowedPaths, interfaceRefs: [], profileId,
       executionEnvironment: { mode: 'namespaced', portCount: 1 }, acceptance,
       validationPlan: acceptance.map(entry => ({ id: `${entry.id}:validation`, acceptanceIds: [entry.id], description: entry.description, method: 'inspection' as const, environment: 'Independent review of the exact workflow attempt and captured artifacts.' })), status: 'ready' });
-    assignments.push({ taskId: node.id, profileId, providerId: node.providerId!, model: node.model!, permissionPreset: node.permissionPreset });
+    assignments.push({ taskId: node.id, profileId, providerId: node.providerId!, model: node.model!, permissionPreset: node.permissionPreset,
+      ...(node.reasoningEffort ? { reasoningEffort: node.reasoningEffort } : {}) });
   }
   const reviewerProfileId = `${subproject.id}:reviewer`;
   draft.profiles.push({ id: reviewerProfileId, revision: subproject.revision, title: '독립 검토', role: 'review',

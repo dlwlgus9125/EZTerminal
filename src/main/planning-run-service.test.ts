@@ -13,7 +13,7 @@ import { PlanningService } from './planning-service';
 import { PlanningExecutionStore } from './planning-execution-store';
 import { autoApprovalCommands, PlanningRunService, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
-import { WorkflowService } from './workflow-service';
+import { WorkflowService, workflowDigest } from './workflow-service';
 import { createWorkflowGraph } from '../shared/workflow';
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -147,6 +147,8 @@ describe('planning provider dispatch', () => {
     const frozen = structuredClone(f.ledger.read('project').runs[0].preparation);
     // A run without 자동 승인 carries no policy field, so older clients still parse it.
     expect(frozen).not.toHaveProperty('approvalPolicy');
+    // A stage without a chosen effort leaves the key out of its task profile.
+    expect(frozen.tasks[0]!.profile).not.toHaveProperty('reasoningEffort');
     graph.nodes[0].instructions = 'Next run only';
     expect(await workflows.execute({ ...common, commandId: 'draft-edit', subprojectId: 'sub', type: 'workflow.patch', payload: { graph, summary: 'Next run' } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
     const start = { ...common, expectedRevision: 1, commandId: 'workflow-start', subprojectId: 'sub', type: 'run.start' as const, payload: { runId: 'workflow-run' } };
@@ -183,6 +185,45 @@ describe('planning provider dispatch', () => {
     // Same phone, updated: the ledger's frozen request fingerprint still matches.
     expect(await workflows.execute(prepare, phone)).toMatchObject({ ok: true });
     expect(f.ledger.read('project').runs).toHaveLength(1);
+  });
+  it('carries a stage’s reasoning effort to its provider and refuses one its model does not offer', async () => {
+    const f = await fixture(); const directory = f.store.getSnapshot().projects[0].rootPath!;
+    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
+      runs: () => f.ledger.read('project').runs, session: () => undefined, executeRun: (...args) => f.service.executeWorkflow(...args) });
+    const graph = createWorkflowGraph('research', 'sub');
+    graph.nodes[0] = { ...graph.nodes[0], providerId: 'codex', model: 'model', reasoningEffort: 'high', instructions: 'Research with evidence', acceptance: ['Explain observed evidence'] };
+    const common = { projectId: 'project', hostId: 'host', expectedRevision: 0 };
+    const user = { kind: 'desktop' as const, id: 'test' };
+    expect(await workflows.execute({ ...common, commandId: 'create-sub', type: 'subproject.create', payload: { id: 'sub', title: 'Research', goal: '', presetId: 'research', graph } }, user)).toMatchObject({ ok: true });
+    expect(await workflows.execute({ ...common, commandId: 'prepare-high', subprojectId: 'sub', type: 'run.prepare', payload: { runId: 'run-high', reviewer: { providerId: 'codex', model: 'model' } } }, user)).toMatchObject({ ok: true });
+    const prepared = f.ledger.read('project').runs[0]!;
+    expect(prepared.preparation.tasks.find((task) => task.taskId === graph.nodes[0]!.id)?.profile.reasoningEffort).toBe('high');
+    expect(await workflows.execute({ ...common, commandId: 'start-high', subprojectId: 'sub', type: 'run.start', payload: { runId: 'run-high' } }, user)).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledWith(expect.objectContaining({ reasoningEffort: 'high' }), expect.anything()));
+    // The fixture model only advertises 'high'.
+    const max = structuredClone(graph); max.nodes[0] = { ...max.nodes[0]!, reasoningEffort: 'max' };
+    expect(await workflows.execute({ ...common, commandId: 'edit-max', subprojectId: 'sub', type: 'workflow.patch', payload: { graph: max, summary: 'Max effort' } }, user)).toMatchObject({ ok: true });
+    const refused = await workflows.execute({ ...common, expectedRevision: 1, commandId: 'prepare-max', subprojectId: 'sub', type: 'run.prepare', payload: { runId: 'run-max', reviewer: { providerId: 'codex', model: 'model' } } }, user);
+    expect(refused).toMatchObject({ ok: false, message: expect.stringMatching(/does not advertise this reasoning setting/u) });
+    expect(f.ledger.read('project').runs.map((run) => run.runId)).toEqual(['run-high']);
+
+    // The ledger itself refuses a prepared task whose effort differs from its frozen stage.
+    const frozen = structuredClone(prepared.preparation); const nodeId = graph.nodes[0]!.id;
+    const withoutEffort = <T extends object>(value: T): T => { const copy = { ...value } as T & { reasoningEffort?: string }; delete copy.reasoningEffort; return copy; };
+    const withTask = (effort: string | undefined) => frozen.tasks.map((task) => task.taskId !== nodeId ? task : { ...task, profile: effort ? { ...task.profile, reasoningEffort: effort } : withoutEffort(task.profile) });
+    const withNode = (effort: string | undefined) => ({ ...frozen.workflow!.graph, nodes: frozen.workflow!.graph.nodes.map((node) => node.id !== nodeId ? node : effort ? { ...node, reasoningEffort: effort } : withoutEffort(node)) });
+    const cases = [
+      { label: 'different', tasks: withTask('max'), graph: withNode('high') },
+      { label: 'task only unset', tasks: withTask(undefined), graph: withNode('high') },
+      { label: 'stage only unset', tasks: withTask('high'), graph: withNode(undefined) },
+    ];
+    for (const [index, entry] of cases.entries()) {
+      const preparation = { ...frozen, tasks: entry.tasks, workflow: { ...frozen.workflow!, graph: entry.graph, fingerprint: workflowDigest(entry.graph) } };
+      const receipt = await f.ledger.execute({ commandId: `mismatch-${index}`, projectId: 'project', expectedRevision: f.ledger.read('project').revision,
+        principal: { kind: 'desktop', id: 'test' }, type: 'run.prepare', payload: { runId: `mismatch-run-${index}`, preparation } });
+      expect(receipt, entry.label).toMatchObject({ ok: false, error: 'invalid-reference' });
+    }
+    expect(f.ledger.read('project').runs.map((run) => run.runId)).toEqual(['run-high']);
   });
   it('lets a project conversation prepare and start a run, freezing 자동 승인 and who started it', async () => {
     const f = await fixture(); const directory = f.store.getSnapshot().projects[0].rootPath!;
