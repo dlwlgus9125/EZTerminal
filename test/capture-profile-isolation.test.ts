@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   PROFILE_COPY_SKIP,
+  inertPath,
   providerDescendants,
   repositoryFingerprint,
   sanitizeCopiedDatabase,
@@ -92,6 +93,12 @@ describe('capture profile isolation', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('keeps provider CLIs off PATH so CLI-history readers cannot start the real CLI', () => {
+    const present = new Set([join(String.raw`C:\npm`, 'codex.cmd'), join(String.raw`C:\tools`, 'claude.exe')]);
+    const exists = (file: string): boolean => present.has(file);
+    expect(inertPath(String.raw`C:\Windows;C:\npm;C:\tools;C:\git\cmd`, exists)).toBe(String.raw`C:\Windows;C:\git\cmd`);
   });
 
   it('flags only provider processes that descend from the launched app', () => {

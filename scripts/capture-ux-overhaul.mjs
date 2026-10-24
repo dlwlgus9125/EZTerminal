@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
 import {
   PROFILE_COPY_SKIP,
+  inertPath,
   listProcesses,
   providerDescendants,
   repositoryFingerprint,
@@ -141,6 +142,8 @@ async function launch() {
     EZTERMINAL_DISABLE_OPENCLAW_SUPERVISOR: '1',
     EZTERMINAL_REMOTE_PORT: '47999',
   });
+  // CLI-history readers start `codex`/`claude` by name: keep them off PATH in the copy.
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') env[key] = inertPath(env[key], existsSync);
   const app = await electron.launch({ args: [MAIN_ENTRY, '--lang=ko-KR'], env });
   watchProviders(app);
   await app.evaluate(({ BrowserWindow }) => {

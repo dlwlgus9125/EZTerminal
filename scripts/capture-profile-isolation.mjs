@@ -35,6 +35,18 @@ const PLANNING_EXECUTION_TABLES = [
   'planning_execution_projects',
 ];
 
+/**
+ * PATH without the folders that hold a provider CLI. The CLI-history readers
+ * start `codex` / `claude` by name (not from the copied database), so a copy
+ * that opens a conversation with native history would otherwise start the
+ * user's real CLI.
+ */
+export function inertPath(value, exists) {
+  const separator = value.includes(';') ? ';' : path.delimiter;
+  return value.split(separator).filter((folder) => !folder || !['codex', 'codex.cmd', 'codex.exe', 'claude', 'claude.cmd', 'claude.exe']
+    .some((name) => exists(path.join(folder, name)))).join(separator);
+}
+
 function normalize(value) {
   return String(value ?? '').replaceAll('\\', '/').toLowerCase();
 }
