@@ -380,7 +380,7 @@ export type PlanningExecutionCommand = z.infer<typeof PlanningExecutionCommandSc
 
 export type PlanningExecutionError = 'invalid-command' | 'revision-conflict' | 'command-conflict'
   | 'not-found' | 'invalid-transition' | 'invalid-reference' | 'retry-limit' | 'stale-review'
-  | 'runtime-required' | 'user-required';
+  | 'runtime-required' | 'user-required' | 'active-run';
 export type PlanningExecutionReceipt = {
   readonly ok: true;
   readonly commandId: string;

@@ -114,6 +114,26 @@ describe('PlanningExecutionStore commit notices', () => {
   });
 });
 
+describe('one unfinished run per flow', () => {
+  it('refuses a second start of the same subproject and answers that start the same way after the first run ends', async () => {
+    const { ledger, send } = await fixture();
+    const owned = { ...preparation, subprojectId: 'sub' };
+    expect(await send('run.prepare', { runId: 'R1', preparation: owned })).toMatchObject({ ok: true });
+    expect(await send('run.prepare', { runId: 'R2', preparation: owned })).toMatchObject({ ok: true });
+    expect(await send('run.prepare', { runId: 'R3', preparation })).toMatchObject({ ok: true });
+    expect(await send('run.start', { runId: 'R1' })).toMatchObject({ ok: true });
+    const refusedAt = ledger.read('P1').revision;
+    expect(await send('run.start', { runId: 'R2' }, 'desktop', { commandId: 'start-r2' })).toMatchObject({ ok: false, error: 'active-run' });
+    // A run that belongs to no subproject is not held back.
+    expect(await send('run.start', { runId: 'R3' })).toMatchObject({ ok: true });
+    expect(await send('run.cancel', { runId: 'R1' })).toMatchObject({ ok: true });
+    expect(ledger.read('P1').runs.find((run) => run.runId === 'R1')).toMatchObject({ state: 'cancelled' });
+    // The refused start is recorded: sent again it is refused again; a new start goes ahead.
+    expect(await send('run.start', { runId: 'R2' }, 'desktop', { commandId: 'start-r2', expectedRevision: refusedAt })).toMatchObject({ ok: false, error: 'active-run', replayed: true });
+    expect(await send('run.start', { runId: 'R2' })).toMatchObject({ ok: true });
+  });
+});
+
 describe('PlanningExecutionStore', () => {
   it('cancels prepared runs and waits for active cancellation acknowledgement without losing evidence', async () => {
     const f = await fixture(); await f.prepare();

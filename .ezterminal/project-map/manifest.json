@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a7635cd87f1f6466f95821f127b946f5486382aba6575c7934e4e035dca8a1e0",
+        "inputDigest": "sha256:2b93bc628035f377eed892dcdfce2b5143ba71505115f4436ea46077239cc7ec",
         "decision": "map-updated",
-        "reason": "Reviewed (I2-3 fixes): a launch settles only input errors and refusals; a provider that is down or planning storage that fails keeps it open, as does a clean-up not yet done; receipts answer before the one-run guard."
+        "reason": "Reviewed (I2-3 fixes 2): the ledger refuses a second start of one flow and records the refusal with the start, so a refused launch never starts; its clean-up tries new ids past recorded conflicts; damaged planning files settle."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9efa8abc3e2a3ef5471258c12f619a9d850d536b17a4d299db265a99be140821",
-        "decision": "map-updated",
-        "reason": "Reviewed (I2-3 fixes): an open launch reaches clients as execution-unavailable (kept pending); an agent's launch resolves its conversation's review AI on first receipt, so its retry is the same request. Claims hold."
+        "inputDigest": "sha256:8da576e2ca4f0e9d1b926dcadf725dde23fab222fc2ed3cf0f177248939e9b7d",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed (I2-3 fixes 2): the one-run rule moved into the ledger start; an execution request left unconfirmed can be let go on the flow screen; anchors re-ranged. Claims hold."
       }
     }
   ]

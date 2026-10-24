@@ -176,6 +176,27 @@ describe('workflow project workspace', () => {
     expect(writes.at(-1)?.creation?.mode).toBe('preset');
     await click('Cancel'); expect(state.commands).toHaveLength(0);
   });
+  it('lets an execution request that stays unconfirmed go, but never an edit', async () => {
+    const snapshot = workflowFixture();
+    for (const pendingCommand of [
+      { commandId: 'launch-1', projectId: snapshot.projectId, hostId: snapshot.hostId, expectedRevision: 2, subprojectId: 'login', type: 'run.launch' as const, payload: { runId: 'run-1' } },
+      { commandId: 'edit-1', projectId: snapshot.projectId, hostId: snapshot.hostId, expectedRevision: 2, subprojectId: 'login', type: 'workflow.undo' as const, payload: { changeId: 'change' } },
+    ]) {
+      const state = fixture();
+      let saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand };
+      const recovery: WorkflowDraftAccess = { workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 0, state: saved } }),
+        workflowDraftWrite: async (_, request) => { saved = request.state; return { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: request.state } }; } };
+      await act(async () => root.render(<WorkflowWorkspacePanel key={pendingCommand.commandId} projectId={snapshot.projectId} projectName="Project" access={state.access} recoveryAccess={recovery} conversations={[]} />));
+      expect(document.body.textContent).toContain('The request is not yet confirmed');
+      const stop = container.querySelector<HTMLButtonElement>('[data-testid="workflow-pending-discard"]');
+      if (pendingCommand.type !== 'run.launch') { expect(stop).toBeNull(); continue; }
+      await act(async () => { stop!.click(); });
+      await act(async () => new Promise(resolve => setTimeout(resolve, 220)));
+      expect(document.body.textContent).not.toContain('The request is not yet confirmed');
+      expect(saved.pendingCommand).toBeNull();
+      expect(state.commands).toHaveLength(0);
+    }
+  });
   it('restores the selected stage and its unsaved document without changing the authoritative graph', async () => {
     const state = fixture(); const snapshot = workflowFixture(); const graph = structuredClone(snapshot.subprojects[0].graph); graph.nodes[0].document = 'Unsaved draft';
     const saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: { login: { baseRevision: 2, graph } }, pendingCommand: null, view: { subprojectId: 'login', nodeId: graph.nodes[0].id, page: 'stage', scrollTop: 77 } };

@@ -669,6 +669,11 @@ describe('다시 실행 review fixes', () => {
       presetId: 'research', graph: frozen.graph, history: [], archivedNodes: [] };
     const launch2 = () => f.service.executeWorkflow({ projectId: 'project', hostId: 'host', expectedRevision: frozen.revision, commandId: 'launch-2', subprojectId: 'sub', type: 'run.launch',
       payload: { runId: 'run-2', reviewer: { providerId: 'codex', model: 'model' } } }, sub, { kind: 'desktop', id: 'test' });
+    // Earlier clean-up tries recorded as conflicting in the ledger itself, then more conflicts now.
+    for (let index = 0; index < 7; index += 1) {
+      expect(await f.ledger.execute({ commandId: `workflow:${workflowLaunchId('launch-2')}:cancel-${index}`, projectId: 'project', expectedRevision: f.ledger.read('project').revision + 9,
+        principal: { kind: 'runtime', id: 'workflow-launch' }, type: 'run.cancel', payload: { runId: 'run-2' } })).toMatchObject({ ok: false, error: 'revision-conflict' });
+    }
     const ledgerExecute = f.ledger.execute.bind(f.ledger);
     const conflicting = vi.spyOn(f.ledger, 'execute').mockImplementation(async (input) => String((input as { commandId?: string }).commandId).includes(':cancel')
       ? { ok: false, commandId: 'x', projectId: 'project', revision: 0, error: 'revision-conflict', message: 'Changed meanwhile.' } as never : ledgerExecute(input));
@@ -680,6 +685,9 @@ describe('다시 실행 review fixes', () => {
     expect(again).toMatchObject({ ok: false, error: 'active-run' });
     expect(again).not.toHaveProperty('transient');
     expect(runs().find((run) => run.runId === 'run-2')).toMatchObject({ state: 'cancelled' });
+    // The refusal is recorded with the start itself: this launch never starts, whatever happens to run-1.
+    expect(f.ledger.getReceipt('project', `workflow:${workflowLaunchId('launch-2')}:start`)).toMatchObject({ ok: false, error: 'active-run' });
+    expect(runs().find((run) => run.runId === 'run-2')!.startedAt).toBeUndefined();
   });
 
   it('answers a refused prepare and a repeated legacy start from their receipts', async () => {
@@ -690,15 +698,17 @@ describe('다시 실행 review fixes', () => {
     expect(await f.send(scoped)).toMatchObject({ ok: true });
     const start = { commandId: 'start-a', projectId: 'project', expectedRevision: revision(), subprojectId: 'legacy-default', type: 'start', payload: { runId: 'run' } } as PlanningRunRequest;
     expect(await f.send(start)).toMatchObject({ ok: true });
-    // Another run of the same subproject started meanwhile (written straight to the ledger).
-    const preparation = f.ledger.read('project', { frozen: true }).runs[0]!.preparation;
-    expect(await f.ledger.execute({ commandId: 'ledger-prepare-b', projectId: 'project', expectedRevision: revision(), principal: { kind: 'desktop', id: 'test' }, type: 'run.prepare', payload: { runId: 'run-b', preparation } })).toMatchObject({ ok: true });
-    expect(await f.ledger.execute({ commandId: 'ledger-start-b', projectId: 'project', expectedRevision: revision(), principal: { kind: 'desktop', id: 'test' }, type: 'run.start', payload: { runId: 'run-b' } })).toMatchObject({ ok: true });
-    // The original start, sent again, is answered by its receipt, not refused as a second run.
+    // The original start, sent again, is answered by its receipt.
     expect(await f.send(start)).toMatchObject({ ok: true });
-    // A new start of a third run is refused.
+    // Another run of the same subproject cannot start while this one goes on.
+    const preparation = f.ledger.read('project', { frozen: true }).runs[0]!.preparation;
     expect(await f.ledger.execute({ commandId: 'ledger-prepare-c', projectId: 'project', expectedRevision: revision(), principal: { kind: 'desktop', id: 'test' }, type: 'run.prepare', payload: { runId: 'run-c', preparation } })).toMatchObject({ ok: true });
-    expect(await f.send({ commandId: 'start-c', projectId: 'project', expectedRevision: revision(), subprojectId: 'legacy-default', type: 'start', payload: { runId: 'run-c' } } as PlanningRunRequest)).toMatchObject({ ok: false, error: 'active-run' });
+    // (The dispatch of run A writes to the ledger meanwhile: a start sent on a stale revision is sent again.)
+    let refusal: Awaited<ReturnType<typeof f.send>> | undefined;
+    for (let attempt = 0; attempt < 5 && (!refusal || (!refusal.ok && refusal.error === 'revision-conflict')); attempt += 1) {
+      refusal = await f.send({ commandId: `start-c-${attempt}`, projectId: 'project', expectedRevision: revision(), subprojectId: 'legacy-default', type: 'start', payload: { runId: 'run-c' } } as PlanningRunRequest);
+    }
+    expect(refusal).toMatchObject({ ok: false, error: 'active-run' });
 
     // A flow prepare the ledger refused answers that refusal on retry (it made no run to compare).
     const refused = await f.ledger.execute({ commandId: workflowLedgerId('refused-prepare'), projectId: 'project', expectedRevision: revision() + 5, principal: { kind: 'desktop', id: 'test' }, type: 'run.prepare', payload: { runId: 'run-x', preparation } });
