@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:076d13f19c68fe5f13171ca40770cbf1ae8034f27d8d89eeef94ab8526e3f35a",
+        "inputDigest": "sha256:54c21ad756d6ccc526d93492a1cda5d7a7fdeee727a3a9ff25d39494f1071c14",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 checkpoint A): a draft an older app left behind is rebased on the host's flow (its hidden stage fields kept) and its unconfirmed graph save becomes that draft instead of being resent. Claims hold."
+        "reason": "Reviewed (I2-4 checkpoint A): an older app's recovery stays marked (olderVersion in the saved state) through offline saves and restarts until every draft is rebased on the host's flow. Claims hold."
       }
     }
   ]

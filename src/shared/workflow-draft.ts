@@ -15,6 +15,11 @@ export const WorkflowDraftStateSchema = z.object({
   snapshot: z.custom<WorkflowSnapshot>(value => WorkflowSnapshotSchema.safeParse(value).success).optional(),
   drafts: z.record(WorkflowIdSchema, z.object({ baseRevision: revision, graph: recoveryGraph }).strict()),
   pendingCommand: WorkflowCommandSchema.nullable(),
+  /**
+   * This recovery (its cached flow and every draft made from it) comes from an app before remote protocol
+   * v17 and is not rebased on the host yet: kept across saves and restarts until it is.
+   */
+  olderVersion: z.literal(true).optional(),
   creation: z.object({ id: WorkflowIdSchema, title: z.string().max(300), goal: z.string().max(65_536), preset: z.enum(['feature', 'fix', 'research', 'parallel', 'custom']), mode: z.enum(['preset', 'conversation']), graph: recoveryGraph, previewSessionId: WorkflowIdSchema.optional(), previewRevision: revision.optional(), linkSessionId: WorkflowIdSchema.optional() }).strict().optional(),
   view: z.object({ subprojectId: WorkflowIdSchema.optional(), nodeId: WorkflowIdSchema.optional(), page: z.enum(['flow', 'stage', 'history', 'run', 'planning']), scrollTop: z.number().finite().nonnegative() }).strict().optional(),
   pendingConversation: z.object({ command: createConversation, subprojectId: WorkflowIdSchema.optional(), nodeId: WorkflowIdSchema.optional(), scope: z.enum(['stage', 'flow-edit']).optional(), previewId: WorkflowIdSchema.optional(), draft: ChatComposerDraftSchema.optional() }).strict().optional(),

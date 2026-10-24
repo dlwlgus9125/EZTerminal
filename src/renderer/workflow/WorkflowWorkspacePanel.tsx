@@ -155,8 +155,12 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [compareGraph, setCompareGraph] = useState(false);
   const hostId = snapshot?.hostId;
   const recovery = useMemo(() => recoveryAccess && hostId ? new WorkflowRecovery(projectId, hostId, recoveryAccess) : null, [projectId, hostId, recoveryAccess]);
+  /** The restored recovery came from an older version and is not rebased on the host yet (see the rebase effect). */
+  const olderState = useRef(false);
   const recoveryExtras = useRef<Pick<WorkflowDraftState, 'creation' | 'view' | 'snapshot'>>({});
-  recoveryExtras.current = { snapshot: snapshot ?? undefined, creation: create ?? undefined, view: { subprojectId: selectedId ?? undefined, nodeId: nodeId ?? undefined, page: view, scrollTop } };
+  recoveryExtras.current = { snapshot: snapshot ?? undefined, creation: create ?? undefined, view: { subprojectId: selectedId ?? undefined, nodeId: nodeId ?? undefined, page: view, scrollTop },
+    // Kept with every save until the drafts are rebased on the host (an offline save or a restart must not lose it).
+    ...(olderState.current ? { olderVersion: true as const } : {}) };
   const cachedRevision = snapshot ? `${snapshot.hostId}:${snapshot.registryRevision}:${snapshot.subprojects.map(item => `${item.id}:${item.revision}`).join(',')}:${snapshot.runs.map(run => `${run.runId}:${run.revision}`).join(',')}` : '';
   const persist = useCallback(async (state: WorkflowDraftState): Promise<void> => {
     if (!recovery) return;
@@ -176,8 +180,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
           restoredDrafts = { ...restoredDrafts, [id]: restoredDrafts[id] ?? { graph: restoredPending.payload.graph, baseRevision: restoredPending.expectedRevision } };
           restoredPending = null;
         }
-        olderDrafts.current = new Set(Object.keys(restoredDrafts));
       }
+      olderState.current = recovery.olderVersion || saved.olderVersion === true;
       setDrafts(restoredDrafts); setPending(restoredPending); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) { setConversationRecovery(saved.pendingConversation); setChatPending(saved.pendingConversation.command); setChatTarget({ subprojectId: saved.pendingConversation.subprojectId, nodeId: saved.pendingConversation.nodeId, scope: saved.pendingConversation.scope, previewId: saved.pendingConversation.previewId }); } } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
   }, [recovery]);
@@ -186,14 +190,14 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     const timer = window.setTimeout(() => { void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
     return () => window.clearTimeout(timer);
   }, [drafts, pending, conversationRecovery, create, selectedId, nodeId, view, scrollTop, recoveryReady, persist, projectId, hostId, cachedRevision, recoveryError]);
-  // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too).
-  const olderDrafts = useRef<ReadonlySet<string>>(new Set());
+  // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too):
+  // every draft, including one made offline from that copy, and only once the host has answered.
   useEffect(() => {
-    if (!snapshot || !authorityReady || !recoveryReady || !olderDrafts.current.size) return;
-    const ids = olderDrafts.current; olderDrafts.current = new Set();
+    if (!snapshot || !authorityReady || !recoveryReady || !olderState.current) return;
+    olderState.current = false;
     setDrafts(current => {
       let next = current;
-      for (const id of ids) {
+      for (const id of Object.keys(current)) {
         const draft = current[id]; const saved = snapshot.subprojects.find(item => item.id === id);
         if (!draft || !saved) continue;
         const graph = withHiddenFlowFields(draft.graph, saved.graph);

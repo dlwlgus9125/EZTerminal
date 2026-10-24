@@ -205,6 +205,38 @@ describe('workflow project workspace', () => {
       expect(node).toMatchObject({ document: 'Older app edit', reasoningEffort: 'high' });
     }
   });
+  it('keeps an older app’s recovery marked through offline edits and a restart, then rebases it once online', async () => {
+    const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
+    const hostSnapshot = { ...snapshot, subprojects: snapshot.subprojects.map((item, index) => index === 0 ? { ...item, graph: { ...item.graph, nodes: item.graph.nodes.map(node => node.id === stage.id ? { ...node, reasoningEffort: 'high' } : node) } } : item) };
+    // The older app left only its (reduced) cached flow, no draft yet.
+    let stored: { revision: number; state: WorkflowDraftState; olderVersion?: true } = { revision: 1, olderVersion: true,
+      state: { projectId: snapshot.projectId, hostId: snapshot.hostId, snapshot, drafts: {}, pendingCommand: null, view: { subprojectId: 'login', nodeId: stage.id, page: 'stage', scrollTop: 0 } } };
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: stored.revision, state: stored.state, ...(stored.olderVersion ? { olderVersion: true as const } : {}) } }),
+      // Saves go to this version's place: the location no longer says "older".
+      workflowDraftWrite: async (_, request) => { stored = { revision: stored.revision + 1, state: request.state }; return { ok: true, snapshot: { projectId: snapshot.projectId, revision: stored.revision, state: request.state } }; },
+    };
+    const commands: WorkflowCommand[] = [];
+    const online: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot: hostSnapshot }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot: hostSnapshot, commandId: command.commandId }; } };
+    const offline: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: false, error: 'unavailable', message: 'Disconnected' }), executeWorkflowCommand: vi.fn() };
+    // Offline: an edit made on the older cached flow is saved on this device.
+    await act(async () => root.render(<WorkflowWorkspacePanel key="offline" projectId={snapshot.projectId} projectName="Project" access={offline} recoveryAccess={recovery} disabled conversations={[]} />));
+    await edit('Stage document', 'Offline edit on the older copy');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+    expect(stored.state.olderVersion).toBe(true);
+    expect(stored.state.drafts.login).toBeDefined();
+    // Restarted and online: the draft is rebased before it is saved.
+    await act(async () => root.render(<WorkflowWorkspacePanel key="online" projectId={snapshot.projectId} projectName="Project" access={online} recoveryAccess={recovery} conversations={[]} />));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    expect(stageDocument()).toBe('Offline edit on the older copy');
+    await click('Save draft');
+    const command = commands.at(-1);
+    if (command?.type !== 'workflow.patch') throw new Error('No graph save');
+    expect(command.payload.graph.nodes.find(item => item.id === stage.id)).toMatchObject({ document: 'Offline edit on the older copy', reasoningEffort: 'high' });
+    // Rebased: later saves no longer carry the mark.
+    await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+    expect(stored.state.olderVersion).toBeUndefined();
+  });
   it('lets an execution request that stays unconfirmed go, but never an edit', async () => {
     const snapshot = workflowFixture();
     for (const pendingCommand of [
