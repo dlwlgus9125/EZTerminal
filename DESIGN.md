@@ -25,6 +25,12 @@ canvas 위에 놓인다. Matrix는 같은 정체성을 유지하되 surface 단�
 **Refined** palette를 쓴다. 두 결정은 새 채팅 행 위에서 다시 확인해 확정했다. 승인된 의도와 현재 구현의 일치 여부는
 [구현 진행 기록](docs/ezterminal-v2-implementation.md)에서 따로 검증한다.
 
+2026-10-24 사용자가 ux2 방향 **Board + Desk**를 Storybook 실물로 승인했다. 시각 언어는 **계기판**이다: 바닥(floor)
+위에 판(plate)이 놓이고 판 사이는 홈(groove)으로 나뉘며, 살아 있는 상태는 작은 램프(LED)가 빛으로 알린다. 빛은 램프와
+활성 신호에만 있고 글자에는 glow를 주지 않는다. Matrix는 이 언어의 기준 팔레트(초록 램프, 호박색 = 사람을 기다림,
+붉은 램프 = 오류로 멈춤)이며, Dark·Light·High Contrast·사용자 테마는 같은 구조(판·홈·램프·작은 반경·라벨 face)에 자기
+팔레트를 쓴다.
+
 Matrix 정체성은 신호처럼 선명한 accent, 어두운 계층형 surface, 절제된 scanline과
 terminal 문법에서 나온다. 그러나 모든 theme에서 제품의 우선순위는 가독성, 실제
 상태의 정직한 표현, 입력 안전성과 작업 연속성이다. 장식 때문에 text, focus, 오류,
@@ -60,7 +66,9 @@ runtime theme registry만 정의한다.
 - Surface 단계는 canvas, working surface, raised overlay와 inset data 영역의 깊이를
   만든다. 단순히 서로 다른 검정을 늘어놓지 않는다.
 - Success, warning, danger와 info는 실제 상태 의미가 있을 때만 쓴다. 의미는 label,
-  icon 또는 구조로도 전달한다.
+  icon 또는 구조로도 전달한다. 계기판 언어에서 호박색(warning)은 **사람을 기다리는 것**(승인·질문)이고, 그 판의
+  작은 글자는 muted보다 한 단계 밝게 둔다.
+- 램프는 상태를 보여 주지만 혼자 말하지 않는다. 램프 옆에는 항상 같은 상태를 글자로 쓴다.
 - Glow와 scanline은 Matrix theme의 제한된 atmosphere다. Dark, Light와 High Contrast에서는
   형태와 경계가 먼저이며, custom theme에도 Matrix 색을 강제로 섞지 않는다. Matrix 안에서도
   glow는 focus, 활성 pane, 실행 중 상태처럼 살아 있는 signal에만 쓰고 dialog나 hover 같은
@@ -78,7 +86,9 @@ terminal content처럼 고정 폭이 의미를 돕는 곳에만 사용한다.
 
 한국어 문장 전체를 display 또는 terminal font로 만들지 않는다. Heading은 짧고 기능을
 명명하며, metadata는 작아질 수 있지만 핵심 상태나 action보다 먼저 희미해져야 한다.
-Heading은 본문과 같은 UI face를 쓰고, display face는 wordmark와 Matrix heading에만 쓴다.
+한국어 본문은 Noto Sans KR(없으면 맑은 고딕)을 먼저 쓴다. Heading, 판의 라벨, 스위치와 개수는 반각 **label face**
+(Barlow Semi Condensed, 번들 OFL)로 모든 theme에서 같고, 한글은 본문 face로 이어진다. display face(Share Tech
+Mono)는 wordmark와 프롬프트 기호에만 쓴다.
 채팅과 chrome 안의 code는 사용자가 고른 terminal font를 따른다.
 정확한 family, type scale와 line height는 token foundation이 소유한다.
 
@@ -89,8 +99,8 @@ Heading은 본문과 같은 UI face를 쓰고, display face는 wordmark와 Matri
 density를 유지하되 빈 공간을 장식으로 채우지 않고 grouping과 scan path를 만드는 데
 사용한다.
 
-Desktop에서는 header와 activity rail이 안정된 frame을 만들고 workspace가 가장 큰
-시각 무게를 가진다. Mobile에서는 현재 destination과 primary action이 먼저 보이고,
+Desktop에서는 위 막대 하나가 안정된 frame을 만들고, 그 아래 **판**(프로젝트 홈) 또는 **작업 모드**(작업 목록 + 도크)가
+가장 큰 시각 무게를 가진다. 판은 줄(lane)마다 왼쪽에 라벨, 오른쪽에 판들을 놓고 오른쪽 칸에 사람을 기다리는 것을 둔다. Mobile에서는 현재 destination과 primary action이 먼저 보이고,
 safe area와 touch anatomy가 terminal 장식을 이긴다. 정확한 geometry, breakpoint와
 navigation anatomy는 UX 계약이 소유한다.
 
@@ -106,8 +116,8 @@ Shadow는 surface를 canvas에서 분리하는 데 필요한 만큼만 쓴다. N
 
 ## Shapes
 
-EZTerminal의 shape는 정밀한 tool chrome에 가깝다. Control은 작고 명확한 corner,
-workspace card와 dialog는 한 단계 부드러운 corner를 사용한다. Pill은 status, compact
+EZTerminal의 shape는 정밀한 tool chrome에 가깝다. 판은 깎아 낸 듯한 작은 corner(둥근 pill 대신 같은 작은
+반경)를 쓰고, control은 작고 명확한 corner, workspace card와 dialog는 한 단계 부드러운 corner를 사용한다. Pill은 status, compact
 choice 또는 chip처럼 형태가 의미를 더할 때만 쓴다. 서로 인접한 control은 같은 높이와
 edge rhythm을 공유한다.
 
@@ -126,8 +136,8 @@ feedback와 toast의 시각·접근성 문법을 feature마다 다시 만들지 
   않는다.
 - Loading, empty, offline, permission denied, unsupported와 stale state는 실제 원인과
   recovery를 숨기지 않는다. 가짜 성공 데이터로 layout을 채우지 않는다.
-- Icon은 Lucide 기반의 일관된 stroke language를 사용한다. Emoji를 product icon으로
-  사용하지 않는다.
+- 셸·판·작업 목록·흐름의 icon은 [`ui/Glyph.tsx`](src/renderer/ui/Glyph.tsx)의 채운 스텐실 glyph이고, 나머지는
+  Lucide stroke icon을 쓰며 단계마다 glyph로 옮긴다. Emoji를 product icon으로 사용하지 않는다.
 - External provider content와 remote video는 제품 frame 안에 들어오지만 body를
   EZTerminal component처럼 위조하지 않는다.
 
@@ -179,6 +189,7 @@ Storybook과 visual snapshot은 구현 증거이지 별도 규범 원천이 아�
 - [`src/renderer/styles/ui-tokens.css`](src/renderer/styles/ui-tokens.css)
 - [`src/renderer/themes.ts`](src/renderer/themes.ts)
 - [`src/renderer/ui/`](src/renderer/ui/)
+- [`src/renderer/shell/`](src/renderer/shell/)
 - [`src/renderer/workbench/`](src/renderer/workbench/)
 - [`mobile/src/mobile-shell.css`](mobile/src/mobile-shell.css)
 - [`docs/ux/reference/2.0/manifest.json`](docs/ux/reference/2.0/manifest.json)
