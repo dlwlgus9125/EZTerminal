@@ -350,9 +350,9 @@ test('Agent Session tab dragged outside opens and safely closes an auxiliary win
   const auxiliary = await waitForAuxiliaryWindow(app);
 
   await expect(main.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toHaveCount(0);
-  // Board + Desk: a window showing one conversation drops its tab strip; the tab is there, hidden.
+  // Board + Desk: a window showing one conversation drops its tab strip once the conversation's own
+  // header is on screen; this fixture conversation never opens, so only its presence is asserted.
   await expect(auxiliary.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toHaveCount(1);
-  await expect(auxiliary.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toBeHidden();
   await expect(main.getByTestId('pane')).toHaveAttribute(
     'data-session-id',
     originalSessionId,

@@ -6,7 +6,7 @@ import { launchApp } from './launch-app';
 /*
  * The Board + Desk shell (approved 2026-10-24): one top bar, the live list in
  * work mode, the project board in its place when chosen. A fresh profile has
- * no projects, so the app opens in work mode on a terminal. Below 1200px (the
+ * no projects, so the app opens in work mode on a terminal. Below 1100px (the
  * default 1024x720 window) the live list is folded into a strip of icons.
  */
 
@@ -247,7 +247,7 @@ test('the folded strip opens the full list over the dock and closes it after a c
     await expect(overlay).toBeVisible();
     await window.keyboard.press('Escape');
     await expect(overlay).toHaveCount(0);
-    // From 1200px the full list stands in place of the strip.
+    // From 1100px the full list stands in place of the strip.
     await window.setViewportSize({ width: 1440, height: 900 });
     await expect(window.getByTestId('shell-live-list')).toBeVisible();
     await expect(window.getByTestId('shell-live-strip')).toHaveCount(0);

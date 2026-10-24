@@ -749,6 +749,8 @@ export function App(): JSX.Element {
     uiPreferencesReady,
   );
   const sidebarReflow = useSidebarReflow();
+  // The work list stands as a column from 1100px (a 1280px screen at 130% keeps it); below, it folds to a strip.
+  const workListRoom = useSidebarReflow('(min-width: 1100px)');
   const projectWide = useSidebarReflow('(min-width: 1024px)');
   const apiRef = useRef<DockviewApi | null>(null);
   const viewsRef = useRef<WorkbenchViewsController | null>(null);
@@ -3084,7 +3086,7 @@ export function App(): JSX.Element {
     openclawVisible,
     // The project registry (pins, names, recency) may have changed while the project screen was open.
     projectsRevision: sidebarDestination === 'agents' ? -1 : projectsRevision,
-    folded: !sidebarReflow || resultsWide,
+    folded: !workListRoom || resultsWide,
     externalWaiting: terminalAgentAttention,
     layoutMenu: (
       <ShellLayoutMenu
@@ -3361,7 +3363,7 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      <div className="workbench-body" data-shell-mode={shellNav.mode} data-live={sidebarReflow && !resultsWide ? 'list' : 'strip'}>
+      <div className="workbench-body" data-shell-mode={shellNav.mode} data-live={workListRoom && !resultsWide ? 'list' : 'strip'}>
         {deskShell.list}
         {sidebarDestination && sidebarContent && (
           <SidebarShell
