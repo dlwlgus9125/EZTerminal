@@ -273,16 +273,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 152,
-          "endLine": 282,
+          "startLine": 155,
+          "endLine": 285,
           "lineDigest": "sha256:85e77a9ab70ab29602e788fd0e0fda52cea28a643eb13cfd3c1832999db1f004",
           "claim": "User or project-agent run commands freeze a graph, planning baseline and auto-approve policy into the ledger; agents cannot approve or integrate; durable fingerprints prevent replay under changed inputs."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-preparation.ts",
-          "startLine": 30,
-          "endLine": 79,
+          "startLine": 31,
+          "endLine": 80,
           "lineDigest": "sha256:1a48d939874812ebe94ec45e4b6c29e9bb3e08564d68d95834d61a6f5a6e0ec8",
           "claim": "Parent-to-leaf instructions and context values are frozen with exact provider/model/reasoning and read/write limits."
         }
@@ -300,10 +300,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 145,
-          "endLine": 238,
-          "lineDigest": "sha256:7aacc6b701f1b11de82fb8acb4746e1d40ac89571ced7d1383e15ce731e75fbe",
-          "claim": "SQLite savepoints persist command identity, revisions and run state together; workflow activations use the same durable ledger; new receipts and restart recoveries notify listeners after the write."
+          "startLine": 156,
+          "endLine": 250,
+          "lineDigest": "sha256:b8935afd1e64bea4db51ca104b660de5dccd67e0f350abeacb712d7dde74bfcd",
+          "claim": "SQLite savepoints persist command identity, revisions and run state together; reads apply stage bindings over the verified preparation; new receipts and restart recoveries notify listeners after the write."
         }
       ]
     },
@@ -319,17 +319,17 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 452,
-          "endLine": 514,
-          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "startLine": 494,
+          "endLine": 560,
+          "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 506,
-          "endLine": 553,
-          "lineDigest": "sha256:de70c51e0908e0531cf6cf7510f8e55e25336db4d4fd001fcfc2acac457b8929",
+          "startLine": 494,
+          "endLine": 599,
+          "lineDigest": "sha256:245a107024462c92ac6ba78518cae026848ba1499849218f52b9a414a80a3689",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
       ]
@@ -389,8 +389,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-repository.ts",
-          "startLine": 361,
-          "endLine": 370,
+          "startLine": 362,
+          "endLine": 371,
           "lineDigest": "sha256:86403cd971203f1fd8fdcad0e5550a5be1e6419bbb83e1c0f24be06f2b510906",
           "claim": "Adoption requires a clean candidate and updates its dedicated integration ref only from the expected previous successful commit."
         }
@@ -416,8 +416,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/project-archive-service.ts",
-          "startLine": 306,
-          "endLine": 370,
+          "startLine": 307,
+          "endLine": 371,
           "lineDigest": "sha256:e0202d101eb4f585e452cac42d7cdeea796ea5aef7e2cdecde0b946ceae435c6",
           "claim": "Restore imports scoped planning and the workflow registry into a new project, retains session links as historical only, and rejects changed partial restores."
         }
@@ -469,8 +469,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 152,
-          "endLine": 282,
+          "startLine": 155,
+          "endLine": 285,
           "lineDigest": "sha256:85e77a9ab70ab29602e788fd0e0fda52cea28a643eb13cfd3c1832999db1f004",
           "claim": "User or project-agent run commands freeze a graph, planning baseline and auto-approve policy into the ledger; agents cannot approve or integrate; durable fingerprints prevent replay under changed inputs."
         }
@@ -486,10 +486,10 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 145,
-          "endLine": 238,
-          "lineDigest": "sha256:7aacc6b701f1b11de82fb8acb4746e1d40ac89571ced7d1383e15ce731e75fbe",
-          "claim": "SQLite savepoints persist command identity, revisions and run state together; workflow activations use the same durable ledger; new receipts and restart recoveries notify listeners after the write."
+          "startLine": 156,
+          "endLine": 250,
+          "lineDigest": "sha256:b8935afd1e64bea4db51ca104b660de5dccd67e0f350abeacb712d7dde74bfcd",
+          "claim": "SQLite savepoints persist command identity, revisions and run state together; reads apply stage bindings over the verified preparation; new receipts and restart recoveries notify listeners after the write."
         }
       ]
     },
@@ -503,9 +503,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 452,
-          "endLine": 514,
-          "lineDigest": "sha256:72166d5b9026ec84664bd353a41366ab575c61c30a5136a1553f1806723be025",
+          "startLine": 494,
+          "endLine": 560,
+          "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }
       ]
@@ -641,8 +641,8 @@
           "relativePath": "src/main/project-archive-service.ts",
           "startLine": 173,
           "endLine": 220,
-          "lineDigest": "sha256:bb2b8fc39f693804b372963f4300f0c894995a88ec61799a31a3840bf2f986ca",
-          "claim": "Portable export adds workflow registry and every subproject planning snapshot to prior execution/receipt/history evidence, preserving redaction and exclusion of live authority."
+          "lineDigest": "sha256:ebd9993b52db7e473e4103280d4765407aaf7df0c0d1eb615c53f8aa26f829f9",
+          "claim": "Portable export adds workflow registry and every subproject planning snapshot to prior evidence, keeping prepared runs as stored with their stage bindings, and preserves redaction and exclusion of live authority."
         }
       ]
     }

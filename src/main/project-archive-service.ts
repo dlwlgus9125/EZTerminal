@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { DaemonSession, DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { PlanningSnapshotSchema } from '../shared/planning';
-import { PlanningExecutionSnapshotSchema } from '../shared/planning-execution';
+import { PlanningExecutionSnapshotSchema, effectiveRun, type ExecutionRun } from '../shared/planning-execution';
 import { PlanningIntegrationRecordSchema, PlanningResultRecordSchema } from '../shared/planning-result';
 import { ARCHIVE_MAX_BYTES, type ArchiveEntry, type ProjectArchiveHistory, type ProjectArchiveInventory, type ProjectArchiveManifest, type ProjectArchivePackage } from '../shared/project-archive';
 import { AsyncMutationGate } from './async-mutation-gate';
@@ -181,7 +181,8 @@ export class ProjectArchiveService {
       }
       const snapshot = this.options.store.getSnapshot(); const project = snapshot.projects.find(entry => entry.id === projectId);
       if (!project?.rootPath) throw new Error('The project root is unavailable.');
-      const execution = this.options.ledger.read(projectId); const sessions = snapshot.sessions.filter(entry => entry.projectId === projectId); const sessionIds = new Set(sessions.map(entry => entry.id));
+      // The stored preparations (and stage bindings in run state) are the record; views apply bindings when read.
+      const execution = this.options.ledger.read(projectId, { frozen: true }); const sessions = snapshot.sessions.filter(entry => entry.projectId === projectId); const sessionIds = new Set(sessions.map(entry => entry.id));
       const workspaceIds = new Set(snapshot.workspaces.filter(entry => entry.projectId === projectId).map(entry => entry.id));
       const exclusions: ProjectArchiveManifest['exclusions'] = [{ item: 'credentials', reason: 'API keys, authentication tokens, SSH private keys and device pairing are excluded.' },
         { item: 'source-repository', reason: 'The source repository and executable binaries are external references; reconnect the matching base revision separately.' },
@@ -382,7 +383,7 @@ export class ProjectArchiveService {
     const history: ProjectArchiveHistory = { manifest: archive.manifest, planning: PlanningSnapshotSchema.parse(parseArchiveJson(archive.entries.find(entry => entry.kind === 'planning')!)),
       ...(archive.entries.some(entry => entry.kind === 'workflow') ? { workflow: WorkflowRegistrySchema.parse(parseArchiveJson(archive.entries.find(entry => entry.kind === 'workflow')!)),
         subprojectPlanning: Object.fromEntries(archive.entries.filter(entry => entry.kind === 'subproject-planning').map(entry => [entry.metadata!.subprojectId, PlanningSnapshotSchema.parse(parseArchiveJson(entry))])) } : {}),
-      execution: PlanningExecutionSnapshotSchema.parse(parseArchiveJson(archive.entries.find(entry => entry.kind === 'execution')!)),
+      execution: (() => { const stored = PlanningExecutionSnapshotSchema.parse(parseArchiveJson(archive.entries.find(entry => entry.kind === 'execution')!)); return { ...stored, runs: stored.runs.map(run => effectiveRun(run as ExecutionRun)) }; })(),
       conversations: daemon.sessions.map(session => ({ session, transcript: archive.entries.filter(entry => entry.kind === 'transcript').flatMap(entry => {
         const transcript = parseArchiveJson(entry) as { sessionId: string; items: DaemonTranscriptItem[] }; return transcript.sessionId === session.id ? transcript.items : [];
       }) })),

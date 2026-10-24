@@ -14,12 +14,17 @@ import { PlanningExecutionStore } from './planning-execution-store';
 import { autoApprovalCommands, PlanningRunService, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
 import { WorkflowService, workflowDigest } from './workflow-service';
+import { decideStageBinding, type CommittedSubproject } from './workflow-stage-binding';
+import { legacyPlanningRunResult } from '../shared/workflow-protocol-projection';
+import { ProjectArchiveService } from './project-archive-service';
+import { parseArchiveJson, verifyArchive } from './project-archive-package';
 import { createWorkflowGraph } from '../shared/workflow';
+import { stageEditScope } from '../shared/planning-execution';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 
-async function fixture(realResults = false) {
+async function fixture(realResults = false, bindStages = false) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ez-planning-run-'));
   const store = new DaemonStore(directory);
   await store.init();
@@ -59,6 +64,9 @@ async function fixture(realResults = false) {
   };
   if (realResults) results = new PlanningResultService({ userDataDir: directory, store, ledger, daemon, git: options.git, worktrees: options.worktrees,
     validationRunner: { run: vi.fn() }, wakeQueuedTurns: options.wakeQueuedTurns, wakeExecution: () => service.requestTick(), reportError: options.reportError });
+  // Stage bindings read the committed subproject through a WorkflowService the test attaches later.
+  const committed: { source?: (projectId: string, subprojectId: string) => Promise<CommittedSubproject> } = {};
+  if (bindStages) Object.assign(options, { committedSubproject: (projectId: string, subprojectId: string) => committed.source?.(projectId, subprojectId) ?? Promise.resolve({ ok: false, reason: 'missing' } as const) });
   service = new PlanningRunService(options);
   await store.applySystemCommit({ mutations: [
     { kind: 'project.upsert', value: { id: 'project', name: 'Project', rootPath: directory, source: 'native' } },
@@ -83,7 +91,7 @@ async function fixture(realResults = false) {
     assignments: [{ taskId: 'task', profileId: 'profile-planning', providerId: 'codex', model: 'model', permissionPreset: 'plan' }],
     reviewer: { profileId: 'profile-review', providerId: 'codex', model: 'model', permissionPreset: 'plan' },
   } };
-  return { store, ledger, runtime, adapter, send, prepare, errors, options, service, results, emit: (event: AgentProviderEvent) => { for (const listener of listeners) listener(event); },
+  return { store, ledger, runtime, adapter, send, prepare, errors, options, service, results, committed, emit: (event: AgentProviderEvent) => { for (const listener of listeners) listener(event); },
     restart: async () => { await service.dispose(); service = new PlanningRunService(options); await service.start(); } };
 }
 
@@ -149,6 +157,7 @@ describe('planning provider dispatch', () => {
     expect(frozen).not.toHaveProperty('approvalPolicy');
     // A stage without a chosen effort leaves the key out of its task profile.
     expect(frozen.tasks[0]!.profile).not.toHaveProperty('reasoningEffort');
+    // This fixture has no committed-flow source, so an edit after prepare waits for the next run (see late binding below).
     graph.nodes[0].instructions = 'Next run only';
     expect(await workflows.execute({ ...common, commandId: 'draft-edit', subprojectId: 'sub', type: 'workflow.patch', payload: { graph, summary: 'Next run' } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
     const start = { ...common, expectedRevision: 1, commandId: 'workflow-start', subprojectId: 'sub', type: 'run.start' as const, payload: { runId: 'workflow-run' } };
@@ -200,10 +209,10 @@ describe('planning provider dispatch', () => {
     expect(prepared.preparation.tasks.find((task) => task.taskId === graph.nodes[0]!.id)?.profile.reasoningEffort).toBe('high');
     expect(await workflows.execute({ ...common, commandId: 'start-high', subprojectId: 'sub', type: 'run.start', payload: { runId: 'run-high' } }, user)).toMatchObject({ ok: true });
     await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledWith(expect.objectContaining({ reasoningEffort: 'high' }), expect.anything()));
-    // The fixture model only advertises 'high'.
-    const max = structuredClone(graph); max.nodes[0] = { ...max.nodes[0]!, reasoningEffort: 'max' };
-    expect(await workflows.execute({ ...common, commandId: 'edit-max', subprojectId: 'sub', type: 'workflow.patch', payload: { graph: max, summary: 'Max effort' } }, user)).toMatchObject({ ok: true });
-    const refused = await workflows.execute({ ...common, expectedRevision: 1, commandId: 'prepare-max', subprojectId: 'sub', type: 'run.prepare', payload: { runId: 'run-max', reviewer: { providerId: 'codex', model: 'model' } } }, user);
+    // The fixture model only advertises 'high'. (The running stage itself is locked, so use a second flow.)
+    const max = createWorkflowGraph('research', 'sub-max'); max.nodes[0] = { ...max.nodes[0]!, providerId: 'codex', model: 'model', reasoningEffort: 'max', instructions: 'Research with evidence', acceptance: ['Explain observed evidence'] };
+    expect(await workflows.execute({ ...common, expectedRevision: 1, commandId: 'create-max', type: 'subproject.create', payload: { id: 'sub-max', title: 'Max', goal: '', presetId: 'research', graph: max } }, user)).toMatchObject({ ok: true });
+    const refused = await workflows.execute({ ...common, commandId: 'prepare-max', subprojectId: 'sub-max', type: 'run.prepare', payload: { runId: 'run-max', reviewer: { providerId: 'codex', model: 'model' } } }, user);
     expect(refused).toMatchObject({ ok: false, message: expect.stringMatching(/does not advertise this reasoning setting/u) });
     expect(f.ledger.read('project').runs.map((run) => run.runId)).toEqual(['run-high']);
 
@@ -337,5 +346,134 @@ describe('auto-approval in the dispatch pump', () => {
     expect(getReceipt.mock.calls.length).toBeLessThanOrEqual(2);
     expect(reportError).toHaveBeenCalledOnce();
     await service.dispose();
+  });
+});
+
+describe('stage edits before a stage starts apply to the current run (late binding)', () => {
+  async function flow(effort?: string) {
+    const f = await fixture(false, true); const directory = f.store.getSnapshot().projects[0].rootPath!;
+    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
+      runs: () => f.ledger.read('project').runs, session: () => undefined, executeRun: (...args) => f.service.executeWorkflow(...args), executionGate: (work) => f.service.exclusive(work) });
+    f.committed.source = (projectId, subprojectId) => workflows.committedSubproject(projectId, subprojectId);
+    const graph = createWorkflowGraph('research', 'sub');
+    graph.nodes[0] = { ...graph.nodes[0]!, providerId: 'codex', model: 'model', instructions: 'Original instructions', acceptance: ['Explain observed evidence'], ...(effort ? { reasoningEffort: effort } : {}) };
+    const user = { kind: 'desktop' as const, id: 'test' };
+    const common = { projectId: 'project', hostId: 'host' };
+    let revision = 0; let sequence = 0;
+    const run = async (type: 'run.prepare' | 'run.start', runId: string) => workflows.execute({ ...common, expectedRevision: revision, commandId: `${type}-${runId}`, subprojectId: 'sub', type,
+      payload: type === 'run.prepare' ? { runId, reviewer: { providerId: 'codex', model: 'model' } } : { runId } } as never, user);
+    const patch = async (change: (node: typeof graph.nodes[number]) => typeof graph.nodes[number]) => {
+      const current = await workflows.read('project'); if (!current.ok) throw new Error(current.message);
+      const subproject = current.snapshot.subprojects.find((entry) => entry.id === 'sub')!;
+      const result = await workflows.execute({ ...common, expectedRevision: subproject.revision, commandId: `edit-${++sequence}`, subprojectId: 'sub', type: 'workflow.patch',
+        payload: { graph: { ...subproject.graph, nodes: subproject.graph.nodes.map((node, index) => index === 0 ? change(node) : node) }, summary: 'Edit stage' } }, user);
+      if (result.ok) revision = result.snapshot.subprojects.find((entry) => entry.id === 'sub')!.revision;
+      return result;
+    };
+    expect(await workflows.execute({ ...common, expectedRevision: 0, commandId: 'create-sub', type: 'subproject.create', payload: { id: 'sub', title: 'Research', goal: '', presetId: 'research', graph } }, user)).toMatchObject({ ok: true });
+    return { f, workflows, graph, run, patch, nodeId: graph.nodes[0]!.id };
+  }
+  const submitted = (f: Awaited<ReturnType<typeof fixture>>) => (f.adapter.submit as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { reasoningEffort?: string };
+
+  it('binds settings edited after prepare but before the stage starts, and keeps the prepared run as stored', async () => {
+    const { f, run, patch, nodeId } = await flow();
+    expect(await run('run.prepare', 'r1')).toMatchObject({ ok: true });
+    const frozen = structuredClone(f.ledger.read('project', { frozen: true }).runs[0]!.preparation);
+    expect(await patch((node) => ({ ...node, instructions: 'Use the newer approach', reasoningEffort: 'high', position: { x: 500, y: 40 } }))).toMatchObject({ ok: true });
+    expect(await run('run.start', 'r1')).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(submitted(f).reasoningEffort).toBe('high');
+    expect(JSON.stringify(submitted(f))).toContain('Use the newer approach');
+    const current = f.ledger.read('project').runs[0]!;
+    expect(current.stageBindings?.[nodeId]).toMatchObject({ outcome: 'applied', changed: ['instructions', 'reasoningEffort'] });
+    expect(current.preparation.tasks[0]!.profile.reasoningEffort).toBe('high');
+    // The frozen graph shows the applied stage settings but keeps its structure and canvas position.
+    expect(current.preparation.workflow!.graph.nodes[0]).toMatchObject({ instructions: 'Use the newer approach', reasoningEffort: 'high', position: frozen.workflow!.graph.nodes[0]!.position });
+    expect(current.attempts[0]!.requestedSettings).toMatchObject({ reasoningEffort: 'high' });
+    expect(f.ledger.read('project', { frozen: true }).runs[0]!.preparation).toEqual(frozen);
+    // An installed v16 phone sees what actually runs, without the v17 record.
+    const legacy = legacyPlanningRunResult({ ok: true, snapshot: f.ledger.read('project') });
+    if (!legacy.ok) throw new Error('unexpected');
+    expect(legacy.snapshot.runs[0]).not.toHaveProperty('stageBindings');
+    expect(legacy.snapshot.runs[0]!.preparation.tasks[0]!.profile.reasoningEffort).toBe('high');
+    // A project backup keeps the prepared run as stored plus the binding record (views apply bindings when read).
+    const archives = new ProjectArchiveService({ userDataDir: path.dirname(f.store.getSnapshot().projects[0].rootPath!), store: f.store, planning: f.options.planning, ledger: f.ledger, registerRestoredProject: vi.fn() });
+    const target = path.join(path.dirname(f.store.getSnapshot().projects[0].rootPath!), 'binding-backup.json');
+    await archives.exportProject('project', target, 'export-bindings');
+    const archived = parseArchiveJson(verifyArchive(await fs.readFile(target)).entries.find((entry) => entry.kind === 'execution')!) as { runs: { preparation: unknown; stageBindings?: Record<string, unknown> }[] };
+    expect(archived.runs[0]!.preparation).toEqual(frozen);
+    expect(archived.runs[0]!.stageBindings?.[nodeId]).toMatchObject({ outcome: 'applied' });
+    expect(f.errors).toEqual([]);
+  });
+
+  it('keeps the prepared settings for a structure change or a setting the model does not offer, and says why', async () => {
+    const structure = await flow();
+    expect(await structure.run('run.prepare', 'r1')).toMatchObject({ ok: true });
+    expect(await structure.patch((node) => ({ ...node, role: 'review', instructions: 'Changed too' }))).toMatchObject({ ok: true });
+    expect(await structure.run('run.start', 'r1')).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(structure.f.adapter.submit).toHaveBeenCalledOnce());
+    expect(JSON.stringify(submitted(structure.f))).toContain('Original instructions');
+    expect(structure.f.ledger.read('project').runs[0]!.stageBindings?.[structure.nodeId]).toMatchObject({ outcome: 'kept', reason: 'structure-changed' });
+
+    const unoffered = await flow();
+    expect(await unoffered.run('run.prepare', 'r1')).toMatchObject({ ok: true });
+    expect(await unoffered.patch((node) => ({ ...node, reasoningEffort: 'max' }))).toMatchObject({ ok: true });
+    expect(await unoffered.run('run.start', 'r1')).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(unoffered.f.adapter.submit).toHaveBeenCalledOnce());
+    expect(submitted(unoffered.f).reasoningEffort).not.toBe('max');
+    expect(unoffered.f.ledger.read('project').runs[0]!.stageBindings?.[unoffered.nodeId]).toMatchObject({ outcome: 'kept', reason: 'invalid', detail: expect.stringMatching(/reasoning setting/u) });
+  });
+
+  it('keeps the prepared settings when the flow file was changed outside this host', async () => {
+    const { f, workflows, run, nodeId } = await flow();
+    expect(await run('run.prepare', 'r1')).toMatchObject({ ok: true });
+    const file = path.join(f.store.getSnapshot().projects[0].rootPath!, '.ezterminal', 'planning', 'workflows.json');
+    const stored = JSON.parse(await fs.readFile(file, 'utf8')) as { registry: { subprojects: { graph: { nodes: { instructions: string }[] } }[] }; receipts: unknown[]; integrity: string };
+    stored.registry.subprojects[0]!.graph.nodes[0]!.instructions = 'Written by another program';
+    stored.integrity = workflowDigest({ registry: stored.registry, receipts: stored.receipts });
+    await fs.writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
+    // The execution side reads the committed flow without the workflow gate, with the same external-change rule.
+    const committed = await workflows.committedSubproject('project', 'sub');
+    expect(committed).toEqual({ ok: false, reason: 'unreadable' });
+    const decision = await decideStageBinding(f.ledger.read('project').runs[0]!, nodeId, committed, { daemon: f.store.getSnapshot(), listModels: async () => [], now: () => new Date('2026-10-25T00:00:00.000Z') });
+    expect(decision).toMatchObject({ kind: 'record', binding: { outcome: 'kept', reason: 'unreadable' } });
+  });
+
+  it('holds a stage whose edited settings cannot be checked, and sends it once the person continues', async () => {
+    const { f, run, patch, nodeId } = await flow();
+    expect(await run('run.prepare', 'r1')).toMatchObject({ ok: true });
+    expect(await patch((node) => ({ ...node, reasoningEffort: 'high' }))).toMatchObject({ ok: true });
+    (f.adapter.listModels as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Codex is offline'));
+    expect(await run('run.start', 'r1')).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.ledger.read('project').runs[0]!.tasks[0]).toMatchObject({ state: 'paused', pauseReason: expect.stringMatching(/could not be checked/u) }));
+    expect(f.adapter.submit).not.toHaveBeenCalled();
+    expect(f.ledger.read('project').runs[0]!.stageBindings?.[nodeId]).toBeUndefined();
+    // The held stage is not locked: an edit made now applies to this run.
+    expect(stageEditScope(f.ledger.read('project').runs[0], nodeId)).toBe('this-run');
+    expect(await patch((node) => ({ ...node, instructions: 'Edited while held' }))).toMatchObject({ ok: true });
+    // Continue: the stage is ready again, binds now that the catalog answers, and is sent.
+    const current = f.ledger.read('project');
+    expect(await f.ledger.execute({ commandId: 'continue-held', projectId: 'project', expectedRevision: current.revision, principal: { kind: 'desktop', id: 'test' }, type: 'run.continue', payload: { runId: current.runs[0]!.runId } })).toMatchObject({ ok: true });
+    f.service.requestTick();
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(submitted(f).reasoningEffort).toBe('high');
+    expect((submitted(f) as { prompt?: string }).prompt ?? JSON.stringify((f.adapter.submit as ReturnType<typeof vi.fn>).mock.calls[0])).toContain('Edited while held');
+    expect(f.ledger.read('project').runs[0]!.stageBindings?.[nodeId]).toMatchObject({ outcome: 'applied' });
+  });
+
+  it('locks a working stage’s settings while letting it move, and the ledger takes one binding per stage from the host only', async () => {
+    const { f, run, patch, nodeId } = await flow();
+    expect(await run('run.prepare', 'r1')).toMatchObject({ ok: true });
+    expect(await run('run.start', 'r1')).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(await patch((node) => ({ ...node, instructions: 'Too late' }))).toMatchObject({ ok: false, error: 'stage-locked' });
+    expect(await patch((node) => ({ ...node, position: { x: 900, y: 9 } }))).toMatchObject({ ok: true });
+    const current = f.ledger.read('project').runs[0]!;
+    const binding = { outcome: 'kept' as const, boundAt: new Date().toISOString(), reason: 'missing' as const };
+    const command = (principal: 'runtime' | 'desktop', commandId: string) => f.ledger.execute({ commandId, projectId: 'project', expectedRevision: f.ledger.read('project').revision,
+      principal: { kind: principal, id: 'test' }, type: 'task.bind', payload: { runId: current.runId, taskId: nodeId, binding } });
+    expect(await command('desktop', 'bind-by-person')).toMatchObject({ ok: false, error: 'runtime-required' });
+    // Once its first attempt started, a stage is never rebound.
+    expect(await command('runtime', 'bind-late')).toMatchObject({ ok: false, error: 'invalid-transition' });
   });
 });

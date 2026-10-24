@@ -13,6 +13,8 @@ import type { WorkflowConversationContext } from '../shared/workflow-conversatio
 import { PlanningSnapshotSchema } from '../shared/planning';
 import { copyWorkflowPlanning } from './workflow-planning-copy';
 import { flowV17Fields, legacyWorkflowGraph } from '../shared/workflow-protocol-projection';
+import { changedStageSettings, stageWorking } from '../shared/planning-execution';
+import type { CommittedSubproject } from './workflow-stage-binding';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 
@@ -69,6 +71,12 @@ export interface WorkflowServiceOptions {
   readonly managedSessions?: (projectId: string) => readonly string[];
   readonly continuationSource?: (sessionId: string) => string | undefined;
   readonly executeRun?: (command: WorkflowCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal) => Promise<{ ok: true } | { ok: false; error: string; message: string }>;
+  /**
+   * Runs `work` under the execution gate. A flow edit checks which stages are working and saves inside
+   * it, so a stage cannot start between that check and the save (the order is always workflow gate, then
+   * execution gate; the execution side never waits for the workflow gate).
+   */
+  readonly executionGate?: <T>(work: () => Promise<T>) => Promise<T>;
   readonly now?: () => Date;
 }
 
@@ -182,6 +190,13 @@ export class WorkflowService {
     const result = await this.read(projectId);
     return result.ok && result.snapshot.subprojects.some(entry => entry.id === subprojectId && (!writing || entry.status !== 'archived'));
   }
+  /** The last committed version of one subproject, for the execution side (no workflow gate). */
+  async committedSubproject(projectId: string, subprojectId: string): Promise<CommittedSubproject> {
+    try {
+      const subproject = (await this.readCommitted(projectId)).subprojects.find(entry => entry.id === subprojectId);
+      return subproject ? { ok: true, subproject } : { ok: false, reason: 'missing' };
+    } catch { return { ok: false, reason: 'unreadable' }; }
+  }
   /** `owns` for callers holding the execution gate: reads the committed file without this service's gate. */
   async ownsCommitted(projectId: string, subprojectId: string, writing = false): Promise<boolean> {
     try {
@@ -266,6 +281,7 @@ export class WorkflowService {
         }
         if (subproject?.status === 'archived' && !(command.type === 'subproject.update' && command.payload.status === 'active') && command.type !== 'subproject.copy' && command.type !== 'session.unlink') return failure('archived', 'Restore the subproject before editing it.');
         const now = (this.options.now?.() ?? new Date()).toISOString();
+        let lockedEdit: (() => WorkflowResult | null) | undefined;
         const actor = { kind: principal.kind === 'ai' ? 'ai' as const : 'user' as const, id: principal.id, ...(principal.sessionId ? { sessionId: principal.sessionId } : {}) };
         if (command.type === 'subproject.create') {
           let createdGraph = command.payload.graph;
@@ -311,6 +327,16 @@ export class WorkflowService {
           Object.assign(subproject!, command.payload); subproject!.revision += 1; subproject!.updatedAt = now; registry.registryRevision += 1;
         } else if (command.type === 'workflow.patch' || command.type === 'workflow.undo') {
           const before = structuredClone(subproject!.graph);
+          // A stage that is working right now keeps its settings until it finishes (its run already uses
+          // them); moving it on the canvas or changing other stages stays possible.
+          lockedEdit = () => {
+            const working = new Set(this.options.runs(command.projectId).filter(run => run.preparation.workflow?.subprojectId === subproject!.id
+              && run.startedAt && !['completed', 'cancelled'].includes(run.state))
+              .flatMap(run => run.tasks.filter(task => stageWorking(run, task.taskId)).map(task => task.taskId)));
+            const locked = [...working].find(id => { const old = before.nodes.find(node => node.id === id); const next = subproject!.graph.nodes.find(node => node.id === id);
+              return old && next && changedStageSettings(old, next).length > 0; });
+            return locked ? failure('stage-locked', 'This stage is working now. Change its settings after it finishes; they apply from then on.') : null;
+          };
           const v17Before = flowV17Fields(subproject!);
           let graph; let undoOf: string | undefined; let summary: string;
           if (command.type === 'workflow.undo') {
@@ -381,7 +407,12 @@ export class WorkflowService {
           if (!result.ok) return result;
         }
         const file = wrap(registry, [...loaded.file.receipts.filter(entry => entry.commandId !== command.commandId), { commandId: command.commandId, fingerprint, revision: subproject?.revision ?? registry.registryRevision }]);
-        await this.write(loaded.target, file, loaded.bytesHash);
+        const commit = async (): Promise<WorkflowResult | null> => {
+          const refused = lockedEdit?.(); if (refused) return refused;
+          await this.write(loaded.target, file, loaded.bytesHash); return null;
+        };
+        const refused = lockedEdit && this.options.executionGate ? await this.options.executionGate(commit) : await commit();
+        if (refused) return refused;
         if (command.type === 'subproject.create' && command.payload.previewId) {
           const preview = this.previews.get(command.payload.previewId);
           if (preview) this.discardedPreviews.set(preview.id, preview.revision + 1);

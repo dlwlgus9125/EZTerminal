@@ -3,6 +3,7 @@ import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import type { PlanningBaseline, PlanningRoleProfile, PlanningSnapshot, PlanningReference, TaskDefinition } from '../shared/planning';
 import { ExecutionPreparationSchema, type ExecutionProfileSnapshot, type PreparedExecutionTask, type ExecutionRun, type ExecutionPreparation } from '../shared/planning-execution';
 import { PlanningRunPreparationInputSchema, type PlanningPreparationResult, type PlanningRunPreparationInput, type PlanningTaskAssignment } from '../shared/planning-run';
+import { writeScopesOverlap } from '../shared/write-scope';
 
 export interface PlanningPreparationDependencies {
   readonly snapshot: PlanningSnapshot;
@@ -105,11 +106,37 @@ function orderedBefore(left: TaskDefinition, right: TaskDefinition, tasks: reado
 }
 
 function overlappingPaths(left: TaskDefinition, right: TaskDefinition): boolean {
-  const normalize = (value: string) => value.replaceAll('\\', '/').replace(/\/$/u, '').toLowerCase();
-  return left.allowedPaths.some((a) => right.allowedPaths.some((b) => {
-    const first = normalize(a); const second = normalize(b);
-    return first === '.' || second === '.' || first === second || first.startsWith(`${second}/`) || second.startsWith(`${first}/`);
-  }));
+  return writeScopesOverlap(left.allowedPaths, right.allowedPaths);
+}
+
+/**
+ * One prepared task from a frozen baseline task and its assignment: provider readiness, the model
+ * catalog (including reasoning effort), write permission rules, the brief and validations. Used for
+ * every task of a prepare, and on its own when a workflow stage's edited settings bind to a run.
+ */
+export async function prepareExecutionTask(
+  task: TaskDefinition,
+  assignment: PlanningTaskAssignment,
+  baseline: PlanningBaseline,
+  dependencies: PlanningPreparationDependencies,
+  shape: { readonly taskId: string; readonly title: string; readonly dependsOn: readonly string[]; readonly candidateGroupId?: string },
+): Promise<PreparedExecutionTask> {
+  const profile = await profileSnapshot(assignment, baseline, dependencies);
+  if (profile.permissionPreset !== 'plan' && (!dependencies.baseCommit || !task.allowedPaths.length)) {
+    throw new Error('Code execution needs a Git base revision and explicit allowed paths.');
+  }
+  return {
+    taskId: shape.taskId, sourceTaskId: task.id,
+    ...(shape.candidateGroupId ? { candidateGroupId: shape.candidateGroupId } : {}), taskRevision: task.revision,
+    title: shape.title,
+    stage: inheritedProfile(assignment.profileId, baseline).role,
+    ...(task.executionEnvironment ? { executionEnvironment: task.executionEnvironment } : {}),
+    brief: await taskBrief(task, baseline, dependencies), dependsOn: [...shape.dependsOn], allowedPaths: task.allowedPaths,
+    profile, retryLimit: inheritedProfile(assignment.profileId, baseline).retryLimit,
+    acceptance: task.acceptance.map((entry) => ({ acceptanceId: entry.id, description: entry.description })),
+    validations: task.validationPlan.map((entry) => ({ validationId: entry.id, acceptanceIds: entry.acceptanceIds,
+      method: entry.method, environment: entry.environment, ...(entry.command ? { command: entry.command } : {}) })),
+  } as PreparedExecutionTask;
 }
 
 /** Build authority-owned input from a real immutable baseline, never renderer-supplied task text. */
@@ -155,22 +182,12 @@ export async function preparePlanningExecution(
     const tasks: PreparedExecutionTask[] = [];
     for (let index = 0; index < assignments.length; index += 1) {
       const assignment = assignments[index]; const task = selected[index];
-      const profile = await profileSnapshot(assignment, baseline, dependencies);
-      if (profile.permissionPreset !== 'plan' && (!dependencies.baseCommit || !task.allowedPaths.length)) {
-        throw new Error('Code execution needs a Git base revision and explicit allowed paths.');
-      }
-      tasks.push({
-        taskId: candidateMode ? `${task.id}:candidate:${index + 1}` : task.id, sourceTaskId: task.id,
-        ...(candidateMode ? { candidateGroupId: task.id } : {}), taskRevision: task.revision,
+      tasks.push(await prepareExecutionTask(task, assignment, baseline, dependencies, {
+        taskId: candidateMode ? `${task.id}:candidate:${index + 1}` : task.id,
         title: candidateMode ? `${task.title} · ${index + 1}` : task.title,
-        stage: inheritedProfile(assignment.profileId, baseline).role,
-        ...(task.executionEnvironment ? { executionEnvironment: task.executionEnvironment } : {}),
-        brief: await taskBrief(task, baseline, dependencies), dependsOn: task.dependencyIds.filter((id) => sourceIds.includes(id)), allowedPaths: task.allowedPaths,
-        profile, retryLimit: inheritedProfile(assignment.profileId, baseline).retryLimit,
-        acceptance: task.acceptance.map((entry) => ({ acceptanceId: entry.id, description: entry.description })),
-        validations: task.validationPlan.map((entry) => ({ validationId: entry.id, acceptanceIds: entry.acceptanceIds,
-          method: entry.method, environment: entry.environment, ...(entry.command ? { command: entry.command } : {}) })),
-      });
+        dependsOn: task.dependencyIds.filter((id) => sourceIds.includes(id)),
+        ...(candidateMode ? { candidateGroupId: task.id } : {}),
+      }));
     }
     const reviewer = input.reviewer ? await profileSnapshot(input.reviewer, baseline, dependencies) : undefined;
     if (reviewer && (reviewer.role !== 'review' || reviewer.permissionPreset !== 'plan')) throw new Error('Independent review requires a read-only review profile.');

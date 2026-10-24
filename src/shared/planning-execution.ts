@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PlanningExecutionEnvironmentSchema } from './planning';
-import { WorkflowFrozenSchema, WorkflowRuntimeSchema, type WorkflowNode, type WorkflowRuntime } from './workflow-graph';
+import { WorkflowFrozenSchema, WorkflowNodeSchema, WorkflowRuntimeSchema, validateWorkflowGraph, type WorkflowGraph, type WorkflowNode, type WorkflowRuntime } from './workflow-graph';
 
 /** Planning execution shares the daemon database, but has a project-local revision. */
 export const PLANNING_EXECUTION_VERSION = 1 as const;
@@ -66,6 +66,123 @@ export function taskMatchesStage(task: PreparedExecutionTask, node: WorkflowNode
     && (task.profile.reasoningEffort ?? null) === (node.reasoningEffort ?? null)
     && task.profile.permissionPreset === node.permissionPreset && task.stage === node.role
     && same(task.allowedPaths ?? [], node.allowedPaths) && same(task.acceptance.map((entry) => entry.description), node.acceptance);
+}
+
+/**
+ * The stage settings a person may change after a run was prepared, up to the moment that stage
+ * starts (remote protocol v17). Everything else about a stage is its structure and waits for the
+ * next run: operation, role, inputs, condition, join policy and the connections around it.
+ */
+export const STAGE_BINDABLE_FIELDS = ['title', 'instructions', 'document', 'providerId', 'model', 'reasoningEffort',
+  'permissionPreset', 'acceptance', 'allowedPaths', 'retryLimit'] as const;
+export type StageBindableField = typeof STAGE_BINDABLE_FIELDS[number];
+const STAGE_STRUCTURE_FIELDS = ['operation', 'role', 'inputs', 'condition', 'joinPolicy'] as const;
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stable(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** Bindable settings that differ between two versions of the same stage. */
+export function changedStageSettings(before: WorkflowNode, after: WorkflowNode): StageBindableField[] {
+  return STAGE_BINDABLE_FIELDS.filter((field) => stable(before[field]) !== stable(after[field]));
+}
+
+/** True when the stage's structure differs (those edits always wait for the next run). */
+export function stageStructureChanged(before: WorkflowNode, after: WorkflowNode): boolean {
+  return STAGE_STRUCTURE_FIELDS.some((field) => stable(before[field]) !== stable(after[field]));
+}
+
+/** `frozen` with only the bindable settings of `current`: the stage as it would run now. */
+export function withStageSettings(frozen: WorkflowNode, current: WorkflowNode): WorkflowNode {
+  const next: Record<string, unknown> = { ...frozen };
+  for (const field of STAGE_BINDABLE_FIELDS) {
+    if (current[field] === undefined) delete next[field];
+    else next[field] = structuredClone(current[field]);
+  }
+  return next as WorkflowNode;
+}
+
+/**
+ * What happened to a not-yet-started stage's settings when it was about to start: `applied` binds
+ * the rebuilt task (what was actually sent) and its stage; `kept` records why the prepared
+ * settings stayed. Stored in run state; the prepared run itself never changes.
+ */
+export const StageBindingSchema = z.object({
+  outcome: z.enum(['applied', 'kept']),
+  boundAt: z.string().datetime(),
+  sourceRevision: revision.optional(),
+  reason: z.enum(['unchanged', 'structure-changed', 'invalid', 'unreadable', 'missing']).optional(),
+  detail: z.string().max(2_000).optional(),
+  changed: z.array(z.enum(STAGE_BINDABLE_FIELDS)).max(STAGE_BINDABLE_FIELDS.length).optional(),
+  /** Rebuilt because a stage it reads documents from was rebound for this run. */
+  inputsChanged: z.literal(true).optional(),
+  task: PreparedExecutionTaskSchema.optional(),
+  node: WorkflowNodeSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.outcome === 'applied' && (!value.task || !value.node || !value.changed || (!value.changed.length && !value.inputsChanged))) context.addIssue({ code: 'custom', message: 'An applied binding carries its task, stage and what changed.' });
+  if (value.outcome === 'kept' && (value.task || value.node || !value.reason)) context.addIssue({ code: 'custom', message: 'A kept binding carries only its reason.' });
+});
+export type StageBinding = z.infer<typeof StageBindingSchema>;
+
+/**
+ * The run as it actually executes: applied stage bindings replace their prepared task and their
+ * stage in the frozen graph. The prepared run (and its fingerprint) stay as stored.
+ */
+export function effectiveRun<T extends ExecutionRun>(run: T): T {
+  const bindings = run.stageBindings;
+  if (!bindings || !Object.values(bindings).some((binding) => binding.outcome === 'applied')) return run;
+  const applied = (taskId: string) => { const binding = bindings[taskId]; return binding?.outcome === 'applied' ? binding : undefined; };
+  const workflow = run.preparation.workflow;
+  return { ...run, preparation: { ...run.preparation,
+    tasks: run.preparation.tasks.map((task) => applied(task.taskId)?.task ?? task),
+    ...(workflow ? { workflow: { ...workflow, graph: { ...workflow.graph, nodes: workflow.graph.nodes.map((node) => applied(node.id)?.node ?? node) } } } : {}),
+  } };
+}
+
+/**
+ * Where an edit to this stage lands for this run: `this-run` before the stage started, `locked`
+ * while it works, `next-run` once it started or finished (or when the run is not going).
+ */
+export function stageEditScope(run: ExecutionRun | undefined, nodeId: string): 'this-run' | 'next-run' | 'locked' {
+  if (!run?.preparation.workflow || !run.startedAt || run.state === 'completed' || run.state === 'cancelled' || run.cancelRequested) return 'next-run';
+  const node = run.preparation.workflow.graph.nodes.find((entry) => entry.id === nodeId);
+  const task = run.tasks.find((entry) => entry.taskId === nodeId);
+  if (!node || node.operation !== 'agent' || !task) return 'next-run';
+  if (stageWorking(run, nodeId)) return 'locked';
+  if (run.stageBindings?.[nodeId] || run.attempts.some((attempt) => attempt.taskId === nodeId)) return 'next-run';
+  // Not sent yet: waiting for its inputs, about to be sent, or held (paused) before its first send.
+  return ['waiting', 'ready', 'paused'].includes(task.state) ? 'this-run' : 'next-run';
+}
+
+/**
+ * A stage is working from the moment its first dispatch was decided (its binding is recorded) until
+ * it finishes, and whenever one of its attempts runs. Its settings are locked meanwhile.
+ */
+export function stageWorking(run: ExecutionRun, nodeId: string): boolean {
+  const task = run.tasks.find((entry) => entry.taskId === nodeId);
+  if (!task) return false;
+  if (['running', 'reconciling', 'awaiting-review'].includes(task.state)) return true;
+  return Boolean(run.stageBindings?.[nodeId]) && !['completed', 'failed', 'cancelled', 'stale'].includes(task.state);
+}
+
+/** True when a stage this one reads documents from was rebound for this run with a new title or document. */
+export function stageInputsRebound(run: ExecutionRun, nodeId: string): boolean {
+  const node = run.preparation.workflow?.graph.nodes.find((entry) => entry.id === nodeId);
+  return Boolean(node?.inputs.some((input) => {
+    const binding = input.kind === 'document' ? run.stageBindings?.[input.nodeId] : undefined;
+    return binding?.outcome === 'applied' && binding.changed?.some((field) => field === 'document' || field === 'title');
+  }));
+}
+
+/** Issues of `node` once spliced into `graph`, for that stage only. */
+export function boundStageIssues(graph: WorkflowGraph, node: WorkflowNode): readonly string[] {
+  const spliced = { ...graph, nodes: graph.nodes.map((entry) => entry.id === node.id ? node : entry) };
+  return validateWorkflowGraph(spliced, true).filter((issue) => issue.nodeId === node.id).map((issue) => issue.message);
 }
 
 export const ExecutionPreparationSchema = z.object({
@@ -213,6 +330,8 @@ export interface ExecutionRun {
   readonly reviews: readonly ExecutionReview[];
   readonly gates: readonly DecisionGate[];
   readonly workflowRuntime?: WorkflowRuntime;
+  /** Not-yet-started stages whose settings were (re)bound when they were about to start (v17). */
+  readonly stageBindings?: Readonly<Record<string, StageBinding>>;
 }
 
 export interface PlanningExecutionSnapshot {
@@ -241,6 +360,7 @@ export const PlanningExecutionCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('workflow.integrate'), payload: z.object(run).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('task.cancel'), payload: z.object({ ...run, taskId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('task.block'), payload: z.object({ ...run, taskId: id, reason: text }).strict() }).strict(),
+  z.object({ ...envelope, type: z.literal('task.bind'), payload: z.object({ ...run, taskId: id, binding: StageBindingSchema }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('candidate.select'), payload: z.object({ ...run, taskId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('attempt.start'), payload: z.object({ ...attempt, taskId: id, dispatchId: id, sessionId: id, turnId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('attempt.finish'), payload: z.object({ ...attempt, outcome: z.enum(['succeeded', 'failed', 'interrupted', 'delivery-uncertain']), summary: text, artifacts: z.array(ExecutionArtifactSchema).max(256) }).strict() }).strict(),
@@ -287,6 +407,7 @@ export const PlanningExecutionSnapshotSchema = z.object({
     createdAt: z.string().datetime(), startedAt: z.string().datetime().optional(), updatedAt: z.string().datetime(),
     dispatchPaused: z.boolean().optional(), selectedCandidates: z.record(id, id).optional(),
     workflowRuntime: WorkflowRuntimeSchema.optional(),
+    stageBindings: z.record(id, StageBindingSchema).optional(),
     tasks: z.array(z.object({
       taskId: id, state: z.enum(['waiting', 'ready', 'running', 'awaiting-review', 'completed', 'failed', 'cancelled', 'paused', 'reconciling', 'stale']),
       retriesUsed: revision, currentAttemptId: id.optional(), pauseReason: z.string().optional(),

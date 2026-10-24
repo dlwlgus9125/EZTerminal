@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:520213190de7de6627809259510476845846084e032f1dbf14f1abeb6489cbe3",
+        "inputDigest": "sha256:17d8a33596dc72836c8fc112d980eb352b9a493f92a8aa94b55c8030c09d3c72",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-1): flow stages carry an optional reasoning effort into their execution profile; agents are told validate_workflow checks structure while prepare checks availability. Boundaries are unchanged."
+        "reason": "Reviewed (I2-2): main wires the execution gate into flow edits and the committed-subproject read into the run service; process and surface boundaries are unchanged. Anchors moved."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:021f7bc17dcc08e9bb020fa97e4b7d1c9f260b0098ac8ff03d89b0c6a38a0f99",
+        "inputDigest": "sha256:0b727edcc49f79746a0053bc8c9a34072d6c822d1bfb4f61989b0b2298735ad5",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-0): the shell re-reads a project's flows on the host's run-change notice (coalesced) besides its timer; lifecycle, focus and panel ownership are unchanged."
+        "reason": "Reviewed (I2-2): main gains two flow wirings (execution gate, committed subproject); window, panel and session lifecycles are unchanged. Anchors moved."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e09df76d463c2e92686fa94d3b7665c2210350b6f5b5bad4b934e9c1d68dc74d",
+        "inputDigest": "sha256:3ca02758f0b9af8a3f2539482877a51313822f6e4c88193e771d012b93106e57",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-1): a newer phone keeps flow commands and previews with v17 settings when the connected PC negotiated v16 or older, instead of sending them; other dataflow is unchanged. Anchors moved."
+        "reason": "Reviewed (I2-2): run replies carry stage bindings for v17 readers; v16-and-older readers get runs with the bound settings applied and no binding record. Other dataflow is unchanged."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:86ca90e7ff303e657f99aa7b32295d8256e64f416b5eff9a7641275ded3d7c95",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-1): a stage's chosen reasoning effort is frozen into its prepared task and checked with the other stage settings by one shared match; ledger and delivery claims hold."
+        "inputDigest": "sha256:53dd27a55196e6da2327b6079b9646420aec0ac6c45c01e5250069bc0f5c5215",
+        "decision": "map-updated",
+        "reason": "Reviewed (I2-2 fixes): binding is decided only for a stage being sent and always recorded; one prepareExecutionTask builds prepare and bound tasks; the turn check counts all the sender adds; a stage whose new inputs no longer fit is held."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b52ba37517ae3c2f5314cf7499c832f6ea6273bb315ffd90cadf80fd4481acdc",
+        "inputDigest": "sha256:31ece74202b9f2042385baf832f834afb69bbcfb9c3bcc9850478f4baa837f98",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-1): stages gain an optional reasoning effort; a v16 reader may create from a creation preview it saw reduced, and the host keeps its own preview graph. Claims hold."
+        "reason": "Reviewed (I2-2 fixes): a stage counts as working (locked) from its recorded dispatch until it finishes; structure includes its connections; input documents rebound upstream rebuild it; a stage held before its first send is ready again when the run continues. Claims hold."
       }
     }
   ]

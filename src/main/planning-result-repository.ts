@@ -8,6 +8,7 @@ import { PlanningResultRecordSchema, PlanningIntegrationRecordSchema, type Plann
 import type { GitRunner, WorktreeService } from './worktree-service';
 import type { PlanningDeviceEvidenceInput } from '../shared/planning-device-evidence';
 import { turnReplies } from './planning-transcript';
+import { writeScopeRoot } from '../shared/write-scope';
 
 export const resultHash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const commitPattern = /^[a-f0-9]{40,64}$/u;
@@ -248,8 +249,8 @@ export class PlanningResultRepository {
     const normalized = file.replaceAll('\\', '/');
     if (path.isAbsolute(normalized) || normalized.split('/').some(part => part === '..' || part === '.git')) return false;
     return allowed.some(scope => {
-      const prefix = scope.replaceAll('\\', '/').replace(/\/$/u, '').replace(/\/\*\*$/u, '');
-      if (prefix.includes('*') || path.isAbsolute(prefix) || prefix.split('/').includes('..')) return false;
+      const prefix = writeScopeRoot(scope);
+      if (prefix === null || path.isAbsolute(prefix)) return false;
       const compare = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
       const boundary = process.platform === 'win32' ? prefix.toLowerCase() : prefix;
       return boundary === '.' || compare === boundary || compare.startsWith(`${boundary}/`);

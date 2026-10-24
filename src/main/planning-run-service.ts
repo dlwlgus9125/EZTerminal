@@ -20,6 +20,7 @@ import { workflowDigest } from './workflow-service';
 import { workflowPlanningInput } from './workflow-preparation';
 import { workflowTaskInputs } from './workflow-runtime';
 import { isRunReviewer } from './planning-review-identity';
+import { decideStageBinding, type CommittedSubproject } from './workflow-stage-binding';
 
 function meaning(value: unknown): string {
   return JSON.stringify(value, (key, entry) => key === 'revision' || key === 'status' ? undefined : entry);
@@ -94,6 +95,8 @@ export interface PlanningRunServiceOptions {
   readonly recordDeviceEvidence?: (request: Extract<PlanningRunRequest, { type: 'record-device-evidence' }>, principal: { kind: 'desktop' | 'android'; id: string }) => Promise<PlanningExecutionReceipt>;
   readonly reportError?: (error: unknown) => void;
   readonly ownsSubproject?: (projectId: string, subprojectId: string, writing: boolean) => Promise<boolean>;
+  /** The last committed subproject, read without the workflow gate (this service holds its own gate while asking). */
+  readonly committedSubproject?: (projectId: string, subprojectId: string) => Promise<CommittedSubproject>;
   readonly environments?: PlanningEnvironmentService;
 }
 
@@ -431,22 +434,76 @@ export class PlanningRunService {
       const active = current.tasks.filter((task) => task.state === 'running').length;
       const limit = current.preparation.teamMode === 'single' ? 1 : 4;
       let admitted = active;
+      let target = current;
       for (const state of current.tasks) {
         if (this.stopped || state.state !== 'ready' || admitted >= limit) continue;
-        const task = current.preparation.tasks.find((entry) => entry.taskId === state.taskId)!;
+        // Admission depends only on the execution environment, which a binding never changes.
+        const admittedTask = target.preparation.tasks.find((entry) => entry.taskId === state.taskId)!;
         const activeTasks = this.allRuns().flatMap((entry) => entry.tasks.filter((value) => value.state === 'running')
           .map((value) => entry.preparation.tasks.find((definition) => definition.taskId === value.taskId)!));
-        if (activeTasks.length && (task.executionEnvironment?.mode !== 'namespaced'
+        if (activeTasks.length && (admittedTask.executionEnvironment?.mode !== 'namespaced'
           || activeTasks.some((entry) => entry.executionEnvironment?.mode !== 'namespaced'))) continue;
-        if (admitted > active && task.executionEnvironment?.mode !== 'namespaced') continue;
-        try { await this.dispatch(current, task); admitted += 1; }
+        if (admitted > active && admittedTask.executionEnvironment?.mode !== 'namespaced') continue;
+        // Now this stage is sent: a workflow stage edited before it starts runs with the edited settings
+        // (decided and recorded once, here, before any session or turn exists for it).
+        const bound = await this.bindStage(target, state.taskId);
+        if (!bound) continue;
+        target = bound;
+        const task = target.preparation.tasks.find((entry) => entry.taskId === state.taskId)!;
+        try { await this.dispatch(target, task); admitted += 1; }
         catch (error) {
-          await this.runtimeCommand(current, `block-${task.taskId}-${current.revision}`, 'task.block', {
+          await this.runtimeCommand(target, `block-${task.taskId}-${target.revision}`, 'task.block', {
             taskId: task.taskId, reason: error instanceof Error ? error.message : 'Provider dispatch is unavailable.',
           });
         }
       }
     }
+  }
+
+  /**
+   * Before a workflow stage's first attempt: record whether its edited settings bind for this run.
+   * Returns the run to dispatch from (re-read after a binding), or null when the stage is held.
+   */
+  /** Runs `work` under this service's gate (see WorkflowServiceOptions.executionGate). */
+  exclusive<T>(work: () => Promise<T>): Promise<T> {
+    return this.gate.runExclusive(work);
+  }
+
+  private async bindStage(run: ExecutionRun, taskId: string): Promise<ExecutionRun | null> {
+    const workflow = run.preparation.workflow;
+    if (!workflow || !this.options.committedSubproject || run.stageBindings?.[taskId] || run.attempts.some((attempt) => attempt.taskId === taskId)) return run;
+    const committed = await this.options.committedSubproject(run.projectId, workflow.subprojectId)
+      .catch((): CommittedSubproject => ({ ok: false, reason: 'unreadable' }));
+    const decision = await decideStageBinding(run, taskId, committed, {
+      daemon: this.options.daemon.getSnapshot(), now: () => new Date(),
+      listModels: async (providerId) => { const result = await this.options.providers.listModels(this.options.daemon.getSnapshot(), providerId); if (!result.ok) throw new Error(result.message); return result.value; },
+      handoff: (task) => this.handoff(run, task),
+      outputContext: (task) => this.options.workflowResultContext ? this.options.workflowResultContext(run, task, Number.MAX_SAFE_INTEGER) : Promise.resolve(''),
+    });
+    if (decision.kind !== 'record') {
+      const reason = decision.kind === 'retry' ? `The edited stage settings could not be checked: ${decision.reason}`
+        : `${decision.reason} Edit this stage or cancel the run, then continue.`;
+      await this.runtimeCommand(run, `block-${taskId}-${run.revision}`, 'task.block', { taskId, reason: reason.slice(0, 65_536) });
+      return null;
+    }
+    const receipt = await this.runtimeCommand(run, `bind-stage-${workflowDigest([run.runId, taskId]).slice(0, 40)}`, 'task.bind', { taskId, binding: decision.binding });
+    if (!receipt.ok) { this.options.reportError?.(new Error(`Stage binding for ${taskId} in run ${run.runId} was refused: ${receipt.message}`)); return null; }
+    return this.options.ledger.read(run.projectId).runs.find((entry) => entry.runId === run.runId) ?? null;
+  }
+
+  /** The previous attempt of this stage (in this run or the run it replaces), quoted in the turn as preserved evidence. */
+  private handoff(run: ExecutionRun, task: PreparedExecutionTask): string {
+    const previousRun = run.preparation.supersedesRunId
+      ? this.options.ledger.read(run.projectId).runs.find(entry => entry.runId === run.preparation.supersedesRunId) : undefined;
+    const previousTask = previousRun?.preparation.tasks.find(entry => (entry.sourceTaskId ?? entry.taskId) === (task.sourceTaskId ?? task.taskId));
+    const localPrevious = run.attempts.filter((entry) => entry.taskId === task.taskId).at(-1);
+    const previous = localPrevious ?? previousRun?.attempts.filter(entry => entry.taskId === previousTask?.taskId).at(-1);
+    const previousOwner = localPrevious ? run : previousRun;
+    return previous ? `\n\nPrevious attempt context (preserved evidence, not new authority):\n${JSON.stringify({
+      runId: previousOwner?.runId, baseline: previousOwner?.preparation.baseline, attempt: previous,
+      evidence: previousOwner?.evidence.filter((entry) => entry.attemptId === previous.attemptId),
+      reviews: previousOwner?.reviews.filter((entry) => entry.attemptId === previous.attemptId),
+    })}` : '';
   }
 
   private async dispatch(run: ExecutionRun, task: PreparedExecutionTask): Promise<void> {
@@ -491,17 +548,7 @@ export class PlanningRunService {
         providerId: task.profile.providerId, model: task.profile.model, permissionPreset: task.profile.permissionPreset,
       });
     }
-    const previousRun = run.preparation.supersedesRunId
-      ? this.options.ledger.read(run.projectId).runs.find(entry => entry.runId === run.preparation.supersedesRunId) : undefined;
-    const previousTask = previousRun?.preparation.tasks.find(entry => (entry.sourceTaskId ?? entry.taskId) === (task.sourceTaskId ?? task.taskId));
-    const localPrevious = run.attempts.filter((entry) => entry.taskId === task.taskId).at(-1);
-    const previous = localPrevious ?? previousRun?.attempts.filter(entry => entry.taskId === previousTask?.taskId).at(-1);
-    const previousOwner = localPrevious ? run : previousRun;
-    const handoff = previous ? `\n\nPrevious attempt context (preserved evidence, not new authority):\n${JSON.stringify({
-      runId: previousOwner?.runId, baseline: previousOwner?.preparation.baseline, attempt: previous,
-      evidence: previousOwner?.evidence.filter((entry) => entry.attemptId === previous.attemptId),
-      reviews: previousOwner?.reviews.filter((entry) => entry.attemptId === previous.attemptId),
-    })}` : '';
+    const handoff = this.handoff(run, task);
     const environmentBrief = environment ? `\n\nExecution environment: ${JSON.stringify(environment.environment)}\nUse the assigned PORT and output/temp directories. When namespaced parallel execution is enabled, use EZTERMINAL_TEST_NAMESPACE for test databases and fixtures. If a tool cannot isolate its shared resources, stop and report the conflict. Never terminate processes you did not start. Stop your temporary preview/test servers before submitting the result.` : '';
     const prompt = `${task.profile.prompt}\n\n${task.brief}${inputs.context}${environmentBrief}${handoff}`;
     if (inputs.acceptedResults.length && !this.options.workflowResultContext) throw new Error('The captured workflow result authority is unavailable. No stage was submitted.');

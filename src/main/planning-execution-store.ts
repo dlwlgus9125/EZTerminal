@@ -6,6 +6,11 @@ import {
   PLANNING_AUTO_APPROVAL_PRINCIPAL,
   PLANNING_EXECUTION_VERSION,
   PlanningExecutionCommandSchema,
+  boundStageIssues,
+  changedStageSettings,
+  effectiveRun,
+  stageInputsRebound,
+  stageStructureChanged,
   taskMatchesStage,
   type ExecutionArtifact,
   type ExecutionAttempt,
@@ -64,21 +69,27 @@ function readRevision(database: DatabaseSync, projectId: string): number {
   return Number(row?.revision ?? 0);
 }
 
-function runFromRow(row: RunRow): ExecutionRun {
+/**
+ * A run as it executes: the stored preparation is verified against its fingerprint first, then
+ * stage bindings recorded in run state replace their prepared tasks (see effectiveRun). `frozen`
+ * returns the stored preparation untouched, for audit.
+ */
+function runFromRow(row: RunRow, frozen = false): ExecutionRun {
   const preparation = JSON.parse(row.preparation_json) as ExecutionRun['preparation'];
   if (fingerprint(preparation) !== row.preparation_fingerprint) throw new Error('Execution preparation integrity check failed.');
   const state = JSON.parse(row.state_json) as Omit<ExecutionRun, 'preparation' | 'preparationFingerprint'>;
-  return {
+  const run: ExecutionRun = {
     ...state,
     preparation,
     preparationFingerprint: row.preparation_fingerprint,
   };
+  return frozen ? run : effectiveRun(run);
 }
 
-function readRun(database: DatabaseSync, projectId: string, runId: string): ExecutionRun | undefined {
+function readRun(database: DatabaseSync, projectId: string, runId: string, frozen = false): ExecutionRun | undefined {
   const row = database.prepare('SELECT * FROM planning_execution_runs WHERE project_id = ? AND run_id = ?')
     .get(projectId, runId) as unknown as RunRow | undefined;
-  return row ? runFromRow(row) : undefined;
+  return row ? runFromRow(row, frozen) : undefined;
 }
 
 function writeRun(database: DatabaseSync, run: ExecutionRun): void {
@@ -166,13 +177,14 @@ export class PlanningExecutionStore {
     });
   }
 
-  read(projectId: string): PlanningExecutionSnapshot {
+  /** Runs as they execute (stage bindings applied); `{ frozen: true }` returns the stored preparations. */
+  read(projectId: string, options: { readonly frozen?: boolean } = {}): PlanningExecutionSnapshot {
     return this.authority.readPlanningExecution((database) => ({
       version: PLANNING_EXECUTION_VERSION,
       projectId,
       revision: readRevision(database, projectId),
       runs: (database.prepare('SELECT * FROM planning_execution_runs WHERE project_id = ? ORDER BY rowid')
-        .all(projectId) as unknown as RunRow[]).map(runFromRow),
+        .all(projectId) as unknown as RunRow[]).map((row) => runFromRow(row, options.frozen)),
     }));
   }
 
@@ -271,7 +283,7 @@ export class PlanningExecutionStore {
   }
 
   private checkPrincipal(command: PlanningExecutionCommand): void {
-    const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'run.cancel-reconcile'].includes(command.type);
+    const runtime = ['attempt.start', 'attempt.finish', 'attempt.reconcile', 'evidence.record', 'task.block', 'task.bind', 'run.cancel-reconcile'].includes(command.type);
     // The host approves and integrates only for a run frozen with automatic approval (checked in apply).
     const autoApproval = command.principal.kind === 'runtime' && command.principal.id === PLANNING_AUTO_APPROVAL_PRINCIPAL
       && (command.type === 'workflow.approve' || command.type === 'workflow.integrate');
@@ -407,6 +419,29 @@ export class PlanningExecutionStore {
         const task = run.tasks.find((entry) => entry.taskId === command.payload.taskId);
         requireState(task?.state === 'ready', 'invalid-transition', 'Only an undispatched task can be blocked.');
         return withTask(run, task.taskId, { state: 'paused', pauseReason: command.payload.reason });
+      }
+      case 'task.bind': {
+        // Recorded once, right before a not-yet-started workflow stage is sent to its provider.
+        const { taskId, binding } = command.payload;
+        const raw = readRun(database, projectId, payload.runId, true)!;
+        const task = run.tasks.find((entry) => entry.taskId === taskId);
+        const frozenTask = raw.preparation.tasks.find((entry) => entry.taskId === taskId);
+        const frozenNode = raw.preparation.workflow?.graph.nodes.find((entry) => entry.id === taskId);
+        requireState(raw.preparation.workflow && frozenTask && frozenNode?.operation === 'agent', 'invalid-reference', 'Only a workflow AI stage can be bound.');
+        requireState(task?.state === 'ready' && !run.attempts.some((attempt) => attempt.taskId === taskId) && !run.stageBindings?.[taskId],
+          'invalid-transition', 'A stage is bound once, before its first attempt.');
+        if (binding.outcome === 'applied') {
+          const node = binding.node!; const bound = binding.task!;
+          requireState(node.id === taskId && !stageStructureChanged(frozenNode, node) && canonical(node.position) === canonical(frozenNode.position),
+            'invalid-reference', 'A binding changes only the stage settings, never its structure.');
+          requireState(bound.taskId === taskId && canonical(bound.dependsOn) === canonical(frozenTask.dependsOn)
+            && canonical(bound.executionEnvironment ?? null) === canonical(frozenTask.executionEnvironment ?? null) && bound.stage === frozenTask.stage
+            && taskMatchesStage(bound, node), 'invalid-reference', 'The bound task must match its bound stage and keep the prepared dependencies.');
+          requireState(boundStageIssues(run.preparation.workflow!.graph, node).length === 0, 'invalid-reference', 'The bound stage is not runnable.');
+          requireState(canonical([...(binding.changed ?? [])].sort()) === canonical(changedStageSettings(frozenNode, node).sort()), 'invalid-reference', 'The recorded changes must match the bound stage.');
+          requireState(!binding.inputsChanged || stageInputsRebound(run, taskId), 'invalid-reference', 'No input document of this stage was rebound.');
+        }
+        return { ...run, stageBindings: { ...run.stageBindings, [taskId]: binding } };
       }
       case 'candidate.select': {
         const definition = run.preparation.tasks.find((entry) => entry.taskId === command.payload.taskId);

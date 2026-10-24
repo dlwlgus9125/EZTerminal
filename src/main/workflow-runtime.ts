@@ -61,6 +61,12 @@ export function advanceWorkflowRun(input: ExecutionRun): ExecutionRun {
         }
       }
       if (current.state === 'awaiting-approval') continue;
+      // A stage held before its first send (blocked, then continued) waits again with its activation
+      // already active: it is ready to be sent once more.
+      if (current.state === 'active' && node.operation === 'agent') {
+        const held = tasks.find(entry => entry.taskId === node.id);
+        if (held?.state === 'waiting' && !held.currentAttemptId) { tasks = tasks.map(entry => entry.taskId === node.id ? { ...entry, state: 'ready' } : entry); changed = true; }
+      }
       let outcome: WorkflowActivation['outcome'];
       if (node.operation === 'agent') {
         const task = tasks.find(entry => entry.taskId === node.id);

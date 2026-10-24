@@ -1549,6 +1549,7 @@ app.on('ready', async () => {
     },
     executeRun: (command, subproject, principal) => planningRuntimeRef.current?.executeWorkflow(command, subproject, principal)
       ?? Promise.resolve({ ok: false, error: 'unavailable', message: 'The execution authority is unavailable.' }),
+    executionGate: (work) => planningRuntimeRef.current ? planningRuntimeRef.current.exclusive(work) : work(),
   });
   workflowRef.service = workflowService;
   agentHistoryService.setCliResumeGuard((provider, providerSessionId) => {
@@ -3157,6 +3158,7 @@ app.on('ready', async () => {
   const planningRunService = new PlanningRunService({
     // Called under the execution gate: a gated workflow read could wait on a workflow command that waits on this gate.
     ownsSubproject: (projectId, subprojectId, writing) => workflowService.ownsCommitted(projectId, subprojectId, writing),
+    committedSubproject: (projectId, subprojectId) => workflowService.committedSubproject(projectId, subprojectId),
     planning: planningService, ledger: planningExecutionStore, daemon: daemonCommandRouter, store: daemonStore,
     providers: providerRegistry, worktrees: worktreeService, git: agentCollaborationGitRunner,
     environments: planningEnvironments,
