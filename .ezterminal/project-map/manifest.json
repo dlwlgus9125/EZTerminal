@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a189207325166a0e9d4edc37a732310bd12d745fbbdd937c002daaf446925187",
+        "inputDigest": "sha256:4d745ea52b62cca8fff1c4aa6a2fe2c5c9443a6f171c2b48e6e37aa7054c4ee4",
         "decision": "map-updated",
-        "reason": "Reviewed: Codex now holds item, delta and plan notifications that race ahead of the turn/start response and replays them on the confirmed turn before its end, as it already did for lifecycle events. Claims hold; anchors moved."
+        "reason": "Reviewed: the Board + Desk shell (I1) wraps conversation tabs for the preview place and tab actions; the dock panel keeps transcript, encrypted drafts, history, hand-off, /clear and send gates. Claims hold; anchors moved."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:87278175e1d389d501f6a3b77b4c6f911efa21e9ea07458870ff197ab18923a4",
+        "inputDigest": "sha256:7b6df5231635a16b361a5e694342b63f355665891ce4b5680f012fdcc77f1341",
         "decision": "map-updated",
-        "reason": "Reviewed: new desktop-only agent.release disposes the provider of an idle conversation after /clear replaced it (refused while a turn, approval or provider-native child is active; nothing stored changes; next message reattaches). Anchors moved."
+        "reason": "Reviewed: the Board + Desk shell (I1) replaces header, rail and status bar around the same dock; conversation, approval and inbox flows are unchanged (the board can allow/deny through permission.resolve). Claims hold; anchors moved."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2a90e72eae5131121950343ea36520345b5c3658427198f1b819dff267da31db",
+        "inputDigest": "sha256:9f0e0dc2ace0c1e6c0bc2c01503d907d3a227846b4ecc4e29c36c35bbf24898d",
         "decision": "map-updated",
-        "reason": "Reviewed: result files retry a replace that Windows refuses while the file is being read, and a review pass writes only when its workspace is new. Claims hold; anchors moved."
+        "reason": "Reviewed: the Session header gains a keep-open pin and a Tab section (split, window, close) when its tab strip is hidden; Session ID, transcript, skin and the history picker are unchanged. Claims hold; anchor moved."
       }
     },
     {

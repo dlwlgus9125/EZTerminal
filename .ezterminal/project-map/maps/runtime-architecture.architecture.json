@@ -112,17 +112,17 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 714,
-          "endLine": 870,
+          "startLine": 717,
+          "endLine": 873,
           "lineDigest": "sha256:14cb70fefa7bdb7b96b8be1cf75f2c9878896600f5c0329c441368e58c26ccc6",
           "claim": "Exact-envelope creation recovery retains its authority checks and same Session ID; selected skill text and references seed the created conversation without auto-submission."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentDockPanel.tsx",
-          "startLine": 1304,
-          "endLine": 1476,
-          "lineDigest": "sha256:cf3eb4a2fb579c1e9fc464858ff5d91798c3e25a6616ed2a6f3cfb6d02c195d2",
+          "startLine": 1307,
+          "endLine": 1479,
+          "lineDigest": "sha256:bc1c1ab0bb07f7ebec9fa318ecf826f0094844f72f195090896f44655aa58359",
           "claim": "The shared Session surface retains transcript and encrypted drafts, exposes a scoped history entry, profile hand-off and a same-settings restart in place (/clear), and preserves workflow reference and send-loading gates."
         },
         {
