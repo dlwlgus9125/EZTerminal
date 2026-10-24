@@ -1231,6 +1231,8 @@ export function App(): JSX.Element {
   const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox'>('projects');
   const [projectEditorRequest, setProjectEditorRequest] = useState<{ readonly projectId: string; readonly id: number }>();
   const [worktreeRequest, setWorktreeRequest] = useState<{ readonly projectId: string; readonly id: number }>();
+  // Request ids only ever grow: a handled request is cleared, and the next one must still look new.
+  const worktreeRequestSeq = useRef(0);
   const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
   const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
     const api = apiRef.current;
@@ -2965,11 +2967,18 @@ export function App(): JSX.Element {
   // ── Board + Desk shell (approved 2026-10-24) ─────────────────────────────
   const shellSnapshot = appChatInbox.snapshot;
   const [projectsRevision, setProjectsRevision] = useState(0);
+  // A project opened from the project screen becomes the shell's project (its tab and board).
+  useEffect(() => { if (activeProjectId) shellNavigation.followPanel(activeProjectId); }, [activeProjectId, shellNavigation]);
   // Results widened beside its conversation: the work list folds to its strip meanwhile.
   const [resultsWide, setResultsWide] = useState(false);
   const resultsWideRef = useRef(false);
   const resultsWidth = useMemo<ResultsWidth>(() => ({
     wide: resultsWide,
+    reset: () => {
+      if (!resultsWideRef.current) return;
+      resultsWideRef.current = false;
+      setResultsWide(false);
+    },
     toggle: (ownerPanelId) => {
       const api = apiRef.current;
       const results = api?.getPanel(resultsPanelId(ownerPanelId));
@@ -2985,7 +2994,7 @@ export function App(): JSX.Element {
     },
   }), [resultsWide]);
   useEffect(() => {
-    if (resultsWideRef.current && !(apiRef.current?.panels ?? []).some((panel) => panel.api.component === 'agent-results')) {
+    if (resultsWideRef.current && !(apiRef.current?.panels ?? []).some((panel) => panel.api.component === 'agent-results' && panel.api.location.type === 'grid')) {
       resultsWideRef.current = false;
       setResultsWide(false);
     }
@@ -3151,7 +3160,8 @@ export function App(): JSX.Element {
       openProjects: () => { setAgentHubView('projects'); setActiveProjectId(null); setSidebarDestination('agents'); },
       openProjectFiles: (projectId) => showProjectWorkspace(projectId),
       newWorktree: (projectId) => {
-        setWorktreeRequest((current) => ({ projectId, id: (current?.id ?? 0) + 1 }));
+        worktreeRequestSeq.current += 1;
+        setWorktreeRequest({ projectId, id: worktreeRequestSeq.current });
         setAgentHubView('projects');
         setActiveProjectId(null);
         setSidebarDestination('agents');

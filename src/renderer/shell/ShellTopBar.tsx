@@ -37,7 +37,14 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
   // The tab list scrolls sideways when narrow; the selected project is always brought into view.
   const tabsRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    tabsRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const tabs = tabsRef.current;
+    if (!tabs) return undefined;
+    const reveal = (): void => tabs.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    reveal();
+    // Narrowing the window can push the selected tab out of the strip: bring it back.
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(reveal) : null;
+    observer?.observe(tabs);
+    return () => observer?.disconnect();
   }, [props.selectedProjectId, props.projects.length]);
   return (
     <header id={SHELL_TOP_BAR_ID} className="ez-shell-top" data-testid="workbench-header">

@@ -6,6 +6,7 @@ import { ArtifactFrame, type ArtifactPreviewAccess } from './ArtifactFrame';
 import { ConversationResults } from './ConversationResults';
 import { useResultsCopy } from './copy';
 import { useResultsNavigation, useResultsSource } from './results-source-store';
+import { useResultsWidth } from '../shell/results-width';
 import type { ResultsServices } from './results-services';
 
 function hostServices(): ResultsServices {
@@ -50,6 +51,9 @@ export function AgentResultsDockPanel(props: IDockviewPanelProps): JSX.Element {
     const disposable = props.api.onDidLocationChange((event) => setInMainWindow(event.location.type === 'grid'));
     return () => disposable.dispose();
   }, [props.api]);
+  // Moved out of the main window while widened: the main window's list comes back.
+  const resultsWidth = useResultsWidth();
+  useEffect(() => { if (!inMainWindow && resultsWidth?.wide) resultsWidth.reset(); }, [inMainWindow, resultsWidth]);
   useEffect(() => {
     if (props.api.title !== title) props.api.setTitle(title);
   }, [props.api, title]);

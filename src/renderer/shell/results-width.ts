@@ -7,6 +7,8 @@ import { createContext, useContext } from 'react';
 export interface ResultsWidth {
   readonly wide: boolean;
   readonly toggle: (ownerPanelId: string) => void;
+  /** Back to normal (the widened Results left the main window). */
+  readonly reset: () => void;
 }
 
 export const ResultsWidthContext = createContext<ResultsWidth | null>(null);

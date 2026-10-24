@@ -149,6 +149,16 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   const nav = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot);
   const { text } = useShellText();
   const projects = useAgentProjects(snapshot, props.projectsRevision);
+  // Projects the host knows but the registry list does not (unsaved, or past its first page) still have a board.
+  const known = useMemo<readonly AgentProjectSummary[] | null>(() => {
+    if (projects === null) return null;
+    const listed = new Set(projects.map((project) => project.projectId));
+    const extra = (snapshot?.projects ?? []).filter((project) => !project.archivedAt && !listed.has(project.id)).map((project): AgentProjectSummary => ({
+      projectId: project.id, name: project.name, primaryRoot: project.rootPath ?? '', additionalRoots: [], pinned: false, saved: false,
+      sessionCount: 0, providers: [], lastActiveAt: Date.parse(project.updatedAt) || null,
+    }));
+    return [...projects, ...extra];
+  }, [projects, snapshot]);
 
   // First start without a stored place: a person with projects lands on a board, one without on the terminal.
   const settled = useRef(props.restored);
@@ -162,14 +172,14 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
 
   // A selected project that no longer exists falls back to the first one.
   useEffect(() => {
-    if (!projects || projects.length === 0) return;
-    if (!nav.projectId || !projects.some((project) => project.projectId === nav.projectId)) {
+    if (!projects || !known || projects.length === 0) return;
+    if (!nav.projectId || !known.some((project) => project.projectId === nav.projectId)) {
       const first = projectTabs(projects.map((project) => ({ ...project, lastActiveAt: project.lastActiveAt ?? undefined })), null, 1)[0];
       if (first) navigation.followPanel(first.projectId);
     }
-  }, [navigation, nav.projectId, projects]);
+  }, [navigation, nav.projectId, projects, known]);
 
-  const project = projects?.find((candidate) => candidate.projectId === nav.projectId) ?? null;
+  const project = known?.find((candidate) => candidate.projectId === nav.projectId) ?? null;
   const projectId = project?.projectId ?? null;
   const projectRef = project ? { projectId: project.projectId, name: project.name } : undefined;
   const workflow = useWorkflow(projectId, snapshot?.revision);
@@ -204,13 +214,17 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     .filter((candidate) => flattenConversations(projectConversations(snapshot, candidate.id)).some((item) => item.state === 'failed'))
     .map((candidate) => candidate.id)), [snapshot]);
 
-  const tabs = useMemo(() => projectTabs((projects ?? []).map((candidate) => ({ ...candidate, lastActiveAt: candidate.lastActiveAt ?? undefined })), projectId), [projects, projectId]);
+  // Saved projects make the tabs; a project chosen from elsewhere (other projects, the project screen) joins them.
+  const tabs = useMemo(() => {
+    const candidates = [...(projects ?? []), ...(project && !projects?.some((candidate) => candidate.projectId === project.projectId) ? [project] : [])];
+    return projectTabs(candidates.map((candidate) => ({ ...candidate, lastActiveAt: candidate.lastActiveAt ?? undefined })), projectId);
+  }, [projects, project, projectId]);
 
   const openConversation = useCallback((sessionId: string, preview = true): void => {
     const title = snapshot?.sessions.find((session) => session.id === sessionId)?.title;
+    // The opening helper decides visibility (a tab living in a popout leaves the board alone).
     actions.openConversation(sessionId, title, { preview });
-    navigation.showWork(sessionProject(sessionId) ?? null);
-  }, [actions, navigation, sessionProject, snapshot]);
+  }, [actions, snapshot]);
 
   const decide = useCallback(async (item: WaitingItem, decision: 'allow' | 'deny'): Promise<{ readonly ok: boolean; readonly message?: string }> => {
     try {

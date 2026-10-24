@@ -406,7 +406,7 @@ mobile root가 한 번만 소유한다.
   에이전트 CLI 실행 항목은 "터미널에서 실행"으로 라벨을 구분한다.
 - `Ctrl/Cmd+K`는 non-editable 앱 UI에서만 열리고 xterm, composer, input, textarea와 contenteditable은 원래 키
   의미를 유지한다. `Ctrl/Cmd+Shift+P`는 전역 alias다. Ctrl+Tab은 최근 패널 전환, Alt+Shift+=/- 는 분할이다.
-  **Ctrl+`**(구현 I1)는 어디서나 가장 최근 터미널을 앞으로 가져오고(없으면 새로 만들고, 판이면 작업 모드로), 다시 누르면
+  **Ctrl+`**(구현 I1)는 메인 창 어디서나(별도 창은 자기 키를 그대로 쓴다) 가장 최근 터미널을 앞으로 가져오고(없으면 새로 만들고, 판이면 작업 모드로), 다시 누르면
   온 곳(직전 탭 또는 판)으로 돌아간다. 터미널 안에서도 앱이 받는다(셸에 Ctrl+`의 의미가 없다).
 - 새 단축키 후보(Ctrl+N 새 대화, Ctrl+Shift+` 새 터미널, Ctrl+B 사이드바, Ctrl+P 파일, Ctrl+1…n 레일 목적지)는
   크롬·composer·편집기·PTY별 우선순위와 함께 D①-6에서 정한다. 터미널 안 키 동작은 바꾸지 않는다.
