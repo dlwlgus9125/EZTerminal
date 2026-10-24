@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, ChevronRight, CircleSlash, CornerDownRight, FileDiff, ListChecks, LoaderCircle, MessageCircleQuestion, NotebookPen, Paperclip, ShieldQuestion, Users, X } from 'lucide-react';
 
-import { useChatCopy } from '../copy';
+import { formatClock, useChatCopy } from '../copy';
 import { useChatContext, useNow } from '../ChatContext';
 import { formatDuration, summarizeActivity, toolDisplayTarget, toolVerb, workspacePath } from '../model/summary';
 import type { ChatActivity, ChatRow, ChatTool } from '../model/types';
@@ -53,6 +53,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
   }
   return (
     <article className="chat-user" aria-label={copy.you} data-message-id={row.anchorId}>
+      <p className="chat-user__who"><span aria-hidden="true">{copy.you}</span><time className="chat-message-time" dateTime={row.createdAt}>{formatClock(row.createdAt, context.locale)}</time></p>
       <div className="chat-user__bubble" data-folded={fold.folded || undefined}>
         {row.context?.replyTo && <blockquote className="chat-user__reply">{row.context.replyTo.text}</blockquote>}
         {row.context?.attachments && row.context.attachments.length > 0 && (
@@ -74,7 +75,7 @@ export function BubbleUser({ row }: { readonly row: RowOf<'user'> }): JSX.Elemen
           {fold.folded ? copy.showMore : copy.showLess}
         </button>
       )}
-      <MessageActions text={row.text} messageId={row.messageId} allowReuse createdAt={row.createdAt} />
+      <MessageActions text={row.text} messageId={row.messageId} allowReuse createdAt={row.createdAt} showTime={false} />
     </article>
   );
 }

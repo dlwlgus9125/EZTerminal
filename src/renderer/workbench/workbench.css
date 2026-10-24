@@ -275,7 +275,7 @@
 }
 
 [data-theme='matrix'] .workbench-brand-mark__name {
-  font-family: var(--ui-font-heading);
+  font-family: var(--ui-font-display);
   letter-spacing: 0.075em;
 }
 

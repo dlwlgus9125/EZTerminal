@@ -1081,3 +1081,24 @@
   flex-wrap: wrap;
   gap: var(--ui-space-2);
 }
+
+/* Stencil glyph and panel lamp (2.0 Board + Desk). WebView 74-safe. */
+.ez-ui-glyph {
+  flex: none;
+  fill: currentColor;
+}
+
+.ez-ui-led {
+  display: inline-block;
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--ui-text-dim);
+  box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid);
+}
+
+.ez-ui-led[data-tone='on'] { background: var(--ui-accent); box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 8px var(--ui-accent); }
+.ez-ui-led[data-tone='amber'] { background: var(--ui-warning); box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 8px var(--ui-warning-ring); }
+.ez-ui-led[data-tone='red'] { background: var(--ui-danger); box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 6px var(--ui-danger-ring); }
+.ez-ui-led[data-tone='ok'] { background: var(--ui-success); }

@@ -2,9 +2,31 @@
    ui/styles.css. The packaged renderer's CSP is `font-src 'self'`
    (vite.renderer.config.ts), which blocks remote fonts, and offline builds
    cannot reach them anyway. Latin subsets only; Hangul falls back to the
-   system UI font. Share Tech Mono is the display face (wordmark, Matrix
-   headings); VT323 is a Matrix accent; JetBrains Mono / Fira Code are
+   system UI font. Barlow Semi Condensed is the label face (headings, plate
+   labels, switches); Share Tech Mono is the display face (wordmark, prompt
+   sigil); VT323 is a Matrix accent; JetBrains Mono / Fira Code are
    terminal-font picker entries (fonts.ts FONT_CATALOG). */
+@font-face {
+  font-family: 'Barlow Semi Condensed';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/barlow-semi-condensed-latin-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Barlow Semi Condensed';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/barlow-semi-condensed-latin-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Barlow Semi Condensed';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/barlow-semi-condensed-latin-600.woff2') format('woff2');
+}
 @font-face {
   font-family: 'Share Tech Mono';
   font-style: normal;
@@ -112,11 +134,14 @@
   --ui-effect-intensity: 0.7;
 
   /* Typography. UI and terminal fonts deliberately have separate contracts. */
-  --ui-font-body: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  /* Korean body first (Noto Sans KR ships with Windows 11 and Android); Segoe/Malgun cover Windows 10. */
+  --ui-font-body: "Noto Sans KR", "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  /* Label face: headings, plate labels, switches, counts. Latin only; Hangul falls through to the body face. */
+  --ui-font-label: "Barlow Semi Condensed", "Bahnschrift", "Segoe UI Variable", "Segoe UI", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
   /* Display face: wordmark and short signal labels only (DESIGN.md). */
   --ui-font-display: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  /* Headings read in the body face; Matrix swaps in the display face below. */
-  --ui-font-heading: var(--ui-font-body);
+  /* Headings read in the label face in every theme. */
+  --ui-font-heading: var(--ui-font-label);
   --ui-font-terminal: var(--term-font, "Cascadia Code", "Cascadia Mono", Consolas, monospace);
   /* Code inside product chrome (chat code blocks, paths) follows the user's terminal font. */
   --ui-font-mono: var(--ui-font-terminal);
@@ -144,7 +169,7 @@
   --ui-line-height-relaxed: 1.6;
   /* Wide tracking belongs to the display face; body-face headings sit at 0. */
   --ui-letter-spacing-display: 0.055em;
-  --ui-letter-spacing-heading: 0;
+  --ui-letter-spacing-heading: 0.01em;
 
   /* Four-point spacing rhythm. */
   --ui-space-0: 0;
@@ -160,13 +185,13 @@
   --ui-pane-gap: 0.875rem;
   --ui-pane-inset: 0.4375rem;
 
-  --ui-radius-sm: 0.125rem;
-  --ui-radius-md: 0.25rem;
-  --ui-radius-lg: 0.5rem;
-  --ui-radius-pill: var(--ui-radius-lg);
+  --ui-radius-sm: 0.1875rem;
+  --ui-radius-md: 0.3125rem;
+  --ui-radius-lg: 0.375rem;
+  --ui-radius-pill: var(--ui-radius-md);
   /* Card-scale radii for panes, panels, and modals. */
-  --ui-radius-xl: 0.75rem;
-  --ui-radius-2xl: 0.875rem;
+  --ui-radius-xl: 0.5rem;
+  --ui-radius-2xl: 0.625rem;
   --ui-radius-round: 999px;
   --ui-radius-2: var(--ui-radius-sm);
   --ui-radius-4: var(--ui-radius-md);
@@ -213,8 +238,6 @@
 }
 
 [data-theme='dark'] {
-  --ui-font-heading: var(--ui-font-body);
-  --ui-letter-spacing-heading: 0;
   --ui-canvas: #1b1a18;
   --ui-surface: #22211f;
   --ui-surface-raised: #2b2a27;
@@ -250,8 +273,6 @@
 }
 
 [data-theme='light'] {
-  --ui-font-heading: var(--ui-font-body);
-  --ui-letter-spacing-heading: 0;
   --ui-canvas: #faf9f6;
   --ui-surface: #ffffff;
   --ui-surface-raised: #ffffff;
@@ -288,8 +309,6 @@
 }
 
 [data-theme='high-contrast'] {
-  --ui-font-heading: var(--ui-font-body);
-  --ui-letter-spacing-heading: 0;
   --ui-canvas: #000000;
   --ui-surface: #000000;
   --ui-surface-raised: #000000;
@@ -329,37 +348,35 @@
 }
 
 [data-theme='matrix'] {
-  --ui-font-heading: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  --ui-letter-spacing-heading: 0.055em;
-  --ui-canvas: #020604;
-  --ui-surface: #07110b;
-  --ui-surface-raised: #0c1b12;
-  --ui-surface-inset: #010402;
-  --ui-text-primary: #c6fde0;
-  --ui-text-secondary: #8fe6b6;
-  --ui-text-muted: #66c592;
-  --ui-text-inverse: #00150a;
-  --ui-border-subtle: #1d3d29;
-  /* borderStrong carries the 3:1 non-text contrast gate in theme-contrast.ts,
-     so the handoff's dimmer strong value lives on --ui-border-mid instead. */
-  --ui-border-strong: #4bbd7a;
+  --ui-canvas: #070d0a;
+  --ui-surface: #0c1511;
+  --ui-surface-raised: #111d17;
+  --ui-surface-inset: #020504;
+  --ui-text-primary: #dcefe4;
+  --ui-text-secondary: #a6c4b3;
+  --ui-text-muted: #88a897;
+  --ui-text-inverse: #04120b;
+  --ui-border-subtle: #18261f;
+  /* borderStrong carries the 3:1 non-text contrast gate in theme-contrast.ts;
+     the decorative groove lives on --ui-border-mid. */
+  --ui-border-strong: #4b6e5b;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
-  --ui-text-dim: #52ad7c;
-  --ui-border-mid: #163322;
-  --ui-border-focus-soft: #2f7350;
-  --ui-accent: #35e58f;
-  --ui-accent-rgb: 53, 229, 143;
+  --ui-text-dim: #88a897;
+  --ui-border-mid: #26392f;
+  --ui-border-focus-soft: #4b7a62;
+  --ui-accent: #3ae894;
+  --ui-accent-rgb: 58, 232, 148;
   --ui-on-accent: #001c0d;
   --ui-focus: #8affba;
-  --ui-info: #62d8ff;
-  --ui-info-rgb: 98, 216, 255;
-  --ui-success: #35e58f;
-  --ui-success-rgb: 53, 229, 143;
-  --ui-warning: #ffd166;
-  --ui-warning-rgb: 255, 209, 102;
-  --ui-danger: #ff6b7a;
-  --ui-danger-rgb: 255, 107, 122;
+  --ui-info: #6fd6e8;
+  --ui-info-rgb: 111, 214, 232;
+  --ui-success: #8fe3b4;
+  --ui-success-rgb: 143, 227, 180;
+  --ui-warning: #f3c45b;
+  --ui-warning-rgb: 243, 196, 91;
+  --ui-danger: #ff7a6a;
+  --ui-danger-rgb: 255, 122, 106;
   --ui-agent-codex-rgb: 72, 215, 200;
   --ui-agent-claude-rgb: 229, 138, 107;
   --ui-glow-color: var(--ui-accent);
@@ -393,11 +410,11 @@
 }
 
 [data-theme='matrix'] {
-  --ui-code-token-keyword: #62d8ff;
-  --ui-code-token-function: #35e58f;
+  --ui-code-token-keyword: #6fd6e8;
+  --ui-code-token-function: #3ae894;
   --ui-code-token-string: #b6f5d0;
   --ui-code-token-string-expression: #b6f5d0;
-  --ui-code-token-constant: #ffd166;
+  --ui-code-token-constant: #f3c45b;
 }
 
 /* derived-ui-tokens:start — generated from themes.ts; rewrite with
@@ -491,26 +508,26 @@
   --ui-chat-diff-remove: #240d0d;
 }
 [data-theme='matrix'] {
-  --ui-surface-hover: #0b2216;
-  --ui-surface-active: #0d2f1d;
-  --ui-surface-selected: #0f3723;
-  --ui-accent-muted: #0e3320;
-  --ui-accent-hover: #46e899;
-  --ui-info-muted: #142d2d;
-  --ui-success-muted: #0d2f1d;
-  --ui-warning-muted: #2a2c18;
-  --ui-danger-muted: #2a1e1b;
-  --ui-danger-soft: #3e2523;
-  --ui-warning-border: #968a47;
-  --ui-danger-border: #965252;
-  --ui-warning-ring: rgba(255, 209, 102, 0.35);
-  --ui-danger-ring: rgba(255, 107, 122, 0.35);
-  --ui-glow-text: 0 0 12px rgba(53, 229, 143, 0.5);
-  --ui-glow-box: 0 0 0 1px rgba(53, 229, 143, 0.25), 0 0 28px rgba(53, 229, 143, 0.18);
-  --ui-chat-user-bubble: #121f18;
-  --ui-chat-inline-code: #18261e;
-  --ui-chat-diff-add: #082416;
-  --ui-chat-diff-remove: #251213;
+  --ui-surface-hover: #10261b;
+  --ui-surface-active: #123323;
+  --ui-surface-selected: #143b29;
+  --ui-accent-muted: #133726;
+  --ui-accent-hover: #4de99e;
+  --ui-info-muted: #1a302f;
+  --ui-success-muted: #1e3228;
+  --ui-warning-muted: #2c2e1b;
+  --ui-danger-muted: #2e231d;
+  --ui-danger-soft: #412b25;
+  --ui-warning-border: #978547;
+  --ui-danger-border: #9d5d4f;
+  --ui-warning-ring: rgba(243, 196, 91, 0.35);
+  --ui-danger-ring: rgba(255, 122, 106, 0.35);
+  --ui-glow-text: 0 0 12px rgba(58, 232, 148, 0.5);
+  --ui-glow-box: 0 0 0 1px rgba(58, 232, 148, 0.25), 0 0 28px rgba(58, 232, 148, 0.18);
+  --ui-chat-user-bubble: #18221e;
+  --ui-chat-inline-code: #1f2924;
+  --ui-chat-diff-add: #16241d;
+  --ui-chat-diff-remove: #251512;
 }
 /* derived-ui-tokens:end */
 
@@ -531,7 +548,7 @@
 }
 
 :lang(ko) {
-  --ui-letter-spacing-heading: -0.012em;
+  --ui-letter-spacing-heading: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

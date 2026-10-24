@@ -177,26 +177,26 @@
   --term-font:
     "Share Tech Mono", "Cascadia Code", Consolas, "Courier New", monospace;
 
-  --term-bg: #020604;
-  --term-bg-raised: #07110b;
-  --term-bg-inset: #010402;
-  --term-bg-hover: rgba(41, 211, 152, 0.08);
+  --term-bg: #040806;
+  --term-bg-raised: #0c1511;
+  --term-bg-inset: #020504;
+  --term-bg-hover: rgba(58, 232, 148, 0.08);
 
-  --term-border: #2c6a47;
-  --term-border-faint: #163322;
+  --term-border: #26392f;
+  --term-border-faint: #18261f;
 
-  --term-fg: #8af7bd;
-  --term-fg-bright: #d5ffe7;
-  --term-fg-dim: #5ac98f;
-  --term-fg-faint: #419b6d;
+  --term-fg: #c4f2d8;
+  --term-fg-bright: #e8faf0;
+  --term-fg-dim: #8fb7a1;
+  --term-fg-faint: #88a897;
 
-  --term-green: #35e58f;
-  --term-red: #ff6b7a;
-  --term-amber: #ffd166;
-  --term-cyan: #62d8ff;
+  --term-green: #3ae894;
+  --term-red: #ff7a6a;
+  --term-amber: #f3c45b;
+  --term-cyan: #6fd6e8;
   --term-blue: #66a8ff;
 
-  --term-selection: rgba(53, 229, 143, 0.28);
+  --term-selection: rgba(58, 232, 148, 0.28);
 }
 
 /* == CRT GLOW (phosphor-glow effect) == a phosphor bloom on accents; a faint

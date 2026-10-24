@@ -51,12 +51,10 @@
 }
 
 .structured-agent__eyebrow {
-  color: var(--ui-accent);
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-3xs);
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-label);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 400;
 }
 
 .structured-agent__draft-header {
@@ -316,16 +314,20 @@
   align-items: center;
   gap: var(--ui-space-2);
   color: var(--ui-text-secondary);
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-xs);
-  text-transform: uppercase;
+  font-family: var(--ui-font-body);
+  font-size: var(--ui-font-size-sm);
 }
 
 .structured-agent-state > span:first-child {
-  width: 0.45rem;
-  height: 0.45rem;
+  width: 0.5rem;
+  height: 0.5rem;
   border-radius: 50%;
-  background: var(--ui-text-muted);
+  background: var(--ui-text-dim);
+}
+
+.structured-agent-state[data-state='blocked'],
+.structured-agent-state[data-state='delivery-uncertain'] {
+  color: var(--ui-warning);
 }
 
 .structured-agent-state[data-state='working'] > span:first-child,
@@ -537,7 +539,8 @@
   flex: 0 0 auto;
   margin-right: var(--ui-space-2);
   color: var(--ui-text-muted);
-  font-size: var(--ui-font-size-2xs);
+  font-family: var(--ui-font-label);
+  font-size: var(--ui-font-size-xs);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -571,9 +574,9 @@
   min-height: 1.75rem;
   box-sizing: border-box;
   padding: 0 var(--ui-space-2);
-  border: 1px solid var(--ui-border-subtle);
+  border: 1px solid var(--ui-border-mid);
   border-radius: var(--ui-radius-pill);
-  background: var(--ui-surface-raised);
+  background: var(--ui-surface);
   color: var(--ui-text-primary);
   font: inherit;
   font-size: var(--ui-font-size-xs);
@@ -847,8 +850,8 @@
   width: min(100%, 51.25rem);
   box-sizing: border-box;
   margin: 0 auto;
-  padding: var(--ui-space-3) var(--ui-space-4) var(--ui-space-4);
-  border-top: 1px solid var(--ui-border-subtle);
+  padding: 0.625rem 0.75rem 0.75rem;
+  border-top: 0;
   background: var(--ui-canvas);
 }
 
@@ -893,6 +896,7 @@
 /* Shortcuts while the box is empty, or why the settings are locked during a turn. */
 .structured-agent-composer__hint {
   margin: var(--ui-space-1) var(--ui-space-3) 0;
+  font-family: var(--ui-font-label);
   overflow: hidden;
   color: var(--ui-text-muted);
   font-size: var(--ui-font-size-xs);
@@ -1305,7 +1309,9 @@
   display: flex; align-items: baseline; flex: 1 1 auto; min-width: 0; overflow: hidden;
 }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity > * + * { margin-left: var(--ui-space-2); }
-.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity .structured-agent__eyebrow { flex: none; }
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity .structured-agent__eyebrow { flex: none; order: 1; margin-left: 0.75rem; }
+/* Title first, then whose conversation it is ("Android 승인 알림… Claude"). */
+.structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity .structured-agent__eyebrow + h1 { margin-left: 0; }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity h1 { flex: 0 1 auto; min-width: 0; }
 .structured-agent--live[data-variant='desktop'] .structured-agent-session-header__identity p { flex: 0 100 auto; min-width: 0; }
 /* The title outranks the state text: a long state ("Enter a first message") shrinks first. */

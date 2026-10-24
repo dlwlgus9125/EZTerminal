@@ -255,10 +255,11 @@ describe('UI token contract', () => {
     expect(declaration('--ui-font-size-lg')).toBe('1rem');
     expect(declaration('--ui-font-size-xl')).toBe('1.25rem');
     expect(declaration('--ui-font-size-2xl')).toBe('var(--ui-font-size-xl)');
-    expect(declaration('--ui-radius-sm')).toBe('0.125rem');
-    expect(declaration('--ui-radius-md')).toBe('0.25rem');
-    expect(declaration('--ui-radius-lg')).toBe('0.5rem');
-    expect(declaration('--ui-radius-pill')).toBe('var(--ui-radius-lg)');
+    // 2.0 Board + Desk (approved 2026-10-24): machined plates — 3 / 5 / 6px, switches share the 5px cut.
+    expect(declaration('--ui-radius-sm')).toBe('0.1875rem');
+    expect(declaration('--ui-radius-md')).toBe('0.3125rem');
+    expect(declaration('--ui-radius-lg')).toBe('0.375rem');
+    expect(declaration('--ui-radius-pill')).toBe('var(--ui-radius-md)');
     expect(declaration('--ui-control-height-sm')).toBe('2rem');
     expect(declaration('--ui-control-height-md')).toBe('2rem');
     expect(declaration('--ui-control-height-lg')).toBe('2.5rem');
@@ -276,8 +277,8 @@ describe('UI token contract', () => {
   });
 
   it('adds the commercial-pass card scale without disturbing the base scales', () => {
-    expect(declaration('--ui-radius-xl')).toBe('0.75rem');
-    expect(declaration('--ui-radius-2xl')).toBe('0.875rem');
+    expect(declaration('--ui-radius-xl')).toBe('0.5rem');
+    expect(declaration('--ui-radius-2xl')).toBe('0.625rem');
     expect(declaration('--ui-radius-round')).toBe('999px');
     expect(declaration('--ui-font-size-3xs')).toBe('0.625rem');
     expect(declaration('--ui-font-size-2xs')).toBe('0.65625rem');

@@ -156,11 +156,11 @@ describe('legacy UI palette seeding', () => {
     expect(vars['--ui-text-primary']).toBe(THEMES.matrix.ui!.textPrimary);
     expect(vars['--ui-on-accent']).toBe(THEMES.matrix.ui!.onAccent);
     expect(vars['--ui-danger']).toBe(THEMES.matrix.ui!.danger);
-    expect(vars['--ui-accent-rgb']).toBe('53, 229, 143');
-    expect(vars['--ui-info-rgb']).toBe('98, 216, 255');
-    expect(vars['--ui-success-rgb']).toBe('53, 229, 143');
-    expect(vars['--ui-warning-rgb']).toBe('255, 209, 102');
-    expect(vars['--ui-danger-rgb']).toBe('255, 107, 122');
+    expect(vars['--ui-accent-rgb']).toBe('58, 232, 148');
+    expect(vars['--ui-info-rgb']).toBe('111, 214, 232');
+    expect(vars['--ui-success-rgb']).toBe('143, 227, 180');
+    expect(vars['--ui-warning-rgb']).toBe('243, 196, 91');
+    expect(vars['--ui-danger-rgb']).toBe('255, 122, 106');
     expect(Object.keys(vars)).toHaveLength(22);
   });
 });

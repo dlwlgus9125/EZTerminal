@@ -45,9 +45,10 @@ describe('BrandMark', () => {
 
   it('keeps CRT decoration theme-aware, effect-gated, and accessibility-safe', () => {
     expect(css).toMatch(
-      /\[data-theme=["']matrix["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*font-family:\s*var\(--ui-font-heading\)/s,
+      /\[data-theme=["']matrix["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*font-family:\s*var\(--ui-font-display\)/s,
     );
-    expect(tokenCss).toMatch(/--ui-font-heading:\s*["']Share Tech Mono["']/);
+    // The wordmark keeps the display face; headings moved to the label face (2.0).
+    expect(tokenCss).toMatch(/--ui-font-display:\s*["']Share Tech Mono["']/);
     expect(css).toMatch(
       /html\[data-effect-phosphor-glow=["']on["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*text-shadow/s,
     );

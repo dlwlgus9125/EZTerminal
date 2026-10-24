@@ -33,7 +33,7 @@ export interface RollbarParams {
 export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
   thickness: 150,
   gap: 100,
-  color: '#35e58f',
+  color: '#3ae894',
   speed: 3,
   opacity: 9,
   softness: 100,

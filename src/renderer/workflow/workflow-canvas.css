@@ -7,19 +7,19 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   color: var(--ui-text-primary);
-  background: var(--ui-surface-raised);
+  background: var(--ui-surface);
   /* border-strong keeps the card edge at 3:1 or more against the canvas in every theme. */
   border: 1px solid var(--ui-border-strong);
-  border-radius: var(--ui-radius-lg);
-  box-shadow: var(--ui-shadow-raised);
+  border-radius: var(--ui-radius-xl);
+  box-shadow: none;
   font: var(--ui-font-size-sm)/var(--ui-line-height-normal) var(--ui-font-body);
   text-align: left;
 }
 .workflow-node-card__body { min-width: 0; display: grid; align-content: start; gap: var(--ui-space-1); padding: var(--ui-space-3); }
-.workflow-node-card__kind { display: flex; align-items: center; gap: var(--ui-space-1); color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-node-card__kind { display: flex; align-items: center; gap: var(--ui-space-1); color: var(--ui-text-muted); font-family: var(--ui-font-label); font-size: var(--ui-font-size-xs); }
 .workflow-node-card__kind svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
 .workflow-node-card__entry { margin-left: auto; padding: 0 var(--ui-space-1); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-pill); color: var(--ui-text-secondary); }
-.workflow-node-card__title { font-size: var(--ui-font-size-md); font-weight: 600; overflow-wrap: anywhere; }
+.workflow-node-card__title { font-family: var(--ui-font-label); font-size: var(--ui-font-size-lg); font-weight: 600; overflow-wrap: anywhere; }
 .workflow-node-card__detail { color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workflow-node-card__run { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1) var(--ui-space-2); margin-top: var(--ui-space-1); font-size: var(--ui-font-size-xs); }
 .workflow-node-card__meta { color: var(--ui-text-secondary); }
@@ -35,7 +35,7 @@
 .workflow-node-card[data-run-state='working'],
 .workflow-node-card[data-run-state='reconciling'],
 .workflow-node-card[data-run-state='reviewing'] { border-color: var(--ui-accent); border-width: 2px; }
-.workflow-node-card[data-run-state='awaiting-approval'] { border-color: var(--ui-warning); border-width: 2px; box-shadow: 0 0 0 3px var(--ui-warning-ring), var(--ui-shadow-raised); }
+.workflow-node-card[data-run-state='awaiting-approval'] { border-color: var(--ui-warning); border-width: 2px; box-shadow: 0 0 0 3px var(--ui-warning-ring); }
 .workflow-node-card[data-run-state='needs-attention'] { border-color: var(--ui-warning-border); border-width: 2px; }
 .workflow-node-card[data-run-state='rejected'],
 .workflow-node-card[data-run-state='retry-exhausted'] { border-color: var(--ui-danger-border); border-width: 2px; }

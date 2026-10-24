@@ -28,7 +28,7 @@ describe('clampRollbarParams', () => {
     expect(DEFAULT_ROLLBAR_PARAMS).toEqual({
       thickness: 150,
       gap: 100,
-      color: '#35e58f',
+      color: '#3ae894',
       speed: 3,
       opacity: 9,
       softness: 100,

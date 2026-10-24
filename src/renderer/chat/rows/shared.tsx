@@ -8,11 +8,13 @@ import { formatDuration } from '../model/summary';
 import type { ChatRow, ChatTool } from '../model/types';
 
 /** Hover/focus actions under a message: copy, reply, reuse, local time. */
-export function MessageActions({ text, messageId, allowReuse = false, createdAt }: {
+export function MessageActions({ text, messageId, allowReuse = false, createdAt, showTime = true }: {
   readonly text: string;
   readonly messageId: string;
   readonly allowReuse?: boolean;
   readonly createdAt: string;
+  /** False where the row shows its time itself (my message's "나 · time" line). */
+  readonly showTime?: boolean;
 }): JSX.Element {
   const copy = useChatCopy();
   const context = useChatContext();
@@ -54,7 +56,7 @@ export function MessageActions({ text, messageId, allowReuse = false, createdAt 
           <RotateCcw aria-hidden="true" />
         </button>
       )}
-      <time className="chat-message-time" dateTime={createdAt}>{formatClock(createdAt, context.locale)}</time>
+      {showTime && <time className="chat-message-time" dateTime={createdAt}>{formatClock(createdAt, context.locale)}</time>}
       <span className="chat-visually-hidden" role="status" aria-live="polite">
         {copied === 'ok' ? copy.copied : copied === 'failed' ? copy.copyFailed : ''}
       </span>

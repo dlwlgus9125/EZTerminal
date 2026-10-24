@@ -53,7 +53,7 @@ describe('themes — built-ins', () => {
     expect(THEMES.dark.swatch).toEqual({ bg: '#1b1a18', accent: '#7aa7ff' });
     expect(THEMES.light.swatch).toEqual({ bg: '#faf9f6', accent: '#2f5fd0' });
     expect(THEMES['high-contrast'].swatch).toEqual({ bg: '#000000', accent: '#00ff66' });
-    expect(THEMES.matrix.swatch).toEqual({ bg: '#020604', accent: '#35e58f' });
+    expect(THEMES.matrix.swatch).toEqual({ bg: '#070d0a', accent: '#3ae894' });
   });
 
   it('all built-ins satisfy the functional contrast contract without runtime correction', () => {
