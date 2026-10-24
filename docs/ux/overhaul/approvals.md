@@ -62,6 +62,16 @@ I1 설치본(2.0.0-local-ed32a403)을 써 본 사용자 의견: 없음. 배치 �
 | `shell-board` | 프로젝트 판(흐름·대화·터미널·변경 칸, 나를 기다리는 것, 시작 막대) | `Compositions/Shell 2.0` · `BoardReference` | `docs/ux/reference/2.0/captures/shell-board.png` | 승인 (2026-10-24): Board + Desk 실물(b180f95)에 "승인 이대로 실물 구현해줘", I1 결정 I1-1–I1-10 전부 "그대로", "2.0 manifest에 첫 approved 항목을 등록해" |
 | `shell-work-mode` | 작업 모드(위 막대·작업 목록·도구 줄) | `Compositions/Shell 2.0` · `WorkModeReference` | `docs/ux/reference/2.0/captures/shell-work-mode.png` | 승인 (2026-10-24): Board + Desk 실물(b180f95)에 "승인 이대로 실물 구현해줘", I1 결정 I1-1–I1-10 전부 "그대로", "2.0 manifest에 첫 approved 항목을 등록해" |
 
+### 2.0 승인 화면 — I2 흐름
+
+I2 흐름 화면(실행 막대·한 컬럼 단계 칸·흐름 편집 상태)의 기준. 실물 시안(b180f95)의 흐름 장면(J7 다시 실행, J10 실행 설정·반복,
+J11 시작 전 고급 편집)을 제품 컴포넌트로 옮긴 것이다. 이 화면만 따로 받은 디자인 답은 없다 — 아래 `답`은 시안 승인과 I2를 확인 없이
+진행하라는 지시를 그대로 옮긴 것이며, 사용자가 실물을 본 뒤의 의견은 받는 대로 이 행에 더한다. 반복(I2-6) 자리는 아직 비어 있다.
+
+| 화면 id | 화면 | story | 실앱 캡처 | 답 |
+|---|---|---|---|---|
+| `flow-run-view` | 소프로젝트 흐름 화면(실행 막대·캔버스·단계 칸, 실행 중 승인 대기) | `Production/Workflow/Flow canvas` · `RunReference` | `docs/ux/reference/2.0/captures/flow-run-view.png` | 승인 근거 (2026-10-24·25): Board + Desk 실물(b180f95, 흐름 장면 포함)에 "승인 이대로 실물 구현해줘", I2 진행에 "확인없이 모두진행해"·"내 확인없이야"(2026-10-25). 실물에 대한 별도 답은 아직 없음 |
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약

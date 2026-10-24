@@ -2108,7 +2108,7 @@ export function App(): JSX.Element {
     openHistory: (projectId) => setConversationHistory({ projectId }),
     openWorkflow: (projectId, name, subprojectId, nodeId, launch) => {
       openPlanningProject({ projectId, name });
-      apiRef.current?.getPanel(`planning-project-${projectId}`)?.api.updateParameters({ subprojectId, nodeId, workflowNavigationKey: crypto.randomUUID(), launch: launch === true });
+      apiRef.current?.getPanel(`planning-project-${projectId}`)?.api.updateParameters({ subprojectId, nodeId, workflowNavigationKey: crypto.randomUUID(), ...(launch ? { launch: true } : { launch: undefined }) });
     },
     openConversation: (sessionId, title) => openStructuredAgentSession({ sessionId, title }),
     newConversation: (projectId, name) => openStructuredAgentDraft({ projectId, name }),

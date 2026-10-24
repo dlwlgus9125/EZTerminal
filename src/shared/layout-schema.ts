@@ -498,6 +498,8 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
           delete params.subprojectId;
           delete params.nodeId;
           delete params.workflowNavigationKey;
+          // 다시 실행 asked from a board card (I2-4): a restore must never run a flow.
+          delete params.launch;
           record.params = params;
         }
         if (record.contentComponent === 'agent-session'

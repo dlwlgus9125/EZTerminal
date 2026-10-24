@@ -2016,6 +2016,9 @@ export async function launchDesktop(
     readonly env?: Readonly<Record<string, string>>;
     /** Seeds the owned profile (e.g. its daemon store) before the app starts. */
     readonly prepareProfile?: (userDataDir: string) => Promise<void>;
+    /** Another desktop build (an older release for compatibility checks): its main entry and Electron. */
+    readonly mainEntry?: string;
+    readonly executablePath?: string;
   } = {},
 ): Promise<DesktopE2eSession> {
   const profile = createOwnedDesktopProfile();
@@ -2034,7 +2037,8 @@ export async function launchDesktop(
     env.EZTERMINAL_REMOTE_VPN_INTERFACE =
       process.env.EZTERMINAL_REMOTE_VPN_INTERFACE?.trim() || '127.0.0.1';
     const launchedApp = await electron.launch({
-      args: [MAIN_ENTRY],
+      args: [options.mainEntry ?? MAIN_ENTRY],
+      ...(options.executablePath ? { executablePath: options.executablePath } : {}),
       env,
       ...(options.cwd ? { cwd: options.cwd } : {}),
     });
@@ -2085,7 +2089,7 @@ export async function launchDesktop(
   }
 }
 
-function ensureRemoteBridgeTransport(): void {
+export function ensureRemoteBridgeTransport(): void {
   const url = new URL(EMULATOR_HOST_URL);
   const loopback = url.hostname === '127.0.0.1'
     || url.hostname === 'localhost'
@@ -2148,14 +2152,20 @@ async function assertColdConnectionUsedOneSocket(): Promise<void> {
  * re-establishes from a known-clean state (fresh install + `pm clear`) rather
  * than assuming one.
  */
-export async function connectAndAuth(token: string): Promise<void> {
+export async function connectAndAuth(token: string, options: {
+  /** Another build (an older release for compatibility checks). */
+  readonly apkPath?: string;
+  /** Remove the installed app first (an older versionCode cannot replace a newer one). */
+  readonly uninstallFirst?: boolean;
+} = {}): Promise<void> {
   // `adb install` / `pm clear` replaces the WebView renderer without always
   // closing its DevTools websocket immediately. Retire the page-level client
   // before replacing the app so re-entry cannot evaluate against a stale,
   // OPEN-looking socket from the previous renderer.
   closeWebViewDevtools();
+  if (options.uninstallFirst) { try { runAdb(['uninstall', APP_ID]); } catch { /* not installed */ } }
   console.log('[e2e] installing APK (fresh app data)...');
-  runAdb(['install', '-r', APK_PATH]);
+  runAdb(['install', '-r', options.apkPath ?? APK_PATH]);
   await clearAppDataAndWaitForQuiescence();
 
   ensureRemoteBridgeTransport();

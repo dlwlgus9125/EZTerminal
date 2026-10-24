@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6ed3362061b632778a3489faaff7b2a02956c13b62f99269352214edce6819f4",
+        "inputDigest": "sha256:cab610741c727cd31d77bfa9e7034f9c77241d50bbe3109e48809cb9ac4fdd0c",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 fixes): the flow screen approves the frozen question, locks a working stage from the run going on, reads models again when a flow opens and takes a board request to run again; conversation paths unchanged."
+        "reason": "Reviewed (I2-4 fixes 2): a board request to run again is bound to the navigation that asked for it and dropped on any other; a one-shot launch param never enters the saved layout. Conversation paths unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:98334af8db333e9984163ed17b84a60b1e7349ff1a2af8ea762b005454389e4e",
+        "inputDigest": "sha256:9b317a337edafc5403356201647d03682e04f326fc1529dd4b9f4a3ba2acb52b",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 fixes): the desktop flow access subscribes to run notices; a board 다시 실행 goes through the flow screen's request recovery; the edit scope says this run only where the host binds. Claims hold."
+        "reason": "Reviewed (I2-4 fixes 2): run.launch from a board card is sent only for the flow it was asked for; the stage column shows a stage's effort as it is when the phone has no catalog. Claims hold."
       }
     }
   ]

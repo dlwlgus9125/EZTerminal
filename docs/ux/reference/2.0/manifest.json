@@ -67,6 +67,27 @@
         "decidedAt": "2026-10-24"
       },
       "replaces": []
+    },
+    {
+      "id": "flow-run-view",
+      "title": "Subproject flow screen (run bar, canvas, stage column) with a run waiting for approval",
+      "story": {
+        "file": "src/renderer/workflow/WorkflowFlowSurface.stories.tsx",
+        "export": "RunReference"
+      },
+      "visual": {
+        "storyId": "production-workflow-flow-canvas--run-reference",
+        "snapshot": "reference-2-0-flow-run-view-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/flow-run-view.png",
+        "sha256": "c4c5bc4f01da506563d66d4839076eb1c1bcfd77ea6b250a9910732ff2a68bbc"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i2-흐름",
+        "decidedAt": "2026-10-25"
+      },
+      "replaces": []
     }
   ]
 }

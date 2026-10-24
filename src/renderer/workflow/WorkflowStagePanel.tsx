@@ -73,7 +73,8 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
   const frozen = run?.preparation.workflow?.graph.nodes.find((item) => item.id === node.id);
   const approvalsOpen = run ? workflowRunControls(run).approvalsOpen : false;
   const provider = props.providers.find((item) => item.id === node.providerId);
-  const efforts = props.catalogs[node.providerId ?? '']?.find((model) => model.id === node.model)?.reasoningEfforts ?? [];
+  const catalog = props.catalogs[node.providerId ?? ''];
+  const efforts = catalog?.find((model) => model.id === node.model)?.reasoningEfforts ?? [];
   const [acceptance, setAcceptance] = useLines(node.acceptance);
   const [paths, setPaths] = useLines(node.allowedPaths);
   const scopeNote = scope === 'this-run' ? text('이번 실행에서 아직 시작하지 않은 단계입니다. 저장하면 이번 실행에 반영됩니다.', 'This stage has not started in this run: saved changes apply to this run.')
@@ -118,10 +119,10 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
           {provider?.models.map((model) => <option value={model.id} key={model.id}>{model.label}</option>)}
         </Select></Field>
         {/* Only the efforts the chosen model offers (a stage keeps none unless one is picked). */}
-        <Field label={text('노력', 'Effort')} description={efforts.length ? undefined : text('이 모델은 노력 설정을 알리지 않습니다.', 'This model does not offer an effort setting.')}>
+        <Field label={text('노력', 'Effort')} description={efforts.length ? undefined : catalog?.length ? text('이 모델은 노력 설정을 알리지 않습니다.', 'This model does not offer an effort setting.') : undefined}>
           <Select value={node.reasoningEffort ?? ''} disabled={!efforts.length && !node.reasoningEffort} onChange={(event) => update({ reasoningEffort: event.target.value || undefined })} data-testid="workflow-stage-effort">
             <option value="">{text('모델 기본값', 'Model default')}</option>
-            {node.reasoningEffort && !efforts.includes(node.reasoningEffort) && <option value={node.reasoningEffort}>{workflowEffortLabel(node.reasoningEffort, text)} · {text('재확인 필요', 'Recheck required')}</option>}
+            {node.reasoningEffort && !efforts.includes(node.reasoningEffort) && <option value={node.reasoningEffort}>{workflowEffortLabel(node.reasoningEffort, text)}{catalog?.length ? ` · ${text('재확인 필요', 'Recheck required')}` : ''}</option>}
             {efforts.map((effort) => <option key={effort} value={effort}>{workflowEffortLabel(effort, text)}</option>)}
           </Select>
         </Field>

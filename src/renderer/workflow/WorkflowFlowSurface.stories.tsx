@@ -127,6 +127,20 @@ async function dragBetween(from: Element, to: Element): Promise<void> {
   fire(to, 'pointerup', end); fire(to, 'mouseup', end); fire(document, 'pointerup', end); fire(document, 'mouseup', end);
 }
 
+/**
+ * 2.0 approved reference `flow-run-view` (I2): a run going on with its approval waiting, the run bar and
+ * the approval stage's column open. In the Storybook locale and the window's width (no pinned frame).
+ */
+export const RunReference: Story = {
+  args: { scenario: 'awaiting-approval', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } },
+  render: (args, context) => <Frame {...args} locale={context.globals.locale === 'en' ? 'en' : 'ko'} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByTestId('workflow-run-bar')).resolves.toBeVisible();
+    await expect(canvas.findByTestId('workflow-stage-approval')).resolves.toBeVisible();
+    await expect(canvas.getByTestId('workflow-run-phase')).toHaveTextContent('#1');
+  },
+};
 /** The first scene: the saved flow was prepared and started; its state sits on the editable canvas. */
 export const JustStarted: Story = { args: { scenario: 'just-started', camera: { column: 0, zoom: 0.72 } } };
 export const AwaitingApprovalSelected: Story = { args: { scenario: 'awaiting-approval', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };

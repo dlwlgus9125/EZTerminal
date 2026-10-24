@@ -228,6 +228,22 @@ describe('workflow project workspace', () => {
       expect(commands.filter(command => command.type === 'run.launch')).toHaveLength(saved ? 1 : 0);
     }
   });
+  it('drops a board request to run when another flow is opened before it could be sent', async () => {
+    const commands: WorkflowCommand[] = []; const snapshot = workflowFixture();
+    snapshot.subprojects = snapshot.subprojects.map(item => ({ ...item, runSettings: { reviewer: { providerId: 'codex', model: 'model-story' } } }));
+    let release: (() => void) | undefined; const ready = new Promise<void>(resolve => { release = resolve; });
+    const now = '2026-10-25T00:00:00.000Z';
+    const authority = { protocolVersion: 12, revision: 1, eventSequence: 1, generatedAt: now, capabilities: ['workflow-launch-v1'], runtime: { keepRunning: false, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
+      projects: [], workspaces: [], providers: [], sessions: [], agents: [], agentRelations: [], turns: [], transcriptHeads: [], approvals: [], schedules: [], heartbeats: [] } as unknown as DaemonSnapshot;
+    // The host answers slowly: the person opens another flow meanwhile.
+    const daemonAccess = { getDaemonSnapshot: async () => { await ready; return authority; }, sendDaemonCommand: vi.fn(), listDaemonProviderModels: async () => ({ ok: true as const, value: [] }) };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot, commandId: command.commandId }; } };
+    const render = async (target: { subprojectId: string; key: string; launch?: boolean }) => { await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} daemonAccess={daemonAccess} conversations={[]} navigationTarget={target} />)); };
+    await render({ subprojectId: 'login', key: 'run-login', launch: true });
+    await render({ subprojectId: 'payments', key: 'open-payments' });
+    await act(async () => { release!(); await new Promise(resolve => setTimeout(resolve, 50)); });
+    expect(commands.filter(command => command.type === 'run.launch')).toHaveLength(0);
+  });
   it('restores the selected stage and its unsaved document without changing the authoritative graph', async () => {
     const state = fixture(); const snapshot = workflowFixture(); const graph = structuredClone(snapshot.subprojects[0].graph); graph.nodes[0].document = 'Unsaved draft';
     const saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: { login: { baseRevision: 2, graph } }, pendingCommand: null, view: { subprojectId: 'login', nodeId: graph.nodes[0].id, page: 'stage', scrollTop: 77 } };

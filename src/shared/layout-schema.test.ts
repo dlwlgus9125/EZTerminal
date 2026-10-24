@@ -531,7 +531,7 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
   it('saves a flow tab opened at a stage without its one-shot navigation', () => {
     const layout = makeLayout(['planning-project-1']);
     (layout.panels as Record<string, unknown>)['planning-project-1'] = { id: 'planning-project-1', contentComponent: 'planning-workspace', renderer: 'always',
-      params: { projectId: 'project-1', projectName: 'Project', subprojectId: 'login', nodeId: 'login:plan', workflowNavigationKey: 'nav-1' } };
+      params: { projectId: 'project-1', projectName: 'Project', subprojectId: 'login', nodeId: 'login:plan', workflowNavigationKey: 'nav-1', launch: true } };
     const env = buildLayoutEnvelope(layout, '2026-10-24T00:00:00.000Z');
     expect(env?.layout.panels['planning-project-1'].params).toEqual({ projectId: 'project-1', projectName: 'Project' });
   });

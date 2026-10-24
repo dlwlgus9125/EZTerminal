@@ -20,6 +20,14 @@ const designReferenceCases = [
     theme: "matrix",
     viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
   },
+  {
+    storyId: "production-workflow-flow-canvas--run-reference",
+    screenshot: "reference-2-0-flow-run-view-matrix-ko.png",
+    readySelector: "[data-testid='workflow-stage-approval']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
 ] as const;
 
 for (const item of designReferenceCases) {
