@@ -14,6 +14,12 @@ export const WorkflowHistorySchema = z.object({
   id, commandId: id, revision, createdAt: z.string().datetime(), actor, summary: z.string().max(1_000),
   before: WorkflowGraphSchema, after: WorkflowGraphSchema, undoOf: id.optional(),
 }).strict();
+/** The review AI a flow is run with (실행 설정), saved on the subproject so 다시 실행 needs no dialog. */
+export const WorkflowReviewerSchema = z.object({ providerId: id, model: z.string().min(1).max(256) }).strict();
+export const WorkflowRunSettingsSchema = z.object({ reviewer: WorkflowReviewerSchema }).strict();
+export type WorkflowRunSettings = z.infer<typeof WorkflowRunSettingsSchema>;
+/** Host capability: `run.launch` (prepare and start the saved flow as one durable request). */
+export const WORKFLOW_LAUNCH_CAPABILITY = 'workflow-launch-v1';
 export const WorkflowSubprojectSchema = z.object({
   id, title: z.string().trim().min(1).max(300), goal: z.string().max(65_536), status: z.enum(['active', 'completed', 'archived']),
   revision, createdAt: z.string().datetime(), updatedAt: z.string().datetime(), presetId: z.string().max(100),
@@ -21,6 +27,8 @@ export const WorkflowSubprojectSchema = z.object({
   legacyPlanning: z.boolean().optional(),
   /** 자동 승인: runs prepared from now on approve stages and integrate without the person (person only). */
   autoApprove: z.boolean().optional(),
+  /** Saved only once chosen (protocol v17). */
+  runSettings: WorkflowRunSettingsSchema.optional(),
 }).strict();
 export type WorkflowSubproject = z.infer<typeof WorkflowSubprojectSchema>;
 export const WorkflowSessionLinkSchema = z.object({
@@ -60,14 +68,16 @@ export interface WorkflowNavigationAccess { getWorkflowNavigation(projectId: str
 const envelope = { commandId: id, projectId: id, hostId: id, expectedRevision: revision, subprojectId: id.optional() };
 export const WorkflowCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('subproject.create'), payload: z.object({ id, title: z.string().trim().min(1).max(300), goal: z.string().max(65_536), presetId: z.enum(['feature', 'fix', 'research', 'parallel', 'custom']), graph: WorkflowGraphSchema.optional(), previewId: id.optional(), previewRevision: revision.optional() }).strict() }).strict(),
-  z.object({ ...envelope, type: z.literal('subproject.update'), payload: z.object({ title: z.string().trim().min(1).max(300).optional(), goal: z.string().max(65_536).optional(), status: z.enum(['active', 'completed', 'archived']).optional(), autoApprove: z.boolean().optional() }).strict() }).strict(),
+  z.object({ ...envelope, type: z.literal('subproject.update'), payload: z.object({ title: z.string().trim().min(1).max(300).optional(), goal: z.string().max(65_536).optional(), status: z.enum(['active', 'completed', 'archived']).optional(), autoApprove: z.boolean().optional(), runSettings: WorkflowRunSettingsSchema.optional() }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('subproject.copy'), payload: z.object({ id, title: z.string().trim().min(1).max(300) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('workflow.patch'), payload: z.object({ graph: WorkflowGraphSchema, summary: z.string().min(1).max(1_000) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('workflow.undo'), payload: z.object({ changeId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('session.link'), payload: z.object({ sessionId: id, nodeId: id.optional(), scope: z.enum(['stage', 'flow-edit']) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('session.unlink'), payload: z.object({ sessionId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('session.refresh'), payload: z.object({ sessionId: id }).strict() }).strict(),
-  z.object({ ...envelope, type: z.literal('run.prepare'), payload: z.object({ runId: id, reviewer: z.object({ providerId: id, model: z.string().min(1).max(256) }).strict() }).strict() }).strict(),
+  z.object({ ...envelope, type: z.literal('run.prepare'), payload: z.object({ runId: id, reviewer: WorkflowReviewerSchema }).strict() }).strict(),
+  /** Prepare and start the saved flow (다시 실행). The review AI defaults to the subproject's run settings. */
+  z.object({ ...envelope, type: z.literal('run.launch'), payload: z.object({ runId: id, reviewer: WorkflowReviewerSchema.optional() }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.start'), payload: z.object({ runId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.pause'), payload: z.object({ runId: id }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('run.resume'), payload: z.object({ runId: id }).strict() }).strict(),

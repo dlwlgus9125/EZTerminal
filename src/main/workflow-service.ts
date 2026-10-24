@@ -6,14 +6,14 @@ import {
   WorkflowCommandSchema, WorkflowRegistrySchema, WorkflowSubprojectSchema, createWorkflowGraph, validateWorkflowGraph, LEGACY_SUBPROJECT_ID,
   WorkflowPreviewRequestSchema, WorkflowGraphSchema, workflowPrincipalIdentity, type WorkflowPreview, type WorkflowPreviewResult,
   type WorkflowCommand, type WorkflowGraph, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowResult, type WorkflowSubproject,
-  type WorkflowNavigationResult, type WorkflowNavigationSnapshot,
+  type WorkflowNavigationResult, type WorkflowNavigationSnapshot, WorkflowReviewerSchema,
 } from '../shared/workflow';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { WorkflowConversationContext } from '../shared/workflow-conversation';
 import { PlanningSnapshotSchema } from '../shared/planning';
 import { copyWorkflowPlanning } from './workflow-planning-copy';
 import { flowV17Fields, legacyWorkflowGraph } from '../shared/workflow-protocol-projection';
-import { changedStageSettings, stageWorking } from '../shared/planning-execution';
+import { blockingRunOf, changedStageSettings, stageWorking } from '../shared/planning-execution';
 import type { CommittedSubproject } from './workflow-stage-binding';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
@@ -52,7 +52,11 @@ export async function loadWorkflowHostId(directory: string): Promise<string> {
   if (!/^[a-f0-9-]{36}$/u.test(value)) throw new Error('The workflow host identity is invalid. Preserve it for recovery.');
   return value;
 }
-const receipt = z.object({ commandId: z.string(), fingerprint: z.string(), revision: z.number().int(), pending: z.boolean().optional(), runSubproject: WorkflowSubprojectSchema.optional(), copyPlanning: PlanningSnapshotSchema.optional() }).strict();
+const receipt = z.object({ commandId: z.string(), fingerprint: z.string(), revision: z.number().int(), pending: z.boolean().optional(), runSubproject: WorkflowSubprojectSchema.optional(), copyPlanning: PlanningSnapshotSchema.optional(),
+  /** run.launch: the run and review AI fixed when it was first received; a retry replays exactly this. */
+  launch: z.object({ runId: z.string(), reviewer: WorkflowReviewerSchema }).strict().optional(),
+  /** A request that failed for good (its retry answers the same). */
+  failed: z.object({ error: z.string().max(100), message: z.string().max(4_000) }).strict().optional() }).strict();
 const fileSchema = z.object({ version: z.literal(1), registry: WorkflowRegistrySchema, receipts: z.array(receipt), integrity: z.string() }).strict();
 type WorkflowFile = z.infer<typeof fileSchema>;
 const MAX_BYTES = 64 * 1024 * 1024;
@@ -70,7 +74,11 @@ export interface WorkflowServiceOptions {
   readonly session: (sessionId: string) => { projectId: string; managed: boolean } | undefined;
   readonly managedSessions?: (projectId: string) => readonly string[];
   readonly continuationSource?: (sessionId: string) => string | undefined;
-  readonly executeRun?: (command: WorkflowCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal) => Promise<{ ok: true } | { ok: false; error: string; message: string }>;
+  /**
+   * `transient` marks a failure whose outcome is not settled (the host or a provider was unreachable, or
+   * the reply was lost): the request stays pending and its retry replays it. Any other failure is final.
+   */
+  readonly executeRun?: (command: WorkflowCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal) => Promise<{ ok: true } | { ok: false; error: string; message: string; transient?: true }>;
   /**
    * Runs `work` under the execution gate. A flow edit checks which stages are working and saves inside
    * it, so a stage cannot start between that check and the save (the order is always workflow gate, then
@@ -261,9 +269,11 @@ export class WorkflowService {
       try {
         if (command.hostId !== this.options.hostId) return failure('wrong-host', 'This command belongs to another execution host. Reconnect and read its state.');
         let loaded = await this.load(command.projectId);
-        const fingerprint = workflowDigest({ command, principal: workflowPrincipalIdentity(principal) });
+        // A launch retried after reading newer state is still the same request.
+        const fingerprint = workflowDigest({ command: command.type === 'run.launch' ? { ...command, expectedRevision: undefined } : command, principal: workflowPrincipalIdentity(principal) });
         const previous = loaded.file.receipts.find(entry => entry.commandId === command.commandId);
         if (previous && previous.fingerprint !== fingerprint) return failure('command-conflict', 'This command ID already belongs to a different edit.');
+        if (previous?.failed) return failure(previous.failed.error, previous.failed.message);
         if (previous && !previous.pending) return this.result(loaded.file.registry, command.commandId, true);
         const registry = structuredClone(loaded.file.registry);
         const subproject = registry.subprojects.find(entry => entry.id === command.subprojectId);
@@ -277,7 +287,7 @@ export class WorkflowService {
           const linked = registry.sessionLinks.find(entry => entry.sessionId === principal.sessionId);
           if (linked && (linked.scope !== 'flow-edit' || linked.subprojectId !== command.subprojectId)) return failure('forbidden', 'Use a flow editing conversation for this subproject. Stage discussions do not grant graph editing authority.');
           // An agent may also run the flow; approvals, integration, ownership and archive stay with the person.
-          if (!['subproject.create', 'workflow.patch', 'workflow.undo', 'run.prepare', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) return failure('user-required', 'Approvals, integration, ownership and archive decisions require an explicit user command.');
+          if (!['subproject.create', 'workflow.patch', 'workflow.undo', 'run.prepare', 'run.launch', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) return failure('user-required', 'Approvals, integration, ownership and archive decisions require an explicit user command.');
         }
         if (subproject?.status === 'archived' && !(command.type === 'subproject.update' && command.payload.status === 'active') && command.type !== 'subproject.copy' && command.type !== 'session.unlink') return failure('archived', 'Restore the subproject before editing it.');
         const now = (this.options.now?.() ?? new Date()).toISOString();
@@ -389,7 +399,8 @@ export class WorkflowService {
           subproject!.revision += 1; subproject!.updatedAt = now;
         } else {
           if (!this.options.executeRun) return failure('unavailable', 'The execution authority is unavailable.');
-          if (command.type === 'run.prepare') {
+          let launch = previous?.launch;
+          if (command.type === 'run.prepare' || command.type === 'run.launch') {
             const issues = validateWorkflowGraph((previous?.runSubproject ?? subproject!).graph, true);
             if (issues.length) return { ok: false, error: 'invalid-graph', message: 'Resolve the highlighted stages before preparing this execution.', issues };
           } else {
@@ -397,14 +408,35 @@ export class WorkflowService {
             const ownerId = command.type === 'run.cancel' ? run?.preparation.subprojectId ?? run?.preparation.workflow?.subprojectId : run?.preparation.workflow?.subprojectId;
             if (ownerId !== subproject!.id) return failure('wrong-run', 'This execution belongs to another subproject.');
           }
+          // One unfinished run per flow (checked again where the run starts). A retry of the same request
+          // is answered by what it already did, so only new requests are checked here.
+          if (!previous && (command.type === 'run.launch' || command.type === 'run.start')
+            && blockingRunOf(this.options.runs(command.projectId), subproject!.id, command.payload.runId)) {
+            return failure('active-run', 'This flow is still running. Finish or cancel that run before starting another.');
+          }
+          if (command.type === 'run.launch' && !launch) {
+            const reviewer = command.payload.reviewer ?? subproject!.runSettings?.reviewer;
+            if (!reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before running it.');
+            launch = { runId: command.payload.runId, reviewer: structuredClone(reviewer) };
+          }
           if (!previous?.pending) {
             // Persist exact intent before crossing the execution ledger boundary. A lost response
             // can only retry this fingerprint and frozen graph, even after another draft edit.
-            await this.write(loaded.target, wrap(registry, [...loaded.file.receipts, { commandId: command.commandId, fingerprint, revision: subproject!.revision, pending: true, runSubproject: structuredClone(subproject!) }]), loaded.bytesHash);
+            await this.write(loaded.target, wrap(registry, [...loaded.file.receipts, { commandId: command.commandId, fingerprint, revision: subproject!.revision, pending: true, runSubproject: structuredClone(subproject!), ...(launch ? { launch } : {}) }]), loaded.bytesHash);
             loaded = await this.load(command.projectId);
           }
-          const result = await this.options.executeRun(command, previous?.runSubproject ?? subproject!, principal);
-          if (!result.ok) return result;
+          // A launch always carries its fixed intent: the same revision and review AI on every retry.
+          const sent: WorkflowCommand = command.type === 'run.launch'
+            ? { ...command, expectedRevision: previous?.revision ?? subproject!.revision, payload: { runId: launch!.runId, reviewer: launch!.reviewer } } : command;
+          const result = await this.options.executeRun(sent, previous?.runSubproject ?? subproject!, principal);
+          if (!result.ok) {
+            if (command.type === 'run.launch' && !result.transient) {
+              const settled = await this.load(command.projectId);
+              await this.write(settled.target, wrap(settled.file.registry, [...settled.file.receipts.filter(entry => entry.commandId !== command.commandId),
+                { commandId: command.commandId, fingerprint, revision: previous?.revision ?? subproject!.revision, failed: { error: result.error.slice(0, 100), message: result.message.slice(0, 4_000) } }]), settled.bytesHash);
+            }
+            return failure(result.error, result.message);
+          }
         }
         const file = wrap(registry, [...loaded.file.receipts.filter(entry => entry.commandId !== command.commandId), { commandId: command.commandId, fingerprint, revision: subproject?.revision ?? registry.registryRevision }]);
         const commit = async (): Promise<WorkflowResult | null> => {

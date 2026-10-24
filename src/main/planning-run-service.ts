@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonTurn,
 } from '../shared/daemon-protocol';
-import { PLANNING_AUTO_APPROVAL_PRINCIPAL, type ExecutionArtifact, type ExecutionAttempt, type ExecutionRun, type PlanningExecutionCommand, type PlanningExecutionReceipt, type PreparedExecutionTask } from '../shared/planning-execution';
+import { PLANNING_AUTO_APPROVAL_PRINCIPAL, PLANNING_LAUNCH_PRINCIPAL, blockingRunOf, runSubprojectId, type ExecutionArtifact, type ExecutionAttempt, type ExecutionRun, type PlanningExecutionCommand, type PlanningExecutionReceipt, type PreparedExecutionTask } from '../shared/planning-execution';
 import { PlanningRunRequestSchema, type PlanningRunRequest, type PlanningRunResult } from '../shared/planning-run';
 import { AsyncMutationGate } from './async-mutation-gate';
 import type { DaemonStore } from './daemon-store';
@@ -21,6 +21,24 @@ import { workflowPlanningInput } from './workflow-preparation';
 import { workflowTaskInputs } from './workflow-runtime';
 import { isRunReviewer } from './planning-review-identity';
 import { decideStageBinding, type CommittedSubproject } from './workflow-stage-binding';
+
+/** A failure whose outcome is not settled: the request stays pending and its retry replays it (see WorkflowService). */
+type WorkflowExecution = { ok: true } | { ok: false; error: string; message: string; transient?: true };
+/** A flow command that maps to one ledger command (`run.launch` is two of them). */
+type WorkflowStepCommand = Exclude<Extract<WorkflowCommand, { type: `run.${string}` }>, { type: 'run.launch' }>;
+
+/** The ledger id of a flow command: `workflow:<id>`, or a hash when that would exceed the ledger's 160 characters. */
+export function workflowLedgerId(commandId: string): string {
+  const plain = `workflow:${commandId}`;
+  return plain.length <= 160 ? plain : `workflow:${createHash('sha256').update(commandId).digest('hex')}`;
+}
+
+/** The ids `run.launch` gives its prepare, start and clean-up (81 characters in the ledger, whatever its command id). */
+export function workflowLaunchId(commandId: string): string {
+  return `workflow-launch:${createHash('sha256').update(commandId).digest('hex').slice(0, 48)}`;
+}
+
+const ACTIVE_RUN_MESSAGE = 'This flow is still running. Finish or cancel that run before starting another.';
 
 function meaning(value: unknown): string {
   return JSON.stringify(value, (key, entry) => key === 'revision' || key === 'status' ? undefined : entry);
@@ -153,15 +171,47 @@ export class PlanningRunService {
       : { ok: false, error: 'not-found', message: 'The project is unavailable.' };
   }
 
-  executeWorkflow(command: WorkflowCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal): Promise<{ ok: true } | { ok: false; error: string; message: string }> {
+  executeWorkflow(command: WorkflowCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal): Promise<WorkflowExecution> {
     return this.gate.runExclusive(async () => {
-      if (this.stopped) return { ok: false, error: 'user-required', message: 'An available host and explicit user execution command are required.' };
-      if (principal.kind === 'ai' && !['run.prepare', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) {
+      if (this.stopped) return { ok: false, error: 'user-required', message: 'An available host and explicit user execution command are required.', transient: true };
+      if (principal.kind === 'ai' && !['run.prepare', 'run.launch', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) {
         return { ok: false, error: 'user-required', message: 'Approvals and integration require an explicit user command.' };
       }
       if (!command.type.startsWith('run.')) return { ok: false, error: 'invalid-command', message: 'This is not an execution command.' };
-      const request = command as Extract<WorkflowCommand, { type: `run.${string}` }>;
-      const ledgerId = `workflow:${request.commandId}`;
+      if (command.type === 'run.launch') return this.launchWorkflow(command, subproject, principal);
+      return this.workflowStep(command as WorkflowStepCommand, subproject, principal);
+    });
+  }
+
+  /**
+   * 다시 실행: prepare and start one run under one hold of the execution gate, with ids derived from the
+   * request so a retry replays exactly what it did. When the start is refused for good, the run it
+   * prepared is cancelled by the launch principal (the ledger allows it nothing else).
+   */
+  private async launchWorkflow(command: Extract<WorkflowCommand, { type: 'run.launch' }>, subproject: WorkflowSubproject, principal: WorkflowPrincipal): Promise<WorkflowExecution> {
+    const { reviewer, runId } = command.payload;
+    if (!reviewer) return { ok: false, error: 'missing-reviewer', message: 'Choose the review AI for this flow before running it.' };
+    const launchId = workflowLaunchId(command.commandId);
+    const envelope = { hostId: command.hostId, projectId: command.projectId, expectedRevision: command.expectedRevision, ...(command.subprojectId ? { subprojectId: command.subprojectId } : {}) };
+    const prepared = await this.workflowStep({ ...envelope, commandId: `${launchId}:prepare`, type: 'run.prepare', payload: { runId, reviewer } }, subproject, principal);
+    if (!prepared.ok) return prepared;
+    const started = await this.workflowStep({ ...envelope, commandId: `${launchId}:start`, type: 'run.start', payload: { runId } }, subproject, principal);
+    if (!started.ok && !started.transient) {
+      const run = this.options.ledger.read(command.projectId).runs.find(entry => entry.runId === runId);
+      if (run && !run.startedAt && run.state !== 'cancelled') {
+        const cancelled = await this.options.ledger.execute({ commandId: `workflow:${launchId}:cancel`, projectId: command.projectId,
+          expectedRevision: this.options.ledger.read(command.projectId).revision, principal: { kind: 'runtime', id: PLANNING_LAUNCH_PRINCIPAL }, type: 'run.cancel', payload: { runId } });
+        if (!cancelled.ok) this.options.reportError?.(new Error(`The run prepared by launch ${launchId} could not be cancelled: ${cancelled.message}`));
+      }
+    }
+    return started;
+  }
+
+  /** One flow execution command against the ledger (called under the execution gate). */
+  private async workflowStep(request: WorkflowStepCommand, subproject: WorkflowSubproject, principal: WorkflowPrincipal): Promise<WorkflowExecution> {
+    const command = request;
+    {
+      const ledgerId = workflowLedgerId(request.commandId);
       // Read the original durable receipt before any preparation side effect on a retry.
       const previous = this.options.ledger.getReceipt(command.projectId, ledgerId);
       // An agent is recorded by its conversation.
@@ -185,6 +235,13 @@ export class PlanningRunService {
           if (previous.ok) { await this.workflowEffects(command.projectId, request); this.wake(); }
           return previous.ok ? { ok: true } : { ok: false, error: previous.error, message: previous.message };
         }
+        // One unfinished run per flow: a new start waits until the others finish or are cancelled.
+        if (request.type === 'run.start') {
+          const runs = this.options.ledger.read(command.projectId).runs;
+          const target = runs.find(run => run.runId === request.payload.runId);
+          const owner = target && runSubprojectId(target);
+          if (owner && blockingRunOf(runs, owner, target.runId)) return { ok: false, error: 'active-run', message: ACTIVE_RUN_MESSAGE };
+        }
         if (request.type === 'run.prepare') {
           const existing = this.options.ledger.read(command.projectId).runs.find(run => run.runId === request.payload.runId);
           if (existing) return { ok: false, error: 'command-conflict', message: 'This run ID is already used. Reconcile the original command.' };
@@ -195,12 +252,22 @@ export class PlanningRunService {
           if (!planning.ok) return planning;
           const root = this.projectRoot(command.projectId);
           const baseCommit = await this.options.git.run(root, ['rev-parse', '--verify', 'HEAD']).then(value => value.trim()).catch(() => undefined);
+          // A provider that cannot list its models, or a file that cannot be read for a reason other than
+          // being absent, leaves the outcome open: the same request is retried, not settled as failed.
+          let unsettled = false;
           const prepared = await preparePlanningExecution({ runId: request.payload.runId, baselineId, teamMode: 'division', progressPolicy: 'autonomous', assignments: generated.assignments, reviewer: generated.reviewer }, {
             snapshot: planning.snapshot, daemon: this.options.daemon.getSnapshot(), baseCommit,
-            readFileReference: reference => readPlanningFileReference(root, reference),
-            listModels: async providerId => { const result = await this.options.providers.listModels(this.options.daemon.getSnapshot(), providerId); if (!result.ok) throw new Error(result.message); return result.value; },
+            readFileReference: async reference => {
+              try { return await readPlanningFileReference(root, reference); }
+              catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') unsettled = true; throw error; }
+            },
+            listModels: async providerId => {
+              const result = await this.options.providers.listModels(this.options.daemon.getSnapshot(), providerId).catch((error: unknown) => { unsettled = true; throw error; });
+              if (!result.ok) { unsettled = true; throw new Error(result.message); }
+              return result.value;
+            },
           });
-          if (!prepared.ok) return prepared;
+          if (!prepared.ok) return unsettled ? { ...prepared, transient: true } : prepared;
           receipt = await this.options.ledger.execute({ ...common, type: 'run.prepare', payload: { runId: request.payload.runId, preparation: {
             ...prepared.preparation, subprojectId: subproject.id, requestFingerprint: workflowDigest({ command, principal: workflowPrincipalIdentity(principal) }),
             // Only an opted-in run carries the policy (absent reads as the person's), so older clients keep parsing runs.
@@ -215,8 +282,8 @@ export class PlanningRunService {
         if (!receipt.ok) return { ok: false, error: receipt.error, message: receipt.message };
         await this.workflowEffects(command.projectId, request);
         this.wake(); this.options.wakeQueuedTurns(); return { ok: true };
-      } catch (error) { return { ok: false, error: 'execution-unavailable', message: error instanceof Error ? error.message : 'Execution is unconfirmed. Reconcile the original command.' }; }
-    });
+      } catch (error) { return { ok: false, error: 'execution-unavailable', message: error instanceof Error ? error.message : 'Execution is unconfirmed. Reconcile the original command.', transient: true }; }
+    }
   }
 
   private async workflowEffects(projectId: string, command: WorkflowCommand): Promise<void> {
@@ -274,6 +341,11 @@ export class PlanningRunService {
           if (!this.options.recordDeviceEvidence) throw new Error('Device evidence recording is unavailable.');
           receipt = await this.options.recordDeviceEvidence(request, principal);
         } else {
+          if (request.type === 'start') {
+            const target = snapshot.runs.find(run => run.runId === request.payload.runId);
+            const owner = target && runSubprojectId(target);
+            if (owner && blockingRunOf(snapshot.runs, owner, target.runId)) return { ok: false, error: 'active-run', message: ACTIVE_RUN_MESSAGE };
+          }
           const types = { start: 'run.start', pause: 'run.pause', continue: 'run.continue', retry: 'attempt.retry', 'extend-retry': 'attempt.extend', 'resume-task': 'attempt.resume', 'cancel-task': 'task.cancel', 'select-candidate': 'candidate.select', 'keep-original': 'gate.keep-original', 'resolve-change': 'gate.resolve' } as const;
           receipt = await this.options.ledger.execute({ ...common, type: types[request.type], payload: request.payload });
           if (receipt.ok && request.type === 'cancel-task') await this.cancelCurrent(request.projectId, request.payload.runId, request.payload.taskId);

@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { workflowCanvasRuns } from '../src/renderer/workflow/workflow-canvas-fixtures';
 import type { ExecutionRun } from '../src/shared/planning-execution';
 import type { ProjectArchiveResult } from '../src/shared/project-archive';
-import { WorkflowResultSchema, type WorkflowResult, type WorkflowSnapshot, type WorkflowSubproject } from '../src/shared/workflow';
+import { WorkflowCommandSchema, WorkflowResultSchema, type WorkflowResult, type WorkflowSnapshot, type WorkflowSubproject } from '../src/shared/workflow';
 import {
+  flowCommandNeedsV17,
   flowV17Fields,
   legacyPlanningRunResult,
   legacyProjectArchiveResult,
@@ -133,5 +134,16 @@ describe('flowV17Fields', () => {
     const a = { ...plain, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } } as unknown as WorkflowSubproject;
     const b = { ...plain, runSettings: { reviewer: { model: 'm', providerId: 'codex' } }, graph: { ...plain.graph, nodes: [...plain.graph.nodes].reverse() } } as unknown as WorkflowSubproject;
     expect(flowV17Fields(a)).toBe(flowV17Fields(b));
+  });
+});
+
+describe('commands a newer client keeps for a v17 host (I2-3)', () => {
+  const envelope = { commandId: 'c', projectId: 'p', hostId: 'h', expectedRevision: 1, subprojectId: 's' };
+  it('needs v17 for 다시 실행 and for saving run settings, not for prepare and start', () => {
+    expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'run.launch', payload: { runId: 'r' } }))).toBe(true);
+    expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'subproject.update', payload: { runSettings: { reviewer: { providerId: 'codex', model: 'm' } } } }))).toBe(true);
+    expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'subproject.update', payload: { title: 'Renamed' } }))).toBe(false);
+    expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'run.prepare', payload: { runId: 'r', reviewer: { providerId: 'codex', model: 'm' } } }))).toBe(false);
+    expect(flowCommandNeedsV17(WorkflowCommandSchema.parse({ ...envelope, type: 'run.start', payload: { runId: 'r' } }))).toBe(false);
   });
 });

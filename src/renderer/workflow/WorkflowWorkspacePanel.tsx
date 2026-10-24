@@ -269,7 +269,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: command });
       setPending(command);
       const result = await access.executeWorkflowCommand(command);
-      if (!result.ok) { setError([result.message, ...(result.issues?.map(issue => issue.message) ?? [])].join('\n')); if (!['unavailable', 'delivery-uncertain'].includes(result.error)) setPending(null); return false; }
+      if (!result.ok) { setError([result.message, ...(result.issues?.map(issue => issue.message) ?? [])].join('\n')); if (!['unavailable', 'delivery-uncertain', 'execution-unavailable'].includes(result.error)) setPending(null); return false; }
       setSnapshot(result.snapshot); setPending(null);
       const nextDrafts = { ...rebaseUnchangedGraphs(drafts, snapshot, result.snapshot) };
       if ((command.type === 'workflow.patch' || command.type === 'workflow.undo') && command.subprojectId) delete nextDrafts[command.subprojectId];

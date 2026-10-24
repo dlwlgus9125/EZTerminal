@@ -124,16 +124,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 683,
-          "endLine": 768,
+          "startLine": 684,
+          "endLine": 769,
           "lineDigest": "sha256:553d740f99709fd3be92e2000da2f830413ad7136f3bd5033b9a434adb37cd95",
           "claim": "Initialization validates containment and existing database material, rejects future schemas, and requires a verified migration or legacy backup before mutation."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 771,
-          "endLine": 808,
+          "startLine": 772,
+          "endLine": 809,
           "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
           "claim": "The store opens with strict SQLite options, enables WAL and full synchronization, migrates, recovers uncertain commands, then marks itself ready."
         },
@@ -314,8 +314,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 660,
-          "endLine": 680,
+          "startLine": 661,
+          "endLine": 681,
           "lineDigest": "sha256:ab7c115ed1aef1694fe596607ce70a22db79d78cca505d9e191c16eed88c6375",
           "claim": "DaemonStore serializes initialization, latches a structured failure, and never exposes a partially initialized database."
         }

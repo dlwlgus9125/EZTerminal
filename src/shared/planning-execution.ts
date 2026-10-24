@@ -212,6 +212,8 @@ export type ExecutionPreparation = z.infer<typeof ExecutionPreparationSchema>;
 
 /** The host's principal id when a run's frozen policy lets it approve and integrate. */
 export const PLANNING_AUTO_APPROVAL_PRINCIPAL = 'auto-approval';
+/** The host's principal id that cancels a run its own launch prepared but could not start. */
+export const PLANNING_LAUNCH_PRINCIPAL = 'workflow-launch';
 /** What an agent may do to a run; approvals, reviews and integration stay with the person. */
 export const PLANNING_AGENT_RUN_COMMANDS = ['run.prepare', 'run.start', 'run.pause', 'run.continue', 'run.cancel'] as const;
 export type RunDefinition = ExecutionPreparation;
@@ -442,3 +444,18 @@ export const PlanningExecutionSnapshotSchema = z.object({
     }).strict()),
   }).strict()),
 }).strict();
+
+/** The subproject a run belongs to: a flow run, or a planning run addressed to a subproject. */
+export function runSubprojectId(run: Pick<ExecutionRun, 'preparation'>): string | undefined {
+  return run.preparation.workflow?.subprojectId ?? run.preparation.subprojectId;
+}
+
+/** A started run that has not finished. Paused, reconciling and cancelling runs are still going. */
+export function runUnfinished(run: Pick<ExecutionRun, 'startedAt' | 'state'>): boolean {
+  return Boolean(run.startedAt) && run.state !== 'completed' && run.state !== 'cancelled';
+}
+
+/** The run that keeps a subproject from starting another one (one unfinished run per flow). */
+export function blockingRunOf<T extends Pick<ExecutionRun, 'runId' | 'preparation' | 'startedAt' | 'state'>>(runs: readonly T[], subprojectId: string, exceptRunId?: string): T | undefined {
+  return runs.find((run) => run.runId !== exceptRunId && runSubprojectId(run) === subprojectId && runUnfinished(run));
+}

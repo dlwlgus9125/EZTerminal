@@ -1548,7 +1548,7 @@ app.on('ready', async () => {
       return session ? { projectId: session.projectId, managed: !workflowSessionAllowed(sessionId) || /^planning-/u.test(sessionId) } : undefined;
     },
     executeRun: (command, subproject, principal) => planningRuntimeRef.current?.executeWorkflow(command, subproject, principal)
-      ?? Promise.resolve({ ok: false, error: 'unavailable', message: 'The execution authority is unavailable.' }),
+      ?? Promise.resolve({ ok: false, error: 'unavailable', message: 'The execution authority is unavailable.', transient: true as const }),
     executionGate: (work) => planningRuntimeRef.current ? planningRuntimeRef.current.exclusive(work) : work(),
   });
   workflowRef.service = workflowService;

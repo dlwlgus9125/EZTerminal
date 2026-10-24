@@ -801,28 +801,37 @@ export class AgentOrchestrationMcpServer {
     ownerAgent: DaemonSnapshot['agents'][number],
     value: unknown,
   ): Promise<JsonObject> {
-    const args = strictObject(value, ['action', 'subprojectId', 'runId', 'reviewer']);
+    const args = strictObject(value, ['action', 'subprojectId', 'runId', 'reviewer', 'commandId']);
     const action = requiredString(args.action, 'action', 16);
-    const actions = { prepare: 'run.prepare', start: 'run.start', pause: 'run.pause', resume: 'run.resume', cancel: 'run.cancel' } as const;
-    if (!(action in actions)) throw new McpRequestError(-32602, 'action is one of prepare, start, pause, resume or cancel.');
+    const actions = { launch: 'run.launch', prepare: 'run.prepare', start: 'run.start', pause: 'run.pause', resume: 'run.resume', cancel: 'run.cancel' } as const;
+    if (!(action in actions)) throw new McpRequestError(-32602, 'action is one of launch, prepare, start, pause, resume or cancel.');
+    // The call's commandId (chosen by the caller, or made here and returned) makes it retryable: the same
+    // call with the same commandId is one request, and one run.
+    const requested = args.commandId === undefined ? this.createId() : requiredString(args.commandId, 'commandId', 160);
+    const derived = (kind: string) => createHash('sha256').update(JSON.stringify([sessionId, requested, kind])).digest('hex').slice(0, 40);
     const subprojectId = requiredString(args.subprojectId, 'subprojectId', 160);
     const read = await authority.read(projectId);
     if (!read.ok) return toolText(read, true);
     const subproject = read.snapshot.subprojects.find((entry) => entry.id === subprojectId);
     if (!subproject) throw new McpRequestError(-32602, 'Unknown subprojectId. Read workflow_read first.');
-    const envelope = { commandId: `mcp-run-${this.createId()}`, projectId, hostId: read.snapshot.hostId, expectedRevision: subproject.revision, subprojectId };
+    const envelope = { commandId: `mcp-run-${derived('command')}`, projectId, hostId: read.snapshot.hostId, expectedRevision: subproject.revision, subprojectId };
     let command: WorkflowCommand;
-    if (action === 'prepare') {
-      const reviewer = isObject(args.reviewer)
-        ? { providerId: requiredString(args.reviewer.providerId, 'reviewer.providerId', 128), model: requiredString(args.reviewer.model, 'reviewer.model', 256) }
-        : ownerAgent.model ? { providerId: ownerAgent.providerId, model: ownerAgent.model } : undefined;
-      if (!reviewer) throw new McpRequestError(-32602, 'Give reviewer {providerId, model}: this conversation runs on its provider\u2019s default model.');
-      command = { ...envelope, type: 'run.prepare', payload: { runId: `run-${this.createId()}`, reviewer } };
+    if (action === 'prepare' || action === 'launch') {
+      const given = isObject(args.reviewer)
+        ? { providerId: requiredString(args.reviewer.providerId, 'reviewer.providerId', 128), model: requiredString(args.reviewer.model, 'reviewer.model', 256) } : undefined;
+      // A launch uses the flow's saved review AI; otherwise this conversation's provider and model.
+      const reviewer = given ?? (action === 'launch' && subproject.runSettings ? undefined
+        : ownerAgent.model ? { providerId: ownerAgent.providerId, model: ownerAgent.model } : undefined);
+      if (!reviewer && !(action === 'launch' && subproject.runSettings)) throw new McpRequestError(-32602, 'Give reviewer {providerId, model}: this conversation runs on its provider\u2019s default model.');
+      const runId = `run-${derived('run')}`;
+      command = action === 'launch' ? { ...envelope, type: 'run.launch', payload: { runId, ...(reviewer ? { reviewer } : {}) } }
+        : { ...envelope, type: 'run.prepare', payload: { runId, reviewer: reviewer! } };
     } else {
-      command = { ...envelope, type: actions[action as Exclude<keyof typeof actions, 'prepare'>], payload: { runId: requiredString(args.runId, 'runId', 160) } };
+      command = { ...envelope, type: actions[action as Exclude<keyof typeof actions, 'prepare' | 'launch'>], payload: { runId: requiredString(args.runId, 'runId', 160) } };
     }
     const result = await authority.execute(command, { kind: 'ai', id: `session:${sessionId}`, sessionId });
-    return toolText({ ...result, ...(command.type === 'run.prepare' && result.ok ? { runId: command.payload.runId } : {}) }, !result.ok);
+    return toolText({ ...result, commandId: requested,
+      ...((command.type === 'run.prepare' || command.type === 'run.launch') && result.ok ? { runId: command.payload.runId } : {}) }, !result.ok);
   }
 
   private workflowToolDefinitions(): JsonObject[] {
@@ -831,8 +840,9 @@ export class AgentOrchestrationMcpServer {
       { name: 'workflow_read', description: 'Read this project’s subprojects, graph drafts, changes, run snapshots and this conversation’s creation preview. No model or run is started.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
       { name: 'workflow_command', description: `${WORKFLOW_SKILL.instructions}\nCommands: subproject.create payload {id,title,goal,presetId:feature|fix|research|parallel|custom,graph?}; workflow.patch payload {graph,summary}; workflow.undo payload {changeId}. Envelope: commandId,projectId,hostId,expectedRevision,subprojectId (required except create),type,payload.`, inputSchema: { type: 'object', properties: { commandId: { type: 'string' }, projectId: { type: 'string' }, hostId: { type: 'string' }, expectedRevision: { type: 'integer' }, subprojectId: { type: 'string' }, type: { type: 'string' }, payload: { type: 'object', properties: { graph }, additionalProperties: true } }, required: ['commandId', 'projectId', 'hostId', 'expectedRevision', 'type', 'payload'], additionalProperties: false } },
       { name: 'validate_workflow', description: 'Validate a proposed graph’s structure and required fields without changing any stored draft or starting execution. Whether each stage’s provider, model and reasoningEffort are available is checked when the run is prepared.', inputSchema: graph },
-      { name: 'workflow_run', description: 'Run a subproject\u2019s saved flow: prepare (freezes the current draft and returns runId; reviewer defaults to this conversation\u2019s provider and model), then start, pause, resume or cancel that runId. Approval stages and result integration are the person\u2019s, unless they turned on 자동 승인 for the subproject; read workflow_results to follow it.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['prepare', 'start', 'pause', 'resume', 'cancel'] }, subprojectId: { type: 'string' }, runId: { type: 'string' },
+      { name: 'workflow_run', description: 'Run a subproject\u2019s saved flow: launch (prepares and starts it as one request and returns runId; reviewer defaults to the flow\u2019s saved review AI, else this conversation\u2019s provider and model; refused while another run of the flow is unfinished), or prepare then start, and pause, resume or cancel that runId. Give a commandId to make a call safe to retry: the same call with the same commandId is one request; the reply returns the commandId it used.'
+          + ' Approval stages and result integration are the person\u2019s, unless they turned on 자동 승인 for the subproject; read workflow_results to follow it.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['launch', 'prepare', 'start', 'pause', 'resume', 'cancel'] }, subprojectId: { type: 'string' }, runId: { type: 'string' }, commandId: { type: 'string' },
           reviewer: { type: 'object', properties: { providerId: { type: 'string' }, model: { type: 'string' } }, required: ['providerId', 'model'], additionalProperties: false } }, required: ['action', 'subprojectId'], additionalProperties: false } },
       { name: 'workflow_results', description: 'Read where a run stands: each stage\u2019s state and attempts with their bounded summaries, approvals waiting for the person, and whether integration was allowed.',
         inputSchema: { type: 'object', properties: { runId: { type: 'string' } }, required: ['runId'], additionalProperties: false } },

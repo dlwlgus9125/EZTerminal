@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:17d8a33596dc72836c8fc112d980eb352b9a493f92a8aa94b55c8030c09d3c72",
+        "inputDigest": "sha256:de5968a0395b26bac8e26ed5e3cc80e9a84be8e603f6e73092cf5b3159e0e1a4",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-2): main wires the execution gate into flow edits and the committed-subproject read into the run service; process and surface boundaries are unchanged. Anchors moved."
+        "reason": "Reviewed (I2-3): the host advertises the workflow-launch-v1 capability next to the others; daemon-store anchors only moved by one import line. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0b727edcc49f79746a0053bc8c9a34072d6c822d1bfb4f61989b0b2298735ad5",
+        "inputDigest": "sha256:4e3a53530b7d2375c4ddc7a9193098c7a21ec8122c6df5748cd7c69a2290b332",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-2): main gains two flow wirings (execution gate, committed subproject); window, panel and session lifecycles are unchanged. Anchors moved."
+        "reason": "Reviewed (I2-3): daemon-store anchors moved by one import line and the capability list gained workflow-launch-v1; lifecycle claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3ca02758f0b9af8a3f2539482877a51313822f6e4c88193e771d012b93106e57",
+        "inputDigest": "sha256:112d4d10d9f2d89fc5ed7ac8dad3027a9c5d17c9ccb0955fb86421a11834e6c6",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-2): run replies carry stage bindings for v17 readers; v16-and-older readers get runs with the bound settings applied and no binding record. Other dataflow is unchanged."
+        "reason": "Reviewed (I2-3): run.launch and run settings are v17-only; newer clients keep them for a v17 host and v16 readers never see run settings. Remote dataflow claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:53dd27a55196e6da2327b6079b9646420aec0ac6c45c01e5250069bc0f5c5215",
+        "inputDigest": "sha256:9b773622488d1cf915d17dc87cd0e71fce68f44c28bd34f7280f956c8c76cd6a",
         "decision": "map-updated",
-        "reason": "Reviewed (I2-2 fixes): binding is decided only for a stage being sent and always recorded; one prepareExecutionTask builds prepare and bound tasks; the turn check counts all the sender adds; a stage whose new inputs no longer fit is held."
+        "reason": "Reviewed (I2-3): run.launch prepares and starts one run under one execution-gate hold with derived ledger ids; a settled start failure cancels the run it prepared; one unfinished run per flow; long command ids hash only past 160."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:31ece74202b9f2042385baf832f834afb69bbcfb9c3bcc9850478f4baa837f98",
-        "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-2 fixes): a stage counts as working (locked) from its recorded dispatch until it finishes; structure includes its connections; input documents rebound upstream rebuild it; a stage held before its first send is ready again when the run continues. Claims hold."
+        "inputDigest": "sha256:3fc1ab4b31f21129a526fee5190016b98b0526fc6b454d0206800eb4103a17cd",
+        "decision": "map-updated",
+        "reason": "Reviewed (I2-3): subprojects save run settings (review AI); run.launch resolves and pins its review AI in a durable receipt, settles final failures and keeps unsettled ones pending; AI may launch; a second start waits for the unfinished run."
       }
     }
   ]

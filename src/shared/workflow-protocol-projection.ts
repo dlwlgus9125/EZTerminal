@@ -33,7 +33,7 @@ export function legacyWorkflowGraph<T extends { readonly nodes: readonly object[
 const legacyGraph = legacyWorkflowGraph;
 
 /** Command types added with remote protocol v17 (later I2 steps add theirs). */
-export const FLOW_V17_COMMAND_TYPES: readonly string[] = [];
+export const FLOW_V17_COMMAND_TYPES: readonly string[] = ['run.launch'];
 
 function graphCarriesV17(graph: { readonly nodes: readonly object[] } | undefined): boolean {
   return Boolean(graph?.nodes.some((node) => FLOW_V17_NODE_FIELDS.some((key) => Object.hasOwn(node, key))));

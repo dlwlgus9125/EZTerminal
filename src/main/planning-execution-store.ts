@@ -4,6 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   PLANNING_AGENT_RUN_COMMANDS,
   PLANNING_AUTO_APPROVAL_PRINCIPAL,
+  PLANNING_LAUNCH_PRINCIPAL,
   PLANNING_EXECUTION_VERSION,
   PlanningExecutionCommandSchema,
   boundStageIssues,
@@ -287,8 +288,11 @@ export class PlanningExecutionStore {
     // The host approves and integrates only for a run frozen with automatic approval (checked in apply).
     const autoApproval = command.principal.kind === 'runtime' && command.principal.id === PLANNING_AUTO_APPROVAL_PRINCIPAL
       && (command.type === 'workflow.approve' || command.type === 'workflow.integrate');
+    // A launch whose start failed cancels the run it prepared (checked against its own prepare in apply), nothing else.
+    const launchCleanup = command.principal.kind === 'runtime' && command.principal.id === PLANNING_LAUNCH_PRINCIPAL;
+    requireState(!launchCleanup || command.type === 'run.cancel', 'user-required', 'A launch can only cancel the run it prepared and could not start.');
     requireState(!runtime || command.principal.kind === 'runtime', 'runtime-required', 'Only the host execution adapter can record provider activity.');
-    requireState(runtime || autoApproval || ['run.pause-impact', 'review.decide', 'attempt.retry'].includes(command.type) || command.principal.kind !== 'runtime',
+    requireState(runtime || autoApproval || launchCleanup || ['run.pause-impact', 'review.decide', 'attempt.retry'].includes(command.type) || command.principal.kind !== 'runtime',
       'user-required', 'This decision requires an explicit user command.');
     requireState(command.principal.kind !== 'agent' || (PLANNING_AGENT_RUN_COMMANDS as readonly string[]).includes(command.type),
       'user-required', 'An agent can prepare, start, pause, continue or cancel a run; approvals, reviews and integration are the person’s.');
@@ -359,6 +363,13 @@ export class PlanningExecutionStore {
         requireState(run.cancelRequested, 'invalid-transition', 'Only requested cancellation can be reconciled.'); return run;
       case 'run.cancel':
         requireState(run.state !== 'completed', 'invalid-transition', 'Completed results are immutable.');
+        if (command.principal.kind === 'runtime' && command.principal.id === PLANNING_LAUNCH_PRINCIPAL) {
+          // Only `workflow:<launch>:cancel` for the run `workflow:<launch>:prepare` prepared, before it started.
+          const launch = /^(workflow:workflow-launch:[0-9a-f]{48}):cancel$/u.exec(command.commandId)?.[1];
+          const prepared = launch && database.prepare('SELECT receipt_json FROM planning_execution_receipts WHERE project_id = ? AND command_id = ?').get(projectId, `${launch}:prepare`);
+          const receipt = prepared ? JSON.parse(String(prepared.receipt_json)) as PlanningExecutionReceipt : null;
+          requireState(receipt?.ok === true && receipt.runId === run.runId && !run.startedAt, 'user-required', 'A launch can only cancel the run it prepared and could not start.');
+        }
         return { ...run, cancelRequested: true, dispatchPaused: true, tasks: run.tasks.map(task => {
           if (task.state === 'completed') return task;
           const active = run.attempts.some(attempt => attempt.attemptId === task.currentAttemptId && ['running', 'delivery-uncertain'].includes(attempt.state));

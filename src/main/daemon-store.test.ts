@@ -542,7 +542,7 @@ describe('DaemonStore', () => {
     await migrated.init();
     expect(migrated.getTranscript('terminal-1')[0]).toMatchObject({ id: 'legacy', text: 'Read\n{}' });
     expect(migrated.getTranscript('terminal-1')[0]).not.toHaveProperty('payload');
-    expect(migrated.getSnapshot().capabilities).toEqual(expect.arrayContaining(['transcript-payload-v1', 'approval-request-v1', 'approval-response-v1', 'agent-effort-v1', 'agent-usage-v1']));
+    expect(migrated.getSnapshot().capabilities).toEqual(expect.arrayContaining(['transcript-payload-v1', 'approval-request-v1', 'approval-response-v1', 'agent-effort-v1', 'agent-usage-v1', 'workflow-launch-v1']));
     const payload = { v: 1, type: 'tool', callId: 'toolu_1', name: 'Read', category: 'read', phase: 'call', status: 'running', target: 'README.md' } as const;
     await migrated.appendTranscriptBatch([{ id: 'call', sessionId: 'terminal-1', kind: 'tool-call', text: 'Read\n{"file_path":"README.md"}', isDelta: false, isSensitive: false, payload }]);
     await migrated.close();

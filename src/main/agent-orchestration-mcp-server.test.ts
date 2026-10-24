@@ -209,9 +209,11 @@ describe('AgentOrchestrationMcpServer', () => {
     const descriptor = server.descriptorForSession('lead-1');
     const call = (name: string, args: unknown) => post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', { name, arguments: args }));
     const prepared = await call('workflow_run', { action: 'prepare', subprojectId: 'sub' });
-    expect(JSON.stringify(prepared.value)).toContain('run-id');
+    // Its ids derive from the call's commandId (made here when not given, and returned for a retry).
+    expect(JSON.stringify(prepared.value)).toMatch(/run-[0-9a-f]{40}/u);
+    expect(JSON.stringify(prepared.value)).toContain('\\"commandId\\":\\"id\\"');
     expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run.prepare', hostId: 'host', subprojectId: 'sub', expectedRevision: 2,
-      payload: { runId: 'run-id', reviewer: { providerId: 'codex', model: 'gpt-5' } } }), { kind: 'ai', id: 'session:lead-1', sessionId: 'lead-1' });
+      payload: { runId: expect.stringMatching(/^run-[0-9a-f]{40}$/u), reviewer: { providerId: 'codex', model: 'gpt-5' } } }), { kind: 'ai', id: 'session:lead-1', sessionId: 'lead-1' });
     await call('workflow_run', { action: 'start', subprojectId: 'sub', runId: 'run-1' });
     expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run.start', payload: { runId: 'run-1' } }), expect.anything());
     expect(JSON.stringify((await call('workflow_run', { action: 'approve', subprojectId: 'sub', runId: 'run-1' })).value)).toMatch(/isError|error/u);
@@ -219,6 +221,27 @@ describe('AgentOrchestrationMcpServer', () => {
     const body = JSON.parse((results.value?.result as { content: Array<{ text: string }> }).content[0]!.text) as { run: Record<string, unknown> };
     expect(body.run).toMatchObject({ approvalPolicy: 'auto', awaitingApproval: ['결과 확인'], stages: [{ stage: '조사', state: 'completed', attempts: [{ summary: 'Found it.' }] }] });
     expect(execute).toHaveBeenCalledTimes(2);
+  });
+  it('launches a flow with its saved review AI, and the same commandId twice is one request', async () => {
+    const read = vi.fn(async () => ({ ok: true as const, snapshot: { hostId: 'host', subprojects: [{ id: 'sub', revision: 4, runSettings: { reviewer: { providerId: 'claude', model: 'opus' } } }], runs: [] } }));
+    const execute = vi.fn(async () => ({ ok: true as const }));
+    const service = { previewForSession: () => undefined } as unknown as import('./workflow-service').WorkflowService;
+    const server = new AgentOrchestrationMcpServer({ authority: { getSnapshot: () => snapshot(), execute: vi.fn() },
+      workflow: () => ({ service, authority: { read, execute } as unknown as WorkflowAuthority }), workflowAllowed: () => true });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+    const call = (args: unknown) => post(descriptor.endpoint, descriptor.bearerToken, rpc(1, 'tools/call', { name: 'workflow_run', arguments: args }));
+    await call({ action: 'launch', subprojectId: 'sub', commandId: 'run-it-once' });
+    await call({ action: 'launch', subprojectId: 'sub', commandId: 'run-it-once' });
+    expect(execute).toHaveBeenCalledTimes(2);
+    const [first, second] = execute.mock.calls as unknown as Array<[{ type: string; commandId: string; payload: Record<string, unknown> }]>;
+    // No reviewer: the host uses the flow's saved one.
+    expect(first![0]).toMatchObject({ type: 'run.launch', payload: { runId: expect.stringMatching(/^run-[0-9a-f]{40}$/u) } });
+    expect(first![0].payload).not.toHaveProperty('reviewer');
+    expect(second![0]).toEqual(first![0]);
+    await call({ action: 'launch', subprojectId: 'sub', commandId: 'another' });
+    expect((execute.mock.calls[2] as unknown as [{ commandId: string }])[0].commandId).not.toBe(first![0].commandId);
   });
   it('rejects malformed tool-call metadata and extra envelope fields before dispatch', async () => {
     const read = vi.fn();

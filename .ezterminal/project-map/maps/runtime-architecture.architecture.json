@@ -314,8 +314,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-store.ts",
-          "startLine": 771,
-          "endLine": 808,
+          "startLine": 772,
+          "endLine": 809,
           "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
           "claim": "The SQLite owner enables foreign keys and WAL with full synchronization, migrates, recovers uncertain commands, and publishes ready state only afterward."
         },

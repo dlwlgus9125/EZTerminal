@@ -11,7 +11,7 @@ import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
 import { PlanningService } from './planning-service';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { autoApprovalCommands, PlanningRunService, type PlanningRunServiceOptions } from './planning-run-service';
+import { autoApprovalCommands, PlanningRunService, workflowLaunchId, workflowLedgerId, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
 import { WorkflowService, workflowDigest } from './workflow-service';
 import { decideStageBinding, type CommittedSubproject } from './workflow-stage-binding';
@@ -475,5 +475,132 @@ describe('stage edits before a stage starts apply to the current run (late bindi
     expect(await command('desktop', 'bind-by-person')).toMatchObject({ ok: false, error: 'runtime-required' });
     // Once its first attempt started, a stage is never rebound.
     expect(await command('runtime', 'bind-late')).toMatchObject({ ok: false, error: 'invalid-transition' });
+  });
+});
+describe('run settings and 다시 실행 (run.launch)', () => {
+  async function launchFlow(options: { staleRuns?: boolean } = {}) {
+    const f = await fixture(false, true); const directory = f.store.getSnapshot().projects[0].rootPath!;
+    // `staleRuns`: the flow service sees no runs, so only the execution side can refuse a second start.
+    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
+      runs: () => options.staleRuns ? [] : f.ledger.read('project').runs, session: () => undefined,
+      executeRun: (...args) => f.service.executeWorkflow(...args), executionGate: (work) => f.service.exclusive(work) });
+    f.committed.source = (projectId, subprojectId) => workflows.committedSubproject(projectId, subprojectId);
+    const graph = createWorkflowGraph('research', 'sub');
+    graph.nodes[0] = { ...graph.nodes[0]!, providerId: 'codex', model: 'model', instructions: 'Original instructions', acceptance: ['Explain observed evidence'] };
+    const user = { kind: 'desktop' as const, id: 'test' };
+    const common = { projectId: 'project', hostId: 'host' };
+    expect(await workflows.execute({ ...common, expectedRevision: 0, commandId: 'create-sub', type: 'subproject.create', payload: { id: 'sub', title: 'Research', goal: '', presetId: 'research', graph } }, user)).toMatchObject({ ok: true });
+    const subproject = async () => { const result = await workflows.read('project'); if (!result.ok) throw new Error(result.message); return result.snapshot.subprojects.find((entry) => entry.id === 'sub')!; };
+    const send = async (commandId: string, type: string, payload: object) => workflows.execute({ ...common, expectedRevision: (await subproject()).revision, commandId, subprojectId: 'sub', type, payload } as never, user);
+    const save = (commandId: string, model = 'model') => send(commandId, 'subproject.update', { runSettings: { reviewer: { providerId: 'codex', model } } });
+    const runs = () => f.ledger.read('project').runs;
+    return { f, workflows, send, save, subproject, runs };
+  }
+
+  it('saves the review AI on the subproject and runs the saved flow with it, once per request', async () => {
+    const { f, send, save, subproject, runs } = await launchFlow();
+    expect(await save('settings')).toMatchObject({ ok: true });
+    expect((await subproject()).runSettings).toEqual({ reviewer: { providerId: 'codex', model: 'model' } });
+    expect(await send('launch-1', 'run.launch', { runId: 'run-1' })).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(runs()).toHaveLength(1);
+    expect(runs()[0]).toMatchObject({ runId: 'run-1', startedAt: expect.any(String), preparation: { reviewer: { providerId: 'codex', model: 'model' } } });
+    // Its prepare and start carry ids derived from the request (81 characters in the ledger).
+    expect(f.ledger.getReceipt('project', `workflow:${workflowLaunchId('launch-1')}:prepare`)).toMatchObject({ ok: true, runId: 'run-1' });
+    expect(f.ledger.getReceipt('project', `workflow:${workflowLaunchId('launch-1')}:start`)).toMatchObject({ ok: true, runId: 'run-1' });
+    // The same request again (even from a newer revision) is the same launch.
+    expect(await send('launch-1', 'run.launch', { runId: 'run-1' })).toMatchObject({ ok: true, duplicate: true });
+    expect(runs()).toHaveLength(1); expect(f.adapter.submit).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a launch before any side effect: no review AI, a broken flow, or a run still going', async () => {
+    const { f, send, save, runs, workflows } = await launchFlow();
+    expect(await send('launch-a', 'run.launch', { runId: 'run-a' })).toMatchObject({ ok: false, error: 'missing-reviewer' });
+    expect(runs()).toHaveLength(0);
+    // Nothing was recorded for it: the same request runs once the review AI is chosen.
+    expect(await save('settings')).toMatchObject({ ok: true });
+    expect(await send('launch-a', 'run.launch', { runId: 'run-a' })).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    // One unfinished run per flow: another launch, or starting a run prepared meanwhile, waits.
+    expect(await send('launch-b', 'run.launch', { runId: 'run-b' })).toMatchObject({ ok: false, error: 'active-run' });
+    expect(await send('prepare-c', 'run.prepare', { runId: 'run-c', reviewer: { providerId: 'codex', model: 'model' } })).toMatchObject({ ok: true });
+    expect(await send('start-c', 'run.start', { runId: 'run-c' })).toMatchObject({ ok: false, error: 'active-run' });
+    // Paused still counts as going.
+    expect(await send('pause-a', 'run.pause', { runId: 'run-a' })).toMatchObject({ ok: true });
+    expect(await send('launch-d', 'run.launch', { runId: 'run-d' })).toMatchObject({ ok: false, error: 'active-run' });
+    expect(runs().map((run) => run.runId)).toEqual(['run-a', 'run-c']);
+    // Its own request is answered by what it did.
+    expect(await send('launch-a', 'run.launch', { runId: 'run-a' })).toMatchObject({ ok: true, duplicate: true });
+    // A flow that cannot run is refused before anything is recorded.
+    const current = await workflows.read('project'); if (!current.ok) throw new Error(current.message);
+    const broken = current.snapshot.subprojects.find((entry) => entry.id === 'sub')!;
+    expect(await send('break', 'workflow.patch', { graph: { ...broken.graph, entryNodeId: null }, summary: 'Break' })).toMatchObject({ ok: true });
+    expect(await send('launch-e', 'run.launch', { runId: 'run-e' })).toMatchObject({ ok: false, error: 'invalid-graph' });
+  });
+
+  it('replays its first intent after a lost reply, even after the review AI was changed', async () => {
+    const { f, send, save, runs } = await launchFlow();
+    expect(await save('settings')).toMatchObject({ ok: true });
+    const rename = fs.rename.bind(fs); let writes = 0;
+    const lost = vi.spyOn(fs, 'rename').mockImplementation(async (...args) => {
+      if (String(args[1]).endsWith('workflows.json') && ++writes === 2) throw new Error('Lost the reply after the run started');
+      return rename(...args);
+    });
+    expect(await send('launch-1', 'run.launch', { runId: 'run-1' })).toMatchObject({ ok: false });
+    lost.mockRestore();
+    expect(await save('settings-2', 'other')).toMatchObject({ ok: true });
+    expect(await send('launch-1', 'run.launch', { runId: 'run-1' })).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(runs()).toHaveLength(1);
+    expect(runs()[0]!.preparation.reviewer).toMatchObject({ model: 'model' });
+  });
+
+  it('settles a launch whose preparation fails for good, and keeps one that could not reach the provider pending', async () => {
+    const { f, send, save, runs } = await launchFlow();
+    expect(await save('settings', 'missing-model')).toMatchObject({ ok: true });
+    const failed = await send('launch-bad', 'run.launch', { runId: 'run-bad' });
+    expect(failed).toMatchObject({ ok: false, error: 'preparation-invalid' });
+    // Fixing the setting does not change what that request did: its retry answers the same without running again.
+    expect(await save('settings-fixed')).toMatchObject({ ok: true });
+    const execution = vi.spyOn(f.service, 'executeWorkflow');
+    expect(await send('launch-bad', 'run.launch', { runId: 'run-bad' })).toEqual(failed);
+    expect(execution).not.toHaveBeenCalled();
+    expect(runs()).toHaveLength(0);
+    // The provider could not be reached: the request stays open and runs once it answers.
+    (f.adapter.listModels as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Codex is offline'));
+    expect(await send('launch-ok', 'run.launch', { runId: 'run-ok' })).toMatchObject({ ok: false });
+    expect(execution).toHaveBeenCalledTimes(1);
+    expect(await send('launch-ok', 'run.launch', { runId: 'run-ok' })).toMatchObject({ ok: true });
+    expect(execution).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    expect(runs().map((run) => run.runId)).toEqual(['run-ok']);
+  });
+
+  it('cancels the run a launch prepared when its start is refused for good, and nothing else', async () => {
+    const { f, send, save, runs } = await launchFlow({ staleRuns: true });
+    expect(await save('settings')).toMatchObject({ ok: true });
+    expect(await send('launch-1', 'run.launch', { runId: 'run-1' })).toMatchObject({ ok: true });
+    // The flow service missed run-1; the execution side refuses the second start and cleans up.
+    expect(await send('launch-2', 'run.launch', { runId: 'run-2' })).toMatchObject({ ok: false, error: 'active-run' });
+    expect(runs().find((run) => run.runId === 'run-2')).toMatchObject({ state: 'cancelled', cancelRequested: true });
+    expect(runs().find((run) => run.runId === 'run-2')!.startedAt).toBeUndefined();
+    expect(await send('launch-2', 'run.launch', { runId: 'run-2' })).toMatchObject({ ok: false, error: 'active-run' });
+    // The launch principal cancels nothing it did not prepare, and no started run.
+    const cancel = (commandId: string, runId: string) => f.ledger.execute({ commandId, projectId: 'project', expectedRevision: f.ledger.read('project').revision,
+      principal: { kind: 'runtime', id: 'workflow-launch' }, type: 'run.cancel', payload: { runId } });
+    expect(await cancel(`workflow:${workflowLaunchId('launch-1')}:cancel`, 'run-1')).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await cancel('workflow:some-other:cancel', 'run-1')).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await f.ledger.execute({ commandId: 'launch-pause', projectId: 'project', expectedRevision: f.ledger.read('project').revision,
+      principal: { kind: 'runtime', id: 'workflow-launch' }, type: 'run.pause', payload: { runId: 'run-1' } })).toMatchObject({ ok: false, error: 'user-required' });
+    expect(runs().find((run) => run.runId === 'run-1')).toMatchObject({ state: 'running' });
+  });
+
+  it('keeps every ledger id within 160 characters without renaming the ids already in use', async () => {
+    expect(workflowLedgerId('x'.repeat(151))).toBe(`workflow:${'x'.repeat(151)}`);
+    expect(workflowLedgerId('x'.repeat(152))).toMatch(/^workflow:[0-9a-f]{64}$/u);
+    expect(`workflow:${workflowLaunchId('y'.repeat(160))}:prepare`).toHaveLength(81);
+    const { send, runs } = await launchFlow();
+    expect(await send('p'.repeat(160), 'run.prepare', { runId: 'long', reviewer: { providerId: 'codex', model: 'model' } })).toMatchObject({ ok: true });
+    expect(runs().map((run) => run.runId)).toEqual(['long']);
   });
 });
