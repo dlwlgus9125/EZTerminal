@@ -11,6 +11,16 @@ export interface BoardProject {
   readonly path?: string;
 }
 
+/** The project folder's working-tree changes (git status) and its worktrees. */
+export interface BoardChanges {
+  readonly branch?: string;
+  readonly files: number;
+  readonly added: number;
+  readonly removed: number;
+  readonly worktrees: number;
+  readonly repository: boolean;
+}
+
 export interface ProjectBoardProps {
   readonly project: BoardProject | null;
   readonly flows: readonly LiveFlow[];
@@ -20,6 +30,7 @@ export interface ProjectBoardProps {
   readonly others: ReturnType<typeof otherProjects>;
   /** The new-conversation composer (the production start panel), one line. */
   readonly startBar?: ReactNode;
+  readonly changes?: BoardChanges | null;
   readonly onOpenConversation: (sessionId: string) => void;
   readonly onOpenFlow: (subprojectId: string) => void;
   readonly onNewFlow: () => void;
@@ -107,7 +118,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
         <main className="ez-shell-board" aria-label={text(`${props.project.name} 판`, `${props.project.name} board`)}>
           <div className="ez-shell-phead">
             <h1>{props.project.name}</h1>
-            {props.project.path && <span className="ez-shell-phead__path" title={props.project.path}>{props.project.path}</span>}
+            {props.project.path && <span className="ez-shell-phead__path" title={props.project.path}>{props.project.path}{props.changes?.branch ? ` · ${props.changes.branch}` : ''}</span>}
             <span className="ez-shell-phead__right">
               <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onFiles}><Glyph name="file" size={16} />{text('파일', 'Files')}</button>
               {props.onWorktree && <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onWorktree}><Glyph name="wt" size={16} />{text('워크트리', 'Worktree')}</button>}
@@ -150,6 +161,19 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
             ))}
             <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onNewTerminal} data-testid="shell-board-new-terminal">{text('+ 새 터미널', '+ New terminal')}</button>
           </Lane>
+          {props.changes && (
+            <Lane glyph="diff" title={text('변경', 'Changes')} note={text('작업 폴더', 'Working folder')}>
+              <button type="button" className="ez-shell-card" data-wide="true" onClick={props.onFiles} data-testid="shell-changes-card">
+                <span className="ez-shell-card__k"><Led tone={props.changes.files > 0 ? 'ok' : 'idle'} />{props.changes.branch ?? text('작업 폴더', 'Working folder')}</span>
+                <span className="ez-shell-card__t ez-shell-card__t--plain">
+                  {props.changes.repository
+                    ? <>{text(`파일 ${props.changes.files}개 바뀜`, `${props.changes.files} files changed`)} <b className="ez-shell-plus">+{props.changes.added}</b> <b className="ez-shell-minus">−{props.changes.removed}</b></>
+                    : text('Git 저장소가 아닙니다', 'Not a Git repository')}
+                  {` · ${text(`워크트리 ${props.changes.worktrees}`, `${props.changes.worktrees} worktrees`)}`}
+                </span>
+              </button>
+            </Lane>
+          )}
         </main>
         <aside className="ez-shell-side" aria-label={text('나를 기다리는 것', 'Waiting for me')} data-testid="shell-waiting">
           <h2><Glyph name="req" size={16} />{text('나를 기다리는 것', 'Waiting for me')}<span className="ez-shell-n">{props.waiting.length}</span></h2>

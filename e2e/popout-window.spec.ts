@@ -350,7 +350,9 @@ test('Agent Session tab dragged outside opens and safely closes an auxiliary win
   const auxiliary = await waitForAuxiliaryWindow(app);
 
   await expect(main.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toHaveCount(0);
-  await expect(auxiliary.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toBeVisible();
+  // Board + Desk: a window showing one conversation drops its tab strip; the tab is there, hidden.
+  await expect(auxiliary.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toHaveCount(1);
+  await expect(auxiliary.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toBeHidden();
   await expect(main.getByTestId('pane')).toHaveAttribute(
     'data-session-id',
     originalSessionId,
@@ -378,9 +380,10 @@ test('Agent Session popout layout restores into a real auxiliary window after re
   await addAgentSessionPanel(main1);
   await addPopoutGroup(main1, 'agent-session-repro');
   const auxiliary1 = await waitForAuxiliaryWindow(app1);
+  // A window showing one conversation drops its tab strip (Board + Desk).
   await expect(
     auxiliary1.locator('.dv-tab').filter({ hasText: 'Agent Repro' }),
-  ).toBeVisible();
+  ).toHaveCount(1);
   await expect(main1.getByTestId('pane')).toHaveAttribute(
     'data-session-id',
     previousMainSessionId,
@@ -395,7 +398,7 @@ test('Agent Session popout layout restores into a real auxiliary window after re
 
   await expect(
     auxiliary2.locator('.dv-tab').filter({ hasText: 'Agent Repro' }),
-  ).toBeVisible();
+  ).toHaveCount(1);
   await expect(
     main2.locator('.dv-tab').filter({ hasText: 'Agent Repro' }),
   ).toHaveCount(0);

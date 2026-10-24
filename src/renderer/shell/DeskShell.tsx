@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import type { AgentProjectSummary } from '../../shared/agent-history';
+import type { GitDirectoryStatus } from '../../shared/git-status';
 import { createDaemonCommand, type DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { WorkflowSnapshot } from '../../shared/workflow';
 import { ConversationStartPanel } from '../ConversationStartPanel';
@@ -73,6 +74,22 @@ function useAgentProjects(snapshot: DaemonSnapshot | null): readonly AgentProjec
   return projects;
 }
 
+/** git status of the project folder while the board shows it (the changes lane and the branch). */
+function useGitChanges(root: string | null, visible: boolean): GitDirectoryStatus | null {
+  const [status, setStatus] = useState<{ readonly root: string; readonly value: GitDirectoryStatus } | null>(null);
+  useEffect(() => {
+    if (!root || !visible || typeof window.ezterminal.getGitStatus !== 'function') return undefined;
+    let alive = true;
+    const read = (): void => {
+      void window.ezterminal.getGitStatus(root).then((value) => { if (alive) setStatus({ root, value }); }).catch(() => undefined);
+    };
+    read();
+    const timer = window.setInterval(read, 15_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [root, visible]);
+  return status?.root === root ? status.value : null;
+}
+
 function useWorkflow(projectId: string | null, revision: number | undefined): WorkflowSnapshot | null {
   const [workflow, setWorkflow] = useState<{ readonly projectId: string; readonly snapshot: WorkflowSnapshot } | null>(null);
   const last = useRef(0);
@@ -127,6 +144,15 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   const projectId = project?.projectId ?? null;
   const projectRef = project ? { projectId: project.projectId, name: project.name } : undefined;
   const workflow = useWorkflow(projectId, snapshot?.revision);
+  const git = useGitChanges(project?.primaryRoot ?? null, nav.mode === 'board');
+  const changes = useMemo(() => (git && projectId ? {
+    ...(git.branch ? { branch: git.branch } : {}),
+    files: git.changes.length,
+    added: git.changes.reduce((sum, change) => sum + (change.added ?? 0), 0),
+    removed: git.changes.reduce((sum, change) => sum + (change.removed ?? 0), 0),
+    worktrees: (snapshot?.workspaces ?? []).filter((workspace) => workspace.projectId === projectId && workspace.kind === 'worktree' && !workspace.archivedAt).length,
+    repository: git.availability === 'ready',
+  } : null), [git, projectId, snapshot]);
   const stageSessions = useMemo(() => new Set((workflow?.sessionLinks ?? []).filter((link) => link.scope === 'stage').map((link) => link.sessionId)), [workflow]);
   const conversations = useMemo(() => (projectId ? projectConversations(snapshot, projectId, { exclude: stageSessions }) : []), [snapshot, projectId, stageSessions]);
   const allWaiting = useMemo(() => waitingItems(snapshot), [snapshot]);
@@ -241,6 +267,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
         terminals={terminals}
         waiting={waiting}
         others={others}
+        changes={changes}
         startBar={project ? (
           <ConversationStartPanel
             key={startIdentity}

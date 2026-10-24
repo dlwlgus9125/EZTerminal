@@ -403,7 +403,10 @@
 
 .ez-shell-card:hover { border-color: var(--ui-border-strong); }
 .ez-shell-card[data-need='true'] { border-color: var(--ui-warning-border); background: var(--ui-warning-muted); }
-.ez-shell-card[data-wide='true'] { flex: 1 1 100%; width: auto; cursor: default; }
+.ez-shell-card[data-wide='true'] { flex: 1 1 100%; width: auto; }
+.ez-shell-card__t--plain { font-weight: 400; }
+.ez-shell-plus { color: var(--ui-success); }
+.ez-shell-minus { color: var(--ui-danger); }
 
 .ez-shell-card__k {
   display: flex;
