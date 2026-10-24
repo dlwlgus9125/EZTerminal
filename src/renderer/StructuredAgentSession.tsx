@@ -77,7 +77,7 @@ import {
   type ChatComposerDraft, type ChatSkin, type TranscriptAnchor,
 } from './chat-view-state';
 import { useAppTranslation } from './i18n';
-import { usePaneActions } from './shell/pane-actions';
+import { announceConversationHeader, usePaneActions } from './shell/pane-actions';
 import { Glyph } from './ui/Glyph';
 import { useAgentStateLabel } from './agent-state-label';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
@@ -1931,6 +1931,13 @@ export function StructuredAgentSessionPanel({
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const paneActions = usePaneActions();
+  // This header carries the tab's actions, so a group of one may hide its tab strip while it is shown.
+  const paneHeaderId = paneActions?.panelId;
+  useEffect(() => {
+    if (!paneHeaderId) return undefined;
+    announceConversationHeader(paneHeaderId, true);
+    return () => announceConversationHeader(paneHeaderId, false);
+  }, [paneHeaderId]);
   const { i18n } = useAppTranslation();
   const chatLocale = useChatLocale();
   const permissionText = agentPermissionCopy(chatLocale);

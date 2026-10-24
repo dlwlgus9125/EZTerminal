@@ -82,7 +82,7 @@ function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly 
             terminals={TERMINALS}
             waiting={waiting}
             others={others}
-            changes={projectId ? { branch: 'main', files: 4, added: 107, removed: 12, worktrees: 0, repository: true } : null}
+            changes={projectId ? { branch: 'main', files: 4, added: 107, removed: 12, worktrees: 0, availability: 'ready', truncated: false } : null}
             startBar={<div className="structured-agent-composer__input-row"><span className="ez-shell-muted">{ko ? '원하는 작업을 입력하세요…' : 'Describe the task…'}</span></div>}
             onOpenConversation={args.onOpenConversation}
             onOpenFlow={() => undefined}

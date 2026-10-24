@@ -111,7 +111,9 @@
 .ez-shell-ptab {
   position: relative;
   display: flex;
-  flex: none;
+  /* Tabs narrow (names cut with an ellipsis) before any of them is pushed out of sight. */
+  flex: 0 1 auto;
+  min-width: 4.5rem;
   align-items: center;
   gap: 0.5625rem;
   max-width: 13.75rem;
@@ -147,7 +149,7 @@
   background: var(--ui-accent);
 }
 
-.ez-shell-ptab--add { padding: 0 0.875rem; font-size: 1rem; }
+.ez-shell-ptab--add { flex: none; min-width: 0; padding: 0 0.875rem; font-size: 1rem; }
 
 .ez-shell-count {
   padding: 1px 0.3125rem;

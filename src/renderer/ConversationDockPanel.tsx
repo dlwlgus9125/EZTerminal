@@ -6,6 +6,7 @@ import { ConversationStartPanel } from './ConversationStartPanel';
 import { rendererCapabilities } from './capability-access';
 import { structuredAgentSessionId, structuredAgentSessionHistoryId, STRUCTURED_AGENT_DRAFT_PREFIX } from './StructuredAgentDockPanel';
 import { useConversationStartWiring } from './conversation-start-wiring';
+import { usePaneActions } from './shell/pane-actions';
 import { Button } from './ui';
 import { useAppTranslation } from './i18n';
 
@@ -27,6 +28,7 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
   const [revision, setRevision] = useState(0);
   const [ready, setReady] = useState(false);
   const { i18n } = useAppTranslation();
+  const paneActions = usePaneActions();
   const folderProjectId = entry?.projectId ?? props.params?.projectId;
   const { access, storage, capabilityClient, workspaceFolders } = useConversationStartWiring(snapshot, folderProjectId);
   useEffect(() => {
@@ -61,7 +63,8 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
   useEffect(() => {
     if (entry?.action === 'open' && liveState && ['completed', 'interrupted', 'failed', 'archived'].includes(liveState)) setRevision(value => value + 1);
   }, [entry?.action, liveState]);
-  if (error || !ready) return <div className="structured-agent__banner" role="status"><p>{error ?? (i18n.language.startsWith('ko') ? '대화를 여는 중…' : 'Opening conversation…')}</p>{error && <Button onClick={() => setRevision(value => value + 1)}>{i18n.language.startsWith('ko') ? '다시 시도' : 'Retry'}</Button>}</div>;
+  // Without a conversation header (a group of one hides its tab strip), the banner carries the tab's close.
+  if (error || !ready) return <div className="structured-agent__banner" role="status"><p>{error ?? (i18n.language.startsWith('ko') ? '대화를 여는 중…' : 'Opening conversation…')}</p>{error && <Button onClick={() => setRevision(value => value + 1)}>{i18n.language.startsWith('ko') ? '다시 시도' : 'Retry'}</Button>}{error && paneActions && <Button variant="ghost" onClick={paneActions.close} data-testid="conversation-close-tab">{i18n.language.startsWith('ko') ? '탭 닫기' : 'Close tab'}</Button>}</div>;
   if (!isDraft && entry?.action === 'open' && entry.linkedSessionId) return <>{renderLive(entry.linkedSessionId, entry.conversationId)}</>;
   return <ConversationStartPanel key={id} identity={entry?.conversationId ?? id} entry={isDraft ? undefined : entry}
     projectId={props.params?.projectId} workspaceId={props.params?.workspaceId} {...(isDraft && props.params?.conversationSeed ? { seed: props.params.conversationSeed } : {})}

@@ -52,12 +52,13 @@ function getSiblingActivityRail(layer: HTMLElement): HTMLElement | null {
   return rail ?? null;
 }
 
+/** `companions`: what stays usable beside the overlay, in document order (top bar, then rail or work list). */
 function getOverlayFocusableElements(
   sidebar: HTMLElement,
-  activityRail: HTMLElement | null,
+  companions: readonly HTMLElement[],
 ): HTMLElement[] {
   return [
-    ...(activityRail ? getFocusableElements(activityRail) : []),
+    ...companions.flatMap((companion) => getFocusableElements(companion)),
     ...getFocusableElements(sidebar)
       .filter((element) => !element.matches('.workbench-sidebar-resizer')),
   ];
@@ -65,10 +66,10 @@ function getOverlayFocusableElements(
 
 function containsOverlayFocus(
   sidebar: HTMLElement,
-  activityRail: HTMLElement | null,
+  companions: readonly HTMLElement[],
 ): boolean {
   const activeElement = document.activeElement;
-  return sidebar.contains(activeElement) || activityRail?.contains(activeElement) === true;
+  return sidebar.contains(activeElement) || companions.some((companion) => companion.contains(activeElement));
 }
 
 export function SidebarShell({
@@ -140,10 +141,8 @@ export function SidebarShell({
     const activityRail = getSiblingActivityRail(layer);
     // The Board + Desk top bar stays usable beside an overlay sidebar (its settings switch closes it again).
     const topBar = layer.ownerDocument.getElementById(SHELL_TOP_BAR_ID);
-    const releaseBackground = isolateModalBackground(
-      layer,
-      [...(activityRail ? [activityRail] : []), ...(topBar ? [topBar] : [])],
-    );
+    const companions = [...(topBar ? [topBar] : []), ...(activityRail ? [activityRail] : [])];
+    const releaseBackground = isolateModalBackground(layer, companions);
     const animationFrame = requestAnimationFrame(() => {
       // A product dialog can mount in the same commit and schedule its own
       // initial-focus frame. Whichever frame runs last, the nested modal owns
@@ -157,7 +156,7 @@ export function SidebarShell({
       if (event.key !== 'Tab' || event.defaultPrevented) return;
       if (hasNestedModal(sidebar)) return;
 
-      const focusable = getOverlayFocusableElements(sidebar, activityRail);
+      const focusable = getOverlayFocusableElements(sidebar, companions);
       if (focusable.length === 0) {
         event.preventDefault();
         sidebar.focus();
@@ -165,7 +164,7 @@ export function SidebarShell({
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (!containsOverlayFocus(sidebar, activityRail)) {
+      if (!containsOverlayFocus(sidebar, companions)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
       } else if (event.shiftKey && document.activeElement === first) {

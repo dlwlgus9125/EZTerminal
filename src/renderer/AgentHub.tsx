@@ -220,6 +220,8 @@ export interface AgentHubProps {
   readonly onOpenAgentSettings?: () => void;
   /** Another surface (a conversation's folder setting) asks to edit this project's folders. */
   readonly projectEditorRequest?: { readonly projectId: string; readonly id: number };
+  /** Opens the new-worktree dialog for that project once per id (the board's Worktree button). */
+  readonly worktreeRequest?: { readonly projectId: string; readonly id: number };
   readonly onDecideManagedMerge?: (
     input: ManagedMergeDecisionInput,
   ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
@@ -277,6 +279,7 @@ export function AgentHub({
   onCreateWorkspaceSession,
   onOpenAgentSettings,
   projectEditorRequest,
+  worktreeRequest,
   onDecideManagedMerge,
   onClose,
   mobile = false,
@@ -561,6 +564,20 @@ export function AgentHub({
       })
       .catch(() => undefined);
   }, [projectEditorRequest, projects, openProjectEditor]);
+
+  const handledWorktreeRequest = useRef(0);
+  useEffect(() => {
+    if (!worktreeRequest || handledWorktreeRequest.current === worktreeRequest.id) return;
+    handledWorktreeRequest.current = worktreeRequest.id;
+    const loaded = projects.find((project) => project.projectId === worktreeRequest.projectId);
+    if (loaded) { setWorktreeProject(loaded); return; }
+    void window.ezterminal.listAgentProjects(false, undefined, 100)
+      .then((page) => {
+        const found = page.items.find((project) => project.projectId === worktreeRequest.projectId);
+        if (found) setWorktreeProject(found);
+      })
+      .catch(() => undefined);
+  }, [worktreeRequest, projects]);
 
   const addProjectFolders = useCallback(async (): Promise<void> => {
     const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(true);

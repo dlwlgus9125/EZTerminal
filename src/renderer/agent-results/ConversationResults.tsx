@@ -10,6 +10,7 @@ import { ResultsSummary } from './ResultsSummary';
 import { useResultsCopy } from './copy';
 import type { ResultsNavigation, ResultsSection, ResultsSource } from './results-source-store';
 import { useResultsViewState, type ResultsServices } from './results-services';
+import { useResultsWidth } from '../shell/results-width';
 import '../chat/chat.css';
 import './agent-results.css';
 
@@ -36,6 +37,7 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
   readonly renderPdf?: (path: string) => ReactNode;
 }): JSX.Element {
   const copy = useResultsCopy();
+  const width = useResultsWidth();
   const sessionId = source.sessionId;
   const [section, setSection] = useResultsViewState<ResultsSection>(`agent-results:section:${source.ownerPanelId}`, 'changes');
   const [backfill, setBackfill] = useState<BackfillState>(IDLE);
@@ -99,7 +101,11 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
   const todoLeft = derived.todo?.filter((item) => item.status !== 'completed').length ?? 0;
   return (
     <div className="conversation-results" data-testid="conversation-results">
-      <Tabs value={section} onValueChange={(value) => setSection(value as ResultsSection)} className="conversation-results__tabs">
+      <Tabs value={section} onValueChange={(value) => setSection(value as ResultsSection)} className={width ? 'conversation-results__tabs conversation-results__tabs--widen' : 'conversation-results__tabs'}>
+        {width && (
+          <button type="button" className="conversation-results__widen" aria-pressed={width.wide} onClick={() => width.toggle(source.ownerPanelId)}
+            data-testid="results-widen">{width.wide ? copy.narrow : copy.widen}</button>
+        )}
         <TabList label={copy.sections} className="conversation-results__tablist">
           <Tab value="changes" data-testid="results-tab-changes">{copy.changes}{changeCount > 0 && <span className="conversation-results__count">{changeCount}</span>}</Tab>
           <Tab value="files" data-testid="results-tab-files">{copy.files}</Tab>

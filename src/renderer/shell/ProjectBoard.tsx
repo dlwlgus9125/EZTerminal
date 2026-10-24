@@ -18,7 +18,9 @@ export interface BoardChanges {
   readonly added: number;
   readonly removed: number;
   readonly worktrees: number;
-  readonly repository: boolean;
+  readonly availability: 'ready' | 'not-a-repository' | 'unavailable';
+  /** The change list hit its cap: the counts are a lower bound. */
+  readonly truncated: boolean;
 }
 
 export interface ProjectBoardProps {
@@ -166,9 +168,13 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
               <button type="button" className="ez-shell-card" data-wide="true" onClick={props.onFiles} data-testid="shell-changes-card">
                 <span className="ez-shell-card__k"><Led tone={props.changes.files > 0 ? 'ok' : 'idle'} />{props.changes.branch ?? text('작업 폴더', 'Working folder')}</span>
                 <span className="ez-shell-card__t ez-shell-card__t--plain">
-                  {props.changes.repository
-                    ? <>{text(`파일 ${props.changes.files}개 바뀜`, `${props.changes.files} files changed`)} <b className="ez-shell-plus">+{props.changes.added}</b> <b className="ez-shell-minus">−{props.changes.removed}</b></>
-                    : text('Git 저장소가 아닙니다', 'Not a Git repository')}
+                  {props.changes.availability === 'ready'
+                    ? <>{props.changes.truncated
+                      ? text(`파일 ${props.changes.files}개 이상 바뀜`, `${props.changes.files}+ files changed`)
+                      : text(`파일 ${props.changes.files}개 바뀜`, `${props.changes.files} files changed`)} <b className="ez-shell-plus">+{props.changes.added}</b> <b className="ez-shell-minus">−{props.changes.removed}</b></>
+                    : props.changes.availability === 'not-a-repository'
+                      ? text('Git 저장소가 아닙니다', 'Not a Git repository')
+                      : text('변경을 읽지 못했습니다', 'Changes could not be read')}
                   {` · ${text(`워크트리 ${props.changes.worktrees}`, `${props.changes.worktrees} worktrees`)}`}
                 </span>
               </button>

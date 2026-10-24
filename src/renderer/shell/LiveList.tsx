@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+import { useNativeOverlayRegistration } from '../native-overlay';
+import { isolateModalBackground } from '../ui/modal-isolation';
+import { SHELL_TOP_BAR_ID } from '../workbench/SidebarShell';
 
 import { Glyph, Led, type GlyphName } from '../ui';
 import { ACTIVITY_RAIL_ID } from '../workbench/ActivityRail';
@@ -63,6 +67,15 @@ export function LiveList(props: LiveListProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const unfoldRef = useRef<HTMLButtonElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLElement>(null);
+  // The opened list covers the dock: the native OpenClaw view steps back and the covered dock goes inert.
+  useNativeOverlayRegistration(open);
+  useLayoutEffect(() => {
+    const overlay = overlayRef.current;
+    if (!open || !overlay) return undefined;
+    const topBar = overlay.ownerDocument.getElementById(SHELL_TOP_BAR_ID);
+    return isolateModalBackground(overlay, [...(stripRef.current ? [stripRef.current] : []), ...(topBar ? [topBar] : [])]);
+  }, [open]);
   // The opened list takes focus; Escape gives it back to the strip.
   useEffect(() => {
     if (!open) return undefined;
@@ -78,12 +91,13 @@ export function LiveList(props: LiveListProps): JSX.Element {
   }, [open]);
   if (!props.folded) return <LiveListPanel {...props} primary />;
   const close = (): void => setOpen(false);
+  const dismiss = (): void => { setOpen(false); unfoldRef.current?.focus(); };
   // Every action taken in the opened list also closes it.
   const overlay = Object.fromEntries(ACTIONS.map((name) => [name, (...args: unknown[]) => { close(); (props[name] as (...values: unknown[]) => void)(...args); }])) as Pick<LiveListProps, ListAction>;
   const waiting = props.waiting.length;
   return (
     <>
-      <nav id={ACTIVITY_RAIL_ID} className="ez-shell-strip" aria-label={text(`${props.projectName ?? '프로젝트'} 작업 목록 (접힘)`, `${props.projectName ?? 'Project'} work list (folded)`)} data-testid="shell-live-strip">
+      <nav ref={stripRef} id={ACTIVITY_RAIL_ID} className="ez-shell-strip" aria-label={text(`${props.projectName ?? '프로젝트'} 작업 목록 (접힘)`, `${props.projectName ?? 'Project'} work list (folded)`)} data-testid="shell-live-strip">
         <button type="button" className="ez-shell-iconbtn" aria-label={text('판', 'Board')} title={text('판', 'Board')} onClick={props.onBoard} data-testid="shell-back-to-board"><Glyph name="back" /></button>
         <button type="button" className="ez-shell-iconbtn" aria-label={text('작업 목록 펴기', 'Open the work list')} title={text('작업 목록 펴기', 'Open the work list')}
           ref={unfoldRef} aria-expanded={open} onClick={() => setOpen((value) => !value)} data-testid="shell-strip-unfold"><Glyph name="new" /></button>
@@ -106,7 +120,7 @@ export function LiveList(props: LiveListProps): JSX.Element {
       </nav>
       {open && (
         <div ref={overlayRef} className="ez-shell-live-overlay" data-testid="shell-live-overlay">
-          <button type="button" className="ez-shell-live-overlay__scrim" aria-label={text('작업 목록 닫기', 'Close the work list')} tabIndex={-1} onClick={close} />
+          <button type="button" className="ez-shell-live-overlay__scrim" aria-label={text('작업 목록 닫기', 'Close the work list')} tabIndex={-1} onClick={dismiss} />
           <LiveListPanel {...props} {...overlay} primary={false} />
         </div>
       )}
@@ -154,7 +168,7 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
               </span>
             </button>
             {/* Subagents show under the conversation in front, or while one of them works or waits. */}
-            {(props.focus === item.sessionId || item.children.some((child) => child.sessionId === props.focus || child.lamp === 'on' || child.lamp === 'amber'))
+            {(props.focus === item.sessionId || item.children.some((child) => child.sessionId === props.focus || child.lamp !== 'ok' && child.lamp !== 'idle'))
               && item.children.map((child) => (
               <button key={child.sessionId} type="button" className="ez-shell-row" data-child="true" aria-current={props.focus === child.sessionId ? 'true' : undefined}
                 onClick={() => props.onOpenConversation(child.sessionId)}

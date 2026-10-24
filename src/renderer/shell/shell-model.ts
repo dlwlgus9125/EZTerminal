@@ -140,8 +140,8 @@ export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string
 function stageLamp(status: WorkflowNodeRunStatus | undefined): StageLamp {
   switch (status) {
     case 'completed': return 'done';
-    case 'awaiting-approval': case 'needs-attention': case 'paused': return 'wait';
-    case 'rejected': case 'retry-exhausted': return 'fail';
+    case 'awaiting-approval': case 'paused': return 'wait';
+    case 'needs-attention': case 'rejected': case 'retry-exhausted': return 'fail';
     case 'working': case 'queued': case 'reviewing': case 'reconciling': case 'waiting': return 'run';
     default: return 'idle';
   }
@@ -174,7 +174,12 @@ export function projectFlows(workflow: Pick<WorkflowSnapshot, 'subprojects' | 'r
     });
 }
 
-/** Other projects that need a look: waiting, failed or working counts, busiest first. */
+/** A conversation and every subagent under it. */
+export function flattenConversations(items: readonly LiveConversation[]): LiveConversation[] {
+  return items.flatMap((item) => [item, ...flattenConversations(item.children)]);
+}
+
+/** Other projects that need a look: waiting, failed or working counts (subagents included), busiest first. */
 export function otherProjects(snapshot: DaemonSnapshot | null, currentProjectId: string | null): {
   readonly projectId: string; readonly name: string; readonly waiting: number; readonly failed: number; readonly working: number;
 }[] {
@@ -182,7 +187,7 @@ export function otherProjects(snapshot: DaemonSnapshot | null, currentProjectId:
   return snapshot.projects
     .filter((project) => project.id !== currentProjectId && !project.archivedAt)
     .map((project) => {
-      const items = projectConversations(snapshot, project.id);
+      const items = flattenConversations(projectConversations(snapshot, project.id));
       return {
         projectId: project.id, name: project.name,
         waiting: items.filter((item) => item.lamp === 'amber').length,

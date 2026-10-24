@@ -19,6 +19,28 @@
   min-height: 0;
 }
 
+.conversation-results__tabs { position: relative; }
+
+/* Board + Desk: widen or narrow the Results beside its conversation (top right of the tab row). */
+.conversation-results__widen {
+  position: absolute;
+  top: var(--ui-space-1);
+  right: var(--ui-space-2);
+  z-index: 1;
+  height: 1.75rem;
+  padding: 0 var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font: 500 var(--ui-font-size-xs) / 1 var(--ui-font-label);
+  cursor: pointer;
+}
+
+.conversation-results__widen[aria-pressed='true'] { color: var(--ui-accent); border-color: var(--ui-border-focus-soft); }
+
+.conversation-results__tabs--widen .conversation-results__tablist { padding-right: 6.5rem; }
+
 .conversation-results__tablist {
   flex-shrink: 0;
   padding: 0 var(--ui-space-2);

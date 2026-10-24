@@ -11,9 +11,23 @@ import { LiveList, type ShellTerminal, type ShellTool } from './LiveList';
 import { ProjectBoard } from './ProjectBoard';
 import { ShellTopBar } from './ShellTopBar';
 import { projectTabs, type ShellNavigation } from './navigation-store';
-import { otherProjects, projectConversations, projectFlows, waitingItems, type WaitingItem } from './shell-model';
+import { flattenConversations, otherProjects, projectConversations, projectFlows, waitingItems, type WaitingItem } from './shell-model';
 import { useShellText } from './shell-text';
 import './shell.css';
+
+const START_ROUNDS_KEY = 'ezterminal.board-start-rounds';
+
+function readStartRounds(): Record<string, number> {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(START_ROUNDS_KEY) ?? '{}') as unknown;
+    if (!value || typeof value !== 'object') return {};
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, number] => Number.isInteger(entry[1])));
+  } catch { return {}; }
+}
+
+function writeStartRounds(rounds: Readonly<Record<string, number>>): void {
+  try { window.localStorage.setItem(START_ROUNDS_KEY, JSON.stringify(rounds)); } catch { /* not kept: the bar may reuse a sent draft's identity after restart */ }
+}
 
 /** A terminal tab in the main window; `projectId` when it was opened for a project. */
 export interface DeskTerminal extends ShellTerminal {
@@ -32,6 +46,7 @@ export interface DeskShellActions {
   readonly openInbox: () => void;
   readonly openProjects: () => void;
   readonly openProjectFiles: (projectId: string) => void;
+  readonly newWorktree: (projectId: string) => void;
   readonly editProject: (projectId: string) => void;
   readonly openFind: () => void;
   readonly openRemote: () => void;
@@ -51,6 +66,8 @@ export interface DeskShellProps {
   readonly updateAvailable: boolean;
   readonly activeTool: string | null;
   readonly openclawVisible: boolean;
+  /** Changes when the project registry may have changed; -1 while the project screen is open. */
+  readonly projectsRevision: number;
   /** Below 1200px the live list folds into a strip. */
   readonly folded: boolean;
   /** Terminal CLI agents waiting on the person; listed in 받은 요청, counted in the top bar. */
@@ -60,17 +77,23 @@ export interface DeskShellProps {
   readonly actions: DeskShellActions;
 }
 
-function useAgentProjects(snapshot: DaemonSnapshot | null): readonly AgentProjectSummary[] | null {
+function useAgentProjects(snapshot: DaemonSnapshot | null, revision: number): readonly AgentProjectSummary[] | null {
   const [projects, setProjects] = useState<readonly AgentProjectSummary[] | null>(null);
-  // The registry changes when a project is added, edited or removed; the daemon's project list follows it.
+  // Added, edited or removed projects reach the daemon's list; pins and recency live only in the
+  // registry, so it is read again after the project screen closes (revision) and once a minute.
   const key = useMemo(() => (snapshot?.projects ?? []).map((project) => `${project.id}:${project.updatedAt}:${project.archivedAt ?? ''}`).join('|'), [snapshot]);
   useEffect(() => {
+    if (revision < 0) return undefined;
     let alive = true;
-    void window.ezterminal.listAgentProjects(false, undefined, 100)
-      .then((page) => { if (alive) setProjects(page.items.filter((project) => project.saved)); })
-      .catch(() => { if (alive) setProjects((current) => current ?? []); });
-    return () => { alive = false; };
-  }, [key]);
+    const read = (): void => {
+      void window.ezterminal.listAgentProjects(false, undefined, 100)
+        .then((page) => { if (alive) setProjects(page.items.filter((project) => project.saved)); })
+        .catch(() => { if (alive) setProjects((current) => current ?? []); });
+    };
+    read();
+    const timer = window.setInterval(read, 60_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [key, revision]);
   return projects;
 }
 
@@ -92,21 +115,27 @@ function useGitChanges(root: string | null, visible: boolean): GitDirectoryStatu
 
 function useWorkflow(projectId: string | null, revision: number | undefined): WorkflowSnapshot | null {
   const [workflow, setWorkflow] = useState<{ readonly projectId: string; readonly snapshot: WorkflowSnapshot } | null>(null);
-  const last = useRef(0);
+  const readRef = useRef<() => void>(() => undefined);
+  // A response is dropped only when the project changed meanwhile; newer revisions just read again.
   useEffect(() => {
-    if (!projectId || typeof window.ezterminal.getWorkflowSnapshot !== 'function') return undefined;
+    if (!projectId || typeof window.ezterminal.getWorkflowSnapshot !== 'function') { readRef.current = () => undefined; return undefined; }
     let alive = true;
     const read = (): void => {
-      last.current = Date.now();
       void window.ezterminal.getWorkflowSnapshot(projectId).then((result) => {
         if (alive && result.ok) setWorkflow({ projectId, snapshot: result.snapshot });
       }).catch(() => undefined);
     };
+    readRef.current = read;
+    read();
     // A run moves through its stages without changing the daemon revision every time: read again now and then.
-    if (Date.now() - last.current > 400) read();
     const timer = window.setInterval(read, 10_000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [projectId, revision]);
+  }, [projectId]);
+  useEffect(() => {
+    if (revision === undefined) return undefined;
+    const timer = window.setTimeout(() => readRef.current(), 300);
+    return () => window.clearTimeout(timer);
+  }, [revision]);
   return workflow?.projectId === projectId ? workflow.snapshot : null;
 }
 
@@ -119,7 +148,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   const { navigation, snapshot, actions } = props;
   const nav = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot);
   const { text } = useShellText();
-  const projects = useAgentProjects(snapshot);
+  const projects = useAgentProjects(snapshot, props.projectsRevision);
 
   // First start without a stored place: a person with projects lands on a board, one without on the terminal.
   const settled = useRef(props.restored);
@@ -151,7 +180,8 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     added: git.changes.reduce((sum, change) => sum + (change.added ?? 0), 0),
     removed: git.changes.reduce((sum, change) => sum + (change.removed ?? 0), 0),
     worktrees: (snapshot?.workspaces ?? []).filter((workspace) => workspace.projectId === projectId && workspace.kind === 'worktree' && !workspace.archivedAt).length,
-    repository: git.availability === 'ready',
+    availability: git.availability,
+    truncated: git.truncated,
   } : null), [git, projectId, snapshot]);
   const stageSessions = useMemo(() => new Set((workflow?.sessionLinks ?? []).filter((link) => link.scope === 'stage').map((link) => link.sessionId)), [workflow]);
   const conversations = useMemo(() => (projectId ? projectConversations(snapshot, projectId, { exclude: stageSessions }) : []), [snapshot, projectId, stageSessions]);
@@ -171,7 +201,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     return counts;
   }, [allWaiting, sessionProject]);
   const stoppedProjects = useMemo(() => new Set((snapshot?.projects ?? [])
-    .filter((candidate) => projectConversations(snapshot, candidate.id).some((item) => item.state === 'failed'))
+    .filter((candidate) => flattenConversations(projectConversations(snapshot, candidate.id)).some((item) => item.state === 'failed'))
     .map((candidate) => candidate.id)), [snapshot]);
 
   const tabs = useMemo(() => projectTabs((projects ?? []).map((candidate) => ({ ...candidate, lastActiveAt: candidate.lastActiveAt ?? undefined })), projectId), [projects, projectId]);
@@ -206,7 +236,9 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   ], [props.openclawVisible, text]);
 
   const wiring = useConversationStartWiring(snapshot, projectId ?? undefined);
-  const [startRound, setStartRound] = useState(0);
+  const [startRounds, setStartRounds] = useState<Readonly<Record<string, number>>>(readStartRounds);
+  const startRound = projectId ? startRounds[projectId] ?? 0 : 0;
+  // Stable per project (a draft survives other projects and restarts); a started one is not reused.
   const startIdentity = `board-start-${projectId ?? 'none'}${startRound > 0 ? `-${startRound}` : ''}`;
 
   const top = (
@@ -281,8 +313,12 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
             onEditProject={actions.editProject}
             onOpenHistory={() => actions.openHistory(project.projectId)}
             onStarted={(sessionId) => {
-              // A conversation started here is kept, not a preview.
-              setStartRound((round) => round + 1);
+              // A conversation started here is kept, not a preview; this project's bar starts over.
+              setStartRounds((current) => {
+                const next = { ...current, [project.projectId]: (current[project.projectId] ?? 0) + 1 };
+                writeStartRounds(next);
+                return next;
+              });
               openConversation(sessionId, false);
             }}
           />
@@ -296,6 +332,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
         onOtherProject={(id) => navigation.showBoard(id)}
         onFiles={() => { if (projectId) actions.openProjectFiles(projectId); }}
         onProjectSettings={() => { if (projectId) actions.editProject(projectId); }}
+        onWorktree={() => { if (projectId) actions.newWorktree(projectId); }}
         onAddProject={actions.openProjects}
       />
     </div>

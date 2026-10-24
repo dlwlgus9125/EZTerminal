@@ -121,7 +121,8 @@ import {
 import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
 import { auxiliaryPopoutUrl, isDetachablePanel, installDockviewPopoutBehavior } from './dockview-popouts';
-import { AgentResultsDock } from './agent-results/agent-results-dock';
+import { AgentResultsDock, resultsPanelId } from './agent-results/agent-results-dock';
+import { ResultsWidthContext, RESULTS_NARROW_SHARE, RESULTS_WIDE_SHARE, type ResultsWidth } from './shell/results-width';
 import { AgentResultsContext, type AgentResultsHost } from './agent-results/AgentResultsContext';
 import { AgentResultsDockPanel } from './agent-results/AgentResultsDockPanel';
 import { resultsCopy } from './agent-results/copy';
@@ -533,6 +534,7 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   }, [props.api]);
   // The conversation header carries the tab's actions: a group showing one conversation has no tab strip.
   const paneActions = useMemo<PaneActions>(() => ({
+    panelId: props.api.id,
     preview,
     keep,
     split: (direction) => tabActions.split(props.api.id, direction),
@@ -833,7 +835,9 @@ export function App(): JSX.Element {
         sessionMirroringCoordinatorRef.current?.getSnapshot().replacementLocked ?? true,
       onActivePanelChange: (panelId, source) => {
         setActivePanelId(panelId);
-        if (source === 'activation' && panelId && !workbenchCoordinatorRef.current?.isLayoutTransactionActive()) shellNavigation.showWork();
+        // A main-window tab the person brings forward shows the dock; a popout's activation leaves the board alone.
+        if (source === 'activation' && panelId && !workbenchCoordinatorRef.current?.isLayoutTransactionActive()
+          && apiRef.current?.getPanel(panelId)?.api.location.type === 'grid') shellNavigation.showWork();
         setPaneCount(apiRef.current?.panels.length ?? 0);
         const panel = panelId ? apiRef.current?.getPanel(panelId) : undefined;
         if (panel?.api.location.type === 'grid') lastMainGridPanelRef.current = panel;
@@ -1224,6 +1228,7 @@ export function App(): JSX.Element {
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
   const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox'>('projects');
   const [projectEditorRequest, setProjectEditorRequest] = useState<{ readonly projectId: string; readonly id: number }>();
+  const [worktreeRequest, setWorktreeRequest] = useState<{ readonly projectId: string; readonly id: number }>();
   const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
   const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
     const api = apiRef.current;
@@ -1233,16 +1238,24 @@ export function App(): JSX.Element {
     const sessions = new Set([entry.linkedSessionId, ...(entry.sessionAliases ?? [])]);
     const existing = api.panels.find(panel => aliases.has(String(panel.params?.conversationId ?? panel.params?.historyId ?? ''))
       || sessions.has(structuredAgentSessionId(String(panel.params?.historyId ?? '')) ?? '__none__'));
-    if (existing) { existing.api.setActive(); windows.focusPanelWindow(existing); }
+    if (existing) {
+      // Opened on purpose (not from a list): a preview it was becomes a kept tab.
+      if (!options?.preview) panelPreview.keep(existing.id);
+      existing.api.setActive();
+      windows.focusPanelWindow(existing);
+    }
     else windows.addPanel({ id: `agent-session-${entry.conversationId}`, component: 'agent-session', title: entry.title, renderer: 'always',
       params: { historyId: entry.conversationId, conversationId: entry.conversationId, projectId: entry.projectId } }, { kind: options?.preview ? 'preview' : 'main-tab' });
+    shellNavigation.showWork();
     setConversationHistory(null);
     if (window.innerWidth < 1024) setSidebarDestination(null);
-  }, []);
+  }, [panelPreview, shellNavigation]);
   const sidebarOverlayBelow = sidebarDestination === 'agents' ? 1024 : 1200;
   const revealOpenedSession = useCallback((): void => {
+    // Whatever was just opened lives in the dock: leave the board for it.
+    shellNavigation.showWork();
     if (window.innerWidth < sidebarOverlayBelow) setSidebarDestination(null);
-  }, [sidebarOverlayBelow]);
+  }, [shellNavigation, sidebarOverlayBelow]);
   const [settingsCategoryRequest, setSettingsCategoryRequest] = useState<{
     readonly category: SettingsCategory;
     readonly id: number;
@@ -1433,7 +1446,7 @@ export function App(): JSX.Element {
   );
 
   useEffect(() => {
-    if (!activePanelId) return;
+    if (!activePanelId || shellNav.mode !== 'work') return;
     for (const activity of agentSnapshot.items) {
       if (activity.state !== 'done') continue;
       const isActive = (sessionPaneBindings.get(activity.sessionId) ?? []).some(
@@ -1442,7 +1455,7 @@ export function App(): JSX.Element {
       );
       if (isActive) void window.ezterminal.markAgentSeen(activity.id, activity.stateSeq);
     }
-  }, [activePanelId, agentSnapshot, sessionPaneBindings]);
+  }, [activePanelId, agentSnapshot, sessionPaneBindings, shellNav.mode]);
 
   useEffect(() => {
     return window.ezterminalDesktop?.onAgentSessionReveal((sessionId) => focusAgentSession(sessionId));
@@ -1555,7 +1568,8 @@ export function App(): JSX.Element {
     };
   }, [agentSnapshot, sessionPaneBindings]);
 
-  const activeConversationSessionId = activePanelId
+  // Only a conversation on screen is being read: under the board it is not.
+  const activeConversationSessionId = shellNav.mode === 'work' && activePanelId
     ? structuredAgentSessionId(String(apiRef.current?.getPanel(activePanelId)?.params?.historyId ?? '')) ?? undefined
     : undefined;
   // App conversations: approvals waiting on the person and turns that ended unseen.
@@ -1832,6 +1846,7 @@ export function App(): JSX.Element {
     const title = input.title?.trim() || input.providerLabel?.trim() || 'Agent';
     const existing = api.getPanel(panelId) ?? api.panels.find(panel => panel.params?.historyId === historyId);
     if (existing) {
+      if (!options?.preview) panelPreview.keep(existing.id);
       existing.api.setTitle(title);
       existing.api.setActive();
       dockWindows.focusPanelWindow(existing);
@@ -1846,7 +1861,7 @@ export function App(): JSX.Element {
       params: { historyId },
     }, { kind: options?.preview ? 'preview' : 'main-tab' });
     revealOpenedSession();
-  }, [sessionMirroringCoordinator, revealOpenedSession]);
+  }, [panelPreview, sessionMirroringCoordinator, revealOpenedSession]);
 
   // A clicked notification for a structured Agent conversation opens it.
   useEffect(() => window.ezterminalDesktop?.onStructuredAgentReveal?.((sessionId) => openStructuredAgentSession({ sessionId })),
@@ -2866,7 +2881,8 @@ export function App(): JSX.Element {
   // Ctrl/Cmd+Shift+P remains the global fallback from every focus surface.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'Backquote') {
+      // Ctrl+` brings the main window's terminal forward; a popout keeps its own keys.
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'Backquote' && e.currentTarget === window) {
         e.preventDefault();
         e.stopPropagation();
         toggleTerminalRef.current();
@@ -2942,12 +2958,40 @@ export function App(): JSX.Element {
 
   // ── Board + Desk shell (approved 2026-10-24) ─────────────────────────────
   const shellSnapshot = appChatInbox.snapshot;
+  const [projectsRevision, setProjectsRevision] = useState(0);
+  // Results widened beside its conversation: the work list folds to its strip meanwhile.
+  const [resultsWide, setResultsWide] = useState(false);
+  const resultsWideRef = useRef(false);
+  const resultsWidth = useMemo<ResultsWidth>(() => ({
+    wide: resultsWide,
+    toggle: (ownerPanelId) => {
+      const api = apiRef.current;
+      const results = api?.getPanel(resultsPanelId(ownerPanelId));
+      if (!api || !results) return;
+      const next = !resultsWideRef.current;
+      resultsWideRef.current = next;
+      setResultsWide(next);
+      // After the list has folded or unfolded, so the share is of the dock's new width.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!api.getPanel(results.id)) return;
+        results.group.api.setSize({ width: Math.round(api.width * (next ? RESULTS_WIDE_SHARE : RESULTS_NARROW_SHARE)) });
+      }));
+    },
+  }), [resultsWide]);
+  useEffect(() => {
+    if (resultsWideRef.current && !(apiRef.current?.panels ?? []).some((panel) => panel.api.component === 'agent-results')) {
+      resultsWideRef.current = false;
+      setResultsWide(false);
+    }
+  }, [panelSetRevision]);
+  useEffect(() => { if (sidebarDestination !== 'agents') setProjectsRevision((value) => value + 1); }, [sidebarDestination]);
   // The project follows the active main-window tab; a tab without one keeps it.
   useEffect(() => {
+    if (shellNav.mode !== 'work') return;
     const panel = activePanelId ? apiRef.current?.getPanel(activePanelId) : undefined;
     if (!panel || panel.api.location.type !== 'grid') return;
     shellNavigation.followPanel(panelProjectId(panel, shellSnapshot));
-  }, [activePanelId, shellSnapshot, shellNavigation]);
+  }, [activePanelId, shellSnapshot, shellNavigation, shellNav.mode]);
   // Back in work mode the hidden dock is shown again: terminals refit, focus returns to the active tab.
   const previousShellMode = useRef(shellNav.mode);
   useEffect(() => {
@@ -3038,7 +3082,9 @@ export function App(): JSX.Element {
     updateAvailable: appUpdateAvailable,
     activeTool: sidebarDestination,
     openclawVisible,
-    folded: !sidebarReflow,
+    // The project registry (pins, names, recency) may have changed while the project screen was open.
+    projectsRevision: sidebarDestination === 'agents' ? -1 : projectsRevision,
+    folded: !sidebarReflow || resultsWide,
     externalWaiting: terminalAgentAttention,
     layoutMenu: (
       <ShellLayoutMenu
@@ -3057,10 +3103,10 @@ export function App(): JSX.Element {
                   <WorkspaceBar
                     presetName={appliedPreset}
                     paneCount={paneCount}
-                    onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
-                    onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
-                    onApplySingle={() => applyLayoutPreset('single')}
-                    onApplyRows={() => applyLayoutPreset('rows')}
+                    onApplyTwoByOne={() => { setPresetsOpen(false); applyLayoutPreset('two-by-one'); }}
+                    onApplyOnePlusTwo={() => { setPresetsOpen(false); applyLayoutPreset('one-plus-two'); }}
+                    onApplySingle={() => { setPresetsOpen(false); applyLayoutPreset('single'); }}
+                    onApplyRows={() => { setPresetsOpen(false); applyLayoutPreset('rows'); }}
                   />
                 </div>
               </>
@@ -3098,6 +3144,12 @@ export function App(): JSX.Element {
       openTool: (id) => toggleSidebarTool(id as SidebarDestination),
       openProjects: () => { setAgentHubView('projects'); setActiveProjectId(null); setSidebarDestination('agents'); },
       openProjectFiles: (projectId) => showProjectWorkspace(projectId),
+      newWorktree: (projectId) => {
+        setWorktreeRequest((current) => ({ projectId, id: (current?.id ?? 0) + 1 }));
+        setAgentHubView('projects');
+        setActiveProjectId(null);
+        setSidebarDestination('agents');
+      },
       editProject: (projectId) => structuredAgentNavigationValue.editProject?.(projectId),
       openFind: () => openQuickOpen('all'),
       openRemote: () => setSidebarOpen('remote', true),
@@ -3199,6 +3251,7 @@ export function App(): JSX.Element {
             setSidebarDestination('settings');
           },
           ...(projectEditorRequest ? { projectEditorRequest } : {}),
+          ...(worktreeRequest ? { worktreeRequest } : {}),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}
@@ -3308,7 +3361,7 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      <div className="workbench-body" data-shell-mode={shellNav.mode} data-live={sidebarReflow ? 'list' : 'strip'}>
+      <div className="workbench-body" data-shell-mode={shellNav.mode} data-live={sidebarReflow && !resultsWide ? 'list' : 'strip'}>
         {deskShell.list}
         {sidebarDestination && sidebarContent && (
           <SidebarShell
@@ -3350,6 +3403,7 @@ export function App(): JSX.Element {
                             <PresetMutationContext.Provider value={presetMutationValue}>
                               <DesktopRuntimeLifecycleProvider>
                                 <PanelPreviewContext.Provider value={panelPreview}>
+                                <ResultsWidthContext.Provider value={resultsWidth}>
                                 <DockviewReact
                                   className="dockview-theme-dark ez-dock"
                                   components={components}
@@ -3360,6 +3414,7 @@ export function App(): JSX.Element {
                                   dndStrategy="html5"
                                   popoutUrl={auxiliaryPopoutUrl()}
                                 />
+                                </ResultsWidthContext.Provider>
                                 </PanelPreviewContext.Provider>
                               </DesktopRuntimeLifecycleProvider>
                             </PresetMutationContext.Provider>
