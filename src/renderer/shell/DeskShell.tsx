@@ -50,6 +50,8 @@ export interface DeskShellProps {
   readonly updateAvailable: boolean;
   readonly activeTool: string | null;
   readonly openclawVisible: boolean;
+  /** Below 1200px the live list folds into a strip. */
+  readonly folded: boolean;
   /** Terminal CLI agents waiting on the person; listed in 받은 요청, counted in the top bar. */
   readonly externalWaiting: number;
   readonly layoutMenu?: ReactNode;
@@ -170,11 +172,11 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   }, [text]);
 
   const tools = useMemo<ShellTool[]>(() => [
-    { id: 'explorer', label: text('파일', 'Files'), glyph: 'file' },
-    { id: 'monitor', label: text('모니터', 'Monitor'), glyph: 'mon' },
-    ...(props.openclawVisible ? [{ id: 'openclaw', label: 'OpenClaw', glyph: 'claw' as const }] : []),
-    { id: 'remote', label: text('원격 · 폰', 'Remote · phone'), glyph: 'phone' },
-    { id: 'settings', label: text('설정', 'Settings'), glyph: 'set' },
+    { id: 'explorer', label: text('파일', 'Files'), glyph: 'file', testId: 'btn-toggle-files' },
+    { id: 'monitor', label: text('모니터', 'Monitor'), glyph: 'mon', testId: 'btn-toggle-stats' },
+    ...(props.openclawVisible ? [{ id: 'openclaw', label: 'OpenClaw', glyph: 'claw' as const, testId: 'btn-toggle-openclaw' }] : []),
+    { id: 'remote', label: text('원격 · 폰', 'Remote · phone'), glyph: 'phone', testId: 'rail-remote' },
+    { id: 'settings', label: text('설정', 'Settings'), glyph: 'set', testId: 'shell-tool-settings' },
   ], [props.openclawVisible, text]);
 
   const wiring = useConversationStartWiring(snapshot, projectId ?? undefined);
@@ -206,6 +208,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
 
   const list = nav.mode === 'work' ? (
     <LiveList
+      folded={props.folded}
       projectName={project?.name ?? null}
       conversations={conversations}
       waiting={waiting}

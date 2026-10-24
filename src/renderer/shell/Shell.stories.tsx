@@ -26,11 +26,11 @@ const TERMINALS = [{ panelId: 'tab-1', title: 'PowerShell · main', detail: 'PS 
 
 function tools(ko: boolean): ShellTool[] {
   return [
-    { id: 'explorer', label: ko ? '파일' : 'Files', glyph: 'file' },
-    { id: 'monitor', label: ko ? '모니터' : 'Monitor', glyph: 'mon' },
-    { id: 'openclaw', label: 'OpenClaw', glyph: 'claw' },
-    { id: 'remote', label: ko ? '원격 · 폰' : 'Remote · phone', glyph: 'phone' },
-    { id: 'settings', label: ko ? '설정' : 'Settings', glyph: 'set' },
+    { id: 'explorer', label: ko ? '파일' : 'Files', glyph: 'file', testId: 'btn-toggle-files' },
+    { id: 'monitor', label: ko ? '모니터' : 'Monitor', glyph: 'mon', testId: 'btn-toggle-stats' },
+    { id: 'openclaw', label: 'OpenClaw', glyph: 'claw', testId: 'btn-toggle-openclaw' },
+    { id: 'remote', label: ko ? '원격 · 폰' : 'Remote · phone', glyph: 'phone', testId: 'rail-remote' },
+    { id: 'settings', label: ko ? '설정' : 'Settings', glyph: 'set', testId: 'shell-tool-settings' },
   ];
 }
 

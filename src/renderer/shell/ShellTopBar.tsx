@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { Glyph, Led, type LedTone } from '../ui';
+import { SHELL_TOP_BAR_ID } from '../workbench/SidebarShell';
 import type { ShellMode, ProjectTabCandidate } from './navigation-store';
 import { useShellText } from './shell-text';
 
@@ -34,7 +35,7 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
   const { text } = useShellText();
   const board = props.mode === 'board';
   return (
-    <header className="ez-shell-top" data-testid="shell-top-bar">
+    <header id={SHELL_TOP_BAR_ID} className="ez-shell-top" data-testid="workbench-header">
       <h1 className="ez-shell-mark" title={props.appVersion ? `EZTerminal ${props.appVersion}` : undefined} data-testid="workbench-brand-mark"><i aria-hidden="true" />EZTerminal</h1>
       <nav className="ez-shell-projects" aria-label={text('프로젝트', 'Projects')}>
         {props.projects.map((project) => {
@@ -52,7 +53,7 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
           );
         })}
         <button type="button" className="ez-shell-ptab ez-shell-ptab--add" aria-label={text('프로젝트 · 추가와 관리', 'Projects: add and manage')}
-          title={text('프로젝트 추가와 관리', 'Add and manage projects')} onClick={props.onAddProject} data-testid="shell-project-add">+</button>
+          title={text('프로젝트 추가와 관리', 'Add and manage projects')} onClick={props.onAddProject} data-testid="rail-agents">+</button>
       </nav>
       <div className="ez-shell-top__right">
         {!board && props.waitingTotal > 0 && (
@@ -61,7 +62,7 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
           </button>
         )}
         <button type="button" className="ez-shell-find" data-compact={!board || undefined} aria-label={text('무엇이든 찾기 (Ctrl K)', 'Find anything (Ctrl K)')}
-          onClick={props.onFind} data-testid="shell-find">
+          onClick={props.onFind} data-testid="btn-command-center">
           <Glyph name="search" size={15} />{board ? text('무엇이든 찾기', 'Find anything') : text('찾기', 'Find')}<kbd>Ctrl K</kbd>
         </button>
         {props.layoutMenu}
@@ -69,7 +70,7 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
           <Led tone={props.host.tone} />{board ? props.host.label : <span className="ez-ui-visually-hidden">{props.host.label}</span>}
         </button>
         <button type="button" className="ez-shell-iconbtn" aria-label={text('설정', 'Settings')} aria-pressed={props.settingsActive || undefined}
-          onClick={props.onSettings} data-testid="shell-settings">
+          onClick={props.onSettings} data-testid="btn-toggle-settings">
           <Glyph name="set" />
           {props.updateAvailable && <span className="ez-shell-dot" data-testid="settings-update-badge"><span className="ez-ui-visually-hidden">{text('업데이트 있음', 'Update available')}</span></span>}
         </button>

@@ -120,6 +120,8 @@ export class DesktopWindowManager {
       });
       mainWindow.webContents.send('desktop-window:flush-layout', requestId);
     });
+    // Renderer storage (the Board + Desk place, chat skin) is written lazily by Chromium; quit must not lose it.
+    if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.session.flushStorageData();
   }
 
   private installIpc(): void {

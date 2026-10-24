@@ -10,7 +10,12 @@ test('workspaces keep live panels, independent split groups and durable membersh
   try {
     const page = await app.firstWindow();
     const bars = page.getByTestId('workbench-views');
-    await expect(bars).toBeVisible();
+    // Board + Desk: work sets live in the work-mode layout menu.
+    const openViews = async (): Promise<void> => {
+      if (!await bars.isVisible()) await page.getByTestId('btn-workspace-menu').click();
+      await expect(bars).toBeVisible();
+    };
+    await openViews();
     // The view bar can render before the first panel is added; on a slow runner panels[0] was undefined.
     await expect.poll(() => page.evaluate(() => (window as unknown as Partial<R7Window>).__ezDock?.panels.length ?? 0), { timeout: 15_000 }).toBeGreaterThan(0);
     await page.evaluate(() => {
@@ -42,6 +47,7 @@ test('workspaces keep live panels, independent split groups and durable membersh
     expect(await page.evaluate(() => (window as unknown as R7Window).__ezDock.getPanel('r7-terminal')!.group.id !== (window as unknown as R7Window).__ezDock.getPanel('r7-second')!.group.id)).toBe(true);
     await page.evaluate(() => (window as unknown as R7Window).__ezLayoutFlush());
     await page.reload();
+    await openViews();
     await expect(page.getByTestId('workbench-views').getByRole('tab')).toHaveCount(2);
     await page.getByTestId('workbench-views').getByRole('button', { name: /Close workspace/ }).nth(1).click();
     await expect(page.getByTestId('workbench-views').getByRole('tab')).toHaveCount(1);

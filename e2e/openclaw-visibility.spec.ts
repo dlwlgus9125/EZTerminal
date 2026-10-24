@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRegisteredE2eTempDir, test, expect } from './test';
 
 import { launchApp } from './launch-app';
+import { enterWorkMode } from './workbench-navigation';
 import {
   buildFixtureState,
   startFakeGateway,
@@ -37,7 +38,8 @@ test('auto mode shows UI with the CLI present; a runtime toggle to off rips the 
   try {
     const window = await app.firstWindow();
     const openclawButton = window.getByTestId('btn-toggle-openclaw');
-    await window.getByTestId('rail-tools').click();
+    // Board + Desk: OpenClaw is a button of the live list's tool row (work mode).
+    await enterWorkMode(window);
     await expect(openclawButton).toBeVisible({ timeout: 10_000 });
 
     await openclawButton.click();
@@ -51,9 +53,7 @@ test('auto mode shows UI with the CLI present; a runtime toggle to off rips the 
     const offRadio = window.getByTestId('settings-openclaw-mode-off');
     await offRadio.click();
     await expect(offRadio).toBeChecked();
-    await window.getByTestId('rail-tools').click();
     await expect(openclawButton).toHaveCount(0, { timeout: 10_000 });
-    await window.keyboard.press('Escape');
 
     await window.getByTestId('btn-toggle-settings').click();
     await expect(window.getByTestId('settings-panel')).toHaveCount(0);
@@ -62,7 +62,6 @@ test('auto mode shows UI with the CLI present; a runtime toggle to off rips the 
     const onRadio = window.getByTestId('settings-openclaw-mode-on');
     await expect(onRadio).toBeVisible({ timeout: 10_000 });
     await onRadio.click();
-    await window.getByTestId('rail-tools').click();
     await expect(openclawButton).toBeVisible({ timeout: 10_000 });
   } finally {
     await app.close();

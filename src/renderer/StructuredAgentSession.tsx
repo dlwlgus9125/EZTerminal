@@ -77,6 +77,8 @@ import {
   type ChatComposerDraft, type ChatSkin, type TranscriptAnchor,
 } from './chat-view-state';
 import { useAppTranslation } from './i18n';
+import { usePaneActions } from './shell/pane-actions';
+import { Glyph } from './ui/Glyph';
 import { useAgentStateLabel } from './agent-state-label';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
 import { Button, Dialog, Field, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, Select } from './ui';
@@ -238,6 +240,13 @@ interface StructuredAgentCopy {
   readonly cliSkin: string;
   readonly conversationMenu: string;
   readonly previousConversations: string;
+  readonly tabSection: string;
+  readonly keepTab: string;
+  readonly splitRight: string;
+  readonly splitBelow: string;
+  readonly moveToNewWindow: string;
+  readonly moveToMainWindow: string;
+  readonly closeTab: string;
   readonly heartbeatMenu: string;
   readonly delegateHandoff: string;
   readonly delegateReview: string;
@@ -262,6 +271,8 @@ interface StructuredAgentCopy {
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   en: {
     skin: 'Conversation skin', bubbleSkin: 'Bubbles', cliSkin: 'CLI',
+    tabSection: 'Tab', keepTab: 'Keep open', splitRight: 'Split right', splitBelow: 'Split down',
+    moveToNewWindow: 'Move to new window', moveToMainWindow: 'Move to main window', closeTab: 'Close tab',
     conversationMenu: 'Conversation menu', previousConversations: 'Previous conversations', heartbeatMenu: 'Heartbeat…', heartbeatOn: 'Heartbeat', delegateHandoff: 'Hand off…', delegateReview: 'Ask for review…',
     changedFiles: (count) => `${count} ${count === 1 ? 'file' : 'files'} changed`, close: 'Close',
     copyMessage: 'Copy', copied: 'Copied', copyFailed: 'Copy failed. Select the message text to copy it.',
@@ -372,6 +383,8 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
   },
   ko: {
     skin: '대화 스킨', bubbleSkin: '말풍선', cliSkin: 'CLI',
+    tabSection: '탭', keepTab: '탭으로 고정', splitRight: '오른쪽으로 나누기', splitBelow: '아래로 나누기',
+    moveToNewWindow: '새 창으로 옮기기', moveToMainWindow: '메인 창으로 옮기기', closeTab: '탭 닫기',
     conversationMenu: '대화 메뉴', previousConversations: '이전 대화', heartbeatMenu: '하트비트…', heartbeatOn: '하트비트', delegateHandoff: '맡기기…', delegateReview: '검토 맡기기…',
     changedFiles: (count) => `파일 ${count}개 변경`, close: '닫기',
     copyMessage: '복사', copied: '복사됨', copyFailed: '복사하지 못했습니다. 메시지 원문을 선택해 복사하세요.',
@@ -1917,6 +1930,7 @@ export function StructuredAgentSessionPanel({
   variant = 'desktop',
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
+  const paneActions = usePaneActions();
   const { i18n } = useAppTranslation();
   const chatLocale = useChatLocale();
   const permissionText = agentPermissionCopy(chatLocale);
@@ -2438,6 +2452,12 @@ export function StructuredAgentSessionPanel({
             )}
             {capabilitiesPanel}
             {historyOnly && settingsControls}
+            {paneActions?.preview && (
+              <button type="button" className="chat-icon-action chat-header-pin" aria-label={copy.keepTab} title={copy.keepTab}
+                onClick={paneActions.keep} data-testid="structured-agent-keep-tab">
+                <Glyph name="pin" size={16} />
+              </button>
+            )}
             <Menu
               label={copy.conversationMenu}
               placement="bottom-end"
@@ -2468,6 +2488,14 @@ export function StructuredAgentSessionPanel({
               )}
               {heartbeatControl !== undefined && <MenuSeparator />}
               {heartbeatControl !== undefined && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
+              {paneActions && <MenuSeparator />}
+              {paneActions && <MenuLabel>{copy.tabSection}</MenuLabel>}
+              {paneActions?.preview && <MenuItem onSelect={paneActions.keep} data-testid="structured-agent-tab-keep">{copy.keepTab}</MenuItem>}
+              {paneActions && <MenuItem onSelect={() => paneActions.split('right')} data-testid="structured-agent-tab-split-right">{copy.splitRight}</MenuItem>}
+              {paneActions && <MenuItem onSelect={() => paneActions.split('below')} data-testid="structured-agent-tab-split-below">{copy.splitBelow}</MenuItem>}
+              {paneActions?.moveToNewWindow && <MenuItem onSelect={paneActions.moveToNewWindow} data-testid="structured-agent-tab-new-window">{copy.moveToNewWindow}</MenuItem>}
+              {paneActions?.moveToMainWindow && <MenuItem onSelect={paneActions.moveToMainWindow} data-testid="structured-agent-tab-main-window">{copy.moveToMainWindow}</MenuItem>}
+              {paneActions && <MenuItem icon={X} onSelect={paneActions.close} data-testid="structured-agent-tab-close">{copy.closeTab}</MenuItem>}
               {hasLifecycleActions && (canDetach || canArchive) && <MenuSeparator />}
               {!historyOnly && canDetach && (
                 <MenuItem icon={Unlink2} disabled={disabled || settingsBusy || lifecycleBusy !== null}

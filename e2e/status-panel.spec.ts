@@ -13,7 +13,7 @@ test('narrow status panel isolates focus and restores terminal use without reflo
 
   const panel = window.getByTestId('status-panel');
   const sidebar = window.getByTestId('workbench-sidebar');
-  const toggle = window.getByTestId('rail-tools');
+  const toggle = window.getByTestId('btn-toggle-stats');
   const pane = window.getByTestId('pane');
   await expect(panel).toHaveCount(0);
   await expect(pane).toBeVisible();

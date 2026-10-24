@@ -25,9 +25,9 @@ describe('profile-runtime', () => {
     expect(TEST_IDS.filter((id) => !rendered(id))).toEqual([]);
   });
 
-  it('opens Monitor and Remote through the Tools menu', () => {
-    expect(FEATURES.filter((feature) => feature.menu).map((feature) => [feature.name, feature.menu]))
-      .toEqual([['monitor', 'rail-tools'], ['remote', 'rail-tools']]);
+  it('opens Monitor and Remote straight from the live list tool row', () => {
+    expect(FEATURES.filter((feature) => 'menu' in feature)).toEqual([]);
+    expect(FEATURES.map((feature) => feature.button)).toEqual(['rail-agents', 'btn-toggle-stats', 'rail-remote', 'btn-toggle-settings']);
   });
 
   it('keeps chat launches separate from interaction launches', () => {

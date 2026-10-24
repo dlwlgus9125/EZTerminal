@@ -42,14 +42,14 @@ const CHAT_VIEWPORT = { width: 1440, height: 900 };
 const SHELL = '2.0-project-navigation';
 
 /**
- * Workbench destinations measured after boot. In the 2.0 shell Monitor and Remote
- * are items of the Tools menu, so they are opened through it and timed from the
- * menu item's click (`toolsMenuOpenMs` is recorded separately).
+ * Workbench destinations measured after boot. In the Board + Desk shell Monitor and
+ * Remote are buttons of the live list's tool row (work mode); a fresh profile opens
+ * in work mode, so they are clicked directly.
  */
 export const FEATURES = [
   { name: 'agents', button: 'rail-agents', target: 'agent-hub' },
-  { name: 'monitor', menu: 'rail-tools', button: 'btn-toggle-stats', target: 'status-panel' },
-  { name: 'remote', menu: 'rail-tools', button: 'rail-remote', target: 'remote-panel' },
+  { name: 'monitor', button: 'btn-toggle-stats', target: 'status-panel' },
+  { name: 'remote', button: 'rail-remote', target: 'remote-panel' },
   { name: 'settings', button: 'btn-toggle-settings', target: 'settings-panel' },
 ];
 

@@ -183,6 +183,7 @@ import { DockWindowCoordinator } from './dock-window-coordinator';
 import { PanelPreviewContext, PanelPreviewSlot, usePanelPreview } from './shell/panel-preview';
 import { useDeskShell, type DeskTerminal } from './shell/DeskShell';
 import { ShellLayoutMenu } from './shell/ShellLayoutMenu';
+import { PaneActionsContext, installConversationGroupHeaders, type PaneActions } from './shell/pane-actions';
 import { ShellNavigation, parseShellNavigation } from './shell/navigation-store';
 import { WindowControls } from './workbench/WindowControls';
 import { writePlanAccess } from './agent-plan-access';
@@ -522,14 +523,34 @@ function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
 }
 
 function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
-  const { keep } = usePanelPreview(props.api.id);
+  const { preview, keep } = usePanelPreview(props.api.id);
+  const tabActions = useContext(WorkspaceTabActionContext);
+  const closeContext = useContext(PaneCloseContext);
+  const [location, setLocation] = useState(props.api.location.type);
+  useEffect(() => {
+    const disposable = props.api.onDidLocationChange((event) => setLocation(event.location.type));
+    return () => disposable.dispose();
+  }, [props.api]);
+  // The conversation header carries the tab's actions: a group showing one conversation has no tab strip.
+  const paneActions = useMemo<PaneActions>(() => ({
+    preview,
+    keep,
+    split: (direction) => tabActions.split(props.api.id, direction),
+    ...(location === 'popout' ? { moveToMainWindow: () => tabActions.moveToMainWindow(props.api.id) } : { moveToNewWindow: () => tabActions.moveToNewWindow(props.api.id) }),
+    close: () => {
+      if (closeContext) closeContext.requestPanelClose(props.api.id, props.api.component, props.api, () => props.api.close());
+      else props.api.close();
+    },
+  }), [closeContext, keep, location, preview, props.api, tabActions]);
   // Typing in any message box of a preview tab keeps it; the wrapper adds no box of its own.
   return (
-    <div className="agent-session-dock-panel" onInput={(event) => {
-      if (event.target instanceof HTMLTextAreaElement && event.target.value.trim()) keep();
-    }}>
-      <AgentSessionDockPanelBody {...props} />
-    </div>
+    <PaneActionsContext.Provider value={paneActions}>
+      <div className="agent-session-dock-panel" onInput={(event) => {
+        if (event.target instanceof HTMLTextAreaElement && event.target.value.trim()) keep();
+      }}>
+        <AgentSessionDockPanelBody {...props} />
+      </div>
+    </PaneActionsContext.Provider>
   );
 }
 
@@ -738,13 +759,19 @@ export function App(): JSX.Element {
   const dockWindowCoordinatorRef = useRef<DockWindowCoordinator | null>(null);
   // Session-only: which tab opened from a list may still be replaced by the next list open.
   const panelPreview = useMemo(() => new PanelPreviewSlot(), []);
+  const groupHeadersRef = useRef<{ dispose(): void } | null>(null);
   // Board or work mode and the selected project (Board + Desk). Per device, in renderer storage.
   const [shellStart] = useState(() => {
     let stored: unknown = null;
     try { stored = JSON.parse(window.localStorage.getItem(SHELL_NAVIGATION_KEY) ?? 'null'); } catch { stored = null; }
-    const navigation = new ShellNavigation(parseShellNavigation(stored), (state) => {
+    // Nothing stored: start in work mode; the shell moves to a board once it knows projects exist.
+    const navigation = new ShellNavigation(stored === null ? { mode: 'work', projectId: null } : parseShellNavigation(stored), (state) => {
       try { window.localStorage.setItem(SHELL_NAVIGATION_KEY, JSON.stringify(state)); } catch { /* storage full or denied: the place is not kept */ }
     });
+    // Kept from the first start on, so a later start opens where this one leaves off.
+    if (stored === null) {
+      try { window.localStorage.setItem(SHELL_NAVIGATION_KEY, JSON.stringify(navigation.getSnapshot())); } catch { /* not kept */ }
+    }
     return { navigation, restored: stored !== null };
   });
   const shellNavigation = shellStart.navigation;
@@ -2703,6 +2730,8 @@ export function App(): JSX.Element {
       viewsRef.current = views;
       setWorkbenchViews(views);
       dockWindowCoordinatorRef.current?.dispose();
+      groupHeadersRef.current?.dispose();
+      groupHeadersRef.current = installConversationGroupHeaders(api);
       const dockWindows = new DockWindowCoordinator(api, panelPreview);
       dockWindowCoordinatorRef.current = dockWindows;
       agentResultsRef.current?.dispose();
@@ -2927,12 +2956,16 @@ export function App(): JSX.Element {
     if (previous === shellNav.mode) return;
     if (shellNav.mode === 'work') {
       requestAnimationFrame(() => window.dispatchEvent(new Event('ez:refit')));
+      // Focus cannot stay in an inert dock: give it back to the active tab unless something else took it.
+      if (!(document.activeElement instanceof HTMLElement) || document.activeElement === document.body || document.activeElement.closest('[data-testid="shell-board-layer"]')) {
+        workbenchCoordinator.focusActivePanel();
+      }
       return;
     }
     if (document.activeElement instanceof HTMLElement && document.activeElement.closest('.dock-host, .ez-shell-live')) {
       requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="shell-board-layer"]')?.focus());
     }
-  }, [shellNav.mode]);
+  }, [shellNav.mode, workbenchCoordinator]);
   const shellTerminals = useMemo<DeskTerminal[]>(() => (apiRef.current?.panels ?? [])
     .filter((panel) => panel.api.component === 'terminal' && panel.api.location.type === 'grid')
     .map((panel) => {
@@ -3005,6 +3038,7 @@ export function App(): JSX.Element {
     updateAvailable: appUpdateAvailable,
     activeTool: sidebarDestination,
     openclawVisible,
+    folded: !sidebarReflow,
     externalWaiting: terminalAgentAttention,
     layoutMenu: (
       <ShellLayoutMenu
@@ -3274,7 +3308,7 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      <div className="workbench-body" data-shell-mode={shellNav.mode}>
+      <div className="workbench-body" data-shell-mode={shellNav.mode} data-live={sidebarReflow ? 'list' : 'strip'}>
         {deskShell.list}
         {sidebarDestination && sidebarContent && (
           <SidebarShell
