@@ -47,7 +47,12 @@ export class WorkflowDraftStore {
   }
   private async readFile(file: SecureAtomicFile, projectId: string, legacy?: SecureAtomicFile): Promise<WorkflowDraftResult> {
     const raw = await file.readText();
-    if (raw === undefined) return legacy ? this.readFile(legacy, projectId) : { ok: true, snapshot: { projectId, revision: 0, state: null } };
+    if (raw === undefined) {
+      if (!legacy) return { ok: true, snapshot: { projectId, revision: 0, state: null } };
+      // What an older build kept: its graphs are a reduced view (see WorkflowDraftResultSchema).
+      const older = await this.readFile(legacy, projectId);
+      return older.ok && older.snapshot.state ? { ...older, snapshot: { ...older.snapshot, olderVersion: true } } : older;
+    }
     try {
       const envelope = JSON.parse(raw) as { version: number; protectedState: string };
       if (envelope.version !== 1 || typeof envelope.protectedState !== 'string') throw new Error('Invalid envelope.');

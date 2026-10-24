@@ -4,6 +4,8 @@ import { WorkflowDraftResultSchema, type WorkflowDraftAccess, type WorkflowDraft
 export class WorkflowRecovery {
   private revision: number | undefined;
   private blocked = false;
+  /** The last read came from an older version's storage (its graphs are a reduced view). */
+  olderVersion = false;
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly projectId: string, private readonly hostId: string, private readonly access: WorkflowDraftAccess) {}
   async read(): Promise<WorkflowDraftState | null> {
@@ -11,7 +13,7 @@ export class WorkflowRecovery {
     const result = WorkflowDraftResultSchema.parse(await this.access.workflowDraftRead(this.projectId));
     if (!result.ok) throw new Error(result.message);
     if (result.snapshot.projectId !== this.projectId || result.snapshot.state && result.snapshot.state.hostId !== this.hostId) throw new Error('Workflow recovery belongs to another PC or project.');
-    this.revision = result.snapshot.revision; this.blocked = false;
+    this.revision = result.snapshot.revision; this.blocked = false; this.olderVersion = result.snapshot.olderVersion === true;
     return result.snapshot.state;
   }
   write(state: WorkflowDraftState): Promise<void> {

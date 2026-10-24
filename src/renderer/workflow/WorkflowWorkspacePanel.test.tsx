@@ -179,6 +179,32 @@ describe('workflow project workspace', () => {
     expect(writes.at(-1)?.creation?.mode).toBe('preset');
     await click('Cancel'); expect(state.commands).toHaveLength(0);
   });
+  it('rebases an older app’s draft and unconfirmed graph save on the host, keeping the stage fields it could not see', async () => {
+    const state = fixture(); const snapshot = workflowFixture();
+    // The host's flow carries an effort an older app never saw.
+    const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
+    const hostSnapshot = { ...snapshot, subprojects: snapshot.subprojects.map((item, index) => index === 0 ? { ...item, graph: { ...item.graph, nodes: item.graph.nodes.map(node => node.id === stage.id ? { ...node, reasoningEffort: 'high' } : node) } } : item) };
+    state.access.getWorkflowSnapshot = async () => ({ ok: true, snapshot: hostSnapshot });
+    const reduced = snapshot.subprojects[0]!.graph;
+    for (const saved of [
+      { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: { login: { baseRevision: 2, graph: { ...reduced, nodes: reduced.nodes.map(node => node.id === stage.id ? { ...node, document: 'Older app edit' } : node) } } }, pendingCommand: null },
+      { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: { commandId: 'older-save', projectId: snapshot.projectId, hostId: snapshot.hostId, expectedRevision: 2, subprojectId: 'login', type: 'workflow.patch' as const,
+        payload: { graph: { ...reduced, nodes: reduced.nodes.map(node => node.id === stage.id ? { ...node, document: 'Older app edit' } : node) }, summary: 'Older app save' } } },
+    ] as WorkflowDraftState[]) {
+      state.commands.length = 0;
+      const recovery: WorkflowDraftAccess = { workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: { ...saved, view: { subprojectId: 'login', nodeId: stage.id, page: 'stage' as const, scrollTop: 0 } } as WorkflowDraftState, olderVersion: true as const } }),
+        workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }) };
+      await act(async () => root.render(<WorkflowWorkspacePanel key={saved.pendingCommand ? 'pending' : 'draft'} projectId={snapshot.projectId} projectName="Project" access={state.access} recoveryAccess={recovery} conversations={[]} />));
+      // The older app's unconfirmed save is not resent as it was.
+      expect(document.body.textContent).not.toContain('The request is not yet confirmed');
+      expect(stageDocument()).toBe('Older app edit');
+      await click('Save draft');
+      const command = state.commands.at(-1);
+      if (command?.type !== 'workflow.patch') throw new Error('No graph save');
+      const node = command.payload.graph.nodes.find(item => item.id === stage.id)!;
+      expect(node).toMatchObject({ document: 'Older app edit', reasoningEffort: 'high' });
+    }
+  });
   it('lets an execution request that stays unconfirmed go, but never an edit', async () => {
     const snapshot = workflowFixture();
     for (const pendingCommand of [

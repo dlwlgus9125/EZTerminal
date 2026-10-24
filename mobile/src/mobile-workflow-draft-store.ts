@@ -39,7 +39,7 @@ export function mobileWorkflowDraftAccess(getToken: () => Promise<string>, secur
     const stored = JSON.parse(raw) as { scope: string; revision: number; state: unknown };
     const state = WorkflowDraftStateSchema.parse(stored.state);
     if (stored.scope !== key || state.projectId !== projectId || !Number.isSafeInteger(stored.revision) || stored.revision < 0) throw new Error('Workflow recovery scope mismatch.');
-    return { ok: true, snapshot: { projectId, revision: stored.revision, state } };
+    return { ok: true, snapshot: { projectId, revision: stored.revision, state, ...(key === legacyKey ? { olderVersion: true as const } : {}) } };
   };
   const failure = (reason: unknown): WorkflowDraftResult => ({ ok: false, error: 'unavailable', message: String(reason) });
   return {

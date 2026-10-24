@@ -108,6 +108,24 @@ export function legacyProjectArchiveResult(result: ProjectArchiveResult): Projec
 }
 
 /**
+ * A graph an older version edited (a reduced view) with the v17 stage fields it could not see taken back
+ * from the host's graph: a field the reduced graph lacks was hidden from it, never removed by it.
+ */
+export function withHiddenFlowFields<T extends { readonly nodes: readonly object[] }>(reduced: T, full: { readonly nodes: readonly object[] }): T {
+  let changed = false;
+  const nodes = reduced.nodes.map((node) => {
+    const id = (node as { id?: string }).id;
+    const source = full.nodes.find((entry) => (entry as { id?: string }).id === id) as Record<string, unknown> | undefined;
+    if (!source) return node;
+    const hidden = FLOW_V17_NODE_FIELDS.filter((key) => !Object.hasOwn(node, key) && Object.hasOwn(source, key));
+    if (!hidden.length) return node;
+    changed = true;
+    return { ...node, ...Object.fromEntries(hidden.map((key) => [key, source[key]])) };
+  });
+  return changed ? { ...reduced, nodes } : reduced;
+}
+
+/**
  * The v17 values of one subproject a v16 reader cannot see, in a stable form.
  * A v16 client's flow edit is refused when it would change them.
  */

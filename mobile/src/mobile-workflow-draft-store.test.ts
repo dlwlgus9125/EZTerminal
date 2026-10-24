@@ -24,11 +24,14 @@ describe('encrypted mobile workflow recovery', () => {
     // Pretend an older app saved it: same record under its v1 key, with its own scope.
     const v1Key = v2Key!.replace('-v2:', '-v1:'); const stored = JSON.parse(f.values.get(v2Key!)!) as { scope: string };
     f.values.delete(v2Key!); f.values.set(v1Key, JSON.stringify({ ...stored, scope: v1Key })); const v1Value = f.values.get(v1Key);
-    expect(await f.access.workflowDraftRead('project')).toMatchObject({ ok: true, snapshot: { revision: 1 } });
+    // Read from the older app's key, it says so: its graphs are a reduced view to rebase.
+    expect(await f.access.workflowDraftRead('project')).toMatchObject({ ok: true, snapshot: { revision: 1, olderVersion: true } });
     expect(await f.access.workflowDraftWrite('project', { expectedRevision: 1, state: { ...f.state, drafts: {} } })).toMatchObject({ ok: true, snapshot: { revision: 2 } });
     expect([...f.values.keys()].sort()).toEqual([v1Key, v2Key].sort());
     expect(f.values.get(v1Key)).toBe(v1Value);
-    expect(await f.access.workflowDraftRead('project')).toMatchObject({ ok: true, snapshot: { revision: 2 } });
+    const own = await f.access.workflowDraftRead('project');
+    expect(own).toMatchObject({ ok: true, snapshot: { revision: 2 } });
+    expect(own.ok && own.snapshot).not.toHaveProperty('olderVersion');
   });
   it('serializes CAS across access objects sharing the same native storage', async () => {
     const f = fixture(); const other = mobileWorkflowDraftAccess(f.getToken, f.secure);

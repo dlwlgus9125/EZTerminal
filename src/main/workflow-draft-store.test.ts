@@ -43,7 +43,7 @@ it('keeps an older build\'s recovery file for that build and moves this version\
   const legacyBytes = await fs.readFile(legacy);
   // This version reads it, then saves to v2 and leaves the older file as it was.
   const store = new WorkflowDraftStore(options);
-  expect(await store.read('project')).toMatchObject({ ok: true, snapshot: { revision: 1, state: { drafts: { sub: { baseRevision: 0 } } } } });
+  expect(await store.read('project')).toMatchObject({ ok: true, snapshot: { revision: 1, olderVersion: true, state: { drafts: { sub: { baseRevision: 0 } } } } });
   expect(await store.write('project', { expectedRevision: 1, state: { ...state, drafts: {} } })).toMatchObject({ ok: true, snapshot: { revision: 2 } });
   expect((await fs.readdir(directory)).sort()).toEqual([path.basename(legacy), written].sort());
   expect(await fs.readFile(legacy)).toEqual(legacyBytes);

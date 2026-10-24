@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9b317a337edafc5403356201647d03682e04f326fc1529dd4b9f4a3ba2acb52b",
+        "inputDigest": "sha256:076d13f19c68fe5f13171ca40770cbf1ae8034f27d8d89eeef94ab8526e3f35a",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 fixes 2): run.launch from a board card is sent only for the flow it was asked for; the stage column shows a stage's effort as it is when the phone has no catalog. Claims hold."
+        "reason": "Reviewed (I2-4 checkpoint A): a draft an older app left behind is rebased on the host's flow (its hidden stage fields kept) and its unconfirmed graph save becomes that draft instead of being resent. Claims hold."
       }
     }
   ]

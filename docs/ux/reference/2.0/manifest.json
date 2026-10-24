@@ -70,7 +70,7 @@
     },
     {
       "id": "flow-run-view",
-      "title": "Subproject flow screen (run bar, canvas, stage column) with a run waiting for approval",
+      "title": "Subproject flow screen during a run (run bar, canvas, stage column); the story waits for an approval, the capture shows a stage at work",
       "story": {
         "file": "src/renderer/workflow/WorkflowFlowSurface.stories.tsx",
         "export": "RunReference"

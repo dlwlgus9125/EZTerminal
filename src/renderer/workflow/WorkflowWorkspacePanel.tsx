@@ -9,6 +9,7 @@ import { ChatComposerDraftSchema } from '../../shared/chat-state';
 import { WorkflowDraftResultSchema, type WorkflowDraftAccess, type WorkflowDraftState } from '../../shared/workflow-draft';
 import { blockingRunOf } from '../../shared/planning-execution';
 import { WorkflowRecovery } from './workflow-recovery';
+import { withHiddenFlowFields } from '../../shared/workflow-protocol-projection';
 import type { PlanningConversation, PlanningWorkspaceSection } from '../PlanningWorkspacePanel';
 import { StructuredAgentDraftPanel, type StructuredAgentDraftFormState, type StructuredAgentDraftInput, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { createStructuredAgentSession, structuredAgentProviderOptions, structuredAgentWorkspaceOptions, type StructuredAgentCreateCommand } from '../structured-agent-create';
@@ -165,7 +166,19 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   useEffect(() => {
     if (!recovery) return;
     let current = true; setRecoveryReady(false);
-    void recovery.read().then(saved => { if (current) { if (saved) { setDrafts(saved.drafts); setPending(saved.pendingCommand); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) { setConversationRecovery(saved.pendingConversation); setChatPending(saved.pendingConversation.command); setChatTarget({ subprojectId: saved.pendingConversation.subprojectId, nodeId: saved.pendingConversation.nodeId, scope: saved.pendingConversation.scope, previewId: saved.pendingConversation.previewId }); } } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
+    void recovery.read().then(saved => { if (current) { if (saved) {
+      // An older version's recovery holds a reduced view: its drafts are rebased on the host once it answers,
+      // and its unconfirmed graph save is kept as a draft (resent from here it would drop what it could not see).
+      let restoredDrafts = saved.drafts; let restoredPending = saved.pendingCommand;
+      if (recovery.olderVersion) {
+        if (restoredPending?.type === 'workflow.patch' && restoredPending.subprojectId) {
+          const id = restoredPending.subprojectId;
+          restoredDrafts = { ...restoredDrafts, [id]: restoredDrafts[id] ?? { graph: restoredPending.payload.graph, baseRevision: restoredPending.expectedRevision } };
+          restoredPending = null;
+        }
+        olderDrafts.current = new Set(Object.keys(restoredDrafts));
+      }
+      setDrafts(restoredDrafts); setPending(restoredPending); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) { setConversationRecovery(saved.pendingConversation); setChatPending(saved.pendingConversation.command); setChatTarget({ subprojectId: saved.pendingConversation.subprojectId, nodeId: saved.pendingConversation.nodeId, scope: saved.pendingConversation.scope, previewId: saved.pendingConversation.previewId }); } } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
   }, [recovery]);
   useEffect(() => {
@@ -173,6 +186,23 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     const timer = window.setTimeout(() => { void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
     return () => window.clearTimeout(timer);
   }, [drafts, pending, conversationRecovery, create, selectedId, nodeId, view, scrollTop, recoveryReady, persist, projectId, hostId, cachedRevision, recoveryError]);
+  // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too).
+  const olderDrafts = useRef<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!snapshot || !authorityReady || !recoveryReady || !olderDrafts.current.size) return;
+    const ids = olderDrafts.current; olderDrafts.current = new Set();
+    setDrafts(current => {
+      let next = current;
+      for (const id of ids) {
+        const draft = current[id]; const saved = snapshot.subprojects.find(item => item.id === id);
+        if (!draft || !saved) continue;
+        const graph = withHiddenFlowFields(draft.graph, saved.graph);
+        if (graph !== draft.graph) { if (next === current) next = { ...current }; next[id] = { ...draft, graph }; }
+      }
+      return next;
+    });
+    // The recovery read finishes after the host's first answer: it triggers this too.
+  }, [snapshot, authorityReady, recoveryReady]);
   useEffect(() => { if (recoveryReady && restoreScroll.current !== undefined && scrollElement.current) { scrollElement.current.scrollTop = restoreScroll.current; restoreScroll.current = undefined; } }, [recoveryReady, selectedId, view]);
   const mutating = useRef(false);
   const refreshGeneration = useRef(0);

@@ -26,7 +26,11 @@ export type WorkflowDraftState = z.infer<typeof WorkflowDraftStateSchema>;
 export const WorkflowDraftWriteSchema = z.object({ expectedRevision: revision, state: WorkflowDraftStateSchema }).strict();
 export type WorkflowDraftWrite = z.infer<typeof WorkflowDraftWriteSchema>;
 export const WorkflowDraftResultSchema = z.union([
-  z.object({ ok: z.literal(true), snapshot: z.object({ projectId: WorkflowIdSchema, revision, state: WorkflowDraftStateSchema.nullable() }).strict() }).strict(),
+  /**
+   * `olderVersion`: read from where an app before remote protocol v17 kept it. Its graphs cannot hold the
+   * v17 stage fields, so they are a reduced view: rebase them on the host before saving (see WorkflowWorkspacePanel).
+   */
+  z.object({ ok: z.literal(true), snapshot: z.object({ projectId: WorkflowIdSchema, revision, state: WorkflowDraftStateSchema.nullable(), olderVersion: z.literal(true).optional() }).strict() }).strict(),
   z.object({ ok: z.literal(false), error: z.enum(['invalid', 'forbidden', 'unavailable', 'corrupt', 'stale']), message: z.string() }).strict(),
 ]);
 export type WorkflowDraftResult = z.infer<typeof WorkflowDraftResultSchema>;
