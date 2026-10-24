@@ -311,6 +311,20 @@ describe('SidebarShell narrow overlay focus contract', () => {
     expect(document.activeElement).toBe(close);
   });
 
+  it('leaves focus already inside the sidebar when the initial-focus frame runs late', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    act(() => root.render(<SidebarHarness />));
+    const action = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="workbench-sidebar"] button'))
+      .find((button) => button.textContent === 'Sidebar action');
+    act(() => action?.focus());
+    act(() => frames.forEach((callback) => callback(0)));
+    expect(document.activeElement).toBe(action);
+  });
+
   it('does not steal initial focus from a nested modal when animation frames race', () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {

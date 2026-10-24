@@ -148,6 +148,8 @@ export function SidebarShell({
       // initial-focus frame. Whichever frame runs last, the nested modal owns
       // focus while it remains open.
       if (hasNestedModal(sidebar)) return;
+      // A late frame (a busy start) must not take focus the person or the content already placed inside.
+      if (sidebar.contains(document.activeElement)) return;
       const focusable = getFocusableElements(sidebar)
         .filter((element) => !element.matches('.workbench-sidebar-resizer'));
       (focusable[0] ?? sidebar).focus();
