@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import { Glyph, Led, type LedTone } from '../ui';
 import { SHELL_TOP_BAR_ID } from '../workbench/SidebarShell';
@@ -34,10 +34,15 @@ export interface ShellTopBarProps {
 export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
   const { text } = useShellText();
   const board = props.mode === 'board';
+  // The tab list scrolls sideways when narrow; the selected project is always brought into view.
+  const tabsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    tabsRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [props.selectedProjectId, props.projects.length]);
   return (
     <header id={SHELL_TOP_BAR_ID} className="ez-shell-top" data-testid="workbench-header">
       <h1 className="ez-shell-mark" title={props.appVersion ? `EZTerminal ${props.appVersion}` : undefined} data-testid="workbench-brand-mark"><i aria-hidden="true" />EZTerminal</h1>
-      <nav className="ez-shell-projects" aria-label={text('프로젝트', 'Projects')}>
+      <nav ref={tabsRef} className="ez-shell-projects" aria-label={text('프로젝트', 'Projects')}>
         {props.projects.map((project) => {
           const current = project.projectId === props.selectedProjectId;
           const waiting = props.waitingByProject[project.projectId] ?? 0;

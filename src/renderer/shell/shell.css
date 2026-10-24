@@ -100,13 +100,18 @@
   box-shadow: 0 0 0.5rem var(--ui-accent);
 }
 
-/* Project tabs take only the room left over; they are the first to give way in a narrow window. */
+/* Project tabs take only the room left over; when even narrowed tabs do not fit, the list scrolls sideways
+   (no scrollbar) and the selected project is scrolled into view. */
 .ez-shell-projects {
   display: flex;
   flex: 1 1 0;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+
+.ez-shell-projects::-webkit-scrollbar { display: none; }
 
 .ez-shell-ptab {
   position: relative;

@@ -222,6 +222,8 @@ export interface AgentHubProps {
   readonly projectEditorRequest?: { readonly projectId: string; readonly id: number };
   /** Opens the new-worktree dialog for that project once per id (the board's Worktree button). */
   readonly worktreeRequest?: { readonly projectId: string; readonly id: number };
+  /** The request was taken; the parent drops it so a later mount does not open the dialog again. */
+  readonly onWorktreeRequestHandled?: () => void;
   readonly onDecideManagedMerge?: (
     input: ManagedMergeDecisionInput,
   ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
@@ -280,6 +282,7 @@ export function AgentHub({
   onOpenAgentSettings,
   projectEditorRequest,
   worktreeRequest,
+  onWorktreeRequestHandled,
   onDecideManagedMerge,
   onClose,
   mobile = false,
@@ -569,6 +572,7 @@ export function AgentHub({
   useEffect(() => {
     if (!worktreeRequest || handledWorktreeRequest.current === worktreeRequest.id) return;
     handledWorktreeRequest.current = worktreeRequest.id;
+    onWorktreeRequestHandled?.();
     const loaded = projects.find((project) => project.projectId === worktreeRequest.projectId);
     if (loaded) { setWorktreeProject(loaded); return; }
     void window.ezterminal.listAgentProjects(false, undefined, 100)
@@ -577,7 +581,7 @@ export function AgentHub({
         if (found) setWorktreeProject(found);
       })
       .catch(() => undefined);
-  }, [worktreeRequest, projects]);
+  }, [worktreeRequest, projects, onWorktreeRequestHandled]);
 
   const addProjectFolders = useCallback(async (): Promise<void> => {
     const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(true);

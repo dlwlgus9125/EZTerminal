@@ -29,15 +29,18 @@ const IDLE: BackfillState = { phase: 'idle', loaded: 0, total: 0, changes: [] };
  * published; viewing never changes the conversation, and comments go to the
  * message draft, never straight to the AI.
  */
-export function ConversationResults({ source, services, navigation, renderHtml, renderPdf }: {
+export function ConversationResults({ source, services, navigation, renderHtml, renderPdf, allowWiden = false }: {
   readonly source: ResultsSource & { readonly sessionId: string };
   readonly services: ResultsServices;
   readonly navigation?: ResultsNavigation;
   readonly renderHtml?: (path: string) => ReactNode;
   readonly renderPdf?: (path: string) => ReactNode;
+  /** The Results tab sits in the main window, where widening can fold the work list. */
+  readonly allowWiden?: boolean;
 }): JSX.Element {
   const copy = useResultsCopy();
-  const width = useResultsWidth();
+  const widthContext = useResultsWidth();
+  const width = allowWiden ? widthContext : null;
   const sessionId = source.sessionId;
   const [section, setSection] = useResultsViewState<ResultsSection>(`agent-results:section:${source.ownerPanelId}`, 'changes');
   const [backfill, setBackfill] = useState<BackfillState>(IDLE);

@@ -6,7 +6,7 @@ import { SHELL_TOP_BAR_ID } from '../workbench/SidebarShell';
 
 import { Glyph, Led, type GlyphName } from '../ui';
 import { ACTIVITY_RAIL_ID } from '../workbench/ActivityRail';
-import type { LiveConversation, LiveFlow, WaitingItem, otherProjects } from './shell-model';
+import { flattenConversations, type LiveConversation, type LiveFlow, type WaitingItem, type otherProjects } from './shell-model';
 import { StageChain } from './StageChain';
 import { conversationStateText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
 
@@ -69,16 +69,18 @@ export function LiveList(props: LiveListProps): JSX.Element {
   const overlayRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLElement>(null);
   // The opened list covers the dock: the native OpenClaw view steps back and the covered dock goes inert.
-  useNativeOverlayRegistration(open);
+  const overlayOpen = open && Boolean(props.folded);
+  useNativeOverlayRegistration(overlayOpen);
+  useEffect(() => { if (!props.folded) setOpen(false); }, [props.folded]);
   useLayoutEffect(() => {
     const overlay = overlayRef.current;
-    if (!open || !overlay) return undefined;
+    if (!overlayOpen || !overlay) return undefined;
     const topBar = overlay.ownerDocument.getElementById(SHELL_TOP_BAR_ID);
     return isolateModalBackground(overlay, [...(stripRef.current ? [stripRef.current] : []), ...(topBar ? [topBar] : [])]);
-  }, [open]);
+  }, [overlayOpen]);
   // The opened list takes focus; Escape gives it back to the strip.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!overlayOpen) return undefined;
     requestAnimationFrame(() => overlayRef.current?.querySelector<HTMLElement>('.ez-shell-live button')?.focus());
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
@@ -88,7 +90,7 @@ export function LiveList(props: LiveListProps): JSX.Element {
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [open]);
+  }, [overlayOpen]);
   if (!props.folded) return <LiveListPanel {...props} primary />;
   const close = (): void => setOpen(false);
   const dismiss = (): void => { setOpen(false); unfoldRef.current?.focus(); };
@@ -168,8 +170,8 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
               </span>
             </button>
             {/* Subagents show under the conversation in front, or while one of them works or waits. */}
-            {(props.focus === item.sessionId || item.children.some((child) => child.sessionId === props.focus || child.lamp !== 'ok' && child.lamp !== 'idle'))
-              && item.children.map((child) => (
+            {(props.focus === item.sessionId || flattenConversations(item.children).some((child) => child.sessionId === props.focus || child.lamp !== 'ok' && child.lamp !== 'idle'))
+              && flattenConversations(item.children).map((child) => (
               <button key={child.sessionId} type="button" className="ez-shell-row" data-child="true" aria-current={props.focus === child.sessionId ? 'true' : undefined}
                 onClick={() => props.onOpenConversation(child.sessionId)}
                 aria-label={text(`${child.title} (하위 에이전트, ${conversationStateText(child.state, text)})`, `${child.title} (subagent, ${conversationStateText(child.state, text)})`)}>

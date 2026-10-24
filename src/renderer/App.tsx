@@ -1248,14 +1248,14 @@ export function App(): JSX.Element {
     }
     else windows.addPanel({ id: `agent-session-${entry.conversationId}`, component: 'agent-session', title: entry.title, renderer: 'always',
       params: { historyId: entry.conversationId, conversationId: entry.conversationId, projectId: entry.projectId } }, { kind: options?.preview ? 'preview' : 'main-tab' });
-    shellNavigation.showWork();
+    if (!existing || existing.api.location.type === 'grid') shellNavigation.showWork();
     setConversationHistory(null);
     if (window.innerWidth < 1024) setSidebarDestination(null);
   }, [panelPreview, shellNavigation]);
   const sidebarOverlayBelow = sidebarDestination === 'agents' ? 1024 : 1200;
-  const revealOpenedSession = useCallback((): void => {
-    // Whatever was just opened lives in the dock: leave the board for it.
-    shellNavigation.showWork();
+  const revealOpenedSession = useCallback((panel?: IDockviewPanel): void => {
+    // Whatever was just opened in the main window lives in the dock: leave the board for it.
+    if (!panel || panel.api.location.type === 'grid') shellNavigation.showWork();
     if (window.innerWidth < sidebarOverlayBelow) setSidebarDestination(null);
   }, [shellNavigation, sidebarOverlayBelow]);
   const [settingsCategoryRequest, setSettingsCategoryRequest] = useState<{
@@ -1436,6 +1436,7 @@ export function App(): JSX.Element {
         workbenchCoordinator.activatePanel(panelId);
         const panel = api?.getPanel(panelId);
         if (panel) dockWindowCoordinatorRef.current?.focusPanelWindow(panel);
+        if (panel?.api.location.type === 'grid') shellNavigation.showWork();
       }
       else workbenchCoordinator.openTerminal({ adoptSessionId: sessionId });
       for (const activity of agentSnapshot.items) {
@@ -1444,11 +1445,12 @@ export function App(): JSX.Element {
         }
       }
     },
-    [agentSnapshot, sessionPaneBindings, workbenchCoordinator],
+    [agentSnapshot, sessionPaneBindings, shellNavigation, workbenchCoordinator],
   );
 
   useEffect(() => {
-    if (!activePanelId || shellNav.mode !== 'work') return;
+    if (!activePanelId) return;
+    if (shellNav.mode !== 'work' && apiRef.current?.getPanel(activePanelId)?.api.location.type === 'grid') return;
     for (const activity of agentSnapshot.items) {
       if (activity.state !== 'done') continue;
       const isActive = (sessionPaneBindings.get(activity.sessionId) ?? []).some(
@@ -1570,8 +1572,10 @@ export function App(): JSX.Element {
     };
   }, [agentSnapshot, sessionPaneBindings]);
 
-  // Only a conversation on screen is being read: under the board it is not.
-  const activeConversationSessionId = shellNav.mode === 'work' && activePanelId
+  // Only a conversation on screen is being read: under the main window's board it is not (a popout's still is).
+  const activeShellPanel = activePanelId ? apiRef.current?.getPanel(activePanelId) : undefined;
+  const activePanelOnScreen = Boolean(activeShellPanel) && (shellNav.mode === 'work' || activeShellPanel?.api.location.type !== 'grid');
+  const activeConversationSessionId = activePanelOnScreen && activePanelId
     ? structuredAgentSessionId(String(apiRef.current?.getPanel(activePanelId)?.params?.historyId ?? '')) ?? undefined
     : undefined;
   // App conversations: approvals waiting on the person and turns that ended unseen.
@@ -1852,7 +1856,7 @@ export function App(): JSX.Element {
       existing.api.setTitle(title);
       existing.api.setActive();
       dockWindows.focusPanelWindow(existing);
-      revealOpenedSession();
+      revealOpenedSession(existing);
       return;
     }
     dockWindows.addPanel({
@@ -3253,7 +3257,7 @@ export function App(): JSX.Element {
             setSidebarDestination('settings');
           },
           ...(projectEditorRequest ? { projectEditorRequest } : {}),
-          ...(worktreeRequest ? { worktreeRequest } : {}),
+          ...(worktreeRequest ? { worktreeRequest, onWorktreeRequestHandled: () => setWorktreeRequest(undefined) } : {}),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}

@@ -1,5 +1,5 @@
 import type { IDockviewPanelProps } from 'dockview-react';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { EmptyState, LoadingState } from '../ui';
 import { ArtifactFrame, type ArtifactPreviewAccess } from './ArtifactFrame';
@@ -44,6 +44,12 @@ export function AgentResultsDockPanel(props: IDockviewPanelProps): JSX.Element {
     ? (path: string) => <ArtifactFrame path={path} kind="pdf" title={path} access={previews} />
     : undefined), [previews]);
   const title = copy.tabTitle(source?.title ?? '');
+  // Widening measures the main window's dock, so it is offered only there.
+  const [inMainWindow, setInMainWindow] = useState(props.api.location.type === 'grid');
+  useEffect(() => {
+    const disposable = props.api.onDidLocationChange((event) => setInMainWindow(event.location.type === 'grid'));
+    return () => disposable.dispose();
+  }, [props.api]);
   useEffect(() => {
     if (props.api.title !== title) props.api.setTitle(title);
   }, [props.api, title]);
@@ -62,6 +68,7 @@ export function AgentResultsDockPanel(props: IDockviewPanelProps): JSX.Element {
       {...(navigation ? { navigation } : {})}
       {...(renderHtml ? { renderHtml } : {})}
       {...(renderPdf ? { renderPdf } : {})}
+      allowWiden={inMainWindow}
     />
   );
 }
