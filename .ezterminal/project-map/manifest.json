@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:de5968a0395b26bac8e26ed5e3cc80e9a84be8e603f6e73092cf5b3159e0e1a4",
+        "inputDigest": "sha256:d47f42b43f08f627325880c36363d24ee48d96d17009b3dcda7b352ddfc3a21a",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3): the host advertises the workflow-launch-v1 capability next to the others; daemon-store anchors only moved by one import line. Claims hold."
+        "reason": "Reviewed (I2-3 fixes): main wires the conversation review AI for agent launches; main.ts anchors only moved. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:4e3a53530b7d2375c4ddc7a9193098c7a21ec8122c6df5748cd7c69a2290b332",
+        "inputDigest": "sha256:9ee888a2271b51e4c177ad4b0ea136707679b24d7e5d108f6abc922c7fae89f2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3): daemon-store anchors moved by one import line and the capability list gained workflow-launch-v1; lifecycle claims hold."
+        "reason": "Reviewed (I2-3 fixes): main.ts anchors moved by the conversation review AI wiring; lifecycle claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:112d4d10d9f2d89fc5ed7ac8dad3027a9c5d17c9ccb0955fb86421a11834e6c6",
+        "inputDigest": "sha256:66c1da6fcc2f52f4100593900139b67d3b0bf3fb395fc716e5e61ce5d96e7f67",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3): run.launch and run settings are v17-only; newer clients keep them for a v17 host and v16 readers never see run settings. Remote dataflow claims hold."
+        "reason": "Reviewed (I2-3 fixes): main.ts anchors moved; the remote flow replies keep their shape (open launches use the existing execution-unavailable code). Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9b773622488d1cf915d17dc87cd0e71fce68f44c28bd34f7280f956c8c76cd6a",
+        "inputDigest": "sha256:a7635cd87f1f6466f95821f127b946f5486382aba6575c7934e4e035dca8a1e0",
         "decision": "map-updated",
-        "reason": "Reviewed (I2-3): run.launch prepares and starts one run under one execution-gate hold with derived ledger ids; a settled start failure cancels the run it prepared; one unfinished run per flow; long command ids hash only past 160."
+        "reason": "Reviewed (I2-3 fixes): a launch settles only input errors and refusals; a provider that is down or planning storage that fails keeps it open, as does a clean-up not yet done; receipts answer before the one-run guard."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3fc1ab4b31f21129a526fee5190016b98b0526fc6b454d0206800eb4103a17cd",
+        "inputDigest": "sha256:9efa8abc3e2a3ef5471258c12f619a9d850d536b17a4d299db265a99be140821",
         "decision": "map-updated",
-        "reason": "Reviewed (I2-3): subprojects save run settings (review AI); run.launch resolves and pins its review AI in a durable receipt, settles final failures and keeps unsettled ones pending; AI may launch; a second start waits for the unfinished run."
+        "reason": "Reviewed (I2-3 fixes): an open launch reaches clients as execution-unavailable (kept pending); an agent's launch resolves its conversation's review AI on first receipt, so its retry is the same request. Claims hold."
       }
     }
   ]

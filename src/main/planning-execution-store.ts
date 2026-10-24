@@ -364,8 +364,8 @@ export class PlanningExecutionStore {
       case 'run.cancel':
         requireState(run.state !== 'completed', 'invalid-transition', 'Completed results are immutable.');
         if (command.principal.kind === 'runtime' && command.principal.id === PLANNING_LAUNCH_PRINCIPAL) {
-          // Only `workflow:<launch>:cancel` for the run `workflow:<launch>:prepare` prepared, before it started.
-          const launch = /^(workflow:workflow-launch:[0-9a-f]{48}):cancel$/u.exec(command.commandId)?.[1];
+          // Only `workflow:<launch>:cancel[-retry]` for the run `workflow:<launch>:prepare` prepared, before it started.
+          const launch = /^(workflow:workflow-launch:[0-9a-f]{48}):cancel(?:-\d)?$/u.exec(command.commandId)?.[1];
           const prepared = launch && database.prepare('SELECT receipt_json FROM planning_execution_receipts WHERE project_id = ? AND command_id = ?').get(projectId, `${launch}:prepare`);
           const receipt = prepared ? JSON.parse(String(prepared.receipt_json)) as PlanningExecutionReceipt : null;
           requireState(receipt?.ok === true && receipt.runId === run.runId && !run.startedAt, 'user-required', 'A launch can only cancel the run it prepared and could not start.');

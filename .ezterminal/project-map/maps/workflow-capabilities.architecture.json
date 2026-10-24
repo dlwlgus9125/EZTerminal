@@ -156,8 +156,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 264,
-          "endLine": 338,
+          "startLine": 266,
+          "endLine": 340,
           "lineDigest": "sha256:965b2a10c6f6ed7231f8691d9deee8c3d73ac5e641c9963ddc27e224d9a9e28c",
           "claim": "One serialized host boundary checks project, host, revision and exact receipts. AI may edit graph drafts and launch, prepare, start, pause, resume or cancel runs; it cannot approve, integrate, archive, change ownership or set auto-approve."
         }
@@ -194,16 +194,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 217,
-          "endLine": 263,
+          "startLine": 219,
+          "endLine": 265,
           "lineDigest": "sha256:55e45c02e04bb371c65f8eae1f3999c7757163da26806a65ad2d2014e2ad86d6",
           "claim": "Stage writes follow exact saved lineage, read from the committed registry without the workflow gate. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 175,
-          "endLine": 196,
+          "startLine": 177,
+          "endLine": 198,
           "lineDigest": "sha256:8203afae1fbf7287851493d51c93923cc832a9b65f6039e80bf0dcb3ef67b60a",
           "claim": "Explicit continuation copies the original stage reference snapshot after checking project, ordinary Session ownership and active stage; it does not silently refresh references."
         }
@@ -229,8 +229,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 102,
-          "endLine": 143,
+          "startLine": 104,
+          "endLine": 145,
           "lineDigest": "sha256:72fd534a64cd35281b2ec6711d56ba9807ca5f3f586bd4c747509460efceebc5",
           "claim": "One serialized project boundary binds a creation preview to one ordinary conversation. Exact command receipts and monotonic revisions reject duplicate contents, discarded-preview replies and changed drafts."
         }
@@ -268,8 +268,8 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
           "startLine": 174,
-          "endLine": 289,
-          "lineDigest": "sha256:88ff47e2a67bab972980361ccf0b2498a21f20e5c7b3ba5f26547e3caadc0092",
+          "endLine": 297,
+          "lineDigest": "sha256:c3149c987c4d8a393358d18fab710d5459af9e82355d47064c2948c05819a871",
           "claim": "User or project-agent run commands freeze graph, scoped planning and auto-approve policy into the ledger; agents cannot approve or integrate; receipt fingerprints reconcile retries before preparation or dispatch."
         }
       ]
@@ -305,8 +305,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 566,
-          "endLine": 632,
+          "startLine": 574,
+          "endLine": 640,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -351,8 +351,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 150,
-          "endLine": 174,
+          "startLine": 152,
+          "endLine": 176,
           "lineDigest": "sha256:781684d32446a001dc6c31c18b5391d4bbb06cddc8f4ebd4b78a80a4277dadf5",
           "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated Session links, including each run's stage and review agents under their stage."
         },
@@ -378,8 +378,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 264,
-          "endLine": 338,
+          "startLine": 266,
+          "endLine": 340,
           "lineDigest": "sha256:965b2a10c6f6ed7231f8691d9deee8c3d73ac5e641c9963ddc27e224d9a9e28c",
           "claim": "One serialized host boundary checks project, host, revision and exact receipts. AI may edit graph drafts and launch, prepare, start, pause, resume or cancel runs; it cannot approve, integrate, archive, change ownership or set auto-approve."
         }
@@ -396,8 +396,8 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
           "startLine": 174,
-          "endLine": 289,
-          "lineDigest": "sha256:88ff47e2a67bab972980361ccf0b2498a21f20e5c7b3ba5f26547e3caadc0092",
+          "endLine": 297,
+          "lineDigest": "sha256:c3149c987c4d8a393358d18fab710d5459af9e82355d47064c2948c05819a871",
           "claim": "User or project-agent run commands freeze graph, scoped planning and auto-approve policy into the ledger; agents cannot approve or integrate; receipt fingerprints reconcile retries before preparation or dispatch."
         }
       ]
@@ -429,8 +429,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 566,
-          "endLine": 632,
+          "startLine": 574,
+          "endLine": 640,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -446,8 +446,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 566,
-          "endLine": 632,
+          "startLine": 574,
+          "endLine": 640,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -531,8 +531,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 217,
-          "endLine": 263,
+          "startLine": 219,
+          "endLine": 265,
           "lineDigest": "sha256:55e45c02e04bb371c65f8eae1f3999c7757163da26806a65ad2d2014e2ad86d6",
           "claim": "Stage writes follow exact saved lineage, read from the committed registry without the workflow gate. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         }
@@ -548,8 +548,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 217,
-          "endLine": 263,
+          "startLine": 219,
+          "endLine": 265,
           "lineDigest": "sha256:55e45c02e04bb371c65f8eae1f3999c7757163da26806a65ad2d2014e2ad86d6",
           "claim": "Stage writes follow exact saved lineage, read from the committed registry without the workflow gate. Archived or removed stages block sending; context uses immutable saved references until an explicit refresh."
         }
@@ -582,8 +582,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 264,
-          "endLine": 338,
+          "startLine": 266,
+          "endLine": 340,
           "lineDigest": "sha256:965b2a10c6f6ed7231f8691d9deee8c3d73ac5e641c9963ddc27e224d9a9e28c",
           "claim": "One serialized host boundary checks project, host, revision and exact receipts. AI may edit graph drafts and launch, prepare, start, pause, resume or cancel runs; it cannot approve, integrate, archive, change ownership or set auto-approve."
         }
@@ -599,8 +599,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/workflow-service.ts",
-          "startLine": 150,
-          "endLine": 174,
+          "startLine": 152,
+          "endLine": 176,
           "lineDigest": "sha256:781684d32446a001dc6c31c18b5391d4bbb06cddc8f4ebd4b78a80a4277dadf5",
           "claim": "The navigation service caches a revisioned metadata projection with subproject titles, stage names and deduplicated Session links, including each run's stage and review agents under their stage."
         },

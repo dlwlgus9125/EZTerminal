@@ -199,9 +199,10 @@ export class PlanningRunService {
     if (!started.ok && !started.transient) {
       const run = this.options.ledger.read(command.projectId).runs.find(entry => entry.runId === runId);
       if (run && !run.startedAt && run.state !== 'cancelled') {
-        const cancelled = await this.options.ledger.execute({ commandId: `workflow:${launchId}:cancel`, projectId: command.projectId,
-          expectedRevision: this.options.ledger.read(command.projectId).revision, principal: { kind: 'runtime', id: PLANNING_LAUNCH_PRINCIPAL }, type: 'run.cancel', payload: { runId } });
-        if (!cancelled.ok) this.options.reportError?.(new Error(`The run prepared by launch ${launchId} could not be cancelled: ${cancelled.message}`));
+        // The launch settles only once its prepared run is cancelled; until then the request stays open.
+        const cancelled = await this.runtimeCommand(run, `workflow:${launchId}:cancel`, 'run.cancel', {}, PLANNING_LAUNCH_PRINCIPAL)
+          .catch((error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : 'Execution state changed repeatedly.' }));
+        if (!cancelled.ok) return { ok: false, error: 'execution-unavailable', message: `${started.message} The run it prepared could not be cancelled yet (${cancelled.message}); retry the same request.`, transient: true };
       }
     }
     return started;
@@ -225,8 +226,9 @@ export class PlanningRunService {
         let receipt: PlanningExecutionReceipt;
         if (previous) {
           if (request.type === 'run.prepare') {
+            // A refused prepare has no run: its retry answers the original refusal below.
             const original = this.options.ledger.read(command.projectId).runs.find(run => run.runId === request.payload.runId);
-            if (!original || original.preparation.requestFingerprint !== workflowDigest({ command, principal: workflowPrincipalIdentity(principal) })) return { ok: false, error: 'command-conflict', message: 'This workflow command ID belongs to different execution inputs.' };
+            if (previous.ok && (!original || original.preparation.requestFingerprint !== workflowDigest({ command, principal: workflowPrincipalIdentity(principal) }))) return { ok: false, error: 'command-conflict', message: 'This workflow command ID belongs to different execution inputs.' };
           } else {
             const types = { 'run.start': 'run.start', 'run.pause': 'run.pause', 'run.resume': 'run.continue', 'run.approve': 'workflow.approve', 'run.cancel': 'run.cancel', 'run.integrate': 'workflow.integrate' } as const;
             const replay = await this.options.ledger.execute({ ...common, expectedRevision: previous.ok ? previous.revision - 1 : previous.revision, type: types[request.type], payload: request.payload });
@@ -248,8 +250,14 @@ export class PlanningRunService {
           if (!this.options.planning.captureWorkflowBaseline) return { ok: false, error: 'unavailable', message: 'Workflow baseline storage is unavailable.' };
           const baselineId = `workflow-${workflowDigest([command.projectId, subproject.id, request.payload.runId]).slice(0, 32)}`;
           const generated = workflowPlanningInput(subproject, baselineId, request.payload.reviewer);
+          // A registered provider that is down, or planning storage that cannot be read or written now, leaves
+          // the outcome open (the same request is retried); a request whose own inputs are invalid settles.
+          const providers = this.options.daemon.getSnapshot().providers;
+          const down = [...generated.assignments, generated.reviewer].map(entry => providers.find(provider => provider.id === entry.providerId))
+            .find(provider => provider?.enabled && (provider.health === 'unavailable' || provider.health === 'error'));
+          if (down) return { ok: false, error: 'preparation-invalid', message: `Provider ${down.id} is not ready. Reconnect it, then retry the same request.`, transient: true };
           const planning = await this.options.planning.captureWorkflowBaseline(command.projectId, subproject.id, baselineId, subproject.title, generated.draft);
-          if (!planning.ok) return planning;
+          if (!planning.ok) return ['unavailable', 'external-change', 'corrupt'].includes(planning.error) ? { ...planning, transient: true } : planning;
           const root = this.projectRoot(command.projectId);
           const baseCommit = await this.options.git.run(root, ['rev-parse', '--verify', 'HEAD']).then(value => value.trim()).catch(() => undefined);
           // A provider that cannot list its models, or a file that cannot be read for a reason other than
@@ -341,7 +349,7 @@ export class PlanningRunService {
           if (!this.options.recordDeviceEvidence) throw new Error('Device evidence recording is unavailable.');
           receipt = await this.options.recordDeviceEvidence(request, principal);
         } else {
-          if (request.type === 'start') {
+          if (request.type === 'start' && !this.options.ledger.getReceipt(request.projectId, request.commandId)) {
             const target = snapshot.runs.find(run => run.runId === request.payload.runId);
             const owner = target && runSubprojectId(target);
             if (owner && blockingRunOf(snapshot.runs, owner, target.runId)) return { ok: false, error: 'active-run', message: ACTIVE_RUN_MESSAGE };

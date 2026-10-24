@@ -819,10 +819,10 @@ export class AgentOrchestrationMcpServer {
     if (action === 'prepare' || action === 'launch') {
       const given = isObject(args.reviewer)
         ? { providerId: requiredString(args.reviewer.providerId, 'reviewer.providerId', 128), model: requiredString(args.reviewer.model, 'reviewer.model', 256) } : undefined;
-      // A launch uses the flow's saved review AI; otherwise this conversation's provider and model.
-      const reviewer = given ?? (action === 'launch' && subproject.runSettings ? undefined
-        : ownerAgent.model ? { providerId: ownerAgent.providerId, model: ownerAgent.model } : undefined);
-      if (!reviewer && !(action === 'launch' && subproject.runSettings)) throw new McpRequestError(-32602, 'Give reviewer {providerId, model}: this conversation runs on its provider\u2019s default model.');
+      // A launch carries only what the call says, so its retry is the same request: the host fills in the
+      // flow's saved review AI, else this conversation's provider and model, once, when it first receives it.
+      const reviewer = given ?? (action === 'launch' ? undefined : ownerAgent.model ? { providerId: ownerAgent.providerId, model: ownerAgent.model } : undefined);
+      if (!reviewer && action === 'prepare') throw new McpRequestError(-32602, 'Give reviewer {providerId, model}: this conversation runs on its provider\u2019s default model.');
       const runId = `run-${derived('run')}`;
       command = action === 'launch' ? { ...envelope, type: 'run.launch', payload: { runId, ...(reviewer ? { reviewer } : {}) } }
         : { ...envelope, type: 'run.prepare', payload: { runId, reviewer: reviewer! } };

@@ -1550,6 +1550,10 @@ app.on('ready', async () => {
     executeRun: (command, subproject, principal) => planningRuntimeRef.current?.executeWorkflow(command, subproject, principal)
       ?? Promise.resolve({ ok: false, error: 'unavailable', message: 'The execution authority is unavailable.', transient: true as const }),
     executionGate: (work) => planningRuntimeRef.current ? planningRuntimeRef.current.exclusive(work) : work(),
+    conversationReviewer: (sessionId) => {
+      const agent = daemonCommandRouter.getSnapshot().agents.find(entry => entry.sessionId === sessionId);
+      return agent?.model ? { providerId: agent.providerId, model: agent.model } : undefined;
+    },
   });
   workflowRef.service = workflowService;
   agentHistoryService.setCliResumeGuard((provider, providerSessionId) => {

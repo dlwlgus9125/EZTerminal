@@ -85,6 +85,8 @@ export interface WorkflowServiceOptions {
    * execution gate; the execution side never waits for the workflow gate).
    */
   readonly executionGate?: <T>(work: () => Promise<T>) => Promise<T>;
+  /** The provider and model a project conversation runs on: its default review AI for a launch it sends. */
+  readonly conversationReviewer?: (sessionId: string) => { readonly providerId: string; readonly model: string } | undefined;
   readonly now?: () => Date;
 }
 
@@ -415,7 +417,9 @@ export class WorkflowService {
             return failure('active-run', 'This flow is still running. Finish or cancel that run before starting another.');
           }
           if (command.type === 'run.launch' && !launch) {
-            const reviewer = command.payload.reviewer ?? subproject!.runSettings?.reviewer;
+            // The request's own, else the flow's saved one, else (an agent's launch) its conversation's provider and model.
+            const reviewer = command.payload.reviewer ?? subproject!.runSettings?.reviewer
+              ?? (principal.kind === 'ai' && principal.sessionId ? this.options.conversationReviewer?.(principal.sessionId) : undefined);
             if (!reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before running it.');
             launch = { runId: command.payload.runId, reviewer: structuredClone(reviewer) };
           }
@@ -435,7 +439,8 @@ export class WorkflowService {
               await this.write(settled.target, wrap(settled.file.registry, [...settled.file.receipts.filter(entry => entry.commandId !== command.commandId),
                 { commandId: command.commandId, fingerprint, revision: previous?.revision ?? subproject!.revision, failed: { error: result.error.slice(0, 100), message: result.message.slice(0, 4_000) } }]), settled.bytesHash);
             }
-            return failure(result.error, result.message);
+            // Clients keep a request pending (and retry it as it was) on this one code.
+            return result.transient ? failure('execution-unavailable', result.message) : failure(result.error, result.message);
           }
         }
         const file = wrap(registry, [...loaded.file.receipts.filter(entry => entry.commandId !== command.commandId), { commandId: command.commandId, fingerprint, revision: subproject?.revision ?? registry.registryRevision }]);
