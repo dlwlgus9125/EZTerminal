@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:7b6df5231635a16b361a5e694342b63f355665891ce4b5680f012fdcc77f1341",
+        "inputDigest": "sha256:a904a34021da317698333454119deeb2ab1d35f3848c3d15d0780c0e39ca3a84",
         "decision": "map-updated",
         "reason": "Reviewed: the Board + Desk shell (I1) replaces header, rail and status bar around the same dock; conversation, approval and inbox flows are unchanged (the board can allow/deny through permission.resolve). Claims hold; anchors moved."
       }
