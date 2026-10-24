@@ -54,7 +54,9 @@ test('ordinary chat keeps its session and unsent draft when linked; a provider e
     await writeFile('artifacts/r4-implementation-review/real-app/stage-return-dom.json', JSON.stringify(await page.evaluate(() => ({ roots: document.querySelectorAll('[data-testid=workflow-workspace]').length, fields: [...document.querySelectorAll('textarea')].map(field => ({ label: field.parentElement?.textContent, inWorkspace: !!field.closest('[data-testid=workflow-workspace]'), value: field.value })) })), null, 2));
     await expect(page.getByRole('textbox', { name: 'Stage document', exact: true })).toHaveValue('Saved stage reference');
     const untouched = await page.evaluate(() => window.ezterminal.getDaemonSnapshot()); expect(untouched!.turns).toHaveLength(1);
-    await workspace.getByRole('button', { name: 'Back to project items' }).click();
+    // Back on the board, "New flow" opens the project's items.
+    await workspace.getByRole('button', { name: 'Back to the board' }).click();
+    await page.getByRole('button', { name: 'New flow', exact: true }).click();
     await workspace.getByRole('button', { name: 'New subproject' }).click();
     await page.getByRole('dialog').getByLabel('Name', { exact: true }).fill('Preview to cancel');
     await page.getByRole('button', { name: 'Design in conversation' }).click(); await page.getByRole('button', { name: 'Open setup conversation' }).click();

@@ -8,9 +8,10 @@ import { createRegisteredE2eTempDir, expect, test } from './test';
 
 /**
  * The subproject flow as one canvas, end to end through the real app: the desktop React Flow
- * chunk loads, a run is prepared and started from the canvas header, the approval stage shows
- * its state on the canvas, it is approved from the stage panel, the AI stage starts working and
- * its task conversation opens from the same panel. The fake Codex answers slowly so the stage
+ * chunk loads, the review AI is saved in the run bar and one button runs the saved flow, the
+ * approval stage shows its state on the canvas and is approved from the stage panel, the AI stage
+ * starts working and its conversation opens from the same panel; once the run finishes, 다시 실행
+ * runs it again as run #2 with a new stage conversation. The fake Codex answers slowly so the stage
  * stays observable while it works; no real provider or account is used. Its reply goes through the
  * real Codex adapter, which marks replies sensitive like every real provider, and the stage's result
  * is captured and independently reviewed from that reply.
@@ -34,8 +35,8 @@ const graph: WorkflowGraph = {
   ],
 };
 
-test('one canvas: prepare, start, approve on the canvas and open the working stage conversation', async () => {
-  test.setTimeout(240_000);
+test('one canvas: run the saved flow, approve, open the working stage conversation, run it again', async () => {
+  test.setTimeout(300_000);
   const profile = createRegisteredE2eTempDir('ezterm-canvas-profile-');
   const projectRoot = createRegisteredE2eTempDir('ezterm-canvas-project-');
   // The fake Codex reads its reply timing from TMPDIR: hold every turn long enough to watch it.
@@ -66,51 +67,57 @@ test('one canvas: prepare, start, approve on the canvas and open the working sta
     await expect(workspace.locator('.react-flow__node[data-id="gate"]')).toBeVisible();
     await page.screenshot({ path: path.join(evidence, '01-flow.png') });
 
-    await workspace.getByRole('button', { name: /^(실행 준비|Prepare run)$/u }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByLabel(/검토 모델|Reviewer model/u).selectOption('gpt-5.6-fixture');
-    await dialog.getByRole('button', { name: /이 버전 준비|Prepare this version/u }).click();
-    await expect(dialog).toHaveCount(0, { timeout: 30_000 });
-    await workspace.getByRole('button', { name: /^(실행 시작|Start execution)$/u }).click();
-
-    // The approval stage waits on the same canvas, and the header offers the jump to it.
-    const gate = workspace.locator('.react-flow__node[data-id="gate"] .workflow-node-card');
-    await expect(gate).toHaveAttribute('data-run-state', 'awaiting-approval', { timeout: 30_000 });
-    await page.screenshot({ path: path.join(evidence, '02-awaiting-approval.png') });
-    await workspace.getByRole('button', { name: /승인 대기 1|1 awaiting approval/u }).click();
-    await expect(workspace.getByRole('tab', { name: /실행 상태|Run status/u, selected: true })).toBeVisible();
-    await workspace.locator('.workflow-flow__panel').getByRole('button', { name: /^(허용|Approve)$/u }).click();
-    await expect(gate).toHaveAttribute('data-run-state', 'completed', { timeout: 30_000 });
-
-    // The AI stage starts; its card and panel follow the run, and its conversation opens from there.
-    const build = workspace.locator('.react-flow__node[data-id="build"]');
-    await expect(build.locator('.workflow-node-card')).toHaveAttribute('data-run-state', /^(queued|working)$/u, { timeout: 60_000 });
+    // The run bar keeps the review AI on the subproject: chosen once, used by every run.
+    const bar = workspace.getByTestId('workflow-run-bar');
+    await bar.getByLabel(/검토 AI 제공자|Review AI provider/u).selectOption('codex');
+    await bar.getByLabel(/검토 모델|Reviewer model/u).selectOption('gpt-5.6-fixture');
     await expect.poll(async () => {
       const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
-      return result.ok ? result.snapshot.runs[0]?.attempts[0]?.sessionId ?? null : null;
-    }, { timeout: 60_000 }).not.toBeNull();
-    const after = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
-    if (!after.ok) throw new Error(after.message);
-    const sessionId = after.snapshot.runs[0].attempts[0].sessionId;
+      return result.ok ? result.snapshot.subprojects.find(item => item.id === 'canvas-flow')?.runSettings?.reviewer.model ?? null : null;
+    }, { timeout: 30_000 }).toBe('gpt-5.6-fixture');
+    // One button prepares and starts the saved flow.
+    await bar.getByTestId('workflow-run-again').click();
+    await expect(bar.getByTestId('workflow-run-phase')).toContainText(/실행 #1|Run #1/u, { timeout: 30_000 });
+
+    // The approval stage waits on the same canvas, and the run bar offers the jump to it.
+    const gate = workspace.locator('.react-flow__node[data-id="gate"] .workflow-node-card');
+    await expect(gate).toHaveAttribute('data-run-state', 'awaiting-approval', { timeout: 30_000 });
+    // While the run goes on, 다시 실행 waits and says why.
+    await expect(bar.getByTestId('workflow-run-again')).toBeDisabled();
+    await page.screenshot({ path: path.join(evidence, '02-awaiting-approval.png') });
+    await bar.getByRole('button', { name: /승인 대기 1|1 awaiting approval/u }).click();
+    const panel = workspace.locator('.workflow-flow__panel');
+    await expect(panel.getByTestId('workflow-stage-approval')).toBeVisible();
+    await panel.getByTestId('workflow-stage-approval').getByRole('button', { name: /^(승인|Approve)$/u }).click();
+    await expect(gate).toHaveAttribute('data-run-state', 'completed', { timeout: 30_000 });
+
+    // The AI stage starts; its panel opens the conversation it works in.
+    const build = workspace.locator('.react-flow__node[data-id="build"]');
+    await expect(build.locator('.workflow-node-card')).toHaveAttribute('data-run-state', /^(queued|working)$/u, { timeout: 60_000 });
+    const attemptSession = async (run: number) => {
+      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
+      return result.ok ? result.snapshot.runs.filter(entry => entry.preparation.workflow?.subprojectId === 'canvas-flow')
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[run]?.attempts[0]?.sessionId ?? null : null;
+    };
+    await expect.poll(() => attemptSession(0), { timeout: 60_000 }).not.toBeNull();
+    const sessionId = (await attemptSession(0))!;
     await build.locator('.workflow-node-card__title').click();
-    await workspace.getByRole('tab', { name: /실행 상태|Run status/u }).click();
-    const open = workspace.locator('.workflow-flow__panel').getByRole('button', { name: /작업 대화 열기|Open task conversation/u });
-    await expect(open).toBeVisible({ timeout: 30_000 });
+    const open = panel.getByTestId('workflow-stage-open');
+    await expect(open).toHaveText(/작업 중인 대화 열기|Open the working conversation/u, { timeout: 30_000 });
     await page.screenshot({ path: path.join(evidence, '03-stage-working.png') });
     await open.click();
     await expect(page.locator(`[data-testid="structured-agent-session"][data-session-id="${sessionId}"]`)).toBeVisible({ timeout: 30_000 });
     await page.screenshot({ path: path.join(evidence, '04-task-conversation.png') });
 
     // The (sensitive-marked) reply is captured as the stage's result and the reviewer's decision is read.
-    await expect.poll(async () => {
+    const firstRun = async () => {
       const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
-      return result.ok ? result.snapshot.runs[0]?.attempts[0]?.state ?? null : null;
-    }, { timeout: 90_000 }).toBe('succeeded');
-    const attemptId = after.snapshot.runs[0].attempts[0].attemptId;
-    // The reviewer's judgment, read from its own (sensitive-marked) reply, is the recorded decision.
+      return result.ok ? result.snapshot.runs.find(entry => entry.attempts[0]?.sessionId === sessionId) ?? null : null;
+    };
+    await expect.poll(async () => (await firstRun())?.attempts[0]?.state ?? null, { timeout: 90_000 }).toBe('succeeded');
+    const attemptId = (await firstRun())!.attempts[0]!.attemptId;
     await expect.poll(async () => {
-      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
-      const review = result.ok ? result.snapshot.runs[0]?.reviews.find(entry => entry.attemptId === attemptId) : undefined;
+      const review = (await firstRun())?.reviews.find(entry => entry.attemptId === attemptId);
       return review ? `${review.decision}: ${review.detail}` : null;
     }, { timeout: 90_000 }).toBe('approve: Fixture review: the frozen result answers the task.');
     const record = await page.evaluate(query => window.ezterminal.readPlanningResult(query), { kind: 'attempt' as const, projectId, subprojectId: 'canvas-flow', attemptId });
@@ -119,10 +126,18 @@ test('one canvas: prepare, start, approve on the canvas and open the working sta
     // Accepted, the stage completes on the canvas and the run finishes (back on the canvas tab).
     await page.locator('.dv-tab').filter({ hasText: 'Canvas acceptance' }).first().click();
     await expect(build.locator('.workflow-node-card')).toHaveAttribute('data-run-state', 'completed', { timeout: 60_000 });
-    await expect.poll(async () => {
-      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
-      return result.ok ? result.snapshot.runs[0]?.state ?? null : null;
-    }, { timeout: 60_000 }).toBe('completed');
+    await expect.poll(async () => (await firstRun())?.state ?? null, { timeout: 60_000 }).toBe('completed');
     await page.screenshot({ path: path.join(evidence, '05-run-completed.png') });
+
+    // 다시 실행: the saved flow and settings again, as run #2 with new stage conversations.
+    await expect(bar.getByTestId('workflow-run-again')).toBeEnabled({ timeout: 30_000 });
+    await bar.getByTestId('workflow-run-again').click();
+    await expect(bar.getByTestId('workflow-run-phase')).toContainText(/실행 #2|Run #2/u, { timeout: 30_000 });
+    await expect(gate).toHaveAttribute('data-run-state', 'awaiting-approval', { timeout: 30_000 });
+    await bar.getByRole('button', { name: /승인 대기 1|1 awaiting approval/u }).click();
+    await panel.getByTestId('workflow-stage-approval').getByRole('button', { name: /^(승인|Approve)$/u }).click();
+    await expect.poll(() => attemptSession(1), { timeout: 60_000 }).not.toBeNull();
+    expect(await attemptSession(1)).not.toBe(sessionId);
+    await page.screenshot({ path: path.join(evidence, '06-run-again.png') });
   } finally { await app.close(); }
 });

@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:de3942eae2ca639a3f45cf42ce57f6de11ec6923a6baa930e466c2c569457dc1",
+        "inputDigest": "sha256:5d3db03fd7ef0d1ddb194f555ac634c2d947bbddc3b7f7ca08931b3ce8fe596f",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed: App passes a first-start flag to ShellNavigation so the first screen yields to a click or key made before projects arrive; conversation, approval and inbox flows are unchanged. Claims hold."
+        "reason": "Reviewed (I2-4): the flow panel moved its run actions into a run bar and its stage tabs into one stage column; stage conversations, links and the AI flow editing conversation keep their paths. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8da576e2ca4f0e9d1b926dcadf725dde23fab222fc2ed3cf0f177248939e9b7d",
+        "inputDigest": "sha256:1f5ce593155a3ebf516678074d4d7a78f4ac784b39139aee44b00ba8eab84f5b",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3 fixes 2): the one-run rule moved into the ledger start; an execution request left unconfirmed can be let go on the flow screen; anchors re-ranged. Claims hold."
+        "reason": "Reviewed (I2-4): the flow screen sends run.launch and saves run settings through the same host command boundary; the panel re-reads on run notices and lets an unconfirmed run request go. Claims hold."
       }
     }
   ]

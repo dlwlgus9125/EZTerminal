@@ -5,10 +5,11 @@ import { useShellText } from './shell-text';
 const TONE: Record<StageLamp, 'on' | 'amber' | 'red' | 'ok' | 'idle'> = { done: 'on', run: 'on', wait: 'amber', fail: 'red', idle: 'idle' };
 
 /** A run's stages as lamps on a wire. Compact: only a stage that works or waits keeps its name on screen. */
-export function StageChain({ stages, compact = false, onOpenStage }: {
+export function StageChain({ stages, compact = false, onOpenConversation }: {
   readonly stages: LiveFlow['stages'];
   readonly compact?: boolean;
-  readonly onOpenStage?: (nodeId: string) => void;
+  /** Opens a stage's conversation in this run (stages not started yet have none). */
+  readonly onOpenConversation?: (sessionId: string) => void;
 }): JSX.Element {
   const { text } = useShellText();
   const stateText = (state: StageLamp): string => state === 'done' ? text('끝남', 'done')
@@ -24,8 +25,9 @@ export function StageChain({ stages, compact = false, onOpenStage }: {
         return (
           <span key={stage.id} style={{ display: 'contents' }}>
             {index > 0 && <span className="ez-shell-wire" data-on={stage.state !== 'idle' || undefined} aria-hidden="true" />}
-            {onOpenStage
-              ? <button type="button" className="ez-shell-stage" data-state={stage.state} title={stage.title} onClick={() => onOpenStage(stage.id)}>{body}</button>
+            {onOpenConversation && stage.sessionId
+              ? <button type="button" className="ez-shell-stage" data-state={stage.state} title={text(`${stage.title} 대화 열기`, `Open the ${stage.title} conversation`)}
+                onClick={() => onOpenConversation(stage.sessionId!)} data-testid="shell-stage-chip">{body}</button>
               : <span className="ez-shell-stage" data-state={stage.state} title={stage.title}>{body}</span>}
           </span>
         );

@@ -19,7 +19,8 @@ function props(overrides: Partial<WorkflowFlowSurfaceProps>): WorkflowFlowSurfac
     text, savedGraph: graph, draftGraph: null, revision: 4, archivedNodes: [], runs: run ? [run] : [], editLocked: false, commandsDisabled: false,
     issues: [], providers: [], selection: null, onSelectionChange: vi.fn(), section: 'settings', onSectionChange: vi.fn(), pickedRunId: null, onPickRun: vi.fn(),
     runView: false, onRunViewChange: vi.fn(), layout: 'graph', onLayoutChange: vi.fn(), onGraphChange: vi.fn(), onSaveDraft: vi.fn(), onDiscardDraft: vi.fn(),
-    onPrepareRun: vi.fn(), onRunCommand: vi.fn(), stageLinks: () => [], canStartStageChat: true, onStartStageChat: vi.fn(), ...overrides,
+    subproject: { id: 'login', status: 'active' }, structure: false, onStructureChange: vi.fn(), onLaunch: vi.fn(), onSaveReviewer: vi.fn(), onAutoApprove: vi.fn(),
+    onRunCommand: vi.fn(), stageLinks: () => [], canStartStageChat: true, onStartStageChat: vi.fn(), ...overrides,
   };
 }
 
@@ -43,7 +44,7 @@ describe('WorkflowFlowSurface', () => {
     const { graph, run } = workflowCanvasFixture('retry-running', 'en');
     const older = { ...run!, runId: 'run-a', createdAt: '2026-10-21T00:00:00.000Z' };
     const newer = { ...run!, runId: 'run-b', createdAt: '2026-10-22T00:00:00.000Z' };
-    const shown = () => (container.querySelector('select[aria-label="Execution history"]') as HTMLSelectElement).value;
+    const shown = () => (container.querySelector('select[aria-label="Run number"]') as HTMLSelectElement).value;
     await act(async () => root.render(<WorkflowFlowSurface {...props({ savedGraph: graph, runs: [older, newer] })} />));
     expect(shown()).toBe('run-b');
     // run-b finishes while run-a is still running: the person keeps watching run-b.

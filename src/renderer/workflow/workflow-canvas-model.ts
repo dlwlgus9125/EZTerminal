@@ -1,5 +1,6 @@
-import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
+import { runUnfinished, type ExecutionRun, type ExecutionTask } from '../../shared/planning-execution';
 import { workflowOutcomePorts, type WorkflowActivation, type WorkflowEdge, type WorkflowGraph } from '../../shared/workflow-graph';
+import { sameWorkflowStructure } from '../../shared/workflow-run-view';
 import type { WorkflowCopy } from './workflow-copy';
 
 /** What a stage looks like in one run. Derived only from what the runtime already recorded. */
@@ -183,10 +184,10 @@ export function workflowLayoutOnlyChange(before: WorkflowGraph, after: WorkflowG
 }
 
 const runEnded = (run: ExecutionRun) => run.state === 'completed' || run.state === 'cancelled';
-/** The newest unfinished run, else the newest run. */
+/** The newest run still going (started, not ended), else the newest run: a run only prepared never hides one at work. */
 export function defaultWorkflowRun(runs: readonly ExecutionRun[]): ExecutionRun | null {
   const newest = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return newest.find(run => !runEnded(run)) ?? newest[0] ?? null;
+  return newest.find(runUnfinished) ?? newest[0] ?? null;
 }
 
 /**
@@ -219,7 +220,9 @@ export function resolveCanvasView(input: { savedGraph: WorkflowGraph; draftGraph
   const frozen = run?.preparation.workflow?.graph;
   if (run && frozen && input.runView) return { mode: 'run-view', graph: frozen, run, overlay: projectRunOverlay(run), editable: false, diverged: false };
   const editing = input.draftGraph ?? input.savedGraph;
-  if (run && frozen && !input.draftGraph && sameWorkflowGraph(input.savedGraph, frozen)) return { mode: 'edit-with-run', graph: editing, run, overlay: projectRunOverlay(run), editable: true, diverged: false };
+  // The run's state stays on the flow while its stages and connections are the ones the run froze: a
+  // stage's own settings may differ (not sent yet, or for the next run).
+  if (run && frozen && sameWorkflowStructure(editing, frozen)) return { mode: 'edit-with-run', graph: editing, run, overlay: projectRunOverlay(run), editable: true, diverged: false };
   return { mode: 'edit', graph: editing, run, overlay: null, editable: true, diverged: !!run && !!frozen };
 }
 

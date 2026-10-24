@@ -1,3 +1,4 @@
+import type { ProviderModel } from '../../shared/daemon-provider';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useMemo, useState, type ComponentType } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
@@ -40,17 +41,26 @@ interface FlowStoryProps {
   readonly paneHeight?: number;
   /** Start with the stage panel hidden (the header toggle brings it back). */
   readonly panelCollapsed?: boolean;
+  /** Start in "흐름 편집" (stages can be added, moved and connected). */
+  readonly structure?: boolean;
+  readonly autoApprove?: boolean;
 }
+
+/** The efforts each fixture model offers (the stage panel lists only these). */
+const STORY_CATALOGS: Readonly<Record<string, readonly ProviderModel[]>> = {
+  codex: [{ id: 'gpt-6-astra', displayName: 'GPT-6-Astra', isDefault: true, supportsReasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'] }],
+  claude: [{ id: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', isDefault: true, supportsReasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
+};
 
 const COLUMN = 248 + 96;
 function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
   if (draft === 'invalid') return { ...graph, nodes: graph.nodes.map(node => node.id === 'login:implement' ? { ...node, model: undefined } : node) };
-  if (draft === 'diverged') return { ...graph, nodes: graph.nodes.map(node => node.id === 'login:design' ? { ...node, instructions: `${node.instructions} (+)`, position: { x: node.position.x, y: node.position.y + 180 } } : node) };
+  if (draft === 'diverged') return { ...graph, nodes: graph.nodes.map(node => node.id === 'login:design' ? { ...node, role: 'review' as const, instructions: `${node.instructions} (+)`, position: { x: node.position.x, y: node.position.y + 180 } } : node) };
   return null;
 }
 function Failing(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
 
-function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false }: FlowStoryProps): JSX.Element {
+function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false, structure: initialStructure = false, autoApprove = false }: FlowStoryProps): JSX.Element {
   const text = useWorkflowCopy();
   const fixture = useMemo(() => {
     if (twoRuns) { const value = workflowCanvasRuns(locale); return { graph: value.graph, runs: value.runs, archivedNodes: [] as WorkflowNode[] }; }
@@ -69,6 +79,7 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
   const [layout, setLayout] = useState<'graph' | 'list'>(initialLayout ?? (mobile ? 'list' : 'graph'));
   const [reloaded, setReloaded] = useState(false);
   const [panelOpen, setPanelOpen] = useState(!panelCollapsed);
+  const [structure, setStructure] = useState(initialStructure === true);
   const scale = useWorkflowScale();
   const issues = validateWorkflowGraph(draftGraph ?? fixture.graph, true);
   const viewport = camera ? { x: 24 - (40 + camera.column * COLUMN) * scale * camera.zoom, y: 120 - 40 * scale * camera.zoom, zoom: camera.zoom } : undefined;
@@ -76,7 +87,9 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
   return <WorkflowFlowSurface text={text} mobile={mobile} savedGraph={fixture.graph} draftGraph={draftGraph} revision={4} archivedNodes={fixture.archivedNodes} runs={fixture.runs}
     editLocked={false} commandsDisabled={false} issues={issues} providers={[{ id: 'codex', label: 'Codex', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }, { id: 'claude', label: 'Claude Code', models: [{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }] }] as never}
     selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={pickedRunId} onPickRun={setPickedRunId} runView={runView} onRunViewChange={setRunView}
-    layout={layout} onLayoutChange={setLayout} onGraphChange={setDraftGraph} onSaveDraft={fn()} onDiscardDraft={() => setDraftGraph(null)} onPrepareRun={fn()} onRunCommand={fn()}
+    layout={layout} onLayoutChange={setLayout} onGraphChange={setDraftGraph} onSaveDraft={fn()} onDiscardDraft={() => setDraftGraph(null)} onRunCommand={fn()}
+    subproject={{ id: 'login', status: 'active', autoApprove, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } } }} catalogs={STORY_CATALOGS}
+    structure={structure} onStructureChange={setStructure} onLaunch={fn()} onSaveReviewer={fn()} onAutoApprove={fn()}
     stageLinks={nodeId => nodeId === 'login:implement' || nodeId === 'login:design' ? [{ sessionId: 'chat-impl', title: locale === 'ko' ? '로그인 오류 처리 방향 논의' : 'Discuss login error handling', graphRevision: 3 }] : []}
     canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()} onOpenResults={fn()} onOpenAttemptResult={fn()}
     canvasRenderer={Renderer} onReloadCanvas={() => setReloaded(true)} initialViewport={viewport} panelOpen={panelOpen} onPanelOpenChange={setPanelOpen} />;
@@ -134,7 +147,7 @@ export const CollapsedPanelOpensOnJump: Story = {
     const canvas = within(canvasElement);
     await expect(canvasElement.querySelector('.workflow-flow__panel')).not.toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
-    await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeVisible();
+    await expect(canvas.findByRole('button', { name: /^(승인|Approve)$/u })).resolves.toBeVisible();
     await expect(canvas.getByRole('button', { name: /단계 패널 접기|Hide stage panel/u })).toHaveAttribute('aria-expanded', 'true');
   },
 };
@@ -170,17 +183,19 @@ export const EmptyFlowAddFirstStage: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByRole('button', { name: /첫 AI 작업 단계 추가|Add a first AI task/u }));
     await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(1));
-    await expect(canvas.findByRole('tab', { name: /설정|Settings/u, selected: true })).resolves.toBeVisible();
+    await expect(canvas.findByTestId('workflow-stage-panel')).resolves.toBeVisible();
+    // Adding the first stage opens "흐름 편집" (its structure is editable).
+    await expect(canvas.findByTestId('workflow-stage-structure')).resolves.toBeVisible();
   },
 };
-/** The approval chip selects the waiting stage and opens its run status. */
+/** The approval chip selects the waiting stage: its panel leads with the decision and opens its record. */
 export const ApprovalChipOpensStage: Story = {
   args: { scenario: 'awaiting-approval', camera: { column: 0, zoom: 0.6 } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
-    await expect(canvas.findByRole('tab', { name: /실행 상태|Run status/u, selected: true })).resolves.toBeVisible();
-    await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeEnabled();
+    await expect(canvas.findByTestId('workflow-stage-approval')).resolves.toBeVisible();
+    await expect(canvas.findByRole('button', { name: /^(승인|Approve)$/u })).resolves.toBeEnabled();
   },
 };
 /** A short dock pane: the flow fits the pane, and jumping to a stage scrolls nothing outside the panel. */
@@ -198,7 +213,7 @@ export const ShortDockPane: Story = {
     await waitFor(() => expect(canvasElement.querySelector('.react-flow__node')).not.toBeNull());
     await expect(fits()).toEqual({ paneOverflow: 0, panelBelowBody: 0, canvasBelowBody: 0 });
     await userEvent.click(await canvas.findByRole('button', { name: /승인 대기 1|1 awaiting approval/u }));
-    await expect(canvas.findByRole('button', { name: /^허용$|^Approve$/u })).resolves.toBeVisible();
+    await expect(canvas.findByRole('button', { name: /^(승인|Approve)$/u })).resolves.toBeVisible();
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     await expect(pane.scrollTop).toBe(0);
     await expect(fits()).toEqual({ paneOverflow: 0, panelBelowBody: 0, canvasBelowBody: 0 });
@@ -206,7 +221,7 @@ export const ShortDockPane: Story = {
 };
 /** A stage added past the visible area is centred and selected, so the person sees what they added. */
 export const AddStageRevealsIt: Story = {
-  args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
+  args: { scenario: 'edit', structure: true, camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(7));
@@ -219,12 +234,12 @@ export const AddStageRevealsIt: Story = {
       const box = added.getBoundingClientRect();
       expect(box.left >= pane.left && box.right <= pane.right && box.top >= pane.top && box.bottom <= pane.bottom).toBe(true);
     });
-    await expect(canvas.findByRole('tab', { name: /설정|Settings/u, selected: true })).resolves.toBeVisible();
+    await expect(canvas.findByTestId('workflow-stage-structure')).resolves.toBeVisible();
   },
 };
 /** Drag from an output port to another stage's input adds exactly one connection. */
 export const ConnectByDrag: Story = {
-  args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
+  args: { scenario: 'edit', structure: true, camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(canvasElement.querySelectorAll('.react-flow__node').length).toBe(7));
     await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] .react-flow__handle-right[data-handleid="failed"]')).not.toBeNull());
@@ -235,7 +250,7 @@ export const ConnectByDrag: Story = {
 };
 /** Changing a stage's operation changes its ports; the new ports connect and their connections draw. */
 export const NewPortsAfterOperationChange: Story = {
-  args: { scenario: 'edit', select: { kind: 'node', key: 'plan' }, section: 'settings', camera: { column: 0, zoom: 0.9 } },
+  args: { scenario: 'edit', structure: true, select: { kind: 'node', key: 'plan' }, section: 'settings', camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"] [data-handleid="next"]')).not.toBeNull());
@@ -252,7 +267,7 @@ export const NewPortsAfterOperationChange: Story = {
 };
 /** Keyboard only: Tab to a connection, select it, Delete removes it. */
 export const DeleteConnectionByKeyboard: Story = {
-  args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
+  args: { scenario: 'edit', structure: true, camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
     const before = await settledEdges(canvasElement);
     (canvasElement.querySelector('.react-flow__edge') as HTMLElement).focus();
@@ -263,7 +278,7 @@ export const DeleteConnectionByKeyboard: Story = {
 };
 /** Keyboard only: select a stage and move it with the arrow keys; Escape clears the selection. */
 export const MoveStageByKeyboard: Story = {
-  args: { scenario: 'edit', camera: { column: 0, zoom: 0.9 } },
+  args: { scenario: 'edit', structure: true, camera: { column: 0, zoom: 0.9 } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await waitFor(() => expect(canvasElement.querySelector('[data-id="login:plan"]')).not.toBeNull());

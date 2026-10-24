@@ -1,6 +1,7 @@
 import type { DaemonApproval, DaemonSnapshot } from '../../shared/daemon-protocol';
-import type { ExecutionRun } from '../../shared/planning-execution';
+import { blockingRunOf } from '../../shared/planning-execution';
 import type { WorkflowSnapshot } from '../../shared/workflow';
+import { currentFlowRun, flowRunNumber, runStageConversation } from '../../shared/workflow-run-view';
 import { projectRunOverlay, type WorkflowNodeRunStatus } from '../workflow/workflow-canvas-model';
 
 /**
@@ -41,12 +42,15 @@ export type StageLamp = 'done' | 'run' | 'wait' | 'idle' | 'fail';
 export interface LiveFlow {
   readonly subprojectId: string;
   readonly title: string;
-  /** 1-based count of runs of this subproject; 0 = never run. */
+  /** 실행 #n of the run shown (the one still going, else the latest); 0 = never run. */
   readonly runNumber: number;
   readonly phase: 'never-run' | 'prepared' | 'running' | 'awaiting-approval' | 'paused' | 'completed' | 'cancelled' | 'attention';
   readonly lamp: Lamp;
-  readonly stages: readonly { readonly id: string; readonly title: string; readonly state: StageLamp }[];
+  /** The run's stages (a condition is part of its review stage); `sessionId` = this stage's conversation in this run. */
+  readonly stages: readonly { readonly id: string; readonly title: string; readonly state: StageLamp; readonly sessionId?: string }[];
   readonly autoApprove: boolean;
+  /** 다시 실행 can be sent now: no run of the flow is going and its review AI is saved. */
+  readonly canRunAgain: boolean;
 }
 
 const WORKING = new Set(['starting', 'queued', 'working']);
@@ -153,14 +157,14 @@ export function projectFlows(workflow: Pick<WorkflowSnapshot, 'subprojects' | 'r
   return workflow.subprojects
     .filter((subproject) => subproject.status === 'active' && !subproject.legacyPlanning)
     .map((subproject) => {
-      const runs = workflow.runs
-        .filter((run) => run.preparation.workflow?.subprojectId === subproject.id)
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      const latest: ExecutionRun | undefined = runs.at(-1);
+      // The run still going, else the latest: the run the flow screen opens, with the same number.
+      const latest = currentFlowRun(workflow.runs, subproject.id);
       const overlay = latest ? projectRunOverlay(latest) : null;
       const graph = latest?.preparation.workflow?.graph ?? subproject.graph;
-      const stages = graph.nodes
-        .map((node) => ({ id: node.id, title: node.title, state: stageLamp(overlay?.nodes[node.id]?.status) }));
+      const stages = graph.nodes.filter((node) => node.operation !== 'condition').map((node) => {
+        const conversation = runStageConversation(latest, node.id);
+        return { id: node.id, title: node.title, state: stageLamp(overlay?.nodes[node.id]?.status), ...(conversation ? { sessionId: conversation.sessionId } : {}) };
+      });
       const phase: LiveFlow['phase'] = !latest ? 'never-run'
         : (overlay?.awaitingApproval.length ?? 0) > 0 ? 'awaiting-approval'
           : stages.some((stage) => stage.state === 'fail') && latest.state !== 'completed' ? 'attention'
@@ -170,7 +174,8 @@ export function projectFlows(workflow: Pick<WorkflowSnapshot, 'subprojects' | 'r
                   : latest.state === 'prepared' ? 'prepared' : 'running';
       const lamp: Lamp = phase === 'awaiting-approval' || phase === 'paused' ? 'amber'
         : phase === 'attention' ? 'red' : phase === 'running' ? 'on' : phase === 'completed' ? 'ok' : 'idle';
-      return { subprojectId: subproject.id, title: subproject.title, runNumber: runs.length, phase, lamp, stages, autoApprove: subproject.autoApprove === true };
+      return { subprojectId: subproject.id, title: subproject.title, runNumber: latest ? flowRunNumber(workflow.runs, latest) : 0, phase, lamp, stages,
+        autoApprove: subproject.autoApprove === true, canRunAgain: !!subproject.runSettings && !blockingRunOf(workflow.runs, subproject.id) };
     });
 }
 

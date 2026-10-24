@@ -24,8 +24,10 @@ export function WorkflowStageSection({ node, text, readOnly, archived = false, l
 }
 
 /** What one stage did in one run, and the actions that belong to it. Read from the frozen run only. */
-export function WorkflowNodeRunSection({ run, node, view, text, commandsDisabled, onApprove, onOpenConversation, onOpenAttemptResult }: {
+export function WorkflowNodeRunSection({ run, node, view, text, commandsDisabled, onApprove, onOpenConversation, onOpenAttemptResult, decisions = true }: {
   readonly run: ExecutionRun; readonly node: WorkflowNode; readonly view?: WorkflowNodeRunView; readonly text: WorkflowCopy; readonly commandsDisabled: boolean;
+  /** Offer the waiting approval's buttons here (off where the stage panel already leads with them). */
+  readonly decisions?: boolean;
   readonly onApprove: (activationId: string, decision: 'approve' | 'reject') => void;
   readonly onOpenConversation?: (sessionId: string) => void;
   readonly onOpenAttemptResult?: (attemptId: string) => void;
@@ -44,7 +46,7 @@ export function WorkflowNodeRunSection({ run, node, view, text, commandsDisabled
       <div className="workflow-inline"><Badge>{text(`회차 ${activation.iteration + 1}`, `Round ${activation.iteration + 1}`)}</Badge><span>{stopped && !finished(activation.state) ? (run.state === 'cancelled' ? text('취소됨', 'Cancelled') : text('취소 처리 중', 'Cancelling')) : workflowStateLabel(activation.state, text)}{activation.outcome ? ` · ${workflowOutcomeLabel(activation.outcome, text)}` : ''}</span>
         {activation.resolvedBy === PLANNING_AUTO_APPROVAL_PRINCIPAL && <Badge variant="warning">{text('자동 승인됨', 'Auto-approved')}</Badge>}</div>
       {node.operation === 'join' && view?.arrivals && activation === activations[0] && <p>{text(`도착한 입력 ${view.arrivals.arrived}/${view.arrivals.expected}`, `Arrived inputs ${view.arrivals.arrived}/${view.arrivals.expected}`)}</p>}
-      {activation.state === 'awaiting-approval' && <div className="workflow-approval">
+      {activation.state === 'awaiting-approval' && decisions && <div className="workflow-approval">
         <p>{node.instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')}</p>
         <div className="workflow-inline">
           <Button variant="primary" disabled={commandsDisabled || !controls.approvalsOpen} onClick={() => onApprove(activation.id, 'approve')}>{text('허용', 'Approve')}</Button>

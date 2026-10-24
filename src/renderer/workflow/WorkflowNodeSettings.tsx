@@ -8,10 +8,15 @@ import { workflowOperationLabel, workflowOutcomeLabel, workflowPermissionLabel, 
 const operations: WorkflowNode['operation'][] = ['agent', 'condition', 'parallel', 'join', 'approval', 'complete'];
 const roles: WorkflowNode['role'][] = ['planning', 'design', 'implementation', 'review', 'integration'];
 
-/** The stage form: every setting the canvas can change is also editable here, without dragging. */
-export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, onChange, onRequestDelete, onMove }: {
+/**
+ * The stage form: every setting the canvas can change is also editable here, without dragging.
+ * `structure` keeps only what decides where the stage sits in the flow (the stage panel shows its own
+ * settings above it).
+ */
+export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, onChange, onRequestDelete, onMove, part = 'all' }: {
   readonly graph: WorkflowGraph; readonly node: WorkflowNode; readonly text: WorkflowCopy; readonly readOnly: boolean;
   readonly providers: readonly StructuredAgentProviderOption[];
+  readonly part?: 'all' | 'structure';
   readonly onChange: (graph: WorkflowGraph) => void;
   readonly onRequestDelete?: (nodeId: string) => void;
   /** Only where the canvas cannot drag (static renderer): nudges the stored position. */
@@ -26,18 +31,18 @@ export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, o
     <Field label={text('단계 이름', 'Stage title')}><Input value={node.title} maxLength={300} readOnly={readOnly} onChange={event => update({ title: event.target.value })} /></Field>
     <Field label={text('동작', 'Operation')}><Select value={node.operation} disabled={readOnly} onChange={event => update({ operation: event.target.value as WorkflowNode['operation'] })}>{operations.map(operation => <option key={operation} value={operation}>{workflowOperationLabel(operation, text)}</option>)}</Select></Field>
     <Field label={text('역할', 'Role')}><Select value={node.role} disabled={readOnly} onChange={event => update({ role: event.target.value as WorkflowNode['role'] })}>{roles.map(role => <option key={role} value={role}>{({ planning: text('기획', 'Planning'), design: text('설계', 'Design'), implementation: text('구현', 'Implementation'), review: text('검토', 'Review'), integration: text('통합', 'Integration') })[role]}</option>)}</Select></Field>
-    {node.operation === 'agent' && <>
+    {node.operation === 'agent' && part === 'all' && <>
       <Field label={text('AI 제공자', 'AI provider')}><Select value={node.providerId ?? ''} disabled={readOnly} onChange={event => update({ providerId: event.target.value || undefined, model: undefined })}><option value="">{text('선택하세요', 'Choose a provider')}</option>{node.providerId && !provider && <option value={node.providerId}>{node.providerId} · {text('사용 불가', 'Unavailable')}</option>}{providers.map(item => <option value={item.id} key={item.id} disabled={item.disabled}>{item.label}{item.disabled ? text(' · 사용 불가', ' · Unavailable') : ''}</option>)}</Select></Field>
       <Field label={text('모델', 'Model')} description={text('실행할 모델을 명시적으로 선택하세요.', 'Select the model that will execute this stage.')}><Select value={node.model ?? ''} disabled={readOnly} onChange={event => update({ model: event.target.value || undefined })}><option value="">{text('모델 선택', 'Choose a model')}</option>{node.model && !provider?.models.some(model => model.id === node.model) && <option value={node.model}>{node.model} · {text('재확인 필요', 'Recheck required')}</option>}{provider?.models.map(model => <option value={model.id} key={model.id}>{model.label}</option>)}</Select></Field>
       <Field label={text('권한', 'Permissions')} description={text('관리형 실행은 지정된 작업 폴더와 경로를 사용합니다.', 'Managed execution uses its assigned workspace and allowed paths.')}><Select value={node.permissionPreset} disabled={readOnly} onChange={event => update({ permissionPreset: event.target.value as WorkflowNode['permissionPreset'] })}><option value="plan">{workflowPermissionLabel('plan', text)}</option><option value="standard">{workflowPermissionLabel('standard', text)}</option>{node.permissionPreset === 'full-access' && <option value="full-access" disabled>{`${workflowPermissionLabel('full-access', text)} · ${text('관리형 실행에서 미지원', 'unsupported for managed execution')}`}</option>}</Select></Field>
     </>}
-    <label className="workflow-field">{text('지시', 'Instructions')}<textarea value={node.instructions} readOnly={readOnly} onChange={event => update({ instructions: event.target.value })} rows={4} /></label>
-    {node.operation === 'agent' && <>
+    {part === 'all' && <label className="workflow-field">{text('지시', 'Instructions')}<textarea value={node.instructions} readOnly={readOnly} onChange={event => update({ instructions: event.target.value })} rows={4} /></label>}
+    {node.operation === 'agent' && part === 'all' && <>
       <label className="workflow-field">{text('완료 조건 · 한 줄에 하나', 'Acceptance criteria · one per line')}<textarea value={node.acceptance.join('\n')} readOnly={readOnly} onChange={event => update({ acceptance: event.target.value.split('\n') })} rows={3} /></label>
       <label className="workflow-field">{text('수정 허용 경로 · 한 줄에 하나', 'Allowed paths · one per line')}<textarea value={node.allowedPaths.join('\n')} readOnly={readOnly} onChange={event => update({ allowedPaths: event.target.value.split('\n') })} rows={2} /></label>
     </>}
     <fieldset className="workflow-connections"><legend>{text('참조할 입력', 'Input references')}</legend>{others.map(item => <label className="workflow-inline" key={item.id}><input type="checkbox" disabled={readOnly} checked={node.inputs.some(input => input.nodeId === item.id)} onChange={event => update({ inputs: event.target.checked ? [...node.inputs, { nodeId: item.id, kind: 'document' }] : node.inputs.filter(input => input.nodeId !== item.id) })} />{item.title}<Select aria-label={`${item.title} ${text('참조 종류', 'reference type')}`} value={node.inputs.find(input => input.nodeId === item.id)?.kind ?? 'document'} disabled={readOnly || !node.inputs.some(input => input.nodeId === item.id)} onChange={event => update({ inputs: node.inputs.map(input => input.nodeId === item.id ? { ...input, kind: event.target.value as 'document' | 'result' } : input) })}><option value="document">{text('문서', 'Document')}</option><option value="result">{text('실행 결과', 'Execution result')}</option></Select></label>)}</fieldset>
-    <Field label={text('추가 시도 한도', 'Retry limit')}><Input type="number" min={0} max={20} value={node.retryLimit} readOnly={readOnly} onChange={event => update({ retryLimit: Math.min(20, Math.max(0, Number(event.target.value))) })} /></Field>
+    {part === 'all' && <Field label={text('추가 시도 한도', 'Retry limit')}><Input type="number" min={0} max={20} value={node.retryLimit} readOnly={readOnly} onChange={event => update({ retryLimit: Math.min(20, Math.max(0, Number(event.target.value))) })} /></Field>}
     {node.operation === 'condition' && <>
       <Field label={text('판단할 단계 결과', 'Result source')}><Select value={node.condition?.sourceNodeId ?? ''} disabled={readOnly} onChange={event => update({ condition: { sourceNodeId: event.target.value, field: 'outcome', equals: node.condition?.equals ?? 'passed' } })}><option value="">{text('단계를 선택하세요', 'Choose a stage')}</option>{others.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</Select></Field>
       <Field label={text('비교할 결과', 'Expected outcome')}><Select value={node.condition?.equals ?? 'passed'} disabled={readOnly} onChange={event => update({ condition: { sourceNodeId: node.condition?.sourceNodeId ?? '', field: 'outcome', equals: event.target.value as 'passed' | 'failed' } })}><option value="passed">{text('통과', 'Passed')}</option><option value="failed">{text('실패', 'Failed')}</option></Select></Field>

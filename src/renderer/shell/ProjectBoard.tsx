@@ -35,6 +35,8 @@ export interface ProjectBoardProps {
   readonly changes?: BoardChanges | null;
   readonly onOpenConversation: (sessionId: string) => void;
   readonly onOpenFlow: (subprojectId: string) => void;
+  /** 다시 실행 from the board (absent where the host cannot take it in one request). */
+  readonly onRunAgain?: (subprojectId: string) => void;
   readonly onNewFlow: () => void;
   readonly onOpenTerminal: (panelId: string) => void;
   readonly onNewTerminal: () => void;
@@ -136,10 +138,13 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
                   <span className="ez-shell-card__t">{flow.title}</span>
                   <span className="ez-shell-card__m">{flow.autoApprove ? text('자동 승인', 'Auto-approve') : text('승인은 내가', 'I approve')}</span>
                 </button>
-                <StageChain stages={flow.stages} />
-                {flow.phase === 'awaiting-approval'
-                  ? <button type="button" className="ez-shell-btn" data-tone="amber" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('승인 보기', 'Review approval')}</button>
-                  : <button type="button" className="ez-shell-btn" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('흐름 보기', 'Open flow')}</button>}
+                <StageChain stages={flow.stages} onOpenConversation={props.onOpenConversation} />
+                <span className="ez-shell-flowcard__actions">
+                  {flow.phase === 'awaiting-approval'
+                    ? <button type="button" className="ez-shell-btn" data-tone="amber" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('승인 보기', 'Review approval')}</button>
+                    : <button type="button" className="ez-shell-btn" onClick={() => props.onOpenFlow(flow.subprojectId)} data-testid="shell-flow-open">{text('흐름 보기', 'Open flow')}</button>}
+                  {props.onRunAgain && flow.canRunAgain && <button type="button" className="ez-shell-btn" onClick={() => props.onRunAgain!(flow.subprojectId)} data-testid="shell-flow-run-again">{flow.runNumber > 0 ? text('다시 실행', 'Run again') : text('실행', 'Run')}</button>}
+                </span>
               </div>
             ))}
           </Lane>

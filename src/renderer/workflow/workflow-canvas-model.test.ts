@@ -176,10 +176,23 @@ describe('one canvas: which graph and which run', () => {
     expect(view.overlay?.nodes[id('plan')].status).toBe('working');
   });
 
-  it('hides the overlay once the draft differs and offers the run view', () => {
+  it('hides the overlay once the draft changes the flow’s stages or connections, and offers the run view', () => {
     const draft = { ...saved, nodes: saved.nodes.slice(0, -1) };
     const view = resolveCanvasView({ savedGraph: saved, draftGraph: draft, runs: [base], pickedRunId: null, runView: false });
     expect(view).toMatchObject({ mode: 'edit', overlay: null, diverged: true, graph: draft });
+  });
+
+  it('keeps the overlay while only a stage’s own settings changed (they reach stages not sent yet)', () => {
+    const edited = { ...saved, nodes: saved.nodes.map((node, index) => index === 0 ? { ...node, instructions: 'Edited', reasoningEffort: 'high' } : node) };
+    expect(resolveCanvasView({ savedGraph: edited, draftGraph: null, runs: [base], pickedRunId: null, runView: false })).toMatchObject({ mode: 'edit-with-run', diverged: false, graph: edited });
+    expect(resolveCanvasView({ savedGraph: saved, draftGraph: edited, runs: [base], pickedRunId: null, runView: false })).toMatchObject({ mode: 'edit-with-run', diverged: false, graph: edited });
+  });
+
+  it('shows the run at work over a newer run only prepared', () => {
+    const prepared = { ...at(base, 'later', 'prepared', '2026-10-23T00:00:00.000Z'), startedAt: undefined } as ExecutionRun;
+    const working = { ...at(base, 'working', 'running', '2026-10-21T00:00:00.000Z'), startedAt: '2026-10-21T00:00:00.000Z' } as ExecutionRun;
+    expect(defaultWorkflowRun([prepared, working])?.runId).toBe('working');
+    expect(defaultWorkflowRun([prepared])?.runId).toBe('later');
   });
 
   it('shows the frozen graph read-only in the run view', () => {

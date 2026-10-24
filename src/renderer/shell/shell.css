@@ -457,6 +457,12 @@
   cursor: default;
 }
 
+.ez-shell-flowcard__actions {
+  display: flex;
+  flex: none;
+  gap: 0.5rem;
+}
+
 .ez-shell-flowcard__name {
   flex: none;
   width: 10rem;
@@ -497,6 +503,11 @@
 .ez-shell-stage[data-state='wait'] { border-color: var(--ui-warning); color: var(--ui-warning); box-shadow: 0 0 0.875rem var(--ui-warning-ring); }
 .ez-shell-stage[data-state='fail'] { border-color: var(--ui-danger-border); color: var(--ui-danger); }
 .ez-shell-stage[data-state='idle'] { color: var(--ui-text-muted); }
+.ez-shell-stage[data-state='run'] { border-color: var(--ui-accent); color: var(--ui-text-primary); }
+/* A stage chip that opens its conversation in this run. */
+button.ez-shell-stage { font-family: inherit; cursor: pointer; }
+button.ez-shell-stage:hover { background: var(--ui-surface-raised); }
+button.ez-shell-stage:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 1px; }
 
 .ez-shell-wire {
   flex: 1;

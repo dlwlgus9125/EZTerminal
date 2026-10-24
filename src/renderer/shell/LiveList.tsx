@@ -196,7 +196,17 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
                   ? <span className="ez-shell-row__chain"><StageChain stages={flow.stages} compact /></span>
                   : <span className="ez-shell-row__m">{flowPhaseText(flow.phase, text)}</span>}
               </button>
-            ))}
+            )).flatMap((row, index) => {
+              const flow = props.flows[index]!;
+              return [row, ...flow.stages.filter((stage) => stage.state === 'run' && stage.sessionId).map((stage) => (
+                <button key={`${flow.subprojectId}:${stage.id}`} type="button" className="ez-shell-row" data-child="true" aria-current={props.focus === stage.sessionId ? 'true' : undefined}
+                  onClick={() => props.onOpenConversation(stage.sessionId!)} data-testid="shell-live-stage" data-session={stage.sessionId}>
+                  <Led tone="on" />
+                  <span className="ez-shell-row__t">{stage.title}</span>
+                  <span className="ez-shell-row__m">{text('작업 중', 'working')}</span>
+                </button>
+              ))];
+            })}
           </>
         )}
         <h2 className="ez-shell-live__sec">

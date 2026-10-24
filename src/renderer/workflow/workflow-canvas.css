@@ -53,7 +53,7 @@
 .workflow-edge-path[data-selected] { stroke: var(--ui-accent); stroke-width: 2.5; }
 
 /* One canvas surface: header, canvas and the stage panel. Fills the subproject view. */
-.workflow-flow { container-type: inline-size; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--ui-space-3); }
+.workflow-flow { container-type: inline-size; min-height: 0; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: var(--ui-space-3); }
 /* Beside each other, canvas and panel share one bounded row: the panel scrolls inside itself and nothing
    pushes the flow past its pane (the pane's own minimum lives on .workflow-flow-host). */
 .workflow-flow__body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); grid-template-rows: minmax(0, 1fr); gap: var(--ui-space-3); }
@@ -94,7 +94,6 @@
 .workflow-canvas-header { display: grid; gap: var(--ui-space-2); }
 .workflow-canvas-header__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2) var(--ui-space-4); }
 .workflow-canvas-header__group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
-.workflow-canvas-header__run { flex: 1 1 100%; order: 3; }
 .workflow-canvas-header__view { display: flex; gap: var(--ui-space-1); margin-left: auto; order: 2; }
 .workflow-canvas-header [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
 .workflow-canvas-header__banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); padding: var(--ui-space-2) var(--ui-space-3); border-left: 3px solid var(--ui-info); border-radius: var(--ui-radius-md); background: var(--ui-info-muted); }
@@ -140,3 +139,21 @@
 .workflow-flow[data-mobile] .workflow-flow__canvas { min-height: 0; }
 .workflow-flow[data-mobile] .workflow-flow__panel { overflow: visible; }
 @media (prefers-reduced-motion: reduce) { .workflow-node-card .is-spinning { animation: none; } }
+/* The run bar: one line for the flow's runs and the settings every run uses (승인, 검토 AI). */
+.workflow-run-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2) var(--ui-space-3); padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: var(--ui-surface-raised); }
+.workflow-run-bar__phase { font-family: var(--ui-font-label); font-weight: 600; }
+.workflow-run-bar__why { flex: 1 1 100%; order: 9; color: var(--ui-text-muted); font-size: var(--ui-font-size-xs); }
+.workflow-run-bar__group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1); }
+.workflow-run-bar__label { color: var(--ui-text-muted); font-family: var(--ui-font-label); font-size: var(--ui-font-size-xs); }
+.workflow-run-bar [aria-pressed='true'] { border-color: var(--ui-accent); background: var(--ui-surface-selected); }
+/* One stage, one column: state and conversations, its own settings (고급 folded), structure while editing the flow, document, record. */
+.workflow-stage-panel { display: grid; gap: var(--ui-space-3); }
+.workflow-stage-panel__state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); margin: 0; font-size: var(--ui-font-size-sm); }
+.workflow-stage-panel__conversations { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
+.workflow-stage-panel__conversations .workflow-hint { flex: 1 1 100%; margin: 0; }
+.workflow-stage-panel__fields { display: grid; gap: var(--ui-space-2); min-width: 0; margin: 0; padding: 0; border: 0; }
+.workflow-stage-panel__fields > legend { margin-bottom: var(--ui-space-1); padding: 0; font-size: var(--ui-font-size-sm); font-weight: 600; }
+.workflow-stage-panel__more { padding-top: var(--ui-space-2); border-top: 1px solid var(--ui-border-subtle); }
+.workflow-stage-panel__more > summary { cursor: pointer; font-size: var(--ui-font-size-sm); font-weight: 600; }
+.workflow-stage-panel__more[open] > summary { margin-bottom: var(--ui-space-2); }
+.workflow-stage-panel__more > * + * { margin-top: var(--ui-space-2); }

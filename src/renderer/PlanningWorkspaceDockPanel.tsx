@@ -33,6 +33,8 @@ export interface PlanningNavigation {
   readonly openFiles: (projectId: string) => void;
   readonly openTerminal: (projectId: string, projectName: string) => void;
   readonly openProjects: () => void;
+  /** The project board (판), from a subproject's flow. */
+  readonly openBoard?: (projectId: string) => void;
 }
 export const PlanningNavigationContext =
   createContext<PlanningNavigation | null>(null);
@@ -223,6 +225,7 @@ export function PlanningWorkspaceDockPanel(
       navigationTarget={typeof props.params.subprojectId === 'string' ? { subprojectId: props.params.subprojectId, nodeId: props.params.nodeId as string | undefined, key: props.params.workflowNavigationKey as string ?? props.params.subprojectId } : undefined}
       conversations={conversations}
       onBack={navigation?.openProjects}
+      onBoard={navigation?.openBoard ? () => navigation.openBoard!(projectId) : undefined}
       onNewConversation={navigation ? () => navigation.newConversation(projectId, projectName) : undefined}
       onNewTerminal={navigation ? () => navigation.openTerminal(projectId, projectName) : undefined}
       onOpenConversation={navigation ? id => navigation.openConversation(id, conversations.find(item => item.id === id)?.title) : undefined}

@@ -17,6 +17,10 @@ export function workflowOperationLabel(operation: WorkflowNode['operation'], tex
 export function workflowOutcomeLabel(outcome: string, text: WorkflowCopy): string {
   return ({ next: text('다음', 'Next'), passed: text('통과', 'Passed'), failed: text('실패', 'Failed'), approved: text('허용', 'Approved'), rejected: text('거절', 'Rejected') } as Record<string, string>)[outcome] ?? outcome;
 }
+/** A model's reasoning effort as the conversation composer names it. */
+export function workflowEffortLabel(effort: string, text: WorkflowCopy): string {
+  return ({ minimal: text('최소', 'Minimal'), low: text('낮음', 'Low'), medium: text('보통', 'Medium'), high: text('높음', 'High'), xhigh: text('매우 높음', 'Extra high'), max: text('최대', 'Max') } as Record<string, string>)[effort] ?? effort;
+}
 /** A stage agent runs on its own: plan means it only plans. */
 export function workflowPermissionLabel(preset: PermissionPreset, text: WorkflowCopy): string {
   return permissionPresetLabel(preset, text('ko', 'en') === 'ko' ? 'ko' : 'en', 'automated');

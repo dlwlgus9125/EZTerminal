@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { GitDirectoryStatus } from '../../shared/git-status';
 import { createDaemonCommand, type DaemonSnapshot } from '../../shared/daemon-protocol';
-import type { WorkflowSnapshot } from '../../shared/workflow';
+import { WORKFLOW_LAUNCH_CAPABILITY, type WorkflowSnapshot } from '../../shared/workflow';
 import { ConversationStartPanel } from '../ConversationStartPanel';
 import { useConversationStartWiring } from '../conversation-start-wiring';
 import type { LedTone } from '../ui';
@@ -232,6 +232,17 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     return projectTabs(candidates.map((candidate) => ({ ...candidate, lastActiveAt: candidate.lastActiveAt ?? undefined })), projectId);
   }, [projects, project, projectId]);
 
+  // 다시 실행 from a flow card: one request on a host that has it. A refusal (another run going, no
+  // review AI saved) opens the flow, where it says why and offers the rest.
+  const canLaunch = !!snapshot?.capabilities?.includes(WORKFLOW_LAUNCH_CAPABILITY);
+  const runAgain = useCallback(async (subprojectId: string): Promise<void> => {
+    const target = workflow?.subprojects.find((subproject) => subproject.id === subprojectId);
+    if (!workflow || !target || !projectId) return;
+    const result = await window.ezterminal.executeWorkflowCommand({ commandId: `workflow-${crypto.randomUUID()}`, projectId, hostId: workflow.hostId,
+      expectedRevision: target.revision, subprojectId, type: 'run.launch', payload: { runId: `run-${crypto.randomUUID()}` } }).catch(() => null);
+    if (!result?.ok && project) { actions.openFlow({ projectId: project.projectId, name: project.name }, subprojectId); navigation.showWork(); }
+  }, [workflow, projectId, project, actions, navigation]);
+
   const openConversation = useCallback((sessionId: string, preview = true): void => {
     const title = snapshot?.sessions.find((session) => session.id === sessionId)?.title;
     // The opening helper decides visibility (a tab living in a popout leaves the board alone).
@@ -351,6 +362,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
         ) : undefined}
         onOpenConversation={(sessionId) => openConversation(sessionId)}
         onOpenFlow={(subprojectId) => { if (projectRef) { actions.openFlow(projectRef, subprojectId); navigation.showWork(); } }}
+        onRunAgain={canLaunch ? (subprojectId) => void runAgain(subprojectId) : undefined}
         onNewFlow={() => { if (projectRef) { actions.openFlow(projectRef); navigation.showWork(); } }}
         onOpenTerminal={(panelId) => { actions.openTerminal(panelId); navigation.showWork(); }}
         onNewTerminal={() => { actions.newTerminal(projectRef); navigation.showWork(); }}

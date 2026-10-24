@@ -54,6 +54,23 @@ describe('projectFlows', () => {
     expect(projectFlows(shellWorkflow('completed'))[0]).toMatchObject({ phase: 'completed', lamp: 'ok' });
     expect(projectFlows(shellWorkflow('retry-running'))[0]).toMatchObject({ phase: 'running', lamp: 'on' });
   });
+
+  it('shows the run still going over a newer one only prepared, without condition chips, with this run’s stage conversations', () => {
+    const workflow = shellWorkflow('retry-running');
+    const going = workflow.runs.at(-1)!;
+    const prepared = { ...going, runId: 'run-login-5', createdAt: '2030-01-01T00:00:00.000Z', state: 'prepared' as const, startedAt: undefined, attempts: [], reviews: [] };
+    const [flow] = projectFlows({ ...workflow, runs: [...workflow.runs, prepared] });
+    expect(flow).toMatchObject({ runNumber: 4, phase: 'running', canRunAgain: false });
+    const graph = going.preparation.workflow!.graph;
+    expect(flow!.stages.map((stage) => stage.id)).toEqual(graph.nodes.filter((node) => node.operation !== 'condition').map((node) => node.id));
+    const attempt = going.attempts.at(-1)!;
+    expect(flow!.stages.find((stage) => stage.id === attempt.taskId)?.sessionId).toBe(attempt.sessionId);
+    // 다시 실행 needs a finished flow and a saved review AI.
+    const done = shellWorkflow('completed');
+    expect(projectFlows(done)[0]!.canRunAgain).toBe(false);
+    const saved = { ...done, subprojects: done.subprojects.map((subproject) => ({ ...subproject, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } } })) };
+    expect(projectFlows(saved)[0]!.canRunAgain).toBe(true);
+  });
 });
 
 describe('otherProjects', () => {

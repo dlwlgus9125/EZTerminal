@@ -1,6 +1,6 @@
-import { ArrowLeft, Archive, CheckCheck, Copy, FolderKanban, History, MessageSquare, MessageSquarePlus, MoreHorizontal, Plus, RefreshCw, Undo2 } from 'lucide-react';
+import { ArrowLeft, Archive, CheckCheck, ClipboardList, Copy, FolderKanban, History, MessageSquare, MessageSquarePlus, MoreHorizontal, Play, Plus, RefreshCw, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { WorkflowCommandSchema, createWorkflowGraph, validateWorkflowGraph, workflowPresets, type WorkflowAccess, type WorkflowCommand, type WorkflowGraph, type WorkflowPresetId, type WorkflowSnapshot, type WorkflowSubproject } from '../../shared/workflow';
+import { WORKFLOW_LAUNCH_CAPABILITY, WorkflowCommandSchema, createWorkflowGraph, validateWorkflowGraph, workflowPresets, type WorkflowAccess, type WorkflowCommand, type WorkflowGraph, type WorkflowPresetId, type WorkflowSnapshot, type WorkflowSubproject } from '../../shared/workflow';
 import type { DaemonCommandReceipt, DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { DaemonProviderManagementResult, ProviderModel } from '../../shared/daemon-provider';
 import type { AgentCapabilitiesClient } from '../../shared/agent-capabilities';
@@ -41,6 +41,8 @@ export interface WorkflowWorkspacePanelProps {
   readonly onNewConversation?: () => void;
   readonly onNewTerminal?: () => void;
   readonly onBack?: () => void;
+  /** From a subproject's flow back to the project board (desktop); without it, back to the project items. */
+  readonly onBoard?: () => void;
   readonly disabled?: boolean;
   readonly disabledReason?: string;
   readonly mobile?: boolean;
@@ -84,7 +86,7 @@ function graphForPreset(id: WorkflowPresetId, prefix: string, text: (ko: string,
 export function WorkflowWorkspacePanel(props: WorkflowWorkspacePanelProps): JSX.Element {
   return <WorkflowWorkspace key={props.projectId} {...props} />;
 }
-function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onNewConversation, onNewTerminal, onBack, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, renderPlanning, canvasRenderer, onReloadCanvas, readPlanningResult }: WorkflowWorkspacePanelProps): JSX.Element {
+function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, renderPlanning, canvasRenderer, onReloadCanvas, readPlanningResult }: WorkflowWorkspacePanelProps): JSX.Element {
   const text = useWorkflowCopy();
   const stateLabel = useAgentStateLabel();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
@@ -110,6 +112,9 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [runView, setRunView] = useState(false);
   const [layout, setLayout] = useState<'graph' | 'list'>(mobile ? 'list' : 'graph');
   const [panelOpen, setPanelOpen] = useState(true);
+  // "흐름 편집": add, move and connect stages. In memory only, closed when another subproject opens.
+  const [structure, setStructure] = useState(false);
+  useEffect(() => { setStructure(false); }, [selectedId]);
   const [resultSelection, setResultSelection] = useState<PlanningResultSelection | null>(null);
   const flowPage = view === 'flow' || view === 'stage' || view === 'run';
   const lastFlowPage = useRef<'flow' | 'stage' | 'run'>('flow');
@@ -224,6 +229,16 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     finally { if (generation === refreshGeneration.current) setLoading(false); }
   }, [access, projectId, recoveryAccess, disabled]);
   useEffect(() => { void refresh(); return () => { refreshGeneration.current += 1; }; }, [refresh]);
+  // A run moves through its stages without a flow revision: read again when the host says this project's runs changed.
+  useEffect(() => {
+    if (!access.onWorkflowRunsChanged || disabled) return undefined;
+    let timer: number | undefined;
+    const stop = access.onWorkflowRunsChanged(changed => {
+      if (changed !== projectId || timer !== undefined) return;
+      timer = window.setTimeout(() => { timer = undefined; if (!mutating.current) void refresh(); }, 300);
+    });
+    return () => { stop(); if (timer !== undefined) window.clearTimeout(timer); };
+  }, [access, projectId, refresh, disabled]);
   const [revealRequest, setRevealRequest] = useState<{ nodeId: string; key: string } | undefined>();
   useEffect(() => { if (targetSubproject) { setSelectedId(targetSubproject); setNodeId(targetNode ?? null); setView(targetNode ? 'stage' : 'flow'); setEdgeId(null); setRunView(false); setRevealRequest(targetNode && targetKey ? { nodeId: targetNode, key: targetKey } : undefined); } }, [targetKey, targetSubproject, targetNode]);
   useEffect(() => {
@@ -286,6 +301,14 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     // A save that only moved stages reads as a layout change in the history.
     const summary = workflowLayoutOnlyChange(selected.graph, next) ? text('배치 변경', 'Layout change') : text('흐름과 단계 문서 편집', 'Edit workflow and stage documents');
     await execute({ type: 'workflow.patch', payload: { graph: next, summary } }, { ...selected, revision: local.baseRevision });
+  };
+  // 다시 실행: one request on a host that has it; an older host prepares from the dialog, then starts.
+  const canLaunch = !!daemon?.capabilities?.includes(WORKFLOW_LAUNCH_CAPABILITY);
+  const openPrepare = (): void => { setReviewer(selected?.runSettings?.reviewer ? { ...selected.runSettings.reviewer } : { providerId: 'codex', model: '' }); setPrepareOpen(true); };
+  const launch = async (): Promise<void> => {
+    if (!canLaunch) { openPrepare(); return; }
+    const runId = `run-${crypto.randomUUID()}`;
+    if (await execute({ type: 'run.launch', payload: { runId } })) { setPreparedRunId(runId); setRunView(false); }
   };
   const selectSubproject = (id: string): void => { setSelectedId(id); setNodeId(snapshot?.subprojects.find(item => item.id === id)?.graph.entryNodeId ?? null); setView('flow'); setEdgeId(null); setRunView(false); };
   const beginCreate = (sourceSessionId?: string): void => { const id = `subproject-${crypto.randomUUID()}`; setCreate({ id, title: '', goal: '', preset: 'feature', mode: 'preset', graph: graphForPreset('feature', id, text), ...(sourceSessionId ? { linkSessionId: sourceSessionId } : {}) }); setPreviewExpired(false); setCreationVisible(true); };
@@ -359,7 +382,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const shownGeneral = filter === 'archived' ? [] : general.filter(item => item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const runs = snapshot?.runs.filter(run => run.preparation.workflow?.subprojectId === selectedId) ?? [];
   return <section ref={scrollElement} onScroll={event => setScrollTop(event.currentTarget.scrollTop)} className="workflow-workspace" data-mobile={mobile || undefined} data-view={view === 'planning' ? 'planning' : selected && flowPage && !mobile ? 'flow' : undefined} data-testid="workflow-workspace">
-    <header className="workflow-header"><IconButton icon={ArrowLeft} aria-label={selected || view === 'planning' ? text('프로젝트 항목으로', 'Back to project items') : text('프로젝트 목록으로', 'Back to projects')} onClick={() => { if (selectedId) { setSelectedId(null); setView('flow'); } else if (view === 'planning') setView('flow'); else onBack?.(); }} /><div className="workflow-header__title"><small>{selected ? projectName : text('프로젝트', 'Project')}</small><h2>{selected?.title ?? projectName}</h2></div><div className="workflow-header__actions"><IconButton icon={RefreshCw} aria-label={text('다시 불러오기', 'Refresh')} disabled={busy || disabled} onClick={() => void refresh()} />{selected && <Button disabled={readOnly} onClick={() => setRename({ title: selected.title, goal: selected.goal })}>{text('이름·목표', 'Name and goal')}</Button>}{selected && <Button leadingIcon={<MessageSquarePlus />} disabled={readOnly || !daemonAccess} onClick={() => startChat({ subprojectId: selected.id, scope: 'flow-edit' })}>{text('AI와 흐름 편집', 'Edit flow with AI')}</Button>}{selected && <Menu label={text('소프로젝트 작업', 'Subproject actions')} placement="bottom-end" trigger={<IconButton icon={MoreHorizontal} aria-label={text('소프로젝트 작업', 'Subproject actions')} />}>{flowLinks.map(link => <MenuItem key={link.sessionId} icon={MessageSquare} onSelect={() => onOpenConversation?.(link.sessionId)}>{conversations.find(item => item.id === link.sessionId)?.title ?? text('흐름 편집 대화', 'Flow editing conversation')}</MenuItem>)}{flowLinks.length > 0 && <MenuSeparator />}<MenuItem icon={CheckCheck} disabled={readOnly || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'completed' ? 'active' : 'completed' } })}>{selected.status === 'completed' ? text('다시 진행', 'Reopen') : text('완료로 표시', 'Mark complete')}</MenuItem><MenuItem icon={Copy} disabled={hostLocked || !!local} onSelect={() => setCopyTitle(`${selected.title} ${text('복사본', 'copy')}`)}>{text('소프로젝트 복사', 'Copy subproject')}</MenuItem><MenuItem icon={Archive} disabled={hostLocked || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'archived' ? 'active' : 'archived' } })}>{selected.status === 'archived' ? text('복원', 'Restore') : text('보관', 'Archive')}</MenuItem></Menu>}</div></header>
+    <header className="workflow-header"><IconButton icon={ArrowLeft} aria-label={selected && view !== 'flow' && view !== 'stage' && view !== 'run' ? text('흐름으로', 'Back to the flow') : selected && onBoard ? text('판으로', 'Back to the board') : selected || view === 'planning' ? text('프로젝트 항목으로', 'Back to project items') : text('프로젝트 목록으로', 'Back to projects')}
+      onClick={() => { if (selected && !flowPage) setView(lastFlowPage.current); else if (selectedId && onBoard) { setSelectedId(null); setView('flow'); onBoard(); } else if (selectedId) { setSelectedId(null); setView('flow'); } else if (view === 'planning') setView('flow'); else onBack?.(); }} data-testid="workflow-back" /><div className="workflow-header__title"><small>{selected ? projectName : text('프로젝트', 'Project')}</small><h2>{selected?.title ?? projectName}</h2></div><div className="workflow-header__actions">{!selected && <IconButton icon={RefreshCw} aria-label={text('다시 불러오기', 'Refresh')} disabled={busy || disabled} onClick={() => void refresh()} />}{selected && <Button disabled={readOnly} onClick={() => setRename({ title: selected.title, goal: selected.goal })}>{text('이름·목표', 'Name and goal')}</Button>}{selected && <Button leadingIcon={<MessageSquarePlus />} disabled={readOnly || !daemonAccess} onClick={() => startChat({ subprojectId: selected.id, scope: 'flow-edit' })}>{text('AI와 흐름 편집', 'Edit flow with AI')}</Button>}{selected && <Button leadingIcon={<History />} aria-pressed={view === 'history'} onClick={() => setView(view === 'history' ? lastFlowPage.current : 'history')}>{text('변경 기록', 'History')}</Button>}{selected && <Menu label={text('소프로젝트 작업', 'Subproject actions')} placement="bottom-end" trigger={<IconButton icon={MoreHorizontal} aria-label={text('소프로젝트 작업', 'Subproject actions')} />}><MenuItem icon={RefreshCw} disabled={busy || disabled} onSelect={() => void refresh()}>{text('다시 불러오기', 'Refresh')}</MenuItem><MenuItem icon={Play} disabled={hostLocked || !!local || issues.length > 0 || selected.status === 'archived'} onSelect={openPrepare}>{text('실행 준비만', 'Prepare a run only')}</MenuItem>{renderPlanning && <MenuItem icon={ClipboardList} onSelect={() => setView('planning')}>{text('기획·설계·검토', 'Planning, design and review')}</MenuItem>}<MenuSeparator />{flowLinks.map(link => <MenuItem key={link.sessionId} icon={MessageSquare} onSelect={() => onOpenConversation?.(link.sessionId)}>{conversations.find(item => item.id === link.sessionId)?.title ?? text('흐름 편집 대화', 'Flow editing conversation')}</MenuItem>)}{flowLinks.length > 0 && <MenuSeparator />}<MenuItem icon={CheckCheck} disabled={readOnly || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'completed' ? 'active' : 'completed' } })}>{selected.status === 'completed' ? text('다시 진행', 'Reopen') : text('완료로 표시', 'Mark complete')}</MenuItem><MenuItem icon={Copy} disabled={hostLocked || !!local} onSelect={() => setCopyTitle(`${selected.title} ${text('복사본', 'copy')}`)}>{text('소프로젝트 복사', 'Copy subproject')}</MenuItem><MenuItem icon={Archive} disabled={hostLocked || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'archived' ? 'active' : 'archived' } })}>{selected.status === 'archived' ? text('복원', 'Restore') : text('보관', 'Archive')}</MenuItem></Menu>}</div></header>
     {snapshot && !authorityReady ? <p role="status" className="workflow-notice">{text('기기에 보관된 화면입니다. 초안 편집은 복구되며, 다시 연결해 호스트의 권한·버전을 확인한 뒤에만 직접 저장하거나 실행할 수 있습니다.', 'Showing the copy stored on this device. Draft edits are recoverable; reconnect for a fresh host authority and version check before saving or running.')}</p> : disabled && <p role="status" className="workflow-notice">{disabledReason ?? text('호스트에 다시 연결하세요.', 'Reconnect to the host.')}</p>}
     {error && <p role="alert" className="workflow-error">{error}</p>}
     {busy && <p role="status">{text('호스트에 저장하고 결과를 확인하는 중입니다.', 'Saving to the host and confirming the result.')}</p>}
@@ -376,9 +400,11 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       <ul className="workflow-items">{shownSubprojects.map(item => <li key={item.id}><button type="button" className="workflow-item" data-testid="workflow-subproject-item" onClick={() => selectSubproject(item.id)}><FolderKanban aria-hidden="true" /><span><strong>{item.title}</strong><small>{text('소프로젝트', 'Subproject')} · {item.graph.nodes.length} {text('단계', 'stages')} · v{item.revision}{item.status === 'archived' ? text(' · 보관됨', ' · Archived') : ''}</small><span>{item.goal}</span></span></button></li>)}{shownGeneral.map(item => <li key={item.id} className="workflow-conversation-row"><button type="button" className="workflow-item" onClick={() => onOpenConversation?.(item.id)}><MessageSquare aria-hidden="true" /><span><strong>{item.title}</strong><small>{text('일반 대화 · 계획 없음', 'Conversation · no plan')} · {item.providerLabel ?? (item.status && stateLabel(item.status))}</small></span></button><Button variant="ghost" size="sm" disabled={hostLocked || !snapshot} onClick={() => { setLinkSessionId(item.id); setLinkTarget({ subprojectId: '', nodeId: '' }); }}>{text('단계에 연결', 'Link to stage')}</Button></li>)}</ul>
       {!shownSubprojects.length && !shownGeneral.length && <p role="status">{query || filter === 'archived' ? text('해당하는 항목이 없습니다.', 'No matching items.') : text('소프로젝트로 흐름을 만들거나 계획 없이 대화를 시작하세요.', 'Create a workflow in a subproject, or start a conversation without a plan.')}</p>}
     </div> : <>
-      <div className="workflow-toolbar workflow-tabs" role="group" aria-label={text('소프로젝트 보기', 'Subproject view')}>{(['flow', 'history', ...(renderPlanning ? ['planning'] as const : [])] as const).map(tab => <Button key={tab} aria-pressed={tab === 'flow' ? flowPage : view === tab} onClick={() => setView(tab === 'flow' ? (flowPage ? view : lastFlowPage.current) : tab)}>{({ flow: text('흐름', 'Flow'), history: text('변경 기록', 'History'), planning: text('기획·설계·검토', 'Planning, design and review') })[tab]}</Button>)}</div>
       {(selected.status !== 'active' || (local && selected.revision !== local.baseRevision)) && <div className="workflow-toolbar workflow-subproject-actions">{selected.status !== 'active' && <Badge>{selected.status === 'archived' ? text('보관됨', 'Archived') : text('완료됨', 'Completed')}</Badge>}{local && selected.revision !== local.baseRevision && <span role="alert">{text('다른 창 또는 AI가 수정했습니다. 현재 입력을 보존한 채 최신 변경을 비교하세요.', 'Another window or AI changed this workflow. Your input is preserved; compare the latest changes.')}</span>}</div>}
       {flowPage && <div className="workflow-flow-host"><WorkflowFlowSurface key={selected.id} text={text} mobile={mobile} savedGraph={selected.graph} draftGraph={local?.graph ?? null} revision={selected.revision} archivedNodes={selected.archivedNodes} runs={runs}
+        subproject={selected} catalogs={models} structure={structure} onStructureChange={setStructure} savedRunSettings={canLaunch}
+        onLaunch={() => void launch()} onSaveReviewer={reviewer => void execute({ type: 'subproject.update', payload: { runSettings: { reviewer } } })}
+        onAutoApprove={on => { if (on !== (selected.autoApprove === true)) void execute({ type: 'subproject.update', payload: { autoApprove: on } }); }}
         editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}
         onSelectionChange={next => { setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); }}
@@ -386,7 +412,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         pickedRunId={preparedRunId} onPickRun={setPreparedRunId} runView={runView} onRunViewChange={setRunView}
         layout={layout} onLayoutChange={setLayout} onGraphChange={updateGraph} onSaveDraft={() => void saveGraph()}
         onDiscardDraft={() => setDrafts(current => { const next = { ...current }; delete next[selected.id]; return next; })}
-        onPrepareRun={() => setPrepareOpen(true)} onRunCommand={command => void execute(command)}
+        onRunCommand={command => void execute(command)}
         stageLinks={stageLinksFor} canStartStageChat={!!daemonAccess} onStartStageChat={stageId => startChat({ subprojectId: selected.id, nodeId: stageId, scope: 'stage' })}
         onOpenConversation={onOpenConversation} onOpenResults={renderPlanning ? runId => { setAdvancedRunId(runId); setView('planning'); } : undefined}
         onOpenAttemptResult={readPlanningResult ? (_runId, attemptId) => setResultSelection({ kind: 'attempt', projectId, subprojectId: selected.id, attemptId }) : undefined}

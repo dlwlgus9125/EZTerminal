@@ -21,7 +21,7 @@ function WorkflowStory({ mobile = false, locale = 'ko', selected = false, archiv
 const meta = { title: 'Production/Workflow/Project workspace', component: WorkflowStory, parameters: { layout: 'fullscreen', a11y: { test: 'error' } } } satisfies Meta<typeof WorkflowStory>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-export const ProjectItems: Story = { args: { locale: 'en' }, play: async ({ canvasElement }) => { const canvas = within(canvasElement); await expect(canvas.findByText('Login improvements')).resolves.toBeVisible(); await expect(canvas.getByText(/Conversation · no plan · Codex/u)).toBeVisible(); await userEvent.click(canvas.getByRole('button', { name: /Login improvements/ })); await expect(canvas.getByRole('button', { name: 'Add stage' })).toBeVisible(); } };
+export const ProjectItems: Story = { args: { locale: 'en' }, play: async ({ canvasElement }) => { const canvas = within(canvasElement); await expect(canvas.findByText('Login improvements')).resolves.toBeVisible(); await expect(canvas.getByText(/Conversation · no plan · Codex/u)).toBeVisible(); await userEvent.click(canvas.getByRole('button', { name: /Login improvements/ })); await expect(canvas.findByTestId('workflow-run-bar')).resolves.toBeVisible(); await userEvent.click(canvas.getByRole('button', { name: 'Edit the flow' })); await expect(canvas.getByRole('button', { name: 'Add stage' })).toBeVisible(); await userEvent.click(canvas.getByRole('button', { name: 'Done editing the flow' })); } };
 export const Graph: Story = { args: { selected: true } };
 export const MobileList: Story = { args: { mobile: true, selected: true } };
 export const InvalidConnections: Story = { args: { selected: true, invalid: true, locale: 'en' } };

@@ -2115,7 +2115,8 @@ export function App(): JSX.Element {
     openFiles: showProjectWorkspace,
     openTerminal: (projectId, projectName) => openProjectTerminal({ projectId, projectName, titleMode: 'generated' }),
     openProjects: () => { setActiveProjectId(null); setAgentHubView('projects'); setSidebarDestination('agents'); },
-  }), [openStructuredAgentSession, openStructuredAgentDraft, showProjectWorkspace, openProjectTerminal, openPlanningProject]);
+    openBoard: (projectId) => shellNavigation.showBoard(projectId),
+  }), [openStructuredAgentSession, openStructuredAgentDraft, showProjectWorkspace, openProjectTerminal, openPlanningProject, shellNavigation]);
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, instanceToken: object, close: () => void): void => {
