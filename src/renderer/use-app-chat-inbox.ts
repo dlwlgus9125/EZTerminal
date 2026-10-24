@@ -29,6 +29,8 @@ function writeSeen(seen: AppChatInboxSeen): void {
 export interface AppChatInboxState {
   readonly entries: readonly AppChatInboxEntry[];
   readonly markSeen: (sessionId: string) => void;
+  /** The daemon snapshot the inbox reads; the Board + Desk shell reads the same one. */
+  readonly snapshot: DaemonSnapshot | null;
 }
 
 /** The app-conversation part of 받은 요청, live from the daemon snapshot. */
@@ -78,5 +80,5 @@ export function useAppChatInbox(activeSessionId: string | undefined, daemon = re
     () => (snapshot ? appChatInbox(snapshot, seen, new Set(activeSessionId ? [activeSessionId] : [])) : []),
     [snapshot, seen, activeSessionId],
   );
-  return { entries, markSeen };
+  return { entries, markSeen, snapshot };
 }

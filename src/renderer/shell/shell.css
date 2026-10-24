@@ -12,7 +12,7 @@
   font-family: var(--ui-font-body);
 }
 
-.ez-shell kbd {
+:where(.ez-shell-top, .ez-shell-live, .ez-shell-board-layer, .ez-shell) kbd {
   padding: 0 5px;
   border: 1px solid var(--ui-border-mid);
   border-radius: var(--ui-radius-sm);
@@ -20,16 +20,38 @@
   font: 11px / 16px var(--ui-font-label);
 }
 
-.ez-shell .ez-shell-label { font-family: var(--ui-font-label); }
-.ez-shell .ez-shell-mono { font-family: var(--ui-font-terminal); }
-.ez-shell .ez-shell-muted { color: var(--ui-text-muted); }
-.ez-shell .ez-shell-plus { color: var(--ui-success); }
-.ez-shell .ez-shell-minus { color: var(--ui-danger); }
+.ez-shell-label { font-family: var(--ui-font-label); }
+.ez-shell-mono { font-family: var(--ui-font-terminal); }
+.ez-shell-muted { color: var(--ui-text-muted); }
 
-.ez-shell button:focus-visible {
+:where(.ez-shell-top, .ez-shell-live, .ez-shell-board-layer) button:focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
 }
+
+/* In the app: the board takes the dock's place; the dock stays mounted, hidden and out of flow. */
+.workbench-body > .dock-host[data-shell-hidden='true'] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  /* opacity too: a descendant that sets visibility: visible would otherwise show through. */
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workbench-body > .ez-shell-board-layer {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ui-floor);
+}
+
+.ez-shell-board-layer:focus { outline: none; }
 
 /* ── top bar ─────────────────────────────────────────────────────────── */
 .ez-shell-top {
@@ -218,6 +240,18 @@
   border-radius: 50%;
   background: var(--ui-accent);
 }
+
+/* work mode's layout menu: the workspace popover opens under the button, aligned right */
+.ez-shell-layout { position: relative; display: flex; }
+.ez-shell-layout .workspace-menu-popover {
+  top: calc(100% + 8px);
+  right: 0;
+  bottom: auto;
+  left: auto;
+  width: min(420px, calc(100vw - 16px));
+}
+.ez-shell-layout .workbench-views,
+.ez-shell-layout .workspace-bar { flex-wrap: wrap; }
 
 /* ── buttons ─────────────────────────────────────────────────────────── */
 .ez-shell-btn {
@@ -542,7 +576,7 @@
   align-items: center;
   gap: 10px;
   min-height: 64px;
-  padding: 0 18px;
+  padding: 10px 18px;
   border-top: 1px solid var(--ui-border-mid);
   background: var(--ui-canvas);
 }
@@ -558,12 +592,18 @@
   background: transparent;
 }
 
-.ez-shell-launch__composer .structured-agent-session-header,
-.ez-shell-launch__composer .structured-agent__draft-header,
-.ez-shell-launch__composer .chat-transcript,
-.ez-shell-launch__composer .structured-agent-composer__hint,
-.ez-shell-launch__composer .conversation-start__settings:empty {
+.ez-shell-launch .ez-shell-launch__composer .structured-agent-session-header,
+.ez-shell-launch .ez-shell-launch__composer .structured-agent__draft-header,
+.ez-shell-launch .ez-shell-launch__composer .chat-transcript,
+.ez-shell-launch .ez-shell-launch__composer .structured-agent-composer__hint,
+.ez-shell-launch .ez-shell-launch__composer .conversation-start__settings:empty {
   display: none;
+}
+
+.ez-shell-launch .ez-shell-launch__composer .structured-agent-composer__disabled-reason {
+  margin: 4px 0 0;
+  color: var(--ui-text-muted);
+  font-size: 12px;
 }
 
 .ez-shell-launch__composer .structured-agent-composer {
@@ -576,7 +616,9 @@
 .ez-shell-launch__composer .chat-composer__box,
 .ez-shell-launch__composer .chat-composer[data-provider] .chat-composer__box {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  row-gap: 8px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -598,9 +640,10 @@
 
 .ez-shell-launch__composer .structured-agent-composer__input-row {
   display: flex;
-  flex: 1 1 auto;
+  /* One line when there is room; the switches move under the message when the window is narrow. */
+  flex: 1 1 22rem;
   align-items: center;
-  min-width: 0;
+  min-width: 16rem;
   height: 40px;
   padding: 0 12px;
   border: 1px solid var(--ui-border-mid);
@@ -624,8 +667,8 @@
   resize: none;
 }
 
-.ez-shell-launch__composer .chat-composer__settings { flex: none; margin-left: 10px; }
-.ez-shell-launch__composer .chat-composer__settings .structured-agent-session-settings { flex-wrap: nowrap; }
+.ez-shell-launch__composer .chat-composer__settings { flex: 1 1 auto; min-width: 0; margin-left: 10px; }
+.ez-shell-launch__composer .chat-composer__settings .structured-agent-session-settings { flex-wrap: wrap; }
 .ez-shell-launch__composer .chat-composer__spacer { display: none; }
 .ez-shell-launch__composer .chat-composer__send { flex: none; margin-left: 8px; }
 

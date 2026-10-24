@@ -1,11 +1,12 @@
 import { Columns2, Rows2, Save, Star, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { useAppTranslation } from '../i18n';
 import { useNativeOverlayRegistration } from '../native-overlay';
 import { Button, IconButton, Input } from '../ui';
 
 export function WorkspaceMenu({
+  leading,
   names,
   onApply,
   onDelete,
@@ -17,6 +18,8 @@ export function WorkspaceMenu({
   saving,
   startupPreset,
 }: {
+  /** Sections shown first (the Board + Desk layout menu puts work sets and quick layouts here). */
+  readonly leading?: ReactNode;
   readonly names: readonly string[];
   readonly onApply: (name: string) => void;
   readonly onDelete: (name: string) => void;
@@ -46,6 +49,7 @@ export function WorkspaceMenu({
       aria-label={t('header.workspace')}
       data-testid="preset-menu"
     >
+      {leading}
       <div className="workspace-menu-section">
         <div className="workspace-menu-label">{t('workspace.split')}</div>
         <Button leadingIcon={<Columns2 />} variant="ghost" onClick={onSplitRight} data-testid="btn-split-right">

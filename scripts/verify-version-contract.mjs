@@ -287,9 +287,9 @@ assert(
 );
 assert(
   rendererApp.includes(
-    'appVersion={rendererCapabilities.runtimeVersions()?.app ?? null}',
+    'appVersion: rendererCapabilities.runtimeVersions()?.app ?? null',
   ),
-  'The production AppHeader does not read the runtime application version.',
+  'The production top bar does not read the runtime application version.',
 );
 assert(
   new RegExp(

@@ -6,6 +6,8 @@ import { useShellText } from './shell-text';
 
 export interface ShellTopBarProps {
   readonly mode: ShellMode;
+  /** Shown as the wordmark's tooltip (the version moved out of the bar). */
+  readonly appVersion?: string | null;
   /** The tabs to show (already limited, see projectTabs). */
   readonly projects: readonly ProjectTabCandidate[];
   readonly selectedProjectId: string | null;
@@ -33,7 +35,7 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
   const board = props.mode === 'board';
   return (
     <header className="ez-shell-top" data-testid="shell-top-bar">
-      <h1 className="ez-shell-mark"><i aria-hidden="true" />EZTerminal</h1>
+      <h1 className="ez-shell-mark" title={props.appVersion ? `EZTerminal ${props.appVersion}` : undefined} data-testid="workbench-brand-mark"><i aria-hidden="true" />EZTerminal</h1>
       <nav className="ez-shell-projects" aria-label={text('프로젝트', 'Projects')}>
         {props.projects.map((project) => {
           const current = project.projectId === props.selectedProjectId;

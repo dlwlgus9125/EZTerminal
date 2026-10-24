@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import type { ConversationEntry } from '../shared/conversation-history';
-import type { ConversationFolders } from '../shared/conversation-folders';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { ConversationStartPanel } from './ConversationStartPanel';
 import { rendererCapabilities } from './capability-access';
 import { structuredAgentSessionId, structuredAgentSessionHistoryId, STRUCTURED_AGENT_DRAFT_PREFIX } from './StructuredAgentDockPanel';
-import type { ConversationStartAccess } from './conversation-start';
+import { useConversationStartWiring } from './conversation-start-wiring';
 import { Button } from './ui';
 import { useAppTranslation } from './i18n';
 
@@ -28,10 +27,8 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
   const [revision, setRevision] = useState(0);
   const [ready, setReady] = useState(false);
   const { i18n } = useAppTranslation();
-  const access = useMemo<ConversationStartAccess>(() => ({ history: window.ezterminal,
-    getSnapshot: () => window.ezterminal.getDaemonSnapshot(), sendCommand: command => window.ezterminal.sendDaemonCommand(command), principal: { kind: 'desktop', id: 'renderer-agent-ui' } }), []);
-  const storage = useMemo(() => ({ chatStateRead: window.ezterminal.chatStateRead, chatStateWrite: window.ezterminal.chatStateWrite }), []);
-  const capabilityClient = useMemo(() => ({ list: window.ezterminal.agentCapabilitiesList, manage: window.ezterminal.agentCapabilitiesManage }), []);
+  const folderProjectId = entry?.projectId ?? props.params?.projectId;
+  const { access, storage, capabilityClient, workspaceFolders } = useConversationStartWiring(snapshot, folderProjectId);
   useEffect(() => {
     let alive = true;
     setReady(false); setError(undefined);
@@ -61,25 +58,6 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
     return () => { alive = false; if (timer) clearTimeout(timer); unsubscribe(); };
   }, [id, isDraft, access, revision, props.api]);
   const liveState = snapshot?.sessions.find(session => session.id === entry?.linkedSessionId)?.state;
-  // The folders each workspace of the project would bring, for the start form's folder setting.
-  // Asked again whenever the project's workspaces change (folders added, removed or moved).
-  const readFolders = window.ezterminalDesktop?.getConversationFolders;
-  const folderProjectId = entry?.projectId ?? props.params?.projectId;
-  const folderTargetsKey = useMemo(() => JSON.stringify((snapshot?.workspaces ?? [])
-    .filter(workspace => !workspace.archivedAt && (!folderProjectId || workspace.projectId === folderProjectId))
-    .map(workspace => [workspace.projectId, workspace.id, workspace.rootPath])), [snapshot, folderProjectId]);
-  const [folders, setFolders] = useState<Readonly<Record<string, ConversationFolders>>>({});
-  useEffect(() => {
-    const targets = JSON.parse(folderTargetsKey) as readonly (readonly [string, string, string])[];
-    if (!readFolders || targets.length === 0) return undefined;
-    let alive = true;
-    void Promise.all(targets.map(async ([targetProjectId, workspaceId]) => (
-      [workspaceId, await readFolders({ projectId: targetProjectId, workspaceId }).catch(() => null)] as const
-    ))).then(found => {
-      if (alive) setFolders(Object.fromEntries(found.filter((pair): pair is readonly [string, ConversationFolders] => pair[1] !== null)));
-    });
-    return () => { alive = false; };
-  }, [readFolders, folderTargetsKey]);
   useEffect(() => {
     if (entry?.action === 'open' && liveState && ['completed', 'interrupted', 'failed', 'archived'].includes(liveState)) setRevision(value => value + 1);
   }, [entry?.action, liveState]);
@@ -93,7 +71,7 @@ export function ConversationDockPanel({ props, renderLive, onOpenHistory, onOpen
       onSeedDraftApplied: () => props.api.updateParameters({ ...params.current, conversationDraftText: undefined }),
     } : {})}
     snapshot={snapshot} access={access} storage={storage} capabilityClient={capabilityClient}
-    {...(readFolders ? { workspaceFolders: (workspaceId: string) => folders[workspaceId] } : {})} onEditProject={onEditProject}
+    {...(workspaceFolders ? { workspaceFolders } : {})} onEditProject={onEditProject}
     onOpenHistory={() => onOpenHistory?.(entry?.projectId ?? props.params?.projectId)} onOpenSettings={onOpenSettings} onContinueCli={onContinueCli} onReviewChange={onReviewChange}
     onStarted={(sessionId, resolved) => {
       props.api.updateParameters({ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), ...(resolved ? { conversationId: resolved.conversationId } : {}) });

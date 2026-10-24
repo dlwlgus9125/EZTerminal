@@ -33,6 +33,8 @@ export interface LiveListProps {
   readonly onOpenConversation: (sessionId: string) => void;
   readonly onNewConversation: () => void;
   readonly onOpenWaiting: (item: WaitingItem) => void;
+  /** Everything that asked for the person (받은 요청), including finished turns. */
+  readonly onInbox: () => void;
   readonly onOpenFlow: (subprojectId: string) => void;
   readonly onOpenTerminal: (panelId: string) => void;
   readonly onNewTerminal: () => void;
@@ -55,18 +57,17 @@ export function LiveList(props: LiveListProps): JSX.Element {
         {props.projectDetail && <span className="ez-shell-live__detail">{props.projectDetail}</span>}
       </div>
       <div className="ez-shell-live__body">
-        {props.waiting.length > 0 && (
-          <>
-            <h2 className="ez-shell-live__sec"><Glyph name="req" size={14} />{text('나를 기다리는 것', 'Waiting for me')}<span className="ez-shell-n">{props.waiting.length}</span></h2>
-            {props.waiting.map((item) => (
-              <button key={item.approvalId} type="button" className="ez-shell-row" data-need="true" onClick={() => props.onOpenWaiting(item)} data-testid="shell-live-waiting">
-                <Led tone="amber" />
-                <span className="ez-shell-row__t">{waitingKindText(item.kind, text)} · {item.title}</span>
-                <span className="ez-shell-row__m">{providerName(item.providerId)} · {item.kind === 'question' ? text('답 기다림', 'answer needed') : text('허용 또는 거부', 'allow or deny')}</span>
-              </button>
-            ))}
-          </>
-        )}
+        <h2 className="ez-shell-live__sec"><Glyph name="req" size={14} />{text('나를 기다리는 것', 'Waiting for me')}<span className="ez-shell-n">{props.waiting.length}</span></h2>
+        {props.waiting.map((item) => (
+          <button key={item.approvalId} type="button" className="ez-shell-row" data-need="true" onClick={() => props.onOpenWaiting(item)} data-testid="shell-live-waiting">
+            <Led tone="amber" />
+            <span className="ez-shell-row__t">{waitingKindText(item.kind, text)} · {item.title}</span>
+            <span className="ez-shell-row__m">{providerName(item.providerId)} · {item.kind === 'question' ? text('답 기다림', 'answer needed') : text('허용 또는 거부', 'allow or deny')}</span>
+          </button>
+        ))}
+        <button type="button" className="ez-shell-row" data-more="true" onClick={props.onInbox} data-testid="rail-inbox">
+          <span /><span className="ez-shell-row__t">{text('받은 요청 모두 보기', 'All requests')}</span>
+        </button>
         <h2 className="ez-shell-live__sec">
           <Glyph name="new" size={14} />{text('대화', 'Conversations')}<span className="ez-shell-n">{props.conversations.length}</span>
           <button type="button" className="ez-shell-live__add" aria-label={text('새 대화', 'New conversation')} onClick={props.onNewConversation} data-testid="shell-live-new">+</button>
@@ -81,7 +82,9 @@ export function LiveList(props: LiveListProps): JSX.Element {
                 {providerName(item.providerId)} · {conversationStateText(item.state, text)}{item.children.length > 0 ? text(` · 하위 ${item.children.length}`, ` · ${item.children.length} sub`) : ''}
               </span>
             </button>
-            {item.children.map((child) => (
+            {/* Subagents show under the conversation in front, or while one of them works or waits. */}
+            {(props.focus === item.sessionId || item.children.some((child) => child.sessionId === props.focus || child.lamp === 'on' || child.lamp === 'amber'))
+              && item.children.map((child) => (
               <button key={child.sessionId} type="button" className="ez-shell-row" data-child="true" aria-current={props.focus === child.sessionId ? 'true' : undefined}
                 onClick={() => props.onOpenConversation(child.sessionId)}
                 aria-label={text(`${child.title} (하위 에이전트, ${conversationStateText(child.state, text)})`, `${child.title} (subagent, ${conversationStateText(child.state, text)})`)}>

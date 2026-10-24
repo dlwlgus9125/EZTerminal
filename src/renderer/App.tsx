@@ -59,6 +59,7 @@ import {
   type ProjectSessionTarget,
 } from '../shared/project-workspace';
 import { countAgentAttention } from '../shared/agent-attention';
+import type { DaemonSnapshot } from '../shared/daemon-protocol';
 
 import { isAppUpdateAvailable } from '../shared/app-update';
 import { AuxiliaryCloseDialog, type AuxiliaryCloseChoice } from './AuxiliaryCloseDialog';
@@ -145,10 +146,7 @@ import {
 } from './feature-loader';
 import type { TerminalNoticeKind } from './terminal-notice';
 import {
-  ActivityRail,
-  AppHeader,
   SidebarShell,
-  StatusBar,
   WorkspaceBar,
   WorkspaceMenu,
   useSidebarReflow,
@@ -183,12 +181,29 @@ import {
 } from './workbench-coordinator';
 import { DockWindowCoordinator } from './dock-window-coordinator';
 import { PanelPreviewContext, PanelPreviewSlot, usePanelPreview } from './shell/panel-preview';
+import { useDeskShell, type DeskTerminal } from './shell/DeskShell';
+import { ShellLayoutMenu } from './shell/ShellLayoutMenu';
+import { ShellNavigation, parseShellNavigation } from './shell/navigation-store';
+import { WindowControls } from './workbench/WindowControls';
 import { writePlanAccess } from './agent-plan-access';
 import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 import { DesktopRuntimeLifecycleProvider, usePanelRuntimeLifecycle } from './desktop-runtime-lifecycle';
+
+/** Renderer storage key for the Board + Desk place (board or work, selected project). */
+const SHELL_NAVIGATION_KEY = 'ezterminal.shell.navigation';
+
+/** The project a dock tab belongs to, when it knows one. */
+function panelProjectId(panel: IDockviewPanel, snapshot: DaemonSnapshot | null): string | undefined {
+  const params = panel.params ?? {};
+  if (typeof params.projectId === 'string' && params.projectId) return params.projectId;
+  const session = params.projectSession as { projectId?: unknown } | undefined;
+  if (session && typeof session.projectId === 'string') return session.projectId;
+  const sessionId = structuredAgentSessionId(String(params.historyId ?? ''));
+  return sessionId ? snapshot?.sessions.find((candidate) => candidate.id === sessionId)?.projectId : undefined;
+}
 
 const CLOSE_RISK_I18N_KEY = {
   'ssh-prompt': 'safetyDialog.risks.sshPrompt',
@@ -723,6 +738,17 @@ export function App(): JSX.Element {
   const dockWindowCoordinatorRef = useRef<DockWindowCoordinator | null>(null);
   // Session-only: which tab opened from a list may still be replaced by the next list open.
   const panelPreview = useMemo(() => new PanelPreviewSlot(), []);
+  // Board or work mode and the selected project (Board + Desk). Per device, in renderer storage.
+  const [shellStart] = useState(() => {
+    let stored: unknown = null;
+    try { stored = JSON.parse(window.localStorage.getItem(SHELL_NAVIGATION_KEY) ?? 'null'); } catch { stored = null; }
+    const navigation = new ShellNavigation(parseShellNavigation(stored), (state) => {
+      try { window.localStorage.setItem(SHELL_NAVIGATION_KEY, JSON.stringify(state)); } catch { /* storage full or denied: the place is not kept */ }
+    });
+    return { navigation, restored: stored !== null };
+  });
+  const shellNavigation = shellStart.navigation;
+  const shellNav = useSyncExternalStore(shellNavigation.subscribe, shellNavigation.getSnapshot);
   const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void; } | null>(null);
@@ -780,6 +806,7 @@ export function App(): JSX.Element {
         sessionMirroringCoordinatorRef.current?.getSnapshot().replacementLocked ?? true,
       onActivePanelChange: (panelId, source) => {
         setActivePanelId(panelId);
+        if (source === 'activation' && panelId && !workbenchCoordinatorRef.current?.isLayoutTransactionActive()) shellNavigation.showWork();
         setPaneCount(apiRef.current?.panels.length ?? 0);
         const panel = panelId ? apiRef.current?.getPanel(panelId) : undefined;
         if (panel?.api.location.type === 'grid') lastMainGridPanelRef.current = panel;
@@ -1302,31 +1329,13 @@ export function App(): JSX.Element {
     ...agentSnapshot,
     items: agentSnapshot.items.filter((item) => !orchestrationWorkerIds.has(item.id)),
   }), [agentSnapshot, orchestrationWorkerIds]);
-  const [unreadAgentIds, setUnreadAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   const latestAgentRevisionRef = useRef(-1);
-  const previousAgentStatusesRef = useRef<Map<string, AgentStatus>>(new Map());
   useEffect(() => {
     let alive = true;
     const applySnapshot = (next: AgentActivitySnapshot): void => {
       if (!alive || next.revision <= latestAgentRevisionRef.current) return;
       latestAgentRevisionRef.current = next.revision;
       setAgentSnapshot(next);
-      const previous = previousAgentStatusesRef.current;
-      const nextStatuses = new Map(next.items.map((item) => [item.id, item.status] as const));
-      setUnreadAgentIds((current) => {
-        const updated = new Set(
-          [...current].filter((id) => {
-            const status = nextStatuses.get(id);
-            return status === 'done' || status === 'blocked' || status === 'error';
-          }),
-        );
-        for (const item of next.items) {
-          if (item.status !== 'done' && item.status !== 'blocked' && item.status !== 'error') continue;
-          if (previous.get(item.id) !== item.status) updated.add(item.id);
-        }
-        return updated;
-      });
-      previousAgentStatusesRef.current = nextStatuses;
     };
     const unsubscribe = window.ezterminal.onAgentActivitySnapshot(applySnapshot);
     void window.ezterminal
@@ -1392,12 +1401,6 @@ export function App(): JSX.Element {
           void window.ezterminal.markAgentSeen(activity.id, activity.stateSeq);
         }
       }
-      setUnreadAgentIds(
-        (current) =>
-          new Set(
-            [...current].filter((id) => agentSnapshot.items.find((item) => item.id === id)?.sessionId !== sessionId),
-          ),
-      );
     },
     [agentSnapshot, sessionPaneBindings, workbenchCoordinator],
   );
@@ -1412,23 +1415,6 @@ export function App(): JSX.Element {
       );
       if (isActive) void window.ezterminal.markAgentSeen(activity.id, activity.stateSeq);
     }
-    setUnreadAgentIds(
-      (current) =>
-        new Set(
-          [...current].filter((id) => {
-            const activity = agentSnapshot.items.find((item) => item.id === id);
-            return (
-              !activity ||
-              !(sessionPaneBindings.get(activity.sessionId) ?? [])
-                .some(
-                  (binding) =>
-                    binding.panelId === activePanelId &&
-                    apiRef.current?.getPanel(binding.panelId)?.api === binding.instanceToken,
-                )
-            );
-          }),
-        ),
-    );
   }, [activePanelId, agentSnapshot, sessionPaneBindings]);
 
   useEffect(() => {
@@ -1547,9 +1533,8 @@ export function App(): JSX.Element {
     : undefined;
   // App conversations: approvals waiting on the person and turns that ended unseen.
   const appChatInbox = useAppChatInbox(activeConversationSessionId);
-  const attentionCount = countAgentAttention(userFacingAgentSnapshot) + appChatInbox.entries.length;
-  const unreadUserFacingAgentCount = [...unreadAgentIds]
-    .filter((activityId) => !orchestrationWorkerIds.has(activityId)).length;
+  // CLI agents running in terminals that wait on the person (their pane approvals); app conversations count in the shell.
+  const terminalAgentAttention = countAgentAttention(userFacingAgentSnapshot);
   const agentSessionIds = useMemo<ReadonlySet<string>>(
     () =>
       new Set(
@@ -2701,6 +2686,7 @@ export function App(): JSX.Element {
   // overlay flag above, several of which are declared later in the file than
   // its doc comment further up) — see that comment for the "why".
   const chatOverlayOpen =
+    shellNav.mode === 'board' ||
     (!sidebarReflow && sidebarDestination !== null) ||
     presetsOpen ||
     quickOpenMode !== null ||
@@ -2851,6 +2837,12 @@ export function App(): JSX.Element {
   // Ctrl/Cmd+Shift+P remains the global fallback from every focus surface.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.code === 'Backquote') {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTerminalRef.current();
+        return;
+      }
       const commandCenterMode = commandCenterShortcutMode(e);
       if (commandCenterMode) {
         e.preventDefault();
@@ -2918,6 +2910,166 @@ export function App(): JSX.Element {
     }),
     [launchAgent, openProjectDocument],
   );
+
+  // ── Board + Desk shell (approved 2026-10-24) ─────────────────────────────
+  const shellSnapshot = appChatInbox.snapshot;
+  // The project follows the active main-window tab; a tab without one keeps it.
+  useEffect(() => {
+    const panel = activePanelId ? apiRef.current?.getPanel(activePanelId) : undefined;
+    if (!panel || panel.api.location.type !== 'grid') return;
+    shellNavigation.followPanel(panelProjectId(panel, shellSnapshot));
+  }, [activePanelId, shellSnapshot, shellNavigation]);
+  // Back in work mode the hidden dock is shown again: terminals refit, focus returns to the active tab.
+  const previousShellMode = useRef(shellNav.mode);
+  useEffect(() => {
+    const previous = previousShellMode.current;
+    previousShellMode.current = shellNav.mode;
+    if (previous === shellNav.mode) return;
+    if (shellNav.mode === 'work') {
+      requestAnimationFrame(() => window.dispatchEvent(new Event('ez:refit')));
+      return;
+    }
+    if (document.activeElement instanceof HTMLElement && document.activeElement.closest('.dock-host, .ez-shell-live')) {
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="shell-board-layer"]')?.focus());
+    }
+  }, [shellNav.mode]);
+  const shellTerminals = useMemo<DeskTerminal[]>(() => (apiRef.current?.panels ?? [])
+    .filter((panel) => panel.api.component === 'terminal' && panel.api.location.type === 'grid')
+    .map((panel) => {
+      const projectSession = panel.params?.projectSession as { projectId?: unknown } | undefined;
+      const cwd = typeof panel.params?.cwd === 'string' ? panel.params.cwd : undefined;
+      return {
+        panelId: panel.id,
+        title: panel.api.title ?? panel.id,
+        ...(cwd ? { detail: cwd } : {}),
+        ...(projectSession && typeof projectSession.projectId === 'string' ? { projectId: projectSession.projectId } : {}),
+      };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [panelSetRevision, activePanelId]);
+  // Ctrl+` : the most recent terminal from anywhere; again, back to where it came from.
+  const lastTerminalPanelRef = useRef<string | null>(null);
+  const lastOtherPanelRef = useRef<string | null>(null);
+  const terminalFromBoardRef = useRef(false);
+  useEffect(() => {
+    const panel = activePanelId ? apiRef.current?.getPanel(activePanelId) : undefined;
+    if (!panel || panel.api.location.type !== 'grid') return;
+    if (panel.api.component === 'terminal') lastTerminalPanelRef.current = panel.id;
+    else { lastOtherPanelRef.current = panel.id; terminalFromBoardRef.current = false; }
+  }, [activePanelId]);
+  const toggleTerminalRef = useRef<() => void>(() => undefined);
+  toggleTerminalRef.current = () => {
+    const api = apiRef.current;
+    if (!api) return;
+    const active = api.activePanel;
+    const onTerminal = shellNav.mode === 'work' && active?.api.component === 'terminal';
+    if (onTerminal) {
+      if (terminalFromBoardRef.current) { terminalFromBoardRef.current = false; shellNavigation.showBoard(); return; }
+      const back = lastOtherPanelRef.current ? api.getPanel(lastOtherPanelRef.current) : undefined;
+      if (back) workbenchCoordinator.activatePanel(back.id);
+      return;
+    }
+    terminalFromBoardRef.current = shellNav.mode === 'board';
+    shellNavigation.showWork();
+    const terminals = api.panels.filter((panel) => panel.api.component === 'terminal' && panel.api.location.type === 'grid');
+    const target = (lastTerminalPanelRef.current ? terminals.find((panel) => panel.id === lastTerminalPanelRef.current) : undefined) ?? terminals[0];
+    if (target) workbenchCoordinator.activatePanel(target.id);
+    else addTab();
+  };
+  const shellFocus = (() => {
+    const panel = activePanelId ? apiRef.current?.getPanel(activePanelId) : undefined;
+    if (!panel) return null;
+    return panel.api.component === 'agent-session' ? structuredAgentSessionId(String(panel.params?.historyId ?? '')) ?? panel.id : panel.id;
+  })();
+  const shellHost = remoteDesktopStatus
+    ? {
+        label: [`${t('rail.remote')} · ${t(`remote.pcControlState.${remoteDesktopStatus.state}` as 'remote.pcControlState.idle')}`, remoteDesktopStatus.controllerName,
+          remoteDesktopStatus.roundTripTimeMs !== null && remoteDesktopStatus.roundTripTimeMs !== undefined ? `${remoteDesktopStatus.roundTripTimeMs} ms` : undefined]
+          .filter(Boolean).join(' · '),
+        tone: remoteDesktopStatus.state === 'active' ? 'amber' as const : remoteDesktopStatus.state === 'error' ? 'red' as const : 'on' as const,
+      }
+    : { label: t('statusBar.local'), tone: 'idle' as const };
+  const toggleSidebarTool = (destination: SidebarDestination): void => {
+    if (destination === 'settings' && sidebarDestination !== 'settings') {
+      setSettingsCategoryRequest((current) => ({ category: 'general', id: current.id + 1 }));
+    }
+    setSidebarOpen(destination, (open) => !open);
+  };
+  const deskShell = useDeskShell({
+    navigation: shellNavigation,
+    restored: shellStart.restored,
+    appVersion: rendererCapabilities.runtimeVersions()?.app ?? null,
+    snapshot: shellSnapshot,
+    terminals: shellTerminals,
+    focus: shellFocus,
+    host: shellHost,
+    updateAvailable: appUpdateAvailable,
+    activeTool: sidebarDestination,
+    openclawVisible,
+    externalWaiting: terminalAgentAttention,
+    layoutMenu: (
+      <ShellLayoutMenu
+        open={presetsOpen}
+        onOpenChange={(open) => {
+          setPresetsOpen(open);
+          setSavingPreset(false);
+          if (open) void refreshPresets();
+        }}
+        menu={(
+          <WorkspaceMenu
+            leading={(
+              <>
+                {workbenchViews && <div className="workspace-menu-section"><WorkbenchViewsBar controller={workbenchViews} /></div>}
+                <div className="workspace-menu-section">
+                  <WorkspaceBar
+                    presetName={appliedPreset}
+                    paneCount={paneCount}
+                    onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
+                    onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
+                    onApplySingle={() => applyLayoutPreset('single')}
+                    onApplyRows={() => applyLayoutPreset('rows')}
+                  />
+                </div>
+              </>
+            )}
+            names={presetNames}
+            saving={savingPreset}
+            startupPreset={startupPreset}
+            onSetSaving={setSavingPreset}
+            onSave={(name) => void saveCurrentAsPreset(name)}
+            onApply={(name) => void applyPreset(name)}
+            onToggleStartup={(name) => void toggleStartupPreset(name)}
+            onDelete={(name) => void removePreset(name)}
+            onSplitRight={() => { setPresetsOpen(false); splitActive('right'); }}
+            onSplitDown={() => { setPresetsOpen(false); splitActive('below'); }}
+          />
+        )}
+      />
+    ),
+    windowControls: <WindowControls />,
+    actions: {
+      openConversation: (sessionId, title, options) => openStructuredAgentSession({ sessionId, ...(title ? { title } : {}) }, options),
+      newConversation: (project) => { openStructuredAgentDraft(project); },
+      openHistory: (projectId) => setConversationHistory(projectId ? { projectId } : {}),
+      openFlow: (project, subprojectId) => {
+        if (subprojectId) planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId);
+        else openPlanningProject(project);
+      },
+      openInbox: () => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); },
+      openTerminal: (panelId) => { workbenchCoordinator.activatePanel(panelId); },
+      newTerminal: (project) => {
+        if (project) openProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' });
+        else { addTab(); revealOpenedSession(); }
+        shellNavigation.showWork();
+      },
+      openTool: (id) => toggleSidebarTool(id as SidebarDestination),
+      openProjects: () => { setAgentHubView('projects'); setActiveProjectId(null); setSidebarDestination('agents'); },
+      openProjectFiles: (projectId) => showProjectWorkspace(projectId),
+      editProject: (projectId) => structuredAgentNavigationValue.editProject?.(projectId),
+      openFind: () => openQuickOpen('all'),
+      openRemote: () => setSidebarOpen('remote', true),
+      openSettings: () => toggleSidebarTool('settings'),
+    },
+  });
 
   const sidebarTitle: Record<SidebarDestination, string> = {
     explorer: t('rail.explorer'),
@@ -3099,52 +3251,8 @@ export function App(): JSX.Element {
     ) : null;
 
   return (
-    <main className="app">
-      <AppHeader
-        appVersion={rendererCapabilities.runtimeVersions()?.app ?? null}
-        attentionCount={Math.max(attentionCount, unreadUserFacingAgentCount)}
-        commandCenterOpen={quickOpenMode !== null}
-        effectIntensity={uiPreferences.effectIntensity}
-        onNewTerminal={() => { addTab(); revealOpenedSession(); }}
-        onNewSession={() => openStructuredAgentDraft()}
-        onOpenAttention={() => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); }}
-        onOpenCommandCenter={() => openQuickOpen('all')}
-        onOpenEffectSettings={() => {
-          setSettingsCategoryRequest((current) => ({
-            category: 'appearance',
-            id: current.id + 1,
-          }));
-          setSidebarDestination('settings');
-        }}
-        onWorkspaceOpenChange={(open) => {
-          setPresetsOpen(open);
-          setSavingPreset(false);
-          if (open) void refreshPresets();
-        }}
-        workspaceOpen={presetsOpen}
-        workspaceMenu={
-          presetsOpen ? (
-            <WorkspaceMenu
-              names={presetNames}
-              saving={savingPreset}
-              startupPreset={startupPreset}
-              onSetSaving={setSavingPreset}
-              onSave={(name) => void saveCurrentAsPreset(name)}
-              onApply={(name) => void applyPreset(name)}
-              onToggleStartup={(name) => void toggleStartupPreset(name)}
-              onDelete={(name) => void removePreset(name)}
-              onSplitRight={() => {
-                setPresetsOpen(false);
-                splitActive('right');
-              }}
-              onSplitDown={() => {
-                setPresetsOpen(false);
-                splitActive('below');
-              }}
-            />
-          ) : undefined
-        }
-      />
+    <main className="app ez-shell" data-shell-mode={shellNav.mode}>
+      {deskShell.top}
 
       {remoteDesktopStatus?.controllerName && (
         <RemoteControlBanner status={remoteDesktopStatus} />
@@ -3166,27 +3274,8 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      <div className="workbench-body">
-        <ActivityRail
-          projectNavigation
-          inboxActive={agentHubView === 'inbox'}
-          onOpenInbox={() => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); }}
-          active={sidebarDestination}
-          attentionCount={attentionCount}
-          updateAvailable={appUpdateAvailable}
-          openclawVisible={openclawVisible}
-          onIntent={(destination) => preloadOnIntent(DESKTOP_FEATURE_LOADERS[destination])}
-          onSelect={(destination) => {
-            if (destination === 'agents') { setAgentHubView('projects'); setActiveProjectId(null); setSidebarDestination('agents'); return; }
-            if (destination === 'settings' && sidebarDestination !== 'settings') {
-              setSettingsCategoryRequest((current) => ({
-                category: 'general',
-                id: current.id + 1,
-              }));
-            }
-            setSidebarOpen(destination, (open) => !open);
-          }}
-        />
+      <div className="workbench-body" data-shell-mode={shellNav.mode}>
+        {deskShell.list}
         {sidebarDestination && sidebarContent && (
           <SidebarShell
             key={sidebarDestination}
@@ -3206,20 +3295,9 @@ export function App(): JSX.Element {
         <div
           className="dock-host"
           data-project-layout={projectDrillActive ? (projectWide ? 'wide' : 'narrow') : undefined}
+          data-shell-hidden={shellNav.mode === 'board' || undefined}
+          {...(shellNav.mode === 'board' ? { inert: '' } : {})}
         >
-          {/* Names the layout and puts splitting one click away. The other
-              entry points stay; this is the one that is always visible. */}
-          <div className="workbench-bar">
-            {workbenchViews && <WorkbenchViewsBar controller={workbenchViews} />}
-            <WorkspaceBar
-              presetName={appliedPreset}
-              paneCount={paneCount}
-              onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
-              onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
-              onApplySingle={() => applyLayoutPreset('single')}
-              onApplyRows={() => applyLayoutPreset('rows')}
-            />
-          </div>
           <SessionBindingContext.Provider value={sessionBindingValue}>
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
@@ -3328,14 +3406,8 @@ export function App(): JSX.Element {
             />
           )}
         </div>
+        {deskShell.board}
       </div>
-      {/* Always-visible footer. Sits outside .workbench-body so it spans the
-          rail and the dock rather than scrolling with either. */}
-      <StatusBar
-        attentionCount={attentionCount}
-        remoteDesktop={remoteDesktopStatus}
-        effectIntensity={uiPreferences.effectIntensity}
-      />
 
       {conversationHistory && <ConversationHistoryDialog open onOpenChange={open => { if (!open) setConversationHistory(null); }}
         onOpenConversation={entry => openConversationHistory(entry)}

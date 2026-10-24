@@ -112,6 +112,7 @@ function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly 
               onOpenConversation={args.onOpenConversation}
               onNewConversation={() => undefined}
               onOpenWaiting={(item) => args.onOpenConversation(item.sessionId)}
+              onInbox={() => undefined}
               onOpenFlow={() => undefined}
               onOpenTerminal={() => undefined}
               onNewTerminal={() => undefined}
