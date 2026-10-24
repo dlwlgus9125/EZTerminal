@@ -119,6 +119,8 @@
   --ui-text-dim: var(--ui-text-muted);
   --ui-border-mid: var(--ui-border-subtle);
   --ui-border-focus-soft: var(--ui-border-strong);
+  /* The floor under the board and the dock (Board + Desk); one step below the canvas where a theme has one. */
+  --ui-floor: var(--ui-canvas);
 
   /* Derived interaction, status-tint and chat roles are precomputed per theme
      in the generated region at the end of this file (Android WebView 74 cannot
@@ -363,6 +365,7 @@
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
   --ui-text-dim: #88a897;
+  --ui-floor: #040806;
   --ui-border-mid: #26392f;
   --ui-border-focus-soft: #4b7a62;
   --ui-accent: #3ae894;
