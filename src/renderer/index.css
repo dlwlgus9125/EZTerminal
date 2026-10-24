@@ -3438,6 +3438,11 @@ button.agent-work-activity:focus-visible {
   flex: 1;
 }
 
+/* Catches typing for the preview place; generates no box. */
+.agent-session-dock-panel {
+  display: contents;
+}
+
 /* A preview tab (opened from a list, not kept yet) reads in italics until it is kept. */
 .agent-aware-tab[data-preview='true'] .dv-default-tab-content,
 .agent-aware-tab[data-preview='true'] .agent-history-tab__label {

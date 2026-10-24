@@ -182,7 +182,7 @@ import {
   type WorkbenchPanelPlacement,
 } from './workbench-coordinator';
 import { DockWindowCoordinator } from './dock-window-coordinator';
-import { PanelPreviewContext, PanelPreviewSlot } from './shell/panel-preview';
+import { PanelPreviewContext, PanelPreviewSlot, usePanelPreview } from './shell/panel-preview';
 import { writePlanAccess } from './agent-plan-access';
 import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
@@ -507,6 +507,18 @@ function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
 }
 
 function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
+  const { keep } = usePanelPreview(props.api.id);
+  // Typing in any message box of a preview tab keeps it; the wrapper adds no box of its own.
+  return (
+    <div className="agent-session-dock-panel" onInput={(event) => {
+      if (event.target instanceof HTMLTextAreaElement && event.target.value.trim()) keep();
+    }}>
+      <AgentSessionDockPanelBody {...props} />
+    </div>
+  );
+}
+
+function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const navigation = useContext(StructuredAgentNavigationContext);
   const createRecovery = useContext(StructuredAgentCreateRecoveryContext);

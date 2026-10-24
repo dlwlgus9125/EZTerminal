@@ -301,7 +301,7 @@ export function StructuredAgentDockPanel(
   },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
-  // Typing or sending in a preview tab keeps it (the next list open will not take its place).
+  // Sending from a preview tab keeps it (typing is caught by the tab's wrapper in App).
   const { keep: keepPreview } = usePanelPreview(props.api.id);
   const capabilityClient = useMemo(() => typeof window.ezterminal?.agentCapabilitiesList === 'function' ? {
     list: window.ezterminal.agentCapabilitiesList,
@@ -1424,7 +1424,6 @@ export function StructuredAgentDockPanel(
       supportsMessageContext={provider?.protocol === 'codex-app-server' || provider?.protocol === 'claude-agent-sdk'}
       draftState={chatRecovery.controller ? chatRecovery.view.draft : undefined}
       onDraftChange={(draft) => {
-        if (draft.text.trim()) keepPreview();
         if (chatRecovery.controller) chatRecovery.controller.updateDraft(draft);
         else earlyDraft.current = { sessionId, draft };
       }}
