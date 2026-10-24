@@ -69,6 +69,8 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
   const status = view ? workflowRunStatusPresentation(view, text) : null;
   const conversation = runStageConversation(run ?? undefined, node.id);
   const awaiting = run?.workflowRuntime?.activations.find((entry) => entry.nodeId === node.id && entry.state === 'awaiting-approval');
+  // What the person approves is what the run froze, never an unsaved draft of it.
+  const frozen = run?.preparation.workflow?.graph.nodes.find((item) => item.id === node.id);
   const approvalsOpen = run ? workflowRunControls(run).approvalsOpen : false;
   const provider = props.providers.find((item) => item.id === node.providerId);
   const efforts = props.catalogs[node.providerId ?? '']?.find((model) => model.id === node.model)?.reasoningEfforts ?? [];
@@ -84,7 +86,7 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
       {status ? <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status> : <span>{text('이 실행에 표시하지 않음', 'Not shown for this run')}</span>}
     </p>}
     {awaiting && <div className="workflow-approval" data-testid="workflow-stage-approval">
-      <p>{node.instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')}</p>
+      <p>{(frozen ?? node).instructions || text('이 단계 이후의 실행을 승인합니다.', 'Approve execution after this stage.')}</p>
       <div className="workflow-inline">
         <Button variant="primary" disabled={props.commandsDisabled || !approvalsOpen} onClick={() => props.onApprove(awaiting.id, 'approve')}>{text('승인', 'Approve')}</Button>
         <Button disabled={props.commandsDisabled || !approvalsOpen} onClick={() => props.onApprove(awaiting.id, 'reject')}>{text('거부', 'Reject')}</Button>
@@ -102,6 +104,7 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
     {scopeNote && node.operation === 'agent' && <p className="workflow-notice" role="status" data-scope={scope} data-testid="workflow-stage-scope">{scopeNote}</p>}
     <fieldset className="workflow-stage-panel__fields" disabled={!editable} data-testid="workflow-stage-fields">
       <legend>{text('이 단계 설정', 'This stage’s settings')}</legend>
+      <div className="workflow-stage-panel__grid">
       {node.operation === 'agent' && <>
         <Field label={text('AI', 'AI')}><Select value={node.providerId ?? ''} onChange={(event) => update({ providerId: event.target.value || undefined, model: undefined, reasoningEffort: undefined })}>
           <option value="">{text('선택하세요', 'Choose a provider')}</option>
@@ -110,7 +113,8 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
         </Select></Field>
         <Field label={text('모델', 'Model')}><Select value={node.model ?? ''} onChange={(event) => update({ model: event.target.value || undefined, reasoningEffort: undefined })}>
           <option value="">{text('모델 선택', 'Choose a model')}</option>
-          {node.model && !provider?.models.some((model) => model.id === node.model) && <option value={node.model}>{node.model} · {text('재확인 필요', 'Recheck required')}</option>}
+          {/* Without a catalog (a phone) the stage's model is listed as it is. */}
+          {node.model && !provider?.models.some((model) => model.id === node.model) && <option value={node.model}>{node.model}{provider?.models.length ? ` · ${text('재확인 필요', 'Recheck required')}` : ''}</option>}
           {provider?.models.map((model) => <option value={model.id} key={model.id}>{model.label}</option>)}
         </Select></Field>
         {/* Only the efforts the chosen model offers (a stage keeps none unless one is picked). */}
@@ -134,11 +138,13 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
           <textarea rows={2} value={paths} placeholder="src/login/" onChange={(event) => update({ allowedPaths: [...setPaths(event.target.value)] })} /></label>
         <Field label={text('실패하면 다시 시도', 'Retry on failure')}><Input type="number" min={0} max={20} value={node.retryLimit} onChange={(event) => update({ retryLimit: Math.min(20, Math.max(0, Number(event.target.value))) })} /></Field>
       </details>}
+      </div>
     </fieldset>
     {props.structure && <details className="workflow-stage-panel__more" open data-testid="workflow-stage-structure">
       <summary>{text('구조', 'Structure')}</summary>
       {/* Where the stage sits: these changes apply from the next run. */}
-      <WorkflowNodeSettings part="structure" graph={graph} node={node} text={text} readOnly={!props.editable || props.archived} providers={props.providers} onChange={props.onChange} onRequestDelete={props.onRequestDelete} onMove={props.onMove} />
+      {/* Its connections may change while it works (they apply next run); its title is one of its settings. */}
+      <WorkflowNodeSettings part="structure" graph={graph} node={node} text={text} readOnly={!props.editable || props.archived} titleLocked={locked} providers={props.providers} onChange={props.onChange} onRequestDelete={props.onRequestDelete} onMove={props.onMove} />
     </details>}
     <WorkflowStageSection node={node} text={text} readOnly={!editable} archived={props.archived} links={props.links} canStartChat={props.canStartChat && !props.commandsDisabled}
       onDocumentChange={(document) => update({ document })} onStartChat={props.onStartChat} onOpenConversation={props.onOpenConversation} />

@@ -151,7 +151,9 @@
 .workflow-stage-panel__state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); margin: 0; font-size: var(--ui-font-size-sm); }
 .workflow-stage-panel__conversations { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-2); }
 .workflow-stage-panel__conversations .workflow-hint { flex: 1 1 100%; margin: 0; }
-.workflow-stage-panel__fields { display: grid; gap: var(--ui-space-2); min-width: 0; margin: 0; padding: 0; border: 0; }
+.workflow-stage-panel__fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+/* A fieldset cannot be a grid container before Chrome 86 (Android WebView 74): the grid sits inside it. */
+.workflow-stage-panel__grid { display: grid; gap: var(--ui-space-2); min-width: 0; }
 .workflow-stage-panel__fields > legend { margin-bottom: var(--ui-space-1); padding: 0; font-size: var(--ui-font-size-sm); font-weight: 600; }
 .workflow-stage-panel__more { padding-top: var(--ui-space-2); border-top: 1px solid var(--ui-border-subtle); }
 .workflow-stage-panel__more > summary { cursor: pointer; font-size: var(--ui-font-size-sm); font-weight: 600; }

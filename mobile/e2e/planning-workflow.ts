@@ -3,7 +3,8 @@
  * Initial connection uses the standard native one-tap helper. Planning controls
  * deliberately use DOM clicks/controlled input so native hit testing is a
  * separate gate, not silently claimed by this scenario. The reviewed CLI fixture
- * supplies provider metadata and initializes sessions; no model turn is submitted.
+ * supplies provider metadata and initializes sessions, then answers the turns of one
+ * flow run from the phone (I2) and of its 다시 실행.
  * Run: node --experimental-strip-types mobile/e2e/planning-workflow.ts
  */
 import assert from 'node:assert/strict';
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
     scenario: 'Android planning manual save / offline encrypted draft / force-stop recovery',
     inputMethod: 'Initial auth: native tap; planning and restart auth: WebView DOM clicks and input events',
     realProviderCalls: 0,
-    modelTurns: 0,
+    modelTurns: 'fixture turns only (one conversation and two flow runs)',
     providerFixture: 'Reviewed fake Codex initialization only',
     startedAt: new Date().toISOString(),
     phases: [],
@@ -284,7 +285,6 @@ async function main(): Promise<void> {
     const createDeadline = Date.now() + 30_000;
     while (!(await readWorkflow()).subprojects.some(item => item.title === 'Android subproject')) { if (Date.now() > createDeadline) throw new Error('Android subproject creation was not acknowledged'); await sleep(150); }
     const subproject = (await readWorkflow()).subprojects.find(item => item.title === 'Android subproject')!;
-    await clickLabel('[data-testid="workflow-workspace"] button', ['Stage documents and chats', '단계 문서·대화']);
     await fillSelector('.workflow-stage textarea', 'Android saved stage document');
     await clickLabel('[data-testid="workflow-workspace"] button', ['Save draft', '초안 저장']);
     const documentDeadline = Date.now() + 30_000;
@@ -331,14 +331,20 @@ async function main(): Promise<void> {
     await clickLabel('.workflow-conversation-context button', ['Return to this stage', '이 단계로 돌아가기']);
     await waitForCondition('unsaved stage preserved through chat return', `(document.querySelector('.workflow-stage textarea') || {}).value === 'Android unsaved stage draft'`);
     await assertWorkflowHealthy('Stage chat return');
-    // Underline tab strip: buttons sit edge to edge (no flex gap by design); their padding separates the
-    // labels, and the selected underline must rest on the strip's border in every WebView (API 29 uses the
-    // flex-gap fallback, which must not add margins here).
-    const spacing = await evaluateWebView<{ token: string; sameRow: boolean; overlap: number; padding: number; underlineOffset: number; fallback: string | null }>(`(() => { const strip = document.querySelector('.workflow-tabs'); const buttons = strip.querySelectorAll(':scope > button'); const a = buttons[0].getBoundingClientRect(), b = buttons[1].getBoundingClientRect(); const style = getComputedStyle(buttons[0]); const selected = strip.querySelector(':scope > button[aria-pressed="true"]').getBoundingClientRect(); return { token: getComputedStyle(document.documentElement).getPropertyValue('--ui-space-2'), sameRow: Math.abs(a.top - b.top) < 1, overlap: a.right - b.left, padding: parseFloat(style.paddingLeft) + parseFloat(style.paddingRight), underlineOffset: strip.getBoundingClientRect().bottom - selected.bottom, fallback: document.documentElement.getAttribute('data-ui-flex-gap') }; })()`);
-    report.workflowSpacing = spacing;
-    assert.ok(spacing.sameRow && spacing.overlap <= 0.5, 'Subproject tabs sit in one row without overlapping');
-    assert.ok(spacing.padding >= 8, 'Tab padding keeps adjacent labels visibly apart');
-    assert.ok(spacing.underlineOffset >= 0 && spacing.underlineOffset <= 1.5, `The selected tab's underline rests on the strip border (offset ${spacing.underlineOffset}px)`);
+    // The run bar wraps on a phone: its controls must not overlap in any WebView (API 29 has no flex gap).
+    const runBar = await evaluateWebView<{ count: number; overlap: number } | null>(`(() => {
+      const bar = document.querySelector('[data-testid="workflow-run-bar"]'); if (!bar) return null;
+      const boxes = [...bar.children].map(node => node.getBoundingClientRect()).filter(box => box.width > 0 && box.height > 0);
+      let overlap = 0;
+      for (let i = 0; i < boxes.length; i += 1) for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i], b = boxes[j];
+        const x = Math.min(a.right, b.right) - Math.max(a.left, b.left), y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (x > 0.5 && y > 0.5) overlap = Math.max(overlap, Math.min(x, y));
+      }
+      return { count: boxes.length, overlap };
+    })()`);
+    report.runBarLayout = runBar;
+    assert.ok(runBar && runBar.count >= 3 && runBar.overlap <= 0.5, `The run bar's controls sit apart (${JSON.stringify(runBar)})`);
     await writeFile(path.join(artifactDir, 'r4-stage-chat-return.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     phases.push('r4 subproject create/save acknowledged; same session and unsent chat draft survive stage linking; unsaved stage document survives chat return');
     await host.evaluate(() => window.ezterminal.setRemoteEnabled(false)); await waitForTestId('mobile-reconnect-scrim');
@@ -366,6 +372,74 @@ async function main(): Promise<void> {
     } while (Date.now() < r4ObservationUntil);
     assert.deepEqual((await host.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.turns.length, afterFirstSend?.turns.length, 'Reconnect must not start a provider turn');
     phases.push('r4 encrypted graph snapshot/draft restore offline after force-stop; reconnect keeps local draft and host revision/document/runs unchanged for 2 seconds without new provider turns');
+    // I2: run a flow from the phone. The review AI is saved in the run bar, 실행 runs the saved flow, the
+    // approval stage is approved from its stage column, the working stage's conversation opens from there,
+    // and once the run finishes 다시 실행 runs it again with a new stage conversation.
+    const runGraph = {
+      entryNodeId: 'gate',
+      nodes: [
+        { id: 'gate', title: 'Go-ahead', operation: 'approval' as const, role: 'review' as const, instructions: 'Approve to start the build.', document: '', acceptance: [], allowedPaths: [], retryLimit: 2, permissionPreset: 'plan' as const, position: { x: 40, y: 40 }, inputs: [] },
+        { id: 'build', title: 'Build', operation: 'agent' as const, role: 'implementation' as const, instructions: 'Summarise the project folder.', document: '', acceptance: ['A short summary'], allowedPaths: [], retryLimit: 0, permissionPreset: 'plan' as const, providerId: 'codex', model: 'gpt-5.6-fixture', position: { x: 384, y: 40 }, inputs: [] },
+        { id: 'done', title: 'Done', operation: 'complete' as const, role: 'integration' as const, instructions: '', document: '', acceptance: [], allowedPaths: [], retryLimit: 2, permissionPreset: 'plan' as const, position: { x: 728, y: 40 }, inputs: [] },
+        { id: 'stopped', title: 'Stopped', operation: 'complete' as const, role: 'integration' as const, instructions: '', document: '', acceptance: [], allowedPaths: [], retryLimit: 2, permissionPreset: 'plan' as const, position: { x: 384, y: 224 }, inputs: [] },
+      ],
+      edges: [
+        { id: 'gate-build', from: 'gate', to: 'build', outcome: 'approved' as const },
+        { id: 'gate-stopped', from: 'gate', to: 'stopped', outcome: 'rejected' as const },
+        { id: 'build-done', from: 'build', to: 'done', outcome: 'next' as const },
+      ],
+    };
+    const beforeRunFlow = await readWorkflow();
+    const createdRunFlow = await host.evaluate(command => window.ezterminal.executeWorkflowCommand(command), { commandId: 'android-run-flow', projectId, hostId: beforeRunFlow.hostId,
+      expectedRevision: beforeRunFlow.registryRevision, type: 'subproject.create' as const, payload: { id: 'android-run', title: 'Android run', goal: '', presetId: 'custom' as const, graph: runGraph } });
+    assert.equal(createdRunFlow.ok, true, 'The run flow was created on the PC');
+    const flowRuns = async () => (await readWorkflow()).runs.filter(run => run.preparation.workflow?.subprojectId === 'android-run').sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const waitHost = async (label: string, check: () => Promise<boolean>, timeoutMs = 60_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (!await check()) { if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`); await sleep(250); }
+    };
+    const openListItem = async (selector: string, label: string) => {
+      const find = `[...document.querySelectorAll(${JSON.stringify(selector)})].find(node => node.querySelector('strong') && node.querySelector('strong').textContent === ${JSON.stringify(label)})`;
+      await waitForCondition(`item ${label}`, `!!(${find})`, 30_000);
+      await evaluateWebView(`(() => { ${find}.click(); return true; })()`);
+    };
+    const approveGate = async () => {
+      await clickLabel('[data-testid="workflow-run-bar"] button', ['1 awaiting approval', '승인 대기 1']);
+      await clickLabel('[data-testid="workflow-stage-approval"] button', ['Approve', '승인']);
+    };
+    await clickSelector('[data-testid="workflow-back"]');
+    await openListItem('[data-testid="workflow-subproject-item"]', 'Android run');
+    await waitForTestId('workflow-run-bar', 30_000);
+    // The phone lists the models its host advertises; this flow's review AI was saved on the PC and the phone shows it.
+    const runFlow = (await readWorkflow()).subprojects.find(item => item.id === 'android-run')!;
+    const savedSettings = await host.evaluate(command => window.ezterminal.executeWorkflowCommand(command), { commandId: 'android-run-settings', projectId, hostId: beforeRunFlow.hostId,
+      expectedRevision: runFlow.revision, subprojectId: 'android-run', type: 'subproject.update' as const, payload: { runSettings: { reviewer: { providerId: 'codex', model: 'gpt-5.6-fixture' } } } });
+    assert.equal(savedSettings.ok, true, 'The review AI was saved on the PC');
+    await waitForCondition('the saved review AI on the phone', `(document.querySelector('[data-testid="workflow-run-bar"] select[aria-label="Reviewer model"], [data-testid="workflow-run-bar"] select[aria-label="검토 모델"]') || {}).value === 'gpt-5.6-fixture'`, 30_000);
+    await clickSelector('[data-testid="workflow-run-again"]');
+    await waitHost('run #1 waits for its approval', async () => (await flowRuns())[0]?.workflowRuntime?.activations.some(entry => entry.nodeId === 'gate' && entry.state === 'awaiting-approval') === true);
+    await waitForCondition('run #1 on the phone', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
+    await approveGate();
+    await waitHost('run #1 sends its AI stage', async () => !!(await flowRuns())[0]?.attempts[0]?.sessionId);
+    const firstSession = (await flowRuns())[0]!.attempts[0]!.sessionId;
+    await openListItem('.workflow-outline button', 'Build');
+    await clickSelector('[data-testid="workflow-stage-open"]');
+    await waitForCondition('the stage conversation of run #1', `(document.querySelector('[data-testid="structured-agent-session"]') || { getAttribute: () => null }).getAttribute('data-session-id') === ${JSON.stringify(firstSession)}`, 30_000);
+    await writeFile(path.join(artifactDir, 'i2-stage-conversation.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
+    await waitHost('run #1 completes', async () => (await flowRuns())[0]?.state === 'completed', 180_000);
+    // The Projects tab keeps the flow that was open.
+    await clickSelector('[data-testid="shell-tab-home"]');
+    await waitForTestId('workflow-run-bar', 30_000);
+    await waitForCondition('run #1 shown as done', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
+    await clickSelector('[data-testid="workflow-run-again"]');
+    await waitHost('run #2 waits for its approval', async () => (await flowRuns())[1]?.workflowRuntime?.activations.some(entry => entry.nodeId === 'gate' && entry.state === 'awaiting-approval') === true);
+    await approveGate();
+    await waitHost('run #2 sends its AI stage', async () => !!(await flowRuns())[1]?.attempts[0]?.sessionId);
+    assert.notEqual((await flowRuns())[1]!.attempts[0]!.sessionId, firstSession, 'Each run starts a new stage conversation');
+    assert.equal((await flowRuns()).length, 2, 'One run per 실행 / 다시 실행');
+    await writeFile(path.join(artifactDir, 'i2-run-again.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
+    await assertWorkflowHealthy('I2 flow run');
+    phases.push('I2 flow run from the phone: review AI saved, 실행 → approve → working stage conversation → run #1 completed → 다시 실행 = run #2 with a new stage conversation');
     report.status = 'passed';
     console.log('[planning-e2e] PASS: explicit recovered draft -> PC revision 2; no automatic send/provider turns');
   } catch (error) {

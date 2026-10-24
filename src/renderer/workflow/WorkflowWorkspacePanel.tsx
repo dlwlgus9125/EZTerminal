@@ -7,6 +7,7 @@ import type { AgentCapabilitiesClient } from '../../shared/agent-capabilities';
 import type { ChatComposerDraft } from '../../shared/chat-message';
 import { ChatComposerDraftSchema } from '../../shared/chat-state';
 import { WorkflowDraftResultSchema, type WorkflowDraftAccess, type WorkflowDraftState } from '../../shared/workflow-draft';
+import { blockingRunOf } from '../../shared/planning-execution';
 import { WorkflowRecovery } from './workflow-recovery';
 import type { PlanningConversation, PlanningWorkspaceSection } from '../PlanningWorkspacePanel';
 import { StructuredAgentDraftPanel, type StructuredAgentDraftFormState, type StructuredAgentDraftInput, type StructuredAgentUiResult } from '../StructuredAgentSession';
@@ -47,7 +48,8 @@ export interface WorkflowWorkspacePanelProps {
   readonly disabledReason?: string;
   readonly mobile?: boolean;
   readonly active?: boolean;
-  readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly key: string };
+  /** `launch`: run the flow again (다시 실행) once it is open and can run, once per key. */
+  readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly key: string; readonly launch?: boolean };
   readonly renderPlanning?: (subproject: WorkflowSubproject | null, section?: PlanningWorkspaceSection, runId?: string) => ReactNode;
   /** Desktop injects the React Flow canvas (a lazy chunk); Android and tests draw the static graph. */
   readonly canvasRenderer?: ComponentType<WorkflowCanvasRendererProps>;
@@ -240,6 +242,9 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     return () => { stop(); if (timer !== undefined) window.clearTimeout(timer); };
   }, [access, projectId, refresh, disabled]);
   const [revealRequest, setRevealRequest] = useState<{ nodeId: string; key: string } | undefined>();
+  // 다시 실행 asked from elsewhere (a board card): kept until this flow is ready, then sent once.
+  const launchRequest = useRef<string | undefined>();
+  useEffect(() => { if (navigationTarget?.launch && targetKey) launchRequest.current = targetKey; }, [navigationTarget?.launch, targetKey]);
   useEffect(() => { if (targetSubproject) { setSelectedId(targetSubproject); setNodeId(targetNode ?? null); setView(targetNode ? 'stage' : 'flow'); setEdgeId(null); setRunView(false); setRevealRequest(targetNode && targetKey ? { nodeId: targetNode, key: targetKey } : undefined); } }, [targetKey, targetSubproject, targetNode]);
   useEffect(() => {
     if (!create?.previewSessionId || !access.workflowPreview || disabled) return;
@@ -272,7 +277,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       }));
     }).catch(reason => { if (current) setError(String(reason)); });
     return () => { current = false; };
-  }, [daemonAccess, disabled, active, creatingConversation, prepareOpen]);
+    // Opening a flow reads the providers and their models again (one enabled since is listed).
+  }, [daemonAccess, disabled, active, creatingConversation, prepareOpen, selectedId]);
 
   const execute = async (input: CommandInput, target = selected, exact?: WorkflowCommand): Promise<boolean> => {
     if (!snapshot || disabled || !authorityReady || !recoveryReady || recoveryError || mutating.current || pending && !exact) return false;
@@ -310,6 +316,13 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     const runId = `run-${crypto.randomUUID()}`;
     if (await execute({ type: 'run.launch', payload: { runId } })) { setPreparedRunId(runId); setRunView(false); }
   };
+  useEffect(() => {
+    if (!launchRequest.current || !selected || selected.id !== targetSubproject || !daemon || hostLocked || selected.status === 'archived') return;
+    launchRequest.current = undefined;
+    // What the run bar would refuse is not sent: the flow shows why instead.
+    if (blockingRunOf(snapshot?.runs ?? [], selected.id) || local || issues.length || (canLaunch && !selected.runSettings)) return;
+    void launch();
+  });
   const selectSubproject = (id: string): void => { setSelectedId(id); setNodeId(snapshot?.subprojects.find(item => item.id === id)?.graph.entryNodeId ?? null); setView('flow'); setEdgeId(null); setRunView(false); };
   const beginCreate = (sourceSessionId?: string): void => { const id = `subproject-${crypto.randomUUID()}`; setCreate({ id, title: '', goal: '', preset: 'feature', mode: 'preset', graph: graphForPreset('feature', id, text), ...(sourceSessionId ? { linkSessionId: sourceSessionId } : {}) }); setPreviewExpired(false); setCreationVisible(true); };
   const switchPreset = async (preset = create?.preset): Promise<void> => {

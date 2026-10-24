@@ -27,7 +27,8 @@ import {
 
 export interface PlanningNavigation {
   readonly openHistory?: (projectId?: string) => void;
-  readonly openWorkflow?: (projectId: string, projectName: string, subprojectId: string, nodeId?: string) => void;
+  /** `launch`: run the flow again once it is open (see WorkflowWorkspacePanel). */
+  readonly openWorkflow?: (projectId: string, projectName: string, subprojectId: string, nodeId?: string, launch?: boolean) => void;
   readonly openConversation: (id: string, title?: string) => void;
   readonly newConversation: (projectId: string, projectName: string) => void;
   readonly openFiles: (projectId: string) => void;
@@ -53,6 +54,8 @@ const workflowAccess: WorkflowAccess = {
   getWorkflowSnapshot: projectId => window.ezterminal.getWorkflowSnapshot(projectId),
   executeWorkflowCommand: command => window.ezterminal.executeWorkflowCommand(command),
   workflowPreview: request => window.ezterminal.workflowPreview?.(request) ?? Promise.resolve({ ok: false, message: 'Update the host to use conversational workflow setup.' }),
+  // A run moves without a flow revision: the host says when a project's runs changed.
+  onWorkflowRunsChanged: listener => window.ezterminal.onWorkflowRunsChanged?.(listener) ?? (() => undefined),
 };
 const workflowDaemonAccess: WorkflowDaemonAccess = {
   getDaemonSnapshot: () => rendererCapabilities.daemon.getSnapshot(),
@@ -222,7 +225,7 @@ export function PlanningWorkspaceDockPanel(
         const written = await window.ezterminal.chatStateWrite(scope, { expectedRevision: saved.snapshot.revision, state: { ...saved.snapshot.state, draft } });
         if (!written.ok) throw new Error(written.message);
       }}
-      navigationTarget={typeof props.params.subprojectId === 'string' ? { subprojectId: props.params.subprojectId, nodeId: props.params.nodeId as string | undefined, key: props.params.workflowNavigationKey as string ?? props.params.subprojectId } : undefined}
+      navigationTarget={typeof props.params.subprojectId === 'string' ? { subprojectId: props.params.subprojectId, nodeId: props.params.nodeId as string | undefined, key: props.params.workflowNavigationKey as string ?? props.params.subprojectId, ...(props.params.launch === true ? { launch: true } : {}) } : undefined}
       conversations={conversations}
       onBack={navigation?.openProjects}
       onBoard={navigation?.openBoard ? () => navigation.openBoard!(projectId) : undefined}

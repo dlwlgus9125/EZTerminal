@@ -38,7 +38,8 @@ export interface DeskShellActions {
   readonly openConversation: (sessionId: string, title: string | undefined, options: { readonly preview: boolean }) => void;
   readonly newConversation: (project: { readonly projectId: string; readonly name: string } | undefined) => void;
   readonly openHistory: (projectId: string | undefined) => void;
-  readonly openFlow: (project: { readonly projectId: string; readonly name: string }, subprojectId?: string) => void;
+  /** `launch`: the flow screen runs it again (다시 실행) once open, through its own request recovery. */
+  readonly openFlow: (project: { readonly projectId: string; readonly name: string }, subprojectId?: string, options?: { readonly launch?: boolean }) => void;
   readonly openTerminal: (panelId: string) => void;
   readonly newTerminal: (project: { readonly projectId: string; readonly name: string } | undefined) => void;
   readonly openTool: (id: string) => void;
@@ -232,16 +233,9 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     return projectTabs(candidates.map((candidate) => ({ ...candidate, lastActiveAt: candidate.lastActiveAt ?? undefined })), projectId);
   }, [projects, project, projectId]);
 
-  // 다시 실행 from a flow card: one request on a host that has it. A refusal (another run going, no
-  // review AI saved) opens the flow, where it says why and offers the rest.
+  // 다시 실행 from a flow card opens the flow and asks it to run: the flow screen keeps the request
+  // (pending, reconcile, one at a time) and says why when it cannot run.
   const canLaunch = !!snapshot?.capabilities?.includes(WORKFLOW_LAUNCH_CAPABILITY);
-  const runAgain = useCallback(async (subprojectId: string): Promise<void> => {
-    const target = workflow?.subprojects.find((subproject) => subproject.id === subprojectId);
-    if (!workflow || !target || !projectId) return;
-    const result = await window.ezterminal.executeWorkflowCommand({ commandId: `workflow-${crypto.randomUUID()}`, projectId, hostId: workflow.hostId,
-      expectedRevision: target.revision, subprojectId, type: 'run.launch', payload: { runId: `run-${crypto.randomUUID()}` } }).catch(() => null);
-    if (!result?.ok && project) { actions.openFlow({ projectId: project.projectId, name: project.name }, subprojectId); navigation.showWork(); }
-  }, [workflow, projectId, project, actions, navigation]);
 
   const openConversation = useCallback((sessionId: string, preview = true): void => {
     const title = snapshot?.sessions.find((session) => session.id === sessionId)?.title;
@@ -362,7 +356,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
         ) : undefined}
         onOpenConversation={(sessionId) => openConversation(sessionId)}
         onOpenFlow={(subprojectId) => { if (projectRef) { actions.openFlow(projectRef, subprojectId); navigation.showWork(); } }}
-        onRunAgain={canLaunch ? (subprojectId) => void runAgain(subprojectId) : undefined}
+        onRunAgain={canLaunch ? (subprojectId) => { if (projectRef) { actions.openFlow(projectRef, subprojectId, { launch: true }); navigation.showWork(); } } : undefined}
         onNewFlow={() => { if (projectRef) { actions.openFlow(projectRef); navigation.showWork(); } }}
         onOpenTerminal={(panelId) => { actions.openTerminal(panelId); navigation.showWork(); }}
         onNewTerminal={() => { actions.newTerminal(projectRef); navigation.showWork(); }}

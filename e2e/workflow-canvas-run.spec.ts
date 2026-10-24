@@ -137,7 +137,13 @@ test('one canvas: run the saved flow, approve, open the working stage conversati
     await bar.getByRole('button', { name: /승인 대기 1|1 awaiting approval/u }).click();
     await panel.getByTestId('workflow-stage-approval').getByRole('button', { name: /^(승인|Approve)$/u }).click();
     await expect.poll(() => attemptSession(1), { timeout: 60_000 }).not.toBeNull();
-    expect(await attemptSession(1)).not.toBe(sessionId);
+    const secondSession = (await attemptSession(1))!;
+    expect(secondSession).not.toBe(sessionId);
+    // The stage column now opens run #2's conversation.
+    await build.locator('.workflow-node-card__title').click();
+    await expect(open).toHaveText(/작업 중인 대화 열기|Open the working conversation/u, { timeout: 30_000 });
     await page.screenshot({ path: path.join(evidence, '06-run-again.png') });
+    await open.click();
+    await expect(page.locator(`[data-testid="structured-agent-session"][data-session-id="${secondSession}"]`)).toBeVisible({ timeout: 30_000 });
   } finally { await app.close(); }
 });

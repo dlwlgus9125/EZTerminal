@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5d3db03fd7ef0d1ddb194f555ac634c2d947bbddc3b7f7ca08931b3ce8fe596f",
+        "inputDigest": "sha256:6ed3362061b632778a3489faaff7b2a02956c13b62f99269352214edce6819f4",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4): the flow panel moved its run actions into a run bar and its stage tabs into one stage column; stage conversations, links and the AI flow editing conversation keep their paths. Claims hold."
+        "reason": "Reviewed (I2-4 fixes): the flow screen approves the frozen question, locks a working stage from the run going on, reads models again when a flow opens and takes a board request to run again; conversation paths unchanged."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1f5ce593155a3ebf516678074d4d7a78f4ac784b39139aee44b00ba8eab84f5b",
+        "inputDigest": "sha256:98334af8db333e9984163ed17b84a60b1e7349ff1a2af8ea762b005454389e4e",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4): the flow screen sends run.launch and saves run settings through the same host command boundary; the panel re-reads on run notices and lets an unconfirmed run request go. Claims hold."
+        "reason": "Reviewed (I2-4 fixes): the desktop flow access subscribes to run notices; a board 다시 실행 goes through the flow screen's request recovery; the edit scope says this run only where the host binds. Claims hold."
       }
     }
   ]

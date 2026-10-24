@@ -13,10 +13,12 @@ const roles: WorkflowNode['role'][] = ['planning', 'design', 'implementation', '
  * `structure` keeps only what decides where the stage sits in the flow (the stage panel shows its own
  * settings above it).
  */
-export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, onChange, onRequestDelete, onMove, part = 'all' }: {
+export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, onChange, onRequestDelete, onMove, part = 'all', titleLocked = false }: {
   readonly graph: WorkflowGraph; readonly node: WorkflowNode; readonly text: WorkflowCopy; readonly readOnly: boolean;
   readonly providers: readonly StructuredAgentProviderOption[];
   readonly part?: 'all' | 'structure';
+  /** The stage is working: its title (one of its own settings) cannot change until it finishes. */
+  readonly titleLocked?: boolean;
   readonly onChange: (graph: WorkflowGraph) => void;
   readonly onRequestDelete?: (nodeId: string) => void;
   /** Only where the canvas cannot drag (static renderer): nudges the stored position. */
@@ -28,7 +30,7 @@ export function WorkflowNodeSettings({ graph, node, text, readOnly, providers, o
   const ports = workflowOutcomePorts(node.operation);
   const others = graph.nodes.filter(item => item.id !== node.id);
   return <div className="workflow-inspector workflow-node-settings">
-    <Field label={text('단계 이름', 'Stage title')}><Input value={node.title} maxLength={300} readOnly={readOnly} onChange={event => update({ title: event.target.value })} /></Field>
+    <Field label={text('단계 이름', 'Stage title')}><Input value={node.title} maxLength={300} readOnly={readOnly || titleLocked} onChange={event => update({ title: event.target.value })} /></Field>
     <Field label={text('동작', 'Operation')}><Select value={node.operation} disabled={readOnly} onChange={event => update({ operation: event.target.value as WorkflowNode['operation'] })}>{operations.map(operation => <option key={operation} value={operation}>{workflowOperationLabel(operation, text)}</option>)}</Select></Field>
     <Field label={text('역할', 'Role')}><Select value={node.role} disabled={readOnly} onChange={event => update({ role: event.target.value as WorkflowNode['role'] })}>{roles.map(role => <option key={role} value={role}>{({ planning: text('기획', 'Planning'), design: text('설계', 'Design'), implementation: text('구현', 'Implementation'), review: text('검토', 'Review'), integration: text('통합', 'Integration') })[role]}</option>)}</Select></Field>
     {node.operation === 'agent' && part === 'all' && <>

@@ -200,6 +200,34 @@ describe('workflow project workspace', () => {
       expect(state.commands).toHaveLength(0);
     }
   });
+  it('reads the flow again when the host says its runs changed, without waiting for the poll', async () => {
+    const state = fixture(); let notify: ((projectId: string) => void) | undefined; let reads = 0;
+    const original = state.access.getWorkflowSnapshot;
+    state.access.getWorkflowSnapshot = async (id) => { reads += 1; return original(id); };
+    state.access.onWorkflowRunsChanged = (listener) => { notify = listener; return () => { notify = undefined; }; };
+    await state.render(true);
+    const before = reads;
+    await act(async () => { notify?.('another-project'); notify?.('project-story'); await new Promise(resolve => setTimeout(resolve, 360)); });
+    expect(reads).toBe(before + 1);
+  });
+  it('runs a flow asked from the board once it is ready, once, and not when it cannot run', async () => {
+    const now = '2026-10-25T00:00:00.000Z';
+    const authority = { protocolVersion: 12, revision: 1, eventSequence: 1, generatedAt: now, capabilities: ['workflow-launch-v1'],
+      runtime: { keepRunning: false, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false }, projects: [], workspaces: [], providers: [],
+      sessions: [], agents: [], agentRelations: [], turns: [], transcriptHeads: [], approvals: [], schedules: [], heartbeats: [] } as unknown as DaemonSnapshot;
+    const daemonAccess = { getDaemonSnapshot: async () => authority, sendDaemonCommand: vi.fn(), listDaemonProviderModels: async () => ({ ok: true as const, value: [] }) };
+    for (const saved of [true, false]) {
+      const commands: WorkflowCommand[] = []; const snapshot = workflowFixture();
+      if (saved) snapshot.subprojects[0] = { ...snapshot.subprojects[0]!, runSettings: { reviewer: { providerId: 'codex', model: 'model-story' } } };
+      const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot, commandId: command.commandId }; } };
+      const render = async (key: string) => { await act(async () => root.render(<WorkflowWorkspacePanel key={String(saved)} projectId={snapshot.projectId} projectName="Project" access={access} daemonAccess={daemonAccess} conversations={[]} navigationTarget={{ subprojectId: 'login', key, launch: true }} />)); };
+      await render('board-1');
+      await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+      await render('board-1');
+      // Without a saved review AI the flow opens and says why; nothing is sent.
+      expect(commands.filter(command => command.type === 'run.launch')).toHaveLength(saved ? 1 : 0);
+    }
+  });
   it('restores the selected stage and its unsaved document without changing the authoritative graph', async () => {
     const state = fixture(); const snapshot = workflowFixture(); const graph = structuredClone(snapshot.subprojects[0].graph); graph.nodes[0].document = 'Unsaved draft';
     const saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: { login: { baseRevision: 2, graph } }, pendingCommand: null, view: { subprojectId: 'login', nodeId: graph.nodes[0].id, page: 'stage', scrollTop: 77 } };

@@ -1,7 +1,7 @@
 import { Plus, TriangleAlert } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
-import { runUnfinished, stageEditScope, type ExecutionRun } from '../../shared/planning-execution';
+import { blockingRunOf, stageEditScope, stageWorking, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowSubproject } from '../../shared/workflow';
 import type { WorkflowGraph, WorkflowIssue, WorkflowNode } from '../../shared/workflow-graph';
 import { flowRunNumber } from '../../shared/workflow-run-view';
@@ -137,8 +137,16 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
   const awaiting = (view.overlay?.awaitingApproval ?? []).map(entry => ({ nodeId: entry.nodeId, title: view.graph.nodes.find(item => item.id === entry.nodeId)?.title ?? entry.nodeId }));
   const controls = view.run ? workflowRunControls(view.run) : null;
   const runNumber = view.run ? flowRunNumber(props.runs, view.run) : 0;
-  // Whether a stage change reaches the run still going (the host binds it before the stage's first send).
-  const scopeOf = (nodeId: string) => view.run && view.mode !== 'run-view' && runUnfinished(view.run) ? stageEditScope(view.run, nodeId) : null;
+  // Whether a stage change reaches the run still going: the host binds a stage's own settings before its
+  // first send (a host with run settings, I2), while the flow keeps the stages and connections that run froze.
+  // A working stage is locked whichever run is shown.
+  const going = blockingRunOf(props.runs, props.subproject.id) ?? null;
+  const scopeOf = (nodeId: string): ReturnType<typeof stageEditScope> | null => {
+    if (!going || view.mode === 'run-view') return null;
+    if (stageWorking(going, nodeId)) return 'locked';
+    const reaches = props.savedRunSettings !== false && view.mode === 'edit-with-run' && view.run?.runId === going.runId;
+    return reaches ? stageEditScope(going, nodeId) : 'next-run';
+  };
 
   // One polite announcement per real change (run state, approvals), not per 4 s poll.
   const summary = view.run ? `${workflowStateLabel(view.run.state, text)}${awaiting.length ? ` · ${text(`승인 대기 ${awaiting.map(item => item.title).join(', ')}`, `awaiting approval: ${awaiting.map(item => item.title).join(', ')}`)}` : ''}` : '';

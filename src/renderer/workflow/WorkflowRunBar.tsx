@@ -53,8 +53,8 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
   useEffect(() => { setProviderId(reviewer?.providerId ?? ''); }, [reviewer?.providerId]);
   const provider = props.providers.find((entry) => entry.id === providerId);
   const archived = subproject.status === 'archived';
-  const launchBlocked = commandsDisabled ? text('호스트에 연결된 뒤 실행할 수 있습니다.', 'Connect to the host to run.')
-    : archived ? text('보관된 소프로젝트입니다. 복원한 뒤 실행하세요.', 'This subproject is archived. Restore it to run.')
+  const launchBlocked = archived ? text('보관된 소프로젝트입니다. 복원한 뒤 실행하세요.', 'This subproject is archived. Restore it to run.')
+    : commandsDisabled ? text('호스트에 연결된 뒤 실행할 수 있습니다.', 'Connect to the host to run.')
       : going ? text(`실행 #${flowRunNumber(runs, going)}이 아직 끝나지 않았습니다. 끝나거나 취소한 뒤 다시 실행할 수 있습니다.`, `Run #${flowRunNumber(runs, going)} has not finished. Run again once it finishes or is cancelled.`)
         : props.hasLocalDraft ? text('저장하지 않은 변경이 있습니다. 저장한 흐름을 실행합니다.', 'There are unsaved changes. Save them first: a run uses the saved flow.')
           : props.issueCount > 0 ? text('실행 전에 확인할 단계가 있습니다.', 'Some stages need attention before running.')
@@ -85,13 +85,14 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
       {props.onOpenResults && run.state !== 'prepared' && <Button size="sm" variant="ghost" leadingIcon={<FileSearch />} onClick={() => props.onOpenResults!(run.runId)}>{text('결과', 'Results')}</Button>}
       {run.preparation.startedBy && props.onOpenConversation && <Button size="sm" variant="ghost" leadingIcon={<MessageSquare />} onClick={() => props.onOpenConversation!(run.preparation.startedBy!.sessionId)}>{text('시작한 대화', 'Started from')}</Button>}
     </>}
-    <span className="workflow-run-bar__group" role="group" aria-label={text('승인 단계', 'Approval stages')}>
+    {/* 승인 and 검토 AI are saved on the subproject: runs prepared from now on use them (a run keeps its own). */}
+    <span className="workflow-run-bar__group" role="group" aria-label={text('승인 단계 · 다음 실행부터', 'Approval stages · from the next run')} title={text('다음에 준비하는 실행부터 적용됩니다.', 'Applies to runs prepared from now on.')}>
       <span className="workflow-run-bar__label">{text('승인', 'Approval')}</span>
       {/* The person's switch (agents can never turn it on); runs prepared from now on use it. */}
       <Button size="sm" variant="ghost" aria-pressed={subproject.autoApprove !== true} disabled={commandsDisabled || archived} onClick={() => props.onAutoApprove(false)}>{text('내가 승인', 'I approve')}</Button>
       <Button size="sm" variant="ghost" aria-pressed={subproject.autoApprove === true} disabled={commandsDisabled || archived} onClick={() => props.onAutoApprove(true)} data-testid="workflow-auto-approve">{text('자동 승인', 'Auto-approve')}</Button>
     </span>
-    {props.savedRunSettings && <span className="workflow-run-bar__group" role="group" aria-label={text('검토 AI', 'Review AI')}>
+    {props.savedRunSettings && <span className="workflow-run-bar__group" role="group" aria-label={text('검토 AI · 다음 실행부터', 'Review AI · from the next run')} title={text('다음에 준비하는 실행부터 적용됩니다.', 'Applies to runs prepared from now on.')}>
       <span className="workflow-run-bar__label">{text('검토 AI', 'Review AI')}</span>
       <Select aria-label={text('검토 AI 제공자', 'Review AI provider')} value={providerId} disabled={commandsDisabled || archived} onChange={(event) => setProviderId(event.target.value)}>
         <option value="">{text('제공자 선택', 'Choose a provider')}</option>
@@ -101,7 +102,8 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
       <Select aria-label={text('검토 모델', 'Reviewer model')} value={reviewer?.providerId === providerId ? reviewer.model : ''} disabled={commandsDisabled || archived || !providerId}
         onChange={(event) => { if (event.target.value) props.onSaveReviewer({ providerId, model: event.target.value }); }}>
         <option value="">{text('모델 선택', 'Choose a model')}</option>
-        {reviewer?.providerId === providerId && !provider?.models.some((model) => model.id === reviewer.model) && <option value={reviewer.model}>{reviewer.model} · {text('재확인 필요', 'Recheck required')}</option>}
+        {/* A phone does not read model catalogs: the saved model is listed as it is unless the catalog says otherwise. */}
+        {reviewer?.providerId === providerId && !provider?.models.some((model) => model.id === reviewer.model) && <option value={reviewer.model}>{reviewer.model}{provider?.models.length ? ` · ${text('재확인 필요', 'Recheck required')}` : ''}</option>}
         {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
       </Select>
     </span>}
