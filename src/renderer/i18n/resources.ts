@@ -1251,6 +1251,8 @@ export const appResources = {
         agentStatus: 'Agent status: {{status}}',
         title: 'Tab title',
         actions: 'Tab actions',
+        keepOpen: 'Keep open',
+        previewHint: 'Preview: the next conversation you open from a list takes this place. Double-click to keep it.',
       },
       fileExplorer: {
         copied: 'Copied',
@@ -3337,6 +3339,8 @@ export const appResources = {
         agentStatus: '에이전트 상태: {{status}}',
         title: '탭 제목',
         actions: '탭 작업',
+        keepOpen: '탭으로 고정',
+        previewHint: '미리보기: 목록에서 다음 대화를 열면 이 자리에 열립니다. 두 번 누르면 고정됩니다.',
       },
       fileExplorer: {
         copied: '복사됨',

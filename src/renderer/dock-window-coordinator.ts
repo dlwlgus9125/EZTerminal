@@ -10,11 +10,14 @@ import {
   findMainGridPanel,
   movePanelToMainGrid,
 } from './main-window-panel-routing';
+import type { PanelPreviewSlot } from './shell/panel-preview';
 
 export type DockSplitDirection = 'right' | 'below';
 
 export type DockPanelPlacementIntent =
   | { readonly kind: 'main-tab' }
+  /** Opened from a list: takes the preview tab's place in the main window's current group, else a new main tab. */
+  | { readonly kind: 'preview' }
   /** Takes the reference tab's place (same group and position); the reference closes. */
   | { readonly kind: 'replace'; readonly referencePanelId: string }
   | {
@@ -44,7 +47,10 @@ export class DockWindowCoordinator {
   private lastMainPanelId: string | null = null;
   private disposed = false;
 
-  public constructor(private readonly api: DockviewApi) {
+  public constructor(
+    private readonly api: DockviewApi,
+    private readonly preview?: PanelPreviewSlot,
+  ) {
     for (const panel of api.panels) {
       if (panel.api.location.type === 'grid' && !this.lastMainPanelId) {
         this.lastMainPanelId = panel.id;
@@ -56,8 +62,15 @@ export class DockWindowCoordinator {
       api.onDidActivePanelChange((event) => {
         if (event.panel) this.rememberPanel(event.panel);
       }),
-      api.onDidMovePanel(({ panel }) => this.rememberPanel(panel)),
-      api.onDidRemovePanel((panel) => this.forgetPanel(panel.id)),
+      api.onDidMovePanel(({ panel }) => {
+        this.rememberPanel(panel);
+        // Moving a tab is keeping it.
+        this.preview?.keep(panel.id);
+      }),
+      api.onDidRemovePanel((panel) => {
+        this.forgetPanel(panel.id);
+        this.preview?.keep(panel.id);
+      }),
     );
   }
 
@@ -66,6 +79,17 @@ export class DockWindowCoordinator {
     placement: DockPanelPlacementIntent,
   ): IDockviewPanel {
     if (this.disposed) throw new Error('DockWindowCoordinator is disposed');
+    if (placement.kind === 'preview') {
+      const reference = this.mainReferencePanel();
+      const previewId = this.preview?.panelId;
+      const current = previewId ? this.api.getPanel(previewId) : undefined;
+      // Only the preview of the group the person works in is reused, and never one in another window.
+      const panel = current && reference && current.group === reference.group && current.api.location.type === 'grid'
+        ? this.addPanel(options, { kind: 'replace', referencePanelId: current.id })
+        : this.addPanel(options, { kind: 'main-tab' });
+      this.preview?.mark(panel.id);
+      return panel;
+    }
     if (placement.kind === 'main-tab') {
       const reference = this.mainReferencePanel();
       const panel = this.api.addPanel({

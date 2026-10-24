@@ -4,6 +4,7 @@ import type { DockviewApi, DockviewGroupPanel, IDockviewPanel } from 'dockview-r
 import { describe, expect, it, vi } from 'vitest';
 
 import { DockWindowCoordinator } from './dock-window-coordinator';
+import { PanelPreviewSlot } from './shell/panel-preview';
 
 function disposable() {
   return { dispose: vi.fn() };
@@ -62,6 +63,8 @@ function createHarness() {
     (group.panels as IDockviewPanel[]).push(panel);
     return panel;
   });
+  const moved: Array<(event: { panel: IDockviewPanel }) => void> = [];
+  const removed: Array<(panel: IDockviewPanel) => void> = [];
   const addPopoutGroup = vi.fn(async () => true);
   const api = {
     panels,
@@ -71,11 +74,13 @@ function createHarness() {
     addPanel,
     addPopoutGroup,
     onDidActivePanelChange: vi.fn(() => disposable()),
-    onDidMovePanel: vi.fn(() => disposable()),
-    onDidRemovePanel: vi.fn(() => disposable()),
+    onDidMovePanel: vi.fn((listener: (event: { panel: IDockviewPanel }) => void) => { moved.push(listener); return disposable(); }),
+    onDidRemovePanel: vi.fn((listener: (panel: IDockviewPanel) => void) => { removed.push(listener); return disposable(); }),
   } as unknown as DockviewApi;
+  const move = (panel: IDockviewPanel): void => { for (const listener of moved) listener({ panel }); };
+  const remove = (panel: IDockviewPanel): void => { for (const listener of removed) listener(panel); };
 
-  return { api, addPanel, addPopoutGroup, auxiliary, mainPanel, popoutPanel };
+  return { api, addPanel, addPopoutGroup, auxiliary, mainPanel, popoutPanel, mainGroup, makePanel, panels, move, remove };
 }
 
 describe('DockWindowCoordinator placement', () => {
@@ -147,5 +152,93 @@ describe('DockWindowCoordinator placement', () => {
       skipSetActive: true,
     });
     focus.mockRestore();
+  });
+});
+
+describe('DockWindowCoordinator preview place', () => {
+  it('opens the first list open as a main tab and marks it as the preview', () => {
+    const h = createHarness();
+    const slot = new PanelPreviewSlot();
+    const coordinator = new DockWindowCoordinator(h.api, slot);
+
+    coordinator.addPanel({ id: 'agent-session-a', component: 'agent-session' }, { kind: 'preview' });
+
+    expect(h.addPanel).toHaveBeenCalledWith(expect.objectContaining({
+      position: { referencePanel: h.mainPanel, direction: 'within' },
+    }));
+    expect(slot.panelId).toBe('agent-session-a');
+  });
+
+  it('replaces the preview in its own place on the next list open', () => {
+    const h = createHarness();
+    const slot = new PanelPreviewSlot();
+    const coordinator = new DockWindowCoordinator(h.api, slot);
+    const first = coordinator.addPanel({ id: 'agent-session-a', component: 'agent-session' }, { kind: 'preview' });
+
+    coordinator.addPanel({ id: 'agent-session-b', component: 'agent-session' }, { kind: 'preview' });
+
+    expect(h.addPanel).toHaveBeenLastCalledWith(expect.objectContaining({
+      id: 'agent-session-b',
+      position: { referencePanel: first, direction: 'within', index: 1 },
+    }));
+    expect(first.api.close).toHaveBeenCalledOnce();
+    expect(slot.panelId).toBe('agent-session-b');
+  });
+
+  it('keeps a preview the person kept, so the next list open adds a tab', () => {
+    const h = createHarness();
+    const slot = new PanelPreviewSlot();
+    const coordinator = new DockWindowCoordinator(h.api, slot);
+    const first = coordinator.addPanel({ id: 'agent-session-a', component: 'agent-session' }, { kind: 'preview' });
+
+    slot.keep(first.id);
+    coordinator.addPanel({ id: 'agent-session-b', component: 'agent-session' }, { kind: 'preview' });
+
+    expect(first.api.close).not.toHaveBeenCalled();
+    expect(slot.panelId).toBe('agent-session-b');
+  });
+
+  it('treats moving a tab as keeping it and forgets a closed preview', () => {
+    const h = createHarness();
+    const slot = new PanelPreviewSlot();
+    const coordinator = new DockWindowCoordinator(h.api, slot);
+    const first = coordinator.addPanel({ id: 'agent-session-a', component: 'agent-session' }, { kind: 'preview' });
+
+    h.move(first);
+    expect(slot.panelId).toBeNull();
+
+    const second = coordinator.addPanel({ id: 'agent-session-b', component: 'agent-session' }, { kind: 'preview' });
+    h.remove(second);
+    expect(slot.panelId).toBeNull();
+  });
+
+  it('never replaces a preview that sits in another window', () => {
+    const h = createHarness();
+    const slot = new PanelPreviewSlot();
+    const coordinator = new DockWindowCoordinator(h.api, slot);
+    slot.mark(h.popoutPanel.id);
+
+    coordinator.addPanel({ id: 'agent-session-b', component: 'agent-session' }, { kind: 'preview' });
+
+    expect(h.popoutPanel.api.close).not.toHaveBeenCalled();
+    expect(h.addPanel).toHaveBeenLastCalledWith(expect.objectContaining({
+      position: { referencePanel: h.mainPanel, direction: 'within' },
+    }));
+    expect(slot.panelId).toBe('agent-session-b');
+  });
+
+  it('leaves a preview in another group alone and starts a new one where the person works', () => {
+    const h = createHarness();
+    const slot = new PanelPreviewSlot();
+    const coordinator = new DockWindowCoordinator(h.api, slot);
+    const otherGroup = { ...h.mainGroup, id: 'other-group', panels: [] as IDockviewPanel[] } as unknown as typeof h.mainGroup;
+    const elsewhere = h.makePanel('agent-session-elsewhere', otherGroup, window);
+    h.panels.push(elsewhere);
+    slot.mark(elsewhere.id);
+
+    coordinator.addPanel({ id: 'agent-session-b', component: 'agent-session' }, { kind: 'preview' });
+
+    expect(elsewhere.api.close).not.toHaveBeenCalled();
+    expect(slot.panelId).toBe('agent-session-b');
   });
 });

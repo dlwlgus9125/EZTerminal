@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDockviewPanelHeaderProps } from 'dockview-react';
 
 import { AppI18nProvider } from './i18n';
+import { PanelPreviewContext, PanelPreviewSlot } from './shell/panel-preview';
 import { agentHistoryTabTitle, WorkspaceTab } from './WorkspaceTab';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -71,6 +72,7 @@ function fakeProps(initialParams: Record<string, unknown> = {}) {
 function renderTab(
   overrides: Partial<React.ComponentProps<typeof WorkspaceTab>> = {},
   locale: 'en' | 'ko' = 'en',
+  preview: PanelPreviewSlot | null = null,
 ) {
   const { props, api } = fakeProps();
   const requestClose = vi.fn((close: () => void) => close());
@@ -80,15 +82,17 @@ function renderTab(
   const onTitleChanged = vi.fn();
   act(() => root.render(
     <AppI18nProvider locale={locale} languages={[locale]}>
-      <WorkspaceTab
-        {...props}
-        requestClose={requestClose}
-        onSplit={onSplit}
-        onMoveToNewWindow={onMoveToNewWindow}
-        onMoveToMainWindow={onMoveToMainWindow}
-        onTitleChanged={onTitleChanged}
-        {...overrides}
-      />
+      <PanelPreviewContext.Provider value={preview}>
+        <WorkspaceTab
+          {...props}
+          requestClose={requestClose}
+          onSplit={onSplit}
+          onMoveToNewWindow={onMoveToNewWindow}
+          onMoveToMainWindow={onMoveToMainWindow}
+          onTitleChanged={onTitleChanged}
+          {...overrides}
+        />
+      </PanelPreviewContext.Provider>
     </AppI18nProvider>,
   ));
   return {
@@ -118,6 +122,37 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   setter.call(input, value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
+
+describe('WorkspaceTab preview place', () => {
+  it('marks the preview tab, keeps it on double-click instead of renaming, and renames once kept', () => {
+    const slot = new PanelPreviewSlot();
+    slot.mark('tab-3');
+    renderTab({}, 'en', slot);
+    const tab = container.querySelector<HTMLElement>('.agent-aware-tab')!;
+    expect(tab.dataset.preview).toBe('true');
+
+    act(() => tab.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })));
+    expect(slot.panelId).toBeNull();
+    expect(tab.dataset.preview).toBeUndefined();
+    expect(container.querySelector('[data-testid="workspace-tab-rename"]')).toBeNull();
+
+    act(() => tab.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })));
+    expect(container.querySelector('[data-testid="workspace-tab-rename"]')).not.toBeNull();
+  });
+
+  it('offers Keep open in the tab menu only while the tab is the preview', () => {
+    const slot = new PanelPreviewSlot();
+    slot.mark('tab-3');
+    renderTab({}, 'ko', slot);
+    const menu = openContextMenu();
+    const keep = menu.querySelector<HTMLElement>('[data-testid="tab-ctx-keep"]')!;
+    expect(keep.textContent).toContain('탭으로 고정');
+    act(() => keep.click());
+    expect(slot.panelId).toBeNull();
+    const again = openContextMenu();
+    expect(again.querySelector('[data-testid="tab-ctx-keep"]')).toBeNull();
+  });
+});
 
 describe('WorkspaceTab interactions', () => {
   it('closes the focused tab view with Delete without nesting a focusable button', () => {

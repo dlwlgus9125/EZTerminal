@@ -63,6 +63,7 @@ import {
   type StructuredAgentCreateCommand,
 } from './structured-agent-create';
 import { type StructuredAgentCreateRecoveryRegistry } from './structured-agent-create-recovery';
+import { usePanelPreview } from './shell/panel-preview';
 import {
   consumeRendererRecoveryStructuredAgentCreate,
   peekRendererRecoveryStructuredAgentCreate,
@@ -300,6 +301,8 @@ export function StructuredAgentDockPanel(
   },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
+  // Typing or sending in a preview tab keeps it (the next list open will not take its place).
+  const { keep: keepPreview } = usePanelPreview(props.api.id);
   const capabilityClient = useMemo(() => typeof window.ezterminal?.agentCapabilitiesList === 'function' ? {
     list: window.ezterminal.agentCapabilitiesList,
     manage: window.ezterminal.agentCapabilitiesManage,
@@ -1421,6 +1424,7 @@ export function StructuredAgentDockPanel(
       supportsMessageContext={provider?.protocol === 'codex-app-server' || provider?.protocol === 'claude-agent-sdk'}
       draftState={chatRecovery.controller ? chatRecovery.view.draft : undefined}
       onDraftChange={(draft) => {
+        if (draft.text.trim()) keepPreview();
         if (chatRecovery.controller) chatRecovery.controller.updateDraft(draft);
         else earlyDraft.current = { sessionId, draft };
       }}
@@ -1429,8 +1433,8 @@ export function StructuredAgentDockPanel(
       recoveryControl={<ChatRecoveryNotice controller={chatRecovery.controller} view={chatRecovery.view} />}
       deliveryUncertain={pendingSubmit !== null}
       onReconcileDelivery={reconcileSubmit}
-      onSend={(prompt, context) => runSessionCommand('agent.submit', prompt, context)}
-      onInterruptAndSend={historyOnly ? undefined : (prompt, context) => runSessionCommand('agent.interrupt-and-submit', prompt, context)}
+      onSend={(prompt, context) => { keepPreview(); return runSessionCommand('agent.submit', prompt, context); }}
+      onInterruptAndSend={historyOnly ? undefined : (prompt, context) => { keepPreview(); return runSessionCommand('agent.interrupt-and-submit', prompt, context); }}
       onChangeSettings={historyOnly ? undefined : changeSettings}
       onResolveApproval={historyOnly ? undefined : resolveApproval}
       onOpenRelatedSession={props.onOpenSession ? openRelatedSession : undefined}

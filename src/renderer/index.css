@@ -3438,6 +3438,12 @@ button.agent-work-activity:focus-visible {
   flex: 1;
 }
 
+/* A preview tab (opened from a list, not kept yet) reads in italics until it is kept. */
+.agent-aware-tab[data-preview='true'] .dv-default-tab-content,
+.agent-aware-tab[data-preview='true'] .agent-history-tab__label {
+  font-style: italic;
+}
+
 .agent-history-tab {
   min-inline-size: 0;
   border-inline-start: 3px solid var(--agent-provider-color, transparent);

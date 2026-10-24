@@ -182,6 +182,7 @@ import {
   type WorkbenchPanelPlacement,
 } from './workbench-coordinator';
 import { DockWindowCoordinator } from './dock-window-coordinator';
+import { PanelPreviewContext, PanelPreviewSlot } from './shell/panel-preview';
 import { writePlanAccess } from './agent-plan-access';
 import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
@@ -708,6 +709,8 @@ export function App(): JSX.Element {
   }
   const structuredAgentCreateRecoveryRegistry = structuredAgentCreateRecoveryRegistryRef.current;
   const dockWindowCoordinatorRef = useRef<DockWindowCoordinator | null>(null);
+  // Session-only: which tab opened from a list may still be replaced by the next list open.
+  const panelPreview = useMemo(() => new PanelPreviewSlot(), []);
   const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void; } | null>(null);
@@ -1156,7 +1159,7 @@ export function App(): JSX.Element {
   const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox'>('projects');
   const [projectEditorRequest, setProjectEditorRequest] = useState<{ readonly projectId: string; readonly id: number }>();
   const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
-  const openConversationHistory = useCallback((entry: ConversationEntry): void => {
+  const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
     const api = apiRef.current;
     const windows = dockWindowCoordinatorRef.current;
     if (!api || !windows) return;
@@ -1166,7 +1169,7 @@ export function App(): JSX.Element {
       || sessions.has(structuredAgentSessionId(String(panel.params?.historyId ?? '')) ?? '__none__'));
     if (existing) { existing.api.setActive(); windows.focusPanelWindow(existing); }
     else windows.addPanel({ id: `agent-session-${entry.conversationId}`, component: 'agent-session', title: entry.title, renderer: 'always',
-      params: { historyId: entry.conversationId, conversationId: entry.conversationId, projectId: entry.projectId } }, { kind: 'main-tab' });
+      params: { historyId: entry.conversationId, conversationId: entry.conversationId, projectId: entry.projectId } }, { kind: options?.preview ? 'preview' : 'main-tab' });
     setConversationHistory(null);
     if (window.innerWidth < 1024) setSidebarDestination(null);
   }, []);
@@ -1793,7 +1796,7 @@ export function App(): JSX.Element {
     readonly sessionId: string;
     readonly title?: string;
     readonly providerLabel?: string;
-  }): void => {
+  }, options?: { readonly preview?: boolean }): void => {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     const sessionId = input.sessionId.trim();
     if (!sessionId) return;
@@ -1817,7 +1820,7 @@ export function App(): JSX.Element {
       title,
       renderer: 'always',
       params: { historyId },
-    }, { kind: 'main-tab' });
+    }, { kind: options?.preview ? 'preview' : 'main-tab' });
     revealOpenedSession();
   }, [sessionMirroringCoordinator, revealOpenedSession]);
 
@@ -2702,7 +2705,7 @@ export function App(): JSX.Element {
       viewsRef.current = views;
       setWorkbenchViews(views);
       dockWindowCoordinatorRef.current?.dispose();
-      const dockWindows = new DockWindowCoordinator(api);
+      const dockWindows = new DockWindowCoordinator(api, panelPreview);
       dockWindowCoordinatorRef.current = dockWindows;
       agentResultsRef.current?.dispose();
       agentResultsRef.current = new AgentResultsDock(api, dockWindows, {
@@ -2766,6 +2769,7 @@ export function App(): JSX.Element {
       void refreshPresets();
     },
     [
+      panelPreview,
       pickCapabilitySafeStartupLayout,
       pushToast,
       refreshPresets,
@@ -2955,7 +2959,8 @@ export function App(): JSX.Element {
           onOpenProjectDocument: openProjectDocument,
           onOpenPlanningProject: openPlanningProject,
           onOpenWorkflowProject: (project, subprojectId, nodeId) => planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, nodeId),
-          onOpenConversationHistory: openConversationHistory,
+          // Opens from a list take the preview place until the person keeps the tab.
+          onOpenConversationHistory: (entry: ConversationEntry) => openConversationHistory(entry, { preview: true }),
           onOpenHistory: projectId => setConversationHistory({ projectId: projectId ?? activeProjectId ?? undefined }),
           onOpenProjectMap: openProjectMap,
           activeProjectId,
@@ -2967,13 +2972,13 @@ export function App(): JSX.Element {
           },
           onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
-          onOpenStructuredAgentSession: openStructuredAgentSession,
+          onOpenStructuredAgentSession: (input: Parameters<typeof openStructuredAgentSession>[0]) => openStructuredAgentSession(input, { preview: true }),
           activeConversationSessionId,
           appChatInbox: {
             entries: appChatInbox.entries,
             onOpen: (entry) => {
               appChatInbox.markSeen(entry.sessionId);
-              openStructuredAgentSession({ sessionId: entry.sessionId, title: entry.conversationTitle });
+              openStructuredAgentSession({ sessionId: entry.sessionId, title: entry.conversationTitle }, { preview: true });
             },
             onMarkSeen: (entry) => appChatInbox.markSeen(entry.sessionId),
           },
@@ -3220,6 +3225,7 @@ export function App(): JSX.Element {
                           <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
                             <PresetMutationContext.Provider value={presetMutationValue}>
                               <DesktopRuntimeLifecycleProvider>
+                                <PanelPreviewContext.Provider value={panelPreview}>
                                 <DockviewReact
                                   className="dockview-theme-dark ez-dock"
                                   components={components}
@@ -3230,6 +3236,7 @@ export function App(): JSX.Element {
                                   dndStrategy="html5"
                                   popoutUrl={auxiliaryPopoutUrl()}
                                 />
+                                </PanelPreviewContext.Provider>
                               </DesktopRuntimeLifecycleProvider>
                             </PresetMutationContext.Provider>
                           </TerminalRuntimeContext.Provider>
@@ -3319,7 +3326,7 @@ export function App(): JSX.Element {
       />
 
       {conversationHistory && <ConversationHistoryDialog open onOpenChange={open => { if (!open) setConversationHistory(null); }}
-        onOpenConversation={openConversationHistory}
+        onOpenConversation={entry => openConversationHistory(entry)}
         client={window.ezterminal} currentProjectId={conversationHistory.projectId} initialConversationId={conversationHistory.conversationId}
         onOpenSession={input => { openStructuredAgentSession(input); setConversationHistory(null); }}
         onOpenCliHistory={async entry => {

@@ -12,6 +12,7 @@ import {
   type ProjectSessionPanelMetadata,
 } from '../shared/project-workspace';
 import { useAppTranslation } from './i18n';
+import { usePanelPreview } from './shell/panel-preview';
 import { Badge } from './ui';
 import { isFocusableHTMLElement } from './ui/utils';
 import {
@@ -329,7 +330,11 @@ export function WorkspaceTab({
     return () => disposable?.dispose();
   }, [props.api, props.params]);
 
+  const { preview, keep } = usePanelPreview(props.api.id);
+
   const startRename = (): void => {
+    // Naming a tab is keeping it.
+    keep();
     cancelRenameRef.current = false;
     setDraft(props.api.title ?? generatedPanelTitle(props.api.id, props.api.component, generatedTitleLabels));
     setRenaming(true);
@@ -390,6 +395,7 @@ export function WorkspaceTab({
   };
 
   const menuItems: readonly TerminalContextMenuItem[] = [
+    ...(preview ? [{ action: 'keep', label: t('workspaceTab.keepOpen'), onClick: keep }] : []),
     { action: 'rename', label: t('workspaceTab.rename'), shortcut: 'F2', onClick: startRename },
     {
       action: 'split-right',
@@ -428,6 +434,8 @@ export function WorkspaceTab({
         'agent-aware-tab',
         props.api.component === 'agent-session' ? 'agent-aware-tab--history' : '',
       ].filter(Boolean).join(' ')}
+      data-preview={preview || undefined}
+      title={preview ? t('workspaceTab.previewHint') : undefined}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -436,7 +444,9 @@ export function WorkspaceTab({
       onDoubleClick={(event) => {
         if ((event.target as Element).closest('.dv-default-tab-action')) return;
         event.preventDefault();
-        startRename();
+        // A preview tab is kept by a double-click; a kept one is renamed.
+        if (preview) keep();
+        else startRename();
       }}
       onKeyDownCapture={(event) => {
         if (event.key === 'F2' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
