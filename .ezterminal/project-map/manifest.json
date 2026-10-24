@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fa48c302b1f31fe9fcffb667c94c972e59af2f019a9aa0b26490f27869c0578a",
-        "decision": "map-updated",
-        "reason": "Reviewed: the Board + Desk shell (I1) replaces header, rail and status bar around the same dock; conversation, approval and inbox flows are unchanged (the board can allow/deny through permission.resolve). Claims hold; anchors moved."
+        "inputDigest": "sha256:de3942eae2ca639a3f45cf42ce57f6de11ec6923a6baa930e466c2c569457dc1",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed: App passes a first-start flag to ShellNavigation so the first screen yields to a click or key made before projects arrive; conversation, approval and inbox flows are unchanged. Claims hold."
       }
     },
     {
