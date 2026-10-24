@@ -528,6 +528,29 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(validateLayoutEnvelope({ schemaVersion: 1 })).toBeNull();
   });
 
+  it('saves a flow tab opened at a stage without its one-shot navigation', () => {
+    const layout = makeLayout(['planning-project-1']);
+    (layout.panels as Record<string, unknown>)['planning-project-1'] = { id: 'planning-project-1', contentComponent: 'planning-workspace', renderer: 'always',
+      params: { projectId: 'project-1', projectName: 'Project', subprojectId: 'login', nodeId: 'login:plan', workflowNavigationKey: 'nav-1' } };
+    const env = buildLayoutEnvelope(layout, '2026-10-24T00:00:00.000Z');
+    expect(env?.layout.panels['planning-project-1'].params).toEqual({ projectId: 'project-1', projectName: 'Project' });
+  });
+
+  it('saves a conversation tab started by /clear without its seed', () => {
+    const layout = makeLayout(['agent-session-1']);
+    (layout.panels as Record<string, unknown>)['agent-session-1'] = { id: 'agent-session-1', contentComponent: 'agent-session', renderer: 'always',
+      params: { historyId: 'structured-draft-1', conversationSeed: { providerId: 'claude', model: 'opus' } } };
+    const env = buildLayoutEnvelope(layout, '2026-10-24T00:00:00.000Z');
+    expect(env?.layout.panels['agent-session-1'].params).toEqual({ historyId: 'structured-draft-1' });
+  });
+
+  it('still rejects unexpected params on a flow tab', () => {
+    const layout = makeLayout(['planning-project-1']);
+    (layout.panels as Record<string, unknown>)['planning-project-1'] = { id: 'planning-project-1', contentComponent: 'planning-workspace', renderer: 'always',
+      params: { projectId: 'project-1', projectName: 'Project', subprojectId: 'login', rootPath: 'C:/unexpected' } };
+    expect(buildLayoutEnvelope(layout, '2026-10-24T00:00:00.000Z')).toBeNull();
+  });
+
   it('buildLayoutEnvelope wraps a raw toJSON() result (save path)', () => {
     const env = buildLayoutEnvelope(makeLayout(['tab-1', 'tab-2']), '2026-07-02T00:00:00.000Z');
     expect(env?.schemaVersion).toBe(2);

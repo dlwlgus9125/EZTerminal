@@ -488,6 +488,25 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
             };
           }
         }
+        // One-shot navigation that rides on a tab's params: opening a flow at a stage, and the
+        // settings a /clear conversation starts with. Neither belongs in the saved layout (a restore
+        // would replay the navigation), and the strict schema below would reject the whole save.
+        if (record.contentComponent === 'planning-workspace'
+          && typeof record.params === 'object'
+          && record.params !== null) {
+          const params = { ...(record.params as Record<string, unknown>) };
+          delete params.subprojectId;
+          delete params.nodeId;
+          delete params.workflowNavigationKey;
+          record.params = params;
+        }
+        if (record.contentComponent === 'agent-session'
+          && typeof record.params === 'object'
+          && record.params !== null) {
+          const params = { ...(record.params as Record<string, unknown>) };
+          delete params.conversationSeed;
+          record.params = params;
+        }
         if (record.contentComponent === 'project-editor'
           && typeof record.params === 'object'
           && record.params !== null) {
