@@ -237,6 +237,28 @@ describe('workflow project workspace', () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
     expect(stored.state.olderVersion).toBeUndefined();
   });
+  it('rebases an older app’s recovery taken in by hand after a failed read', async () => {
+    const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
+    const hostSnapshot = { ...snapshot, subprojects: snapshot.subprojects.map((item, index) => index === 0 ? { ...item, graph: { ...item.graph, nodes: item.graph.nodes.map(node => node.id === stage.id ? { ...node, reasoningEffort: 'high' } : node) } } : item) };
+    const commands: WorkflowCommand[] = [];
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot: hostSnapshot }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot: hostSnapshot, commandId: command.commandId }; } };
+    const reduced = snapshot.subprojects[0]!.graph;
+    const older: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, pendingCommand: null, view: { subprojectId: 'login', nodeId: stage.id, page: 'stage', scrollTop: 0 },
+      drafts: { login: { baseRevision: 2, graph: { ...reduced, nodes: reduced.nodes.map(node => node.id === stage.id ? { ...node, document: 'Older app edit' } : node) } } } };
+    let reads = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => { reads += 1; if (reads === 1) return { ok: false, error: 'unavailable', message: 'Busy' }; return { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: older, olderVersion: true } }; },
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} navigationTarget={{ subprojectId: 'login', nodeId: stage.id, key: 'manual' }} conversations={[]} />));
+    await click('Read stored draft');
+    await click('Use stored draft');
+    expect(stageDocument()).toBe('Older app edit');
+    await click('Save draft');
+    const command = commands.at(-1);
+    if (command?.type !== 'workflow.patch') throw new Error('No graph save');
+    expect(command.payload.graph.nodes.find(item => item.id === stage.id)).toMatchObject({ document: 'Older app edit', reasoningEffort: 'high' });
+  });
   it('lets an execution request that stays unconfirmed go, but never an edit', async () => {
     const snapshot = workflowFixture();
     for (const pendingCommand of [
