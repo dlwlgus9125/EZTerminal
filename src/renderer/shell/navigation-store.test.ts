@@ -34,6 +34,26 @@ describe('ShellNavigation', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('chooses the first screen once, and not after the person already moved', () => {
+    const withProjects = new ShellNavigation({ mode: 'work', projectId: null }, undefined, { firstStart: true });
+    expect(withProjects.awaitingFirstStart).toBe(true);
+    withProjects.settleFirstStart('p1');
+    expect(withProjects.getSnapshot()).toEqual({ mode: 'board', projectId: 'p1' });
+    withProjects.showWork();
+    withProjects.settleFirstStart('p1');
+    expect(withProjects.getSnapshot().mode).toBe('work');
+
+    const touched = new ShellNavigation({ mode: 'work', projectId: null }, undefined, { firstStart: true });
+    touched.touch();
+    touched.settleFirstStart('p1');
+    expect(touched.getSnapshot()).toEqual({ mode: 'work', projectId: null });
+
+    const restored = new ShellNavigation({ mode: 'work', projectId: 'p2' });
+    expect(restored.awaitingFirstStart).toBe(false);
+    restored.settleFirstStart('p1');
+    expect(restored.getSnapshot()).toEqual({ mode: 'work', projectId: 'p2' });
+  });
+
   it('forgets a project that went away', () => {
     const navigation = new ShellNavigation({ mode: 'board', projectId: 'p1' });
     navigation.forgetProject('p2');

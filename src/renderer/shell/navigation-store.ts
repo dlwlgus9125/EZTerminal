@@ -23,12 +23,33 @@ export const INITIAL_SHELL_NAVIGATION: ShellNavigationState = { mode: 'board', p
 export class ShellNavigation {
   private state: ShellNavigationState;
   private readonly listeners = new Set<() => void>();
+  private firstStart: boolean;
 
   public constructor(
     initial: ShellNavigationState = INITIAL_SHELL_NAVIGATION,
     private readonly persist?: (state: ShellNavigationState) => void,
+    options: { readonly firstStart?: boolean } = {},
   ) {
     this.state = initial;
+    this.firstStart = options.firstStart === true;
+  }
+
+  /** Nothing was stored and the first screen is not chosen yet. */
+  public get awaitingFirstStart(): boolean {
+    return this.firstStart;
+  }
+
+  /** The person clicked or typed before the first screen was chosen: where they are stays. */
+  public touch(): void {
+    this.firstStart = false;
+  }
+
+  /** First start, once the projects are known: a person with projects lands on a board, one without on the terminal. */
+  public settleFirstStart(firstProjectId: string | undefined): void {
+    if (!this.firstStart) return;
+    this.firstStart = false;
+    if (firstProjectId) this.showBoard(firstProjectId);
+    else this.showWork();
   }
 
   public readonly subscribe = (listener: () => void): (() => void) => {

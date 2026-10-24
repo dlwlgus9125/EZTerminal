@@ -56,8 +56,6 @@ export interface DeskShellActions {
 export interface DeskShellProps {
   readonly navigation: ShellNavigation;
   readonly appVersion: string | null;
-  /** Whether a navigation state was stored before this start (decides the first screen). */
-  readonly restored: boolean;
   readonly snapshot: DaemonSnapshot | null;
   readonly terminals: readonly DeskTerminal[];
   /** The session (conversation) or panel (terminal) of the dock's active tab. */
@@ -160,14 +158,21 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     return [...projects, ...extra];
   }, [projects, snapshot]);
 
-  // First start without a stored place: a person with projects lands on a board, one without on the terminal.
-  const settled = useRef(props.restored);
+  // First start without a stored place: the first screen is chosen once the projects are known,
+  // unless the person already clicked or typed somewhere before they arrived.
   useEffect(() => {
-    if (settled.current || projects === null) return;
-    settled.current = true;
-    const first = projectTabs(projects.map((project) => ({ ...project, lastActiveAt: project.lastActiveAt ?? undefined })), null, 1)[0];
-    if (first) navigation.showBoard(first.projectId);
-    else navigation.showWork();
+    if (!navigation.awaitingFirstStart) return undefined;
+    const touch = (): void => navigation.touch();
+    window.addEventListener('pointerdown', touch, true);
+    window.addEventListener('keydown', touch, true);
+    return () => {
+      window.removeEventListener('pointerdown', touch, true);
+      window.removeEventListener('keydown', touch, true);
+    };
+  }, [navigation]);
+  useEffect(() => {
+    if (projects === null) return;
+    navigation.settleFirstStart(projectTabs(projects.map((project) => ({ ...project, lastActiveAt: project.lastActiveAt ?? undefined })), null, 1)[0]?.projectId);
   }, [navigation, projects]);
 
   // A selected project that no longer exists falls back to the first one.

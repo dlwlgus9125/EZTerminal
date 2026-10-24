@@ -771,12 +771,12 @@ export function App(): JSX.Element {
     // Nothing stored: start in work mode; the shell moves to a board once it knows projects exist.
     const navigation = new ShellNavigation(stored === null ? { mode: 'work', projectId: null } : parseShellNavigation(stored), (state) => {
       try { window.localStorage.setItem(SHELL_NAVIGATION_KEY, JSON.stringify(state)); } catch { /* storage full or denied: the place is not kept */ }
-    });
+    }, { firstStart: stored === null });
     // Kept from the first start on, so a later start opens where this one leaves off.
     if (stored === null) {
       try { window.localStorage.setItem(SHELL_NAVIGATION_KEY, JSON.stringify(navigation.getSnapshot())); } catch { /* not kept */ }
     }
-    return { navigation, restored: stored !== null };
+    return { navigation };
   });
   const shellNavigation = shellStart.navigation;
   const shellNav = useSyncExternalStore(shellNavigation.subscribe, shellNavigation.getSnapshot);
@@ -3088,7 +3088,6 @@ export function App(): JSX.Element {
   };
   const deskShell = useDeskShell({
     navigation: shellNavigation,
-    restored: shellStart.restored,
     appVersion: rendererCapabilities.runtimeVersions()?.app ?? null,
     snapshot: shellSnapshot,
     terminals: shellTerminals,
