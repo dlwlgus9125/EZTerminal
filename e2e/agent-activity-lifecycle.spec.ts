@@ -60,9 +60,15 @@ test('terminating an Agent terminal session removes its activity and focus targe
   await window.getByTestId('rail-agents').click();
   const projectId = await window.evaluate(async id => (await globalThis.window.ezterminal.getDaemonSnapshot())?.sessions.find(item => item.id === id)?.projectId, sessionId!);
   const project = window.getByTestId(`agent-project-open-${projectId}`);
-  if (await project.getAttribute('aria-expanded') !== 'true') await project.getByRole('button', { name: /^Expand:/ }).click();
   const row = window.locator(`[role="treeitem"][data-session-id="${sessionId}"]`);
-  await expect(row).toBeVisible();
+  // The tree also opens the project by itself (first project, active session) once its list arrives,
+  // which renames Expand to Collapse: expand only while it is still closed, and retry until the row shows.
+  await expect(async () => {
+    if (!await row.isVisible() && await project.getAttribute('aria-expanded') !== 'true') {
+      await project.getByRole('button', { name: /^Expand:/ }).click({ timeout: 1_000 });
+    }
+    await expect(row).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await row.getByTestId('session-end').click();
   const dialog = window.getByTestId('session-end-dialog');
   await expect(dialog).toBeVisible();
