@@ -140,6 +140,8 @@
 .ez-shell-ptab:hover { color: var(--ui-text-secondary); }
 
 .ez-shell-ptab[aria-current='page'] {
+  /* The selected project keeps its whole name; the others narrow. */
+  flex-shrink: 0;
   background: var(--ui-floor);
   color: var(--ui-text-primary);
 }
@@ -633,8 +635,11 @@
   font-size: 0.75rem;
 }
 
-.ez-shell-launch__composer .structured-agent-composer {
+.ez-shell-launch .ez-shell-launch__composer .structured-agent-composer,
+.ez-shell-launch .ez-shell-launch__composer .chat-composer {
+  /* The bar spans the board, not the chat column's centred width. */
   width: 100%;
+  max-width: none;
   margin: 0;
   padding: 0;
   background: transparent;
@@ -667,10 +672,10 @@
 
 .ez-shell-launch__composer .structured-agent-composer__input-row {
   display: flex;
-  /* One line when there is room; the switches move under the message when the window is narrow. */
-  flex: 1 1 22rem;
+  /* Two lines: the message beside its + on the first, the switches and send on the second. */
+  flex: 1 1 calc(100% - 3rem);
   align-items: center;
-  min-width: 16rem;
+  min-width: 0;
   height: 2.5rem;
   padding: 0 0.75rem;
   border: 1px solid var(--ui-border-mid);
@@ -694,7 +699,8 @@
   resize: none;
 }
 
-.ez-shell-launch__composer .chat-composer__settings { flex: 1 1 auto; min-width: 0; margin-left: 0.625rem; }
+/* The switches take the rest of the line (basis 0) so the send button stays at its end. */
+.ez-shell-launch__composer .chat-composer__settings { flex: 1 1 0; min-width: 0; margin-left: 0.625rem; }
 .ez-shell-launch__composer .chat-composer__settings .structured-agent-session-settings { flex-wrap: wrap; }
 .ez-shell-launch__composer .chat-composer__spacer { display: none; }
 .ez-shell-launch__composer .chat-composer__send { flex: none; margin-left: 0.5rem; }
