@@ -89,6 +89,41 @@ function rendererSafeRegistryResult<T>(
     : failure(result.code, REGISTRY_FAILURE_MESSAGES[result.code]);
 }
 
+/** A good catalog is kept this long for phones. */
+const REMOTE_MODELS_KEEP_MS = 60_000;
+
+/**
+ * The phone's read-only model catalog (I2-9): the one the desktop's model menus read, with the same safe failure
+ * words. Listing can start a provider's CLI, so one read per provider runs at a time and a good answer is kept a minute.
+ */
+export function createRemoteProviderModels(input: {
+  readonly registry: Pick<AgentProviderRegistry, 'listModels'>;
+  readonly getSnapshot: () => Pick<DaemonSnapshot, 'providers'>;
+  readonly now?: () => number;
+}): { list(providerId: string): Promise<DaemonProviderManagementResult<readonly ProviderModel[]>> } {
+  const now = input.now ?? Date.now;
+  const kept = new Map<string, { readonly at: number; readonly value: readonly ProviderModel[] }>();
+  const reading = new Map<string, Promise<DaemonProviderManagementResult<readonly ProviderModel[]>>>();
+  return {
+    list(providerId) {
+      if (!isDaemonProviderId(providerId)) return Promise.resolve(invalidInput());
+      const cached = kept.get(providerId);
+      if (cached && now() - cached.at < REMOTE_MODELS_KEEP_MS) return Promise.resolve({ ok: true, value: cached.value });
+      const pending = reading.get(providerId);
+      if (pending) return pending;
+      const read = input.registry.listModels(input.getSnapshot(), providerId).then(
+        (result) => {
+          if (result.ok) kept.set(providerId, { at: now(), value: result.value });
+          return rendererSafeRegistryResult(result);
+        },
+        () => failure<readonly ProviderModel[]>('provider-operation-failed', 'Provider models could not be loaded.'),
+      ).finally(() => reading.delete(providerId));
+      reading.set(providerId, read);
+      return read;
+    },
+  };
+}
+
 function isGateCode(value: unknown): value is ClaudeEnablementGateFailureCode {
   return value === 'CLAUDE_TERMS_REQUIRED'
     || value === 'CLAUDE_COMMERCIAL_APPROVAL_REQUIRED'

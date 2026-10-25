@@ -9,6 +9,7 @@ import {
   type ProviderRegistryResult,
 } from '../shared/daemon-provider';
 import {
+  createRemoteProviderModels,
   installDaemonProviderIpc,
   type DaemonProviderIpc,
   type DaemonProviderIpcChannel,
@@ -276,5 +277,31 @@ describe('daemon provider IPC', () => {
     await expect(codexModels).resolves.toMatchObject({ ok: false, code: 'provider-operation-failed' });
     expect(observedSignals.every((signal) => signal.aborted)).toBe(true);
     expect(subject.ipc.handlers.size).toBe(0);
+  });
+});
+
+describe('the phone’s read-only model catalog (I2-9)', () => {
+  const model = { id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: true, reasoningEfforts: ['low', 'high'], isDefault: true };
+  it('reads a provider once at a time, keeps a good answer a minute, and never keeps a failure', async () => {
+    let clock = 0;
+    let answer: ProviderRegistryResult<readonly typeof model[]> = { ok: true, value: [model] };
+    const listModels = vi.fn(async () => answer);
+    const catalog = createRemoteProviderModels({ registry: { listModels } as never, getSnapshot: () => ({ providers: [] }), now: () => clock });
+    const [first, second] = await Promise.all([catalog.list('codex'), catalog.list('codex')]);
+    expect(first).toEqual({ ok: true, value: [model] });
+    expect(second).toEqual(first);
+    expect(listModels).toHaveBeenCalledTimes(1);
+    clock = 59_000;
+    await catalog.list('codex');
+    expect(listModels).toHaveBeenCalledTimes(1);
+    clock = 61_000;
+    answer = { ok: false, code: 'provider-unavailable', message: 'C:\\Users\\someone\\codex.exe exited' };
+    // Failures use the host's safe words (no paths) and are asked again next time.
+    expect(await catalog.list('codex')).toEqual({ ok: false, code: 'provider-unavailable', message: expect.not.stringContaining('Users') });
+    await catalog.list('codex');
+    expect(listModels).toHaveBeenCalledTimes(3);
+    listModels.mockRejectedValueOnce(new Error('boom'));
+    expect(await catalog.list('claude')).toMatchObject({ ok: false, code: 'provider-operation-failed' });
+    expect(await catalog.list('../codex')).toMatchObject({ ok: false, code: 'invalid-input' });
   });
 });

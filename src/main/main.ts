@@ -190,7 +190,7 @@ import {
   trustedDaemonWorkspaceReactivationIds,
   type DaemonProjectSyncOptions,
 } from './daemon-project-sync';
-import { installDaemonProviderIpc } from './daemon-provider-ipc';
+import { createRemoteProviderModels, installDaemonProviderIpc } from './daemon-provider-ipc';
 import { DaemonRuntime } from './daemon-runtime';
 import { DaemonStore } from './daemon-store';
 import type { DesktopRuntime } from './desktop-runtime';
@@ -941,6 +941,7 @@ app.on('ready', async () => {
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
     && !planningRuntimeRef.current?.preparedSessionSettings(sessionId) && !planningRuntimeRef.results?.preparedSessionSettings(sessionId)
     && !planningRuntimeRef.ai?.preparedSessionSettings(sessionId));
+  const remoteProviderModels = createRemoteProviderModels({ registry: providerRegistry, getSnapshot: () => daemonRouterRef.current!.getSnapshot() });
   const uninstallDaemonProviderIpc = installDaemonProviderIpc({
     ipc: ipcMain,
     registry: providerRegistry,
@@ -4545,6 +4546,7 @@ app.on('ready', async () => {
       workflowNavigationSource: { getWorkflowNavigation: projectId => localAgentOperationIngress.run(async () => { await daemonAuthorityReady; return workflowService.navigation(projectId); }) },
       workflowPreviewSource: workflowAuthority,
       agentCapabilitiesSource: agentCapabilities,
+      providerModelsSource: remoteProviderModels,
       planningRunSource: planningRunAuthority,
         planningAiSource: planningAiAuthority,
         planningAssetSource: planningAssetAuthority,

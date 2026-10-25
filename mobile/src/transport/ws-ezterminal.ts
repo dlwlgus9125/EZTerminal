@@ -139,11 +139,12 @@ import {
   type DaemonTranscriptItem,
 } from '../../../src/shared/daemon-protocol';
 import type { DaemonAuthorityAvailability } from '../../../src/shared/daemon-authority';
-import type {
-  ClaudeProviderEnablement,
-  DaemonProviderManagementResult,
-  ProviderInspection,
-  ProviderModel,
+import {
+  ProviderModelListResultSchema,
+  type ClaudeProviderEnablement,
+  type DaemonProviderManagementResult,
+  type ProviderInspection,
+  type ProviderModel,
 } from '../../../src/shared/daemon-provider';
 
 import {
@@ -156,6 +157,7 @@ import {
   decodeFrame,
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
+  REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
@@ -167,6 +169,7 @@ import {
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
   REMOTE_PROTOCOL_VERSION_PLANNING,
   type AgentCapabilitiesWireRequest,
+  type ProviderModelsListRequest,
   type ConversationHistoryRequest,
   type PlanningExtensionRequest,
   type WorkflowRequest,
@@ -1064,11 +1067,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   listDaemonProviderModels(
     providerId: string,
   ): Promise<DaemonProviderManagementResult<readonly ProviderModel[]>> {
-    void providerId;
-    return Promise.resolve({
-      ok: false,
-      code: 'desktop-principal-required',
-      message: 'Provider management is available only from the desktop app.',
+    // An older PC would refuse the unknown request: ask only one that says it answers.
+    if (!this.remoteCapabilities.has(REMOTE_CAPABILITY_PROVIDER_MODELS_READ)) {
+      return Promise.resolve({
+        ok: false,
+        code: 'desktop-principal-required',
+        message: 'Update the connected PC to read provider models.',
+      });
+    }
+    return this.requestPlanningExtension({ kind: 'provider-models-list', requestId: this.newId(), providerId }, 'provider-models-list-reply', (value): DaemonProviderManagementResult<readonly ProviderModel[]> => {
+      const parsed = ProviderModelListResultSchema.safeParse(value);
+      if (!parsed.success) return { ok: false, code: 'provider-operation-failed', message: 'The connected PC model list could not be verified.' };
+      return parsed.data.ok ? { ok: true, value: parsed.data.value } : { ok: false, code: 'provider-operation-failed', message: parsed.data.message };
     });
   }
 
@@ -1141,7 +1151,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.requestPlanningRun(projectId, undefined, subprojectId);
   }
 
-  private requestPlanningExtension<T>(message: PlanningExtensionRequest | WorkflowRequest | AgentCapabilitiesWireRequest | ConversationHistoryRequest, replyKind: string, validate: (value: unknown) => T): Promise<T> {
+  private requestPlanningExtension<T>(message: PlanningExtensionRequest | WorkflowRequest | AgentCapabilitiesWireRequest | ConversationHistoryRequest | ProviderModelsListRequest, replyKind: string, validate: (value: unknown) => T): Promise<T> {
     const unavailable = { ok: false, error: 'unavailable', message: 'No confirmed receipt. Reconnect and reconcile the saved request before sending again.' };
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_PLANNING) return Promise.resolve(validate(unavailable));
     return new Promise(resolve => {
@@ -3158,6 +3168,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
                 (capability): capability is RemoteCapability => (
                   capability === REMOTE_CAPABILITY_QUICK_COMMANDS_READ
                   || capability === REMOTE_CAPABILITY_DESKTOP_CONTROL
+                  || capability === REMOTE_CAPABILITY_PROVIDER_MODELS_READ
                 ),
               )
             : [],
@@ -3441,6 +3452,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'planning-ai-reply':
       case 'agent-capabilities-list-reply':
       case 'agent-capabilities-manage-reply':
+      case 'provider-models-list-reply':
       case 'workflow-read-reply':
       case 'workflow-navigation-reply':
       case 'conversation-history-resolve-reply':

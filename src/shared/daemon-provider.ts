@@ -189,6 +189,21 @@ export type DaemonProviderManagementFailureCode =
   | 'desktop-principal-required'
   | 'provider-operation-failed';
 
+const ProviderModelSchema = z.object({
+  id: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(256),
+  description: z.string().max(10_000).optional(),
+  supportsReasoning: z.boolean(),
+  reasoningEfforts: z.array(z.string().min(1).max(64)).max(64).optional(),
+  resolvedModel: z.string().min(1).max(256).optional(),
+  isDefault: z.boolean(),
+});
+/** A provider's model catalog as a phone reads it from the PC (fields a newer PC adds are dropped). */
+export const ProviderModelListResultSchema = z.union([
+  z.object({ ok: z.literal(true), value: z.array(ProviderModelSchema).max(1_000) }),
+  z.object({ ok: z.literal(false), code: z.string().min(1).max(100), message: z.string().max(2_000) }),
+]);
+
 export type DaemonProviderManagementResult<T> =
   | { readonly ok: true; readonly value: T }
   | {

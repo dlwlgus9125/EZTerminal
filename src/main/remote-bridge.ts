@@ -53,6 +53,7 @@ import {
 import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
+  REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
@@ -599,6 +600,8 @@ export interface RemoteBridgeOptions {
   readonly workflowNavigationSource?: import('../shared/workflow').WorkflowNavigationAccess;
   readonly workflowPreviewSource?: Pick<WorkflowAuthority, 'preview'>;
   readonly agentCapabilitiesSource?: AgentCapabilitiesClient;
+  /** Read-only provider model catalogs for phones (advertised as `provider-models-read`). */
+  readonly providerModelsSource?: { list(providerId: string): Promise<import('../shared/daemon-provider').DaemonProviderManagementResult<readonly import('../shared/daemon-provider').ProviderModel[]>> };
   readonly planningRunSource?: Pick<PlanningRunAuthority, 'read' | 'execute' | 'readResult'>;
   readonly planningAiSource?: { request(value: unknown, principalId: string): Promise<PlanningAiResult> };
   readonly planningAssetSource?: { request(value: unknown, principalId: string): Promise<PlanningAssetResult> };
@@ -1211,6 +1214,7 @@ export function attachConnection(
           }
           const capabilities = [
             ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),
+            ...(options.providerModelsSource ? [REMOTE_CAPABILITY_PROVIDER_MODELS_READ] : []),
             ...(negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
               && clientIdentity
               && options.desktopSource
@@ -1794,6 +1798,13 @@ export function attachConnection(
             ...(negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? { reducedFlowView: true as const } : {}) })
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use subproject workflows.' } as const);
         void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyWorkflowResult(value) : value }); });
+        break;
+      }
+      case 'provider-models-list': {
+        const result = options.providerModelsSource
+          ? options.providerModelsSource.list(msg.providerId).catch(() => ({ ok: false, code: 'provider-operation-failed', message: 'Provider models could not be loaded.' } as const))
+          : Promise.resolve({ ok: false, code: 'provider-operation-failed', message: 'Update the PC to read provider models.' } as const);
+        void result.then(value => { if (authed) send({ kind: 'provider-models-list-reply', requestId: msg.requestId, result: value }); });
         break;
       }
       case 'agent-capabilities-list': {

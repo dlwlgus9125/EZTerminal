@@ -265,6 +265,29 @@ describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
     expect(sockets[0].sent).toHaveLength(before);
     transport.disconnect();
   });
+  it('reads provider models only from a PC that says it answers, and verifies the reply (I2-9)', async () => {
+    const older = makeCreateSocket();
+    const before = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket: older.createSocket });
+    older.sockets[0].triggerOpen(); older.sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 17 });
+    const sentBefore = older.sockets[0].sent.length;
+    expect(await before.listDaemonProviderModels('codex')).toMatchObject({ ok: false, code: 'desktop-principal-required' });
+    expect(older.sockets[0].sent).toHaveLength(sentBefore);
+    before.disconnect();
+
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 17, capabilities: ['provider-models-read'] });
+    const pending = transport.listDaemonProviderModels('codex');
+    const request = sockets[0].lastSent() as { kind: string; requestId: string; providerId: string };
+    expect(request).toMatchObject({ kind: 'provider-models-list', providerId: 'codex' });
+    sockets[0].triggerMessage({ kind: 'provider-models-list-reply', requestId: request.requestId, result: { ok: true, value: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: true, reasoningEfforts: ['low'], isDefault: true, addedLater: 1 }] } });
+    expect(await pending).toEqual({ ok: true, value: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: true, reasoningEfforts: ['low'], isDefault: true }] });
+    const malformed = transport.listDaemonProviderModels('codex');
+    const second = sockets[0].lastSent() as { requestId: string };
+    sockets[0].triggerMessage({ kind: 'provider-models-list-reply', requestId: second.requestId, result: { ok: true, value: [{ id: '' }] } });
+    expect(await malformed).toMatchObject({ ok: false, code: 'provider-operation-failed' });
+    transport.disconnect();
+  });
   it('rejects a correlated catalog for another workspace and mismatched command receipts', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

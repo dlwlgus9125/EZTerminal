@@ -16,6 +16,7 @@ import { parseDaemonCommand } from '../shared/daemon-protocol';
 import { PlanningCommandSchema } from '../shared/planning';
 import { WorkflowCommandSchema, WorkflowPreviewRequestSchema } from '../shared/workflow';
 import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema } from '../shared/agent-capabilities';
+import { isDaemonProviderId } from '../shared/daemon-provider';
 import { PlanningRunRequestSchema } from '../shared/planning-run';
 import { PlanningAiRequestSchema } from '../shared/planning-ai';
 import { PlanningAssetRequestSchema } from '../shared/planning-asset';
@@ -392,6 +393,9 @@ export function isDispatchableClientMessage(value: unknown): value is Dispatchab
         && (value.limit === undefined || typeof value.limit === 'number' && Number.isInteger(value.limit) && value.limit >= 1 && value.limit <= 100);
     case 'workflow-execute':
       return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH && WorkflowCommandSchema.safeParse(value.command).success;
+    case 'provider-models-list':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && isDaemonProviderId(value.providerId);
     case 'agent-capabilities-list':
     case 'agent-capabilities-manage':
       return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH

@@ -4966,6 +4966,18 @@ describe('RemoteBridge - read-only Quick Commands capability', () => {
     });
   });
 
+  it('answers provider model catalogs and says so (I2-9)', async () => {
+    const providerModelsSource = { list: vi.fn(async () => ({ ok: true as const, value: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: false, isDefault: true }] })) };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ providerModelsSource });
+    await authed(ws, options);
+    expect(ws.sent.find((message) => message.kind === 'auth-ok')).toMatchObject({ capabilities: ['provider-models-read'] });
+    ws.clientSend({ kind: 'provider-models-list', requestId: 'pm-1', providerId: 'codex' });
+    await flush();
+    expect(providerModelsSource.list).toHaveBeenCalledWith('codex');
+    expect(ws.sent).toContainEqual({ kind: 'provider-models-list-reply', requestId: 'pm-1', result: { ok: true, value: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: false, isDefault: true }] } });
+  });
+
   it('keeps older hosts capability-free and reports unavailable if probed', async () => {
     const ws = new FakeWs();
     const { options } = makeOptions();
