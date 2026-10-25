@@ -3236,6 +3236,8 @@ app.on('ready', async () => {
     liveTerminalIds: () => new Set(broker?.listSessions().map((session) => session.sessionId) ?? []),
   });
   runCleanupRef.current = runCleanup;
+  // A cleanup the app stopped part way is settled against the real Git and folder state once runs can be read.
+  void planningExecutionReady.then(() => runCleanup.reconcile()).catch((error: unknown) => mainLog?.line(`run cleanup reconcile: ${String(error)}`));
   featureIpcDisposers.push(installRunRetentionIpc({ ipc: ipcMain, cleanup: runCleanup, ready: planningExecutionReady }));
   // 반복: the host runs each flow's saved 다시 실행 at its local time, only while it keeps running from login.
   const workflowRepeat = new WorkflowRepeatService({

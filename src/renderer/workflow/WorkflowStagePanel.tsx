@@ -27,7 +27,7 @@ export interface WorkflowStagePanelProps {
   readonly structure: boolean;
   readonly run: ExecutionRun | null;
   readonly runNumber: number;
-  /** The shown run's work folders were cleaned up (작업 폴더 정리): its conversations stay readable as history. */
+  /** This stage's work folder in the shown run was cleaned up (작업 폴더 정리): its conversations stay readable as history. */
   readonly runCleaned?: boolean;
   /** This stage in the shown run, when the run is shown over this flow. */
   readonly view?: WorkflowNodeRunView;
@@ -103,7 +103,7 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
       </Button>
       {conversation?.reviewSessionId && <Button variant="ghost" leadingIcon={<ScanSearch />} onClick={() => props.onOpenConversation?.(conversation.reviewSessionId!)}>{text('검토 대화 열기', 'Open the review conversation')}</Button>}
       {!conversation && <p className="workflow-hint">{run ? text('이번 실행에서 아직 시작하지 않아 대화가 없습니다.', 'No conversation yet: this stage has not started in this run.') : text('실행하면 단계마다 새 대화가 생깁니다.', 'Each run starts a new conversation for each stage.')}</p>}
-      {props.runCleaned && <p className="workflow-hint" data-testid="workflow-stage-cleaned">{text('이 실행의 작업 폴더는 정리되었습니다. 대화 기록과 결과는 그대로 볼 수 있습니다.', 'This run’s work folders were cleaned up. Its conversations and results stay readable.')}</p>}
+      {props.runCleaned && <p className="workflow-hint" data-testid="workflow-stage-cleaned">{text('이 단계의 작업 폴더는 정리되었습니다. 대화 기록과 결과는 그대로 볼 수 있습니다.', 'This stage’s work folder was cleaned up. Its conversations and results stay readable.')}</p>}
     </div>}
     {/* Only an AI stage binds its settings when it is first sent; other stages change from the next run. */}
     {scopeNote && node.operation === 'agent' && <p className="workflow-notice" role="status" data-scope={scope} data-testid="workflow-stage-scope">{scopeNote}</p>}

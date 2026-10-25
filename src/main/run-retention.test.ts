@@ -16,8 +16,10 @@ describe('retentionCandidates', () => {
   it('offers every finished run of a flow but its newest three, in 실행 #n order', () => {
     const runs = [run('r1', 'a', 1, 'completed'), run('r2', 'a', 2, 'cancelled'), run('r3', 'a', 3, 'completed'), run('r4', 'a', 4, 'completed'), run('r5', 'a', 5, 'completed')];
     expect(retentionCandidates(runs, none)).toEqual([{ runId: 'r1', subprojectId: 'a', why: 'older' }, { runId: 'r2', subprojectId: 'a', why: 'older' }]);
-    // The newest three count whatever state they are in.
-    expect(retentionCandidates([...runs, run('r6', 'a', 6, 'running')], none).map(entry => entry.runId)).toEqual(['r1', 'r2', 'r3']);
+    // Only finished runs fill the newest three: one still going takes no place (Codex I2-7c P2-8).
+    expect(retentionCandidates([...runs, run('r6', 'a', 6, 'running')], none).map(entry => entry.runId)).toEqual(['r1', 'r2']);
+    const prepared = [run('done', 'a', 1, 'completed'), run('p2', 'a', 2, 'prepared'), run('p3', 'a', 3, 'prepared'), run('p4', 'a', 4, 'prepared')];
+    expect(retentionCandidates(prepared, none)).toEqual([]);
   });
 
   it('counts each flow on its own and orders by preparation, not by when a run last changed', () => {

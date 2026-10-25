@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f83c8c88e01a927d866791790342504705f503ac9dacb07e401e7c012f7258c9",
+        "inputDigest": "sha256:bb549414198a1c665e8dea166d8ceea9da603092a2bd212d103df80fae3bfb2d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-9): phones read provider model catalogs by a new read-only provider-models-list request, sent only to hosts whose auth-ok advertises provider-models-read; the host reads one provider at a time and keeps a good answer a minute. Claims hold."
+        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d203559cd3551071c4ac8db92de1a5033f7a00313aa8c60303f284d9a1e15c76",
+        "inputDigest": "sha256:a8ffd3ee4adffd70fc3aea6810621824488d25b4043f7a8b3bded40e2fe2b83b",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-9): phones read provider model catalogs by a new read-only provider-models-list request, sent only to hosts whose auth-ok advertises provider-models-read; the host reads one provider at a time and keeps a good answer a minute. Claims hold."
+        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:52c313442c2dce255df21bc15a7e590851732548a28d0833af078b1d909bc316",
+        "inputDigest": "sha256:2c19f0fc9d44c4cbe07a577c63411bdb290bc34528e7d049601abdcc4e05e502",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-9): phones read provider model catalogs by a new read-only provider-models-list request, sent only to hosts whose auth-ok advertises provider-models-read; the host reads one provider at a time and keeps a good answer a minute. Claims hold."
+        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:45be3b47ac12811125965137518f2262beaa5eb174bb56bb8a73ec5fd5542b55",
+        "inputDigest": "sha256:205dc61b3c0e55281bedf2095210dad6d03d60f5d54db6859880457366293b23",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c): the person's work-folder cleanup (src/main/run-worktree-cleanup.ts) archives a finished run's chats, then removes its clean folders without force; results and files read from the project checkout once the kept ref names them. Claims hold."
+        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
       }
     }
   ]

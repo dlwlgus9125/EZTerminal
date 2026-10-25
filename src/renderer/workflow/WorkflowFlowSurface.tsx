@@ -32,8 +32,8 @@ export interface WorkflowFlowSurfaceProps {
   /** What every run of this flow uses (승인, 검토 AI), saved on the subproject. */
   readonly subproject: Pick<WorkflowSubproject, 'id' | 'autoApprove' | 'runSettings' | 'status' | 'repeat'>;
   readonly repeatStatus?: WorkflowRepeatStatus;
-  /** Runs whose work folders were cleaned up (desktop; see 작업 폴더 정리). */
-  readonly cleanedRunIds?: readonly string[];
+  /** Folders this host removed (desktop; see 작업 폴더 정리). */
+  readonly cleanedFolders?: readonly import('../../shared/run-retention').CleanedFolderEntry[];
   readonly onSaveRepeat?: (repeat: WorkflowRepeat) => void;
   readonly onOpenAutomationSettings?: () => void;
   /** Model catalogs per provider (the efforts each model offers). */
@@ -224,7 +224,8 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
         {node ? <>
           <WorkflowStagePanel key={node.id} text={text} graph={view.graph} node={node} archived={archived} editable={editable} structure={props.structure && view.mode !== 'run-view'}
             run={view.overlay ? view.run : null} runNumber={runNumber} view={view.overlay?.nodes[node.id]} scope={scopeOf(node.id)} recordOpen={section === 'run'}
-            runCleaned={!!view.run && !!props.cleanedRunIds?.includes(view.run.runId)}
+            runCleaned={!!view.run && !!props.cleanedFolders?.some(entry => entry.kind === 'attempt' && entry.runId === view.run!.runId
+              && view.run!.attempts.some(attempt => attempt.attemptId === entry.attemptId && attempt.taskId === node.id))}
             providers={props.providers} catalogs={props.catalogs ?? NO_CATALOGS} commandsDisabled={props.commandsDisabled} links={props.stageLinks(node.id)} canStartChat={props.canStartStageChat}
             onChange={change} onRequestDelete={setRemoveId}
             onMove={(staticRenderer || canvasFailed) && shaping ? (id, dy) => change({ ...view.graph, nodes: view.graph.nodes.map(item => item.id === id ? { ...item, position: { ...item.position, y: Math.max(0, item.position.y + dy) } } : item) }) : undefined}

@@ -8,7 +8,7 @@ import type { ConversationSettings } from '../shared/conversation-start';
 import type { DaemonSnapshot, DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
 import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
-import { ConversationStartController, historyResumeBlock, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
+import { ConversationStartController, historyResumeBlock, initialConversationSettings, resumeAvailabilityKey, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
 import { inheritPlanAccess, movePlanAccess, readLastAccess } from './agent-plan-access';
@@ -119,6 +119,8 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const [source, setSource] = useState<{ model?: string; permissionPreset: PermissionPreset } | null | undefined>(initialEntry ? undefined : null);
   // The host can also say it cannot be continued here (its work folder was cleaned up, say): then it is read only.
   const [resumeBlocked, setResumeBlocked] = useState<{ readonly message?: string } | null>(null);
+  // The host's answer depends on the AI being set up and the project and its workspaces being there: asked again when those change.
+  const resumeInputs = useMemo(() => resumeAvailabilityKey(snapshot), [snapshot]);
   useEffect(() => {
     if (!originalId || disconnected) return;
     let alive = true;
@@ -126,7 +128,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       .then(prepared => { if (alive) { setResumeBlocked(historyResumeBlock(prepared)); setSource(prepared.ok ? { ...(prepared.model ? { model: prepared.model } : {}), permissionPreset: prepared.permissionPreset } : null); } })
       .catch(() => { if (alive) setSource(null); });
     return () => { alive = false; };
-  }, [access, originalId, disconnected]);
+  }, [access, originalId, disconnected, resumeInputs]);
   // Until an AI is chosen the settings name no provider and cannot be stored; plan and access
   // changes made meanwhile stay here and are stored with the AI once one is picked.
   const [unsaved, setUnsaved] = useState<Partial<ConversationSettings>>({});

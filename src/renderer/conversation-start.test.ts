@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatStateSnapshot, ChatStateScope } from '../shared/chat-state';
 import type { DaemonCommand, DaemonSnapshot } from '../shared/daemon-protocol';
 import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
-import { ConversationStartController, historyResumeBlock, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
+import { ConversationStartController, historyResumeBlock, initialConversationSettings, resumeAvailabilityKey, type ConversationStartAccess } from './conversation-start';
 
 const settings = { workspaceId: 'workspace', providerId: 'codex', permissionPreset: 'standard' as const };
 const scope: ChatStateScope = { projectId: 'project', sessionId: 'draft-1', kind: 'draft' };
@@ -126,6 +126,16 @@ describe('start form settings', () => {
     const cleared = { providerId: 'claude', workspaceId: 'cleared', model: 'claude-opus-5-5', permissionPreset: 'plan' as const, reasoningEffort: 'high' };
     expect(initialConversationSettings({ seed: cleared, recent: { providerId: 'codex', permissionPreset: 'standard' }, fallbackWorkspaceId: 'w' }))
       .toEqual(cleared);
+  });
+});
+
+describe('resumeAvailabilityKey (Codex I2-7c P2-11)', () => {
+  it('changes when the AI becomes ready or the workspace comes back, not on unrelated snapshot changes', () => {
+    const base = { providers: [{ id: 'codex', enabled: false, health: 'unavailable' }], projects: [{ id: 'P', rootPath: 'C:/p' }], workspaces: [{ id: 'w', rootPath: 'C:/p', archivedAt: '2026-10-26T00:00:00.000Z' }] } as unknown as DaemonSnapshot;
+    const key = resumeAvailabilityKey(base);
+    expect(resumeAvailabilityKey({ ...base, revision: 99, agents: [] } as unknown as DaemonSnapshot)).toBe(key);
+    expect(resumeAvailabilityKey({ ...base, providers: [{ ...base.providers[0]!, enabled: true, health: 'ready' }] })).not.toBe(key);
+    expect(resumeAvailabilityKey({ ...base, workspaces: [{ ...base.workspaces[0]!, archivedAt: undefined }] } as unknown as DaemonSnapshot)).not.toBe(key);
   });
 });
 

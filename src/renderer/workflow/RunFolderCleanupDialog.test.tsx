@@ -13,7 +13,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 const text = (_ko: string, en: string) => en;
 
 const plan: RunCleanupPlan = {
-  cleanedRunIds: [],
+  cleaned: [],
   runs: [
     { runId: 'r1', runNumber: 1, subprojectId: 'flow', why: 'older', folders: [
       { runId: 'r1', attemptId: 'A1', kind: 'attempt', path: 'C:/work/attempt-1', state: 'removable' },
@@ -49,7 +49,7 @@ describe('RunFolderCleanupDialog', () => {
 
   it('says so when nothing can be cleaned up, and offers no button', async () => {
     const access: RunRetentionAccess = {
-      plan: vi.fn(async () => ({ ok: true as const, value: { runs: [], cleanedRunIds: [] } })),
+      plan: vi.fn(async () => ({ ok: true as const, value: { runs: [], cleaned: [] } })),
       cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
       cleanup: vi.fn(),
       folderState: vi.fn(), readFile: vi.fn(),
@@ -57,6 +57,20 @@ describe('RunFolderCleanupDialog', () => {
     await act(async () => root.render(<RunFolderCleanupDialog open onOpenChange={vi.fn()} projectId="P" subprojectId="flow" access={access} text={text} />));
     expect(document.body.textContent).toContain('There are no work folders to clean up.');
     expect((document.querySelector('[data-testid="run-folder-cleanup-confirm"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows why a folder stayed in this cleanup even when the list read again would offer it (Codex I2-7c P2-10)', async () => {
+    const access: RunRetentionAccess = {
+      plan: vi.fn(async () => ({ ok: true as const, value: plan })),
+      cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
+      cleanup: vi.fn(async () => ({ ok: true as const, value: { removed: 0, kept: [{ path: 'C:/work/attempt-1', code: 'busy' as const, reason: 'Something still runs there.' }] } })),
+      folderState: vi.fn(), readFile: vi.fn(),
+    };
+    await act(async () => root.render(<RunFolderCleanupDialog open onOpenChange={vi.fn()} projectId="P" subprojectId="flow" access={access} text={text} />));
+    await act(async () => (document.querySelector('[data-testid="run-folder-cleanup-confirm"]') as HTMLButtonElement).click());
+    const row = [...document.querySelectorAll('[data-testid="run-folder-cleanup"] li[data-state]')].find(item => item.textContent?.includes('C:/work/attempt-1'))!;
+    expect(row.getAttribute('data-state')).toBe('kept');
+    expect(row.textContent).toContain('Something still runs there. Stop it and clean up again.');
   });
 
   it('words every reason a folder stays, falling back to the host’s own words', () => {

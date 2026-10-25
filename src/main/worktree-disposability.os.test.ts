@@ -113,6 +113,52 @@ describe('judgeDisposable (real Git)', () => {
     expect(await judge(lfs.folder, { ...lfs.expected, tree: result })).toMatchObject({ disposable: false, reason: expect.stringContaining('LFS') });
   });
 
+  it('keeps a folder once its kept result ref no longer names the result (Codex I2-7c P1-4)', async () => {
+    const captured = attempt({ capture: true });
+    const keptRef = { name: 'refs/ezterminal/results/1', commit: captured.result! };
+    expect(await judge(captured.folder, { ...captured.expected, keptRef })).toEqual({ disposable: true });
+    git(captured.folder, ['update-ref', 'refs/ezterminal/results/1', captured.baseCommit]);
+    expect(await judge(captured.folder, { ...captured.expected, keptRef })).toMatchObject({ disposable: false, code: 'result-mismatch' });
+    git(captured.folder, ['update-ref', '-d', 'refs/ezterminal/results/1']);
+    expect(await judge(captured.folder, { ...captured.expected, keptRef })).toMatchObject({ disposable: false, code: 'result-mismatch' });
+  });
+
+  it('keeps a folder holding a repository of its own inside a tracked folder (Codex I2-7c P1-1)', async () => {
+    const nested = attempt({ capture: true });
+    mkdirSync(path.join(nested.folder, 'lib'));
+    writeFileSync(path.join(nested.folder, 'lib', 'a.txt'), 'tracked\n');
+    git(nested.folder, ['add', '-A']);
+    const tree = git(nested.folder, ['write-tree']).trim();
+    const result = git(nested.folder, ['-c', 'user.name=E', '-c', 'user.email=e@localhost', 'commit-tree', tree, '-p', nested.baseCommit, '-m', 'result']).trim();
+    expect(await judge(nested.folder, { ...nested.expected, tree: result })).toEqual({ disposable: true });
+    // A person makes the tracked folder a repository with its own history: Git does not list its .git at all.
+    git(path.join(nested.folder, 'lib'), ['init', '-q']);
+    expect(await judge(nested.folder, { ...nested.expected, tree: result })).toMatchObject({ disposable: false, code: 'nested-repository' });
+  });
+
+  it('keeps a folder whose files Git LFS handles by the person’s own or the system attributes (Codex I2-7c P1-3)', async () => {
+    const lfs = attempt({ capture: true });
+    writeFileSync(path.join(lfs.folder, 'data.bin'), 'binary-ish\n');
+    git(lfs.folder, ['add', '-A']);
+    const tree = git(lfs.folder, ['write-tree']).trim();
+    const result = git(lfs.folder, ['-c', 'user.name=E', '-c', 'user.email=e@localhost', 'commit-tree', tree, '-p', lfs.baseCommit, '-m', 'result']).trim();
+    expect(await judge(lfs.folder, { ...lfs.expected, tree: result })).toEqual({ disposable: true });
+    const config = mkdtempSync(path.join(tmpdir(), 'ez-dispose-xdg-'));
+    bases.add(config);
+    mkdirSync(path.join(config, 'git'));
+    writeFileSync(path.join(config, 'git', 'attributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = config;
+    try {
+      expect(await judge(lfs.folder, { ...lfs.expected, tree: result })).toMatchObject({ disposable: false, code: 'lfs' });
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+    }
+    const storage = attempt();
+    git(storage.folder, ['config', 'lfs.storage', path.join(storage.folder, '.lfs-objects')]);
+    expect(await judge(storage.folder, storage.expected)).toMatchObject({ disposable: false, code: 'lfs' });
+  });
+
   it('keeps a folder it cannot check', async () => {
     const gone = attempt();
     expect(await judge(path.join(gone.folder, 'missing'), gone.expected)).toMatchObject({ disposable: false, reason: expect.stringContaining('could not be checked') });

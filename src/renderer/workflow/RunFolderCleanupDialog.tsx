@@ -1,7 +1,7 @@
 import { FolderX } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import type { RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunRetentionAccess } from '../../shared/run-retention';
+import type { CleanedFolderEntry, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunRetentionAccess } from '../../shared/run-retention';
 import { Badge, Button, Dialog, LoadingState } from '../ui';
 import type { WorkflowCopy } from './workflow-copy';
 
@@ -13,6 +13,7 @@ export function runFolderKeepText(code: RunFolderKeepCode | undefined, reason: s
     sparse: ['일부만 체크아웃된 폴더입니다.', 'It is a sparse checkout.'],
     'unchecked-entries': ['Git이 변경을 확인하지 않도록 설정된 파일이 있습니다.', 'Some files are set so that Git does not check them.'],
     submodule: ['하위 모듈이 있습니다.', 'It has a submodule.'],
+    'nested-repository': ['그 안에 따로 만든 Git 저장소가 있습니다.', 'It holds a Git repository of its own.'],
     untracked: ['Git이 보관하지 않는 파일이 있습니다(무시된 파일 포함).', 'It has files Git does not keep (ignored ones included).'],
     changed: ['Git에 넣지 않은 변경이 있습니다.', 'It has changes not added to Git.'],
     'staged-differs': ['올려 둔 파일이 이 실행의 결과와 다릅니다.', 'Its staged files differ from this run’s result.'],
@@ -21,6 +22,7 @@ export function runFolderKeepText(code: RunFolderKeepCode | undefined, reason: s
     'not-ezterminal': ['EZTerminal이 이 프로젝트에 만든 작업 폴더가 아닙니다.', 'It is not a work folder EZTerminal created for this project.'],
     locked: ['Git에서 잠겨 있습니다.', 'It is locked in Git.'],
     'project-inside': ['그 안에 프로젝트가 등록되어 있습니다.', 'A project is registered in it.'],
+    shared: ['다른 대화·작업 공간·프로젝트도 이 폴더를 씁니다.', 'Another conversation, workspace or project uses it.'],
     'no-record': ['비교할 결과 기록이 없습니다.', 'It has no result record to check it against.'],
     'result-mismatch': ['보관된 결과가 기록과 다릅니다.', 'Its kept result does not match its record.'],
     busy: ['아직 그 폴더에서 무언가 실행 중입니다. 멈춘 뒤 다시 정리하세요.', 'Something still runs there. Stop it and clean up again.'],
@@ -46,7 +48,7 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
   readonly access: RunRetentionAccess;
   readonly text: WorkflowCopy;
   /** After a cleanup removed folders (the flow screen marks those runs). */
-  readonly onCleaned?: (cleanedRunIds: readonly string[]) => void;
+  readonly onCleaned?: (cleaned: readonly CleanedFolderEntry[]) => void;
 }): JSX.Element {
   const [plan, setPlan] = useState<RunCleanupPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +74,7 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
       // The outcome shows with the list read again, so the two never disagree.
       const next = await access.plan(projectId);
       setOutcome(result.value);
-      if (next.ok) { setPlan(next.value); onCleaned?.(next.value.cleanedRunIds); }
+      if (next.ok) { setPlan(next.value); onCleaned?.(next.value.cleaned); }
     } finally { setBusy(false); }
   };
   const kind = (value: 'attempt' | 'validation') => (value === 'attempt' ? text('단계 작업 폴더', 'Stage work folder') : text('검증 폴더', 'Validation folder'));
@@ -92,12 +94,17 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
           : <ul className="workflow-folder-cleanup__runs">{runs.map(run => <li key={run.runId}>
             <strong>{text(`실행 #${run.runNumber}`, `Run #${run.runNumber}`)}</strong>
             {run.why === 'launch-leftover' && <Badge>{text('시작하지 못한 실행', 'Run that never started')}</Badge>}
-            <ul>{run.folders.map(folder => <li key={folder.path} data-state={folder.state}>
-              <span>{kind(folder.kind)} · <code>{folder.path}</code></span>
-              {folder.state === 'removable' ? <Badge variant="success">{text('정리할 수 있음', 'Can be cleaned up')}</Badge>
-                : folder.state === 'removed' ? <Badge>{text('정리됨', 'Cleaned up')}</Badge>
-                  : <><Badge variant="warning">{text('남김', 'Kept')}</Badge> <small>{runFolderKeepText(folder.code, folder.reason, text)}</small></>}
-            </li>)}</ul>
+            <ul>{run.folders.map(listed => {
+              // What the cleanup just reported for a folder wins over the list read again (a busy chat is not in the plan).
+              const stayed = outcome?.kept.find(entry => entry.path === listed.path);
+              const folder = stayed && listed.state !== 'removed' ? { ...listed, state: 'kept' as const, code: stayed.code, reason: stayed.reason } : listed;
+              return <li key={folder.path} data-state={folder.state}>
+                <span>{kind(folder.kind)} · <code>{folder.path}</code></span>
+                {folder.state === 'removable' ? <Badge variant="success">{text('정리할 수 있음', 'Can be cleaned up')}</Badge>
+                  : folder.state === 'removed' ? <Badge>{text('정리됨', 'Cleaned up')}</Badge>
+                    : <><Badge variant="warning">{text('남김', 'Kept')}</Badge> <small>{runFolderKeepText(folder.code, folder.reason, text)}</small></>}
+              </li>;
+            })}</ul>
           </li>)}</ul>}
     </div>
   </Dialog>;

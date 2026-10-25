@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -7,12 +8,13 @@ import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../sha
 import { IMAGE_PREVIEW_MAX_BYTES, type FilePreviewResult } from '../shared/file-preview';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { PlanningResultRecord } from '../shared/planning-result';
-import type { CleanedFolderState, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan } from '../shared/run-retention';
+import type { CleanedFolderEntry, CleanedFolderState, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan } from '../shared/run-retention';
 import { flowRunNumber } from '../shared/workflow-run-view';
 import { worktreeCleanupScope } from '../shared/workspace-worktree';
 import { RecordFile } from './atomic-record-file';
 import { folderHeld } from './folder-cleanup';
 import { resultHash } from './planning-result-repository';
+import { planningReviewerId } from './planning-review-identity';
 import { retentionCandidates } from './run-retention';
 import { executeAsPerson } from './workspace-worktree-actions';
 import { judgeDisposable, type DisposableExpectation } from './worktree-disposability';
@@ -33,6 +35,15 @@ const RecordSchema = z.object({
   launchLeftovers: z.array(z.object({ projectId: z.string().min(1).max(200), runId: z.string().min(1).max(200), at: z.string().datetime() }).strict()),
 }).strict();
 type RetentionRecord = z.infer<typeof RecordSchema>;
+type Expectation = DisposableExpectation & { readonly detachTo?: string };
+/** A run's folder: where it is, what it must hold, and which workspaces may be rooted in it (its own). */
+interface RunFolder {
+  readonly path: string;
+  readonly plan: Omit<RunFolderPlan, 'state' | 'reason' | 'code'>;
+  readonly expected?: Expectation;
+  readonly owners: Set<string>;
+  readonly keep?: readonly [RunFolderKeepCode, string];
+}
 
 export interface RunWorktreeCleanupOptions {
   readonly directory: string;
@@ -74,17 +85,38 @@ export class RunWorktreeCleanup {
       : { ...record, launchLeftovers: [...record.launchLeftovers, { projectId, runId, at: this.now() }] }));
   }
 
-  async cleaned(projectId: string): Promise<readonly string[]> {
+  /** The folders this host has removed (per attempt and kind, so a screen marks only what really went). */
+  async cleaned(projectId: string): Promise<readonly CleanedFolderEntry[]> {
+    return removedEntries(await this.read(), projectId);
+  }
+
+  /**
+   * Settles records an earlier cleanup left 'retiring' (the app stopped part way), by the worktree they saved: still a
+   * worktree = kept (judged again next time); gone with its folder = removed; gone but files left = blocked.
+   */
+  async reconcile(): Promise<void> {
     const record = await this.read();
-    return [...new Set(record.folders.filter(entry => entry.projectId === projectId && entry.state === 'removed').map(entry => entry.runId))];
+    const snapshot = this.options.getSnapshot();
+    for (const entry of record.folders.filter(folder => folder.state === 'retiring' && !this.cleaning.has(folder.projectId))) {
+      const root = snapshot?.projects.find(project => project.id === entry.projectId)?.rootPath;
+      if (!root) continue;
+      const listed = await this.options.worktrees.execute({ action: 'list', cwd: root }, 'desktop');
+      if (!listed.ok) continue;
+      const plan = { runId: entry.runId, attemptId: entry.attemptId, kind: entry.kind, path: entry.path };
+      if (listed.worktrees.some(worktree => (entry.worktreeId && worktree.worktreeId === entry.worktreeId) || samePath(worktree.path, entry.path))) {
+        await this.write(entry.projectId, plan, 'kept', 'An earlier cleanup stopped before removing it.');
+      } else if (!(await present(entry.path))) await this.write(entry.projectId, plan, 'removed');
+      else await this.write(entry.projectId, plan, 'blocked', 'An earlier cleanup stopped part way; files are left there.');
+    }
   }
 
   async plan(projectId: string): Promise<RunCleanupPlan> {
+    if (!this.cleaning.has(projectId)) await this.reconcile();
     const record = await this.read();
     const snapshot = this.options.getSnapshot();
     const root = snapshot?.projects.find(entry => entry.id === projectId && !entry.archivedAt)?.rootPath;
-    const cleanedRunIds = [...new Set(record.folders.filter(entry => entry.projectId === projectId && entry.state === 'removed').map(entry => entry.runId))];
-    if (!snapshot || !root) return { runs: [], cleanedRunIds };
+    const cleaned = removedEntries(record, projectId);
+    if (!snapshot || !root) return { runs: [], cleaned };
     const runs = this.options.runs(projectId);
     const busy = new Set<string>();
     for (const run of runs) if (await this.options.resultBusy(projectId, run)) busy.add(run.runId);
@@ -100,18 +132,26 @@ export class RunWorktreeCleanup {
         const removed = record.folders.some(entry => entry.projectId === projectId && entry.runId === run.runId && samePath(entry.path, folder.path) && entry.state === 'removed');
         const worktree = worktrees.find(entry => samePath(entry.path, folder.path));
         if (removed && !worktree) { folders.push({ ...folder.plan, state: 'removed' }); continue; }
-        const keep: [RunFolderKeepCode, string] | undefined = !worktree || !worktree.managed || worktree.main ? ['not-ezterminal', 'It is not a work folder EZTerminal created for this project.']
-          : worktree.locked ? ['locked', 'It is locked in Git.']
-            : snapshot.projects.some(project => project.rootPath && within(project.rootPath, folder.path)) ? ['project-inside', 'A project is registered in it.']
-              : !folder.expected ? ['no-record', 'It has no result record to check it against.']
-                : await this.resultKept(root, projectId, folder.plan.attemptId, folder.expected) ? undefined : ['result-mismatch', 'Its kept result does not match its record.'];
+        const keep = this.keepBefore(snapshot, folder, worktree);
         if (keep) { folders.push({ ...folder.plan, state: 'kept', code: keep[0], reason: keep[1] }); continue; }
         const judged = await judgeDisposable(this.options.git, folder.path, folder.expected!);
         folders.push(judged.disposable ? { ...folder.plan, state: 'removable' } : { ...folder.plan, state: 'kept', code: judged.code, reason: judged.reason });
       }
       if (folders.length) planned.push({ runId: run.runId, runNumber: flowRunNumber(runs, run), subprojectId: candidate.subprojectId, why: candidate.why, folders });
     }
-    return { runs: planned, cleanedRunIds };
+    return { runs: planned, cleaned };
+  }
+
+  /** What keeps a folder before its contents are looked at: its records, its worktree, and anything else rooted in it. */
+  private keepBefore(snapshot: DaemonSnapshot, folder: RunFolder, worktree: { readonly managed: boolean; readonly main: boolean; readonly locked?: boolean } | undefined): readonly [RunFolderKeepCode, string] | undefined {
+    if (folder.keep) return folder.keep;
+    if (!worktree || !worktree.managed || worktree.main) return ['not-ezterminal', 'It is not a work folder EZTerminal created for this project.'];
+    if (worktree.locked) return ['locked', 'It is locked in Git.'];
+    if (snapshot.projects.some(project => project.rootPath && within(project.rootPath, folder.path))) return ['project-inside', 'A project is registered in it.'];
+    // Any workspace of another run, chat or project (archived ones too) rooted there or below: it is not only this run's.
+    if (snapshot.workspaces.some(entry => entry.rootPath && within(entry.rootPath, folder.path) && !folder.owners.has(entry.id))) return ['shared', 'Another conversation, workspace or project uses it.'];
+    if (!folder.expected) return ['no-record', 'It has no result record to check it against.'];
+    return undefined;
   }
 
   /** Removes the removable work folders of these runs (the person confirmed them); anything else is left as it is. */
@@ -142,9 +182,12 @@ export class RunWorktreeCleanup {
     const snapshot = this.options.getSnapshot();
     const resolved = run && snapshot ? (await this.folders(projectId, run, snapshot)).find(entry => samePath(entry.path, folder.path)) : undefined;
     if (!run || !snapshot || !resolved?.expected) return this.settle(projectId, folder, 'kept', 'run-changed', 'Its run or result record changed.');
+    // A review retry or device evidence may have started since the list was shown.
+    if (await this.options.resultBusy(projectId, run)) return this.settle(projectId, folder, 'blocked', 'busy', 'Something still runs there. Stop it and clean up again.');
     const listed = await this.options.worktrees.execute({ action: 'list', cwd: root }, 'desktop');
-    const worktree = listed.ok ? listed.worktrees.find(entry => samePath(entry.path, folder.path) && entry.managed && !entry.main) : undefined;
-    if (!worktree) return this.settle(projectId, folder, 'kept', 'not-ezterminal', 'It is not a work folder EZTerminal created for this project.');
+    const worktree = listed.ok ? listed.worktrees.find(entry => samePath(entry.path, folder.path)) : undefined;
+    const keep = this.keepBefore(snapshot, resolved, worktree);
+    if (keep || !worktree) return this.settle(projectId, folder, 'kept', keep?.[0] ?? 'not-ezterminal', keep?.[1] ?? 'It is not a work folder EZTerminal created for this project.');
     await this.write(projectId, folder, 'retiring', undefined, worktree.worktreeId);
     // Everything rooted in the folder: its chats are archived (a live or queued turn, an approval or anything else running keeps it).
     const affected = new Set(snapshot.workspaces.filter(entry => !entry.archivedAt && within(entry.rootPath, folder.path)).map(entry => entry.id));
@@ -171,31 +214,45 @@ export class RunWorktreeCleanup {
     return this.settle(projectId, folder, 'blocked', retired.code === 'WORKTREE_IN_USE' ? 'in-use' : 'failed', retired.message);
   }
 
-  /** The run's attempt and validation folders with what each must hold (from the host's own result record). */
-  private async folders(projectId: string, run: ExecutionRun, snapshot: DaemonSnapshot): Promise<{ path: string; plan: Omit<RunFolderPlan, 'state' | 'reason'>; expected?: DisposableExpectation & { detachTo?: string } }[]> {
-    const result: { path: string; plan: Omit<RunFolderPlan, 'state' | 'reason'>; expected?: DisposableExpectation & { detachTo?: string } }[] = [];
+  /**
+   * The run's attempt and validation folders with what each must hold (from the host's own result record) and the
+   * workspaces that are its own: the attempt's workspace and its reviews' workspaces. The attempt folder is the one its
+   * workspace names; a result record naming another folder keeps it.
+   */
+  private async folders(projectId: string, run: ExecutionRun, snapshot: DaemonSnapshot): Promise<RunFolder[]> {
+    const result: RunFolder[] = [];
+    const add = (folder: RunFolder): void => {
+      const same = result.find(entry => samePath(entry.path, folder.path));
+      if (same) { for (const owner of folder.owners) same.owners.add(owner); } else result.push(folder);
+    };
     for (const attempt of run.attempts) {
       const workspace = snapshot.workspaces.find(entry => entry.id === attempt.workspaceId);
       const record = await this.options.readResult(projectId, attempt.attemptId).catch(() => null);
-      const rootPath = record?.rootPath ?? workspace?.rootPath;
-      if (rootPath && !result.some(entry => samePath(entry.path, rootPath))) {
-        const expected = record?.baseCommit ? (record.commit
-          ? { head: record.baseCommit, tree: record.commit, detachedAt: record.commit, detachTo: record.commit }
-          : { head: record.baseCommit, tree: record.baseCommit }) : undefined;
-        result.push({ path: rootPath, plan: { runId: run.runId, attemptId: attempt.attemptId, kind: 'attempt', path: rootPath }, ...(expected ? { expected } : {}) });
-      }
-      if (record?.validationWorkspace && record.commit && !result.some(entry => samePath(entry.path, record.validationWorkspace!))) {
-        result.push({ path: record.validationWorkspace, plan: { runId: run.runId, attemptId: attempt.attemptId, kind: 'validation', path: record.validationWorkspace },
-          expected: { head: record.commit, tree: record.commit } });
+      const rootPath = workspace?.rootPath ?? record?.rootPath;
+      if (!rootPath) continue;
+      const reviews = Array.from({ length: (record?.reviewAttempt ?? 0) + 1 }, (_value, generation) => `planning-review-workspace-${resultHash(planningReviewerId(run, attempt, generation)).slice(0, 32)}`);
+      const keptRef = record?.commit ? { name: `refs/ezterminal/results/${resultHash([projectId, attempt.attemptId])}`, commit: record.commit } : undefined;
+      const keep: readonly [RunFolderKeepCode, string] | undefined = !workspace ? ['no-record', 'It has no workspace record to check it against.']
+        : record && !samePath(record.rootPath, workspace.rootPath) ? ['result-mismatch', 'Its result record names another folder.'] : undefined;
+      const expected = record?.baseCommit ? (record.commit && keptRef
+        ? { head: record.baseCommit, tree: record.commit, detachedAt: record.commit, detachTo: record.commit, keptRef }
+        : { head: record.baseCommit, tree: record.baseCommit }) : undefined;
+      add({ path: rootPath, plan: { runId: run.runId, attemptId: attempt.attemptId, kind: 'attempt', path: rootPath }, owners: new Set([attempt.workspaceId, ...reviews]),
+        ...(expected ? { expected } : {}), ...(keep ? { keep } : {}) });
+      if (record?.validationWorkspace && record.commit && keptRef && !samePath(record.validationWorkspace, rootPath)) {
+        add({ path: record.validationWorkspace, plan: { runId: run.runId, attemptId: attempt.attemptId, kind: 'validation', path: record.validationWorkspace },
+          owners: new Set(reviews), expected: { head: record.commit, tree: record.commit, keptRef } });
       }
     }
     return result;
   }
 
+  /** A conversation folder (or one below it) as the record says: being cleaned up, cleaned up (and whether its result reads), or live. */
   async folderState(folderPath: string): Promise<CleanedFolderState> {
-    const entry = (await this.read()).folders.filter(folder => samePath(folder.path, folderPath)).at(-1);
-    if (entry?.state !== 'removed') return { cleaned: false };
-    return { cleaned: true, root: entry.path, result: (await this.verifiedResult(entry)) !== undefined };
+    const entry = recordFor(await this.read(), folderPath);
+    if (entry?.state === 'retiring') return { state: 'retiring', root: entry.path };
+    if (entry?.state !== 'removed') return { state: 'live' };
+    return { state: 'cleaned', root: entry.path, result: (await this.verifiedResult(entry)) !== undefined };
   }
 
   /**
@@ -204,9 +261,7 @@ export class RunWorktreeCleanup {
    */
   async readFile(filePath: string): Promise<FilePreviewResult> {
     const resolved = path.resolve(filePath);
-    // The deepest recorded folder holding the file, its latest record (a later one for the same path wins).
-    const entry = (await this.read()).folders.filter(folder => within(resolved, folder.path))
-      .reduce<RetentionRecord['folders'][number] | undefined>((best, folder) => (!best || folder.path.length >= best.path.length ? folder : best), undefined);
+    const entry = recordFor(await this.read(), resolved);
     if (entry?.state !== 'removed') return { ok: false, error: 'This file is not in a cleaned-up work folder.' };
     const verified = await this.verifiedResult(entry);
     if (!verified) return { ok: false, error: 'This run kept no result to read the file from.' };
@@ -246,7 +301,7 @@ export class RunWorktreeCleanup {
     return state === 'removed' ? { ok: true } : { ok: false, code: code ?? 'failed', reason: reason ?? 'It was kept.' };
   }
 
-  private write(projectId: string, folder: RunFolderPlan, state: z.infer<typeof FolderRecord>['state'], reason?: string, worktreeId?: string): Promise<void> {
+  private write(projectId: string, folder: Pick<RunFolderPlan, 'runId' | 'attemptId' | 'kind' | 'path'>, state: z.infer<typeof FolderRecord>['state'], reason?: string, worktreeId?: string): Promise<void> {
     return this.change(record => {
       const previous = record.folders.find(entry => entry.projectId === projectId && entry.runId === folder.runId && samePath(entry.path, folder.path));
       const next = { projectId, runId: folder.runId, attemptId: folder.attemptId, kind: folder.kind, path: folder.path, state, at: this.now(),
@@ -283,6 +338,20 @@ export class RunWorktreeCleanup {
 function samePath(left: string, right: string): boolean {
   return process.platform === 'win32' ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right);
 }
+/** The deepest recorded folder holding this path, its latest record (a later one for the same path wins). */
+function recordFor(record: RetentionRecord, target: string): RetentionRecord['folders'][number] | undefined {
+  return record.folders.filter(folder => within(target, folder.path))
+    .reduce<RetentionRecord['folders'][number] | undefined>((best, folder) => (!best || folder.path.length >= best.path.length ? folder : best), undefined);
+}
+
+function removedEntries(record: RetentionRecord, projectId: string): CleanedFolderEntry[] {
+  return record.folders.filter(entry => entry.projectId === projectId && entry.state === 'removed').map(entry => ({ runId: entry.runId, attemptId: entry.attemptId, kind: entry.kind }));
+}
+
+async function present(target: string): Promise<boolean> {
+  try { await fs.lstat(target); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
+
 /** Bytes already read, behind the few file-handle calls the host's preview makes. */
 function memoryHandle(bytes: Buffer): FileHandle {
   return {

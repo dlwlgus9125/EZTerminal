@@ -166,11 +166,18 @@ describe('WorkflowFlowSurface 반복', () => {
 });
 
 describe('WorkflowFlowSurface 작업 폴더 정리', () => {
-  it('tells a stage of a run whose work folders were cleaned up that its conversations stay readable', async () => {
+  it('tells only the stage whose work folder was cleaned up that its conversations stay readable (Codex I2-7c P2-9)', async () => {
     const { run } = workflowCanvasFixture('retry-running', 'en');
-    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedRunIds: [run!.runId], selection: { kind: 'node', id: 'login:implement' }, section: 'run' })} />));
-    expect(document.querySelector('[data-testid="workflow-stage-cleaned"]')?.textContent).toContain('work folders were cleaned up');
-    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedRunIds: [], selection: { kind: 'node', id: 'login:implement' }, section: 'run' })} />));
+    const attempt = run!.attempts.find(entry => entry.taskId === 'login:implement')!;
+    const removed = [{ runId: run!.runId, attemptId: attempt.attemptId, kind: 'attempt' as const }];
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedFolders: removed, selection: { kind: 'node', id: 'login:implement' }, section: 'run' })} />));
+    expect(document.querySelector('[data-testid="workflow-stage-cleaned"]')?.textContent).toContain('work folder was cleaned up');
+    // Another stage of the same run kept its folder.
+    const other = run!.preparation.tasks.find(task => task.taskId !== 'login:implement')!.taskId;
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedFolders: removed, selection: { kind: 'node', id: other }, section: 'run' })} />));
+    expect(document.querySelector('[data-testid="workflow-stage-cleaned"]')).toBeNull();
+    // Only the validation folder went: the stage's own work folder is still there.
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedFolders: [{ ...removed[0]!, kind: 'validation' }], selection: { kind: 'node', id: 'login:implement' }, section: 'run' })} />));
     expect(document.querySelector('[data-testid="workflow-stage-cleaned"]')).toBeNull();
   });
 });

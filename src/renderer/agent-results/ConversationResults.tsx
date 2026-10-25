@@ -10,7 +10,7 @@ import { ResultsFiles } from './ResultsFiles';
 import { ResultsSummary } from './ResultsSummary';
 import { useResultsCopy } from './copy';
 import type { ResultsNavigation, ResultsSection, ResultsSource } from './results-source-store';
-import { useResultsViewState, type ResultsServices } from './results-services';
+import { useResultsViewState, type ResultsFolderAccess, type ResultsServices } from './results-services';
 import { useResultsWidth } from '../shell/results-width';
 import '../chat/chat.css';
 import './agent-results.css';
@@ -101,17 +101,35 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
     setSection('files');
   }, [setSection]);
 
-  // 작업 폴더 정리: a cleaned-up folder is never read; its files come from the run's kept result (asked again once the
-  // conversation becomes history, which the cleanup does).
+  // 작업 폴더 정리: the folder is read only once the host says it is live. A cleaned-up one's files come from the run's
+  // kept result. Asked again when the conversation becomes history (the cleanup archives it), on refresh, and every
+  // couple of seconds while a cleanup is removing it.
   const root = source.workspaceRoot;
-  const [folderState, setFolderState] = useState<{ readonly root: string; readonly state: CleanedFolderState }>();
+  const [folderState, setFolderState] = useState<{ readonly root: string; readonly state: CleanedFolderState | 'asking' | 'error' }>();
+  const [asked, setAsked] = useState(0);
+  const recheck = useCallback(() => {
+    setFolderState((current) => (current ? { root: current.root, state: 'asking' } : current));
+    setAsked((value) => value + 1);
+  }, []);
   useEffect(() => {
     if (!root || !services.cleanedFolder) return undefined;
     let alive = true;
-    void services.cleanedFolder(root).then((state) => { if (alive) setFolderState({ root, state }); }).catch(() => undefined);
+    setFolderState({ root, state: 'asking' });
+    void services.cleanedFolder(root).then((state) => { if (alive) setFolderState({ root, state }); }, () => { if (alive) setFolderState({ root, state: 'error' }); });
     return () => { alive = false; };
-  }, [root, services, source.historyOnly]);
-  const cleaned = folderState && folderState.root === root && folderState.state.cleaned ? folderState.state : undefined;
+  }, [root, services, source.historyOnly, asked]);
+  const retiring = !!folderState && folderState.root === root && typeof folderState.state === 'object' && folderState.state.state === 'retiring';
+  useEffect(() => {
+    if (!retiring) return undefined;
+    const timer = window.setTimeout(() => setAsked((value) => value + 1), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [retiring, folderState]);
+  const folder: ResultsFolderAccess = !root || !services.cleanedFolder ? { kind: 'live' }
+    : folderState?.root !== root || folderState.state === 'asking' ? { kind: 'checking' }
+      : folderState.state === 'error' ? { kind: 'error', retry: recheck }
+        : folderState.state.state === 'live' ? { kind: 'live' }
+          : folderState.state.state === 'retiring' ? { kind: 'checking' }
+            : { kind: 'cleaned', root: folderState.state.root, result: folderState.state.result };
 
   const changeCount = derived.files.length;
   const todoLeft = derived.todo?.filter((item) => item.status !== 'completed').length ?? 0;
@@ -145,7 +163,7 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               {...(source.draftUnavailable ? { draftUnavailable: source.draftUnavailable } : {})}
               {...(changesTarget ? { target: changesTarget } : {})}
               turnActive={source.turnActive ?? false}
-              folderCleaned={Boolean(cleaned)}
+              folderReadable={folder.kind === 'live'}
               onViewFile={showFile}
             />
           )}
@@ -158,8 +176,9 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               derived={derived}
               services={services}
               {...(filesTarget ? { target: filesTarget } : {})}
-              {...(source.openProjectFiles && !cleaned ? { onOpenProjectFiles: source.openProjectFiles } : {})}
-              {...(cleaned ? { cleaned } : {})}
+              {...(source.openProjectFiles && folder.kind === 'live' ? { onOpenProjectFiles: source.openProjectFiles } : {})}
+              folder={folder}
+              {...(services.cleanedFolder && root ? { onRefreshFolder: recheck } : {})}
               onViewChanges={showChanges}
               {...(renderHtml ? { renderHtml } : {})}
               {...(renderPdf ? { renderPdf } : {})}

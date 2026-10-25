@@ -26,7 +26,7 @@ describe('ResultsFiles in a cleaned-up work folder (작업 폴더 정리)', () =
       openFileInApp: vi.fn(),
     };
     await act(async () => root.render(<ResultsFiles sessionId="s-clean-1" workspaceRoot={ROOT} derived={derived(['notes.txt'])} services={services}
-      cleaned={{ root: ROOT, result: true }} />));
+      folder={{ kind: 'cleaned', root: ROOT, result: true }} />));
     expect(services.readCleanedFile).toHaveBeenCalledWith(`${ROOT}\\notes.txt`);
     expect(services.readFilePreview).not.toHaveBeenCalled();
     expect(container.textContent).toContain('as the run left it');
@@ -39,17 +39,35 @@ describe('ResultsFiles in a cleaned-up work folder (작업 폴더 정리)', () =
     const renderPdf = vi.fn(() => <iframe title="pdf" />);
     const services: ResultsServices = { readFilePreview: vi.fn(), readCleanedFile: vi.fn() };
     await act(async () => root.render(<ResultsFiles sessionId="s-clean-2" workspaceRoot={ROOT} derived={derived(['page.html'])} services={services}
-      renderHtml={renderHtml} renderPdf={renderPdf} cleaned={{ root: ROOT, result: true }} />));
+      renderHtml={renderHtml} renderPdf={renderPdf} folder={{ kind: 'cleaned', root: ROOT, result: true }} />));
     expect(renderHtml).not.toHaveBeenCalled();
     expect(container.textContent).toContain('preview is not available');
     await act(async () => root.render(<ResultsFiles sessionId="s-clean-3" workspaceRoot={ROOT} derived={derived(['report.pdf'])} services={services}
-      renderHtml={renderHtml} renderPdf={renderPdf} cleaned={{ root: ROOT, result: true }} />));
+      renderHtml={renderHtml} renderPdf={renderPdf} folder={{ kind: 'cleaned', root: ROOT, result: true }} />));
     expect(renderPdf).not.toHaveBeenCalled();
     await act(async () => root.render(<ResultsFiles sessionId="s-clean-4" workspaceRoot={ROOT} derived={derived(['notes.txt'])} services={services}
-      cleaned={{ root: ROOT, result: false }} />));
+      folder={{ kind: 'cleaned', root: ROOT, result: false }} />));
     expect(container.textContent).toContain('kept no result');
     expect(services.readCleanedFile).not.toHaveBeenCalled();
     expect(services.readFilePreview).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing while the host is asked, and nothing when it could not tell (Codex I2-7c P1-5)', async () => {
+    const services: ResultsServices = { readFilePreview: vi.fn(), readCleanedFile: vi.fn(), openFileInApp: vi.fn() };
+    const renderHtml = vi.fn(() => <iframe title="html" />);
+    await act(async () => root.render(<ResultsFiles sessionId="s-check-1" workspaceRoot={ROOT} derived={derived(['page.html'])} services={services}
+      renderHtml={renderHtml} folder={{ kind: 'checking' }} />));
+    expect(renderHtml).not.toHaveBeenCalled();
+    expect(container.querySelector('button[aria-label="Open in browser"], [data-testid="results-open-browser"]')).toBeNull();
+    const retry = vi.fn();
+    await act(async () => root.render(<ResultsFiles sessionId="s-check-2" workspaceRoot={ROOT} derived={derived(['notes.txt'])} services={services}
+      folder={{ kind: 'error', retry }} />));
+    expect(container.textContent).toContain('Could not check');
+    await act(async () => ([...container.querySelectorAll('button')].find(button => button.textContent === 'Check again') as HTMLButtonElement).click());
+    expect(retry).toHaveBeenCalled();
+    expect(services.readFilePreview).not.toHaveBeenCalled();
+    expect(services.readCleanedFile).not.toHaveBeenCalled();
+    expect(container.querySelector('button[aria-label="Open with default app"]')).toBeNull();
   });
 
   it('still reads a folder that was not cleaned up as it is', async () => {

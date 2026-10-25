@@ -30,6 +30,13 @@ export function historyResumeBlock(prepared: { readonly ok: boolean; readonly ca
   return prepared.message ? { message: prepared.message } : {};
 }
 
+/** What a history's "can it be continued here" answer depends on: asked again when this changes (not on every snapshot). */
+export function resumeAvailabilityKey(snapshot: Pick<DaemonSnapshot, 'providers' | 'projects' | 'workspaces'> | null | undefined): string {
+  return JSON.stringify([snapshot?.providers.map(provider => [provider.id, provider.enabled, provider.health]),
+    snapshot?.projects.map(project => [project.id, project.rootPath ?? null, project.archivedAt ?? null]),
+    snapshot?.workspaces.map(workspace => [workspace.id, workspace.rootPath, workspace.archivedAt ?? null])]);
+}
+
 export function initialConversationSettings(input: {
   readonly entry?: { readonly providerId: string; readonly workspaceId?: string };
   readonly seed?: ConversationSettings;

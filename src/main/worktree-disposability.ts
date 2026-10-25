@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
 import { GitCommandError, type GitRunner } from './worktree-service';
 
@@ -10,14 +11,18 @@ export interface DisposableExpectation {
   readonly tree: string;
   /** A commit HEAD may already be detached at (a cleanup that stopped after detaching). */
   readonly detachedAt?: string;
+  /** The shared ref that keeps the run's result once the folder is gone: it must still name exactly this commit. */
+  readonly keptRef?: { readonly name: string; readonly commit: string };
 }
 /** Why a folder stays, for screens to word (`reason` is the host's own English). */
-export type KeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'unchecked';
+export type KeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'nested-repository' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'result-mismatch' | 'unchecked';
 export type Disposability = { readonly disposable: true } | { readonly disposable: false; readonly code: KeepCode; readonly reason: string };
 
 /** No pager, no hooks, no fsmonitor, no optional index writes: the check changes nothing. */
 const SAFE = ['--no-pager', '--no-optional-locks', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false'] as const;
 const IN_PROGRESS = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LOG', 'rebase-merge', 'rebase-apply', 'sequencer', 'index.lock'] as const;
+/** Past this many entries the folder is not walked for nested repositories (and stays). */
+const WALK_LIMIT = 100_000;
 
 /**
  * Whether a work folder may be removed without losing anything that is not kept by Git: every condition must hold,
@@ -40,9 +45,19 @@ export async function judgeDisposable(git: Pick<GitRunner, 'run'>, folder: strin
     if ((await run(['ls-files', '--stage', '-z'])).split('\0').filter(Boolean).some(line => line.startsWith('160000 '))) return keep('submodule', 'It has a submodule.');
     // Untracked and ignored alike (no exclude rules): any file Git does not keep.
     if ((await run(['ls-files', '--others', '-z'])).length > 0) return keep('untracked', 'It has files Git does not keep (untracked or ignored).');
+    // Git never lists a .git inside a tracked folder: a repository of the person's own there would go with the folder.
+    const nested = await nestedRepository(folder);
+    if (nested !== false) return nested === 'unchecked' ? keep('unchecked', 'It is too large to check.') : keep('nested-repository', 'It holds a Git repository of its own.');
+    if (await usesLfs(run, [...new Set([expected.head, expected.tree, ...(expected.detachedAt ? [expected.detachedAt] : [])])])) return keep('lfs', 'It uses Git LFS.');
     if (await differs(run, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', '--'])) return keep('changed', 'It has changes not added to Git.');
     if (await differs(run, ['diff', '--cached', '--quiet', '--no-ext-diff', '--no-textconv', expected.tree, '--'])) return keep('staged-differs', 'Its staged files are not exactly this run’s result.');
-    if (await usesLfs(run, [...new Set([expected.head, expected.tree, ...(expected.detachedAt ? [expected.detachedAt] : [])])])) return keep('lfs', 'It uses Git LFS.');
+    if (expected.keptRef) {
+      const kept = await run(['rev-parse', '--verify', '--quiet', expected.keptRef.name]).then(value => value.trim(), (error: unknown) => {
+        if (error instanceof GitCommandError && error.exitCode === 1) return '';
+        throw error;
+      });
+      if (kept !== expected.keptRef.commit) return keep('result-mismatch', 'Its kept result does not match its record.');
+    }
     return { disposable: true };
   } catch {
     return keep('unchecked', 'It could not be checked.');
@@ -57,8 +72,29 @@ async function differs(run: (args: readonly string[]) => Promise<string>, args: 
   }
 }
 
-/** Git LFS named by any attributes in these commits' trees, the repository's own attributes or the user's attributes file. */
+/** Whether any folder below the top holds a `.git` (links are not followed); 'unchecked' past WALK_LIMIT entries. */
+async function nestedRepository(folder: string): Promise<boolean | 'unchecked'> {
+  const pending = [folder];
+  let seen = 0;
+  while (pending.length) {
+    const directory = pending.pop()!;
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (++seen > WALK_LIMIT) return 'unchecked';
+      if (entry.name.toLowerCase() === '.git') { if (directory !== folder) return true; continue; }
+      if (entry.isDirectory() && !entry.isSymbolicLink()) pending.push(path.join(directory, entry.name));
+    }
+  }
+  return false;
+}
+
+/**
+ * Git LFS anywhere it could apply: attributes in these commits' trees, the effective attributes of the index (the
+ * repository's, the person's own and the system's), any attributes file naming the LFS filter, or LFS storage set to
+ * a folder of its own.
+ */
 async function usesLfs(run: (args: readonly string[]) => Promise<string>, commits: readonly string[]): Promise<boolean> {
+  if ((await run(['ls-files', '-z', '--', ':(attr:filter=lfs)'])).length > 0) return true;
+  if (await optional(run, ['config', '--get', 'lfs.storage'])) return true;
   for (const commit of commits) {
     try {
       if ((await run(['grep', '-I', '-l', '--no-color', '-e', 'filter=lfs', commit, '--', ':(glob)**/.gitattributes'])).trim()) return true;
@@ -67,15 +103,22 @@ async function usesLfs(run: (args: readonly string[]) => Promise<string>, commit
     }
   }
   const local = (await run(['rev-parse', '--path-format=absolute', '--git-path', 'info/attributes'])).trim();
-  let global = '';
-  try { global = (await run(['config', '--path', '--get', 'core.attributesFile'])).trim(); } catch (error) {
-    if (!(error instanceof GitCommandError && error.exitCode === 1)) throw error;
-  }
-  for (const file of [local, global].filter(Boolean)) {
+  // Where Git itself reads the person's and the system's attributes (core.attributesFile, else the XDG default).
+  const global = (await run(['var', 'GIT_ATTR_GLOBAL'])).trim();
+  const system = (await run(['var', 'GIT_ATTR_SYSTEM'])).trim();
+  for (const file of [local, global, system].filter(Boolean)) {
     const text = await fs.readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return ''; throw error; });
     if (text.includes('filter=lfs')) return true;
   }
   return false;
+}
+
+/** A value that may be unset (exit 1 = unset; anything else is an error). */
+async function optional(run: (args: readonly string[]) => Promise<string>, args: readonly string[]): Promise<string> {
+  try { return (await run(args)).trim(); } catch (error) {
+    if (error instanceof GitCommandError && error.exitCode === 1) return '';
+    throw error;
+  }
 }
 
 async function exists(target: string): Promise<boolean> {

@@ -20,8 +20,11 @@ function hostServices(): ResultsServices {
     ...(typeof api.readFilePreview === 'function' ? { readFilePreview: (path: string) => api.readFilePreview(path) } : {}),
     ...(typeof api.openFileInApp === 'function' ? { openFileInApp: (path: string) => api.openFileInApp(path) } : {}),
     ...(api.runRetention ? {
-      // A record that cannot be read is no cleanup: the folder is read as it is.
-      cleanedFolder: (root: string) => api.runRetention!.folderState(root).then((result): CleanedFolderState => (result.ok ? result.value : { cleaned: false })),
+      // A record the host cannot read is not 'live': the tab reads nothing until it can tell.
+      cleanedFolder: (root: string) => api.runRetention!.folderState(root).then((result): CleanedFolderState => {
+        if (!result.ok) throw new Error(result.message);
+        return result.value;
+      }),
       readCleanedFile: (path: string) => api.runRetention!.readFile(path).then((result): FilePreviewResult => (result.ok ? result.value : { ok: false, error: result.message })),
     } : {}),
     ...(typeof window.ezterminalDesktop?.openExternalHttpUrl === 'function'

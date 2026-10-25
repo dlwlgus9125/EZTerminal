@@ -28,7 +28,7 @@ function git(cwd: string, args: readonly string[]): string {
  * A project whose flow has four finished runs; the oldest (r1) left an attempt work folder holding its captured result,
  * with an idle stage conversation in it — what the person's 작업 폴더 정리 finds.
  */
-async function project(options: { turn?: boolean } = {}) {
+async function project(options: { turn?: boolean; onRelease?: (folder: string, repo: string, base: string) => void; busy?: () => boolean } = {}) {
   const base = mkdtempSync(path.join(tmpdir(), 'ez-run-cleanup-'));
   bases.add(base);
   const repo = path.join(base, 'repo');
@@ -67,12 +67,12 @@ async function project(options: { turn?: boolean } = {}) {
   const commands: DaemonCommand[] = [];
   const cleanup = new RunWorktreeCleanup({
     directory: userData, getSnapshot: () => snapshot, runs: () => runs, readResult: async (_projectId, attemptId) => (attemptId === 'A1' ? record : null),
-    resultBusy: async () => false, worktrees, git: new GitRunner(),
+    resultBusy: async () => options.busy?.() ?? false, worktrees, git: new GitRunner(),
     preview: (filePath, handle) => new FileService({ trashItem: async () => undefined }).readFilePreview(filePath, handle),
     executeCommand: vi.fn(async (command: DaemonCommand) => { commands.push(command); return { ok: true, status: 'committed', commandId: command.commandId, revision: 2 } as never; }),
-    releaseProviders: async () => undefined, liveTerminalIds: () => new Set(), folderReleaseMs: 0,
+    releaseProviders: async () => { options.onRelease?.(folder, repo, baseCommit); }, liveTerminalIds: () => new Set(), folderReleaseMs: 0,
   });
-  return { repo, userData, folder, baseCommit, commit, cleanup, commands };
+  return { repo, userData, folder, baseCommit, commit, cleanup, commands, snapshot, worktrees, record };
 }
 
 describe('RunWorktreeCleanup (real Git)', () => {
@@ -86,7 +86,7 @@ describe('RunWorktreeCleanup (real Git)', () => {
     // Its result is still kept by the shared ref.
     expect(git(p.repo, ['rev-parse', `refs/ezterminal/results/${resultHash(['P', 'A1'])}`]).trim()).toBe(p.commit);
     const again = await p.cleanup.plan('P');
-    expect(again.cleanedRunIds).toEqual(['r1']);
+    expect(again.cleaned).toEqual([{ runId: 'r1', attemptId: 'A1', kind: 'attempt' }]);
     expect(again.runs[0]!.folders[0]).toMatchObject({ state: 'removed' });
     const saved = JSON.parse(await fs.readFile(path.join(p.userData, RUN_RETENTION_FILE), 'utf8')) as { folders: { state: string; worktreeId?: string }[] };
     expect(saved.folders).toEqual([expect.objectContaining({ state: 'removed', worktreeId: 'worktree-00000001' })]);
@@ -114,9 +114,9 @@ describe('RunWorktreeCleanup (real Git)', () => {
 
   it('reads a cleaned folder’s files from the run’s kept result, and nothing it cannot vouch for', async () => {
     const p = await project();
-    expect(await p.cleanup.folderState(p.folder)).toEqual({ cleaned: false });
+    expect(await p.cleanup.folderState(p.folder)).toEqual({ state: 'live' });
     await p.cleanup.cleanup('P', ['r1']);
-    expect(await p.cleanup.folderState(p.folder)).toEqual({ cleaned: true, root: p.folder, result: true });
+    expect(await p.cleanup.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: true });
     expect(await p.cleanup.readFile(path.join(p.folder, 'README.md'))).toMatchObject({ ok: true, kind: 'text', content: 'updated\n', name: 'README.md' });
     const image = await p.cleanup.readFile(path.join(p.folder, 'pixel.png'));
     expect(image).toMatchObject({ ok: true, kind: 'image', mime: 'image/png', width: 1, height: 1 });
@@ -127,8 +127,55 @@ describe('RunWorktreeCleanup (real Git)', () => {
     expect(await p.cleanup.readFile(p.folder)).toMatchObject({ ok: false });
     // Once the shared ref no longer names the recorded result, nothing is read from it.
     git(p.repo, ['update-ref', `refs/ezterminal/results/${resultHash(['P', 'A1'])}`, p.baseCommit]);
-    expect(await p.cleanup.folderState(p.folder)).toEqual({ cleaned: true, root: p.folder, result: false });
+    expect(await p.cleanup.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: false });
     expect(await p.cleanup.readFile(path.join(p.folder, 'README.md'))).toMatchObject({ ok: false, error: expect.stringContaining('no result') });
+  }, 60_000);
+
+  it('keeps a folder another project’s workspace is rooted in, and archives nothing for it (Codex I2-7c P1-2)', async () => {
+    const p = await project();
+    (p.snapshot.workspaces as unknown[]).push({ id: 'other-ws', projectId: 'Q', rootPath: path.join(p.folder, 'sub'), kind: 'local' });
+    expect((await p.cleanup.plan('P')).runs[0]!.folders[0]).toMatchObject({ state: 'kept', code: 'shared' });
+    expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0 });
+    expect(p.commands).toEqual([]);
+    expect(existsSync(p.folder)).toBe(true);
+  }, 60_000);
+
+  it('keeps a folder whose result record names another folder (Codex I2-7c P1-2)', async () => {
+    const p = await project();
+    (p.record as { rootPath: string }).rootPath = path.join(p.repo, '..', 'elsewhere');
+    expect((await p.cleanup.plan('P')).runs[0]!.folders[0]).toMatchObject({ state: 'kept', code: 'result-mismatch' });
+  }, 60_000);
+
+  it('keeps the folder when its kept result ref moves while chats are let go (Codex I2-7c P1-4)', async () => {
+    const p = await project({ onRelease: (_folder, repo, base) => { git(repo, ['update-ref', `refs/ezterminal/results/${resultHash(['P', 'A1'])}`, base]); } });
+    expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0, kept: [expect.objectContaining({ code: 'result-mismatch' })] });
+    expect(existsSync(p.folder)).toBe(true);
+  }, 60_000);
+
+  it('stops when a review of the run starts after the list was shown (advisor, I2-7c)', async () => {
+    // Four runs are asked about per plan; the cleanup plans once more, then asks again right before touching the folder.
+    let calls = 0;
+    const p = await project({ busy: () => ++calls > 8 });
+    expect((await p.cleanup.plan('P')).runs[0]!.folders[0]).toMatchObject({ state: 'removable' });
+    expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0, kept: [expect.objectContaining({ code: 'busy' })] });
+    expect(calls).toBe(9);
+    expect(p.commands).toEqual([]);
+    expect(existsSync(p.folder)).toBe(true);
+  }, 60_000);
+
+  it('knows a conversation rooted below a cleaned folder, and settles a cleanup the app stopped part way (Codex I2-7c P1-6, P2-7)', async () => {
+    const p = await project();
+    await p.cleanup.cleanup('P', ['r1']);
+    expect(await p.cleanup.folderState(path.join(p.folder, 'src'))).toEqual({ state: 'cleaned', root: p.folder, result: true });
+    // The app stopped after Git removed the folder, before the record said so.
+    const file = path.join(p.userData, RUN_RETENTION_FILE);
+    const saved = JSON.parse(await fs.readFile(file, 'utf8')) as { folders: { state: string }[] };
+    saved.folders[0]!.state = 'retiring';
+    await fs.writeFile(file, `${JSON.stringify(saved, null, 2)}\n`);
+    const restarted = new RunWorktreeCleanup({ ...(p.cleanup as unknown as { options: ConstructorParameters<typeof RunWorktreeCleanup>[0] }).options });
+    expect(await restarted.folderState(p.folder)).toEqual({ state: 'retiring', root: p.folder });
+    await restarted.reconcile();
+    expect(await restarted.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: true });
   }, 60_000);
 
   it('offers nothing of the newest three runs', async () => {

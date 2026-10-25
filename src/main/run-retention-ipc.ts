@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron';
 
 import type { FilePreviewResult } from '../shared/file-preview';
-import type { CleanedFolderState, RunCleanupOutcome, RunCleanupPlan, RunRetentionResult } from '../shared/run-retention';
+import type { CleanedFolderEntry, CleanedFolderState, RunCleanupOutcome, RunCleanupPlan, RunRetentionResult } from '../shared/run-retention';
 import type { RunWorktreeCleanup } from './run-worktree-cleanup';
 
 /** Desktop-only 작업 폴더 정리: list a project's removable run work folders, and remove the ones the person confirms. */
@@ -20,7 +20,7 @@ export function installRunRetentionIpc(input: {
   ipc.handle('run-retention:plan', (_event, projectId: unknown): Promise<RunRetentionResult<RunCleanupPlan>> => (
     id(projectId) ? answer(() => cleanup.plan(projectId)) : Promise.resolve({ ok: false, message: 'Choose a project.' })
   ));
-  ipc.handle('run-retention:cleaned', (_event, projectId: unknown): Promise<RunRetentionResult<readonly string[]>> => (
+  ipc.handle('run-retention:cleaned', (_event, projectId: unknown): Promise<RunRetentionResult<readonly CleanedFolderEntry[]>> => (
     id(projectId) ? answer(() => cleanup.cleaned(projectId)) : Promise.resolve({ ok: false, message: 'Choose a project.' })
   ));
   ipc.handle('run-retention:cleanup', (_event, projectId: unknown, runIds: unknown): Promise<RunRetentionResult<RunCleanupOutcome>> => (

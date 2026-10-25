@@ -122,7 +122,7 @@ function useGitScope(workspaceRoot: string | undefined, services: ResultsService
   return [state, () => refreshRef.current()];
 }
 
-export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFloor, backfill, onLoadEarlier, onCancelEarlier, services, insertIntoDraft, draftUnavailable, target, turnActive, folderCleaned, onViewFile }: {
+export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFloor, backfill, onLoadEarlier, onCancelEarlier, services, insertIntoDraft, draftUnavailable, target, turnActive, folderReadable = true, onViewFile }: {
   readonly sessionId: string;
   readonly workspaceRoot?: string;
   readonly derived: DerivedResults;
@@ -136,8 +136,8 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
   /** A turn or file the conversation asked to show. */
   readonly target?: { readonly sequence: number; readonly turnId?: string; readonly path?: string };
   readonly turnActive: boolean;
-  /** The work folder was cleaned up (작업 폴더 정리): there is no folder to read. */
-  readonly folderCleaned?: boolean;
+  /** The work folder may be read (false while the host is asked, or once it was cleaned up: 작업 폴더 정리). */
+  readonly folderReadable?: boolean;
   readonly onViewFile?: (path: string) => void;
 }): JSX.Element {
   const copy = useResultsCopy();
@@ -150,7 +150,7 @@ export function ResultsChanges({ sessionId, workspaceRoot, derived, transcriptFl
   const [inserted, setInserted] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   // A remembered Working folder scope falls back when this conversation has no folder to read.
-  const gitAvailable = Boolean(workspaceRoot && !folderCleaned && services.getGitDiff && services.getGitStatus);
+  const gitAvailable = Boolean(workspaceRoot && folderReadable && services.getGitDiff && services.getGitStatus);
   const scope: ChangeScope = view.scope === 'git' && !gitAvailable ? 'all' : view.scope;
   const [git, refreshGit] = useGitScope(workspaceRoot, services, scope === 'git', turnActive, derived.artifactSequence);
 

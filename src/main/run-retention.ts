@@ -12,8 +12,8 @@ export interface RetentionCandidate {
 }
 
 /**
- * The finished runs whose work folders a person may clean up, per flow: every run but the newest
- * RETENTION_KEEP_RUNS in 실행 #n order, and runs a refused launch prepared and cancelled (recorded by the host when it
+ * The finished runs whose work folders a person may clean up, per flow: every finished run but the newest
+ * RETENTION_KEEP_RUNS finished ones in 실행 #n order, and runs a refused launch prepared and cancelled (recorded by the host when it
  * cancelled them). A run counts as finished only when it is completed or cancelled with no attempt still running or
  * unsettled and nothing of it busy elsewhere (a review or integration in progress, `busy`); a prepared run that never
  * started is kept. Whether each folder may really go is decided per folder afterwards.
@@ -31,7 +31,9 @@ export function retentionCandidates(runs: readonly ExecutionRun[], options: {
   const candidates: RetentionCandidate[] = [];
   for (const subprojectId of subprojects) {
     const own = flowRuns(runs, subprojectId);
-    const newest = new Set(own.slice(-keep).map(run => run.runId));
+    // The newest finished runs keep their folders; a run still going (or only prepared) takes no place among them.
+    const ended = own.filter(run => (run.state === 'completed' || run.state === 'cancelled') && !(options.launchLeftovers.has(run.runId) && !run.startedAt));
+    const newest = new Set(ended.slice(-keep).map(run => run.runId));
     for (const run of own) {
       if (!finished(run)) continue;
       if (options.launchLeftovers.has(run.runId) && run.state === 'cancelled' && !run.startedAt) candidates.push({ runId: run.runId, subprojectId, why: 'launch-leftover' });

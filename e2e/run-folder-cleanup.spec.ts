@@ -100,7 +100,7 @@ test('작업 폴더 정리: the oldest run’s folders go, its conversation and 
     expect(existsSync(newest)).toBe(true);
     // The kept result still holds the run's files: the cleaned folder reads from it, never from the old path.
     const state = await page.evaluate(folder => window.ezterminal.runRetention!.folderState(folder), oldest);
-    expect(state).toEqual({ ok: true, value: { cleaned: true, root: oldest, result: true } });
+    expect(state).toEqual({ ok: true, value: { state: 'cleaned', root: oldest, result: true } });
     const file = await page.evaluate(filePath => window.ezterminal.runRetention!.readFile(filePath), path.join(oldest, 'README.md'));
     expect(file).toMatchObject({ ok: true, value: { ok: true, kind: 'text', content: expect.stringContaining('cleanup fixture') } });
     await page.getByTestId('run-folder-cleanup-close').click();
