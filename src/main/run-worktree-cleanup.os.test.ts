@@ -200,6 +200,30 @@ describe('RunWorktreeCleanup (real Git)', () => {
     expect(await again.readFile(path.join(p.folder, 'README.md'))).toMatchObject({ ok: true, content: 'updated\n' });
   }, 60_000);
 
+  it('never trusts another worktree at a cleaned folder’s path, nor a removal it could not confirm (Codex I2-7c recheck 2)', async () => {
+    const p = await project();
+    await p.cleanup.cleanup('P', ['r1']);
+    const file = path.join(p.userData, RUN_RETENTION_FILE);
+    const saved = JSON.parse(await fs.readFile(file, 'utf8')) as { folders: { state: string }[] };
+    saved.folders[0]!.state = 'retiring';
+    await fs.writeFile(file, `${JSON.stringify(saved, null, 2)}\n`);
+    // Someone made another worktree at the same path before the app started again.
+    git(p.repo, ['worktree', 'add', '-b', 'someone-else', p.folder]);
+    const restarted = new RunWorktreeCleanup({ ...(p.cleanup as unknown as { options: ConstructorParameters<typeof RunWorktreeCleanup>[0] }).options });
+    await restarted.reconcile();
+    expect(await restarted.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: true });
+
+    // Retirement reports an error and the list after it cannot be read: not 'live' again.
+    const q = await project();
+    const service = q.worktrees as unknown as { retire: (...args: unknown[]) => Promise<unknown>; execute: (...args: unknown[]) => Promise<unknown> };
+    const execute = service.execute.bind(q.worktrees);
+    let retired = false;
+    service.retire = async () => { retired = true; return { ok: false, kept: false, code: 'GIT_FAILED', message: 'git failed part way' }; };
+    service.execute = async (...args: unknown[]) => (retired ? { ok: false, code: 'GIT_FAILED', message: 'list failed' } : execute(...args));
+    expect(await q.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0 });
+    expect(await q.cleanup.folderState(q.folder)).toEqual({ state: 'cleaned', root: q.folder, result: true });
+  }, 60_000);
+
   it('removes the folder a passed integration combined the run’s results in, and keeps any other (I2-7d)', async () => {
     const p = await project({ integration: 'passed' });
     const combined = p.integration!.workspacePath as string;

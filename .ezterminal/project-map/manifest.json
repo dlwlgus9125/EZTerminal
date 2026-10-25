@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:205dc61b3c0e55281bedf2095210dad6d03d60f5d54db6859880457366293b23",
+        "inputDigest": "sha256:9110e2af5913a9a4176c98950bf5e2a1750aa68067006fe308e12996adc6ec24",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
+        "reason": "Reviewed (I2-7c recheck 2, B list 8 and 9): cleanup recovery trusts only the same managed worktree; schedules and heartbeats save an IANA zone; a refreshed flow keeps a refused command's reason. Claims hold."
       }
     }
   ]

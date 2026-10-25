@@ -97,7 +97,8 @@ export class RunWorktreeCleanup {
 
   /**
    * Settles records an earlier cleanup left 'retiring' (the app stopped part way), by the worktree they saved: still a
-   * worktree = kept (judged again next time); gone with its folder = removed; gone but files left = blocked.
+   * managed worktree (same id, same path) = kept (judged again next time); gone with its folder = removed; anything
+   * else at its path (files left, or another worktree there) = ambiguous: only the run's verified result is read.
    */
   async reconcile(): Promise<void> {
     const record = await this.read();
@@ -108,9 +109,9 @@ export class RunWorktreeCleanup {
       const listed = await this.options.worktrees.execute({ action: 'list', cwd: root }, 'desktop');
       if (!listed.ok) continue;
       const plan = { runId: entry.runId, attemptId: entry.attemptId, kind: entry.kind, path: entry.path };
-      if (listed.worktrees.some(worktree => (entry.worktreeId && worktree.worktreeId === entry.worktreeId) || samePath(worktree.path, entry.path))) {
+      if (entry.worktreeId && listed.worktrees.some(worktree => worktree.managed && worktree.worktreeId === entry.worktreeId && samePath(worktree.path, entry.path))) {
         await this.write(entry.projectId, plan, 'kept', 'An earlier cleanup stopped before removing it.');
-      } else if (!(await present(entry.path))) await this.write(entry.projectId, plan, 'removed');
+      } else if (!listed.worktrees.some(worktree => samePath(worktree.path, entry.path)) && !(await present(entry.path))) await this.write(entry.projectId, plan, 'removed');
       else await this.write(entry.projectId, plan, 'ambiguous', 'An earlier cleanup stopped part way; files are left there.');
     }
   }
@@ -218,7 +219,8 @@ export class RunWorktreeCleanup {
     if (retired.kept) return this.settle(projectId, folder, 'kept', retired.code, retired.reason);
     // Git may have let go of it part way: then what is left there is not read as the run's any more.
     const after = await this.options.worktrees.execute({ action: 'list', cwd: root }, 'desktop');
-    const gone = after.ok && !after.worktrees.some(entry => samePath(entry.path, folder.path));
+    // A list that cannot be read is no proof it is still the run's worktree.
+    const gone = !after.ok || !after.worktrees.some(entry => samePath(entry.path, folder.path) && entry.managed && entry.worktreeId === worktree.worktreeId);
     return this.settle(projectId, folder, gone ? 'ambiguous' : 'blocked', retired.code === 'WORKTREE_IN_USE' ? 'in-use' : 'failed', retired.message);
   }
 
