@@ -362,9 +362,13 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     if (!create?.previewSessionId || !access.workflowPreview || disabled) return;
     let current = true;
     const previewId = create.id;
+    // Reads overlap (every 2 s): only an answer newer than the last one applied counts (B list ③).
+    let issued = 0; let applied = 0;
     const read = async (): Promise<void> => {
+      const sequence = ++issued;
       try { const result = await access.workflowPreview!({ action: 'read', projectId, previewId });
-        if (!current) return;
+        if (!current || sequence < applied) return;
+        applied = sequence;
         if (!result.ok) { setError(result.message); return; }
         setPreviewExpired(!result.preview);
         if (result.preview) setCreate(previous => previous?.id === previewId && previous.previewRevision !== result.preview!.revision ? { ...previous, graph: result.preview!.graph, preset: 'custom', previewRevision: result.preview!.revision } : previous);
@@ -453,17 +457,22 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     if (created.previewSessionId) await access.workflowPreview?.({ action: 'discard', projectId, previewId: created.id });
   };
   const beginCreate = (sourceSessionId?: string): void => { const id = `subproject-${crypto.randomUUID()}`; setCreate({ id, title: '', goal: '', preset: 'feature', mode: 'preset', graph: graphForPreset('feature', id, text), ...(sourceSessionId ? { linkSessionId: sourceSessionId } : {}) }); setPreviewExpired(false); setCreationVisible(true); };
+  // Each preset switch or reconnect supersedes the ones before it: a late answer to an older one is ignored (B list ②).
+  const setupAction = useRef(0);
   const switchPreset = async (preset = create?.preset): Promise<void> => {
     if (!create || !preset) return;
     const id = create.id;
-    if (create.previewSessionId && access.workflowPreview) { const result = await access.workflowPreview({ action: 'discard', projectId, previewId: id }); if (!result.ok) { setError(result.message); return; } }
+    const action = ++setupAction.current;
+    if (create.previewSessionId && access.workflowPreview) { const result = await access.workflowPreview({ action: 'discard', projectId, previewId: id }); if (action !== setupAction.current) return; if (!result.ok) { setError(result.message); return; } }
     // Applied to the setup as it is now: what was typed while the host answered stays.
     setCreate(previous => previous?.id === id ? { ...previous, preset, mode: 'preset', graph: graphForPreset(preset, id, text), previewSessionId: undefined, previewRevision: undefined } : previous); setPreviewExpired(false);
   };
   const reconnectPreview = async (): Promise<void> => {
     if (!create?.previewSessionId || !access.workflowPreview) return;
     const id = create.id;
+    const action = ++setupAction.current;
     const result = await access.workflowPreview({ action: 'open', projectId, sessionId: create.previewSessionId, previewId: id, graph: cleanGraph(create.graph) });
+    if (action !== setupAction.current) return;
     if (!result.ok || !result.preview) { setError(result.ok ? text('생성 초안을 다시 연결하지 못했습니다.', 'The creation draft could not be reconnected.') : result.message); return; }
     const preview = result.preview;
     setCreate(previous => previous?.id === id ? { ...previous, graph: preview.graph, previewRevision: preview.revision } : previous); setPreviewExpired(false);

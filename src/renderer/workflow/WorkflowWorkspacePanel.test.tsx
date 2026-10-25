@@ -398,6 +398,46 @@ describe('workflow project workspace', () => {
     expect(button('From preset').getAttribute('aria-pressed')).toBe('true');
     expect([...document.querySelectorAll('label')].find(item => item.firstChild?.textContent?.trim() === 'Goal')!.querySelector('textarea')!.value).toBe('Goal typed while switching');
   });
+  it('never lets an older answer about the setup draft undo a newer one (B list ② ③)', async () => {
+    const snapshot = workflowFixture();
+    const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'custom' as const, mode: 'conversation' as const, graph: snapshot.subprojects[0]!.graph, previewSessionId: 'setup-chat', previewRevision: 1 };
+    const stored: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, creation };
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: stored } }),
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    const titled = (title: string) => ({ ...creation.graph, nodes: creation.graph.nodes.map((node, index) => (index === 0 ? { ...node, title } : node)) });
+    // ③ The first read answers after the second: its older revision must not come back.
+    let reads = 0;
+    const polling: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn(),
+      workflowPreview: async request => {
+        if (request.action !== 'read') return { ok: true, preview: null };
+        const call = ++reads;
+        if (call === 1) await new Promise(resolve => setTimeout(resolve, 2_600));
+        return { ok: true, preview: { id: creation.id, projectId: snapshot.projectId, sessionId: 'setup-chat', revision: call === 1 ? 2 : 3, graph: titled(call === 1 ? 'Older proposal' : 'Newer proposal') } };
+      } };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={polling} recoveryAccess={recovery} conversations={[]} />));
+    await click('Continue setup');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 3_000)));
+    expect(document.body.textContent).toContain('· v3');
+    expect(document.body.textContent).not.toContain('· v2');
+    await act(async () => root.unmount()); root = createRoot(container);
+    // ② Reconnecting answers after switching to a preset: the preset stays, without the reconnected graph.
+    const reconnecting: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn(),
+      workflowPreview: async request => {
+        if (request.action === 'read') return { ok: true, preview: null };
+        if (request.action === 'open') { await new Promise(resolve => setTimeout(resolve, 400)); return { ok: true, preview: { id: creation.id, projectId: snapshot.projectId, sessionId: 'setup-chat', revision: 5, graph: titled('Reconnected graph') } }; }
+        await new Promise(resolve => setTimeout(resolve, 50)); return { ok: true, preview: null };
+      } };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={reconnecting} recoveryAccess={recovery} conversations={[]} />));
+    await click('Continue setup');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    await act(async () => { button('Reconnect saved draft').click(); await new Promise(resolve => setTimeout(resolve, 10)); });
+    await act(async () => { button('Switch to preset').click(); await new Promise(resolve => setTimeout(resolve, 700)); });
+    expect(button('From preset').getAttribute('aria-pressed')).toBe('true');
+    expect(document.body.textContent).not.toContain('Reconnected graph');
+    expect(document.body.textContent).not.toContain('· v5');
+  }, 15_000);
   it('lets a setup go without clearing one begun while the host answered', async () => {
     const snapshot = workflowFixture();
     const creation = { id: 'subproject-old', title: 'Old setup', goal: 'A goal', preset: 'custom' as const, mode: 'conversation' as const, graph: snapshot.subprojects[0]!.graph, previewSessionId: 'setup-chat', previewRevision: 1 };
