@@ -249,6 +249,10 @@ describe('planning result authority', () => {
     await f.git.run(f.root, ['worktree', 'remove', '--force', f.worker]);
     await expect(fs.stat(f.worker)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await f.service.readDiff('P', 'A')).toBe(diff);
+    // The record is trusted only while the shared result ref still names its commit.
+    const ref = (await f.git.run(f.root, ['for-each-ref', '--format=%(refname)', 'refs/ezterminal/results/'])).trim().split('\n')[0]!;
+    await f.git.run(f.root, ['update-ref', ref, f.baseCommit]);
+    await expect(f.service.readDiff('P', 'A')).rejects.toThrow('result reference');
   }, 60_000);
   it('captures exact owned changes, preserves the dirty original and requires an independent read-only review before integration', async () => {
     const f = await fixture();

@@ -155,8 +155,11 @@ export class PlanningResultRepository {
     const record = await this.readResult(projectId, attemptId);
     if (!record?.baseCommit || !record.commit) return null;
     // Read from the project's own checkout: the result commit is kept by a shared ref (refs/ezterminal/results/*),
-    // so it stays readable after retention removes the attempt's work folder.
-    const output = await this.runGit(this.projectRoot(projectId), ['diff', '--no-ext-diff', '--no-textconv', record.baseCommit, record.commit, '--']);
+    // so it stays readable after retention removes the attempt's work folder. The record counts only while that ref names it.
+    const root = this.projectRoot(projectId);
+    const kept = (await this.runGit(root, ['rev-parse', '--verify', '--quiet', `refs/ezterminal/results/${resultHash([projectId, attemptId])}`]).catch(() => '')).trim();
+    if (kept !== record.commit) throw new Error('The kept result reference does not match this recorded result.');
+    const output = await this.runGit(root, ['diff', '--no-ext-diff', '--no-textconv', record.baseCommit, record.commit, '--']);
     const limit = 1_048_576;
     return Buffer.byteLength(output) <= limit ? output : `${Buffer.from(output).subarray(0, limit).toString('utf8')}\n[Diff preview truncated at 1 MiB; exact Git artifact retained.]`;
   }
