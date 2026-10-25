@@ -159,3 +159,11 @@
 .workflow-stage-panel__more > summary { cursor: pointer; font-size: var(--ui-font-size-sm); font-weight: 600; }
 .workflow-stage-panel__more[open] > summary { margin-bottom: var(--ui-space-2); }
 .workflow-stage-panel__more > * + * { margin-top: var(--ui-space-2); }
+
+/* 작업 폴더 정리 (desktop dialog): each run, then its folders with what happens to them. */
+.workflow-folder-cleanup { display: grid; gap: var(--ui-space-3); }
+.workflow-folder-cleanup__runs, .workflow-folder-cleanup__runs ul { display: grid; gap: var(--ui-space-2); margin: 0; padding: 0; list-style: none; }
+.workflow-folder-cleanup__runs > li { display: grid; gap: var(--ui-space-2); padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); }
+.workflow-folder-cleanup__runs ul > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1) var(--ui-space-2); color: var(--ui-text-secondary); font-size: var(--ui-font-size-sm); }
+.workflow-folder-cleanup__runs code { overflow-wrap: anywhere; color: var(--ui-text-primary); }
+.workflow-folder-cleanup__runs small { flex-basis: 100%; color: var(--ui-text-muted); }

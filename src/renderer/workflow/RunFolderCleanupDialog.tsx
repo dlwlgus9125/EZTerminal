@@ -69,8 +69,9 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
     try {
       const result = await access.cleanup(projectId, runs.filter(run => run.folders.some(folder => folder.state === 'removable')).map(run => run.runId));
       if (!result.ok) { setError(result.message); return; }
-      setOutcome(result.value);
+      // The outcome shows with the list read again, so the two never disagree.
       const next = await access.plan(projectId);
+      setOutcome(result.value);
       if (next.ok) { setPlan(next.value); onCleaned?.(next.value.cleanedRunIds); }
     } finally { setBusy(false); }
   };
@@ -79,7 +80,7 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
     title={text('작업 폴더 정리', 'Clean up work folders')} closeLabel={text('닫기', 'Close')}
     description={text('흐름마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리합니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',
       'Each flow keeps the work folders of its newest 3 runs. Of older finished runs, only folders holding no file Git does not keep (ignored ones included) are cleaned up. Results, changes and stage conversations stay readable afterwards.')}
-    footer={<><Button disabled={busy} onClick={() => onOpenChange(false)}>{text('닫기', 'Close')}</Button>
+    footer={<><Button disabled={busy} onClick={() => onOpenChange(false)} data-testid="run-folder-cleanup-close">{text('닫기', 'Close')}</Button>
       <Button variant="primary" disabled={busy || removable.length === 0} onClick={() => void clean()} data-testid="run-folder-cleanup-confirm">
         {busy ? text('정리하는 중…', 'Cleaning up…') : text(`폴더 ${removable.length}개 정리`, `Clean up ${removable.length} folder${removable.length === 1 ? '' : 's'}`)}</Button></>}>
     <div className="workflow-folder-cleanup" data-testid="run-folder-cleanup">
