@@ -6,7 +6,8 @@ import type { FilePreviewResult } from './file-preview';
 export interface RunFolderPlan {
   readonly runId: string;
   readonly attemptId: string;
-  readonly kind: 'attempt' | 'validation';
+  /** attempt: a stage's work folder; validation: where its result was checked; integration: where the run's results were combined. */
+  readonly kind: 'attempt' | 'validation' | 'integration';
   readonly path: string;
   /** removable: nothing of a person's is there; kept: why it stays; removed: already gone (an earlier cleanup). */
   readonly state: 'removable' | 'kept' | 'removed';
@@ -21,7 +22,7 @@ export type RunFolderKeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'u
 export interface CleanedFolderEntry {
   readonly runId: string;
   readonly attemptId: string;
-  readonly kind: 'attempt' | 'validation';
+  readonly kind: RunFolderPlan['kind'];
 }
 
 export interface RunCleanupPlan {

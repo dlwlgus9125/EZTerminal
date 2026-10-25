@@ -389,8 +389,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-repository.ts",
-          "startLine": 366,
-          "endLine": 375,
+          "startLine": 370,
+          "endLine": 379,
           "lineDigest": "sha256:86403cd971203f1fd8fdcad0e5550a5be1e6419bbb83e1c0f24be06f2b510906",
           "claim": "Adoption requires a clean candidate and updates its dedicated integration ref only from the expected previous successful commit."
         }

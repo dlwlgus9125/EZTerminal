@@ -1,7 +1,7 @@
 import { FolderX } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import type { CleanedFolderEntry, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunRetentionAccess } from '../../shared/run-retention';
+import type { CleanedFolderEntry, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan, RunRetentionAccess } from '../../shared/run-retention';
 import { Badge, Button, Dialog, LoadingState } from '../ui';
 import type { WorkflowCopy } from './workflow-copy';
 
@@ -77,7 +77,8 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
       if (next.ok) { setPlan(next.value); onCleaned?.(next.value.cleaned); }
     } finally { setBusy(false); }
   };
-  const kind = (value: 'attempt' | 'validation') => (value === 'attempt' ? text('단계 작업 폴더', 'Stage work folder') : text('검증 폴더', 'Validation folder'));
+  const kind = (value: RunFolderPlan['kind']) => (value === 'attempt' ? text('단계 작업 폴더', 'Stage work folder')
+    : value === 'validation' ? text('검증 폴더', 'Validation folder') : text('통합 폴더', 'Integration folder'));
   return <Dialog open={open} onOpenChange={next => { if (!busy) onOpenChange(next); }} dismissible={!busy} size="lg" icon={<FolderX aria-hidden="true" />}
     title={text('작업 폴더 정리', 'Clean up work folders')} closeLabel={text('닫기', 'Close')}
     description={text('흐름마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리합니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',

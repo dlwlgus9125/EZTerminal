@@ -28,7 +28,7 @@ function git(cwd: string, args: readonly string[]): string {
  * A project whose flow has four finished runs; the oldest (r1) left an attempt work folder holding its captured result,
  * with an idle stage conversation in it — what the person's 작업 폴더 정리 finds.
  */
-async function project(options: { turn?: boolean; onRelease?: (folder: string, repo: string, base: string) => void; busy?: () => boolean } = {}) {
+async function project(options: { turn?: boolean; onRelease?: (folder: string, repo: string, base: string) => void; busy?: () => boolean; integration?: 'passed' | 'validating' } = {}) {
   const base = mkdtempSync(path.join(tmpdir(), 'ez-run-cleanup-'));
   bases.add(base);
   const repo = path.join(base, 'repo');
@@ -57,6 +57,17 @@ async function project(options: { turn?: boolean; onRelease?: (folder: string, r
     startedAt: new Date(Date.UTC(2026, 9, 26, 0, minute, 1)).toISOString(), attempts, preparation: { workflow: { subprojectId: 'flow' } } }) as unknown as ExecutionRun;
   const runs = [run('r1', 1, [{ attemptId: 'A1', state: 'succeeded', workspaceId: 'planning-workspace-1' }]), run('r2', 2), run('r3', 3), run('r4', 4)];
   const record = { rootPath: folder, baseCommit, commit } as unknown as PlanningResultRecord;
+  // The run's results combined in their own worktree, adopted as the integration result.
+  let integration: Record<string, unknown> | null = null;
+  if (options.integration) {
+    const combined = await worktrees.execute({ action: 'create', cwd: repo, branch: 'ezterminal/integration-1', base: baseCommit, allowDirtyBase: true }, 'desktop');
+    if (!combined.ok || !combined.opened) throw new Error('integration create failed');
+    const at = combined.opened.path;
+    git(at, ['-c', 'user.name=E', '-c', 'user.email=e@localhost', 'cherry-pick', commit]);
+    const candidateCommit = git(at, ['rev-parse', 'HEAD']).trim();
+    git(at, ['update-ref', `refs/ezterminal/integrations/${resultHash(['P', 'r1'])}`, candidateCommit]);
+    integration = { status: options.integration, workspacePath: at, candidateCommit, ...(options.integration === 'passed' ? { successfulCommit: candidateCommit } : {}) };
+  }
   const snapshot = {
     projects: [{ id: 'P', rootPath: repo }],
     workspaces: [{ id: 'planning-workspace-1', projectId: 'P', rootPath: folder, kind: 'worktree' }],
@@ -67,12 +78,13 @@ async function project(options: { turn?: boolean; onRelease?: (folder: string, r
   const commands: DaemonCommand[] = [];
   const cleanup = new RunWorktreeCleanup({
     directory: userData, getSnapshot: () => snapshot, runs: () => runs, readResult: async (_projectId, attemptId) => (attemptId === 'A1' ? record : null),
+    readIntegration: async (_projectId, runId) => (runId === 'r1' ? integration as never : null),
     resultBusy: async () => options.busy?.() ?? false, worktrees, git: new GitRunner(),
     preview: (filePath, handle) => new FileService({ trashItem: async () => undefined }).readFilePreview(filePath, handle),
     executeCommand: vi.fn(async (command: DaemonCommand) => { commands.push(command); return { ok: true, status: 'committed', commandId: command.commandId, revision: 2 } as never; }),
     releaseProviders: async () => { options.onRelease?.(folder, repo, baseCommit); }, liveTerminalIds: () => new Set(), folderReleaseMs: 0,
   });
-  return { repo, userData, folder, baseCommit, commit, cleanup, commands, snapshot, worktrees, record };
+  return { repo, userData, folder, baseCommit, commit, cleanup, commands, snapshot, worktrees, record, integration };
 }
 
 describe('RunWorktreeCleanup (real Git)', () => {
@@ -177,6 +189,24 @@ describe('RunWorktreeCleanup (real Git)', () => {
     await restarted.reconcile();
     expect(await restarted.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: true });
   }, 60_000);
+
+  it('removes the folder a passed integration combined the run’s results in, and keeps any other (I2-7d)', async () => {
+    const p = await project({ integration: 'passed' });
+    const combined = p.integration!.workspacePath as string;
+    expect((await p.cleanup.plan('P')).runs[0]!.folders).toEqual([
+      expect.objectContaining({ kind: 'attempt', state: 'removable' }),
+      expect.objectContaining({ kind: 'integration', path: combined, state: 'removable' }),
+    ]);
+    expect(await p.cleanup.cleanup('P', ['r1'])).toEqual({ removed: 2, kept: [] });
+    expect(existsSync(combined)).toBe(false);
+    // Its result is still kept by the shared ref and its branch.
+    expect(git(p.repo, ['rev-parse', 'ezterminal/integration-1']).trim()).toBe(p.integration!.candidateCommit);
+    const moved = await project({ integration: 'passed' });
+    git(moved.repo, ['update-ref', `refs/ezterminal/integrations/${resultHash(['P', 'r1'])}`, moved.baseCommit]);
+    expect((await moved.cleanup.plan('P')).runs[0]!.folders[1]).toMatchObject({ kind: 'integration', state: 'kept', code: 'result-mismatch' });
+    const unfinished = await project({ integration: 'validating' });
+    expect((await unfinished.cleanup.plan('P')).runs[0]!.folders.map(folder => folder.kind)).toEqual(['attempt']);
+  }, 90_000);
 
   it('offers nothing of the newest three runs', async () => {
     const p = await project();

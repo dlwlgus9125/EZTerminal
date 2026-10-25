@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../shared/daemon-protocol';
 import { IMAGE_PREVIEW_MAX_BYTES, type FilePreviewResult } from '../shared/file-preview';
 import type { ExecutionRun } from '../shared/planning-execution';
-import type { PlanningResultRecord } from '../shared/planning-result';
+import type { PlanningIntegrationRecord, PlanningResultRecord } from '../shared/planning-result';
 import type { CleanedFolderEntry, CleanedFolderState, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan } from '../shared/run-retention';
 import { flowRunNumber } from '../shared/workflow-run-view';
 import { worktreeCleanupScope } from '../shared/workspace-worktree';
@@ -25,7 +25,7 @@ export const RUN_RETENTION_FILE = 'run-retention-v1.json';
 
 const FolderRecord = z.object({
   projectId: z.string().min(1).max(200), runId: z.string().min(1).max(200), attemptId: z.string().min(1).max(200),
-  kind: z.enum(['attempt', 'validation']), path: z.string().min(1).max(4_000), worktreeId: z.string().max(200).optional(),
+  kind: z.enum(['attempt', 'validation', 'integration']), path: z.string().min(1).max(4_000), worktreeId: z.string().max(200).optional(),
   state: z.enum(['retiring', 'removed', 'kept', 'blocked']), reason: z.string().max(1_000).optional(), at: z.string().datetime(),
 }).strict();
 const RecordSchema = z.object({
@@ -50,6 +50,8 @@ export interface RunWorktreeCleanupOptions {
   readonly getSnapshot: () => DaemonSnapshot | undefined;
   readonly runs: (projectId: string) => readonly ExecutionRun[];
   readonly readResult: (projectId: string, attemptId: string) => Promise<PlanningResultRecord | null>;
+  /** The run's latest integration candidate record (PlanningResultService). */
+  readonly readIntegration: (projectId: string, runId: string) => Promise<PlanningIntegrationRecord | null>;
   /** A review or an integration of this run is still being worked on (PlanningResultService). */
   readonly resultBusy: (projectId: string, run: ExecutionRun) => Promise<boolean>;
   readonly worktrees: Pick<WorktreeService, 'execute' | 'retire'>;
@@ -243,6 +245,14 @@ export class RunWorktreeCleanup {
         add({ path: record.validationWorkspace, plan: { runId: run.runId, attemptId: attempt.attemptId, kind: 'validation', path: record.validationWorkspace },
           owners: new Set(reviews), expected: { head: record.commit, tree: record.commit, keptRef } });
       }
+    }
+    // The folder the run's results were combined in, once that integration passed and its result is kept by the shared
+    // ref. No workspace or chat of the run is rooted there; a failed or unfinished candidate stays for the person.
+    const integration = await this.options.readIntegration(projectId, run.runId).catch(() => null);
+    if (integration?.status === 'passed' && integration.successfulCommit === integration.candidateCommit && integration.workspacePath) {
+      add({ path: integration.workspacePath, plan: { runId: run.runId, attemptId: `integration:${run.runId}`, kind: 'integration', path: integration.workspacePath }, owners: new Set(),
+        expected: { head: integration.candidateCommit, tree: integration.candidateCommit,
+          keptRef: { name: `refs/ezterminal/integrations/${resultHash([projectId, run.runId])}`, commit: integration.candidateCommit } } });
     }
     return result;
   }

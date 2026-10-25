@@ -224,6 +224,10 @@ export class PlanningResultRepository {
       if (!existing.managed || samePath(existing.path, root)) throw new Error('The result branch belongs to an unmanaged checkout.');
       return existing.path;
     }
+    // The branch outlived its folder (작업 폴더 정리): it is not attached again under a name alone.
+    if (await this.runGit(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).then(() => true, () => false)) {
+      throw new Error('This result branch has no work folder any more (it was cleaned up); it is not attached again.');
+    }
     const created = await this.options.worktrees.execute({ action: 'create', cwd: root, branch, base, allowDirtyBase: true }, 'desktop');
     if (!created.ok || !created.opened) throw new Error(created.ok ? 'No result worktree was returned.' : created.message);
     return created.opened.path;

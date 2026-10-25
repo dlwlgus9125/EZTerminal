@@ -3224,6 +3224,7 @@ app.on('ready', async () => {
     getSnapshot: () => daemonCommandRouter.getSnapshot(),
     runs: (projectId) => planningExecutionStore.read(projectId).runs,
     readResult: (projectId, attemptId) => planningResultService.readResult(projectId, attemptId),
+    readIntegration: (projectId, runId) => planningResultService.readIntegration(projectId, runId),
     resultBusy: (projectId, run) => planningResultService.busy(projectId, run),
     worktrees: worktreeService, git: agentCollaborationGitRunner,
     preview: (filePath, handle) => fileService.readFilePreview(filePath, handle),

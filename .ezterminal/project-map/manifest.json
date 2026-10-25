@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:bb549414198a1c665e8dea166d8ceea9da603092a2bd212d103df80fae3bfb2d",
+        "inputDigest": "sha256:cdbbd3947efae9a11a16204cbf09d6c02a409de5d300e757e66e780942c33748",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
+        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a8ffd3ee4adffd70fc3aea6810621824488d25b4043f7a8b3bded40e2fe2b83b",
+        "inputDigest": "sha256:95b12846bc1ed07644be94096b7cbcdf44740218e4ee381a1073f9850eb50f97",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
+        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2c19f0fc9d44c4cbe07a577c63411bdb290bc34528e7d049601abdcc4e05e502",
+        "inputDigest": "sha256:c797a7f96e23ccd3b1f68ee010d5100395827145d1e3c877d1661d4713873c6c",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c review fixes): work-folder cleanup keeps shared, nested-repository and LFS folders, rechecks the kept result ref and busy reviews before removal, settles interrupted records at start; Results reads no folder until the host says it is live. Claims hold."
+        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e824f9e17f17c8fcfb8fafffeea4de493202666196ae63c67533d694d69f9cdc",
+        "inputDigest": "sha256:d93e6aaf22c074de3b1720be371c66b33456729734e2ff225b1aabf69cc85a38",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-9): phones read provider model catalogs by a new read-only provider-models-list request, sent only to hosts whose auth-ok advertises provider-models-read; the host reads one provider at a time and keeps a good answer a minute. Claims hold."
+        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
       }
     },
     {
