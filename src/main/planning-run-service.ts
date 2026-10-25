@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   createDaemonCommand, type DaemonCommand, type DaemonCommandReceipt, type DaemonTurn,
 } from '../shared/daemon-protocol';
-import { PLANNING_AUTO_APPROVAL_PRINCIPAL, PLANNING_LAUNCH_PRINCIPAL, type ExecutionArtifact, type ExecutionAttempt, type ExecutionRun, type PlanningExecutionCommand, type PlanningExecutionReceipt, type PreparedExecutionTask } from '../shared/planning-execution';
+import { PLANNING_AUTO_APPROVAL_PRINCIPAL, PLANNING_LAUNCH_PRINCIPAL, PLANNING_REPEAT_PRINCIPAL, type ExecutionArtifact, type ExecutionAttempt, type ExecutionRun, type PlanningExecutionCommand, type PlanningExecutionReceipt, type PreparedExecutionTask } from '../shared/planning-execution';
 import { PlanningRunRequestSchema, type PlanningRunRequest, type PlanningRunResult } from '../shared/planning-run';
 import { AsyncMutationGate } from './async-mutation-gate';
 import type { DaemonStore } from './daemon-store';
@@ -194,6 +194,7 @@ export class PlanningRunService {
       if (principal.kind === 'ai' && !['run.prepare', 'run.launch', 'run.start', 'run.pause', 'run.resume', 'run.cancel'].includes(command.type)) {
         return { ok: false, error: 'user-required', message: 'Approvals and integration require an explicit user command.' };
       }
+      if (principal.kind === 'schedule' && command.type !== 'run.launch') return { ok: false, error: 'user-required', message: 'A repeat schedule can only run a flow.' };
       if (!command.type.startsWith('run.')) return { ok: false, error: 'invalid-command', message: 'This is not an execution command.' };
       if (command.type === 'run.launch') return this.launchWorkflow(command, subproject, principal);
       return this.workflowStep(command as WorkflowStepCommand, subproject, principal);
@@ -252,9 +253,11 @@ export class PlanningRunService {
       // Read the original durable receipt before any preparation side effect on a retry.
       const previous = this.options.ledger.getReceipt(command.projectId, ledgerId);
       // An agent is recorded by its conversation.
+      // The repeat schedule is the host's own (prepare and start only, see the ledger).
       const ledgerPrincipal = principal.kind === 'ai'
         ? { kind: 'agent' as const, id: principal.sessionId ?? principal.id }
-        : { kind: principal.kind, id: principal.id };
+        : principal.kind === 'schedule' ? { kind: 'runtime' as const, id: PLANNING_REPEAT_PRINCIPAL }
+          : { kind: principal.kind, id: principal.id };
       const common = { commandId: ledgerId, projectId: command.projectId,
         expectedRevision: this.options.ledger.read(command.projectId).revision,
         principal: ledgerPrincipal };

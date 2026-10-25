@@ -6,7 +6,7 @@ import {
   WorkflowCommandSchema, WorkflowRegistrySchema, WorkflowSubprojectSchema, createWorkflowGraph, validateWorkflowGraph, LEGACY_SUBPROJECT_ID,
   WorkflowPreviewRequestSchema, WorkflowGraphSchema, workflowPrincipalIdentity, type WorkflowPreview, type WorkflowPreviewResult,
   type WorkflowCommand, type WorkflowGraph, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowResult, type WorkflowSubproject,
-  type WorkflowNavigationResult, type WorkflowNavigationSnapshot, WorkflowReviewerSchema,
+  type WorkflowNavigationResult, type WorkflowNavigationSnapshot, WorkflowReviewerSchema, type WorkflowRepeat, type WorkflowRepeatStatus,
 } from '../shared/workflow';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { WorkflowConversationContext } from '../shared/workflow-conversation';
@@ -17,6 +17,7 @@ import { blockingRunOf, changedStageSettings, stageWorking } from '../shared/pla
 import type { CommittedSubproject } from './workflow-stage-binding';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
+import { canonicalTimezone } from './automation-time';
 
 /**
  * Where a run's own agents belong in the project list: each attempt under the stage it ran,
@@ -64,6 +65,17 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === '
 const failure = (error: string, message: string, revision?: number): Extract<WorkflowResult, { ok: false }> => ({ ok: false, error, message, ...(revision === undefined ? {} : { revision }) });
 const wrap = (registry: WorkflowRegistry, receipts: WorkflowFile['receipts']): WorkflowFile => ({ version: 1, registry, receipts, integrity: workflowDigest({ registry, receipts }) });
 
+function repeatStatusOf(status: Readonly<Record<string, WorkflowRepeatStatus>> | undefined): { repeatStatus?: Record<string, WorkflowRepeatStatus> } {
+  return status && Object.keys(status).length ? { repeatStatus: structuredClone({ ...status }) } : {};
+}
+/** A subproject's saved 반복 and what decides whether it runs (WorkflowService.repeatSources). */
+export interface WorkflowRepeatSource {
+  readonly subprojectId: string;
+  readonly revision: number;
+  readonly status: WorkflowSubproject['status'];
+  readonly repeat: WorkflowRepeat;
+  readonly reviewer?: { readonly providerId: string; readonly model: string };
+}
 export interface WorkflowServiceOptions {
   readonly hostId: string;
   readonly resolveProjectRoot: (projectId: string) => string | null | undefined | Promise<string | null | undefined>;
@@ -73,6 +85,10 @@ export interface WorkflowServiceOptions {
   readonly runs: (projectId: string) => readonly ExecutionRun[];
   readonly session: (sessionId: string) => { projectId: string; managed: boolean } | undefined;
   readonly managedSessions?: (projectId: string) => readonly string[];
+  /** What the host's repeat schedule did and will do, per subproject with a repeat (protocol v17), for the registry being answered. */
+  readonly repeatStatus?: (registry: WorkflowRegistry) => Readonly<Record<string, WorkflowRepeatStatus>> | undefined;
+  /** After a command or a restore saved a new registry (the repeat schedule arms from it at once). */
+  readonly onCommitted?: (projectId: string) => void;
   readonly continuationSource?: (sessionId: string) => string | undefined;
   /**
    * `transient` marks a failure whose outcome is not settled (the host or a provider was unreachable, or
@@ -282,6 +298,8 @@ export class WorkflowService {
         const expected = command.type === 'subproject.create' ? registry.registryRevision : subproject?.revision;
         if (expected === undefined) return failure('not-found', 'Choose an existing subproject explicitly.');
         if (!previous?.pending && command.expectedRevision !== expected) return failure('revision-conflict', 'The workflow changed. Read the latest changes before applying this edit.', expected);
+        // The repeat schedule only runs the saved flow (under the host's own launch, see PlanningRunService).
+        if (principal.kind === 'schedule' && command.type !== 'run.launch') return failure('user-required', 'A repeat schedule can only run a flow.');
         if (principal.kind === 'ai') {
           const source = principal.sessionId && this.options.session(principal.sessionId);
           if (!source || source.projectId !== command.projectId || source.managed) return failure('forbidden', 'An ordinary conversation in this project is required for flow editing.');
@@ -330,13 +348,21 @@ export class WorkflowService {
           const graph = { ...structuredClone(source.graph), entryNodeId: source.graph.entryNodeId ? remapNode(source.graph.entryNodeId) : null,
             nodes: source.graph.nodes.map(node => ({ ...structuredClone(node), id: remapNode(node.id), ...(node.condition ? { condition: { ...node.condition, sourceNodeId: remapNode(node.condition.sourceNodeId) } } : {}), inputs: node.inputs.map(input => ({ ...input, nodeId: remapNode(input.nodeId) })) })),
             edges: source.graph.edges.map(edge => ({ ...edge, id: `copy-${workflowDigest([command.payload.id, edge.id]).slice(0, 32)}`, from: remapNode(edge.from), to: remapNode(edge.to) })) };
-          registry.subprojects.push({ ...structuredClone(source), id: command.payload.id, title: command.payload.title, status: 'active', revision: 0, createdAt: now, updatedAt: now, graph, history: [], archivedNodes: [], legacyPlanning: undefined });
+          // A copy never starts repeating on its own: 반복 comes along off.
+          registry.subprojects.push({ ...structuredClone(source), id: command.payload.id, title: command.payload.title, status: 'active', revision: 0, createdAt: now, updatedAt: now, graph, history: [], archivedNodes: [], legacyPlanning: undefined,
+            ...(source.repeat ? { repeat: { ...source.repeat, enabled: false } } : {}) });
           registry.registryRevision += 1;
         } else if (command.type === 'subproject.update') {
           if (command.payload.status && command.payload.status !== 'active' && this.options.runs(command.projectId).some(run => (run.preparation.subprojectId ?? run.preparation.workflow?.subprojectId) === subproject!.id && !['completed', 'cancelled'].includes(run.state))) {
             return failure('active-run', 'Finish or resolve the active execution before completing or archiving this subproject.');
           }
-          Object.assign(subproject!, command.payload); subproject!.revision += 1; subproject!.updatedAt = now; registry.registryRevision += 1;
+          // 반복 names an IANA zone (kept canonical) and, to be on, the review AI it runs with.
+          let repeat = command.payload.repeat;
+          if (repeat) {
+            try { repeat = { ...repeat, timezone: canonicalTimezone(repeat.timezone) }; } catch (error) { return failure('invalid-command', error instanceof Error ? error.message : String(error)); }
+            if (repeat.enabled && !(command.payload.runSettings ?? subproject!.runSettings)?.reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before turning on 반복.');
+          }
+          Object.assign(subproject!, command.payload, repeat ? { repeat } : {}); subproject!.revision += 1; subproject!.updatedAt = now; registry.registryRevision += 1;
         } else if (command.type === 'workflow.patch' || command.type === 'workflow.undo') {
           const before = structuredClone(subproject!.graph);
           // A stage that is working right now keeps its settings until it finishes (its run already uses
@@ -450,6 +476,7 @@ export class WorkflowService {
         };
         const refused = lockedEdit && this.options.executionGate ? await this.options.executionGate(commit) : await commit();
         if (refused) return refused;
+        this.committed(command.projectId);
         if (command.type === 'subproject.create' && command.payload.previewId) {
           const preview = this.previews.get(command.payload.previewId);
           if (preview) this.discardedPreviews.set(preview.id, preview.revision + 1);
@@ -461,6 +488,11 @@ export class WorkflowService {
   }
 
   /** Portable registry only. Live attempts remain in the existing execution archive. */
+  /** Whether a command was ever recorded (a repeat occurrence's launch, say): its receipt is written before any effect. */
+  hasReceipt(projectId: string, commandId: string): Promise<boolean> {
+    return this.exclusive(projectId, async () => (await this.load(projectId)).file.receipts.some(entry => entry.commandId === commandId));
+  }
+
   async exportRegistry(projectId: string): Promise<WorkflowRegistry> {
     return this.exclusive(projectId, async () => structuredClone((await this.load(projectId)).file.registry));
   }
@@ -472,7 +504,26 @@ export class WorkflowService {
       if (await fs.stat(target).then(() => true).catch(error => { if (missing(error)) return false; throw error; })) throw new Error('Restore requires an empty workflow registry.');
       this.validateRegistry(registry);
       await this.write(target, wrap(registry, []), null);
+      this.committed(projectId);
     });
+  }
+
+  /**
+   * Each subproject's 반복 with what decides whether it runs, from the saved flow (none while the project has
+   * no flow file yet). Reads like navigation: no legacy planning read on every repeat check.
+   */
+  repeatSources(projectId: string): Promise<readonly WorkflowRepeatSource[]> {
+    return this.exclusive(projectId, async () => {
+      const target = await this.target(projectId);
+      if (!await fs.stat(target).then(() => true, error => { if (missing(error)) return false; throw error; })) return [];
+      return (await this.load(projectId, true)).file.registry.subprojects.flatMap(entry => entry.repeat ? [{
+        subprojectId: entry.id, revision: entry.revision, status: entry.status, repeat: structuredClone(entry.repeat),
+        ...(entry.runSettings?.reviewer ? { reviewer: structuredClone(entry.runSettings.reviewer) } : {}) }] : []);
+    });
+  }
+
+  private committed(projectId: string): void {
+    try { this.options.onCommitted?.(projectId); } catch { /* a listener never undoes a saved commit */ }
   }
 
   async flush(): Promise<void> { while (this.pending.size) await Promise.allSettled([...this.pending]); }
@@ -488,7 +539,7 @@ export class WorkflowService {
         return { ...link, referenceStale: workflowDigest({ ...current, graphRevision: 0, fingerprint: '' }) !== workflowDigest({ ...link.referenceSnapshot, graphRevision: 0, fingerprint: '' }) };
       } catch { return { ...link, referenceStale: true }; }
     });
-    return { ok: true, snapshot: { ...snapshot, hostId: this.options.hostId, runs: structuredClone([...this.options.runs(registry.projectId)]), managedSessionIds: [...this.options.managedSessions?.(registry.projectId) ?? []] }, ...(commandId ? { commandId, duplicate } : {}) };
+    return { ok: true, snapshot: { ...snapshot, hostId: this.options.hostId, runs: structuredClone([...this.options.runs(registry.projectId)]), managedSessionIds: [...this.options.managedSessions?.(registry.projectId) ?? []], ...repeatStatusOf(this.options.repeatStatus?.(registry)) }, ...(commandId ? { commandId, duplicate } : {}) };
   }
   private error(error: unknown): Extract<WorkflowResult, { ok: false }> { return failure(error instanceof WorkflowFailure ? error.code : 'unavailable', error instanceof Error ? error.message : 'Workflow state is unavailable. Preserve edits and reload before retrying.'); }
   private exclusive<T>(projectId: string, action: () => Promise<T>): Promise<T> {

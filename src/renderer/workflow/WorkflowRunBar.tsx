@@ -1,13 +1,13 @@
-import { FileSearch, Hand, MessageSquare, Pause, Play, RotateCw, Square } from 'lucide-react';
+import { FileSearch, Hand, MessageSquare, Pause, Play, Repeat, RotateCw, Settings, Square } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, blockingRunOf, type ExecutionRun } from '../../shared/planning-execution';
-import type { WorkflowSubproject } from '../../shared/workflow';
+import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
 import { flowRunNumber } from '../../shared/workflow-run-view';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
 import { Badge, Button, Select } from '../ui';
 import type { WorkflowRunCommandInput } from './WorkflowCanvasHeader';
 import { workflowRunControls } from './workflow-canvas-model';
-import { workflowStateLabel, type WorkflowCopy } from './workflow-copy';
+import { workflowStateLabel, workflowWeekdayLabel, type WorkflowCopy } from './workflow-copy';
 
 export interface WorkflowRunBarProps {
   readonly text: WorkflowCopy;
@@ -15,7 +15,9 @@ export interface WorkflowRunBarProps {
   readonly run: ExecutionRun | null;
   /** This flow's runs. */
   readonly runs: readonly ExecutionRun[];
-  readonly subproject: Pick<WorkflowSubproject, 'id' | 'autoApprove' | 'runSettings' | 'status'>;
+  readonly subproject: Pick<WorkflowSubproject, 'id' | 'autoApprove' | 'runSettings' | 'status' | 'repeat'>;
+  /** What the host's repeat schedule did and will do for this flow (protocol v17). */
+  readonly repeatStatus?: WorkflowRepeatStatus;
   readonly providers: readonly StructuredAgentProviderOption[];
   /**
    * The host keeps run settings and runs the saved flow in one request (protocol v17). An older host
@@ -32,6 +34,10 @@ export interface WorkflowRunBarProps {
   readonly onPickRun: (runId: string) => void;
   readonly onSaveReviewer: (reviewer: { readonly providerId: string; readonly model: string }) => void;
   readonly onAutoApprove: (on: boolean) => void;
+  /** 반복 (saved with savedRunSettings hosts only). */
+  readonly onSaveRepeat?: (repeat: WorkflowRepeat) => void;
+  /** Where the PC app's start-at-login and keep-running switches are (desktop). */
+  readonly onOpenAutomationSettings?: () => void;
   readonly onJumpToNode: (nodeId: string) => void;
   readonly onOpenConversation?: (sessionId: string) => void;
   readonly onOpenResults?: (runId: string) => void;
@@ -107,5 +113,86 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
         {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
       </Select>
     </span>}
+    {props.savedRunSettings && props.onSaveRepeat && <WorkflowRepeatGroup text={text} repeat={subproject.repeat} status={props.repeatStatus} canTurnOn={!!reviewer} active={subproject.status === 'active'}
+      disabled={commandsDisabled || archived} onSave={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings} />}
   </div>;
+}
+
+const MINUTES = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, '0'));
+const HOURS = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
+
+/**
+ * 반복: off / every day / every week on one day, at a local time (selects, not a time field: the phone's
+ * WebView commits a select at once). The zone is this device's when it is first turned on, then kept.
+ */
+function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, active, disabled, onSave, onOpenAutomationSettings }: {
+  readonly text: WorkflowCopy;
+  readonly repeat: WorkflowRepeat | undefined;
+  readonly status: WorkflowRepeatStatus | undefined;
+  readonly canTurnOn: boolean;
+  /** A completed or archived flow does not repeat (its setting stays for when it is active again). */
+  readonly active: boolean;
+  readonly disabled: boolean;
+  readonly onSave: (repeat: WorkflowRepeat) => void;
+  readonly onOpenAutomationSettings?: () => void;
+}): JSX.Element {
+  const on = repeat?.enabled === true;
+  const canTurnOn = reviewerSaved && active;
+  const time = repeat?.time ?? '09:00';
+  const [hours, minutes] = time.split(':');
+  const timezone = repeat?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const save = (change: { cadence?: WorkflowRepeat['cadence']; weekday?: number; time?: string; enabled?: boolean }) => {
+    const cadence = change.cadence ?? repeat?.cadence ?? 'daily';
+    const weekday = change.weekday ?? repeat?.weekday ?? new Date().getDay();
+    onSave({ cadence, ...(cadence === 'weekly' ? { weekday } : {}), time: change.time ?? time, timezone, enabled: change.enabled ?? on });
+  };
+  const locale = text('ko-KR', 'en-US');
+  const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const when = (iso: string, withTime: boolean) => new Date(iso).toLocaleString(locale, { timeZone: timezone, month: 'short', day: 'numeric', weekday: 'short',
+    ...(withTime ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' as const } : {}) }) + (withTime && timezone !== local ? ` (${timezone})` : '');
+  const last = status?.last;
+  const lastText = !last ? null : (() => {
+    const day = when(last.occurrenceAt, false);
+    switch (last.state) {
+      case 'started': return text(`${day} 회차 실행함`, `Ran the ${day} occurrence`);
+      case 'claimed': return text(`${day} 회차 실행 요청 중`, `Starting the ${day} occurrence`);
+      case 'skipped-running': return text(`${day} 회차 건너뜀 · 앞 실행이 끝나지 않았음`, `Skipped ${day} · the previous run had not finished`);
+      case 'missed': return (last.missedCount ?? 1) > 1
+        ? text(`${day}까지 ${last.missedCount}번 놓침 · 예정 시각 30분 안에 PC 앱이 실행하지 못함`, `Missed ${last.missedCount} through ${day} · the PC app could not run them within 30 minutes`)
+        : text(`${day} 회차 놓침 · 예정 시각 30분 안에 PC 앱이 실행하지 못함`, `Missed ${day} · the PC app could not run it within 30 minutes`);
+      case 'failed': return text(`${day} 회차를 실행하지 못함${last.detail ? ` · ${last.detail}` : ''}`, `Could not run ${day}${last.detail ? ` · ${last.detail}` : ''}`);
+    }
+  })();
+  const blockedText = status?.blocked === 'automation-off' ? text('PC 앱이 로그인할 때 시작하고 창을 닫아도 계속 실행되도록 켜야 반복합니다.', 'Repeats run only while the PC app starts at login and keeps running when closed.')
+    : status?.blocked === 'missing-reviewer' ? text('검토 AI를 고르면 반복합니다.', 'Choose the review AI to repeat.')
+      : status?.blocked === 'unreadable' ? text('반복 기록을 읽을 수 없어 반복을 멈췄습니다. PC 앱 기록(main.log)을 확인하세요.', 'The repeat record cannot be read, so repeats are stopped. Check the PC app log (main.log).') : null;
+  return <span className="workflow-run-bar__group" role="group" aria-label={text('반복', 'Repeat')} data-testid="workflow-repeat">
+    <span className="workflow-run-bar__label"><Repeat aria-hidden="true" size={12} /> {text('반복', 'Repeat')}</span>
+    <Select aria-label={text('반복', 'Repeat')} value={on ? repeat!.cadence : 'off'} disabled={disabled} data-testid="workflow-repeat-cadence"
+      title={!canTurnOn && !on ? (active ? text('검토 AI를 먼저 고르세요.', 'Choose the review AI first.') : text('진행 중인 소프로젝트만 반복합니다.', 'Only an active subproject repeats.')) : undefined}
+      onChange={(event) => { const value = event.target.value; if (value === 'off') { if (repeat && on) save({ enabled: false }); } else save({ cadence: value as WorkflowRepeat['cadence'], enabled: true }); }}>
+      <option value="off">{text('끔', 'Off')}</option>
+      <option value="daily" disabled={!canTurnOn}>{text('매일', 'Every day')}</option>
+      <option value="weekly" disabled={!canTurnOn}>{text('매주', 'Every week')}</option>
+    </Select>
+    {on && repeat!.cadence === 'weekly' && <Select aria-label={text('요일', 'Weekday')} value={String(repeat!.weekday ?? 0)} disabled={disabled} data-testid="workflow-repeat-weekday"
+      onChange={(event) => save({ weekday: Number(event.target.value) })}>
+      {[1, 2, 3, 4, 5, 6, 0].map((weekday) => <option key={weekday} value={weekday}>{workflowWeekdayLabel(weekday, text)}</option>)}
+    </Select>}
+    {on && <>
+      <Select aria-label={text('시', 'Hour')} value={hours} disabled={disabled} data-testid="workflow-repeat-hour" onChange={(event) => save({ time: `${event.target.value}:${minutes}` })}>
+        {HOURS.map((hour) => <option key={hour} value={hour}>{hour}</option>)}
+      </Select>
+      <Select aria-label={text('분', 'Minute')} value={minutes} disabled={disabled} data-testid="workflow-repeat-minute" onChange={(event) => save({ time: `${hours}:${event.target.value}` })}>
+        {!MINUTES.includes(minutes!) && <option value={minutes}>{minutes}</option>}
+        {MINUTES.map((minute) => <option key={minute} value={minute}>{minute}</option>)}
+      </Select>
+    </>}
+    {on && <small className="workflow-run-bar__why" role="status" data-testid="workflow-repeat-status">
+      {!active ? text('완료되거나 보관된 소프로젝트는 반복하지 않습니다. 다시 진행하면 그때부터 반복합니다.', 'A completed or archived subproject does not repeat. It repeats again from when it is reopened.')
+        : blockedText ?? (status?.nextAt ? text(`다음 실행 ${when(status.nextAt, true)}`, `Next run ${when(status.nextAt, true)}`) : text('다음 실행 시각을 계산하는 중입니다.', 'Working out the next run.'))}
+      {status?.blocked === 'automation-off' && onOpenAutomationSettings && <> <Button size="sm" variant="ghost" leadingIcon={<Settings />} onClick={onOpenAutomationSettings}>{text('설정 열기', 'Open settings')}</Button></>}
+      {lastText && <><br />{text('마지막: ', 'Last: ')}{lastText}</>}
+    </small>}
+  </span>;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { shellSnapshot, shellWorkflow } from './shell-fixtures';
 import { hostWaitingItems, otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
+import { workflowRepeatLabel } from '../workflow/workflow-copy';
 
 describe('projectConversations', () => {
   it('lists a project\'s conversations newest first with provider subagents nested under their parent', () => {
@@ -94,6 +95,16 @@ describe('projectFlows', () => {
     expect(projectFlows(done)[0]!.canRunAgain).toBe(false);
     const saved = { ...done, subprojects: done.subprojects.map((subproject) => ({ ...subproject, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } } })) };
     expect(projectFlows(saved)[0]!.canRunAgain).toBe(true);
+  });
+
+  it('names a flow’s 반복 while it is on, as the board card shows it', () => {
+    const done = shellWorkflow('completed');
+    const repeating = (enabled: boolean) => ({ ...done, subprojects: done.subprojects.map((subproject) => ({ ...subproject,
+      repeat: { cadence: 'weekly' as const, weekday: 1, time: '09:00', timezone: 'Asia/Seoul', enabled } })) });
+    expect(projectFlows(repeating(true))[0]!.repeat).toEqual({ cadence: 'weekly', weekday: 1, time: '09:00' });
+    expect(workflowRepeatLabel(projectFlows(repeating(true))[0]!.repeat!, (ko) => ko)).toBe('매주 월 09:00');
+    expect(workflowRepeatLabel({ cadence: 'daily', time: '18:30' }, (_ko, en) => en)).toBe('Daily 18:30');
+    expect(projectFlows(repeating(false))[0]!.repeat).toBeUndefined();
   });
 });
 

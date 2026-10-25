@@ -14,6 +14,7 @@ import { PlanningExecutionStore } from './planning-execution-store';
 import { autoApprovalCommandId, autoApprovalCommands, autoApprovalRefused, PlanningRunService, workflowLaunchId, workflowLedgerId, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
 import { WorkflowService, workflowDigest } from './workflow-service';
+import { REPEAT_SCHEDULE_PRINCIPAL, WorkflowRepeatService, repeatOccurrenceIds } from './workflow-repeat-service';
 import { decideStageBinding, type CommittedSubproject } from './workflow-stage-binding';
 import { legacyPlanningRunResult } from '../shared/workflow-protocol-projection';
 import { ProjectArchiveService } from './project-archive-service';
@@ -24,6 +25,12 @@ import { stageEditScope } from '../shared/planning-execution';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 
+/** The host's repeat schedule over a real flow service (fake clock, timers left to the test). */
+function repeatService(workflows: WorkflowService, now: () => Date): WorkflowRepeatService {
+  return new WorkflowRepeatService({ directory: mkdtempSync(path.join(os.tmpdir(), 'ez-repeat-run-')), file: { windowsAcl: async () => undefined }, hostId: 'host',
+    projectIds: () => ['project'], sources: (projectId) => workflows.repeatSources(projectId), hasReceipt: (projectId, commandId) => workflows.hasReceipt(projectId, commandId),
+    launch: (command, principal) => workflows.execute(command, principal), automationEnabled: () => true, now, setTimer: () => 0, clearTimer: () => undefined });
+}
 async function fixture(realResults = false, bindStages = false) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ez-planning-run-'));
   const store = new DaemonStore(directory);
@@ -609,6 +616,57 @@ describe('run settings and 다시 실행 (run.launch)', () => {
     expect(await f.ledger.execute({ commandId: 'launch-pause', projectId: 'project', expectedRevision: f.ledger.read('project').revision,
       principal: { kind: 'runtime', id: 'workflow-launch' }, type: 'run.pause', payload: { runId: 'run-1' } })).toMatchObject({ ok: false, error: 'user-required' });
     expect(runs().find((run) => run.runId === 'run-1')).toMatchObject({ state: 'running' });
+  });
+
+  it('lets the repeat schedule run the saved flow once a day under the host’s own principal, and nothing else', async () => {
+    const { f, workflows, send, save, subproject, runs } = await launchFlow();
+    expect(await save('settings')).toMatchObject({ ok: true });
+    expect(await send('repeat-on', 'subproject.update', { repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true } })).toMatchObject({ ok: true });
+    let clock = new Date('2026-10-25T23:00:00.000Z'); // 08:00 in Seoul
+    const repeat = repeatService(workflows, () => clock);
+    await repeat.start();
+    clock = new Date('2026-10-26T00:00:02.000Z');
+    await repeat.wake();
+    await vi.waitFor(() => expect(f.adapter.submit).toHaveBeenCalledOnce());
+    const ids = repeatOccurrenceIds('project', 'sub', '2026-10-26');
+    expect(runs()).toHaveLength(1);
+    expect(runs()[0]).toMatchObject({ runId: ids.runId, startedAt: expect.any(String), preparation: { reviewer: { providerId: 'codex', model: 'model' } } });
+    expect(f.ledger.getReceipt('project', `workflow:${workflowLaunchId(ids.commandId)}:start`)).toMatchObject({ ok: true, runId: ids.runId });
+    // A person's 다시 실행 while it goes is refused, and the schedule's next look starts nothing more.
+    expect(await send('launch-by-person', 'run.launch', { runId: 'person-run' })).toMatchObject({ ok: false, error: 'active-run' });
+    clock = new Date('2026-10-26T00:10:00.000Z'); await repeat.wake();
+    expect(runs()).toHaveLength(1);
+    // Neither the flow service nor the ledger lets the schedule do anything else with it.
+    expect(await workflows.execute({ projectId: 'project', hostId: 'host', expectedRevision: (await subproject()).revision, commandId: 'schedule-cancel', subprojectId: 'sub',
+      type: 'run.cancel', payload: { runId: ids.runId } }, REPEAT_SCHEDULE_PRINCIPAL)).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await f.ledger.execute({ commandId: 'schedule-ledger-cancel', projectId: 'project', expectedRevision: f.ledger.read('project').revision,
+      principal: { kind: 'runtime', id: 'workflow-schedule' }, type: 'run.cancel', payload: { runId: ids.runId } })).toMatchObject({ ok: false, error: 'user-required' });
+    expect(runs()[0]).toMatchObject({ state: 'running' });
+    await repeat.dispose();
+  });
+
+  it('records a repeat day as skipped when the flow was already running, whichever side refused it', async () => {
+    for (const staleRuns of [false, true]) {
+      const { f, workflows, send, save, runs } = await launchFlow({ staleRuns });
+      expect(await save('settings')).toMatchObject({ ok: true });
+      expect(await send('repeat-on', 'subproject.update', { repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true } })).toMatchObject({ ok: true });
+      let clock = new Date('2026-10-25T23:00:00.000Z');
+      const repeat = repeatService(workflows, () => clock);
+      await repeat.start();
+      // The person's run started a minute before the schedule's time.
+      expect(await send('launch-by-person', 'run.launch', { runId: 'person-run' })).toMatchObject({ ok: true });
+      clock = new Date('2026-10-26T00:00:02.000Z');
+      await repeat.wake();
+      const ids = repeatOccurrenceIds('project', 'sub', '2026-10-26');
+      const status = repeat.status(await workflows.exportRegistry('project')).sub;
+      expect(status?.last).toMatchObject({ key: '2026-10-26', state: 'skipped-running' });
+      expect(runs().filter((run) => run.startedAt).map((run) => run.runId)).toEqual(['person-run']);
+      // The ledger side prepared the schedule's run before refusing its start: that run is cancelled.
+      if (staleRuns) expect(runs().find((run) => run.runId === ids.runId)).toMatchObject({ state: 'cancelled' });
+      else expect(runs().some((run) => run.runId === ids.runId)).toBe(false);
+      await repeat.dispose();
+      void f;
+    }
   });
 
   it('keeps every ledger id within 160 characters without renaming the ids already in use', async () => {

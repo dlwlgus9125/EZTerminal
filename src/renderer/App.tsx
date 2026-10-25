@@ -2116,7 +2116,11 @@ export function App(): JSX.Element {
     openTerminal: (projectId, projectName) => openProjectTerminal({ projectId, projectName, titleMode: 'generated' }),
     openProjects: () => { setActiveProjectId(null); setAgentHubView('projects'); setSidebarDestination('agents'); },
     openBoard: (projectId) => shellNavigation.showBoard(projectId),
-  }), [openStructuredAgentSession, openStructuredAgentDraft, showProjectWorkspace, openProjectTerminal, openPlanningProject, shellNavigation]);
+    openAutomationSettings: () => {
+      setSettingsCategoryRequest((current) => ({ category: 'general', id: current.id + 1 }));
+      setSidebarOpen('settings', true);
+    },
+  }), [openStructuredAgentSession, openStructuredAgentDraft, showProjectWorkspace, openProjectTerminal, openPlanningProject, shellNavigation, setSidebarOpen]);
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, instanceToken: object, close: () => void): void => {

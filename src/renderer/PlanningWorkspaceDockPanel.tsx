@@ -36,6 +36,8 @@ export interface PlanningNavigation {
   readonly openProjects: () => void;
   /** The project board (판), from a subproject's flow. */
   readonly openBoard?: (projectId: string) => void;
+  /** Settings › General: start at login and keep running (반복 needs both). */
+  readonly openAutomationSettings?: () => void;
 }
 export const PlanningNavigationContext =
   createContext<PlanningNavigation | null>(null);
@@ -207,6 +209,7 @@ export function PlanningWorkspaceDockPanel(
   return (
     <WorkflowWorkspacePanel
       onOpenHistory={navigation?.openHistory ? () => navigation.openHistory?.(projectId) : undefined}
+      onOpenAutomationSettings={navigation?.openAutomationSettings}
       projectId={projectId}
       projectName={projectName}
       access={workflowAccess}

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { WorkflowService, workflowDigest } from './workflow-service';
 import { PlanningService } from './planning-service';
-import { createWorkflowGraph, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
+import { createWorkflowGraph, WorkflowCommandSchema, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
 import { legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
 
 let directory: string; let planning: PlanningService; let service: WorkflowService;
@@ -137,6 +137,44 @@ describe('workflow authority and storage', () => {
     expect(state.subprojects[1].graph.nodes.some(node => state.subprojects[0].graph.nodes.some(source => source.id === node.id))).toBe(false);
     expect(state.subprojects[1].history).toEqual([]); expect(state.sessionLinks).toEqual([]); expect(state.runs).toEqual([]);
     expect(await planning.read('project', 'b')).toMatchObject({ ok: true, snapshot: { history: [], baselines: [], draft: { items: [{ body: 'document', status: 'review-needed' }] } } });
+  });
+  it('saves 반복 with a canonical zone, only on with a review AI, and starts a copy with it off', async () => {
+    await service.execute(create('a'), user);
+    const update = (commandId: string, expectedRevision: number, payload: Record<string, unknown>) => service.execute({ ...base, commandId, subprojectId: 'a', expectedRevision, type: 'subproject.update', payload } as WorkflowCommand, user);
+    const daily = { cadence: 'daily', time: '09:00', timezone: 'US/Eastern', enabled: true };
+    expect(await update('no-reviewer', 0, { repeat: daily })).toMatchObject({ ok: false, error: 'missing-reviewer' });
+    expect(await update('bad-zone', 0, { repeat: { ...daily, timezone: 'Mars/Olympus' }, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: false, error: 'invalid-command' });
+    expect(await update('on', 0, { repeat: daily, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: true });
+    expect((await snapshot()).subprojects[0].repeat).toEqual({ ...daily, timezone: 'America/New_York' });
+    // A weekly repeat names its weekday.
+    expect(() => WorkflowCommandSchema.parse({ ...base, commandId: 'weekly', subprojectId: 'a', type: 'subproject.update', payload: { repeat: { ...daily, cadence: 'weekly' } } })).toThrow();
+    expect(await service.execute({ ...base, commandId: 'copy-repeat', subprojectId: 'a', expectedRevision: 1, type: 'subproject.copy', payload: { id: 'b', title: 'Copied' } }, user)).toMatchObject({ ok: true });
+    expect((await snapshot()).subprojects.find(entry => entry.id === 'b')?.repeat).toMatchObject({ enabled: false, cadence: 'daily' });
+  });
+  it('answers each read with the repeat status of the registry it returns, and tells the schedule what it saved', async () => {
+    const onCommitted = vi.fn();
+    const repeatStatus = vi.fn((registry: { subprojects: readonly { id: string; repeat?: unknown }[] }) =>
+      Object.fromEntries(registry.subprojects.filter(entry => entry.repeat).map(entry => [entry.id, { nextAt: '2026-10-26T00:00:00.000Z' }])));
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, repeatStatus, onCommitted });
+    expect(await service.repeatSources('project')).toEqual([]);
+    await service.execute(create('a'), user);
+    expect(onCommitted).toHaveBeenLastCalledWith('project');
+    expect((await snapshot()).repeatStatus).toBeUndefined();
+    const daily = { cadence: 'daily' as const, time: '09:00', timezone: 'Asia/Seoul', enabled: true };
+    const saved = await service.execute({ ...base, commandId: 'on', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { repeat: daily, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } } }, user);
+    // The saving reply already carries the status of what it saved.
+    expect(saved).toMatchObject({ ok: true, snapshot: { repeatStatus: { a: { nextAt: '2026-10-26T00:00:00.000Z' } } } });
+    expect(onCommitted).toHaveBeenCalledTimes(2);
+    expect(await service.repeatSources('project')).toEqual([{ subprojectId: 'a', revision: 1, status: 'active', repeat: daily, reviewer: { providerId: 'codex', model: 'm' } }]);
+    // A refused command saves nothing and tells nobody.
+    await service.execute({ ...base, commandId: 'stale', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { title: 'Stale' } }, user);
+    expect(onCommitted).toHaveBeenCalledTimes(2);
+  });
+  it('lets the repeat schedule run a flow and nothing else', async () => {
+    await service.execute(create('a'), user);
+    const schedule = { kind: 'schedule' as const, id: 'workflow-schedule' };
+    expect(await service.execute({ ...base, commandId: 'by-schedule', subprojectId: 'a', type: 'subproject.update', payload: { title: 'Renamed' } }, schedule)).toMatchObject({ ok: false, error: 'user-required' });
+    expect(await service.execute({ ...base, commandId: 'by-schedule-approve', subprojectId: 'a', type: 'run.approve', payload: { runId: 'run-1', activationId: 'x', decision: 'approve' } } as WorkflowCommand, schedule)).toMatchObject({ ok: false, error: 'user-required' });
   });
   it('reserves run intent before a side effect and rejects changed retries after a lost commit', async () => {
     const executeRun = vi.fn(async () => ({ ok: true as const }));

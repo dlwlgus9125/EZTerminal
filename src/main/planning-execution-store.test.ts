@@ -134,6 +134,20 @@ describe('one unfinished run per flow', () => {
   });
 });
 
+describe('repeat schedule principal', () => {
+  it('prepares and starts a run, and may do nothing else', async () => {
+    const { ledger } = await fixture();
+    let sequence = 0;
+    const asSchedule = (type: string, payload: Record<string, unknown>) => ledger.execute({
+      commandId: `schedule-${++sequence}`, projectId: 'P1', expectedRevision: ledger.read('P1').revision,
+      principal: { kind: 'runtime', id: 'workflow-schedule' }, type, payload: { runId: 'R1', ...payload },
+    } as never);
+    expect(await asSchedule('run.prepare', { preparation })).toMatchObject({ ok: true });
+    expect(await asSchedule('run.start', {})).toMatchObject({ ok: true });
+    for (const type of ['run.pause', 'run.cancel']) expect(await asSchedule(type, {})).toMatchObject({ ok: false, error: 'user-required' });
+  });
+});
+
 describe('PlanningExecutionStore', () => {
   it('cancels prepared runs and waits for active cancellation acknowledgement without losing evidence', async () => {
     const f = await fixture(); await f.prepare();

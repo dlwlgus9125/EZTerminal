@@ -1,6 +1,6 @@
 import type { DaemonApproval, DaemonSnapshot } from '../../shared/daemon-protocol';
 import { blockingRunOf } from '../../shared/planning-execution';
-import type { WorkflowSnapshot } from '../../shared/workflow';
+import type { WorkflowRepeat, WorkflowSnapshot } from '../../shared/workflow';
 import { currentFlowRun, flowRunNumber, runStageConversation } from '../../shared/workflow-run-view';
 import { projectRunOverlay, type WorkflowNodeRunStatus } from '../workflow/workflow-canvas-model';
 
@@ -54,6 +54,8 @@ export interface LiveFlow {
   /** The run's stages (a condition is part of its review stage); `sessionId` = this stage's conversation in this run. */
   readonly stages: readonly { readonly id: string; readonly title: string; readonly state: StageLamp; readonly sessionId?: string }[];
   readonly autoApprove: boolean;
+  /** 반복, while it is on. */
+  readonly repeat?: Pick<WorkflowRepeat, 'cadence' | 'weekday' | 'time'>;
   /** 다시 실행 can be sent now: no run of the flow is going and its review AI is saved. */
   readonly canRunAgain: boolean;
 }
@@ -202,7 +204,8 @@ export function projectFlows(workflow: Pick<WorkflowSnapshot, 'subprojects' | 'r
       const lamp: Lamp = phase === 'awaiting-approval' || phase === 'paused' ? 'amber'
         : phase === 'attention' ? 'red' : phase === 'running' ? 'on' : phase === 'completed' ? 'ok' : 'idle';
       return { subprojectId: subproject.id, title: subproject.title, runNumber: latest ? flowRunNumber(workflow.runs, latest) : 0, phase, lamp, stages,
-        autoApprove: subproject.autoApprove === true, canRunAgain: !!subproject.runSettings && !blockingRunOf(workflow.runs, subproject.id) };
+        autoApprove: subproject.autoApprove === true, canRunAgain: !!subproject.runSettings && !blockingRunOf(workflow.runs, subproject.id),
+        ...(subproject.repeat?.enabled ? { repeat: { cadence: subproject.repeat.cadence, weekday: subproject.repeat.weekday, time: subproject.repeat.time } } : {}) };
     });
 }
 

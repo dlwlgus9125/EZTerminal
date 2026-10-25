@@ -32,6 +32,8 @@ export interface WorkflowDaemonAccess {
 }
 export interface WorkflowWorkspacePanelProps {
   readonly onOpenHistory?: () => void;
+  /** The PC app's start-at-login and keep-running settings (반복 runs only with both on). */
+  readonly onOpenAutomationSettings?: () => void;
   readonly projectId: string;
   readonly projectName: string;
   readonly access: WorkflowAccess;
@@ -91,7 +93,7 @@ function graphForPreset(id: WorkflowPresetId, prefix: string, text: (ko: string,
 export function WorkflowWorkspacePanel(props: WorkflowWorkspacePanelProps): JSX.Element {
   return <WorkflowWorkspace key={props.projectId} {...props} />;
 }
-function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, renderPlanning, canvasRenderer, onReloadCanvas, readPlanningResult }: WorkflowWorkspacePanelProps): JSX.Element {
+function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capabilityClient, recoveryAccess, onSeedConversationDraft, conversations, onOpenConversation, onOpenHistory, onOpenAutomationSettings, onNewConversation, onNewTerminal, onBack, onBoard, disabled = false, disabledReason, mobile = false, active = true, navigationTarget, renderPlanning, canvasRenderer, onReloadCanvas, readPlanningResult }: WorkflowWorkspacePanelProps): JSX.Element {
   const text = useWorkflowCopy();
   const stateLabel = useAgentStateLabel();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
@@ -581,6 +583,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       {flowPage && <div className="workflow-flow-host"><WorkflowFlowSurface key={selected.id} text={text} mobile={mobile} savedGraph={selected.graph} draftGraph={local?.graph ?? null} revision={selected.revision} archivedNodes={selected.archivedNodes} runs={runs}
         subproject={selected} catalogs={models} structure={structure} onStructureChange={setStructure} savedRunSettings={canLaunch}
         onLaunch={() => void launch()} onSaveReviewer={reviewer => void execute({ type: 'subproject.update', payload: { runSettings: { reviewer } } })}
+        repeatStatus={snapshot?.repeatStatus?.[selected.id]} onSaveRepeat={repeat => void execute({ type: 'subproject.update', payload: { repeat } })} onOpenAutomationSettings={onOpenAutomationSettings}
         onAutoApprove={on => { if (on !== (selected.autoApprove === true)) void execute({ type: 'subproject.update', payload: { autoApprove: on } }); }}
         editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}

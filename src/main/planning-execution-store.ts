@@ -5,6 +5,7 @@ import {
   PLANNING_AGENT_RUN_COMMANDS,
   PLANNING_AUTO_APPROVAL_PRINCIPAL,
   PLANNING_LAUNCH_PRINCIPAL,
+  PLANNING_REPEAT_PRINCIPAL,
   blockingRunOf,
   runSubprojectId,
   PLANNING_EXECUTION_VERSION,
@@ -299,8 +300,11 @@ export class PlanningExecutionStore {
     // A launch whose start failed cancels the run it prepared (checked against its own prepare in apply), nothing else.
     const launchCleanup = command.principal.kind === 'runtime' && command.principal.id === PLANNING_LAUNCH_PRINCIPAL;
     requireState(!launchCleanup || command.type === 'run.cancel', 'user-required', 'A launch can only cancel the run it prepared and could not start.');
+    // The repeat schedule prepares and starts a run; approvals, integration and everything else stay with the person.
+    const repeat = command.principal.kind === 'runtime' && command.principal.id === PLANNING_REPEAT_PRINCIPAL;
+    requireState(!repeat || command.type === 'run.prepare' || command.type === 'run.start', 'user-required', 'A repeat schedule can only prepare and start a run.');
     requireState(!runtime || command.principal.kind === 'runtime', 'runtime-required', 'Only the host execution adapter can record provider activity.');
-    requireState(runtime || autoApproval || launchCleanup || ['run.pause-impact', 'review.decide', 'attempt.retry'].includes(command.type) || command.principal.kind !== 'runtime',
+    requireState(runtime || autoApproval || launchCleanup || repeat || ['run.pause-impact', 'review.decide', 'attempt.retry'].includes(command.type) || command.principal.kind !== 'runtime',
       'user-required', 'This decision requires an explicit user command.');
     requireState(command.principal.kind !== 'agent' || (PLANNING_AGENT_RUN_COMMANDS as readonly string[]).includes(command.type),
       'user-required', 'An agent can prepare, start, pause, continue or cancel a run; approvals, reviews and integration are the person’s.');

@@ -1,5 +1,5 @@
 import type { PermissionPreset } from '../../shared/daemon-protocol';
-import type { WorkflowNode } from '../../shared/workflow';
+import type { WorkflowNode, WorkflowRepeat } from '../../shared/workflow';
 import { permissionPresetLabel } from '../agent-permission-copy';
 import { useAppTranslation } from '../i18n';
 
@@ -20,6 +20,16 @@ export function workflowOutcomeLabel(outcome: string, text: WorkflowCopy): strin
 /** A model's reasoning effort as the conversation composer names it. */
 export function workflowEffortLabel(effort: string, text: WorkflowCopy): string {
   return ({ minimal: text('최소', 'Minimal'), low: text('낮음', 'Low'), medium: text('보통', 'Medium'), high: text('높음', 'High'), xhigh: text('매우 높음', 'Extra high'), max: text('최대', 'Max') } as Record<string, string>)[effort] ?? effort;
+}
+/** 0 = Sunday ... 6 = Saturday, short. */
+export function workflowWeekdayLabel(weekday: number, text: WorkflowCopy): string {
+  return text('일월화수목금토'[weekday] ?? '', ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][weekday] ?? '');
+}
+/** 반복 as one phrase: 매일 09:00 / 매주 월 09:00. */
+export function workflowRepeatLabel(repeat: Pick<WorkflowRepeat, 'cadence' | 'weekday' | 'time'>, text: WorkflowCopy): string {
+  return repeat.cadence === 'weekly'
+    ? text(`매주 ${workflowWeekdayLabel(repeat.weekday ?? 0, text)} ${repeat.time}`, `Weekly ${workflowWeekdayLabel(repeat.weekday ?? 0, text)} ${repeat.time}`)
+    : text(`매일 ${repeat.time}`, `Daily ${repeat.time}`);
 }
 /** A stage agent runs on its own: plan means it only plans. */
 export function workflowPermissionLabel(preset: PermissionPreset, text: WorkflowCopy): string {

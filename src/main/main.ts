@@ -15,6 +15,7 @@ import {
   MessageChannelMain,
   net,
   Notification,
+  powerMonitor,
   powerSaveBlocker,
   protocol,
   safeStorage,
@@ -44,6 +45,8 @@ import { installProjectWorkspaceIpc } from './project-workspace-ipc';
 import { PlanningService } from './planning-service';
 import { PlanningAuthority } from './planning-authority';
 import { WorkflowService, loadWorkflowHostId } from './workflow-service';
+import { WorkflowRepeatService } from './workflow-repeat-service';
+import { automationEnabled } from './automation-time';
 import { WorkflowAuthority } from './workflow-authority';
 import { WorkflowDraftStore } from './workflow-draft-store';
 import { AgentCapabilityService } from './agent-capability-service';
@@ -929,6 +932,7 @@ app.on('ready', async () => {
   const hostAttentionRef: { current?: HostAttentionService } = {};
   const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService; ai?: PlanningAiService } = {};
   const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
+  const workflowRepeatRef: { current?: WorkflowRepeatService } = {};
   // The worktree service starts after the orchestration server; agents reach it through this.
   const agentWorktreeRef: { create?: (projectId: string, branch: string) => ReturnType<typeof createWorkspaceWorktree> } = {};
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
@@ -1086,6 +1090,8 @@ app.on('ready', async () => {
     closeProviderIngress: uninstallDaemonProviderIpc,
     beginAgentShutdown: () => daemonAgentRuntime.beginShutdown(),
     stopAutomation: async () => {
+      // The repeat schedule stops first: a launch it is sending still reaches a running execution side.
+      await workflowRepeatRef.current?.dispose();
       const resultsStopped = planningRuntimeRef.results?.dispose();
         const aiStopped = planningRuntimeRef.ai?.dispose();
       await planningRuntimeRef.current?.dispose();
@@ -1559,6 +1565,9 @@ app.on('ready', async () => {
       const agent = daemonCommandRouter.getSnapshot().agents.find(entry => entry.sessionId === sessionId);
       return agent?.model ? { providerId: agent.providerId, model: agent.model } : undefined;
     },
+    repeatStatus: (registry) => workflowRepeatRef.current?.status(registry),
+    // A saved 반복 arms at once (an occurrence before it was turned on or changed never runs).
+    onCommitted: () => { void workflowRepeatRef.current?.wake(); },
   });
   workflowRef.service = workflowService;
   agentHistoryService.setCliResumeGuard((provider, providerSessionId) => {
@@ -3194,6 +3203,25 @@ app.on('ready', async () => {
     else daemonAgentRuntime.wakeQueuedTurns();
   });
   ownMainStartup(planningExecutionReady);
+  // 반복: the host runs each flow's saved 다시 실행 at its local time, only while it keeps running from login.
+  const workflowRepeat = new WorkflowRepeatService({
+    directory: app.getPath('userData'), hostId: workflowHostId,
+    projectIds: () => daemonCommandRouter.getSnapshot().projects.filter(project => !project.archivedAt).map(project => project.id),
+    sources: (projectId) => workflowService.repeatSources(projectId),
+    hasReceipt: (projectId, commandId) => workflowService.hasReceipt(projectId, commandId),
+    launch: (command, principal) => workflowService.execute(command, principal),
+    automationEnabled: () => automationEnabled(daemonCommandRouter.getSnapshot()),
+    onChanged: (projectId) => broadcast('workflow:runs-changed', projectId),
+    reportError: (error) => {
+      console.error('[main] workflow repeat:', error);
+      mainLog?.line(`workflow repeat: ${String(error)}`);
+    },
+  });
+  workflowRepeatRef.current = workflowRepeat;
+  void planningExecutionReady.then(() => { if (!daemonAuthorityShutdown.isStopping()) void workflowRepeat.start(); });
+  // A sleeping PC's timers drift: look at the wall clock again on resume, and when automation is turned on or off.
+  powerMonitor.on('resume', () => { void workflowRepeat.wake(); });
+  daemonCommandRouter.onEvent((event) => { if (event.kind === 'runtime.changed') void workflowRepeat.wake(); });
   const planningRunAuthority = new PlanningRunAuthority({
     service: planningRunService, results: planningResultService, ready: planningExecutionReady, ingress: localAgentOperationIngress,
     ownsSubproject: (projectId, subprojectId) => workflowService.owns(projectId, subprojectId),

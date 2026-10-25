@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { CronExpressionParser } from 'cron-parser';
 
 import {
   createDaemonCommand,
@@ -25,6 +24,7 @@ import type {
   DaemonStoreMutation,
 } from './daemon-store';
 import { findActiveDaemonWorkspace } from './daemon-workspace-authority';
+import { AutomationInputError, automationEnabled, canonicalCron } from './automation-time';
 
 type AutomationCommandType = Extract<DaemonCommandType,
   | 'schedule.create'
@@ -77,12 +77,6 @@ export interface DaemonAutomationRuntimeOptions {
   readonly reportError?: (context: string, error: unknown) => void;
 }
 
-interface CanonicalCron {
-  readonly cron: string;
-  readonly timezone: string;
-  readonly nextRunAt: string;
-}
-
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const DEFAULT_PENDING_POLL_MS = 1_000;
 const ACTIVE_AGENT_STATES = new Set<DaemonAgent['state']>([
@@ -91,8 +85,6 @@ const ACTIVE_AGENT_STATES = new Set<DaemonAgent['state']>([
   'working',
   'blocked',
 ]);
-
-class AutomationInputError extends Error {}
 
 function commandError(
   code: DaemonCommandError['code'],
@@ -106,46 +98,6 @@ function stableId(prefix: string, ...parts: readonly string[]): string {
   return `${prefix}-${createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)}`;
 }
 
-function canonicalTimezone(value: string): string {
-  const timezone = value.trim();
-  try {
-    const canonical = new Intl.DateTimeFormat('en-US', { timeZone: timezone }).resolvedOptions().timeZone;
-    if (/^[+-]/u.test(canonical)) throw new Error('fixed offsets are not IANA zones');
-    return canonical;
-  } catch {
-    throw new AutomationInputError(`Timezone ${JSON.stringify(value)} is not a supported IANA timezone.`);
-  }
-}
-
-function canonicalCron(
-  expression: string,
-  timezoneValue: string,
-  after: Date,
-  hashSeed: string,
-): CanonicalCron {
-  const normalized = expression.trim().replace(/\s+/gu, ' ');
-  if (normalized.split(' ').length !== 5) {
-    throw new AutomationInputError('Automation cron expressions must contain exactly five fields.');
-  }
-  const timezone = canonicalTimezone(timezoneValue);
-  try {
-    const parsed = CronExpressionParser.parse(normalized, {
-      currentDate: after,
-      tz: timezone,
-      hashSeed,
-    });
-    return {
-      cron: parsed.stringify(false),
-      timezone,
-      nextRunAt: parsed.next().toDate().toISOString(),
-    };
-  } catch (error) {
-    throw new AutomationInputError(
-      `Invalid cron expression: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 function canonicalExpiry(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) {
@@ -156,10 +108,6 @@ function canonicalExpiry(value: string | undefined): string | undefined {
     throw new AutomationInputError('Automation expiry must be a valid ISO date-time.');
   }
   return new Date(timestamp).toISOString();
-}
-
-function automationEnabled(snapshot: DaemonSnapshot): boolean {
-  return snapshot.runtime.keepRunning && snapshot.runtime.startAtLogin;
 }
 
 function exhausted(schedule: Pick<DaemonSchedule, 'maxRuns' | 'runCount' | 'expiresAt'>, now: Date): boolean {

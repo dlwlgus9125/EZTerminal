@@ -357,6 +357,8 @@ export class ProjectArchiveService {
       if (workflowEntry) {
         const source: WorkflowRegistry = WorkflowRegistrySchema.parse(parseArchiveJson(workflowEntry));
         source.historicalSessionLinks = [...(source.historicalSessionLinks ?? []), ...source.sessionLinks]; source.sessionLinks = []; source.projectId = projectId;
+        // A restored flow never starts repeating on its own (the same form is compared when a restore resumes).
+        source.subprojects = source.subprojects.map(entry => (entry.repeat ? { ...entry, repeat: { ...entry.repeat, enabled: false } } : entry));
         const stagingWorkflow = new WorkflowService({ hostId: 'archive-restore', resolveProjectRoot: id => id === projectId ? rootPath : null, planning: stagingPlanning, runs: () => [], session: () => undefined });
         const exists = await fs.stat(path.join(rootPath, '.ezterminal', 'planning', 'workflows.json')).then(() => true, error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; });
         if (!exists) await stagingWorkflow.importRegistry(projectId, source);

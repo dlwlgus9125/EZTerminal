@@ -18,6 +18,33 @@ export const WorkflowHistorySchema = z.object({
 export const WorkflowReviewerSchema = z.object({ providerId: id, model: z.string().min(1).max(256) }).strict();
 export const WorkflowRunSettingsSchema = z.object({ reviewer: WorkflowReviewerSchema }).strict();
 export type WorkflowRunSettings = z.infer<typeof WorkflowRunSettingsSchema>;
+/**
+ * 반복 (protocol v17): run the saved flow every day, or every week on one weekday, at a local time in an IANA zone.
+ * Off keeps the settings. Turning it on needs a saved review AI; a copy or an import starts with it off.
+ */
+export const WorkflowRepeatSchema = z.object({
+  cadence: z.enum(['daily', 'weekly']),
+  /** 0 = Sunday ... 6 = Saturday; weekly only. */
+  weekday: z.number().int().min(0).max(6).optional(),
+  time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u),
+  timezone: z.string().min(1).max(64),
+  enabled: z.boolean(),
+}).strict().superRefine((value, context) => {
+  if ((value.cadence === 'weekly') !== (value.weekday !== undefined)) context.addIssue({ code: 'custom', path: ['weekday'], message: 'A weekly repeat names its weekday, and only a weekly one.' });
+});
+export type WorkflowRepeat = z.infer<typeof WorkflowRepeatSchema>;
+/** What the host's repeat schedule did and will do for one subproject (host-computed, protocol v17). */
+export const WorkflowRepeatStatusSchema = z.object({
+  /** The next occurrence it will run; absent while it cannot (see `blocked`) or is off. */
+  nextAt: z.string().datetime().optional(),
+  blocked: z.enum(['automation-off', 'missing-reviewer', 'unreadable']).optional(),
+  last: z.object({
+    key: z.string().min(1).max(32), occurrenceAt: z.string().datetime(),
+    state: z.enum(['claimed', 'started', 'skipped-running', 'missed', 'failed']), at: z.string().datetime(),
+    runId: id.optional(), detail: z.string().max(500).optional(), missedCount: z.number().int().positive().optional(),
+  }).strict().optional(),
+}).strict();
+export type WorkflowRepeatStatus = z.infer<typeof WorkflowRepeatStatusSchema>;
 /** Host capability: `run.launch` (prepare and start the saved flow as one durable request). */
 export const WORKFLOW_LAUNCH_CAPABILITY = 'workflow-launch-v1';
 export const WorkflowSubprojectSchema = z.object({
@@ -29,6 +56,8 @@ export const WorkflowSubprojectSchema = z.object({
   autoApprove: z.boolean().optional(),
   /** Saved only once chosen (protocol v17). */
   runSettings: WorkflowRunSettingsSchema.optional(),
+  /** Saved only once chosen (protocol v17). */
+  repeat: WorkflowRepeatSchema.optional(),
 }).strict();
 export type WorkflowSubproject = z.infer<typeof WorkflowSubprojectSchema>;
 export const WorkflowSessionLinkSchema = z.object({
@@ -46,7 +75,9 @@ export const WorkflowRegistrySchema = z.object({
 }).strict();
 export type WorkflowRegistry = z.infer<typeof WorkflowRegistrySchema>;
 export type WorkflowRun = ExecutionRun;
-export const WorkflowSnapshotSchema = WorkflowRegistrySchema.extend({ hostId: id, runs: PlanningExecutionSnapshotSchema.shape.runs, managedSessionIds: z.array(id).optional() }).strict();
+export const WorkflowSnapshotSchema = WorkflowRegistrySchema.extend({ hostId: id, runs: PlanningExecutionSnapshotSchema.shape.runs, managedSessionIds: z.array(id).optional(),
+  /** Per subproject with a repeat (protocol v17). */
+  repeatStatus: z.record(id, WorkflowRepeatStatusSchema).optional() }).strict();
 export type WorkflowSnapshot = Omit<z.infer<typeof WorkflowSnapshotSchema>, 'runs'> & { readonly runs: readonly ExecutionRun[] };
 
 /** Navigation projection excludes instructions, documents, graph edges, runs and edit history. */
@@ -68,7 +99,7 @@ export interface WorkflowNavigationAccess { getWorkflowNavigation(projectId: str
 const envelope = { commandId: id, projectId: id, hostId: id, expectedRevision: revision, subprojectId: id.optional() };
 export const WorkflowCommandSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('subproject.create'), payload: z.object({ id, title: z.string().trim().min(1).max(300), goal: z.string().max(65_536), presetId: z.enum(['feature', 'fix', 'research', 'parallel', 'custom']), graph: WorkflowGraphSchema.optional(), previewId: id.optional(), previewRevision: revision.optional() }).strict() }).strict(),
-  z.object({ ...envelope, type: z.literal('subproject.update'), payload: z.object({ title: z.string().trim().min(1).max(300).optional(), goal: z.string().max(65_536).optional(), status: z.enum(['active', 'completed', 'archived']).optional(), autoApprove: z.boolean().optional(), runSettings: WorkflowRunSettingsSchema.optional() }).strict() }).strict(),
+  z.object({ ...envelope, type: z.literal('subproject.update'), payload: z.object({ title: z.string().trim().min(1).max(300).optional(), goal: z.string().max(65_536).optional(), status: z.enum(['active', 'completed', 'archived']).optional(), autoApprove: z.boolean().optional(), runSettings: WorkflowRunSettingsSchema.optional(), repeat: WorkflowRepeatSchema.optional() }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('subproject.copy'), payload: z.object({ id, title: z.string().trim().min(1).max(300) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('workflow.patch'), payload: z.object({ graph: WorkflowGraphSchema, summary: z.string().min(1).max(1_000) }).strict() }).strict(),
   z.object({ ...envelope, type: z.literal('workflow.undo'), payload: z.object({ changeId: id }).strict() }).strict(),
@@ -87,7 +118,8 @@ export const WorkflowCommandSchema = z.discriminatedUnion('type', [
 ]);
 export type WorkflowCommand = z.infer<typeof WorkflowCommandSchema>;
 /** `reducedFlowView`: a remote reader on protocol v16 or older, which only sees flows without the v17 fields. */
-export type WorkflowPrincipal = { readonly kind: 'desktop' | 'android' | 'ai'; readonly id: string; readonly sessionId?: string; readonly reducedFlowView?: true };
+/** `schedule`: the host's own repeat schedule, which may only launch a flow (never saved as an author). */
+export type WorkflowPrincipal = { readonly kind: 'desktop' | 'android' | 'ai' | 'schedule'; readonly id: string; readonly sessionId?: string; readonly reducedFlowView?: true };
 /** Who sent a command, for receipt fingerprints: how it was connected is not part of it, so a phone's retry still matches after an app update. */
 export function workflowPrincipalIdentity(principal: WorkflowPrincipal): Omit<WorkflowPrincipal, 'reducedFlowView'> {
   return { kind: principal.kind, id: principal.id, ...(principal.sessionId ? { sessionId: principal.sessionId } : {}) };

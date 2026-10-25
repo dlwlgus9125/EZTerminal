@@ -2,7 +2,7 @@ import { Plus, TriangleAlert } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType } from 'react';
 import type { ProviderModel } from '../../shared/daemon-provider';
 import { blockingRunOf, stageEditScope, stageWorking, type ExecutionRun } from '../../shared/planning-execution';
-import type { WorkflowSubproject } from '../../shared/workflow';
+import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
 import type { WorkflowGraph, WorkflowIssue, WorkflowNode } from '../../shared/workflow-graph';
 import { flowRunNumber } from '../../shared/workflow-run-view';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
@@ -30,7 +30,10 @@ export interface WorkflowFlowSurfaceProps {
   readonly archivedNodes: readonly WorkflowNode[];
   readonly runs: readonly ExecutionRun[];
   /** What every run of this flow uses (승인, 검토 AI), saved on the subproject. */
-  readonly subproject: Pick<WorkflowSubproject, 'id' | 'autoApprove' | 'runSettings' | 'status'>;
+  readonly subproject: Pick<WorkflowSubproject, 'id' | 'autoApprove' | 'runSettings' | 'status' | 'repeat'>;
+  readonly repeatStatus?: WorkflowRepeatStatus;
+  readonly onSaveRepeat?: (repeat: WorkflowRepeat) => void;
+  readonly onOpenAutomationSettings?: () => void;
   /** Model catalogs per provider (the efforts each model offers). */
   readonly catalogs?: Readonly<Record<string, readonly ProviderModel[]>>;
   /** The host keeps run settings and has 다시 실행 as one request (see WorkflowRunBar). */
@@ -199,6 +202,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     <WorkflowRunBar text={text} run={view.run} runs={props.runs} subproject={props.subproject} providers={props.providers} savedRunSettings={props.savedRunSettings ?? true} commandsDisabled={props.commandsDisabled}
       hasLocalDraft={!!props.draftGraph} issueCount={props.issues.length} awaiting={awaiting} onLaunch={props.onLaunch} onRunCommand={props.onRunCommand}
       onPickRun={props.onPickRun} onSaveReviewer={props.onSaveReviewer} onAutoApprove={props.onAutoApprove} onJumpToNode={id => jumpTo(id, 'run')}
+      repeatStatus={props.repeatStatus} onSaveRepeat={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings}
       onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} />
     <WorkflowCanvasHeader text={text} mode={view.mode} revision={props.revision} hasLocalDraft={!!props.draftGraph} diverged={view.diverged} run={view.run}
       editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} structure={props.structure} onStructureChange={props.onStructureChange}

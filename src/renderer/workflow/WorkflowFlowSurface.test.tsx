@@ -83,3 +83,59 @@ describe('WorkflowFlowSurface', () => {
     expect(toggle()).toBeNull();
   });
 });
+
+describe('WorkflowFlowSurface 반복', () => {
+  const reviewer = { reviewer: { providerId: 'codex', model: 'model' } };
+  const select = (testId: string) => container.querySelector(`[data-testid="${testId}"]`) as HTMLSelectElement;
+  const choose = async (testId: string, value: string) => {
+    await act(async () => { select(testId).value = value; select(testId).dispatchEvent(new Event('change', { bubbles: true })); });
+  };
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  it('turns 반복 on in this device’s zone only once a review AI is saved, and keeps its settings when turned off', async () => {
+    const onSaveRepeat = vi.fn();
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat })} />));
+    expect(select('workflow-repeat-cadence').value).toBe('off');
+    expect([...select('workflow-repeat-cadence').options].filter(option => option.disabled).map(option => option.value)).toEqual(['daily', 'weekly']);
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat, subproject: { id: 'login', status: 'active', runSettings: reviewer } })} />));
+    await choose('workflow-repeat-cadence', 'daily');
+    expect(onSaveRepeat).toHaveBeenLastCalledWith({ cadence: 'daily', time: '09:00', timezone: zone, enabled: true });
+    const weekly = { cadence: 'weekly' as const, weekday: 1, time: '09:00', timezone: 'Asia/Seoul', enabled: true };
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat, subproject: { id: 'login', status: 'active', runSettings: reviewer, repeat: weekly } })} />));
+    await choose('workflow-repeat-weekday', '5');
+    expect(onSaveRepeat).toHaveBeenLastCalledWith({ ...weekly, weekday: 5 });
+    await choose('workflow-repeat-hour', '18');
+    expect(onSaveRepeat).toHaveBeenLastCalledWith({ ...weekly, time: '18:00' });
+    await choose('workflow-repeat-minute', '30');
+    expect(onSaveRepeat).toHaveBeenLastCalledWith({ ...weekly, time: '09:30' });
+    // Back to every day: no weekday is sent (the host refuses one on a daily repeat).
+    await choose('workflow-repeat-cadence', 'daily');
+    expect(onSaveRepeat).toHaveBeenLastCalledWith({ cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true });
+    await choose('workflow-repeat-cadence', 'off');
+    expect(onSaveRepeat).toHaveBeenLastCalledWith({ ...weekly, enabled: false });
+  });
+
+  it('says when it runs next, what the last occurrence did, and why it is not running', async () => {
+    const repeat = { cadence: 'daily' as const, time: '09:00', timezone: 'Asia/Seoul', enabled: true };
+    const subproject = { id: 'login', status: 'active' as const, runSettings: reviewer, repeat };
+    const onOpenAutomationSettings = vi.fn();
+    const status = () => container.querySelector('[data-testid="workflow-repeat-status"]')!.textContent;
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat: vi.fn(), subproject, repeatStatus: { nextAt: '2026-10-26T00:00:00.000Z',
+      last: { key: '2026-10-25', occurrenceAt: '2026-10-25T00:00:00.000Z', state: 'missed', at: '2026-10-25T02:00:00.000Z', runId: 'r', missedCount: 3 } } })} />));
+    expect(status()).toMatch(/^Next run .*Oct 26.*09:00/u);
+    expect(status()).toContain('Last: Missed 3 through');
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat: vi.fn(), onOpenAutomationSettings, subproject, repeatStatus: { blocked: 'automation-off' } })} />));
+    expect(status()).toContain('Repeats run only while the PC app starts at login and keeps running when closed.');
+    const open = [...container.querySelectorAll('[data-testid="workflow-repeat-status"] button')].find(button => button.textContent === 'Open settings') as HTMLButtonElement;
+    await act(async () => open.click());
+    expect(onOpenAutomationSettings).toHaveBeenCalledOnce();
+    // A completed flow keeps its setting and says it does not repeat; it cannot be turned on.
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat: vi.fn(), subproject: { ...subproject, status: 'completed' }, repeatStatus: {} })} />));
+    expect(status()).toContain('A completed or archived subproject does not repeat.');
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat: vi.fn(), subproject: { ...subproject, status: 'completed', repeat: { ...repeat, enabled: false } } })} />));
+    expect([...select('workflow-repeat-cadence').options].filter(option => option.disabled).map(option => option.value)).toEqual(['daily', 'weekly']);
+    // An older host keeps no run settings: no 반복 either.
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat: vi.fn(), subproject, savedRunSettings: false })} />));
+    expect(container.querySelector('[data-testid="workflow-repeat"]')).toBeNull();
+  });
+});

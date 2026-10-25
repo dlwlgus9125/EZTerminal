@@ -214,6 +214,8 @@ export type ExecutionPreparation = z.infer<typeof ExecutionPreparationSchema>;
 export const PLANNING_AUTO_APPROVAL_PRINCIPAL = 'auto-approval';
 /** The host's principal id that cancels a run its own launch prepared but could not start. */
 export const PLANNING_LAUNCH_PRINCIPAL = 'workflow-launch';
+/** The host's repeat schedule (I2-6): it may prepare and start a flow's run, nothing else. */
+export const PLANNING_REPEAT_PRINCIPAL = 'workflow-schedule';
 /** What an agent may do to a run; approvals, reviews and integration stay with the person. */
 export const PLANNING_AGENT_RUN_COMMANDS = ['run.prepare', 'run.start', 'run.pause', 'run.continue', 'run.cancel'] as const;
 export type RunDefinition = ExecutionPreparation;

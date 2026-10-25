@@ -4,6 +4,7 @@ import { Glyph, Led, type GlyphName } from '../ui';
 import type { LiveConversation, LiveFlow, WaitingItem, otherProjects } from './shell-model';
 import { StageChain } from './StageChain';
 import type { ShellTerminal } from './LiveList';
+import { workflowRepeatLabel } from '../workflow/workflow-copy';
 import { conversationStateText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';
 
 export interface BoardProject {
@@ -140,7 +141,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
                 <button type="button" className="ez-shell-flowcard__name" onClick={() => props.onOpenFlow(flow.subprojectId)}>
                   <span className="ez-shell-card__k"><Led tone={flow.lamp} />{flow.runNumber > 0 ? text(`실행 #${flow.runNumber} · `, `Run #${flow.runNumber} · `) : ''}{flowPhaseText(flow.phase, text)}</span>
                   <span className="ez-shell-card__t">{flow.title}</span>
-                  <span className="ez-shell-card__m">{flow.autoApprove ? text('자동 승인', 'Auto-approve') : text('승인은 내가', 'I approve')}</span>
+                  <span className="ez-shell-card__m">{flow.autoApprove ? text('자동 승인', 'Auto-approve') : text('승인은 내가', 'I approve')}{flow.repeat ? ` · ${workflowRepeatLabel(flow.repeat, text)}` : ''}</span>
                 </button>
                 <StageChain stages={flow.stages} onOpenConversation={props.onOpenConversation} />
                 <span className="ez-shell-flowcard__actions">
