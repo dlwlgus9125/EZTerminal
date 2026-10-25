@@ -11,7 +11,7 @@ import { Button, EmptyState, IconButton, LoadingState, Status } from '../ui';
 import type { DerivedResults } from './derive-results';
 import { PathLabel } from './PathLabel';
 import { useResultsCopy } from './copy';
-import { fileLanguage, fileViewKind, resolveWorkspacePath, samePath, type FileViewKind } from './results-format';
+import { fileLanguage, fileViewKind, isInsideWorkspace, resolveWorkspacePath, samePath, type FileViewKind } from './results-format';
 import { useResultsViewState, type ResultsServices } from './results-services';
 
 /** Above these the source shows plain, without syntax colors. */
@@ -68,7 +68,7 @@ function isMissing(result: FilePreviewResult): boolean {
   return !result.ok && /ENOENT|not found|no such file|does not exist/iu.test(result.error);
 }
 
-export function ResultsFiles({ sessionId, workspaceRoot, derived, services, target, onOpenProjectFiles, onViewChanges, renderHtml, renderPdf }: {
+export function ResultsFiles({ sessionId, workspaceRoot, derived, services, target, onOpenProjectFiles, onViewChanges, renderHtml, renderPdf, cleaned }: {
   readonly sessionId: string;
   readonly workspaceRoot?: string;
   readonly derived: DerivedResults;
@@ -79,6 +79,8 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
   /** Isolated HTML preview; without it HTML shows as source. */
   readonly renderHtml?: (path: string) => ReactNode;
   readonly renderPdf?: (path: string) => ReactNode;
+  /** The work folder was cleaned up (작업 폴더 정리): files in it come from the run's kept result, never the old path. */
+  readonly cleaned?: { readonly root: string; readonly result: boolean };
 }): JSX.Element {
   const copy = useResultsCopy();
   const chatCopy = useChatCopy();
@@ -112,19 +114,21 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
   const kind = selected ? fileViewKind(selected.path) : 'code';
   const mode = selected ? view.modes[selected.path] ?? 'rendered' : 'rendered';
 
+  const inCleaned = Boolean(cleaned && absolute && isInsideWorkspace(absolute, cleaned.root));
+  const read = inCleaned ? (cleaned?.result ? services.readCleanedFile : undefined) : services.readFilePreview;
+  // HTML and PDF show in their own isolated views when the host offers them (those read the file's path, so not for a cleaned folder).
+  const isolated = Boolean((kind === 'html' && renderHtml && mode === 'rendered') || (kind === 'pdf' && renderPdf));
   const [result, setResult] = useState<{ readonly path: string; readonly value?: FilePreviewResult; readonly loading: boolean }>();
   const [reload, setReload] = useState(0);
   useEffect(() => {
-    if (!absolute || !services.readFilePreview) return undefined;
-    // HTML and PDF show in their own isolated views when the host offers them.
-    if ((kind === 'html' && renderHtml && mode === 'rendered') || (kind === 'pdf' && renderPdf)) return undefined;
+    if (!absolute || !read || isolated) return undefined;
     let alive = true;
     setResult({ path: absolute, loading: true });
-    void services.readFilePreview(absolute)
+    void read(absolute)
       .then((value) => { if (alive) setResult({ path: absolute, value, loading: false }); })
       .catch((error: unknown) => { if (alive) setResult({ path: absolute, value: { ok: false, error: error instanceof Error ? error.message : String(error) }, loading: false }); });
     return () => { alive = false; };
-  }, [absolute, kind, mode, reload, renderHtml, renderPdf, services]);
+  }, [absolute, isolated, read, reload]);
 
   const labels = useMemo<Partial<ChatMarkdownLabels>>(() => ({
     copyCode: chatCopy.copyCode, copied: chatCopy.copied, copyFailed: chatCopy.copyFailed,
@@ -142,7 +146,7 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
 
   const current = result && result.path === absolute ? result : undefined;
   const value = current?.value;
-  const loading = current ? current.loading : Boolean(absolute && services.readFilePreview);
+  const loading = current ? current.loading : Boolean(absolute && read);
   const display = (path: string): string => workspacePath(path, workspaceRoot);
   const setMode = (next: 'rendered' | 'source'): void => setView((current) => ({ ...current, modes: { ...current.modes, [selected.path]: next } }));
   const hasChanges = derived.files.some((file) => samePath(file.path, selected.path));
@@ -150,12 +154,14 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
 
   let body: ReactNode;
   if (!absolute) body = <Status variant="neutral">{copy.fileUnavailable}</Status>;
+  else if (isolated && inCleaned) body = <Status variant="neutral">{copy.cleanedNoPreview}</Status>;
+  else if (inCleaned && !cleaned?.result) body = <Status variant="neutral">{copy.cleanedNoResult}</Status>;
   // Refresh asks main for a new preview of the file as it is now.
   else if (kind === 'html' && renderHtml && mode === 'rendered') body = <Fragment key={`html:${String(reload)}`}>{renderHtml(absolute)}</Fragment>;
   else if (kind === 'pdf' && renderPdf) body = <Fragment key={`pdf:${String(reload)}`}>{renderPdf(absolute)}</Fragment>;
   else if (loading && !value) body = <LoadingState label={copy.fileLoading} />;
   else if (!value) body = <Status variant="neutral">{copy.fileUnavailable}</Status>;
-  else if (isMissing(value)) body = <Status variant="warning">{copy.fileGone}</Status>;
+  else if (isMissing(value)) body = <Status variant="warning">{inCleaned ? copy.cleanedFileGone : copy.fileGone}</Status>;
   else if (!value.ok || value.kind !== 'text') body = <div className="results-preview"><FilePreviewContent result={value} {...(services.openExternalHttpUrl ? { openExternalHttpUrl: services.openExternalHttpUrl } : {})} /></div>;
   else if (kind === 'markdown' && mode === 'rendered') {
     body = <div className="results-markdown"><ChatMarkdown markdown={value.content} variant="prose" labels={labels} {...(services.openExternalHttpUrl ? { onOpenLink: services.openExternalHttpUrl } : {})} /></div>;
@@ -197,13 +203,14 @@ export function ResultsFiles({ sessionId, workspaceRoot, derived, services, targ
             )}
             {hasChanges && onViewChanges && <Button variant="ghost" size="sm" onClick={() => onViewChanges(selected.path)}>{copy.viewChanges}</Button>}
             <IconButton size="sm" icon={RefreshCw} aria-label={copy.refresh} onClick={() => setReload((value) => value + 1)} />
-            {absolute && services.openFileInApp && (kind === 'html'
+            {absolute && services.openFileInApp && !inCleaned && (kind === 'html'
               // Interactive pages run in the person's browser, by their own click (the preview is static).
               ? <Button variant="ghost" size="sm" leadingIcon={<ExternalLink />} onClick={() => void services.openFileInApp!(absolute)} data-testid="results-open-browser">{copy.openInBrowser}</Button>
               : <IconButton size="sm" icon={ExternalLink} aria-label={copy.openInApp} onClick={() => void services.openFileInApp!(absolute)} />)}
             {onOpenProjectFiles && <IconButton size="sm" icon={FolderOpen} aria-label={copy.openProjectFiles} onClick={onOpenProjectFiles} />}
           </span>
         </header>
+        {inCleaned && cleaned?.result && <p className="results-note" data-testid="results-files-cleaned">{copy.cleanedFromResult}</p>}
         {body}
       </section>
     </div>

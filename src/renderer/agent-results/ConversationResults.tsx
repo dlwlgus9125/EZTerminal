@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type { ConversationFileChange } from '../../shared/conversation-changes';
+import type { CleanedFolderState } from '../../shared/run-retention';
 import { Tab, TabList, TabPanel, Tabs } from '../ui';
 import { deriveResults } from './derive-results';
 import { backfillConversationChanges } from './history-backfill';
@@ -100,6 +101,18 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
     setSection('files');
   }, [setSection]);
 
+  // 작업 폴더 정리: a cleaned-up folder is never read; its files come from the run's kept result (asked again once the
+  // conversation becomes history, which the cleanup does).
+  const root = source.workspaceRoot;
+  const [folderState, setFolderState] = useState<{ readonly root: string; readonly state: CleanedFolderState }>();
+  useEffect(() => {
+    if (!root || !services.cleanedFolder) return undefined;
+    let alive = true;
+    void services.cleanedFolder(root).then((state) => { if (alive) setFolderState({ root, state }); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [root, services, source.historyOnly]);
+  const cleaned = folderState && folderState.root === root && folderState.state.cleaned ? folderState.state : undefined;
+
   const changeCount = derived.files.length;
   const todoLeft = derived.todo?.filter((item) => item.status !== 'completed').length ?? 0;
   return (
@@ -132,6 +145,7 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               {...(source.draftUnavailable ? { draftUnavailable: source.draftUnavailable } : {})}
               {...(changesTarget ? { target: changesTarget } : {})}
               turnActive={source.turnActive ?? false}
+              folderCleaned={Boolean(cleaned)}
               onViewFile={showFile}
             />
           )}
@@ -144,7 +158,8 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
               derived={derived}
               services={services}
               {...(filesTarget ? { target: filesTarget } : {})}
-              {...(source.openProjectFiles ? { onOpenProjectFiles: source.openProjectFiles } : {})}
+              {...(source.openProjectFiles && !cleaned ? { onOpenProjectFiles: source.openProjectFiles } : {})}
+              {...(cleaned ? { cleaned } : {})}
               onViewChanges={showChanges}
               {...(renderHtml ? { renderHtml } : {})}
               {...(renderPdf ? { renderPdf } : {})}

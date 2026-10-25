@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../shared/daemon-protocol';
+import { IMAGE_PREVIEW_MAX_BYTES, type FilePreviewResult } from '../shared/file-preview';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { PlanningResultRecord } from '../shared/planning-result';
-import type { RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan } from '../shared/run-retention';
+import type { CleanedFolderState, RunCleanupOutcome, RunCleanupPlan, RunFolderKeepCode, RunFolderPlan } from '../shared/run-retention';
 import { flowRunNumber } from '../shared/workflow-run-view';
 import { worktreeCleanupScope } from '../shared/workspace-worktree';
 import { RecordFile } from './atomic-record-file';
@@ -40,7 +42,9 @@ export interface RunWorktreeCleanupOptions {
   /** A review or an integration of this run is still being worked on (PlanningResultService). */
   readonly resultBusy: (projectId: string, run: ExecutionRun) => Promise<boolean>;
   readonly worktrees: Pick<WorktreeService, 'execute' | 'retire'>;
-  readonly git: Pick<GitRunner, 'run'>;
+  readonly git: Pick<GitRunner, 'run' | 'runBytes'>;
+  /** The host's file preview over bytes already read (a cleaned folder's file comes from its result commit). */
+  readonly preview: (filePath: string, handle: FileHandle) => Promise<FilePreviewResult>;
   readonly executeCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt>;
   /** Waits (bounded) for archived chats to let go of their provider processes. */
   readonly releaseProviders: () => Promise<void>;
@@ -188,6 +192,48 @@ export class RunWorktreeCleanup {
     return result;
   }
 
+  async folderState(folderPath: string): Promise<CleanedFolderState> {
+    const entry = (await this.read()).folders.filter(folder => samePath(folder.path, folderPath)).at(-1);
+    if (entry?.state !== 'removed') return { cleaned: false };
+    return { cleaned: true, root: entry.path, result: (await this.verifiedResult(entry)) !== undefined };
+  }
+
+  /**
+   * A file of a cleaned-up folder, from the run's kept result in the project checkout: only once the shared result ref
+   * still names the recorded commit, only a file of that commit's tree, never past the preview's own size bound.
+   */
+  async readFile(filePath: string): Promise<FilePreviewResult> {
+    const resolved = path.resolve(filePath);
+    // The deepest recorded folder holding the file, its latest record (a later one for the same path wins).
+    const entry = (await this.read()).folders.filter(folder => within(resolved, folder.path))
+      .reduce<RetentionRecord['folders'][number] | undefined>((best, folder) => (!best || folder.path.length >= best.path.length ? folder : best), undefined);
+    if (entry?.state !== 'removed') return { ok: false, error: 'This file is not in a cleaned-up work folder.' };
+    const verified = await this.verifiedResult(entry);
+    if (!verified) return { ok: false, error: 'This run kept no result to read the file from.' };
+    const relative = path.relative(path.resolve(entry.path), resolved);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return { ok: false, error: 'This file is not in a cleaned-up work folder.' };
+    const spec = `${verified.commit}:${relative.split(path.sep).join('/')}`;
+    const read = ['--no-pager', '--no-optional-locks', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', 'cat-file'];
+    try {
+      const type = (await this.options.git.run(verified.root, [...read, '-t', spec]).catch(() => '')).trim();
+      if (type !== 'blob') return { ok: false, error: 'ENOENT: the run’s kept result has no such file.' };
+      const size = Number((await this.options.git.run(verified.root, [...read, '-s', spec])).trim());
+      if (!Number.isSafeInteger(size) || size > IMAGE_PREVIEW_MAX_BYTES) return { ok: false, error: 'This file is too large to show from the run’s kept result.' };
+      const bytes = await this.options.git.runBytes(verified.root, [...read, 'blob', spec], size + 1);
+      return await this.options.preview(resolved, memoryHandle(bytes));
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** A removed folder's result, once the project checkout's shared result ref still names the recorded commit. */
+  private async verifiedResult(entry: { projectId: string; attemptId: string }): Promise<{ root: string; commit: string } | undefined> {
+    const root = this.options.getSnapshot()?.projects.find(project => project.id === entry.projectId)?.rootPath;
+    const record = root ? await this.options.readResult(entry.projectId, entry.attemptId).catch(() => null) : null;
+    if (!root || !record?.commit) return undefined;
+    return await this.resultKept(root, entry.projectId, entry.attemptId, { head: record.commit, tree: record.commit, detachTo: record.commit }) ? { root, commit: record.commit } : undefined;
+  }
+
   /** The shared ref the run's result is kept by names the recorded result (a folder without one has nothing to check). */
   private async resultKept(root: string, projectId: string, attemptId: string, expected: DisposableExpectation & { detachTo?: string }): Promise<boolean> {
     if (!expected.detachTo) return true;
@@ -236,6 +282,14 @@ export class RunWorktreeCleanup {
 
 function samePath(left: string, right: string): boolean {
   return process.platform === 'win32' ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right);
+}
+/** Bytes already read, behind the few file-handle calls the host's preview makes. */
+function memoryHandle(bytes: Buffer): FileHandle {
+  return {
+    stat: async () => ({ size: bytes.length }),
+    read: async (buffer: Buffer, offset: number, length: number, position: number) => ({ bytesRead: bytes.copy(buffer, offset, position, Math.min(bytes.length, position + length)), buffer }),
+    close: async () => undefined,
+  } as unknown as FileHandle;
 }
 /** `child` is `parent` or inside it. */
 function within(child: string, parent: string): boolean {

@@ -1,6 +1,8 @@
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import type { FilePreviewResult } from '../../shared/file-preview';
+import type { CleanedFolderState } from '../../shared/run-retention';
 import { EmptyState, LoadingState } from '../ui';
 import { ArtifactFrame, type ArtifactPreviewAccess } from './ArtifactFrame';
 import { ConversationResults } from './ConversationResults';
@@ -17,6 +19,11 @@ function hostServices(): ResultsServices {
     ...(typeof api.getGitDiff === 'function' ? { getGitDiff: (directory: string) => api.getGitDiff(directory) } : {}),
     ...(typeof api.readFilePreview === 'function' ? { readFilePreview: (path: string) => api.readFilePreview(path) } : {}),
     ...(typeof api.openFileInApp === 'function' ? { openFileInApp: (path: string) => api.openFileInApp(path) } : {}),
+    ...(api.runRetention ? {
+      // A record that cannot be read is no cleanup: the folder is read as it is.
+      cleanedFolder: (root: string) => api.runRetention!.folderState(root).then((result): CleanedFolderState => (result.ok ? result.value : { cleaned: false })),
+      readCleanedFile: (path: string) => api.runRetention!.readFile(path).then((result): FilePreviewResult => (result.ok ? result.value : { ok: false, error: result.message })),
+    } : {}),
     ...(typeof window.ezterminalDesktop?.openExternalHttpUrl === 'function'
       ? { openExternalHttpUrl: (url: string) => { if (/^https?:/iu.test(url)) void window.ezterminalDesktop?.openExternalHttpUrl(url); } }
       : {}),

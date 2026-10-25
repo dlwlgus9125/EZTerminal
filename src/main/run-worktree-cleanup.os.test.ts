@@ -8,10 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonCommand, DaemonSnapshot } from '../shared/daemon-protocol';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { PlanningResultRecord } from '../shared/planning-result';
+import { FileService } from './file-service';
 import { resultHash } from './planning-result-repository';
 import { RUN_RETENTION_FILE, RunWorktreeCleanup } from './run-worktree-cleanup';
 import { GitRunner, WorktreeService } from './worktree-service';
 
+/** A 1×1 PNG: bytes a text decoding would break. */
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 const bases = new Set<string>();
 afterEach(async () => {
   for (const base of bases) await fs.rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -45,6 +48,7 @@ async function project(options: { turn?: boolean } = {}) {
   const folder = created.opened.path;
   const baseCommit = git(folder, ['rev-parse', 'HEAD']).trim();
   writeFileSync(path.join(folder, 'README.md'), 'updated\n');
+  writeFileSync(path.join(folder, 'pixel.png'), PIXEL);
   git(folder, ['add', '-A']);
   const tree = git(folder, ['write-tree']).trim();
   const commit = git(folder, ['-c', 'user.name=EZTerminal', '-c', 'user.email=e@localhost', 'commit-tree', tree, '-p', baseCommit, '-m', 'result']).trim();
@@ -64,6 +68,7 @@ async function project(options: { turn?: boolean } = {}) {
   const cleanup = new RunWorktreeCleanup({
     directory: userData, getSnapshot: () => snapshot, runs: () => runs, readResult: async (_projectId, attemptId) => (attemptId === 'A1' ? record : null),
     resultBusy: async () => false, worktrees, git: new GitRunner(),
+    preview: (filePath, handle) => new FileService({ trashItem: async () => undefined }).readFilePreview(filePath, handle),
     executeCommand: vi.fn(async (command: DaemonCommand) => { commands.push(command); return { ok: true, status: 'committed', commandId: command.commandId, revision: 2 } as never; }),
     releaseProviders: async () => undefined, liveTerminalIds: () => new Set(), folderReleaseMs: 0,
   });
@@ -105,6 +110,25 @@ describe('RunWorktreeCleanup (real Git)', () => {
     const moved = await project();
     git(moved.repo, ['update-ref', `refs/ezterminal/results/${resultHash(['P', 'A1'])}`, moved.baseCommit]);
     expect((await moved.cleanup.plan('P')).runs[0]!.folders[0]).toMatchObject({ state: 'kept', reason: expect.stringContaining('does not match') });
+  }, 60_000);
+
+  it('reads a cleaned folder’s files from the run’s kept result, and nothing it cannot vouch for', async () => {
+    const p = await project();
+    expect(await p.cleanup.folderState(p.folder)).toEqual({ cleaned: false });
+    await p.cleanup.cleanup('P', ['r1']);
+    expect(await p.cleanup.folderState(p.folder)).toEqual({ cleaned: true, root: p.folder, result: true });
+    expect(await p.cleanup.readFile(path.join(p.folder, 'README.md'))).toMatchObject({ ok: true, kind: 'text', content: 'updated\n', name: 'README.md' });
+    const image = await p.cleanup.readFile(path.join(p.folder, 'pixel.png'));
+    expect(image).toMatchObject({ ok: true, kind: 'image', mime: 'image/png', width: 1, height: 1 });
+    expect(Buffer.from((image as { bytes: Uint8Array }).bytes).equals(PIXEL)).toBe(true);
+    // A file the result does not hold, a path out of the folder, and the folder itself are not read.
+    expect(await p.cleanup.readFile(path.join(p.folder, 'notes.txt'))).toMatchObject({ ok: false, error: expect.stringContaining('ENOENT') });
+    expect(await p.cleanup.readFile(path.join(p.folder, '..', 'repo', 'README.md'))).toMatchObject({ ok: false });
+    expect(await p.cleanup.readFile(p.folder)).toMatchObject({ ok: false });
+    // Once the shared ref no longer names the recorded result, nothing is read from it.
+    git(p.repo, ['update-ref', `refs/ezterminal/results/${resultHash(['P', 'A1'])}`, p.baseCommit]);
+    expect(await p.cleanup.folderState(p.folder)).toEqual({ cleaned: true, root: p.folder, result: false });
+    expect(await p.cleanup.readFile(path.join(p.folder, 'README.md'))).toMatchObject({ ok: false, error: expect.stringContaining('no result') });
   }, 60_000);
 
   it('offers nothing of the newest three runs', async () => {

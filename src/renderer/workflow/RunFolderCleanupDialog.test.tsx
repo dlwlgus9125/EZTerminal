@@ -29,6 +29,7 @@ describe('RunFolderCleanupDialog', () => {
       plan: vi.fn(async () => ({ ok: true as const, value: plan })),
       cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
       cleanup: vi.fn(async () => ({ ok: true as const, value: { removed: 1, kept: [] } })),
+      folderState: vi.fn(), readFile: vi.fn(),
     };
     const onCleaned = vi.fn();
     await act(async () => root.render(<RunFolderCleanupDialog open onOpenChange={vi.fn()} projectId="P" subprojectId="flow" access={access} text={text} onCleaned={onCleaned} />));
@@ -51,6 +52,7 @@ describe('RunFolderCleanupDialog', () => {
       plan: vi.fn(async () => ({ ok: true as const, value: { runs: [], cleanedRunIds: [] } })),
       cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
       cleanup: vi.fn(),
+      folderState: vi.fn(), readFile: vi.fn(),
     };
     await act(async () => root.render(<RunFolderCleanupDialog open onOpenChange={vi.fn()} projectId="P" subprojectId="flow" access={access} text={text} />));
     expect(document.body.textContent).toContain('There are no work folders to clean up.');

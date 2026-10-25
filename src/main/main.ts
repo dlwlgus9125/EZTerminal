@@ -3225,6 +3225,7 @@ app.on('ready', async () => {
     readResult: (projectId, attemptId) => planningResultService.readResult(projectId, attemptId),
     resultBusy: (projectId, run) => planningResultService.busy(projectId, run),
     worktrees: worktreeService, git: agentCollaborationGitRunner,
+    preview: (filePath, handle) => fileService.readFilePreview(filePath, handle),
     executeCommand: (command) => daemonCommandRouter.execute(command),
     // Archived chats dispose their provider sessions in the background; their processes hold the folder.
     releaseProviders: () => new Promise<void>((resolve) => {

@@ -1,4 +1,4 @@
-import { execFile, type ExecFileOptionsWithStringEncoding } from 'node:child_process';
+import { execFile, type ExecFileOptionsWithBufferEncoding, type ExecFileOptionsWithStringEncoding } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -93,6 +93,23 @@ export class GitRunner {
           return;
         }
         resolve(String(stdout));
+      });
+    });
+  }
+
+  /** Raw stdout (a blob's bytes), refused past `maxBuffer`. */
+  runBytes(cwd: string, args: readonly string[], maxBuffer: number): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const options: ExecFileOptionsWithBufferEncoding = {
+        cwd, encoding: 'buffer', windowsHide: true, shell: false, timeout: this.options.timeoutMs ?? GIT_TIMEOUT_MS, maxBuffer, env: gitEnvironment(),
+      };
+      this.execute('git', [...args], options, (error, stdout, stderr) => {
+        if (error) {
+          const code = (error as NodeJS.ErrnoException & { code?: number | string }).code ?? null;
+          reject(new GitCommandError(args, String(stderr).slice(0, GIT_MAX_BUFFER), code, '', { cause: error }));
+          return;
+        }
+        resolve(stdout);
       });
     });
   }
