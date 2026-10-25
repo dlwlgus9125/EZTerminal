@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d47f42b43f08f627325880c36363d24ee48d96d17009b3dcda7b352ddfc3a21a",
+        "inputDigest": "sha256:72a277d799d4d323872b5765ca95ee180fd061a0b78ef806733257382322d0eb",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3 fixes): main wires the conversation review AI for agent launches; main.ts anchors only moved. Claims hold."
+        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9ee888a2271b51e4c177ad4b0ea136707679b24d7e5d108f6abc922c7fae89f2",
+        "inputDigest": "sha256:788ef99e63245a2553c7c82245c6ff73601030b0e0d9f676994e6e1f5e6f17ed",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3 fixes): main.ts anchors moved by the conversation review AI wiring; lifecycle claims hold."
+        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:66c1da6fcc2f52f4100593900139b67d3b0bf3fb395fc716e5e61ce5d96e7f67",
+        "inputDigest": "sha256:080ebf3a42fee0be0d65aa15ae0c78352cb7959af6642edf68efcbe9631649de",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-3 fixes): main.ts anchors moved; the remote flow replies keep their shape (open launches use the existing execution-unavailable code). Claims hold."
+        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:cab610741c727cd31d77bfa9e7034f9c77241d50bbe3109e48809cb9ac4fdd0c",
+        "inputDigest": "sha256:db91664576b63c8e2a5e41318c56e3c6327455d5d8913f57a7631b5d94852664",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 fixes 2): a board request to run again is bound to the navigation that asked for it and dropped on any other; a one-shot launch param never enters the saved layout. Conversation paths unchanged."
+        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2b93bc628035f377eed892dcdfce2b5143ba71505115f4436ea46077239cc7ec",
-        "decision": "map-updated",
-        "reason": "Reviewed (I2-3 fixes 2): the ledger refuses a second start of one flow and records the refusal with the start, so a refused launch never starts; its clean-up tries new ids past recorded conflicts; damaged planning files settle."
+        "inputDigest": "sha256:3bf1481ce6c0b4a1ce4bbba25c060ef21f41ddbfa0ddaaedb48aac3de9c98487",
+        "decision": "no-semantic-impact",
+        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:eb0ec0676f8474f12d3839af1f1178191150df734f8678777afd6617906556fa",
+        "inputDigest": "sha256:a4dc0da9701c85aec95aed1ebb0c9a84de1d6a79d9e937f62e93488835edf275",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 checkpoint A): every recovery save, autosave too, keeps the request being sent (command until answered, conversation request tagged with its host); stale autosaves before a newer save are dropped. Claims hold."
+        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
     }
   ]

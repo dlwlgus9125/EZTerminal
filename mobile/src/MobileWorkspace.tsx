@@ -904,7 +904,10 @@ export function MobileWorkspace({
     ...agentSnapshot,
     items: agentSnapshot.items.filter((item) => !orchestrationWorkerIds.has(item.id)),
   }), [agentSnapshot, orchestrationWorkerIds]);
-  const agentAttention = countAgentAttention(userFacingAgentSnapshot);
+  // The host's count when it sends one (conversation and flow approvals, blocked terminal agents), the same as the
+  // desktop's; an older host (or a copy kept on this device) leaves the terminal agents' count.
+  const hostAttention = daemonRuntimeState.status === 'ready' ? daemonRuntimeState.snapshot?.attention : undefined;
+  const agentAttention = hostAttention ? hostAttention.items.length : countAgentAttention(userFacingAgentSnapshot);
 
   // Swipe-between-tabs used to live on the tab strip the session sheet
   // replaced. Keeping it on the terminal header preserves the gesture (and

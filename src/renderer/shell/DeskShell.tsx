@@ -11,7 +11,7 @@ import { LiveList, type ShellTerminal, type ShellTool } from './LiveList';
 import { ProjectBoard } from './ProjectBoard';
 import { ShellTopBar } from './ShellTopBar';
 import { projectTabs, type ShellNavigation } from './navigation-store';
-import { flattenConversations, otherProjects, projectConversations, projectFlows, waitingItems, type WaitingItem } from './shell-model';
+import { flattenConversations, hostWaitingItems, otherProjects, projectConversations, projectFlows, type WaitingItem } from './shell-model';
 import { useShellText } from './shell-text';
 import './shell.css';
 
@@ -39,7 +39,7 @@ export interface DeskShellActions {
   readonly newConversation: (project: { readonly projectId: string; readonly name: string } | undefined) => void;
   readonly openHistory: (projectId: string | undefined) => void;
   /** `launch`: the flow screen runs it again (다시 실행) once open, through its own request recovery. */
-  readonly openFlow: (project: { readonly projectId: string; readonly name: string }, subprojectId?: string, options?: { readonly launch?: boolean }) => void;
+  readonly openFlow: (project: { readonly projectId: string; readonly name: string }, subprojectId?: string, options?: { readonly launch?: boolean; readonly nodeId?: string }) => void;
   readonly openTerminal: (panelId: string) => void;
   readonly newTerminal: (project: { readonly projectId: string; readonly name: string } | undefined) => void;
   readonly openTool: (id: string) => void;
@@ -208,8 +208,9 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   } : null), [git, projectId, snapshot]);
   const stageSessions = useMemo(() => new Set((workflow?.sessionLinks ?? []).filter((link) => link.scope === 'stage').map((link) => link.sessionId)), [workflow]);
   const conversations = useMemo(() => (projectId ? projectConversations(snapshot, projectId, { exclude: stageSessions }) : []), [snapshot, projectId, stageSessions]);
-  const allWaiting = useMemo(() => waitingItems(snapshot), [snapshot]);
-  const waiting = useMemo(() => (projectId ? waitingItems(snapshot, projectId) : allWaiting), [snapshot, projectId, allWaiting]);
+  // The host's count when it sends one (flows and terminal agents included), else conversation approvals.
+  const allWaiting = useMemo(() => hostWaitingItems(snapshot), [snapshot]);
+  const waiting = useMemo(() => (projectId ? hostWaitingItems(snapshot, projectId) : allWaiting), [snapshot, projectId, allWaiting]);
   const flows = useMemo(() => projectFlows(workflow), [workflow]);
   const others = useMemo(() => otherProjects(snapshot, projectId), [snapshot, projectId]);
   const terminals = useMemo(() => props.terminals.filter((terminal) => !terminal.projectId || terminal.projectId === projectId), [props.terminals, projectId]);
@@ -218,7 +219,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
   const waitingByProject = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const item of allWaiting) {
-      const owner = sessionProject(item.sessionId);
+      const owner = item.projectId ?? sessionProject(item.sessionId);
       if (owner) counts[owner] = (counts[owner] ?? 0) + 1;
     }
     return counts;
@@ -242,6 +243,16 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     // The opening helper decides visibility (a tab living in a popout leaves the board alone).
     actions.openConversation(sessionId, title, { preview });
   }, [actions, snapshot]);
+  // A waiting item opens where it is answered: its conversation, its flow at the waiting stage, or 받은 요청.
+  const openWaiting = useCallback((item: WaitingItem): void => {
+    if (item.kind === 'terminal-agent') { actions.openInbox(); return; }
+    if (item.kind === 'flow-approval') {
+      const owner = projects?.find((candidate) => candidate.projectId === item.projectId);
+      if (owner && item.flow) { actions.openFlow({ projectId: owner.projectId, name: owner.name }, item.flow.subprojectId, { nodeId: item.flow.nodeId }); navigation.showWork(); }
+      return;
+    }
+    openConversation(item.sessionId);
+  }, [actions, navigation, openConversation, projects]);
 
   const decide = useCallback(async (item: WaitingItem, decision: 'allow' | 'deny'): Promise<{ readonly ok: boolean; readonly message?: string }> => {
     try {
@@ -280,13 +291,14 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
       selectedProjectId={projectId}
       waitingByProject={waitingByProject}
       stoppedProjects={stoppedProjects}
-      waitingTotal={allWaiting.length + props.externalWaiting}
+      // Terminal agents are in the host's count when it sends one; their done/error notices stay in 받은 요청.
+      waitingTotal={snapshot?.attention ? allWaiting.length : allWaiting.length + props.externalWaiting}
       host={props.host}
       updateAvailable={props.updateAvailable}
       settingsActive={props.activeTool === 'settings'}
       onSelectProject={(id) => navigation.showBoard(id)}
       onAddProject={actions.openProjects}
-      onWaits={() => { const first = waiting[0] ?? allWaiting[0]; if (first) openConversation(first.sessionId); else actions.openInbox(); }}
+      onWaits={() => { const first = waiting[0] ?? allWaiting[0]; if (first) openWaiting(first); else actions.openInbox(); }}
       onFind={actions.openFind}
       onHost={actions.openRemote}
       onSettings={actions.openSettings}
@@ -310,7 +322,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
       onBoard={() => navigation.showBoard()}
       onOpenConversation={(sessionId) => openConversation(sessionId)}
       onNewConversation={() => { actions.newConversation(projectRef); navigation.showWork(); }}
-      onOpenWaiting={(item) => openConversation(item.sessionId)}
+      onOpenWaiting={openWaiting}
       onInbox={actions.openInbox}
       onOpenFlow={(subprojectId) => { if (projectRef) actions.openFlow(projectRef, subprojectId); }}
       onOpenTerminal={(panelId) => actions.openTerminal(panelId)}
@@ -329,6 +341,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
         conversations={conversations}
         terminals={terminals}
         waiting={waiting}
+        onOpenWaiting={openWaiting}
         others={others}
         changes={changes}
         startBar={project ? (

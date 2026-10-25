@@ -74,10 +74,14 @@ function hash(value: unknown): string {
  * integration once it completed with no pending gate. Nothing for a person's run, or one the
  * person paused or cancelled.
  */
+/** The ledger command id of the host's automatic decision on one approval stage (its receipt records a refusal). */
+export function autoApprovalCommandId(runId: string, activationId: string): string {
+  return `auto-approve-${hash([runId, activationId]).slice(0, 32)}`;
+}
 export function autoApprovalCommands(run: ExecutionRun): Array<{ readonly commandId: string; readonly type: 'workflow.approve' | 'workflow.integrate'; readonly payload: Record<string, unknown> }> {
   if (run.preparation.approvalPolicy !== 'auto' || run.cancelRequested || run.dispatchPaused) return [];
   const approvals = (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval')
-    .map((activation) => ({ commandId: `auto-approve-${hash([run.runId, activation.id]).slice(0, 32)}`, type: 'workflow.approve' as const,
+    .map((activation) => ({ commandId: autoApprovalCommandId(run.runId, activation.id), type: 'workflow.approve' as const,
       payload: { activationId: activation.id, decision: 'approve' } }));
   const integrate = run.preparation.workflow && run.state === 'completed' && !run.integrationAuthorized && !run.gates.some((gate) => gate.state === 'pending')
     ? [{ commandId: `auto-integrate-${hash([run.runId]).slice(0, 32)}`, type: 'workflow.integrate' as const, payload: {} }]

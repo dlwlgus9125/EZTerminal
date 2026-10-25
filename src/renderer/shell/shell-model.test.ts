@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { shellSnapshot, shellWorkflow } from './shell-fixtures';
-import { otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
+import { hostWaitingItems, otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
 
 describe('projectConversations', () => {
   it('lists a project\'s conversations newest first with provider subagents nested under their parent', () => {
@@ -39,6 +39,30 @@ describe('waitingItems', () => {
     ]);
     expect(waitingItems(shellSnapshot(), 'p-garnet')).toEqual([]);
     expect(waitingItems(shellSnapshot({ waiting: false }))).toEqual([]);
+  });
+});
+
+describe('hostWaitingItems', () => {
+  const attention = {
+    version: 1 as const, digest: 'd',
+    items: [
+      { id: 'flow-1', kind: 'flow-approval' as const, projectId: 'p-ez', title: '승인', since: '2026-10-25T09:00:00.000Z', subprojectId: 'login', nodeId: 'login:approval', runId: 'run-4', activationId: 'act-1' },
+      { id: 'agent-1', kind: 'terminal-agent' as const, projectId: 'p-garnet', title: 'claude', since: '2026-10-25T08:00:00.000Z', activityId: 'activity-1' },
+      { id: 'approval-x', kind: 'approval' as const, projectId: 'p-ez', title: 'ignored: conversations come from the approvals', since: '2026-10-25T07:00:00.000Z' },
+    ],
+  };
+
+  it('is the conversation approvals alone for an older host', () => {
+    expect(hostWaitingItems(shellSnapshot(), 'p-ez')).toEqual(waitingItems(shellSnapshot(), 'p-ez'));
+  });
+
+  it('adds the flow approvals and blocked terminal agents the host counts, by project, newest first', () => {
+    const snapshot = { ...shellSnapshot(), attention };
+    const ez = hostWaitingItems(snapshot, 'p-ez');
+    expect(ez.map((item) => item.kind)).toEqual(['flow-approval', ...waitingItems(snapshot, 'p-ez').map((item) => item.kind)]);
+    expect(ez[0]).toMatchObject({ approvalId: 'flow-1', sessionId: '', projectId: 'p-ez', title: '승인', flow: { subprojectId: 'login', nodeId: 'login:approval' } });
+    expect(hostWaitingItems(snapshot, 'p-garnet').map((item) => item.kind)).toEqual(['terminal-agent']);
+    expect(hostWaitingItems(snapshot)).toHaveLength(waitingItems(snapshot).length + 2);
   });
 });
 

@@ -34,6 +34,8 @@ export interface ProjectBoardProps {
   readonly startBar?: ReactNode;
   readonly changes?: BoardChanges | null;
   readonly onOpenConversation: (sessionId: string) => void;
+  /** Opens a waiting item where it is answered (a flow approval, a terminal agent); its conversation when absent. */
+  readonly onOpenWaiting?: (item: WaitingItem) => void;
   readonly onOpenFlow: (subprojectId: string) => void;
   /** 다시 실행 from the board (absent where the host cannot take it in one request). */
   readonly onRunAgain?: (subprojectId: string) => void;
@@ -79,9 +81,9 @@ function WaitingCard({ item, onDecide, onOpen }: {
   const decidable = item.kind === 'command' || item.kind === 'file-change' || item.kind === 'tool';
   return (
     <article className="ez-shell-need" aria-label={`${waitingKindText(item.kind, text)}: ${item.title}`} data-testid="shell-need" data-kind={item.kind}>
-      <div className="ez-shell-need__k"><Glyph name={item.kind === 'question' ? 'q' : 'ok'} size={14} />{waitingKindText(item.kind, text)} · {providerName(item.providerId)}</div>
+      <div className="ez-shell-need__k"><Glyph name={item.kind === 'question' ? 'q' : 'ok'} size={14} />{waitingKindText(item.kind, text)}{item.providerId ? ` · ${providerName(item.providerId)}` : ''}</div>
       <p className="ez-shell-need__t">{item.title}</p>
-      {item.kind === 'command' ? <pre className="ez-shell-need__c">{item.detail}</pre> : <p className="ez-shell-need__q">{item.detail}</p>}
+      {item.kind === 'command' ? <pre className="ez-shell-need__c">{item.detail}</pre> : item.detail && <p className="ez-shell-need__q">{item.detail}</p>}
       <div className="ez-shell-btns">
         {decidable ? (
           <>
@@ -90,7 +92,9 @@ function WaitingCard({ item, onDecide, onOpen }: {
             <button type="button" className="ez-shell-btn" data-tone="flat" onClick={onOpen}>{text('대화 열기', 'Open conversation')}</button>
           </>
         ) : (
-          <button type="button" className="ez-shell-btn" onClick={onOpen} data-testid="shell-need-answer">{item.kind === 'question' ? text('답하기', 'Answer') : text('대화 열기', 'Open conversation')}</button>
+          <button type="button" className="ez-shell-btn" onClick={onOpen} data-testid="shell-need-answer">{item.kind === 'question' ? text('답하기', 'Answer')
+            : item.kind === 'flow-approval' ? text('승인 보기', 'Review approval')
+              : item.kind === 'terminal-agent' ? text('받은 요청 보기', 'Open requests') : text('대화 열기', 'Open conversation')}</button>
         )}
       </div>
       {error && <p className="ez-shell-need__error" role="alert">{error}</p>}
@@ -190,7 +194,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
           <h2><Glyph name="req" size={16} />{text('나를 기다리는 것', 'Waiting for me')}<span className="ez-shell-n">{props.waiting.length}</span></h2>
           {props.waiting.length === 0 && <p className="ez-shell-empty">{text('지금 기다리는 것이 없습니다.', 'Nothing is waiting for you.')}</p>}
           {props.waiting.map((item) => (
-            <WaitingCard key={item.approvalId} item={item} onDecide={props.onDecide} onOpen={() => props.onOpenConversation(item.sessionId)} />
+            <WaitingCard key={item.approvalId} item={item} onDecide={props.onDecide} onOpen={() => (props.onOpenWaiting ? props.onOpenWaiting(item) : props.onOpenConversation(item.sessionId))} />
           ))}
           {props.others.length > 0 && <h2><Glyph name="proj" size={16} />{text('다른 프로젝트', 'Other projects')}</h2>}
           {props.others.slice(0, 3).map((project) => (

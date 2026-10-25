@@ -191,6 +191,12 @@ export class PlanningExecutionStore {
     }));
   }
 
+  /** Projects that have execution runs (for the host's own reads, such as what waits on the person). */
+  projectIds(): string[] {
+    return this.authority.readPlanningExecution((database) => (database.prepare('SELECT DISTINCT project_id FROM planning_execution_runs ORDER BY project_id')
+      .all() as unknown as Array<{ project_id: string }>).map((row) => String(row.project_id)));
+  }
+
   /** Read-only reconciliation; clients never resend an uncertain command under a new ID. */
   getReceipt(projectId: string, commandId: string): PlanningExecutionReceipt | null {
     return this.authority.readPlanningExecution((database) => {

@@ -3146,7 +3146,7 @@ export function App(): JSX.Element {
       newConversation: (project) => { openStructuredAgentDraft(project); },
       openHistory: (projectId) => setConversationHistory(projectId ? { projectId } : {}),
       openFlow: (project, subprojectId, options) => {
-        if (subprojectId) planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, undefined, options?.launch);
+        if (subprojectId) planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, options?.nodeId, options?.launch);
         else openPlanningProject(project);
       },
       openInbox: () => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); },

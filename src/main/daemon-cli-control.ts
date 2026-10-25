@@ -383,6 +383,8 @@ export class DaemonCliControl {
       ...snapshot.schedules.filter((schedule) => scope.workspaceIds.has(schedule.workspaceId)).map((schedule) => schedule.providerId),
     ]);
     const { agentUsage, providerUsage, ...rest } = snapshot;
+    // What waits on the person spans every project and is the person's own: not for a project-scoped agent.
+    delete (rest as { attention?: unknown }).attention;
     const scopedUsage = agentUsage
       ? Object.fromEntries(Object.entries(agentUsage).filter(([sessionId]) => scope.sessionIds.has(sessionId)))
       : {};

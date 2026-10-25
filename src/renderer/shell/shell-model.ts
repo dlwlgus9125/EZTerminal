@@ -26,15 +26,20 @@ export interface LiveConversation {
 }
 
 export interface WaitingItem {
+  /** The conversation approval, or the host's item id for a flow approval or a terminal agent. */
   readonly approvalId: string;
+  /** The conversation that waits; empty for a flow approval or a terminal agent. */
   readonly sessionId: string;
-  /** The conversation that waits (the parent when a subagent asked). */
+  /** The conversation that waits (the parent when a subagent asked), the stage, or the terminal agent. */
   readonly title: string;
   readonly providerId: string;
-  readonly kind: 'command' | 'file-change' | 'tool' | 'question' | 'plan' | 'other';
+  readonly kind: 'command' | 'file-change' | 'tool' | 'question' | 'plan' | 'other' | 'flow-approval' | 'terminal-agent';
   /** One line: the command, the file, the question. */
   readonly detail: string;
   readonly at: string;
+  /** Where a flow approval or a terminal agent waits (a conversation's project comes from its session). */
+  readonly projectId?: string;
+  readonly flow?: { readonly subprojectId: string; readonly nodeId: string };
 }
 
 export type StageLamp = 'done' | 'run' | 'wait' | 'idle' | 'fail';
@@ -139,6 +144,26 @@ export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string
       }];
     })
     .sort((left, right) => right.at.localeCompare(left.at));
+}
+
+/**
+ * Everything that waits on the person: the conversation approvals above, plus what the host counts besides them
+ * (flow approval stages, blocked terminal agents) when it sends `attention` (src/shared/host-attention.ts). An older
+ * host sends none: its flow approvals stay on the flow and its terminal agents in 받은 요청.
+ */
+export function hostWaitingItems(snapshot: DaemonSnapshot | null, projectId?: string): WaitingItem[] {
+  const conversations = waitingItems(snapshot, projectId);
+  const attention = snapshot?.attention;
+  if (!attention) return conversations;
+  const others = attention.items.flatMap((item): WaitingItem[] => {
+    if ((item.kind !== 'flow-approval' && item.kind !== 'terminal-agent') || (projectId && item.projectId !== projectId)) return [];
+    return [{
+      approvalId: item.id, sessionId: '', title: item.title, providerId: '', kind: item.kind, detail: '', at: item.since,
+      ...(item.projectId ? { projectId: item.projectId } : {}),
+      ...(item.kind === 'flow-approval' && item.subprojectId && item.nodeId ? { flow: { subprojectId: item.subprojectId, nodeId: item.nodeId } } : {}),
+    }];
+  });
+  return [...conversations, ...others].sort((left, right) => right.at.localeCompare(left.at));
 }
 
 function stageLamp(status: WorkflowNodeRunStatus | undefined): StageLamp {

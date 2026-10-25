@@ -54,6 +54,8 @@ export interface DaemonCommandRouterOptions {
   readonly now?: () => Date;
   /** Usage for the snapshot's conversations and providers, kept beside the store. */
   readonly agentUsage?: (snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>) => Pick<DaemonSnapshot, 'agentUsage' | 'providerUsage'>;
+  /** What waits on the person (src/main/host-attention-service.ts); none until the host computes it. */
+  readonly attention?: (snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'approvals'>) => DaemonSnapshot['attention'];
 }
 
 function commandError(
@@ -166,6 +168,7 @@ export class DaemonCommandRouter {
   private readonly handlers: Partial<Record<DaemonCommandType, DaemonCommandHandler>>;
   private readonly now: () => Date;
   private readonly agentUsage: DaemonCommandRouterOptions['agentUsage'];
+  private readonly attention: DaemonCommandRouterOptions['attention'];
   private acceptingCommands = true;
 
   constructor(
@@ -175,12 +178,18 @@ export class DaemonCommandRouter {
     this.handlers = options.handlers ?? {};
     this.now = options.now ?? (() => new Date());
     this.agentUsage = options.agentUsage;
+    this.attention = options.attention;
   }
 
   getSnapshot(): DaemonSnapshot {
     const snapshot = this.store.getSnapshot();
     const usage = this.agentUsage?.(snapshot);
-    return usage && (usage.agentUsage || usage.providerUsage) ? { ...snapshot, ...usage } : snapshot;
+    const attention = this.attention?.(snapshot);
+    return {
+      ...snapshot,
+      ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
+      ...(attention ? { attention } : {}),
+    };
   }
 
   /**

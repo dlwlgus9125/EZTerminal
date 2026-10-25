@@ -244,16 +244,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 2055,
-          "endLine": 2104,
+          "startLine": 2060,
+          "endLine": 2109,
           "lineDigest": "sha256:6d1e43fe7176736977a5bcd58d409d25d26377a5eba237fb282c450f74b11a2f",
           "claim": "Only after Project preflight and ordered MCP, Agent, and automation startup does main publish ready availability; any failure is cleaned up and latched as terminal-only safe mode."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1573,
-          "endLine": 1683,
+          "startLine": 1578,
+          "endLine": 1688,
           "lineDigest": "sha256:f7370e46d70e7d0705763f51e9508b7bf8425b72581f70db23ce9332994bdeb9",
           "claim": "The closeable Project FIFO serializes discovery and fresh-snapshot sync, propagates cancellation, and passes reactivation ids only for explicit user intent."
         }
@@ -271,24 +271,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 217,
-          "endLine": 248,
+          "startLine": 226,
+          "endLine": 257,
           "lineDigest": "sha256:bfaa739fa5148e0281ecdc518bb0e6322811862a6ba5db2a83793560a584861c",
           "claim": "The router strictly parses every command, serializes accepted work, and can close external ingress without discarding its accepted FIFO prefix."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 366,
-          "endLine": 452,
+          "startLine": 375,
+          "endLine": 461,
           "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
           "claim": "Authorization, idempotency, outbox delivery state, durable commit, and event publication remain inside one exclusive command transaction."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 250,
-          "endLine": 259,
+          "startLine": 259,
+          "endLine": 268,
           "lineDigest": "sha256:d58fef03bf6d17c6363c2fc592862f46b409e57291182888d372a06712680480",
           "claim": "A system transition planner derives its commit from the fresh snapshot only after entering the same serialized router gate."
         }
@@ -656,8 +656,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-cli-control.ts",
-          "startLine": 1180,
-          "endLine": 1206,
+          "startLine": 1182,
+          "endLine": 1208,
           "lineDigest": "sha256:c4fe99c3ffbbe0e6091a084c816270f21c5388e8230b06fd909ff39769d71bba",
           "claim": "CLI mutations receive a Session-bound CLI principal and current expected revision, then execute through the shared daemon authority with bounded conflict retries."
         }
@@ -673,9 +673,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 967,
-          "endLine": 1064,
-          "lineDigest": "sha256:b508ec3babc2feb8f230f852bbcbab5afc94072d4d3e6be4de1c3dd1c3906500",
+          "startLine": 971,
+          "endLine": 1069,
+          "lineDigest": "sha256:7daa20e08a1ce66fdddb3fb564d9ba0970328eca250d85a71ea6b89ed7e1b0c7",
           "claim": "One provider runtime receives durable SQLite transitions, a usage file, frozen execution settings, workflow MCP admission, archived-conversation checks, stage references, a host command path for reports and subagent-record checks."
         }
       ]
@@ -690,8 +690,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1895,
-          "endLine": 2050,
+          "startLine": 1900,
+          "endLine": 2055,
           "lineDigest": "sha256:aec722e17dc73aaec4827ac9482ffae3d2cc86e067a25fb7d978d0dbf168b54f",
           "claim": "The Project FIFO persists approval or revocation intent before changing daemon authority, finalizes consent afterward, compensates failed approval, and recovers pending work before provider startup."
         }
@@ -724,8 +724,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 381,
-          "endLine": 451,
+          "startLine": 390,
+          "endLine": 460,
           "lineDigest": "sha256:d16089a5ac01092a0791a46c15e041b93e1217385289b7c630c4ae779b03ce6c",
           "claim": "The router binds idempotency, persists provider-dispatch intent, atomically commits or rejects the command, then publishes resulting events."
         },
@@ -757,16 +757,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1743,
-          "endLine": 1873,
+          "startLine": 1748,
+          "endLine": 1878,
           "lineDigest": "sha256:f413e4b30da9c13756c3aa31a25071a66eeb6ae3d5134eb739c9277499ee2dd8",
           "claim": "Project save stops active orchestration when authority shrinks, retires obsolete daemon descendants and capabilities, clears removed consent and auxiliary authority, then publishes and explicitly reactivates the replacement."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1954,
-          "endLine": 1992,
+          "startLine": 1959,
+          "endLine": 1997,
           "lineDigest": "sha256:74a21e03bc0ef6f81e53fdbb270edc7a2757b88d7d971b4f2c949b7192d70c50",
           "claim": "Full removal stops Project runs, applies the fail-closed daemon transition, revokes MCP and Agent-control tokens, and only then removes consent, coordination, orchestration, and history records."
         }
@@ -832,8 +832,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/daemon-command-router.ts",
-          "startLine": 489,
-          "endLine": 571,
+          "startLine": 498,
+          "endLine": 580,
           "lineDigest": "sha256:880318b4a5b8a3fea1ea03e2c5bf988b8e31689ebd68ab6079d6fda532e0722c",
           "claim": "Project archive atomically archives child Workspaces, while Session creation admits only a Workspace under the requested active Project."
         }
@@ -866,8 +866,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1690,
-          "endLine": 1722,
+          "startLine": 1695,
+          "endLine": 1727,
           "lineDigest": "sha256:728754d16151caf1a2b19853510b8e39805fa085d413023c8d4b6da122f37d4e",
           "claim": "Launch, resume, and Project or worker activity records enter the same main-owned FIFO; only direct-directory launch conveys explicit Project re-registration intent before sync."
         },
@@ -899,9 +899,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 967,
-          "endLine": 1020,
-          "lineDigest": "sha256:92d9d20b48965a33b7813d0b16562bfc01fda602385a0b07454d6f286d49df58",
+          "startLine": 971,
+          "endLine": 1025,
+          "lineDigest": "sha256:6c30e9b96327bd04a0aff1665bbdce96f59f757b0bd50b3a18b6827019b6889f",
           "claim": "One provider runtime receives durable SQLite transitions, a usage file, frozen execution settings, workflow MCP admission, archived-conversation checks, stage references, a host command path for reports and subagent-record checks."
         },
         {
@@ -1075,8 +1075,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/main.ts",
-          "startLine": 1565,
-          "endLine": 1571,
+          "startLine": 1570,
+          "endLine": 1576,
           "lineDigest": "sha256:45e1aa66606870c1719bd6ca9c34b7fa825b62f74f061c3f806d7ee7d865f812",
           "claim": "Main binds the history service to the existing daemon, SQLite store, provider runtime and lightweight workflow lineage service."
         }

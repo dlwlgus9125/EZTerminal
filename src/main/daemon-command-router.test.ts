@@ -70,6 +70,23 @@ describe('DaemonCommandRouter', () => {
     }
   });
 
+  it('adds what waits on the person to the snapshot once the host computes it', async () => {
+    const attention = { version: 1 as const, digest: 'digest-1', items: [] };
+    let current: typeof attention | undefined;
+    const seen: number[] = [];
+    const { store, router } = await runtime({ attention: (snapshot) => { seen.push(snapshot.approvals.length); return current; } });
+    try {
+      expect(router.getSnapshot()).not.toHaveProperty('attention');
+      current = attention;
+      const merged = router.getSnapshot();
+      expect(merged.attention).toEqual(attention);
+      expect({ ...merged, attention: undefined, generatedAt: '' }).toEqual({ ...store.getSnapshot(), generatedAt: '' });
+      expect(seen).toEqual([0, 0]);
+    } finally {
+      await store.close();
+    }
+  });
+
   it('applies core hierarchy commands and publishes committed events', async () => {
     const { store, router } = await runtime();
     const events: string[] = [];

@@ -82,6 +82,8 @@ test('one canvas: run the saved flow, approve, open the working stage conversati
     // The approval stage waits on the same canvas, and the run bar offers the jump to it.
     const gate = workspace.locator('.react-flow__node[data-id="gate"] .workflow-node-card');
     await expect(gate).toHaveAttribute('data-run-state', 'awaiting-approval', { timeout: 30_000 });
+    // The host counts the waiting stage for every screen: the top bar shows it (the phone's badge reads the same).
+    await expect(page.getByTestId('shell-top-waits')).toContainText(/기다리는 것 1|1 waiting/u, { timeout: 15_000 });
     // While the run goes on, 다시 실행 waits and says why.
     await expect(bar.getByTestId('workflow-run-again')).toBeDisabled();
     await page.screenshot({ path: path.join(evidence, '02-awaiting-approval.png') });
@@ -90,6 +92,7 @@ test('one canvas: run the saved flow, approve, open the working stage conversati
     await expect(panel.getByTestId('workflow-stage-approval')).toBeVisible();
     await panel.getByTestId('workflow-stage-approval').getByRole('button', { name: /^(승인|Approve)$/u }).click();
     await expect(gate).toHaveAttribute('data-run-state', 'completed', { timeout: 30_000 });
+    await expect(page.getByTestId('shell-top-waits')).toHaveCount(0, { timeout: 15_000 });
 
     // The AI stage starts; its panel opens the conversation it works in.
     const build = workspace.locator('.react-flow__node[data-id="build"]');

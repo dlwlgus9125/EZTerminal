@@ -123,6 +123,14 @@ describe('DaemonCliControl', () => {
     expect(foreignOnly).not.toHaveProperty('agentUsage');
   });
 
+  it('keeps what waits on the person out of a project-scoped snapshot', async () => {
+    const { control, setSnapshot } = fixture();
+    const item = { id: 'approval-x', kind: 'approval' as const, projectId: 'project-2', title: 'Elsewhere', since: '2026-10-25T00:00:00.000Z' };
+    setSnapshot({ ...snapshot(), attention: { version: 1, digest: 'digest', items: [item] } });
+    const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(scoped).not.toHaveProperty('attention');
+  });
+
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
     const { control } = fixture();
     const projects = await control.handle('/v1/daemon/projects', {}, source);

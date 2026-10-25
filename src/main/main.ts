@@ -50,7 +50,8 @@ import { AgentCapabilityService } from './agent-capability-service';
 import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient } from '../shared/agent-capabilities';
 import { installPlanningIpc } from './planning-ipc';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { PlanningRunService } from './planning-run-service';
+import { PlanningRunService, autoApprovalCommandId } from './planning-run-service';
+import { HostAttentionService } from './host-attention-service';
 import { PlanningRunAuthority } from './planning-run-authority';
 import { installPlanningRunIpc } from './planning-run-ipc';
 import { PlanningResultService } from './planning-result-service';
@@ -90,6 +91,7 @@ import type {
   AgentProviderRef,
   CollaborationPolicy
 } from '../shared/agent-orchestration';
+import { orchestrationWorkerActivityIds } from '../shared/agent-orchestration';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
 import { APP_RENDERER_ORIGIN } from '../shared/desktop-window';
 import type {
@@ -923,6 +925,8 @@ app.on('ready', async () => {
     claudeProviderAdapter,
   ]);
   const daemonRouterRef: { current?: DaemonCommandRouter; } = {};
+  // Created once the planning ledger and the agent services exist (below); the snapshot carries it from then on.
+  const hostAttentionRef: { current?: HostAttentionService } = {};
   const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService; ai?: PlanningAiService } = {};
   const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
   // The worktree service starts after the orchestration server; agents reach it through this.
@@ -1017,6 +1021,7 @@ app.on('ready', async () => {
   });
   const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
     agentUsage: (snapshot) => daemonAgentRuntime.agentUsage(snapshot),
+    attention: (snapshot) => hostAttentionRef.current?.attention(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),
@@ -3786,6 +3791,27 @@ app.on('ready', async () => {
   trackLocalAgentStackSubscription(agentActivityService.onSnapshot((snapshot) => {
     powerSaveGuard.set('terminal-agents', terminalAgentsWorking(snapshot.items));
   }));
+  // 나를 기다리는 것: one count for every screen. Flow approvals and terminal agents move no daemon revision, so a
+  // change in them is announced (an events-only commit makes every client read the snapshot again).
+  const hostAttention = new HostAttentionService({
+    projectIds: () => planningExecutionStore.projectIds(),
+    readRuns: (projectId) => planningExecutionStore.read(projectId).runs,
+    autoApprovalRefused: (projectId, runId, activationId) => planningExecutionStore.getReceipt(projectId, autoApprovalCommandId(runId, activationId))?.ok === false,
+    terminalAgents: () => agentActivityService?.getSnapshot().items ?? [],
+    orchestrationWorkers: () => (agentOrchestrationService ? orchestrationWorkerActivityIds(agentOrchestrationService.getSnapshot()) : new Set<string>()),
+    announce: async () => {
+      await daemonCommandRouter.applySystemCommit({ events: [{ kind: 'entity.upserted', payload: { entityType: 'attention', entityId: 'host' } }] });
+    },
+    reportError: (error) => {
+      console.error('[main] host attention:', error);
+      mainLog?.line(`host attention: ${String(error)}`);
+    },
+  });
+  hostAttentionRef.current = hostAttention;
+  planningExecutionStore.onCommitted((projectId) => hostAttention.projectChanged(projectId));
+  trackLocalAgentStackSubscription(agentActivityService.onSnapshot(() => hostAttention.terminalsChanged()));
+  trackLocalAgentStackSubscription(agentOrchestrationService.onSnapshot(() => hostAttention.terminalsChanged()));
+  trackLocalAgentStackSubscription(() => { hostAttentionRef.current = undefined; hostAttention.close(); });
   trackLocalAgentStackSubscription(() => powerSaveGuard.dispose());
   const structuredAgentNotices = new StructuredAgentNoticeTracker();
   structuredAgentNotices.observe(daemonCommandRouter.getSnapshot());

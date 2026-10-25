@@ -259,6 +259,8 @@ export interface DaemonSnapshot {
   readonly agentUsage?: Readonly<Record<string, import('./agent-usage').AgentUsage>>;
   /** Plan limits last reported per provider id, for a conversation that has not started yet. */
   readonly providerUsage?: Readonly<Record<string, import('./agent-usage').AgentUsage>>;
+  /** What waits on the person, computed by the host (src/shared/host-attention.ts); absent on older hosts. */
+  readonly attention?: import('./host-attention').HostAttention;
 }
 
 export const DAEMON_COMMAND_TYPES = [
@@ -522,7 +524,8 @@ export type DaemonCommandReceipt =
 
 export interface DaemonEventPayloads {
   readonly 'entity.upserted': {
-    readonly entityType: 'project' | 'workspace' | 'session' | 'agent' | 'relation' | 'turn' | 'approval' | 'provider' | 'schedule' | 'schedule-run' | 'heartbeat';
+    /** `attention`: what waits on the person changed without another entity (a flow approval, a terminal agent). */
+    readonly entityType: 'project' | 'workspace' | 'session' | 'agent' | 'relation' | 'turn' | 'approval' | 'provider' | 'schedule' | 'schedule-run' | 'heartbeat' | 'attention';
     readonly entityId: string;
   };
   readonly 'entity.archived': { readonly entityType: 'project' | 'workspace' | 'session'; readonly entityId: string };

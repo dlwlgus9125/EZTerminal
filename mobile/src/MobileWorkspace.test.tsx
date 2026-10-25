@@ -555,6 +555,20 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     expect(store.load).not.toHaveBeenCalledWith(pairingFingerprint);
   });
 
+  it('badges what the host says waits on the person', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const items = [
+      { id: 'approval-1', kind: 'approval' as const, projectId: 'project-1', title: 'Fix login', since: '2026-10-25T01:00:00.000Z' },
+      { id: 'flow-1', kind: 'flow-approval' as const, projectId: 'project-1', title: 'Go-ahead', since: '2026-10-25T02:00:00.000Z' },
+    ];
+    const authority = daemonSnapshot({ attention: { version: 1, digest: 'digest-1', items } });
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    const el = await renderWorkspace(transport);
+    await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    await flushAsync();
+    expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')?.textContent).toBe('2');
+  });
+
   it('rechecks a transient secure-storage failure from the inline retry action', async () => {
     const { transport, socket } = makeAuthedTransport();
     const authority = daemonSnapshot();
