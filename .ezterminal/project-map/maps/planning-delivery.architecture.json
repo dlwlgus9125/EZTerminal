@@ -274,9 +274,9 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
           "startLine": 190,
-          "endLine": 389,
-          "lineDigest": "sha256:2845f6353fc683abc5b2b32f032eef481bcce4e02db6765c0bedd0739790333f",
-          "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy into the ledger; agents cannot approve or integrate; fingerprints stop changed replays."
+          "endLine": 392,
+          "lineDigest": "sha256:48b3a884ab36a48deab60dca3fa079401a464a2a793b54bc2519076e96995294",
+          "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy; agents cannot approve or integrate; the repeat schedule only launches."
         },
         {
           "rootAlias": "app",
@@ -300,8 +300,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 159,
-          "endLine": 259,
+          "startLine": 160,
+          "endLine": 260,
           "lineDigest": "sha256:84461829e38ee9327a5a0ef2bd2bd121a426b0d87e32b594394bae891076e729",
           "claim": "SQLite savepoints persist command identity, revisions and run state together; reads apply stage bindings over the verified preparation; new receipts and restart recoveries notify listeners after the write; it lists projects with runs."
         }
@@ -319,16 +319,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 598,
-          "endLine": 664,
+          "startLine": 601,
+          "endLine": 667,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 598,
-          "endLine": 703,
+          "startLine": 601,
+          "endLine": 706,
           "lineDigest": "sha256:245a107024462c92ac6ba78518cae026848ba1499849218f52b9a414a80a3689",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
@@ -417,9 +417,9 @@
           "rootAlias": "app",
           "relativePath": "src/main/project-archive-service.ts",
           "startLine": 307,
-          "endLine": 371,
-          "lineDigest": "sha256:e0202d101eb4f585e452cac42d7cdeea796ea5aef7e2cdecde0b946ceae435c6",
-          "claim": "Restore imports scoped planning and the workflow registry into a new project, retains session links as historical only, and rejects changed partial restores."
+          "endLine": 373,
+          "lineDigest": "sha256:1304d90a57b59fe816ad462b3f80d1a6f8be702e2a37d02158b3cae69f13d08b",
+          "claim": "Restore imports scoped planning and the workflow registry into a new project with 반복 off, retains session links as historical only, and rejects changed partial restores."
         }
       ]
     }
@@ -470,9 +470,9 @@
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
           "startLine": 190,
-          "endLine": 389,
-          "lineDigest": "sha256:2845f6353fc683abc5b2b32f032eef481bcce4e02db6765c0bedd0739790333f",
-          "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy into the ledger; agents cannot approve or integrate; fingerprints stop changed replays."
+          "endLine": 392,
+          "lineDigest": "sha256:48b3a884ab36a48deab60dca3fa079401a464a2a793b54bc2519076e96995294",
+          "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy; agents cannot approve or integrate; the repeat schedule only launches."
         }
       ]
     },
@@ -486,8 +486,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-execution-store.ts",
-          "startLine": 159,
-          "endLine": 259,
+          "startLine": 160,
+          "endLine": 260,
           "lineDigest": "sha256:84461829e38ee9327a5a0ef2bd2bd121a426b0d87e32b594394bae891076e729",
           "claim": "SQLite savepoints persist command identity, revisions and run state together; reads apply stage bindings over the verified preparation; new receipts and restart recoveries notify listeners after the write; it lists projects with runs."
         }
@@ -503,8 +503,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 598,
-          "endLine": 664,
+          "startLine": 601,
+          "endLine": 667,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }

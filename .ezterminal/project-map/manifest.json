@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0216e05831d68b0e1d04a04f10925061708e89b9008056679b3bb53cf67c4940",
+        "inputDigest": "sha256:a6522c0db2125c3354b5f82e864ac5b03c7cbf65a283ddd73318230a2a80bb74",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
+        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:fde162b021fbb0eb6df999f59f263a44a4e1f94c9b277fa4b7d0c0d6b2266d3e",
+        "inputDigest": "sha256:6e683ad20c007f7e6669a6aa000279884a09f572adda0b892dda927192aa1006",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
+        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c70cf2256e3afd7f2d81c64ca227764333a1995edc24faa64cc266c5ae8ba00a",
+        "inputDigest": "sha256:9fbcde19a263e306b583dc9e17e76e3b17b92c7343b96a57a33839281972b73c",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
+        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3fa8338b2fa4d2fbe6e90fbfef5ba849dd36e51948fcb8f2752cd167b8addcd6",
+        "inputDigest": "sha256:d5ab32c86008af85d51cffdcac4e9a085fff2bea7ae4d40498f5250ae549f042",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
+        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:28e352924c3584161ca97c52b4ea0cbd2085d20044740215617f619c2c8d9d0d",
+        "inputDigest": "sha256:9b57441719dc58963ff4b097f7b74733476102be02e88411b02a36e440b3046e",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
+        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:668967bd508664a3fdaf4e83e96aa9b5dfdba74934150f0f482d6a9fe46f1859",
+        "inputDigest": "sha256:952f4ba8ad5141f15ad46138edb276b0fbde8308ae61abc45586ee1633f199bc",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
+        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
     }
   ]
