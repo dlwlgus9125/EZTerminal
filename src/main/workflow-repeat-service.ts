@@ -8,7 +8,7 @@ import {
   WorkflowIdSchema, type WorkflowCommand, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowRepeat, type WorkflowRepeatStatus, type WorkflowResult,
 } from '../shared/workflow';
 import { nextRepeatAt, occurrenceKey, repeatConfigDigest } from './workflow-repeat-time';
-import { repeatContentDigest, type WorkflowRepeatConsentChange, type WorkflowRepeatSource } from './workflow-service';
+import { launchIntentDigest, repeatContentDigest, type WorkflowLaunchReceipt, type WorkflowRepeatConsentChange, type WorkflowRepeatSource } from './workflow-service';
 
 /** An occurrence runs if the host can start it within this long of its time; later, it is recorded as missed. */
 export const REPEAT_GRACE_MS = 30 * 60_000;
@@ -27,6 +27,8 @@ const OccurrenceSchema = z.object({
   key: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), occurrenceAt: instant,
   state: z.enum(['claimed', 'started', 'skipped-running', 'missed', 'failed']), at: instant,
   commandId: WorkflowIdSchema, runId: WorkflowIdSchema,
+  /** launchIntentDigest of what this host claimed to run: a recorded launch is replayed only if it still says this. */
+  intent: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
   detail: z.string().max(500).optional(), missedCount: z.number().int().positive().optional(),
 }).strict();
 type Occurrence = z.infer<typeof OccurrenceSchema>;
@@ -58,8 +60,8 @@ export interface WorkflowRepeatServiceOptions {
   /** The projects whose flows may repeat (not archived). */
   readonly projectIds: () => readonly string[];
   readonly sources: (projectId: string) => Promise<readonly WorkflowRepeatSource[]>;
-  /** Whether the flow service recorded this command (it does so before any effect). */
-  readonly hasReceipt: (projectId: string, commandId: string) => Promise<boolean>;
+  /** What the flow service recorded for this command (it does so before any effect). */
+  readonly launchReceipt: (projectId: string, commandId: string) => Promise<WorkflowLaunchReceipt>;
   readonly launch: (command: WorkflowCommand, principal: WorkflowPrincipal) => Promise<WorkflowResult>;
   /** keepRunning && startAtLogin: repeats run only while the host keeps running from login. */
   readonly automationEnabled: () => boolean;
@@ -137,8 +139,11 @@ export class WorkflowRepeatService {
       const follows = !change.set && !!entry.consent && entry.consent.contentDigest === change.before;
       if (!change.set && !follows) return entry;
       const consent = change.after ? { contentDigest: change.after, at: change.set ? at : entry.consent!.at } : undefined;
+      // An edit of a confirmed flow, or the same flow saved again, keeps its arming; anything newly confirmed (turned
+      // on, its time changed, a flow that came from outside confirmed) counts from this save.
+      const continuing = follows || entry.consent?.contentDigest === change.after;
       const armed = !consent || !change.runnable || !change.config ? undefined
-        : entry.armed?.configDigest === change.config ? entry.armed : { configDigest: change.config, armedAt: at };
+        : continuing && entry.armed?.configDigest === change.config ? entry.armed : { configDigest: change.config, armedAt: at };
       return { ...entry, consent, armed };
     });
   }
@@ -236,25 +241,28 @@ export class WorkflowRepeatService {
     for (const projectId of this.options.projectIds()) {
       if (this.disposed) break;
       let sources: readonly WorkflowRepeatSource[];
+      // A consent or arming saved after this read is newer than what the read says (a person saved meanwhile).
+      const readAt = this.now().getTime();
       try { sources = await this.options.sources(projectId); } catch (error) { this.options.reportError?.(error); continue; }
       for (const source of sources) {
         if (this.disposed) break;
-        try { wait = Math.min(wait, await this.check(projectId, source)); } catch (error) { this.options.reportError?.(error); }
+        try { wait = Math.min(wait, await this.check(projectId, source, readAt)); } catch (error) { this.options.reportError?.(error); }
       }
     }
     return wait;
   }
 
-  private async check(projectId: string, source: WorkflowRepeatSource): Promise<number> {
+  private async check(projectId: string, source: WorkflowRepeatSource, readAt: number): Promise<number> {
     const id = entryKey(projectId, source.subprojectId);
     const auto = this.sampleAutomation();
     const digest = repeatConfigDigest(source.repeat);
     let entry = this.entries.get(id) ?? { projectId, subprojectId: source.subprojectId, occurrences: [] };
     const eligible = auto && source.repeat.enabled && source.status === 'active' && entry.consent?.contentDigest === source.contentDigest;
+    const older = (value: { at?: string; armedAt?: string } | undefined) => !!value && Date.parse(value.at ?? value.armedAt!) <= readAt;
     // Off in the saved flow: the consent goes too, so the file alone can never turn it back on.
-    if (!source.repeat.enabled && entry.consent) entry = await this.update(projectId, source.subprojectId, current => (current.consent ? { ...current, consent: undefined } : current));
+    if (!source.repeat.enabled && older(entry.consent)) entry = await this.update(projectId, source.subprojectId, current => (older(current.consent) ? { ...current, consent: undefined } : current));
     // Off, not confirmed here, completed, archived or automation off: what comes before turning it back on never runs.
-    if (!eligible && entry.armed) entry = await this.update(projectId, source.subprojectId, current => (current.armed ? { ...current, armed: undefined } : current));
+    if (!eligible && older(entry.armed)) entry = await this.update(projectId, source.subprojectId, current => (older(current.armed) ? { ...current, armed: undefined } : current));
     if (eligible) {
       // A flow change through this host armed it already (consent). Left here: automation turned (back) on, from then.
       const floor = this.automationOnSince ?? 0;
@@ -268,7 +276,7 @@ export class WorkflowRepeatService {
     let wait = REPEAT_RECHECK_MS;
     for (const claim of entry.occurrences.filter(occurrence => occurrence.state === 'claimed')) {
       if (this.disposed) return wait;
-      wait = Math.min(wait, await this.resolveClaim(projectId, source, claim, eligible));
+      wait = Math.min(wait, await this.resolveClaim(projectId, source, claim, eligible, digest));
     }
     if (!eligible || !source.reviewer || this.disposed) return wait;
     entry = this.entries.get(id)!;
@@ -295,7 +303,7 @@ export class WorkflowRepeatService {
       // Claimed on disk first: whatever happens next, this day's request is the one replayed.
       const claim = await this.record(projectId, source.subprojectId, { key: due.key, occurrenceAt: due.at.toISOString(), state: 'claimed', at: now.toISOString(),
         ...repeatOccurrenceIds(projectId, source.subprojectId, due.key) });
-      wait = Math.min(wait, await this.run(projectId, source, claim));
+      wait = Math.min(wait, await this.run(projectId, source, claim, digest));
     }
     return wait;
   }
@@ -305,25 +313,46 @@ export class WorkflowRepeatService {
    * Not recorded: nothing started, so it runs only as a first try would (still on, within the window); one whose
    * time has not come yet (the clock went back) waits for it. Returns how long until it needs another look.
    */
-  private async resolveClaim(projectId: string, source: WorkflowRepeatSource, claim: Occurrence, eligible: boolean): Promise<number> {
-    let recorded: boolean;
-    try { recorded = await this.options.hasReceipt(projectId, claim.commandId); } catch (error) { this.options.reportError?.(error); return RETRY_MS; }
-    if (recorded) return this.run(projectId, source, claim);
+  private async resolveClaim(projectId: string, source: WorkflowRepeatSource, claim: Occurrence, eligible: boolean, config: string): Promise<number> {
+    let receipt: WorkflowLaunchReceipt;
+    try { receipt = await this.options.launchReceipt(projectId, claim.commandId); } catch (error) { this.options.reportError?.(error); return RETRY_MS; }
+    // Settled: the replay only answers from its record. Pending: a replay runs what the flow file recorded, so only
+    // if that is what this host claimed (the file sits in the project folder).
+    if (receipt.state === 'settled') return this.run(projectId, source, claim);
+    if (receipt.state === 'pending') {
+      if (claim.intent && receipt.intent === claim.intent) return this.run(projectId, source, claim);
+      await this.record(projectId, source.subprojectId, { ...claim, state: 'failed', at: this.now().toISOString(),
+        detail: 'The flow file changed outside this host after this occurrence was sent; it was not run again.' });
+      return Number.POSITIVE_INFINITY;
+    }
     const entry = this.entries.get(entryKey(projectId, source.subprojectId));
     const armedAt = entry?.armed ? Date.parse(entry.armed.armedAt) : Number.POSITIVE_INFINITY;
     const occurrenceAt = Date.parse(claim.occurrenceAt);
     const age = this.now().getTime() - occurrenceAt;
     if (age < 0) return -age;
-    if (eligible && source.reviewer && occurrenceAt >= armedAt && age <= REPEAT_GRACE_MS) return this.run(projectId, source, claim);
+    if (eligible && source.reviewer && occurrenceAt >= armedAt && age <= REPEAT_GRACE_MS) return this.run(projectId, source, claim, config);
     await this.record(projectId, source.subprojectId, { ...claim, state: 'missed', at: this.now().toISOString(),
       detail: eligible ? 'The run could not start within 30 minutes of this time.' : 'The repeat was turned off before the run started.' });
     return Number.POSITIVE_INFINITY;
   }
 
-  /** Launches a claim (or replays it). Returns how long until it needs another look (Infinity once settled). */
-  private async run(projectId: string, source: WorkflowRepeatSource, claim: Occurrence): Promise<number> {
+  /**
+   * Launches a claim, or replays a recorded one (`config` absent). Returns how long until it needs another look
+   * (Infinity once settled).
+   */
+  private async run(projectId: string, source: WorkflowRepeatSource, claim: Occurrence, config?: string): Promise<number> {
     // Automation can be switched off while the claim was being saved: then nothing is sent and the claim waits.
     if (!this.sampleAutomation() || this.disposed) return RETRY_MS;
+    if (config !== undefined) {
+      // A first send, checked again right before it against what may have changed while the claim was saved: still
+      // confirmed, still armed for this occurrence, automation on since before it. Otherwise it waits (then is missed).
+      const entry = this.entries.get(entryKey(projectId, source.subprojectId));
+      const occurrenceAt = Date.parse(claim.occurrenceAt);
+      if (entry?.consent?.contentDigest !== source.contentDigest || entry.armed?.configDigest !== config
+        || Date.parse(entry.armed.armedAt) > occurrenceAt || (this.automationOnSince ?? Number.POSITIVE_INFINITY) > occurrenceAt || !source.reviewer) return RETRY_MS;
+      const intent = launchIntentDigest(source.contentDigest, { runId: claim.runId, reviewer: source.reviewer });
+      if (claim.intent !== intent) claim = await this.record(projectId, source.subprojectId, { ...claim, intent });
+    }
     let result: WorkflowResult;
     try {
       result = await this.options.launch({ type: 'run.launch', hostId: this.options.hostId, projectId, subprojectId: source.subprojectId,

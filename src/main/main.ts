@@ -3218,7 +3218,7 @@ app.on('ready', async () => {
     directory: app.getPath('userData'), hostId: workflowHostId,
     projectIds: () => daemonCommandRouter.getSnapshot().projects.filter(project => !project.archivedAt).map(project => project.id),
     sources: (projectId) => workflowService.repeatSources(projectId),
-    hasReceipt: (projectId, commandId) => workflowService.hasReceipt(projectId, commandId),
+    launchReceipt: (projectId, commandId) => workflowService.launchReceipt(projectId, commandId),
     launch: (command, principal) => workflowService.execute(command, principal),
     automationEnabled: () => automationEnabled(daemonCommandRouter.getSnapshot()),
     onChanged: (projectId) => broadcast('workflow:runs-changed', projectId),

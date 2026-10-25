@@ -49,6 +49,11 @@ export function repeatContentDigest(subproject: WorkflowSubproject): string {
   delete content.history; delete content.archivedNodes; delete content.revision; delete content.updatedAt; delete content.createdAt;
   return workflowDigest(content);
 }
+/** What a launch runs: the flow's content (repeatContentDigest) with its fixed run id and review AI. */
+export function launchIntentDigest(contentDigest: string, launch: { readonly runId: string; readonly reviewer: { readonly providerId: string; readonly model: string } }): string {
+  return workflowDigest({ contentDigest, runId: launch.runId, reviewer: { providerId: launch.reviewer.providerId, model: launch.reviewer.model } });
+}
+export type WorkflowLaunchReceipt = { readonly state: 'none' | 'settled' } | { readonly state: 'pending'; readonly intent?: string };
 /** How a saved command moves this host's consent for a subproject's 반복 (WorkflowRepeatService.consent). */
 export interface WorkflowRepeatConsentChange {
   /** A person saved 반복 itself: consent is `after` (or withdrawn). Otherwise consent follows only from `before`. */
@@ -520,12 +525,21 @@ export class WorkflowService {
     });
   }
 
-  /** Portable registry only. Live attempts remain in the existing execution archive. */
-  /** Whether a command was ever recorded (a repeat occurrence's launch, say): its receipt is written before any effect. */
-  hasReceipt(projectId: string, commandId: string): Promise<boolean> {
-    return this.exclusive(projectId, async () => (await this.load(projectId)).file.receipts.some(entry => entry.commandId === commandId));
+  /**
+   * A command's receipt as the repeat schedule needs it before replaying one (it is written before any effect):
+   * none, settled (a replay only answers from it), or pending, with the intent a replay would run. That intent is
+   * read from the flow file in the project folder, so the schedule replays it only if it is what it claimed.
+   */
+  launchReceipt(projectId: string, commandId: string): Promise<WorkflowLaunchReceipt> {
+    return this.exclusive(projectId, async () => {
+      const receipt = (await this.load(projectId)).file.receipts.find(entry => entry.commandId === commandId);
+      if (!receipt) return { state: 'none' as const };
+      if (!receipt.pending) return { state: 'settled' as const };
+      return { state: 'pending' as const, ...(receipt.runSubproject && receipt.launch ? { intent: launchIntentDigest(repeatContentDigest(receipt.runSubproject), receipt.launch) } : {}) };
+    });
   }
 
+  /** Portable registry only. Live attempts remain in the existing execution archive. */
   async exportRegistry(projectId: string): Promise<WorkflowRegistry> {
     return this.exclusive(projectId, async () => structuredClone((await this.load(projectId)).file.registry));
   }

@@ -29,7 +29,7 @@ const repeats = new WeakMap<WorkflowService, WorkflowRepeatService>();
 /** The host's repeat schedule over a real flow service (fake clock, timers left to the test); it records consent for that service. */
 function repeatService(workflows: WorkflowService, now: () => Date): WorkflowRepeatService {
   const created = new WorkflowRepeatService({ directory: mkdtempSync(path.join(os.tmpdir(), 'ez-repeat-run-')), hostId: 'host',
-    projectIds: () => ['project'], sources: (projectId) => workflows.repeatSources(projectId), hasReceipt: (projectId, commandId) => workflows.hasReceipt(projectId, commandId),
+    projectIds: () => ['project'], sources: (projectId) => workflows.repeatSources(projectId), launchReceipt: (projectId, commandId) => workflows.launchReceipt(projectId, commandId),
     launch: (command, principal) => workflows.execute(command, principal), automationEnabled: () => true, now, setTimer: () => 0, clearTimer: () => undefined });
   repeats.set(workflows, created);
   return created;

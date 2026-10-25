@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowCommand, WorkflowPrincipal, WorkflowRegistry, WorkflowRepeat, WorkflowResult } from '../shared/workflow';
 import { REPEAT_FILE, REPEAT_HISTORY_LIMIT, WorkflowRepeatService, repeatOccurrenceIds } from './workflow-repeat-service';
 import { repeatConfigDigest as configOf } from './workflow-repeat-time';
-import { repeatContentDigest, type WorkflowRepeatSource } from './workflow-service';
+import { launchIntentDigest, repeatContentDigest, type WorkflowLaunchReceipt, type WorkflowRepeatSource } from './workflow-service';
 
 const seoulNine: WorkflowRepeat = { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true };
 const at = (iso: string) => new Date(iso);
@@ -19,7 +19,8 @@ describe('WorkflowRepeatService', () => {
   let source: TestSource;
   /** The flow's goal: content a pull could change without this host. */
   let goal: string;
-  let receipts: Set<string>;
+  /** The flow service's receipts: written before any effect, left pending when the outcome is unknown. */
+  let receipts: Map<string, { pending: boolean; intent?: string }>;
   let respond: (command: WorkflowCommand) => WorkflowResult;
   let launch: ReturnType<typeof vi.fn<(command: WorkflowCommand, principal: WorkflowPrincipal) => Promise<WorkflowResult>>>;
   let timers: number[];
@@ -34,10 +35,17 @@ describe('WorkflowRepeatService', () => {
     clock = at('2026-10-25T00:00:00.000Z'); // 09:00 in Seoul
     auto = true; goal = '';
     source = { subprojectId: 'flow', revision: 3, status: 'active', repeat: seoulNine, reviewer: { providerId: 'codex', model: 'model' } };
-    receipts = new Set();
+    receipts = new Map();
     respond = () => started;
-    // The flow service records a launch before its effect: a later look sees the receipt.
-    launch = vi.fn(async (command: WorkflowCommand) => { receipts.add(command.commandId); return respond(command); });
+    // The flow service records a launch (what it runs) before its effect; a refusal before any effect leaves none.
+    launch = vi.fn(async (command: WorkflowCommand) => {
+      const result = respond(command);
+      if (result.ok || result.error !== 'revision-conflict') {
+        receipts.set(command.commandId, { pending: !result.ok && result.error === 'execution-unavailable',
+          intent: launchIntentDigest(contentOf(), { runId: (command.payload as { runId: string }).runId, reviewer: source.reviewer! }) });
+      }
+      return result;
+    });
     timers = []; changed = []; onSaved = undefined; readSources = async () => undefined;
   });
   afterEach(async () => {
@@ -54,8 +62,8 @@ describe('WorkflowRepeatService', () => {
   function service(): WorkflowRepeatService {
     const created = new WorkflowRepeatService({
       directory, hostId: 'host', projectIds: () => ['project'],
-      sources: async () => { await readSources(); return [{ ...structuredClone(source), contentDigest: contentOf() }]; },
-      hasReceipt: async (_projectId, commandId) => receipts.has(commandId), launch,
+      sources: async () => { const read = [{ ...structuredClone(source), contentDigest: contentOf() }]; await readSources(); return read; },
+      launchReceipt: async (_projectId, commandId) => receiptOf(commandId), launch,
       automationEnabled: () => auto, now: () => clock, onChanged: projectId => { changed.push(projectId); onSaved?.(); },
       setTimer: (_run, ms) => { timers.push(ms); return ms; }, clearTimer: () => undefined,
     });
@@ -63,6 +71,10 @@ describe('WorkflowRepeatService', () => {
     return created;
   }
   const status = (repeat: WorkflowRepeatService) => repeat.status(registry()).flow;
+  const receiptOf = (commandId: string): WorkflowLaunchReceipt => {
+    const receipt = receipts.get(commandId);
+    return !receipt ? { state: 'none' } : receipt.pending ? { state: 'pending', ...(receipt.intent ? { intent: receipt.intent } : {}) } : { state: 'settled' };
+  };
   /** What the flow service tells the schedule after saving: a person's 반복 save (no `before`) or another edit. */
   const saved = (repeat: WorkflowRepeatService, before?: string) => repeat.consent('project', 'flow', { set: before === undefined, ...(before ? { before } : {}),
     ...(source.repeat.enabled ? { after: contentOf() } : {}), config: configOf(source.repeat), runnable: source.repeat.enabled && source.status === 'active' });
@@ -286,7 +298,7 @@ describe('WorkflowRepeatService', () => {
     await fs.writeFile(file, '{"version":1,"entries":[{"broken"');
     const reportError = vi.fn();
     const repeat = new WorkflowRepeatService({ directory, hostId: 'host', projectIds: () => ['project'],
-      sources: async () => [{ ...source, contentDigest: contentOf() }], hasReceipt: async () => false, launch, automationEnabled: () => true, now: () => clock, reportError,
+      sources: async () => [{ ...source, contentDigest: contentOf() }], launchReceipt: async () => ({ state: 'none' }), launch, automationEnabled: () => true, now: () => clock, reportError,
       setTimer: () => 0, clearTimer: () => undefined });
     services.push(repeat);
     clock = at('2026-10-25T00:00:05.000Z'); await repeat.start(); await repeat.wake();
@@ -405,7 +417,7 @@ describe('WorkflowRepeatService', () => {
   it('keeps a person’s consent and a tick’s claim when they are saved at the same moment', async () => {
     const repeat = await armedAt('2026-10-24T23:00:00.000Z');
     let release!: () => void;
-    launch.mockImplementationOnce(async (command) => { receipts.add(command.commandId); await new Promise<void>(resolve => { release = resolve; }); return started; });
+    launch.mockImplementationOnce(async (command) => { receipts.set(command.commandId, { pending: false }); await new Promise<void>(resolve => { release = resolve; }); return started; });
     clock = at('2026-10-25T00:00:05.000Z');
     const ticking = repeat.wake();
     await vi.waitFor(() => expect(launch).toHaveBeenCalledOnce());
@@ -433,6 +445,57 @@ describe('WorkflowRepeatService', () => {
     expect(whole).not.toBe('');
   });
 
+  it('does not replay a sent occurrence whose recorded flow was changed in the project folder', async () => {
+    let repeat = await armedAt('2026-10-24T23:00:00.000Z');
+    respond = () => ({ ok: false, error: 'execution-unavailable', message: 'The provider was unreachable.' });
+    clock = at('2026-10-25T00:00:05.000Z'); await repeat.wake();
+    expect(launch).toHaveBeenCalledOnce();
+    await repeat.dispose();
+    // While the host is down, the flow file's pending receipt is rewritten to run other instructions.
+    const ids = repeatOccurrenceIds('project', 'flow', '2026-10-25');
+    receipts.set(ids.commandId, { pending: true, intent: 'f'.repeat(64) });
+    respond = () => started;
+    clock = at('2026-10-25T00:10:00.000Z');
+    repeat = service(); await repeat.start();
+    expect(launch).toHaveBeenCalledOnce();
+    expect(status(repeat)?.last).toMatchObject({ key: '2026-10-25', state: 'failed', detail: expect.stringContaining('changed outside this host') });
+  });
+
+  it('sends nothing for an occurrence from before automation was switched off and on while its claim was saved', async () => {
+    const repeat = await armedAt('2026-10-24T23:00:00.000Z');
+    onSaved = () => {
+      if (status(repeat)?.last?.state !== 'claimed' || onSaved === undefined) return;
+      onSaved = undefined;
+      auto = false; void repeat.wake();
+      clock = at('2026-10-25T00:00:06.000Z'); auto = true; void repeat.wake();
+    };
+    clock = at('2026-10-25T00:00:05.000Z'); await repeat.wake();
+    expect(launch).not.toHaveBeenCalled();
+    expect(status(repeat)?.last).toMatchObject({ key: '2026-10-25', state: 'missed' });
+  });
+
+  it('keeps a consent a person saved while the schedule was reading an older copy of the flow', async () => {
+    source = { ...source, repeat: { ...seoulNine, enabled: false } };
+    const repeat = await armedAt('2026-10-24T22:00:00.000Z');
+    clock = at('2026-10-24T23:00:00.000Z');
+    // The schedule reads the flow (still off); before it decides, the person turns 반복 on.
+    readSources = async () => { readSources = async () => undefined; clock = at('2026-10-24T23:00:02.000Z'); await setRepeat(repeat, seoulNine); };
+    await repeat.wake();
+    expect((await record()).entries[0]!.consent).toBeDefined();
+    expect(status(repeat)).toEqual({ nextAt: '2026-10-25T00:00:00.000Z' });
+    clock = at('2026-10-25T00:00:05.000Z'); await repeat.wake();
+    expect(launch).toHaveBeenCalledOnce();
+  });
+
+  it('counts a flow confirmed again (after a change outside this host) from that confirmation', async () => {
+    const repeat = await armedAt('2026-10-24T23:00:00.000Z');
+    goal = 'Changed by a pull';
+    // Confirmed again at 09:05 before any look: the 09:00 occurrence, before it, does not run.
+    clock = at('2026-10-25T00:05:00.000Z'); await saved(repeat); await repeat.wake();
+    expect(launch).not.toHaveBeenCalled();
+    expect(status(repeat)?.nextAt).toBe('2026-10-26T00:00:00.000Z');
+  });
+
   it('names the review AI it needs before it can run', async () => {
     source = { ...source, reviewer: undefined };
     const repeat = await armedAt('2026-10-24T23:00:00.000Z');
@@ -447,7 +510,7 @@ describe('WorkflowRepeatService', () => {
       at: `${day(index)}T00:00:01.000Z`, ...repeatOccurrenceIds('project', 'flow', day(index)) }));
     await fs.writeFile(path.join(directory, REPEAT_FILE), JSON.stringify({ version: 1, entries: [{ projectId: 'project', subprojectId: 'flow',
       consent: { contentDigest: contentOf(), at: '2025-12-31T00:00:00.000Z' }, armed: { configDigest: configOf(seoulNine), armedAt: '2025-12-31T00:00:00.000Z' }, occurrences }] }));
-    receipts.add(occurrences[0]!.commandId);
+    receipts.set(occurrences[0]!.commandId, { pending: false });
     clock = at('2026-03-12T00:00:05.000Z');
     const repeat = service(); await repeat.start();
     await repeat.dispose();

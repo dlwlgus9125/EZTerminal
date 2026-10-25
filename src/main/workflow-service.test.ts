@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkflowService, repeatContentDigest, workflowDigest, type WorkflowRepeatConsentChange } from './workflow-service';
+import { WorkflowService, launchIntentDigest, repeatContentDigest, workflowDigest, type WorkflowRepeatConsentChange } from './workflow-service';
 import { repeatConfigDigest } from './workflow-repeat-time';
 import { PlanningService } from './planning-service';
 import { createWorkflowGraph, WorkflowCommandSchema, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
@@ -191,6 +191,24 @@ describe('workflow authority and storage', () => {
     // A refused command saves nothing and tells nobody.
     await service.execute({ ...base, commandId: 'stale', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { title: 'Stale' } }, user);
     expect(onCommitted).toHaveBeenCalledTimes(2);
+  });
+  it('tells the repeat schedule what a recorded launch would run when it is replayed', async () => {
+    let transient = true;
+    const executeRun = vi.fn(async () => (transient ? { ok: false as const, error: 'unavailable', message: 'Provider down.', transient: true as const } : { ok: true as const }));
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, executeRun, repeatConsent: async () => undefined });
+    const graph = createWorkflowGraph('research', 'a'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'claude', model: 'model', instructions: 'Research', acceptance: ['Report evidence'] };
+    await service.execute({ ...create('a'), payload: { ...create('a').payload, graph } }, user);
+    const reviewer = { providerId: 'claude', model: 'model' };
+    await service.execute({ ...base, commandId: 'settings', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { runSettings: { reviewer } } }, user);
+    const schedule = { kind: 'schedule' as const, id: 'workflow-schedule' };
+    const launch = { ...base, commandId: 'schedule-1', subprojectId: 'a', expectedRevision: 1, type: 'run.launch', payload: { runId: 'repeat-1' } } as WorkflowCommand;
+    expect(await service.launchReceipt('project', 'schedule-1')).toEqual({ state: 'none' });
+    expect(await service.execute(launch, schedule)).toMatchObject({ ok: false, error: 'execution-unavailable' });
+    const saved = (await snapshot()).subprojects[0]!;
+    expect(await service.launchReceipt('project', 'schedule-1')).toEqual({ state: 'pending', intent: launchIntentDigest(repeatContentDigest(saved), { runId: 'repeat-1', reviewer }) });
+    transient = false;
+    expect(await service.execute(launch, schedule)).toMatchObject({ ok: true });
+    expect(await service.launchReceipt('project', 'schedule-1')).toEqual({ state: 'settled' });
   });
   it('lets the repeat schedule run a flow and nothing else', async () => {
     await service.execute(create('a'), user);
