@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8d169b2ac78030fa810994ac7848480b537e5612dc2b06fb6b33f58464270f6b",
+        "inputDigest": "sha256:a2e0c7083f94f41234585423a7fec616fff8d55e5b833baa9287c34abcef8d34",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 checkpoint A): recovery sweep in the workflow panel (stale autosave skipped after a newer save, host-bound conversation answers, refused resend editable, controls inside the dialog, setup restore/reconcile, offline cache retry). Claims hold."
+        "reason": "Reviewed (I2-4 checkpoint A): every recovery save, autosave too, keeps the request being sent (command until answered, conversation request tagged with its host); stale autosaves before a newer save are dropped. Claims hold."
       }
     }
   ]

@@ -329,6 +329,23 @@ describe('workflow project workspace', () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
     expect(stored).toMatchObject({ pendingCommand: { type: 'workflow.patch' } });
   });
+  it('saves what changes while a request is being sent, with the request kept', async () => {
+    const snapshot = workflowFixture();
+    let stored: WorkflowDraftState | null = null; let revision = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision, state: stored } }),
+      workflowDraftWrite: async (_, request) => { stored = request.state; revision += 1; return { ok: true, snapshot: { projectId: snapshot.projectId, revision, state: request.state } }; },
+    };
+    // The host never answers the creation.
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: () => new Promise(() => undefined) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 300)));
+    await click('New subproject'); await edit('Name', 'Plan sent');
+    await act(async () => { button('Create subproject').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await edit('Goal', 'Goal typed while sending');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
+    expect(stored).toMatchObject({ creation: { goal: 'Goal typed while sending' }, pendingCommand: { type: 'subproject.create' } });
+  });
   it('finishes a subproject creation confirmed by reconciling its request', async () => {
     const snapshot = workflowFixture();
     const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'research' as const, mode: 'preset' as const, graph: snapshot.subprojects[0]!.graph };
