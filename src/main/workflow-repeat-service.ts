@@ -242,28 +242,33 @@ export class WorkflowRepeatService {
     for (const projectId of this.options.projectIds()) {
       if (this.disposed) break;
       let sources: readonly WorkflowRepeatSource[];
-      // A consent or arming saved after this read is newer than what the read says (a person saved meanwhile).
-      const readAt = this.now().getTime();
+      // The record as it was when the flows were read: a save meanwhile (a person's consent or arming) replaces an entry,
+      // and the read says nothing about that newer state.
+      const seen = new Map(this.entries);
       try { sources = await this.options.sources(projectId); } catch (error) { this.options.reportError?.(error); continue; }
       for (const source of sources) {
         if (this.disposed) break;
-        try { wait = Math.min(wait, await this.check(projectId, source, readAt)); } catch (error) { this.options.reportError?.(error); }
+        try { wait = Math.min(wait, await this.check(projectId, source, seen.get(entryKey(projectId, source.subprojectId)))); } catch (error) { this.options.reportError?.(error); }
       }
     }
     return wait;
   }
 
-  private async check(projectId: string, source: WorkflowRepeatSource, readAt: number): Promise<number> {
+  private async check(projectId: string, source: WorkflowRepeatSource, seen: Entry | undefined): Promise<number> {
     const id = entryKey(projectId, source.subprojectId);
     const auto = this.sampleAutomation();
     const digest = repeatConfigDigest(source.repeat);
     let entry = this.entries.get(id) ?? { projectId, subprojectId: source.subprojectId, occurrences: [] };
     const eligible = auto && source.repeat.enabled && source.status === 'active' && entry.consent?.contentDigest === source.contentDigest;
-    const older = (value: { at?: string; armedAt?: string } | undefined) => !!value && Date.parse(value.at ?? value.armedAt!) <= readAt;
-    // Off in the saved flow: the consent goes too, so the file alone can never turn it back on.
-    if (!source.repeat.enabled && older(entry.consent)) entry = await this.update(projectId, source.subprojectId, current => (older(current.consent) ? { ...current, consent: undefined } : current));
-    // Off, not confirmed here, completed, archived or automation off: what comes before turning it back on never runs.
-    if (!eligible && older(entry.armed)) entry = await this.update(projectId, source.subprojectId, current => (older(current.armed) ? { ...current, armed: undefined } : current));
+    // Off in the saved flow: the consent goes too, so the file alone can never turn it back on. Off, not confirmed here,
+    // completed, archived or automation off: what comes before turning it back on never runs. Either only if nothing
+    // was saved for this flow since the read (then the next look decides from a fresh read).
+    const withdraw = !source.repeat.enabled && !!entry.consent;
+    const disarm = !eligible && !!entry.armed;
+    if ((withdraw || disarm) && entry === seen) {
+      entry = await this.update(projectId, source.subprojectId, current => (current !== seen ? current
+        : { ...current, ...(withdraw ? { consent: undefined } : {}), ...(disarm ? { armed: undefined } : {}) }));
+    }
     if (eligible) {
       // A flow change through this host armed it already (consent). Left here: automation turned (back) on, from then.
       const floor = this.automationOnSince ?? 0;
@@ -342,17 +347,20 @@ export class WorkflowRepeatService {
    * (Infinity once settled).
    */
   private async run(projectId: string, source: WorkflowRepeatSource, claim: Occurrence, config?: string): Promise<number> {
-    // Automation can be switched off while the claim was being saved: then nothing is sent and the claim waits.
+    if (this.disposed) return RETRY_MS;
+    if (config !== undefined && source.reviewer) {
+      const intent = launchIntentDigest(source.contentDigest, { runId: claim.runId, reviewer: source.reviewer });
+      if (claim.intent !== intent) claim = await this.record(projectId, source.subprojectId, { ...claim, intent });
+    }
+    // Checked after the last save and right before the send (nothing awaited in between): automation can be switched
+    // off, a person can change the flow, while the claim was being saved. Then nothing is sent and the claim waits.
     if (!this.sampleAutomation() || this.disposed) return RETRY_MS;
     if (config !== undefined) {
-      // A first send, checked again right before it against what may have changed while the claim was saved: still
-      // confirmed, still armed for this occurrence, automation on since before it. Otherwise it waits (then is missed).
+      // A first send: still confirmed, still armed for this occurrence, automation on since before it (else missed later).
       const entry = this.entries.get(entryKey(projectId, source.subprojectId));
       const occurrenceAt = Date.parse(claim.occurrenceAt);
       if (entry?.consent?.contentDigest !== source.contentDigest || entry.armed?.configDigest !== config
         || Date.parse(entry.armed.armedAt) > occurrenceAt || (this.automationOnSince ?? Number.POSITIVE_INFINITY) > occurrenceAt || !source.reviewer) return RETRY_MS;
-      const intent = launchIntentDigest(source.contentDigest, { runId: claim.runId, reviewer: source.reviewer });
-      if (claim.intent !== intent) claim = await this.record(projectId, source.subprojectId, { ...claim, intent });
     }
     let result: WorkflowResult;
     try {

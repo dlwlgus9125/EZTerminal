@@ -442,6 +442,27 @@ async function main(): Promise<void> {
     assert.notEqual((await flowRuns())[1]!.attempts[0]!.sessionId, firstSession, 'Each run starts a new stage conversation');
     assert.equal((await flowRuns()).length, 2, 'One run per 실행 / 다시 실행');
     await writeFile(path.join(artifactDir, 'i2-run-again.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
+    // 반복 (I2-6): set on the phone, saved on the PC in the phone's zone, shown with its next run or why it waits.
+    const chooseOption = async (testId: string, value: string) => {
+      const select = `document.querySelector(${JSON.stringify(`[data-testid="${testId}"]`)})`;
+      await waitForCondition(`the ${testId} select`, `!!${select} && !${select}.disabled`, 30_000);
+      await evaluateWebView(`(() => { const select = ${select}; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    };
+    const savedRepeat = async () => (await readWorkflow()).subprojects.find(item => item.id === 'android-run')?.repeat;
+    await chooseOption('workflow-repeat-cadence', 'daily');
+    await waitHost('반복 saved on the PC', async () => (await savedRepeat())?.enabled === true);
+    await chooseOption('workflow-repeat-hour', '07');
+    await waitHost('반복 time saved on the PC', async () => (await savedRepeat())?.time === '07:00');
+    await waitForCondition('반복 status on the phone', `/Next run|다음 실행|Repeats run only while|PC 앱이 로그인할 때/.test((document.querySelector('[data-testid="workflow-repeat-status"]') || {}).textContent || '')`, 30_000);
+    const repeat = await savedRepeat();
+    assert.equal(repeat?.cadence, 'daily', 'The phone saved a daily repeat');
+    assert.ok(repeat?.timezone, 'The repeat names the zone it runs in');
+    report.repeat = { saved: repeat, status: await evaluateWebView<string>(`(document.querySelector('[data-testid="workflow-repeat-status"]') || {}).textContent || ''`) };
+    // The run bar is above the stage column the earlier steps left on screen: bring 반복 into view for the shot.
+    await evaluateWebView(`(() => { document.querySelector('[data-testid="workflow-repeat"]').scrollIntoView({ block: 'center' }); return true; })()`);
+    await sleep(500);
+    await writeFile(path.join(artifactDir, 'i2-repeat.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
+    phases.push('I2 반복 from the phone: daily at 07:00 saved on the PC with its zone; the phone shows the next run or why it waits');
     await assertWorkflowHealthy('I2 flow run');
     phases.push('I2 flow run from the phone: review AI saved, 실행 → approve → working stage conversation → run #1 completed → 다시 실행 = run #2 with a new stage conversation');
     report.status = 'passed';

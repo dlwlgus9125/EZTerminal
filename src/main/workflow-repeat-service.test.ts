@@ -489,6 +489,32 @@ describe('WorkflowRepeatService', () => {
     expect(launch).toHaveBeenCalledOnce();
   });
 
+  it('checks again after saving what it is about to send: automation switched off and on then sends nothing', async () => {
+    const repeat = await armedAt('2026-10-24T23:00:00.000Z');
+    let saves = 0;
+    // The second save of this occurrence is its intent, right before the send.
+    onSaved = () => {
+      if (status(repeat)?.last?.state !== 'claimed' || ++saves !== 2) return;
+      auto = false; void repeat.wake();
+      clock = at('2026-10-25T00:00:06.000Z'); auto = true; void repeat.wake();
+    };
+    clock = at('2026-10-25T00:00:05.000Z'); await repeat.wake();
+    expect(launch).not.toHaveBeenCalled();
+    expect(status(repeat)?.last).toMatchObject({ key: '2026-10-25', state: 'missed' });
+  });
+
+  it('keeps the arming an edit made here moved along while the schedule was reading an older copy', async () => {
+    const repeat = await armedAt('2026-10-24T23:00:00.000Z');
+    clock = at('2026-10-25T00:00:05.000Z');
+    // The schedule reads the flow; before it decides, the person edits the flow here (the consent follows, the arming stays).
+    readSources = async () => { readSources = async () => undefined; await edit(repeat, () => { goal = 'Edited here'; }); };
+    await repeat.wake();
+    expect((await record()).entries[0]!.armed?.armedAt).toBe('2026-10-24T23:00:00.000Z');
+    // The next look (with the fresh flow) runs the 09:00 occurrence.
+    await repeat.wake();
+    expect(launch).toHaveBeenCalledOnce();
+  });
+
   it('counts a flow confirmed again (after a change outside this host) from that confirmation', async () => {
     const repeat = await armedAt('2026-10-24T23:00:00.000Z');
     goal = 'Changed by a pull';
