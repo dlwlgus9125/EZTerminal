@@ -329,7 +329,7 @@ describe('workflow project workspace', () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
     expect(stored).toMatchObject({ pendingCommand: { type: 'workflow.patch' } });
   });
-  it('saves what changes while a request is being sent, with the request kept', async () => {
+  it('keeps a subproject being created as sent while its request is sent or unconfirmed', async () => {
     const snapshot = workflowFixture();
     let stored: WorkflowDraftState | null = null; let revision = 0;
     const recovery: WorkflowDraftAccess = {
@@ -342,9 +342,12 @@ describe('workflow project workspace', () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 300)));
     await click('New subproject'); await edit('Name', 'Plan sent');
     await act(async () => { button('Create subproject').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
-    await edit('Goal', 'Goal typed while sending');
     await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
-    expect(stored).toMatchObject({ creation: { goal: 'Goal typed while sending' }, pendingCommand: { type: 'subproject.create' } });
+    // The host creates what was sent: nothing typed now could reach it, so nothing can be typed.
+    const goal = [...document.querySelectorAll('label')].find(item => item.firstChild?.textContent?.trim() === 'Goal')!.querySelector('textarea')!;
+    expect(goal.disabled).toBe(true);
+    expect([...document.querySelectorAll('input')].find(item => item.value === 'Plan sent')?.disabled).toBe(true);
+    expect(stored).toMatchObject({ creation: { title: 'Plan sent' }, pendingCommand: { type: 'subproject.create' } });
   });
   it('finishes a subproject creation confirmed by reconciling its request', async () => {
     const snapshot = workflowFixture();

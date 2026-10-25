@@ -98,7 +98,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<WorkflowCommand | null>(null);
+  const [pending, setPendingState] = useState<WorkflowCommand | null>(null);
+  /** The unconfirmed command, also before the render that shows it (a conversation request saves from an older render). */
+  const pendingRef = useRef<WorkflowCommand | null>(null);
+  const setPending = (value: WorkflowCommand | null): void => { pendingRef.current = value; setPendingState(value); };
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [nodeId, setNodeId] = useState<string | null>(null);
   const targetSubproject = navigationTarget?.subprojectId;
@@ -146,6 +149,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [conversationRecovery, setConversationRecovery] = useState<WorkflowDraftState['pendingConversation']>();
   const conversationRecoveryRef = useRef(conversationRecovery);
   conversationRecoveryRef.current = conversationRecovery;
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
   const [unlinkedSession, setUnlinkedSession] = useState<string | null>(null);
   const [preparedRunId, setPreparedRunId] = useState<string | null>(null);
   const [reviewer, setReviewer] = useState({ providerId: 'codex', model: '' });
@@ -449,13 +454,20 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     return execute({ type: 'session.link', payload: { sessionId, scope, ...(stageId ? { nodeId: stageId } : {}) } }, target);
   };
   /** The conversation request is settled or let go: no save keeps it any more. */
-  const clearConversationRecovery = (): void => { sendingConversation.current = null; setConversationRecovery(undefined); };
+  const clearConversationRecovery = (): void => { sendingConversation.current = null; conversationRecoveryRef.current = undefined; setConversationRecovery(undefined); };
   const createConversation = async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
     if (!daemonAccess || !chatTarget || !authorityReady || disabled) return { ok: false, message: text('호스트 연결이 필요합니다.', 'Connect to the host first.') };
     // Every answer below belongs to this host: after a host change nothing of it is taken on.
     const host = currentHost.current;
     const hostChanged = (): boolean => currentHost.current !== host;
     const changed = { ok: false as const, message: text('연결된 PC가 바뀌었습니다. 대화를 다시 시작하세요.', 'The connected PC changed. Start the conversation again.') };
+    // Its saves keep this host's latest drafts and unconfirmed command (the dialog may have been closed and the flow
+    // edited and sent meanwhile); after a host change, what the request started from.
+    const saveConversation = async (pendingConversation: WorkflowDraftState['pendingConversation']): Promise<void> => {
+      if (!snapshot) return;
+      const current = !hostChanged();
+      await persist({ projectId, hostId: snapshot.hostId, drafts: current ? draftsRef.current : drafts, pendingCommand: current ? sendingCommand.current ?? pendingRef.current : pending, pendingConversation });
+    };
     let sessionId: string;
     if (unlinkedSession) sessionId = unlinkedSession;
     else {
@@ -465,8 +477,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         if (receipt && !receipt.ok && receipt.status === 'rejected') {
           // A definite refusal: nothing was created, so the request is no longer unconfirmed and can be edited.
           setChatPending(null);
-          if (snapshot) await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: undefined });
           if (!hostChanged()) clearConversationRecovery();
+          await saveConversation(undefined);
           return { ok: false, message: receipt.error.message };
         }
         if (!receipt?.ok) return { ok: false, message: receipt && !receipt.ok ? receipt.error.message : text('응답 미확정', 'Receipt unconfirmed'), deliveryUncertain: true };
@@ -477,13 +489,13 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
           const record = { command, subprojectId: chatTarget.subprojectId, nodeId: chatTarget.nodeId, scope: chatTarget.scope, previewId: chatTarget.previewId, draft: ChatComposerDraftSchema.parse({ text: input.draftText ?? chatTarget.prompt ?? '', ...(input.draftSkills ? { skills: input.draftSkills } : {}) }) };
           if (hostChanged()) throw new Error('The connected PC changed. Start the conversation again.');
           sendingConversation.current = { host: snapshot.hostId, record };
-          try { await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: record }); }
+          try { await saveConversation(record); }
           catch (reason) { if (sendingConversation.current?.record === record) sendingConversation.current = null; throw reason; }
           if (hostChanged()) throw new Error('The connected PC changed. Start the conversation again.');
           setConversationRecovery(record); setChatPending(command);
         } });
         if (hostChanged()) return changed;
-        if (result.kind !== 'created') { if (result.kind === 'rejected') { setChatPending(null); if (snapshot && result.reason !== 'recovery-unavailable') { if (!hostChanged()) sendingConversation.current = null; await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: undefined }); if (!hostChanged()) clearConversationRecovery(); } } return { ok: false, message: result.message, deliveryUncertain: result.kind === 'delivery-uncertain' }; }
+        if (result.kind !== 'created') { if (result.kind === 'rejected') { setChatPending(null); if (snapshot && result.reason !== 'recovery-unavailable') { if (!hostChanged()) clearConversationRecovery(); await saveConversation(undefined); } } return { ok: false, message: result.message, deliveryUncertain: result.kind === 'delivery-uncertain' }; }
         if (hostChanged()) return changed;
         sessionId = result.sessionId; setChatPending(null);
       }
@@ -505,14 +517,15 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       try { await onSeedConversationDraft(sessionId, conversationRecovery?.draft ?? { text: draftText, ...(input.draftSkills ? { skills: input.draftSkills } : {}) }); }
       catch (reason) { return { ok: false, message: String(reason) }; }
     }
-    if (!hostChanged()) sendingConversation.current = null;
-    if (snapshot) await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: null, pendingConversation: undefined });
+    if (!hostChanged()) clearConversationRecovery();
+    await saveConversation(undefined);
     if (hostChanged()) return changed;
-    clearConversationRecovery(); setUnlinkedSession(null); setChatTarget(null); onOpenConversation?.(sessionId); return { ok: true };
+    setUnlinkedSession(null); setChatTarget(null); onOpenConversation?.(sessionId); return { ok: true };
   };
   const shownSubprojects = snapshot?.subprojects.filter(item => (filter === 'all' || (filter === 'archived') === (item.status === 'archived')) && `${item.title} ${item.goal}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) ?? [];
   const shownGeneral = filter === 'archived' ? [] : general.filter(item => item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const runs = snapshot?.runs.filter(run => run.preparation.workflow?.subprojectId === selectedId) ?? [];
+  const creationLocked = busy || pending?.type === 'subproject.create';
   // Recovery needs attention: reachable from the conversation dialog too while it is open (it may not close mid-link).
   const chatOpen = active && !!chatTarget;
   const recoveryControls = <>
@@ -566,10 +579,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     {create && !creationVisible && <div className="workflow-notice"><p>{text('아직 만들지 않은 소프로젝트 구성이 있습니다. 대화에서 바뀐 흐름을 확인하세요.', 'A subproject setup is in progress. Review the workflow updated in your conversation.')}</p><Button onClick={() => setCreationVisible(true)}>{text('구성 이어가기', 'Continue setup')}</Button></div>}
     <Dialog open={active && !!create && creationVisible} onOpenChange={open => { if (!open && !busy) void discardCreate(); }} title={text('새 소프로젝트', 'New subproject')} size="lg" closeLabel={text('닫기', 'Close')} footer={<><Button disabled={busy} onClick={() => void discardCreate()}>{text('취소', 'Cancel')}</Button><Button variant="primary" disabled={hostLocked || previewExpired || !create?.title.trim()} onClick={() => { if (create) void execute({ type: 'subproject.create', payload: { id: create.id, title: create.title, goal: create.goal, presetId: create.preset, graph: cleanGraph(create.graph), ...(create.previewSessionId ? { previewId: create.id, previewRevision: create.previewRevision } : {}) } }, undefined).then(async ok => { if (ok) await finishCreate(create); }); }}>{text('소프로젝트 만들기', 'Create subproject')}</Button></>}>
       {create && <div className="workflow-create">{error && <p className="workflow-error" role="alert">{error}</p>}{recoveryError && <p className="workflow-error" role="alert">{recoveryError}</p>}<div className="workflow-create__settings">
-        <Field label={text('이름', 'Name')}><Input autoFocus value={create.title} maxLength={300} onChange={event => setCreate({ ...create, title: event.target.value })} /></Field>
-        <label className="workflow-field">{text('목표', 'Goal')}<textarea rows={3} value={create.goal} onChange={event => setCreate({ ...create, goal: event.target.value })} /></label>
-        <div className="workflow-toolbar" role="group" aria-label={text('구성 방법', 'Setup method')}><Button aria-pressed={create.mode === 'preset'} onClick={() => void switchPreset()}>{text('프리셋으로', 'From preset')}</Button><Button aria-pressed={create.mode === 'conversation'} onClick={() => setCreate({ ...create, mode: 'conversation' })}>{text('대화로 구성', 'Design in conversation')}</Button></div>
-        {create.mode === 'preset' ? <Field label={text('시작 프리셋', 'Starting preset')}><Select value={create.preset} onChange={event => void switchPreset(event.target.value as WorkflowPresetId)}>{workflowPresets.map(preset => <option key={preset.id} value={preset.id}>{localizedPreset(preset.id, text)}</option>)}</Select></Field> : <>
+        <Field label={text('이름', 'Name')}><Input autoFocus value={create.title} maxLength={300} disabled={creationLocked} onChange={event => setCreate({ ...create, title: event.target.value })} /></Field>
+        <label className="workflow-field">{text('목표', 'Goal')}<textarea rows={3} value={create.goal} disabled={creationLocked} onChange={event => setCreate({ ...create, goal: event.target.value })} /></label>
+        <div className="workflow-toolbar" role="group" aria-label={text('구성 방법', 'Setup method')}><Button aria-pressed={create.mode === 'preset'} disabled={creationLocked} onClick={() => void switchPreset()}>{text('프리셋으로', 'From preset')}</Button><Button aria-pressed={create.mode === 'conversation'} disabled={creationLocked} onClick={() => setCreate({ ...create, mode: 'conversation' })}>{text('대화로 구성', 'Design in conversation')}</Button></div>
+        {create.mode === 'preset' ? <Field label={text('시작 프리셋', 'Starting preset')}><Select value={create.preset} disabled={creationLocked} onChange={event => void switchPreset(event.target.value as WorkflowPresetId)}>{workflowPresets.map(preset => <option key={preset.id} value={preset.id}>{localizedPreset(preset.id, text)}</option>)}</Select></Field> : <>
           <p>{text('대화에서 AI에게 원하는 흐름을 설명하세요. AI가 수정한 생성 초안을 여기에서 확인한 뒤 만들기를 누릅니다.', 'Describe your workflow to AI in a conversation. Review its updated draft here, then create the subproject.')}</p>
           <Button disabled={hostLocked || previewExpired || !daemonAccess || !access.workflowPreview} onClick={() => {
             if (create.previewSessionId && !previewExpired) { setCreationVisible(false); onOpenConversation?.(create.previewSessionId); }

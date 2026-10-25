@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a2e0c7083f94f41234585423a7fec616fff8d55e5b833baa9287c34abcef8d34",
+        "inputDigest": "sha256:64d024113986ac7908e05420da26296dc4eefdc023def72821ca03822d912d84",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-4 checkpoint A): every recovery save, autosave too, keeps the request being sent (command until answered, conversation request tagged with its host); stale autosaves before a newer save are dropped. Claims hold."
       }
