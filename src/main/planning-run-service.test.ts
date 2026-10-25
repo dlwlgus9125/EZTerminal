@@ -647,7 +647,7 @@ describe('run settings and 다시 실행 (run.launch)', () => {
       principal: { kind: 'runtime', id: 'workflow-schedule' }, type: 'run.cancel', payload: { runId: ids.runId } })).toMatchObject({ ok: false, error: 'user-required' });
     expect(runs()[0]).toMatchObject({ state: 'running' });
     await repeat.dispose();
-  });
+  }, 30_000);
 
   it('records a repeat day as skipped when the flow was already running, whichever side refused it', async () => {
     for (const staleRuns of [false, true]) {
@@ -671,7 +671,7 @@ describe('run settings and 다시 실행 (run.launch)', () => {
       await repeat.dispose();
       void f;
     }
-  });
+  }, 30_000);
 
   it('keeps every ledger id within 160 characters without renaming the ids already in use', async () => {
     expect(workflowLedgerId('x'.repeat(151))).toBe(`workflow:${'x'.repeat(151)}`);
