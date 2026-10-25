@@ -204,6 +204,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const cachedRevision = snapshot ? `${snapshot.hostId}:${snapshot.registryRevision}:${snapshot.subprojects.map(item => `${item.id}:${item.revision}`).join(',')}:${snapshot.runs.map(run => `${run.runId}:${run.revision}`).join(',')}` : '';
   /** Counts saves: an autosave scheduled before a later save is stale and is not written (see the autosave effect). */
   const writeGeneration = useRef(0);
+  /** A conversation is being requested: its own saves hold the recovery until it settles. */
+  const conversationRequest = useRef(0);
   const persist = useCallback(async (state: WorkflowDraftState): Promise<void> => {
     if (!recovery) return;
     writeGeneration.current += 1;
@@ -220,9 +222,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   }, [recovery]);
   useEffect(() => {
     if (!recoveryReady || !hostId || recoveryError) return;
-    // A request saved since (a command or a conversation about to be sent) holds newer state than this render.
+    // A request saved since (a command or a conversation about to be sent) holds newer state than this render, and
+    // while one is being sent its own saves hold the recovery: this render may not show it as unconfirmed yet.
     const generation = writeGeneration.current;
-    const timer = window.setTimeout(() => { if (writeGeneration.current === generation) void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
+    const timer = window.setTimeout(() => { if (writeGeneration.current === generation && !mutating.current && !conversationRequest.current) void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
     return () => window.clearTimeout(timer);
   }, [drafts, pending, conversationRecovery, create, selectedId, nodeId, view, scrollTop, recoveryReady, persist, projectId, hostId, cachedRevision, recoveryError]);
   // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too), once the
@@ -438,6 +441,10 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     return execute({ type: 'session.link', payload: { sessionId, scope, ...(stageId ? { nodeId: stageId } : {}) } }, target);
   };
   const createConversation = async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
+    conversationRequest.current += 1;
+    try { return await requestConversation(input); } finally { conversationRequest.current -= 1; }
+  };
+  const requestConversation = async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
     if (!daemonAccess || !chatTarget || !authorityReady || disabled) return { ok: false, message: text('호스트 연결이 필요합니다.', 'Connect to the host first.') };
     // Every answer below belongs to this host: after a host change nothing of it is taken on.
     const host = currentHost.current;
@@ -466,6 +473,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
           if (hostChanged()) throw new Error('The connected PC changed. Start the conversation again.');
           setConversationRecovery(record); setChatPending(command);
         } });
+        if (hostChanged()) return changed;
         if (result.kind !== 'created') { if (result.kind === 'rejected') { setChatPending(null); if (snapshot && result.reason !== 'recovery-unavailable') { await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: undefined }); if (!hostChanged()) setConversationRecovery(undefined); } } return { ok: false, message: result.message, deliveryUncertain: result.kind === 'delivery-uncertain' }; }
         if (hostChanged()) return changed;
         sessionId = result.sessionId; setChatPending(null);

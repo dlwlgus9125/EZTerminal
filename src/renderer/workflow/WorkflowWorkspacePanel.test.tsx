@@ -309,6 +309,26 @@ describe('workflow project workspace', () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
     expect(stored).toMatchObject({ pendingCommand: { type: 'workflow.patch' } });
   });
+  it('never lets an autosave scheduled while the request is being saved drop it', async () => {
+    const snapshot = workflowFixture();
+    let stored: WorkflowDraftState | null = null; let revision = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision, state: stored } }),
+      workflowDraftWrite: async (_, request) => { await new Promise(resolve => setTimeout(resolve, 240)); stored = request.state; revision += 1; return { ok: true, snapshot: { projectId: snapshot.projectId, revision, state: request.state } }; },
+    };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: () => new Promise(() => undefined) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} navigationTarget={{ subprojectId: 'login', nodeId: 'login:research', key: 'save' }} conversations={[]} />));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
+    await edit('Stage document', 'Edit sent before leaving');
+    // Opening the history while the request is saved schedules a new autosave of this (not yet unconfirmed) view.
+    // (Separate act scopes, so the history view renders while the request's own save is still pending.)
+    await act(async () => { button('Save draft').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => { button('History').click(); });
+    await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+    await act(async () => root.render(<></>));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
+    expect(stored).toMatchObject({ pendingCommand: { type: 'workflow.patch' } });
+  });
   it('finishes a subproject creation confirmed by reconciling its request', async () => {
     const snapshot = workflowFixture();
     const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'research' as const, mode: 'preset' as const, graph: snapshot.subprojects[0]!.graph };

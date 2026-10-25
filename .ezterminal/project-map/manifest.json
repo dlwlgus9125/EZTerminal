@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:09df67c483feb9693dc9bf92fc8c8f70347ad1b37a19c61d24144140f954372e",
+        "inputDigest": "sha256:8d169b2ac78030fa810994ac7848480b537e5612dc2b06fb6b33f58464270f6b",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-4 checkpoint A): recovery sweep in the workflow panel (stale autosave skipped after a newer save, host-bound conversation answers, refused resend editable, controls inside the dialog, setup restore/reconcile, offline cache retry). Claims hold."
       }
