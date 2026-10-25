@@ -34,6 +34,9 @@ export class HostAttentionService {
   /** Moves with every reload and terminal change; with the daemon revision it keys the last result. */
   private version = 0;
   private memo: { readonly key: string; readonly value: HostAttention } | undefined;
+  /** One announcement at a time; a change meanwhile is checked again once it is through. */
+  private sending = false;
+  private recheck = false;
 
   constructor(private readonly options: HostAttentionServiceOptions) {
     try {
@@ -95,13 +98,21 @@ export class HostAttentionService {
 
   /** One check shortly after the first change: later changes ride on it, so a stream of them cannot hold it back. */
   private schedule(delay = this.options.debounceMs ?? 200): void {
+    if (this.sending) { this.recheck = true; return; }
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       if (this.closed) return;
       const digest = this.ownDigest();
       if (digest === this.announced) return;
-      this.options.announce().then(() => { this.announced = digest; }, (error: unknown) => {
+      this.sending = true;
+      this.options.announce().then(() => {
+        this.sending = false;
+        this.announced = digest;
+        if (this.recheck && !this.closed) { this.recheck = false; this.schedule(); }
+      }, (error: unknown) => {
+        this.sending = false;
+        this.recheck = false;
         this.options.reportError?.(error);
         // Not announced: try again, so the clients do not keep the old count.
         if (!this.closed) this.schedule(this.options.retryMs ?? 2_000);

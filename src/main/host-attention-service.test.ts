@@ -123,6 +123,34 @@ describe('HostAttentionService', () => {
     expect(h.announce).toHaveBeenCalledTimes(1);
   });
 
+  it('sends one announcement at a time, and another only for what changed meanwhile', async () => {
+    const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'active' }])], 'project-b': [run('run-2', [{ id: 'b1', state: 'active' }])] });
+    let release: () => void = () => undefined;
+    h.announce.mockImplementationOnce(() => new Promise<undefined>((resolve) => { release = () => resolve(undefined); }));
+    h.runs.set('project-a', [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }])]);
+    h.service.projectChanged('project-a');
+    await h.settle();
+    // While it is sent, unrelated reloads arrive.
+    for (let tick = 0; tick < 9; tick += 1) { h.service.projectChanged('project-b'); await vi.advanceTimersByTimeAsync(100); }
+    expect(h.announce).toHaveBeenCalledTimes(1);
+    release();
+    await h.settle();
+    expect(h.announce).toHaveBeenCalledTimes(1);
+    // A real change meanwhile is announced once the first is through.
+    let releaseSecond: () => void = () => undefined;
+    h.announce.mockImplementationOnce(() => new Promise<undefined>((resolve) => { releaseSecond = () => resolve(undefined); }));
+    h.runs.set('project-b', [run('run-2', [{ id: 'b1', state: 'awaiting-approval' }])]);
+    h.service.projectChanged('project-b');
+    await h.settle();
+    h.runs.set('project-a', [run('run-1', [{ id: 'a1', state: 'completed' }])]);
+    h.service.projectChanged('project-a');
+    await h.settle();
+    expect(h.announce).toHaveBeenCalledTimes(2);
+    releaseSecond();
+    await h.settle();
+    expect(h.announce).toHaveBeenCalledTimes(3);
+  });
+
   it('tries again when the announcement fails', async () => {
     const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'active' }])] });
     h.announce.mockRejectedValueOnce(new Error('store busy'));
