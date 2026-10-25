@@ -22,7 +22,7 @@ describe('WorkflowRepeatService', () => {
   /** The flow service's receipts: written before any effect, left pending when the outcome is unknown. */
   let receipts: Map<string, { pending: boolean; intent?: string }>;
   let respond: (command: WorkflowCommand) => WorkflowResult;
-  let launch: ReturnType<typeof vi.fn<(command: WorkflowCommand, principal: WorkflowPrincipal) => Promise<WorkflowResult>>>;
+  let launch: ReturnType<typeof vi.fn<(command: WorkflowCommand, principal: WorkflowPrincipal, expected?: { readonly launchIntent?: string }) => Promise<WorkflowResult>>>;
   let timers: number[];
   let changed: string[];
   let onSaved: (() => void) | undefined;
@@ -107,9 +107,11 @@ describe('WorkflowRepeatService', () => {
     await repeat.wake();
     const ids = repeatOccurrenceIds('project', 'flow', '2026-10-25');
     expect(launch).toHaveBeenCalledOnce();
-    expect(launch.mock.calls[0]).toEqual([{ type: 'run.launch', hostId: 'host', projectId: 'project', subprojectId: 'flow', commandId: ids.commandId, expectedRevision: 3, payload: { runId: ids.runId } },
+    expect(launch.mock.calls[0]!.slice(0, 2)).toEqual([{ type: 'run.launch', hostId: 'host', projectId: 'project', subprojectId: 'flow', commandId: ids.commandId, expectedRevision: 3, payload: { runId: ids.runId } },
       { kind: 'schedule', id: 'workflow-schedule' }]);
     expect(ids.commandId).toMatch(/^schedule-[0-9a-f]{40}$/u);
+    // It names what it decided to run, and the flow service checks that where it runs.
+    expect(launch.mock.calls[0]![2]).toEqual({ launchIntent: launchIntentDigest(contentOf(), { runId: ids.runId, reviewer: source.reviewer! }) });
     expect(status(repeat)).toEqual({ nextAt: '2026-10-26T00:00:00.000Z', last: { key: '2026-10-25', occurrenceAt: '2026-10-25T00:00:00.000Z', state: 'started', at: '2026-10-25T00:00:05.000Z', runId: ids.runId } });
     clock = at('2026-10-25T00:10:00.000Z');
     await repeat.wake();

@@ -62,7 +62,8 @@ export interface WorkflowRepeatServiceOptions {
   readonly sources: (projectId: string) => Promise<readonly WorkflowRepeatSource[]>;
   /** What the flow service recorded for this command (it does so before any effect). */
   readonly launchReceipt: (projectId: string, commandId: string) => Promise<WorkflowLaunchReceipt>;
-  readonly launch: (command: WorkflowCommand, principal: WorkflowPrincipal) => Promise<WorkflowResult>;
+  /** WorkflowService.execute: `expected.launchIntent` is checked under its gate right before anything is recorded or run. */
+  readonly launch: (command: WorkflowCommand, principal: WorkflowPrincipal, expected?: { readonly launchIntent?: string }) => Promise<WorkflowResult>;
   /** keepRunning && startAtLogin: repeats run only while the host keeps running from login. */
   readonly automationEnabled: () => boolean;
   /** A subproject's repeat record changed (screens read the flow again). */
@@ -355,8 +356,10 @@ export class WorkflowRepeatService {
     }
     let result: WorkflowResult;
     try {
+      // What this host claimed is checked again where it runs (a change in the project folder after this check is refused there).
       result = await this.options.launch({ type: 'run.launch', hostId: this.options.hostId, projectId, subprojectId: source.subprojectId,
-        commandId: claim.commandId, expectedRevision: source.revision, payload: { runId: claim.runId } }, REPEAT_SCHEDULE_PRINCIPAL);
+        commandId: claim.commandId, expectedRevision: source.revision, payload: { runId: claim.runId } }, REPEAT_SCHEDULE_PRINCIPAL,
+      claim.intent ? { launchIntent: claim.intent } : undefined);
     } catch (error) {
       result = { ok: false, error: 'execution-unavailable', message: error instanceof Error ? error.message : String(error) };
     }

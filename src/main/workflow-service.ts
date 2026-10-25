@@ -314,7 +314,12 @@ export class WorkflowService {
     return { ...content, fingerprint: workflowDigest(content) };
   }
 
-  execute(value: unknown, principal: WorkflowPrincipal): Promise<WorkflowResult> {
+  /**
+   * `required.launchIntent` (the repeat schedule): a run.launch runs only if what it would run (the flow content and
+   * the fixed run id and review AI, launchIntentDigest) is exactly that, checked here under the project gate right
+   * before its receipt is written or replayed. Otherwise nothing is recorded or run ('flow-changed').
+   */
+  execute(value: unknown, principal: WorkflowPrincipal, required?: { readonly launchIntent?: string }): Promise<WorkflowResult> {
     const parsed = WorkflowCommandSchema.safeParse(value);
     if (!parsed.success) return Promise.resolve(failure('invalid-command', 'The workflow command is invalid.'));
     const command = parsed.data;
@@ -485,6 +490,10 @@ export class WorkflowService {
               ?? (principal.kind === 'ai' && principal.sessionId ? this.options.conversationReviewer?.(principal.sessionId) : undefined);
             if (!reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before running it.');
             launch = { runId: command.payload.runId, reviewer: structuredClone(reviewer) };
+          }
+          if (command.type === 'run.launch' && required?.launchIntent !== undefined
+            && launchIntentDigest(repeatContentDigest(previous?.runSubproject ?? subproject!), launch!) !== required.launchIntent) {
+            return failure('flow-changed', 'The flow changed after this run was decided, so nothing was run.');
           }
           if (!previous?.pending) {
             // Persist exact intent before crossing the execution ledger boundary. A lost response

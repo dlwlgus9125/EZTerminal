@@ -3219,7 +3219,7 @@ app.on('ready', async () => {
     projectIds: () => daemonCommandRouter.getSnapshot().projects.filter(project => !project.archivedAt).map(project => project.id),
     sources: (projectId) => workflowService.repeatSources(projectId),
     launchReceipt: (projectId, commandId) => workflowService.launchReceipt(projectId, commandId),
-    launch: (command, principal) => workflowService.execute(command, principal),
+    launch: (command, principal, expected) => workflowService.execute(command, principal, expected),
     automationEnabled: () => automationEnabled(daemonCommandRouter.getSnapshot()),
     onChanged: (projectId) => broadcast('workflow:runs-changed', projectId),
     reportError: (error) => {

@@ -207,8 +207,17 @@ describe('workflow authority and storage', () => {
     const saved = (await snapshot()).subprojects[0]!;
     expect(await service.launchReceipt('project', 'schedule-1')).toEqual({ state: 'pending', intent: launchIntentDigest(repeatContentDigest(saved), { runId: 'repeat-1', reviewer }) });
     transient = false;
-    expect(await service.execute(launch, schedule)).toMatchObject({ ok: true });
+    // A replay checked against another intent (the flow file changed after the schedule looked) runs nothing.
+    executeRun.mockClear();
+    expect(await service.execute(launch, schedule, { launchIntent: 'f'.repeat(64) })).toMatchObject({ ok: false, error: 'flow-changed' });
+    expect(executeRun).not.toHaveBeenCalled();
+    expect(await service.launchReceipt('project', 'schedule-1')).toMatchObject({ state: 'pending' });
+    expect(await service.execute(launch, schedule, { launchIntent: launchIntentDigest(repeatContentDigest(saved), { runId: 'repeat-1', reviewer }) })).toMatchObject({ ok: true });
     expect(await service.launchReceipt('project', 'schedule-1')).toEqual({ state: 'settled' });
+    // A first launch is checked the same way, before its receipt is written.
+    const next = { ...launch, commandId: 'schedule-2', expectedRevision: 1, payload: { runId: 'repeat-2' } } as WorkflowCommand;
+    expect(await service.execute(next, schedule, { launchIntent: 'e'.repeat(64) })).toMatchObject({ ok: false, error: 'flow-changed' });
+    expect(await service.launchReceipt('project', 'schedule-2')).toEqual({ state: 'none' });
   });
   it('lets the repeat schedule run a flow and nothing else', async () => {
     await service.execute(create('a'), user);
