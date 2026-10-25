@@ -874,7 +874,7 @@ export function StructuredAgentDraftPanel({
         <div className="structured-agent-draft-input">
           {completion.menu}
           <Field label={copy.message} id={`${promptId}-draft`}><textarea {...completion.inputProps} ref={draftInputRef} id={`${promptId}-draft`} className="structured-agent-textarea" rows={2}
-            value={draftText} readOnly={deliveryRecovery} maxLength={65_536} onKeyDown={event => { completion.keyDown(event); }}
+            value={draftText} readOnly={deliveryRecovery || submitting} maxLength={65_536} onKeyDown={event => { completion.keyDown(event); }}
             onChange={event => updateDraftInput({ ...draftValue, text: event.target.value, selectionStart: event.target.selectionStart, selectionEnd: event.target.selectionEnd })}
             onSelect={event => { const input = event.currentTarget; if (draftSelection[0] !== input.selectionStart || draftSelection[1] !== input.selectionEnd) setDraftSelection([input.selectionStart, input.selectionEnd]); }} /></Field>
           <div>{completion.buttons}</div>

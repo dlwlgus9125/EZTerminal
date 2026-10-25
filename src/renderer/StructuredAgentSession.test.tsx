@@ -190,6 +190,31 @@ describe('StructuredAgentDraftPanel', () => {
     expect(container.querySelector('label[for]')?.getAttribute('for')).toBeTruthy();
   });
 
+  it('keeps the message being sent as it is while the send is saved (B list ①)', async () => {
+    let finish!: (value: { ok: false; message: string }) => void;
+    const onCreate = vi.fn(() => new Promise<{ ok: false; message: string }>(resolve => { finish = resolve; }));
+    render(
+      <StructuredAgentDraftPanel
+        providers={[{ id: 'codex', label: 'Codex', models: [{ id: 'gpt-5', label: 'GPT-5' }] }]}
+        workspaces={[{ id: 'workspace-1', label: 'Feature worktree', kind: 'worktree' }]}
+        initialProviderId="codex"
+        initialModel="gpt-5"
+        initialPermissionPreset="plan"
+        initialDraftText="Send this"
+        onCreate={onCreate}
+      />,
+    );
+    const draft = [...container.querySelectorAll<HTMLTextAreaElement>('textarea')].find(item => item.value === 'Send this')!;
+    expect(draft.readOnly).toBe(false);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-create"]')!.click());
+    await flush();
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ draftText: 'Send this' }));
+    // What is typed now would be replaced by the saved send: the field takes no edits until it settles.
+    expect(draft.readOnly).toBe(true);
+    await act(async () => finish({ ok: false, message: 'not sent' }));
+    expect(draft.readOnly).toBe(false);
+  });
+
   it('locks an uncertain delivery draft but keeps exact-command recovery available', async () => {
     const onCreate = vi.fn(async () => ({ ok: false as const, message: 'Still checking delivery' }));
     render(
