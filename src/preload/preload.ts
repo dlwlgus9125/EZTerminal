@@ -435,6 +435,10 @@ const api: EzTerminalApi = {
   revealFileInExplorer: (path: string) => ipcRenderer.invoke('files:reveal', path),
   executeWorktree: (request: import('../shared/worktree').WorktreeRequest) =>
     ipcRenderer.invoke('worktrees:execute', request),
+  runRetention: {
+    plan: (projectId: string) => ipcRenderer.invoke('run-retention:plan', projectId),
+    cleanup: (projectId: string, runIds: readonly string[]) => ipcRenderer.invoke('run-retention:cleanup', projectId, runIds),
+  },
   workspaceWorktrees: {
     create: (projectId: string, branch: string) => ipcRenderer.invoke('workspace-worktrees:create', projectId, branch),
     status: (projectId: string) => ipcRenderer.invoke('workspace-worktrees:status', projectId),

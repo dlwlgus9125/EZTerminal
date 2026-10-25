@@ -129,6 +129,8 @@ export interface PlanningRunServiceOptions {
   readonly retryReview?: (request: Extract<PlanningRunRequest, { type: 'retry-review' }>, principal: { kind: 'desktop' | 'android'; id: string }) => Promise<PlanningExecutionReceipt>;
   readonly recordDeviceEvidence?: (request: Extract<PlanningRunRequest, { type: 'record-device-evidence' }>, principal: { kind: 'desktop' | 'android'; id: string }) => Promise<PlanningExecutionReceipt>;
   readonly reportError?: (error: unknown) => void;
+  /** A refused launch's prepared run was cancelled: the work-folder cleanup offers it whatever its number (I2-7). */
+  readonly onLaunchLeftover?: (projectId: string, runId: string) => void | Promise<void>;
   readonly ownsSubproject?: (projectId: string, subprojectId: string, writing: boolean) => Promise<boolean>;
   /** The last committed subproject, read without the workflow gate (this service holds its own gate while asking). */
   readonly committedSubproject?: (projectId: string, subprojectId: string) => Promise<CommittedSubproject>;
@@ -222,6 +224,7 @@ export class PlanningRunService {
         const cancelled = await this.cancelLaunchRun(run, launchId);
         if (cancelled === 'conflicting') return { ok: false, error: 'execution-unavailable', message: `${started.message} The run it prepared could not be cancelled yet; retry the same request.`, transient: true };
         if (cancelled !== 'cancelled') this.options.reportError?.(new Error(`The run prepared by launch ${launchId} was not cancelled: ${cancelled.refused}`));
+        else void Promise.resolve(this.options.onLaunchLeftover?.(run.projectId, run.runId)).catch(error => this.options.reportError?.(error));
       }
     }
     return started;

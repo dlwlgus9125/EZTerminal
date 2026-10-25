@@ -46,6 +46,8 @@ import { PlanningService } from './planning-service';
 import { PlanningAuthority } from './planning-authority';
 import { WorkflowService, loadWorkflowHostId } from './workflow-service';
 import { WorkflowRepeatService } from './workflow-repeat-service';
+import { RunWorktreeCleanup } from './run-worktree-cleanup';
+import { installRunRetentionIpc } from './run-retention-ipc';
 import { automationEnabled } from './automation-time';
 import { WorkflowAuthority } from './workflow-authority';
 import { WorkflowDraftStore } from './workflow-draft-store';
@@ -933,6 +935,7 @@ app.on('ready', async () => {
   const planningRuntimeRef: { current?: PlanningRunService; results?: PlanningResultService; environments?: PlanningEnvironmentService; ai?: PlanningAiService } = {};
   const workflowRef: { service?: WorkflowService; authority?: WorkflowAuthority } = {};
   const workflowRepeatRef: { current?: WorkflowRepeatService } = {};
+  const runCleanupRef: { current?: RunWorktreeCleanup } = {};
   // The worktree service starts after the orchestration server; agents reach it through this.
   const agentWorktreeRef: { create?: (projectId: string, branch: string) => ReturnType<typeof createWorkspaceWorktree> } = {};
   const workflowSessionAllowed = (sessionId: string): boolean => Boolean(workflowRef.authority
@@ -3195,6 +3198,7 @@ app.on('ready', async () => {
     capturePartialResult: (...args) => planningResultService.capturePartialResult(...args),
     prepareWorkspace: (...args) => planningResultService.prepareWorkspace(...args),
     workflowResultContext: (...args) => planningResultService.workflowResultContext(...args),
+    onLaunchLeftover: (projectId, runId) => runCleanupRef.current?.markLaunchLeftover(projectId, runId),
     processReview: (...args) => planningResultService.processReview(...args),
     processIntegration: (run) => planningResultService.processIntegration(run),
     cancelReviews: (run) => planningResultService.cancelReviews(run),
@@ -3213,6 +3217,24 @@ app.on('ready', async () => {
     else daemonAgentRuntime.wakeQueuedTurns();
   });
   ownMainStartup(planningExecutionReady);
+  // 작업 폴더 정리 (I2-7): the person removes older finished runs' work folders that hold nothing of theirs.
+  const runCleanup = new RunWorktreeCleanup({
+    directory: app.getPath('userData'),
+    getSnapshot: () => daemonCommandRouter.getSnapshot(),
+    runs: (projectId) => planningExecutionStore.read(projectId).runs,
+    readResult: (projectId, attemptId) => planningResultService.readResult(projectId, attemptId),
+    resultBusy: (projectId, run) => planningResultService.busy(projectId, run),
+    worktrees: worktreeService, git: agentCollaborationGitRunner,
+    executeCommand: (command) => daemonCommandRouter.execute(command),
+    // Archived chats dispose their provider sessions in the background; their processes hold the folder.
+    releaseProviders: () => new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 15_000);
+      void daemonAgentRuntime.whenIdle().finally(() => { clearTimeout(timer); resolve(); });
+    }),
+    liveTerminalIds: () => new Set(broker?.listSessions().map((session) => session.sessionId) ?? []),
+  });
+  runCleanupRef.current = runCleanup;
+  featureIpcDisposers.push(installRunRetentionIpc({ ipc: ipcMain, cleanup: runCleanup, ready: planningExecutionReady }));
   // 반복: the host runs each flow's saved 다시 실행 at its local time, only while it keeps running from login.
   const workflowRepeat = new WorkflowRepeatService({
     directory: app.getPath('userData'), hostId: workflowHostId,

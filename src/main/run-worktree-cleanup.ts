@@ -5,37 +5,19 @@ import { z } from 'zod';
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../shared/daemon-protocol';
 import type { ExecutionRun } from '../shared/planning-execution';
 import type { PlanningResultRecord } from '../shared/planning-result';
+import type { RunCleanupOutcome, RunCleanupPlan, RunFolderPlan } from '../shared/run-retention';
 import { flowRunNumber } from '../shared/workflow-run-view';
 import { worktreeCleanupScope } from '../shared/workspace-worktree';
 import { RecordFile } from './atomic-record-file';
 import { folderHeld } from './folder-cleanup';
 import { resultHash } from './planning-result-repository';
-import { retentionCandidates, type RetentionCandidate } from './run-retention';
+import { retentionCandidates } from './run-retention';
 import { executeAsPerson } from './workspace-worktree-actions';
 import { judgeDisposable, type DisposableExpectation } from './worktree-disposability';
 import type { GitRunner, WorktreeService } from './worktree-service';
 
 export const RUN_RETENTION_FILE = 'run-retention-v1.json';
 
-/** One work folder of a run, as the person's 작업 폴더 정리 sees it. */
-export interface RunFolderPlan {
-  readonly runId: string;
-  readonly attemptId: string;
-  readonly kind: 'attempt' | 'validation';
-  readonly path: string;
-  /** removable: nothing of a person's is there; kept: why it stays; removed: already gone (an earlier cleanup). */
-  readonly state: 'removable' | 'kept' | 'removed';
-  readonly reason?: string;
-}
-export interface RunCleanupPlan {
-  readonly runs: readonly { readonly runId: string; readonly runNumber: number; readonly subprojectId: string; readonly why: RetentionCandidate['why']; readonly folders: readonly RunFolderPlan[] }[];
-  /** Runs whose work folders this host has removed (their stage conversations stay readable as history). */
-  readonly cleanedRunIds: readonly string[];
-}
-export interface RunCleanupOutcome {
-  readonly removed: number;
-  readonly kept: readonly { readonly path: string; readonly reason: string }[];
-}
 
 const FolderRecord = z.object({
   projectId: z.string().min(1).max(200), runId: z.string().min(1).max(200), attemptId: z.string().min(1).max(200),

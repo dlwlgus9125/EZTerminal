@@ -605,12 +605,16 @@ describe('run settings and 다시 실행 (run.launch)', () => {
 
   it('cancels the run a launch prepared when its start is refused for good, and nothing else', async () => {
     const { f, send, save, runs } = await launchFlow({ staleRuns: true });
+    const leftovers: string[] = [];
+    (f.options as { onLaunchLeftover?: (projectId: string, runId: string) => void }).onLaunchLeftover = (projectId, runId) => { leftovers.push(`${projectId}/${runId}`); };
     expect(await save('settings')).toMatchObject({ ok: true });
     expect(await send('launch-1', 'run.launch', { runId: 'run-1' })).toMatchObject({ ok: true });
     // The flow service missed run-1; the execution side refuses the second start and cleans up.
     expect(await send('launch-2', 'run.launch', { runId: 'run-2' })).toMatchObject({ ok: false, error: 'active-run' });
     expect(runs().find((run) => run.runId === 'run-2')).toMatchObject({ state: 'cancelled', cancelRequested: true });
     expect(runs().find((run) => run.runId === 'run-2')!.startedAt).toBeUndefined();
+    // The cleanup is told which run that was (a launch leftover is offered whatever its number).
+    expect(leftovers).toEqual(['project/run-2']);
     expect(await send('launch-2', 'run.launch', { runId: 'run-2' })).toMatchObject({ ok: false, error: 'active-run' });
     // The launch principal cancels nothing it did not prepare, and no started run.
     const cancel = (commandId: string, runId: string) => f.ledger.execute({ commandId, projectId: 'project', expectedRevision: f.ledger.read('project').revision,
