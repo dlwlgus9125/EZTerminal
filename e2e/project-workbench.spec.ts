@@ -889,9 +889,12 @@ test('narrow project workspace reuses one editor and preserves live PTY state th
   expect(await selectionRange(draftInput)).toEqual([3, 11]);
 
   await terminalTab.click();
-  await draftInput.focus();
-  await draftInput.evaluate((element) => (element as HTMLInputElement).setSelectionRange(3, 11));
-  await expect(draftInput).toBeFocused();
+  // The activated panel settles its own focus first (later on a slow runner); then the draft input takes it.
+  await expect(async () => {
+    await draftInput.focus();
+    await draftInput.evaluate((element) => (element as HTMLInputElement).setSelectionRange(3, 11));
+    await expect(draftInput).toBeFocused({ timeout: 500 });
+  }).toPass({ timeout: 10_000 });
   await window.setViewportSize({ width: 1440, height: 900 });
   await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'wide');
   await expect(draftInput).toBeFocused();

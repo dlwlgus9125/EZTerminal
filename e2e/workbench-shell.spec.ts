@@ -1,5 +1,8 @@
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { enterWorkMode, toggleWorkbenchTool } from './workbench-navigation';
-import { expect, test } from './test';
+import { createRegisteredE2eTempDir, expect, test } from './test';
 
 import { launchApp } from './launch-app';
 
@@ -156,6 +159,12 @@ test('a nested sidebar dialog keeps ownership when the wide shell becomes narrow
     await toggleWorkbenchTool(window, 'btn-toggle-files');
     const sidebar = window.getByTestId('workbench-sidebar');
     await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
+    // A folder of its own: where the explorer first opens depends on the machine (a CI runner's home has no package.json).
+    const folder = createRegisteredE2eTempDir('ezterm-e2e-shell-');
+    writeFileSync(path.join(folder, 'package.json'), '{}');
+    const pathInput = window.getByTestId('file-path-input');
+    await pathInput.fill(folder);
+    await pathInput.press('Enter');
     const packageEntry = window.getByTestId('file-entry').filter({ hasText: 'package.json' });
     await expect(packageEntry).toBeVisible();
     await packageEntry.click({ button: 'right' });
