@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:317e1c918d769bbee00f7bf73f9094b172b71706ecc4c913ecf4cec5788263b1",
+        "inputDigest": "sha256:ffe1dda604a60b6af773524633ccba0bcb76aee508296514edaac4e70a1d4660",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-4 checkpoint A): an older app's drafts are marked one by one (reduced) and only those are rebased on the host once it answers; drafts kept from this version are never refilled. Claims hold."
       }

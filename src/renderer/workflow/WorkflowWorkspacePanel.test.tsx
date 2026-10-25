@@ -259,6 +259,8 @@ describe('workflow project workspace', () => {
       await act(async () => root.render(<WorkflowWorkspacePanel key={key} projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
       await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
       await click('Read stored draft');
+      // Only an older app's own place says what happens to its unsent flow save.
+      expect(document.body.textContent?.includes('A flow save an older app could not send comes back as a draft')).toBe(olderPlace);
       await click('Keep current input');
       expect(stageDocument()).toBe('Current edit');
       await click('Save draft');
