@@ -1,6 +1,6 @@
 import { ArrowLeft, Archive, CheckCheck, ClipboardList, Copy, FolderKanban, History, MessageSquare, MessageSquarePlus, MoreHorizontal, Play, Plus, RefreshCw, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { WORKFLOW_LAUNCH_CAPABILITY, WorkflowCommandSchema, createWorkflowGraph, validateWorkflowGraph, workflowPresets, type WorkflowAccess, type WorkflowCommand, type WorkflowGraph, type WorkflowPresetId, type WorkflowSnapshot, type WorkflowSubproject } from '../../shared/workflow';
+import { WORKFLOW_LAUNCH_CAPABILITY, WORKFLOW_REPEAT_CAPABILITY, WorkflowCommandSchema, createWorkflowGraph, validateWorkflowGraph, workflowPresets, type WorkflowAccess, type WorkflowCommand, type WorkflowGraph, type WorkflowPresetId, type WorkflowSnapshot, type WorkflowSubproject } from '../../shared/workflow';
 import type { DaemonCommandReceipt, DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { DaemonProviderManagementResult, ProviderModel } from '../../shared/daemon-provider';
 import type { AgentCapabilitiesClient } from '../../shared/agent-capabilities';
@@ -412,6 +412,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   };
   // 다시 실행: one request on a host that has it; an older host prepares from the dialog, then starts.
   const canLaunch = !!daemon?.capabilities?.includes(WORKFLOW_LAUNCH_CAPABILITY);
+  // 반복 is its own capability: a host with launch only refuses `repeat` (strict update schema).
+  const canRepeat = !!daemon?.capabilities?.includes(WORKFLOW_REPEAT_CAPABILITY);
   const openPrepare = (): void => { setReviewer(selected?.runSettings?.reviewer ? { ...selected.runSettings.reviewer } : { providerId: 'codex', model: '' }); setPrepareOpen(true); };
   const launch = async (): Promise<void> => {
     if (!canLaunch) { openPrepare(); return; }
@@ -583,7 +585,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       {flowPage && <div className="workflow-flow-host"><WorkflowFlowSurface key={selected.id} text={text} mobile={mobile} savedGraph={selected.graph} draftGraph={local?.graph ?? null} revision={selected.revision} archivedNodes={selected.archivedNodes} runs={runs}
         subproject={selected} catalogs={models} structure={structure} onStructureChange={setStructure} savedRunSettings={canLaunch}
         onLaunch={() => void launch()} onSaveReviewer={reviewer => void execute({ type: 'subproject.update', payload: { runSettings: { reviewer } } })}
-        repeatStatus={snapshot?.repeatStatus?.[selected.id]} onSaveRepeat={repeat => void execute({ type: 'subproject.update', payload: { repeat } })} onOpenAutomationSettings={onOpenAutomationSettings}
+        repeatStatus={snapshot?.repeatStatus?.[selected.id]} onSaveRepeat={canRepeat ? repeat => void execute({ type: 'subproject.update', payload: { repeat } }) : undefined} onOpenAutomationSettings={onOpenAutomationSettings}
         onAutoApprove={on => { if (on !== (selected.autoApprove === true)) void execute({ type: 'subproject.update', payload: { autoApprove: on } }); }}
         editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}

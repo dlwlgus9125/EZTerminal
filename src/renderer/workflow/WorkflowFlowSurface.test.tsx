@@ -132,7 +132,7 @@ describe('WorkflowFlowSurface 반복', () => {
     // A repeat that came with the project folder: it says so and offers to turn it on here, as it is.
     const onSaveRepeat = vi.fn();
     await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat, subproject, repeatStatus: { blocked: 'unconfirmed' } })} />));
-    expect(status()).toContain('This repeat came with the project folder, so it does not run on this PC yet.');
+    expect(status()).toContain('This flow came or changed outside this PC (with the project folder), so it does not repeat yet.');
     await act(async () => (container.querySelector('[data-testid="workflow-repeat-confirm"]') as HTMLButtonElement).click());
     expect(onSaveRepeat).toHaveBeenCalledWith(repeat);
     // A completed flow keeps its setting and says it does not repeat; it cannot be turned on.

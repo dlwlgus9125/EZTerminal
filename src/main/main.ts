@@ -1566,9 +1566,16 @@ app.on('ready', async () => {
       return agent?.model ? { providerId: agent.providerId, model: agent.model } : undefined;
     },
     repeatStatus: (registry) => workflowRepeatRef.current?.status(registry),
-    repeatConsent: (projectId, subprojectId, repeat) => (workflowRepeatRef.current
-      ? workflowRepeatRef.current.consent(projectId, subprojectId, repeat)
-      : Promise.reject(new Error('The repeat schedule is still starting. Try again in a moment.'))),
+    repeatConsent: async (projectId, subprojectId, change) => {
+      try {
+        if (!workflowRepeatRef.current) throw new Error('The repeat schedule is still starting.');
+        await workflowRepeatRef.current.consent(projectId, subprojectId, change);
+      } catch (error) {
+        console.error('[main] workflow repeat consent:', error);
+        mainLog?.line(`workflow repeat consent: ${String(error)}`);
+        throw error;
+      }
+    },
     // A saved 반복 arms at once (an occurrence before it was turned on or changed never runs).
     onCommitted: () => { void workflowRepeatRef.current?.wake(); },
   });
@@ -3207,10 +3214,8 @@ app.on('ready', async () => {
   });
   ownMainStartup(planningExecutionReady);
   // 반복: the host runs each flow's saved 다시 실행 at its local time, only while it keeps running from login.
-  // Its own protected folder: each save is a plain atomic write, not a PowerShell ACL run per file.
-  const repeatFolder = draftDirectory('workflow-repeat');
   const workflowRepeat = new WorkflowRepeatService({
-    directory: repeatFolder.directory, file: { windowsAcl: repeatFolder.windowsAcl }, hostId: workflowHostId,
+    directory: app.getPath('userData'), hostId: workflowHostId,
     projectIds: () => daemonCommandRouter.getSnapshot().projects.filter(project => !project.archivedAt).map(project => project.id),
     sources: (projectId) => workflowService.repeatSources(projectId),
     hasReceipt: (projectId, commandId) => workflowService.hasReceipt(projectId, commandId),

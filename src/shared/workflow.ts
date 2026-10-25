@@ -37,7 +37,7 @@ export type WorkflowRepeat = z.infer<typeof WorkflowRepeatSchema>;
 export const WorkflowRepeatStatusSchema = z.object({
   /** The next occurrence it will run; absent while it cannot (see `blocked`) or is off. */
   nextAt: z.string().datetime().optional(),
-  /** `unconfirmed`: on in the flow file but never turned on through this host (it came with the project folder). */
+  /** `unconfirmed`: on in the flow file, but the flow came or changed outside this host (with the project folder). */
   blocked: z.enum(['automation-off', 'missing-reviewer', 'unreadable', 'unconfirmed']).optional(),
   last: z.object({
     key: z.string().min(1).max(32), occurrenceAt: z.string().datetime(),
@@ -48,6 +48,11 @@ export const WorkflowRepeatStatusSchema = z.object({
 export type WorkflowRepeatStatus = z.infer<typeof WorkflowRepeatStatusSchema>;
 /** Host capability: `run.launch` (prepare and start the saved flow as one durable request). */
 export const WORKFLOW_LAUNCH_CAPABILITY = 'workflow-launch-v1';
+/**
+ * Host capability: 반복 (a subproject's `repeat` is saved and run by the host). Separate from launch: a host with
+ * launch but without 반복 refuses `repeat` in its strict update schema.
+ */
+export const WORKFLOW_REPEAT_CAPABILITY = 'workflow-repeat-v1';
 export const WorkflowSubprojectSchema = z.object({
   id, title: z.string().trim().min(1).max(300), goal: z.string().max(65_536), status: z.enum(['active', 'completed', 'archived']),
   revision, createdAt: z.string().datetime(), updatedAt: z.string().datetime(), presetId: z.string().max(100),

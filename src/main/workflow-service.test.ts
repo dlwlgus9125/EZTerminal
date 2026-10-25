@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkflowService, workflowDigest } from './workflow-service';
+import { WorkflowService, repeatContentDigest, workflowDigest, type WorkflowRepeatConsentChange } from './workflow-service';
+import { repeatConfigDigest } from './workflow-repeat-time';
 import { PlanningService } from './planning-service';
 import { createWorkflowGraph, WorkflowCommandSchema, type WorkflowCommand, type WorkflowSnapshot } from '../shared/workflow';
 import { legacyWorkflowPreviewResult, legacyWorkflowResult } from '../shared/workflow-protocol-projection';
@@ -139,7 +140,7 @@ describe('workflow authority and storage', () => {
     expect(await planning.read('project', 'b')).toMatchObject({ ok: true, snapshot: { history: [], baselines: [], draft: { items: [{ body: 'document', status: 'review-needed' }] } } });
   });
   it('saves 반복 with a canonical zone, only on with a review AI, and starts a copy with it off', async () => {
-    const repeatConsent = vi.fn(async () => undefined);
+    const repeatConsent = vi.fn<(projectId: string, subprojectId: string, change: WorkflowRepeatConsentChange) => Promise<void>>(async () => undefined);
     service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, repeatConsent });
     await service.execute(create('a'), user);
     const update = (commandId: string, expectedRevision: number, payload: Record<string, unknown>) => service.execute({ ...base, commandId, subprojectId: 'a', expectedRevision, type: 'subproject.update', payload } as WorkflowCommand, user);
@@ -148,16 +149,27 @@ describe('workflow authority and storage', () => {
     expect(await update('bad-zone', 0, { repeat: { ...daily, timezone: 'Mars/Olympus' }, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: false, error: 'invalid-command' });
     expect(await update('on', 0, { repeat: daily, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: true });
     expect((await snapshot()).subprojects[0].repeat).toEqual({ ...daily, timezone: 'America/New_York' });
-    // The host records the person's consent for exactly what is saved, before saving it.
+    // Right after saving, the host records the person's consent for exactly the saved flow, and arms it then.
+    const savedFlow = (await snapshot()).subprojects[0]!;
     expect(repeatConsent).toHaveBeenCalledOnce();
-    expect(repeatConsent).toHaveBeenCalledWith('project', 'a', { ...daily, timezone: 'America/New_York' });
-    // A host that cannot record it refuses to turn 반복 on.
+    expect(repeatConsent).toHaveBeenCalledWith('project', 'a', { set: true, after: repeatContentDigest(savedFlow), config: repeatConfigDigest(savedFlow.repeat!), runnable: true });
+    // Any other edit through this host moves that consent from the flow before it to the flow after it.
+    expect(await update('rename', 1, { title: 'Renamed' })).toMatchObject({ ok: true });
+    const renamed = (await snapshot()).subprojects[0]!;
+    expect(repeatConsent).toHaveBeenLastCalledWith('project', 'a', { set: false, before: repeatContentDigest(savedFlow), after: repeatContentDigest(renamed), config: repeatConfigDigest(renamed.repeat!), runnable: true });
+    // A command that leaves the flow as it was moves nothing; a consent the host cannot record leaves the flow saved (unconfirmed).
+    repeatConsent.mockClear();
     repeatConsent.mockRejectedValueOnce(new Error('The repeat record cannot be read, so 반복 cannot be changed now.'));
-    expect(await update('consent-fails', 1, { repeat: { ...daily, time: '10:00' } })).toMatchObject({ ok: false, message: expect.stringContaining('cannot be read') });
-    expect((await snapshot()).subprojects[0].repeat?.time).toBe('09:00');
+    expect(await update('consent-fails', 2, { repeat: { ...daily, time: '10:00' } })).toMatchObject({ ok: true });
+    expect((await snapshot()).subprojects[0].repeat?.time).toBe('10:00');
+    expect(repeatConsent).toHaveBeenCalledOnce();
+    // Off: consent goes (no `after`) and nothing is armed.
+    expect(await update('off', 3, { repeat: { ...daily, time: '10:00', enabled: false } })).toMatchObject({ ok: true });
+    expect(repeatConsent).toHaveBeenLastCalledWith('project', 'a', expect.objectContaining({ set: true, runnable: false }));
+    expect(repeatConsent.mock.calls.at(-1)![2]).not.toHaveProperty('after');
     // A weekly repeat names its weekday.
     expect(() => WorkflowCommandSchema.parse({ ...base, commandId: 'weekly', subprojectId: 'a', type: 'subproject.update', payload: { repeat: { ...daily, cadence: 'weekly' } } })).toThrow();
-    expect(await service.execute({ ...base, commandId: 'copy-repeat', subprojectId: 'a', expectedRevision: 1, type: 'subproject.copy', payload: { id: 'b', title: 'Copied' } }, user)).toMatchObject({ ok: true });
+    expect(await service.execute({ ...base, commandId: 'copy-repeat', subprojectId: 'a', expectedRevision: 4, type: 'subproject.copy', payload: { id: 'b', title: 'Copied' } }, user)).toMatchObject({ ok: true });
     expect((await snapshot()).subprojects.find(entry => entry.id === 'b')?.repeat).toMatchObject({ enabled: false, cadence: 'daily' });
   });
   it('answers each read with the repeat status of the registry it returns, and tells the schedule what it saved', async () => {
@@ -174,7 +186,8 @@ describe('workflow authority and storage', () => {
     // The saving reply already carries the status of what it saved.
     expect(saved).toMatchObject({ ok: true, snapshot: { repeatStatus: { a: { nextAt: '2026-10-26T00:00:00.000Z' } } } });
     expect(onCommitted).toHaveBeenCalledTimes(2);
-    expect(await service.repeatSources('project')).toEqual([{ subprojectId: 'a', revision: 1, status: 'active', repeat: daily, reviewer: { providerId: 'codex', model: 'm' } }]);
+    expect(await service.repeatSources('project')).toEqual([{ subprojectId: 'a', revision: 1, status: 'active', repeat: daily, reviewer: { providerId: 'codex', model: 'm' },
+      contentDigest: repeatContentDigest((await snapshot()).subprojects[0]!) }]);
     // A refused command saves nothing and tells nobody.
     await service.execute({ ...base, commandId: 'stale', subprojectId: 'a', expectedRevision: 0, type: 'subproject.update', payload: { title: 'Stale' } }, user);
     expect(onCommitted).toHaveBeenCalledTimes(2);

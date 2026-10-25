@@ -602,6 +602,21 @@ describe('workflow project workspace', () => {
       expect(commands.filter(command => command.type === 'run.launch')).toHaveLength(saved ? 1 : 0);
     }
   });
+  it('offers 반복 only on a host that says it runs it (a host with 다시 실행 alone refuses it)', async () => {
+    const now = '2026-10-25T00:00:00.000Z';
+    for (const capabilities of [['workflow-launch-v1'], ['workflow-launch-v1', 'workflow-repeat-v1']]) {
+      const authority = { protocolVersion: 12, revision: 1, eventSequence: 1, generatedAt: now, capabilities,
+        runtime: { keepRunning: false, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false }, projects: [], workspaces: [], providers: [],
+        sessions: [], agents: [], agentRelations: [], turns: [], transcriptHeads: [], approvals: [], schedules: [], heartbeats: [] } as unknown as DaemonSnapshot;
+      const daemonAccess = { getDaemonSnapshot: async () => authority, sendDaemonCommand: vi.fn(), listDaemonProviderModels: async () => ({ ok: true as const, value: [] }) };
+      const snapshot = workflowFixture();
+      const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => ({ ok: true, snapshot, commandId: command.commandId }) };
+      await act(async () => root.render(<WorkflowWorkspacePanel key={capabilities.join()} projectId={snapshot.projectId} projectName="Project" access={access} daemonAccess={daemonAccess} conversations={[]} navigationTarget={{ subprojectId: 'login', key: 'open' }} />));
+      await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+      expect(container.querySelector('[data-testid="workflow-run-bar"]')).not.toBeNull();
+      expect(!!container.querySelector('[data-testid="workflow-repeat"]')).toBe(capabilities.includes('workflow-repeat-v1'));
+    }
+  });
   it('drops a board request to run when another flow is opened before it could be sent', async () => {
     const commands: WorkflowCommand[] = []; const snapshot = workflowFixture();
     snapshot.subprojects = snapshot.subprojects.map(item => ({ ...item, runSettings: { reviewer: { providerId: 'codex', model: 'model-story' } } }));

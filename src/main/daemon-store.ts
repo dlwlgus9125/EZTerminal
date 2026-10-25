@@ -1,4 +1,4 @@
-import { WORKFLOW_LAUNCH_CAPABILITY } from '../shared/workflow';
+import { WORKFLOW_LAUNCH_CAPABILITY, WORKFLOW_REPEAT_CAPABILITY } from '../shared/workflow';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
@@ -899,7 +899,7 @@ export class DaemonStore {
     const runtime = this.runtimeRow(database);
     return {
       protocolVersion: DAEMON_PROTOCOL_VERSION,
-      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1', 'agent-usage-v1', WORKFLOW_LAUNCH_CAPABILITY],
+      capabilities: ['agent-queue', TRANSCRIPT_PAYLOAD_CAPABILITY, APPROVAL_REQUEST_CAPABILITY, APPROVAL_RESPONSE_CAPABILITY, APPROVAL_SESSION_CAPABILITY, PLAN_PROPOSAL_CAPABILITY, 'agent-effort-v1', 'agent-usage-v1', WORKFLOW_LAUNCH_CAPABILITY, WORKFLOW_REPEAT_CAPABILITY],
       revision: runtime.revision,
       eventSequence: runtime.eventSequence,
       generatedAt: this.isoNow(),

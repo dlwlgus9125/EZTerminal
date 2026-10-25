@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useMemo, useState, type ComponentType } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import type { ExecutionRun } from '../../shared/planning-execution';
+import type { WorkflowRepeat, WorkflowRepeatStatus } from '../../shared/workflow';
 import { validateWorkflowGraph, type WorkflowGraph, type WorkflowNode } from '../../shared/workflow-graph';
 import { AppI18nProvider } from '../i18n';
 import type { WorkflowPanelSection } from './workflow-canvas-model';
@@ -44,6 +45,8 @@ interface FlowStoryProps {
   /** Start in "흐름 편집" (stages can be added, moved and connected). */
   readonly structure?: boolean;
   readonly autoApprove?: boolean;
+  /** 반복 on a host that runs it (workflow-repeat-v1): the saved setting and what the host says about it. */
+  readonly repeat?: { readonly value: WorkflowRepeat; readonly status?: WorkflowRepeatStatus };
 }
 
 /** The efforts each fixture model offers (the stage panel lists only these). */
@@ -60,7 +63,7 @@ function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
 }
 function Failing(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
 
-function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false, structure: initialStructure = false, autoApprove = false }: FlowStoryProps): JSX.Element {
+function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false, structure: initialStructure = false, autoApprove = false, repeat }: FlowStoryProps): JSX.Element {
   const text = useWorkflowCopy();
   const fixture = useMemo(() => {
     if (twoRuns) { const value = workflowCanvasRuns(locale); return { graph: value.graph, runs: value.runs, archivedNodes: [] as WorkflowNode[] }; }
@@ -88,7 +91,8 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
     editLocked={false} commandsDisabled={false} issues={issues} providers={[{ id: 'codex', label: 'Codex', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }, { id: 'claude', label: 'Claude Code', models: [{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }] }] as never}
     selection={selection} onSelectionChange={setSelection} section={section} onSectionChange={setSection} pickedRunId={pickedRunId} onPickRun={setPickedRunId} runView={runView} onRunViewChange={setRunView}
     layout={layout} onLayoutChange={setLayout} onGraphChange={setDraftGraph} onSaveDraft={fn()} onDiscardDraft={() => setDraftGraph(null)} onRunCommand={fn()}
-    subproject={{ id: 'login', status: 'active', autoApprove, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } } }} catalogs={STORY_CATALOGS}
+    subproject={{ id: 'login', status: 'active', autoApprove, runSettings: { reviewer: { providerId: 'codex', model: 'gpt-6-astra' } }, ...(repeat ? { repeat: repeat.value } : {}) }} catalogs={STORY_CATALOGS}
+    {...(repeat ? { onSaveRepeat: fn(), repeatStatus: repeat.status } : {})}
     structure={structure} onStructureChange={setStructure} onLaunch={fn()} onSaveReviewer={fn()} onAutoApprove={fn()}
     stageLinks={nodeId => nodeId === 'login:implement' || nodeId === 'login:design' ? [{ sessionId: 'chat-impl', title: locale === 'ko' ? '로그인 오류 처리 방향 논의' : 'Discuss login error handling', graphRevision: 3 }] : []}
     canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()} onOpenResults={fn()} onOpenAttemptResult={fn()}
@@ -166,6 +170,25 @@ export const CollapsedPanelOpensOnJump: Story = {
   },
 };
 export const Prepared: Story = { args: { scenario: 'prepared', camera: { column: 0, zoom: 0.6 } } };
+/** 반복 every Monday at 09:00 in Seoul: the next run and how the last one went, on the run bar. */
+export const RepeatWeekly: Story = {
+  args: { scenario: 'completed', camera: { column: 2, zoom: 0.6 }, repeat: {
+    value: { cadence: 'weekly', weekday: 1, time: '09:00', timezone: 'Asia/Seoul', enabled: true },
+    status: { nextAt: '2026-11-02T00:00:00.000Z', last: { key: '2026-10-26', occurrenceAt: '2026-10-26T00:00:00.000Z', state: 'started', at: '2026-10-26T00:00:02.000Z', runId: 'run-login-4' } } } },
+  play: async ({ canvasElement }) => {
+    const group = await within(canvasElement).findByTestId('workflow-repeat');
+    expect(within(group).getByTestId('workflow-repeat-cadence')).toHaveValue('weekly');
+    expect(within(group).getByTestId('workflow-repeat-weekday')).toHaveValue('1');
+    expect(within(group).getByTestId('workflow-repeat-status').textContent).toMatch(/2026|11/u);
+  },
+};
+/** 반복 on in the flow file but not confirmed on this PC (it came with the project folder): it says so and offers 켜기. */
+export const RepeatUnconfirmed: Story = {
+  args: { scenario: 'completed', camera: { column: 2, zoom: 0.6 }, repeat: { value: { cadence: 'daily', time: '07:30', timezone: 'Asia/Seoul', enabled: true }, status: { blocked: 'unconfirmed' } } },
+  play: async ({ canvasElement }) => {
+    expect(await within(canvasElement).findByTestId('workflow-repeat-confirm')).toBeVisible();
+  },
+};
 export const TwoRunsWithPicker: Story = { args: { scenario: 'retry-running', twoRuns: true, camera: { column: 1, zoom: 0.6 } } };
 export const DraftWithIssue: Story = { args: { scenario: 'edit', draft: 'invalid', camera: { column: 1, zoom: 0.72 } } };
 export const EditingStageSettings: Story = { args: { scenario: 'edit', select: { kind: 'node', key: 'implement' }, section: 'settings', camera: { column: 1, zoom: 0.72 } } };

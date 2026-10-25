@@ -166,7 +166,7 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
   const blockedText = status?.blocked === 'automation-off' ? text('PC 앱이 로그인할 때 시작하고 창을 닫아도 계속 실행되도록 켜야 반복합니다.', 'Repeats run only while the PC app starts at login and keeps running when closed.')
     : status?.blocked === 'missing-reviewer' ? text('검토 AI를 고르면 반복합니다.', 'Choose the review AI to repeat.')
       : status?.blocked === 'unreadable' ? text('반복 기록을 읽을 수 없어 반복을 멈췄습니다. PC 앱 기록(main.log)을 확인하세요.', 'The repeat record cannot be read, so repeats are stopped. Check the PC app log (main.log).')
-        : status?.blocked === 'unconfirmed' ? text('프로젝트 폴더에 함께 들어온 반복 설정이라 이 PC에서는 아직 돌지 않습니다. 이대로 반복하려면 켜기를 누르세요.', 'This repeat came with the project folder, so it does not run on this PC yet. Turn it on to repeat as it is.') : null;
+        : status?.blocked === 'unconfirmed' ? text('이 PC를 거치지 않고(프로젝트 폴더와 함께) 들어오거나 바뀐 흐름이라 아직 반복하지 않습니다. 지금 흐름 그대로 반복하려면 켜기를 누르세요.', 'This flow came or changed outside this PC (with the project folder), so it does not repeat yet. Turn it on to repeat the flow as it is now.') : null;
   return <span className="workflow-run-bar__group" role="group" aria-label={text('반복', 'Repeat')} data-testid="workflow-repeat">
     <span className="workflow-run-bar__label"><Repeat aria-hidden="true" size={12} /> {text('반복', 'Repeat')}</span>
     <Select aria-label={text('반복', 'Repeat')} value={on ? repeat!.cadence : 'off'} disabled={disabled} data-testid="workflow-repeat-cadence"

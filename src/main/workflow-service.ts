@@ -18,6 +18,7 @@ import type { CommittedSubproject } from './workflow-stage-binding';
 import type { PlanningService } from './planning-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { canonicalTimezone } from './automation-time';
+import { repeatConfigDigest } from './workflow-repeat-time';
 
 /**
  * Where a run's own agents belong in the project list: each attempt under the stage it ran,
@@ -38,6 +39,27 @@ function runSessionLinks(runs: readonly ExecutionRun[]): Array<{ readonly sessio
   });
 }
 
+/**
+ * What a repeating flow runs, as a person confirmed it on this host: the saved subproject without its edit
+ * history and bookkeeping, and with 반복 on or off alike. Anything else changed outside this host (a pull,
+ * another tool) no longer matches, so the schedule waits for the person (WorkflowRepeatService).
+ */
+export function repeatContentDigest(subproject: WorkflowSubproject): string {
+  const content: Partial<WorkflowSubproject> = { ...subproject, ...(subproject.repeat ? { repeat: { ...subproject.repeat, enabled: true } } : {}) };
+  delete content.history; delete content.archivedNodes; delete content.revision; delete content.updatedAt; delete content.createdAt;
+  return workflowDigest(content);
+}
+/** How a saved command moves this host's consent for a subproject's 반복 (WorkflowRepeatService.consent). */
+export interface WorkflowRepeatConsentChange {
+  /** A person saved 반복 itself: consent is `after` (or withdrawn). Otherwise consent follows only from `before`. */
+  readonly set: boolean;
+  readonly before?: string;
+  /** Absent when 반복 is off after the command. */
+  readonly after?: string;
+  /** repeatConfigDigest of the saved 반복, and whether it can run now (on and active): it arms at this commit. */
+  readonly config?: string;
+  readonly runnable?: boolean;
+}
 export function workflowDigest(value: unknown): string {
   const canonical = (entry: unknown): string => Array.isArray(entry) ? `[${entry.map(canonical).join(',')}]`
     : entry !== null && typeof entry === 'object' ? `{${Object.entries(entry).filter(([, child]) => child !== undefined).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(',')}}`
@@ -75,6 +97,8 @@ export interface WorkflowRepeatSource {
   readonly status: WorkflowSubproject['status'];
   readonly repeat: WorkflowRepeat;
   readonly reviewer?: { readonly providerId: string; readonly model: string };
+  /** repeatContentDigest of the saved subproject: what this host's consent must match. */
+  readonly contentDigest: string;
 }
 export interface WorkflowServiceOptions {
   readonly hostId: string;
@@ -89,8 +113,12 @@ export interface WorkflowServiceOptions {
   readonly repeatStatus?: (registry: WorkflowRegistry) => Readonly<Record<string, WorkflowRepeatStatus>> | undefined;
   /** After a command or a restore saved a new registry (the repeat schedule arms from it at once). */
   readonly onCommitted?: (projectId: string) => void;
-  /** Records on this host, before the save, that a person set this 반복 (see WorkflowRepeatService.consent). */
-  readonly repeatConsent?: (projectId: string, subprojectId: string, repeat: WorkflowRepeat) => Promise<void>;
+  /**
+   * After a saved command changed a subproject with 반복 (under the project gate, so the schedule never reads
+   * between the save and this): a person's own 반복 save sets this host's consent, any other edit made through
+   * this host moves it along (see WorkflowRepeatService.consent). A failure leaves the flow saved and unconfirmed.
+   */
+  readonly repeatConsent?: (projectId: string, subprojectId: string, change: WorkflowRepeatConsentChange) => Promise<void>;
   readonly continuationSource?: (sessionId: string) => string | undefined;
   /**
    * `transient` marks a failure whose outcome is not settled (the host or a provider was unreachable, or
@@ -365,7 +393,6 @@ export class WorkflowService {
             if (repeat.enabled && !(command.payload.runSettings ?? subproject!.runSettings)?.reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before turning on 반복.');
             // Only a person saves 반복 (the schedule and agents cannot send subproject.update): their consent is this host's.
             if (repeat.enabled && !this.options.repeatConsent) return failure('unavailable', 'This host cannot run 반복.');
-            await this.options.repeatConsent?.(command.projectId, subproject!.id, repeat);
           }
           Object.assign(subproject!, command.payload, repeat ? { repeat } : {}); subproject!.revision += 1; subproject!.updatedAt = now; registry.registryRevision += 1;
         } else if (command.type === 'workflow.patch' || command.type === 'workflow.undo') {
@@ -481,6 +508,7 @@ export class WorkflowService {
         };
         const refused = lockedEdit && this.options.executionGate ? await this.options.executionGate(commit) : await commit();
         if (refused) return refused;
+        await this.moveRepeatConsent(command, loaded.file.registry, registry);
         this.committed(command.projectId);
         if (command.type === 'subproject.create' && command.payload.previewId) {
           const preview = this.previews.get(command.payload.previewId);
@@ -522,9 +550,24 @@ export class WorkflowService {
       const target = await this.target(projectId);
       if (!await fs.stat(target).then(() => true, error => { if (missing(error)) return false; throw error; })) return [];
       return (await this.load(projectId, true)).file.registry.subprojects.flatMap(entry => entry.repeat ? [{
-        subprojectId: entry.id, revision: entry.revision, status: entry.status, repeat: structuredClone(entry.repeat),
+        subprojectId: entry.id, revision: entry.revision, status: entry.status, repeat: structuredClone(entry.repeat), contentDigest: repeatContentDigest(entry),
         ...(entry.runSettings?.reviewer ? { reviewer: structuredClone(entry.runSettings.reviewer) } : {}) }] : []);
     });
+  }
+
+  private async moveRepeatConsent(command: WorkflowCommand, before: WorkflowRegistry, after: WorkflowRegistry): Promise<void> {
+    if (!this.options.repeatConsent || command.type === 'subproject.create' || !command.subprojectId) return;
+    const previous = before.subprojects.find(entry => entry.id === command.subprojectId);
+    const next = after.subprojects.find(entry => entry.id === command.subprojectId);
+    const set = command.type === 'subproject.update' && !!command.payload.repeat;
+    const beforeDigest = previous?.repeat ? repeatContentDigest(previous) : undefined;
+    const afterDigest = next?.repeat ? repeatContentDigest(next) : undefined;
+    if (!set && (!beforeDigest || beforeDigest === afterDigest)) return;
+    try {
+      await this.options.repeatConsent(command.projectId, command.subprojectId, { set, ...(beforeDigest ? { before: beforeDigest } : {}),
+        ...(next?.repeat?.enabled && afterDigest ? { after: afterDigest } : {}),
+        ...(next?.repeat ? { config: repeatConfigDigest(next.repeat), runnable: next.repeat.enabled && next.status === 'active' } : {}) });
+    } catch { /* The flow is saved; its 반복 shows as not confirmed on this host until turned on again. */ }
   }
 
   private committed(projectId: string): void {
