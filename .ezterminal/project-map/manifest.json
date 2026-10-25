@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c1e29ee6b5005eb134574f9ae097422c84578b8e6b524bdb6dc05f72943d8ed2",
+        "inputDigest": "sha256:0d593b223948ed633e0ff9df90d3e4e4b6799521a97b1ff0529b33dc490a5fe6",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
+        "reason": "Reviewed (I2-7c): the person's work-folder cleanup (src/main/run-worktree-cleanup.ts) archives a finished run's chats, then removes its clean folders without force; results and files read from the project checkout once the kept ref names them. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f4db92cbc4915f13508d3655c0898451a38dfae7ab1db06ac01f16ae294ec47d",
+        "inputDigest": "sha256:654fc14f590df8e943d2434e9313d901ae07f98695d59570c3e106b0f92d9af6",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
+        "reason": "Reviewed (I2-7c): the person's work-folder cleanup (src/main/run-worktree-cleanup.ts) archives a finished run's chats, then removes its clean folders without force; results and files read from the project checkout once the kept ref names them. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:838df20773c768a4de56199e7e5d6f7aa7d6a6f6694f0fca20523e0392fbdc67",
+        "inputDigest": "sha256:2877a441b7c49fe93e2401cf8903783288a19694d43ef38d0fc1957ee616f4f7",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
+        "reason": "Reviewed (I2-7c): the person's work-folder cleanup (src/main/run-worktree-cleanup.ts) archives a finished run's chats, then removes its clean folders without force; results and files read from the project checkout once the kept ref names them. Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9b57441719dc58963ff4b097f7b74733476102be02e88411b02a36e440b3046e",
+        "inputDigest": "sha256:aec64eb87a56c312724dca25c1a5cedfd64e319581eaaa1b999a309f186e1893",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
+        "reason": "Reviewed (I2-7c): the person's work-folder cleanup (src/main/run-worktree-cleanup.ts) archives a finished run's chats, then removes its clean folders without force; results and files read from the project checkout once the kept ref names them. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d0fef8dbcd567aaee47ef51f758d644cc628bc072155d51ed856bce25eeffe3a",
+        "inputDigest": "sha256:45be3b47ac12811125965137518f2262beaa5eb174bb56bb8a73ec5fd5542b55",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
+        "reason": "Reviewed (I2-7c): the person's work-folder cleanup (src/main/run-worktree-cleanup.ts) archives a finished run's chats, then removes its clean folders without force; results and files read from the project checkout once the kept ref names them. Claims hold."
       }
     }
   ]

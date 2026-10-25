@@ -273,9 +273,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 190,
-          "endLine": 392,
-          "lineDigest": "sha256:48b3a884ab36a48deab60dca3fa079401a464a2a793b54bc2519076e96995294",
+          "startLine": 192,
+          "endLine": 395,
+          "lineDigest": "sha256:5ac8c648d8c8ca1087f37c7e7a05d046a288b14129bd864cfee1930c22634296",
           "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy; agents cannot approve or integrate; the repeat schedule only launches."
         },
         {
@@ -319,16 +319,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 601,
-          "endLine": 667,
+          "startLine": 604,
+          "endLine": 670,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 601,
-          "endLine": 706,
+          "startLine": 604,
+          "endLine": 709,
           "lineDigest": "sha256:245a107024462c92ac6ba78518cae026848ba1499849218f52b9a414a80a3689",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
@@ -346,24 +346,24 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 189,
-          "endLine": 240,
+          "startLine": 198,
+          "endLine": 249,
           "lineDigest": "sha256:882f1c6d3d5aa6f7de93d04f5168efc9404fc4f11637a28e578a257203166805",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 244,
-          "endLine": 268,
+          "startLine": 253,
+          "endLine": 277,
           "lineDigest": "sha256:067601ae19915986aeeaef128ff9ab4e91b4014914b2022362d59c1ee54757da",
           "claim": "The reviewer output must identify the same baseline and artifact set; missing inspection evidence is recorded as not run."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 397,
-          "endLine": 457,
+          "startLine": 406,
+          "endLine": 466,
           "lineDigest": "sha256:1ff7fccb937c261bc88a5ca296cd7e8a7f04361e00f16a9c2791690eb6214439",
           "claim": "User-attested device evidence is bound to the exact current attempt or integration candidate and a durable command identity; attempt evidence triggers a new independent review generation."
         }
@@ -381,16 +381,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 471,
-          "endLine": 518,
+          "startLine": 480,
+          "endLine": 527,
           "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-repository.ts",
-          "startLine": 362,
-          "endLine": 371,
+          "startLine": 366,
+          "endLine": 375,
           "lineDigest": "sha256:86403cd971203f1fd8fdcad0e5550a5be1e6419bbb83e1c0f24be06f2b510906",
           "claim": "Adoption requires a clean candidate and updates its dedicated integration ref only from the expected previous successful commit."
         }
@@ -469,9 +469,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 190,
-          "endLine": 392,
-          "lineDigest": "sha256:48b3a884ab36a48deab60dca3fa079401a464a2a793b54bc2519076e96995294",
+          "startLine": 192,
+          "endLine": 395,
+          "lineDigest": "sha256:5ac8c648d8c8ca1087f37c7e7a05d046a288b14129bd864cfee1930c22634296",
           "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy; agents cannot approve or integrate; the repeat schedule only launches."
         }
       ]
@@ -503,8 +503,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 601,
-          "endLine": 667,
+          "startLine": 604,
+          "endLine": 670,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }
@@ -520,8 +520,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 189,
-          "endLine": 240,
+          "startLine": 198,
+          "endLine": 249,
           "lineDigest": "sha256:882f1c6d3d5aa6f7de93d04f5168efc9404fc4f11637a28e578a257203166805",
           "claim": "Result review retains exact artifact/baseline binding and an independent reviewer, with cancellation rechecked before each asynchronous validation/review boundary."
         }
@@ -537,8 +537,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-result-service.ts",
-          "startLine": 471,
-          "endLine": 518,
+          "startLine": 480,
+          "endLine": 527,
           "lineDigest": "sha256:f8349787105929255337ec2bc600f8bce7f359ddae277830c0053489475ffbf2",
           "claim": "Integration requires exact independently approved artifacts, validates the candidate, waits for its separate device evidence, and rechecks run revision before adoption."
         }

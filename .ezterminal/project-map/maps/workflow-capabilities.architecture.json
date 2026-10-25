@@ -267,9 +267,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 191,
-          "endLine": 329,
-          "lineDigest": "sha256:61ad61aa22e585db708143e6ea119e843d43bfa73bc0709eef232dccb109b63c",
+          "startLine": 193,
+          "endLine": 332,
+          "lineDigest": "sha256:1bd323f298920b2c642e14dcba96bcaf21e58f6a505acedaadc6a306efa89244",
           "claim": "User or project-agent run commands freeze graph, scoped planning and auto-approve policy into the ledger; agents cannot approve or integrate; the repeat schedule only launches; receipt fingerprints reconcile retries."
         }
       ]
@@ -305,8 +305,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 601,
-          "endLine": 667,
+          "startLine": 604,
+          "endLine": 670,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -395,9 +395,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 191,
-          "endLine": 329,
-          "lineDigest": "sha256:61ad61aa22e585db708143e6ea119e843d43bfa73bc0709eef232dccb109b63c",
+          "startLine": 193,
+          "endLine": 332,
+          "lineDigest": "sha256:1bd323f298920b2c642e14dcba96bcaf21e58f6a505acedaadc6a306efa89244",
           "claim": "User or project-agent run commands freeze graph, scoped planning and auto-approve policy into the ledger; agents cannot approve or integrate; the repeat schedule only launches; receipt fingerprints reconcile retries."
         }
       ]
@@ -429,8 +429,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 601,
-          "endLine": 667,
+          "startLine": 604,
+          "endLine": 670,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
@@ -446,8 +446,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 601,
-          "endLine": 667,
+          "startLine": 604,
+          "endLine": 670,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Provider attempts retain deterministic identities and managed worktrees while receiving only verified predecessor outputs selected by the frozen activation."
         }
