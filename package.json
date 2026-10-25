@@ -91,6 +91,7 @@
       "proxy-addr": "2.0.8",
       "hono": "4.13.13",
       "@modelcontextprotocol/sdk": "1.32.1",
+      "body-parser": "2.4.0",
       "plist@3.1.0>@xmldom/xmldom": "0.8.15",
       "plist@3.1.1>@xmldom/xmldom": "0.9.12"
     },
@@ -175,6 +176,6 @@
     "tslib": "^2.8.1",
     "ws": "^8.21.0",
     "yauzl": "2.10.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   }
 }
