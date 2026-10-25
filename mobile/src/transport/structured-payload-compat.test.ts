@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DAEMON_PROTOCOL_VERSION } from '../../../src/shared/daemon-protocol';
-import { isDaemonSnapshot, isDaemonTranscriptItem } from './ws-transport-contract';
+import { isDaemonEvent, isDaemonSnapshot, isDaemonTranscriptItem } from './ws-transport-contract';
 
 /**
  * Hosts with the 2.0 chat overhaul add optional fields (transcript `payload`,
@@ -44,6 +44,21 @@ describe('structured payload compatibility', () => {
       providerUsage: { codex: { weekly: { usedPercent: 26, resetsAt: 1_792_472_286_000 }, limitsObservedAt: 1 } },
     };
     expect(isDaemonSnapshot(snapshot)).toBe(true);
+  });
+
+  it('accepts what the host says waits on the person, and the event that announces its change', () => {
+    const snapshot = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION, revision: 4, eventSequence: 10, generatedAt: '2026-10-25T00:00:00.000Z',
+      runtime: { keepRunning: true, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
+      projects: [], workspaces: [], sessions: [], agents: [], agentRelations: [], turns: [], transcriptHeads: [], approvals: [],
+      providers: [], schedules: [], heartbeats: [],
+      attention: { version: 1, digest: 'digest-1', items: [{ id: 'flow-1', kind: 'flow-approval', projectId: 'project-1', title: 'Go-ahead', since: '2026-10-25T00:00:00.000Z' }] },
+    };
+    expect(isDaemonSnapshot(snapshot)).toBe(true);
+    expect(isDaemonEvent({
+      protocolVersion: DAEMON_PROTOCOL_VERSION, eventId: 'event-1', sequence: 11, revision: 5, occurredAt: '2026-10-25T00:00:01.000Z',
+      kind: 'entity.upserted', payload: { entityType: 'attention', entityId: 'host' },
+    })).toBe(true);
   });
 
   it('accepts transcript items that carry a structured payload', () => {
