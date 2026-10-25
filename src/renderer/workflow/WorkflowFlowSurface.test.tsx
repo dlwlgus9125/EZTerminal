@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { validateWorkflowGraph, type WorkflowGraph } from '../../shared/workflow-graph';
 import { WorkflowFlowSurface, type WorkflowFlowSurfaceProps } from './WorkflowFlowSurface';
+import { deviceTimezone } from './WorkflowRunBar';
 import { workflowCanvasFixture } from './workflow-canvas-fixtures';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 
@@ -84,13 +85,31 @@ describe('WorkflowFlowSurface', () => {
   });
 });
 
+describe('deviceTimezone', () => {
+  it('names a device set to a bare offset by an IANA zone the host accepts', () => {
+    const reported = (timeZone: string) => {
+      vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((() => ({ resolvedOptions: () => ({ timeZone }) })) as never);
+      const zone = deviceTimezone();
+      vi.restoreAllMocks();
+      return zone;
+    };
+    expect(reported('Asia/Seoul')).toBe('Asia/Seoul');
+    // Chrome 124 on an Android set to GMT reports "+00:00".
+    expect(reported('+00:00')).toBe('UTC');
+    expect(reported('+09:00')).toBe('Etc/GMT-9');
+    expect(reported('-03:00')).toBe('Etc/GMT+3');
+    expect(reported('+05:30')).toBe('UTC');
+    expect(reported('')).toBe('UTC');
+  });
+});
+
 describe('WorkflowFlowSurface 반복', () => {
   const reviewer = { reviewer: { providerId: 'codex', model: 'model' } };
   const select = (testId: string) => container.querySelector(`[data-testid="${testId}"]`) as HTMLSelectElement;
   const choose = async (testId: string, value: string) => {
     await act(async () => { select(testId).value = value; select(testId).dispatchEvent(new Event('change', { bubbles: true })); });
   };
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const zone = deviceTimezone();
 
   it('turns 반복 on in this device’s zone only once a review AI is saved, and keeps its settings when turned off', async () => {
     const onSaveRepeat = vi.fn();

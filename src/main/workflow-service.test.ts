@@ -147,6 +147,8 @@ describe('workflow authority and storage', () => {
     const daily = { cadence: 'daily', time: '09:00', timezone: 'US/Eastern', enabled: true };
     expect(await update('no-reviewer', 0, { repeat: daily })).toMatchObject({ ok: false, error: 'missing-reviewer' });
     expect(await update('bad-zone', 0, { repeat: { ...daily, timezone: 'Mars/Olympus' }, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: false, error: 'invalid-command' });
+    // A bare offset is not a zone (the run bar sends the matching Etc zone instead).
+    expect(await update('offset-zone', 0, { repeat: { ...daily, timezone: '+00:00' }, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: false, error: 'invalid-command' });
     expect(await update('on', 0, { repeat: daily, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: true });
     expect((await snapshot()).subprojects[0].repeat).toEqual({ ...daily, timezone: 'America/New_York' });
     // Right after saving, the host records the person's consent for exactly the saved flow, and arms it then.

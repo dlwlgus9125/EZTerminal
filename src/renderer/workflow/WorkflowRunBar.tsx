@@ -118,6 +118,21 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
   </div>;
 }
 
+/**
+ * This device's zone as an IANA name (the host accepts nothing else). A device set to a bare offset reports it as
+ * "+00:00" (Chrome 124 on an Android set to GMT): a whole-hour offset becomes its Etc zone, anything else UTC, and the
+ * run bar names the zone next to the time whenever it differs from what the device reports.
+ */
+export function deviceTimezone(): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = /^([+-])(\d{2}):(\d{2})$/u.exec(zone ?? '');
+  if (!offset) return zone || 'UTC';
+  const hours = Number(offset[2]);
+  if (offset[3] !== '00' || hours === 0) return 'UTC';
+  // Etc zones count the other way: UTC+9 is Etc/GMT-9.
+  return `Etc/GMT${offset[1] === '+' ? '-' : '+'}${hours}`;
+}
+
 const MINUTES = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, '0'));
 const HOURS = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
 
@@ -140,14 +155,14 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
   const canTurnOn = reviewerSaved && active;
   const time = repeat?.time ?? '09:00';
   const [hours, minutes] = time.split(':');
-  const timezone = repeat?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezone = repeat?.timezone ?? deviceTimezone();
   const save = (change: { cadence?: WorkflowRepeat['cadence']; weekday?: number; time?: string; enabled?: boolean }) => {
     const cadence = change.cadence ?? repeat?.cadence ?? 'daily';
     const weekday = change.weekday ?? repeat?.weekday ?? new Date().getDay();
     onSave({ cadence, ...(cadence === 'weekly' ? { weekday } : {}), time: change.time ?? time, timezone, enabled: change.enabled ?? on });
   };
   const locale = text('ko-KR', 'en-US');
-  const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const local = deviceTimezone();
   const when = (iso: string, withTime: boolean) => new Date(iso).toLocaleString(locale, { timeZone: timezone, month: 'short', day: 'numeric', weekday: 'short',
     ...(withTime ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' as const } : {}) }) + (withTime && timezone !== local ? ` (${timezone})` : '');
   const last = status?.last;
