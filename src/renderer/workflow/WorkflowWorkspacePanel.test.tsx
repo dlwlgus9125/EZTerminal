@@ -349,6 +349,26 @@ describe('workflow project workspace', () => {
     expect([...document.querySelectorAll('input')].find(item => item.value === 'Plan sent')?.disabled).toBe(true);
     expect(stored).toMatchObject({ creation: { title: 'Plan sent' }, pendingCommand: { type: 'subproject.create' } });
   });
+  it('closes a created subproject\u2019s form before letting its setup draft go', async () => {
+    const snapshot = workflowFixture();
+    const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'custom' as const, mode: 'conversation' as const, graph: snapshot.subprojects[0]!.graph, previewSessionId: 'setup-chat', previewRevision: 1 };
+    const created = { ...snapshot, registryRevision: snapshot.registryRevision + 1, subprojects: [...snapshot.subprojects, { ...snapshot.subprojects[0]!, id: creation.id, title: creation.title }] };
+    const stored: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, creation };
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: stored } }),
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    // Letting the setup draft go answers slowly.
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => ({ ok: true, snapshot: created, commandId: command.commandId }),
+      workflowPreview: async request => { if (request.action === 'discard') await new Promise(resolve => setTimeout(resolve, 400)); return { ok: true, preview: request.action === 'read' ? { id: creation.id, projectId: snapshot.projectId, sessionId: 'setup-chat', revision: 1, graph: creation.graph } : null }; } };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+    await click('Continue setup');
+    await act(async () => { button('Create subproject').click(); await new Promise(resolve => setTimeout(resolve, 100)); });
+    // Created and still letting the draft go: the form is gone already, nothing can be typed into it.
+    expect([...document.querySelectorAll('button')].some(item => item.textContent?.trim() === 'Create subproject')).toBe(false);
+    expect(document.body.textContent).not.toContain('A subproject setup is in progress');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
+  });
   it('finishes a subproject creation confirmed by reconciling its request', async () => {
     const snapshot = workflowFixture();
     const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'research' as const, mode: 'preset' as const, graph: snapshot.subprojects[0]!.graph };
