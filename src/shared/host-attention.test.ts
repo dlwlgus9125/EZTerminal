@@ -61,6 +61,13 @@ describe('computeHostAttention', () => {
     }
   });
 
+  it('leaves out the flow approvals of a project that was archived or removed', () => {
+    const flows = [{ projectId: 'project-a', run: run(), autoApprovalRefused: none }, { projectId: 'project-gone', run: run({ runId: 'run-9' }), autoApprovalRefused: none }];
+    const projects = [{ id: 'project-a' }, { id: 'project-gone', archivedAt: '2026-10-25T00:00:00.000Z' }];
+    const result = computeHostAttention({ daemon: { ...daemon({ approvals: [] }), projects } as unknown as HostAttentionInput['daemon'], flows, terminalAgents: [], orchestrationWorkers: new Set() });
+    expect(result.items.map((item) => item.runId)).toEqual(['run-1']);
+  });
+
   it('counts an auto-approved run’s stage only once the host refused to decide it', () => {
     const auto = run({ preparation: { approvalPolicy: 'auto', workflow: { subprojectId: 'login', graph: { nodes: [{ id: 'gate', title: 'Go-ahead' }] } } } });
     const input = (refused: boolean) => ({ daemon: daemon({ approvals: [] }), flows: [{ projectId: 'project-a', run: auto, autoApprovalRefused: (id: string) => refused && id === 'activation-1' }], terminalAgents: [], orchestrationWorkers: new Set<string>() });

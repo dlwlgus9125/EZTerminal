@@ -500,6 +500,8 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
           delete params.workflowNavigationKey;
           // 다시 실행 asked from a board card (I2-4): a restore must never run a flow.
           delete params.launch;
+          // The run a waiting approval opens (I2-5).
+          delete params.runId;
           record.params = params;
         }
         if (record.contentComponent === 'agent-session'

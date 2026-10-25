@@ -16,6 +16,7 @@ export interface HostAttentionServiceOptions {
   readonly announce: () => Promise<void>;
   readonly reportError?: (error: unknown) => void;
   readonly debounceMs?: number;
+  readonly retryMs?: number;
 }
 
 /**
@@ -30,6 +31,9 @@ export class HostAttentionService {
   private announced: string;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
+  /** Moves with every reload and terminal change; with the daemon revision it keys the last result. */
+  private version = 0;
+  private memo: { readonly key: string; readonly value: HostAttention } | undefined;
 
   constructor(private readonly options: HostAttentionServiceOptions) {
     try {
@@ -40,9 +44,13 @@ export class HostAttentionService {
     this.announced = this.ownDigest();
   }
 
-  /** What waits now, for a snapshot about to be sent. */
-  attention(daemon: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'approvals'>): HostAttention {
-    return computeHostAttention({ daemon, flows: [...this.flows.values()].flat(), terminalAgents: this.options.terminalAgents(), orchestrationWorkers: this.options.orchestrationWorkers() });
+  /** What waits now, for a snapshot about to be sent (the same snapshot revision and state give the same result). */
+  attention(daemon: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'approvals'> & Partial<Pick<DaemonSnapshot, 'projects' | 'revision'>>): HostAttention {
+    const key = daemon.revision === undefined ? undefined : `${daemon.revision}/${this.version}`;
+    if (key && this.memo?.key === key) return this.memo.value;
+    const value = computeHostAttention({ daemon, flows: [...this.flows.values()].flat(), terminalAgents: this.options.terminalAgents(), orchestrationWorkers: this.options.orchestrationWorkers() });
+    if (key) this.memo = { key, value };
+    return value;
   }
 
   /** A project's execution ledger committed (a new receipt, a refusal or a restart recovery). */
@@ -54,7 +62,9 @@ export class HostAttentionService {
 
   /** Terminal agents or orchestration workers changed. */
   terminalsChanged(): void {
-    if (!this.closed) this.schedule();
+    if (this.closed) return;
+    this.version += 1;
+    this.schedule();
   }
 
   close(): void {
@@ -64,6 +74,7 @@ export class HostAttentionService {
   }
 
   private load(projectId: string): void {
+    this.version += 1;
     const runs = this.options.readRuns(projectId).filter((run) => run.state !== 'completed' && run.state !== 'cancelled');
     const waiting = new Set(runs.flatMap((run) => (run.workflowRuntime?.activations ?? [])
       .filter((activation) => activation.state === 'awaiting-approval').map((activation) => `${projectId}/${run.runId}/${activation.id}`)));
@@ -82,16 +93,20 @@ export class HostAttentionService {
     }));
   }
 
-  private schedule(): void {
-    if (this.timer) clearTimeout(this.timer);
+  /** One check shortly after the first change: later changes ride on it, so a stream of them cannot hold it back. */
+  private schedule(delay = this.options.debounceMs ?? 200): void {
+    if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       if (this.closed) return;
       const digest = this.ownDigest();
       if (digest === this.announced) return;
-      this.announced = digest;
-      this.options.announce().catch((error: unknown) => this.options.reportError?.(error));
-    }, this.options.debounceMs ?? 200);
+      this.options.announce().then(() => { this.announced = digest; }, (error: unknown) => {
+        this.options.reportError?.(error);
+        // Not announced: try again, so the clients do not keep the old count.
+        if (!this.closed) this.schedule(this.options.retryMs ?? 2_000);
+      });
+    }, delay);
   }
 
   /** The part this service owns (flows and terminals), whose changes move no daemon revision. */

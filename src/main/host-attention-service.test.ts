@@ -105,6 +105,37 @@ describe('HostAttentionService', () => {
     expect(h.announce).toHaveBeenCalledTimes(1);
   });
 
+  it('keys the result to the snapshot revision and what it knows', () => {
+    const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }])] });
+    const first = h.service.attention({ ...noDaemon, revision: 3 });
+    expect(h.service.attention({ ...noDaemon, revision: 3 })).toBe(first);
+    expect(h.service.attention({ ...noDaemon, revision: 4 })).not.toBe(first);
+    h.runs.set('project-a', []);
+    h.service.projectChanged('project-a');
+    expect(h.service.attention({ ...noDaemon, revision: 4 }).items).toEqual([]);
+  });
+
+  it('announces within its delay even while unrelated changes keep arriving', async () => {
+    const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'active' }])], 'project-b': [run('run-2', [{ id: 'b1', state: 'active' }])] });
+    h.runs.set('project-a', [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }])]);
+    h.service.projectChanged('project-a');
+    for (let tick = 0; tick < 4; tick += 1) { await vi.advanceTimersByTimeAsync(100); h.service.projectChanged('project-b'); }
+    expect(h.announce).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again when the announcement fails', async () => {
+    const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'active' }])] });
+    h.announce.mockRejectedValueOnce(new Error('store busy'));
+    h.runs.set('project-a', [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }])]);
+    h.service.projectChanged('project-a');
+    await h.settle();
+    expect(h.announce).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(h.announce).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(h.announce).toHaveBeenCalledTimes(2);
+  });
+
   it('reports a failed read and keeps what it had', async () => {
     const reportError = vi.fn();
     const runs = [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }])];

@@ -57,7 +57,8 @@ export interface HostAttentionFlowRun {
 }
 
 export interface HostAttentionInput {
-  readonly daemon: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'approvals'>;
+  /** With `projects`, a flow approval counts only in a project that is still there (not archived or removed). */
+  readonly daemon: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'approvals'> & Partial<Pick<DaemonSnapshot, 'projects'>>;
   readonly flows: readonly HostAttentionFlowRun[];
   readonly terminalAgents: readonly AgentActivity[];
   /** Activity ids of orchestration workers (see orchestrationWorkerActivityIds). */
@@ -65,7 +66,9 @@ export interface HostAttentionInput {
 }
 
 export function computeHostAttention(input: HostAttentionInput): HostAttention {
-  const items = [...conversationItems(input.daemon), ...flowItems(input.flows), ...terminalItems(input.terminalAgents, input.orchestrationWorkers)]
+  const live = input.daemon.projects && new Set(input.daemon.projects.filter((project) => !project.archivedAt).map((project) => project.id));
+  const flows = live ? input.flows.filter((flow) => live.has(flow.projectId)) : input.flows;
+  const items = [...conversationItems(input.daemon), ...flowItems(flows), ...terminalItems(input.terminalAgents, input.orchestrationWorkers)]
     .sort((left, right) => right.since.localeCompare(left.since) || left.id.localeCompare(right.id));
   return { version: HOST_ATTENTION_VERSION, digest: attentionDigest(items), items };
 }

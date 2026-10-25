@@ -51,7 +51,8 @@ export interface WorkflowWorkspacePanelProps {
   readonly mobile?: boolean;
   readonly active?: boolean;
   /** `launch`: run the flow again (다시 실행) once it is open and can run, once per key. */
-  readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly key: string; readonly launch?: boolean };
+  /** `runId`: the run to show (a waiting approval opens its own run); without it the flow shows its current run. */
+  readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly key: string; readonly launch?: boolean; readonly runId?: string };
   readonly renderPlanning?: (subproject: WorkflowSubproject | null, section?: PlanningWorkspaceSection, runId?: string) => ReactNode;
   /** Desktop injects the React Flow canvas (a lazy chunk); Android and tests draw the static graph. */
   readonly canvasRenderer?: ComponentType<WorkflowCanvasRendererProps>;
@@ -107,6 +108,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const targetSubproject = navigationTarget?.subprojectId;
   const targetNode = navigationTarget?.nodeId;
   const targetKey = navigationTarget?.key;
+  const targetRun = navigationTarget?.runId;
   const targetRef = useRef(targetSubproject); targetRef.current = targetSubproject;
   const [view, setView] = useState<'flow' | 'stage' | 'history' | 'run' | 'planning'>('flow');
   const [advancedRunId, setAdvancedRunId] = useState<string>();
@@ -337,7 +339,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   useEffect(() => {
     launchRequest.current = navigationTarget?.launch && targetKey && targetSubproject ? { key: targetKey, subprojectId: targetSubproject } : undefined;
   }, [navigationTarget?.launch, targetKey, targetSubproject]);
-  useEffect(() => { if (targetSubproject) { setSelectedId(targetSubproject); setNodeId(targetNode ?? null); setView(targetNode ? 'stage' : 'flow'); setEdgeId(null); setRunView(false); setRevealRequest(targetNode && targetKey ? { nodeId: targetNode, key: targetKey } : undefined); } }, [targetKey, targetSubproject, targetNode]);
+  // An arrival shows the run it names (a waiting approval's), else the flow's current run, not one picked before.
+  useEffect(() => { if (targetSubproject) { setSelectedId(targetSubproject); setNodeId(targetNode ?? null); setView(targetNode ? 'stage' : 'flow'); setEdgeId(null); setRunView(false); setPreparedRunId(targetRun ?? null); setRevealRequest(targetNode && targetKey ? { nodeId: targetNode, key: targetKey } : undefined); } }, [targetKey, targetSubproject, targetNode, targetRun]);
   useEffect(() => {
     if (!create?.previewSessionId || !access.workflowPreview || disabled) return;
     let current = true;

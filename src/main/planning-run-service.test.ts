@@ -11,7 +11,7 @@ import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonStore } from './daemon-store';
 import { PlanningService } from './planning-service';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { autoApprovalCommands, PlanningRunService, workflowLaunchId, workflowLedgerId, type PlanningRunServiceOptions } from './planning-run-service';
+import { autoApprovalCommandId, autoApprovalCommands, autoApprovalRefused, PlanningRunService, workflowLaunchId, workflowLedgerId, type PlanningRunServiceOptions } from './planning-run-service';
 import { PlanningResultService } from './planning-result-service';
 import { WorkflowService, workflowDigest } from './workflow-service';
 import { decideStageBinding, type CommittedSubproject } from './workflow-stage-binding';
@@ -292,6 +292,22 @@ describe('planning provider dispatch', () => {
     await vi.waitFor(() => expect(f.ledger.read('project').runs[0].attempts[0].state).toBe('running'));
     expect(f.adapter.submit).toHaveBeenCalledOnce();
     expect(f.ledger.read('project').runs[0].tasks[0].retriesUsed).toBe(0);
+  });
+});
+
+describe('autoApprovalRefused', () => {
+  const base = autoApprovalCommandId('run-1', 'activation-1');
+  const reading = (receipts: Record<string, { ok: boolean; error?: string }>) => autoApprovalRefused(
+    (_projectId, commandId) => (receipts[commandId] ? { commandId, projectId: 'project', revision: 1, ...receipts[commandId] } as never : null), 'project', 'run-1', 'activation-1');
+  it('reads the host’s decision across its retries, as the runtime records them', () => {
+    expect(reading({})).toBe(false);
+    expect(reading({ [`${base}-0`]: { ok: true } })).toBe(false);
+    expect(reading({ [`${base}-0`]: { ok: false, error: 'invalid-state' } })).toBe(true);
+    expect(reading({ [`${base}-0`]: { ok: false, error: 'revision-conflict' }, [`${base}-1`]: { ok: false, error: 'user-required' } })).toBe(true);
+    // Still retrying: not decided yet.
+    expect(reading({ [`${base}-0`]: { ok: false, error: 'revision-conflict' } })).toBe(false);
+    // Every retry met a conflict: the runtime gave up, the person decides.
+    expect(reading(Object.fromEntries([0, 1, 2, 3, 4].map((retry) => [`${base}-${retry}`, { ok: false, error: 'revision-conflict' }])))).toBe(true);
   });
 });
 

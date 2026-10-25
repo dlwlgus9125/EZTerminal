@@ -55,7 +55,7 @@ export interface DaemonCommandRouterOptions {
   /** Usage for the snapshot's conversations and providers, kept beside the store. */
   readonly agentUsage?: (snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>) => Pick<DaemonSnapshot, 'agentUsage' | 'providerUsage'>;
   /** What waits on the person (src/main/host-attention-service.ts); none until the host computes it. */
-  readonly attention?: (snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents' | 'approvals'>) => DaemonSnapshot['attention'];
+  readonly attention?: (snapshot: DaemonSnapshot) => DaemonSnapshot['attention'];
 }
 
 function commandError(

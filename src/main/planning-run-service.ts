@@ -78,6 +78,21 @@ function hash(value: unknown): string {
 export function autoApprovalCommandId(runId: string, activationId: string): string {
   return `auto-approve-${hash([runId, activationId]).slice(0, 32)}`;
 }
+/** How many times a runtime command is retried on a revision conflict, each under `<id>-<n>`. */
+export const RUNTIME_COMMAND_RETRIES = 5;
+/**
+ * The host's automatic decision on an approval stage did not and will not happen: its first non-conflict answer was a
+ * refusal, or every retry met a conflict (the runtime then gives up on it). Read from the recorded receipts.
+ */
+export function autoApprovalRefused(getReceipt: (projectId: string, commandId: string) => PlanningExecutionReceipt | null, projectId: string, runId: string, activationId: string): boolean {
+  const commandId = autoApprovalCommandId(runId, activationId);
+  for (let retry = 0; retry < RUNTIME_COMMAND_RETRIES; retry += 1) {
+    const receipt = getReceipt(projectId, `${commandId}-${retry}`);
+    if (!receipt || receipt.ok) return false;
+    if (receipt.error !== 'revision-conflict') return true;
+  }
+  return true;
+}
 export function autoApprovalCommands(run: ExecutionRun): Array<{ readonly commandId: string; readonly type: 'workflow.approve' | 'workflow.integrate'; readonly payload: Record<string, unknown> }> {
   if (run.preparation.approvalPolicy !== 'auto' || run.cancelRequested || run.dispatchPaused) return [];
   const approvals = (run.workflowRuntime?.activations ?? []).filter((activation) => activation.state === 'awaiting-approval')
@@ -700,7 +715,7 @@ export class PlanningRunService {
   }
 
   private async runtimeCommand(run: ExecutionRun, commandId: string, type: PlanningExecutionCommand['type'], payload: Record<string, unknown>, principalId = 'planning-runtime'): Promise<PlanningExecutionReceipt> {
-    for (let retry = 0; retry < 5; retry += 1) {
+    for (let retry = 0; retry < RUNTIME_COMMAND_RETRIES; retry += 1) {
       const id = `${commandId}-${retry}`;
       const existing = this.options.ledger.getReceipt(run.projectId, id);
       if (existing && (existing.ok || existing.error !== 'revision-conflict')) return existing;

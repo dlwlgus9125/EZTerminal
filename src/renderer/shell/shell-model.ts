@@ -39,7 +39,7 @@ export interface WaitingItem {
   readonly at: string;
   /** Where a flow approval or a terminal agent waits (a conversation's project comes from its session). */
   readonly projectId?: string;
-  readonly flow?: { readonly subprojectId: string; readonly nodeId: string };
+  readonly flow?: { readonly subprojectId: string; readonly nodeId: string; readonly runId?: string };
 }
 
 export type StageLamp = 'done' | 'run' | 'wait' | 'idle' | 'fail';
@@ -162,7 +162,7 @@ export function hostWaitingItems(snapshot: DaemonSnapshot | null, projectId?: st
     return [{
       approvalId: item.id, sessionId: '', title: item.title, providerId: '', kind: item.kind, detail: '', at: item.since,
       ...(item.projectId ? { projectId: item.projectId } : {}),
-      ...(item.kind === 'flow-approval' && item.subprojectId && item.nodeId ? { flow: { subprojectId: item.subprojectId, nodeId: item.nodeId } } : {}),
+      ...(item.kind === 'flow-approval' && item.subprojectId && item.nodeId ? { flow: { subprojectId: item.subprojectId, nodeId: item.nodeId, ...(item.runId ? { runId: item.runId } : {}) } } : {}),
     }];
   });
   return [...conversations, ...others].sort((left, right) => right.at.localeCompare(left.at));

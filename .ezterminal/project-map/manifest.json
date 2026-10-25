@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:72a277d799d4d323872b5765ca95ee180fd061a0b78ef806733257382322d0eb",
+        "inputDigest": "sha256:0216e05831d68b0e1d04a04f10925061708e89b9008056679b3bb53cf67c4940",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
@@ -369,7 +369,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:788ef99e63245a2553c7c82245c6ff73601030b0e0d9f676994e6e1f5e6f17ed",
+        "inputDigest": "sha256:fde162b021fbb0eb6df999f59f263a44a4e1f94c9b277fa4b7d0c0d6b2266d3e",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
@@ -501,7 +501,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:080ebf3a42fee0be0d65aa15ae0c78352cb7959af6642edf68efcbe9631649de",
+        "inputDigest": "sha256:c70cf2256e3afd7f2d81c64ca227764333a1995edc24faa64cc266c5ae8ba00a",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:db91664576b63c8e2a5e41318c56e3c6327455d5d8913f57a7631b5d94852664",
+        "inputDigest": "sha256:3fa8338b2fa4d2fbe6e90fbfef5ba849dd36e51948fcb8f2752cd167b8addcd6",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
@@ -665,7 +665,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3bf1481ce6c0b4a1ce4bbba25c060ef21f41ddbfa0ddaaedb48aac3de9c98487",
+        "inputDigest": "sha256:28e352924c3584161ca97c52b4ea0cbd2085d20044740215617f619c2c8d9d0d",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }
@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:a4dc0da9701c85aec95aed1ebb0c9a84de1d6a79d9e937f62e93488835edf275",
+        "inputDigest": "sha256:668967bd508664a3fdaf4e83e96aa9b5dfdba74934150f0f482d6a9fe46f1859",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-5): the host computes what waits on the person (src/shared/host-attention.ts) and adds it to the daemon snapshot; flow and terminal changes are announced by an events-only commit; screens and the phone badge read it. Claims hold."
       }

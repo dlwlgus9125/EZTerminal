@@ -906,7 +906,8 @@ export function MobileWorkspace({
   }), [agentSnapshot, orchestrationWorkerIds]);
   // The host's count when it sends one (conversation and flow approvals, blocked terminal agents), the same as the
   // desktop's; an older host (or a copy kept on this device) leaves the terminal agents' count.
-  const hostAttention = daemonRuntimeState.status === 'ready' ? daemonRuntimeState.snapshot?.attention : undefined;
+  // (While the snapshot is read again after an event it is kept, so the count stays.)
+  const hostAttention = connected && transport.isAuthed ? daemonRuntimeState.snapshot?.attention : undefined;
   const agentAttention = hostAttention ? hostAttention.items.length : countAgentAttention(userFacingAgentSnapshot);
 
   // Swipe-between-tabs used to live on the tab strip the session sheet

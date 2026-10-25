@@ -567,6 +567,12 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
     expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')?.textContent).toBe('2');
+    // An event makes the phone read the snapshot again; the count stays meanwhile.
+    await act(async () => socket.triggerMessage({ kind: 'daemon-event', event: {
+      protocolVersion: authority.protocolVersion, eventId: 'event-1', sequence: authority.eventSequence + 1, revision: authority.revision + 1,
+      occurredAt: '2026-10-25T03:00:00.000Z', kind: 'entity.upserted', payload: { entityType: 'attention', entityId: 'host' },
+    } }));
+    expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')?.textContent).toBe('2');
   });
 
   it('rechecks a transient secure-storage failure from the inline retry action', async () => {

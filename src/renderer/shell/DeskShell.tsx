@@ -39,7 +39,7 @@ export interface DeskShellActions {
   readonly newConversation: (project: { readonly projectId: string; readonly name: string } | undefined) => void;
   readonly openHistory: (projectId: string | undefined) => void;
   /** `launch`: the flow screen runs it again (다시 실행) once open, through its own request recovery. */
-  readonly openFlow: (project: { readonly projectId: string; readonly name: string }, subprojectId?: string, options?: { readonly launch?: boolean; readonly nodeId?: string }) => void;
+  readonly openFlow: (project: { readonly projectId: string; readonly name: string }, subprojectId?: string, options?: { readonly launch?: boolean; readonly nodeId?: string; readonly runId?: string }) => void;
   readonly openTerminal: (panelId: string) => void;
   readonly newTerminal: (project: { readonly projectId: string; readonly name: string } | undefined) => void;
   readonly openTool: (id: string) => void;
@@ -248,7 +248,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
     if (item.kind === 'terminal-agent') { actions.openInbox(); return; }
     if (item.kind === 'flow-approval') {
       const owner = projects?.find((candidate) => candidate.projectId === item.projectId);
-      if (owner && item.flow) { actions.openFlow({ projectId: owner.projectId, name: owner.name }, item.flow.subprojectId, { nodeId: item.flow.nodeId }); navigation.showWork(); }
+      if (owner && item.flow) { actions.openFlow({ projectId: owner.projectId, name: owner.name }, item.flow.subprojectId, { nodeId: item.flow.nodeId, ...(item.flow.runId ? { runId: item.flow.runId } : {}) }); navigation.showWork(); }
       return;
     }
     openConversation(item.sessionId);

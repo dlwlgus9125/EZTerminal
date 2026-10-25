@@ -50,7 +50,7 @@ import { AgentCapabilityService } from './agent-capability-service';
 import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient } from '../shared/agent-capabilities';
 import { installPlanningIpc } from './planning-ipc';
 import { PlanningExecutionStore } from './planning-execution-store';
-import { PlanningRunService, autoApprovalCommandId } from './planning-run-service';
+import { PlanningRunService, autoApprovalRefused } from './planning-run-service';
 import { HostAttentionService } from './host-attention-service';
 import { PlanningRunAuthority } from './planning-run-authority';
 import { installPlanningRunIpc } from './planning-run-ipc';
@@ -3796,8 +3796,9 @@ app.on('ready', async () => {
   const hostAttention = new HostAttentionService({
     projectIds: () => planningExecutionStore.projectIds(),
     readRuns: (projectId) => planningExecutionStore.read(projectId).runs,
-    autoApprovalRefused: (projectId, runId, activationId) => planningExecutionStore.getReceipt(projectId, autoApprovalCommandId(runId, activationId))?.ok === false,
-    terminalAgents: () => agentActivityService?.getSnapshot().items ?? [],
+    autoApprovalRefused: (projectId, runId, activationId) => autoApprovalRefused((id, commandId) => planningExecutionStore.getReceipt(id, commandId), projectId, runId, activationId),
+    // The coordination view: activities with the project they run in (the activity service alone has none).
+    terminalAgents: () => agentCoordinationService?.getSnapshot().activities ?? [],
     orchestrationWorkers: () => (agentOrchestrationService ? orchestrationWorkerActivityIds(agentOrchestrationService.getSnapshot()) : new Set<string>()),
     announce: async () => {
       await daemonCommandRouter.applySystemCommit({ events: [{ kind: 'entity.upserted', payload: { entityType: 'attention', entityId: 'host' } }] });
@@ -3809,7 +3810,7 @@ app.on('ready', async () => {
   });
   hostAttentionRef.current = hostAttention;
   planningExecutionStore.onCommitted((projectId) => hostAttention.projectChanged(projectId));
-  trackLocalAgentStackSubscription(agentActivityService.onSnapshot(() => hostAttention.terminalsChanged()));
+  trackLocalAgentStackSubscription(agentCoordinationService.onSnapshot(() => hostAttention.terminalsChanged()));
   trackLocalAgentStackSubscription(agentOrchestrationService.onSnapshot(() => hostAttention.terminalsChanged()));
   trackLocalAgentStackSubscription(() => { hostAttentionRef.current = undefined; hostAttention.close(); });
   trackLocalAgentStackSubscription(() => powerSaveGuard.dispose());

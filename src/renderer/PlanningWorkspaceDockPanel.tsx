@@ -28,7 +28,7 @@ import {
 export interface PlanningNavigation {
   readonly openHistory?: (projectId?: string) => void;
   /** `launch`: run the flow again once it is open (see WorkflowWorkspacePanel). */
-  readonly openWorkflow?: (projectId: string, projectName: string, subprojectId: string, nodeId?: string, launch?: boolean) => void;
+  readonly openWorkflow?: (projectId: string, projectName: string, subprojectId: string, nodeId?: string, launch?: boolean, runId?: string) => void;
   readonly openConversation: (id: string, title?: string) => void;
   readonly newConversation: (projectId: string, projectName: string) => void;
   readonly openFiles: (projectId: string) => void;
@@ -225,7 +225,7 @@ export function PlanningWorkspaceDockPanel(
         const written = await window.ezterminal.chatStateWrite(scope, { expectedRevision: saved.snapshot.revision, state: { ...saved.snapshot.state, draft } });
         if (!written.ok) throw new Error(written.message);
       }}
-      navigationTarget={typeof props.params.subprojectId === 'string' ? { subprojectId: props.params.subprojectId, nodeId: props.params.nodeId as string | undefined, key: props.params.workflowNavigationKey as string ?? props.params.subprojectId, ...(props.params.launch === true ? { launch: true } : {}) } : undefined}
+      navigationTarget={typeof props.params.subprojectId === 'string' ? { subprojectId: props.params.subprojectId, nodeId: props.params.nodeId as string | undefined, key: props.params.workflowNavigationKey as string ?? props.params.subprojectId, ...(props.params.launch === true ? { launch: true } : {}), ...(typeof props.params.runId === 'string' ? { runId: props.params.runId } : {}) } : undefined}
       conversations={conversations}
       onBack={navigation?.openProjects}
       onBoard={navigation?.openBoard ? () => navigation.openBoard!(projectId) : undefined}

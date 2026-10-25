@@ -2106,9 +2106,9 @@ export function App(): JSX.Element {
 
   const planningNavigation = useMemo<PlanningNavigation>(() => ({
     openHistory: (projectId) => setConversationHistory({ projectId }),
-    openWorkflow: (projectId, name, subprojectId, nodeId, launch) => {
+    openWorkflow: (projectId, name, subprojectId, nodeId, launch, runId) => {
       openPlanningProject({ projectId, name });
-      apiRef.current?.getPanel(`planning-project-${projectId}`)?.api.updateParameters({ subprojectId, nodeId, workflowNavigationKey: crypto.randomUUID(), ...(launch ? { launch: true } : { launch: undefined }) });
+      apiRef.current?.getPanel(`planning-project-${projectId}`)?.api.updateParameters({ subprojectId, nodeId, workflowNavigationKey: crypto.randomUUID(), ...(launch ? { launch: true } : { launch: undefined }), runId: runId ?? undefined });
     },
     openConversation: (sessionId, title) => openStructuredAgentSession({ sessionId, title }),
     newConversation: (projectId, name) => openStructuredAgentDraft({ projectId, name }),
@@ -3146,7 +3146,7 @@ export function App(): JSX.Element {
       newConversation: (project) => { openStructuredAgentDraft(project); },
       openHistory: (projectId) => setConversationHistory(projectId ? { projectId } : {}),
       openFlow: (project, subprojectId, options) => {
-        if (subprojectId) planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, options?.nodeId, options?.launch);
+        if (subprojectId) planningNavigation.openWorkflow?.(project.projectId, project.name, subprojectId, options?.nodeId, options?.launch, options?.runId);
         else openPlanningProject(project);
       },
       openInbox: () => { setAgentHubView('inbox'); setActiveProjectId(null); setSidebarDestination('agents'); },

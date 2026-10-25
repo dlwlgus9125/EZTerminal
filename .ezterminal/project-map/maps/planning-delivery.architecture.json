@@ -273,8 +273,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 175,
-          "endLine": 374,
+          "startLine": 190,
+          "endLine": 389,
           "lineDigest": "sha256:2845f6353fc683abc5b2b32f032eef481bcce4e02db6765c0bedd0739790333f",
           "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy into the ledger; agents cannot approve or integrate; fingerprints stop changed replays."
         },
@@ -319,16 +319,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 583,
-          "endLine": 649,
+          "startLine": 598,
+          "endLine": 664,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 583,
-          "endLine": 688,
+          "startLine": 598,
+          "endLine": 703,
           "lineDigest": "sha256:245a107024462c92ac6ba78518cae026848ba1499849218f52b9a414a80a3689",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
@@ -469,8 +469,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 175,
-          "endLine": 374,
+          "startLine": 190,
+          "endLine": 389,
           "lineDigest": "sha256:2845f6353fc683abc5b2b32f032eef481bcce4e02db6765c0bedd0739790333f",
           "claim": "Run commands, including a launch that prepares and starts one run and cancels it if its start is refused, freeze graph, baseline and auto-approve policy into the ledger; agents cannot approve or integrate; fingerprints stop changed replays."
         }
@@ -503,8 +503,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 583,
-          "endLine": 649,
+          "startLine": 598,
+          "endLine": 664,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }
