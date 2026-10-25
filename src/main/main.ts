@@ -3235,6 +3235,7 @@ app.on('ready', async () => {
       void daemonAgentRuntime.whenIdle().finally(() => { clearTimeout(timer); resolve(); });
     }),
     liveTerminalIds: () => new Set(broker?.listSessions().map((session) => session.sessionId) ?? []),
+    onChange: () => broadcast('run-retention:changed'),
   });
   runCleanupRef.current = runCleanup;
   // A cleanup the app stopped part way is settled against the real Git and folder state once runs can be read.

@@ -26,7 +26,8 @@ export const RUN_RETENTION_FILE = 'run-retention-v1.json';
 const FolderRecord = z.object({
   projectId: z.string().min(1).max(200), runId: z.string().min(1).max(200), attemptId: z.string().min(1).max(200),
   kind: z.enum(['attempt', 'validation', 'integration']), path: z.string().min(1).max(4_000), worktreeId: z.string().max(200).optional(),
-  state: z.enum(['retiring', 'removed', 'kept', 'blocked']), reason: z.string().max(1_000).optional(), at: z.string().datetime(),
+  // ambiguous: Git no longer has it as a worktree but files are at its path (left part way, or a new folder there): never read as the run's.
+  state: z.enum(['retiring', 'removed', 'kept', 'blocked', 'ambiguous']), reason: z.string().max(1_000).optional(), at: z.string().datetime(),
 }).strict();
 const RecordSchema = z.object({
   version: z.literal(1),
@@ -62,6 +63,8 @@ export interface RunWorktreeCleanupOptions {
   /** Waits (bounded) for archived chats to let go of their provider processes. */
   readonly releaseProviders: () => Promise<void>;
   readonly liveTerminalIds: () => ReadonlySet<string>;
+  /** After every record change (screens ask again about the folders they show). */
+  readonly onChange?: () => void;
   readonly folderReleaseMs?: number;
   readonly now?: () => Date;
 }
@@ -108,7 +111,7 @@ export class RunWorktreeCleanup {
       if (listed.worktrees.some(worktree => (entry.worktreeId && worktree.worktreeId === entry.worktreeId) || samePath(worktree.path, entry.path))) {
         await this.write(entry.projectId, plan, 'kept', 'An earlier cleanup stopped before removing it.');
       } else if (!(await present(entry.path))) await this.write(entry.projectId, plan, 'removed');
-      else await this.write(entry.projectId, plan, 'blocked', 'An earlier cleanup stopped part way; files are left there.');
+      else await this.write(entry.projectId, plan, 'ambiguous', 'An earlier cleanup stopped part way; files are left there.');
     }
   }
 
@@ -213,7 +216,10 @@ export class RunWorktreeCleanup {
     const retired = await this.options.worktrees.retire(root, worktree.worktreeId, resolved.expected);
     if (retired.ok) return this.settle(projectId, folder, 'removed');
     if (retired.kept) return this.settle(projectId, folder, 'kept', retired.code, retired.reason);
-    return this.settle(projectId, folder, 'blocked', retired.code === 'WORKTREE_IN_USE' ? 'in-use' : 'failed', retired.message);
+    // Git may have let go of it part way: then what is left there is not read as the run's any more.
+    const after = await this.options.worktrees.execute({ action: 'list', cwd: root }, 'desktop');
+    const gone = after.ok && !after.worktrees.some(entry => samePath(entry.path, folder.path));
+    return this.settle(projectId, folder, gone ? 'ambiguous' : 'blocked', retired.code === 'WORKTREE_IN_USE' ? 'in-use' : 'failed', retired.message);
   }
 
   /**
@@ -261,7 +267,7 @@ export class RunWorktreeCleanup {
   async folderState(folderPath: string): Promise<CleanedFolderState> {
     const entry = recordFor(await this.read(), folderPath);
     if (entry?.state === 'retiring') return { state: 'retiring', root: entry.path };
-    if (entry?.state !== 'removed') return { state: 'live' };
+    if (entry?.state !== 'removed' && entry?.state !== 'ambiguous') return { state: 'live' };
     return { state: 'cleaned', root: entry.path, result: (await this.verifiedResult(entry)) !== undefined };
   }
 
@@ -272,7 +278,7 @@ export class RunWorktreeCleanup {
   async readFile(filePath: string): Promise<FilePreviewResult> {
     const resolved = path.resolve(filePath);
     const entry = recordFor(await this.read(), resolved);
-    if (entry?.state !== 'removed') return { ok: false, error: 'This file is not in a cleaned-up work folder.' };
+    if (entry?.state !== 'removed' && entry?.state !== 'ambiguous') return { ok: false, error: 'This file is not in a cleaned-up work folder.' };
     const verified = await this.verifiedResult(entry);
     if (!verified) return { ok: false, error: 'This run kept no result to read the file from.' };
     const relative = path.relative(path.resolve(entry.path), resolved);
@@ -306,7 +312,7 @@ export class RunWorktreeCleanup {
     try { return (await this.options.git.run(root, ['rev-parse', '--verify', '--quiet', ref])).trim() === expected.detachTo; } catch { return false; }
   }
 
-  private async settle(projectId: string, folder: RunFolderPlan, state: 'removed' | 'kept' | 'blocked', code?: RunFolderKeepCode, reason?: string): Promise<{ ok: true } | { ok: false; code: RunFolderKeepCode; reason: string }> {
+  private async settle(projectId: string, folder: RunFolderPlan, state: 'removed' | 'kept' | 'blocked' | 'ambiguous', code?: RunFolderKeepCode, reason?: string): Promise<{ ok: true } | { ok: false; code: RunFolderKeepCode; reason: string }> {
     await this.write(projectId, folder, state, reason);
     return state === 'removed' ? { ok: true } : { ok: false, code: code ?? 'failed', reason: reason ?? 'It was kept.' };
   }
@@ -328,6 +334,7 @@ export class RunWorktreeCleanup {
       const text = `${JSON.stringify(next, null, 2)}\n`;
       await this.file.write(text);
       this.record = next;
+      try { this.options.onChange?.(); } catch { /* a screen that went away */ }
     });
   }
 

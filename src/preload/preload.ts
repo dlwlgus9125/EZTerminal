@@ -440,6 +440,11 @@ const api: EzTerminalApi = {
     cleaned: (projectId: string) => ipcRenderer.invoke('run-retention:cleaned', projectId),
     folderState: (folderPath: string) => ipcRenderer.invoke('run-retention:folder-state', folderPath),
     readFile: (filePath: string) => ipcRenderer.invoke('run-retention:read-file', filePath),
+    onChanged: (listener: () => void): (() => void) => {
+      const handler = (): void => listener();
+      ipcRenderer.on('run-retention:changed', handler);
+      return () => ipcRenderer.removeListener('run-retention:changed', handler);
+    },
     cleanup: (projectId: string, runIds: readonly string[]) => ipcRenderer.invoke('run-retention:cleanup', projectId, runIds),
   },
   workspaceWorktrees: {

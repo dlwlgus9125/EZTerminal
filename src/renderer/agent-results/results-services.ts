@@ -16,6 +16,8 @@ export interface ResultsServices {
   readonly cleanedFolder?: (root: string) => Promise<CleanedFolderState>;
   /** A cleaned-up folder's file, from the run's kept result. */
   readonly readCleanedFile?: (path: string) => Promise<FilePreviewResult>;
+  /** Called when the host's cleanup record changes; returns the unsubscribe. */
+  readonly onFolderChanged?: (listener: () => void) => () => void;
 }
 
 /**

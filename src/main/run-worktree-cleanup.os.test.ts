@@ -188,6 +188,16 @@ describe('RunWorktreeCleanup (real Git)', () => {
     expect(await restarted.folderState(p.folder)).toEqual({ state: 'retiring', root: p.folder });
     await restarted.reconcile();
     expect(await restarted.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: true });
+    // Stopped part way and a folder is at the old path again: never read as the run's (Codex I2-7c recheck).
+    const replaced = JSON.parse(await fs.readFile(file, 'utf8')) as { folders: { state: string }[] };
+    replaced.folders[0]!.state = 'retiring';
+    await fs.writeFile(file, `${JSON.stringify(replaced, null, 2)}\n`);
+    mkdirSync(p.folder);
+    writeFileSync(path.join(p.folder, 'README.md'), 'someone else’s\n');
+    const again = new RunWorktreeCleanup({ ...(p.cleanup as unknown as { options: ConstructorParameters<typeof RunWorktreeCleanup>[0] }).options });
+    await again.reconcile();
+    expect(await again.folderState(p.folder)).toEqual({ state: 'cleaned', root: p.folder, result: true });
+    expect(await again.readFile(path.join(p.folder, 'README.md'))).toMatchObject({ ok: true, content: 'updated\n' });
   }, 60_000);
 
   it('removes the folder a passed integration combined the run’s results in, and keeps any other (I2-7d)', async () => {

@@ -90,6 +90,11 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
       {error && <p role="alert" className="workflow-error">{error} <Button size="sm" variant="ghost" onClick={() => setGeneration(value => value + 1)}>{text('다시 확인', 'Check again')}</Button></p>}
       {outcome && <p role="status">{text(`폴더 ${outcome.removed}개를 정리했습니다.`, `Cleaned up ${outcome.removed} folder${outcome.removed === 1 ? '' : 's'}.`)}
         {outcome.kept.length > 0 && text(` ${outcome.kept.length}개는 남겼습니다(아래 이유).`, ` ${outcome.kept.length} stayed (see why below).`)}</p>}
+      {/* A folder the cleanup just kept may be gone from the list read again (its run became busy): its reason still shows. */}
+      {outcome && outcome.kept.some(entry => entry.path && !runs.some(run => run.folders.some(folder => folder.path === entry.path))) && <ul className="workflow-folder-cleanup__runs">
+        <li><strong>{text('이번에 남긴 폴더', 'Kept this time')}</strong><ul>{outcome.kept.filter(entry => entry.path && !runs.some(run => run.folders.some(folder => folder.path === entry.path))).map(entry =>
+          <li key={entry.path} data-state="kept"><span><code>{entry.path}</code></span><Badge variant="warning">{text('남김', 'Kept')}</Badge> <small>{runFolderKeepText(entry.code, entry.reason, text)}</small></li>)}</ul></li>
+      </ul>}
       {!plan && !error ? <LoadingState label={text('작업 폴더 확인 중', 'Checking work folders')} />
         : runs.length === 0 ? <p>{text('정리할 작업 폴더가 없습니다.', 'There are no work folders to clean up.')}</p>
           : <ul className="workflow-folder-cleanup__runs">{runs.map(run => <li key={run.runId}>

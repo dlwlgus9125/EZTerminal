@@ -65,4 +65,6 @@ export interface RunRetentionAccess {
   folderState(folderPath: string): Promise<RunRetentionResult<CleanedFolderState>>;
   /** A file of a cleaned-up folder, read from the run's verified result commit in the project checkout. */
   readFile(filePath: string): Promise<RunRetentionResult<FilePreviewResult>>;
+  /** Called after the host's cleanup record changes (a folder is being or was cleaned up); returns the unsubscribe. */
+  onChanged?(listener: () => void): () => void;
 }

@@ -118,6 +118,8 @@ export function ConversationResults({ source, services, navigation, renderHtml, 
     void services.cleanedFolder(root).then((state) => { if (alive) setFolderState({ root, state }); }, () => { if (alive) setFolderState({ root, state: 'error' }); });
     return () => { alive = false; };
   }, [root, services, source.historyOnly, asked]);
+  // Any change to the host's cleanup record: this folder may be going, so nothing more is read from it until asked again.
+  useEffect(() => (root && services.onFolderChanged ? services.onFolderChanged(recheck) : undefined), [root, services, recheck]);
   const retiring = !!folderState && folderState.root === root && typeof folderState.state === 'object' && folderState.state.state === 'retiring';
   useEffect(() => {
     if (!retiring) return undefined;

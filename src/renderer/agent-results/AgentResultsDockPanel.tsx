@@ -26,6 +26,7 @@ function hostServices(): ResultsServices {
         return result.value;
       }),
       readCleanedFile: (path: string) => api.runRetention!.readFile(path).then((result): FilePreviewResult => (result.ok ? result.value : { ok: false, error: result.message })),
+      ...(api.runRetention.onChanged ? { onFolderChanged: (listener: () => void) => api.runRetention!.onChanged!(listener) } : {}),
     } : {}),
     ...(typeof window.ezterminalDesktop?.openExternalHttpUrl === 'function'
       ? { openExternalHttpUrl: (url: string) => { if (/^https?:/iu.test(url)) void window.ezterminalDesktop?.openExternalHttpUrl(url); } }

@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:cdbbd3947efae9a11a16204cbf09d6c02a409de5d300e757e66e780942c33748",
+        "inputDigest": "sha256:159d1a11677224b80e44ea6e5a46bac4c87f36114b5c49347533f64782b7f234",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
+        "reason": "Reviewed (I2-7c recheck): the cleanup record's changes are broadcast so Results asks again about the folder it shows; a folder Git let go of part way is recorded ambiguous and only its verified result is read. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:95b12846bc1ed07644be94096b7cbcdf44740218e4ee381a1073f9850eb50f97",
+        "inputDigest": "sha256:146dffd30d952b7b731400fcad794745e4883283644796276dd03ab23476d7fc",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
+        "reason": "Reviewed (I2-7c recheck): the cleanup record's changes are broadcast so Results asks again about the folder it shows; a folder Git let go of part way is recorded ambiguous and only its verified result is read. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c797a7f96e23ccd3b1f68ee010d5100395827145d1e3c877d1661d4713873c6c",
+        "inputDigest": "sha256:1f1b1ebb618eeae1201250876ac3ca960e541ca736ffdc135c5c9d71db46ff7d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
+        "reason": "Reviewed (I2-7c recheck): the cleanup record's changes are broadcast so Results asks again about the folder it shows; a folder Git let go of part way is recorded ambiguous and only its verified result is read. Claims hold."
       }
     },
     {

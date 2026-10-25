@@ -48,6 +48,19 @@ describe('ConversationResults and a cleaned-up work folder (Codex I2-7c P1-5)', 
     expect(services.cleanedFolder).toHaveBeenCalledTimes(2);
   });
 
+  it('stops reading a live folder once the host says its cleanup record changed (Codex I2-7c recheck)', async () => {
+    const listeners: (() => void)[] = [];
+    const answers: CleanedFolderState[] = [{ state: 'live' }, { state: 'cleaned', root: ROOT, result: true }];
+    const services: ResultsServices = { readFilePreview: vi.fn(async () => text), readCleanedFile: vi.fn(async () => text), cleanedFolder: vi.fn(async () => answers.shift()!),
+      onFolderChanged: listener => { listeners.push(listener); return () => undefined; } };
+    await act(async () => show('s-changed', services));
+    expect(services.readFilePreview).toHaveBeenCalledTimes(1);
+    await act(async () => { for (const listener of listeners) listener(); });
+    expect(services.cleanedFolder).toHaveBeenCalledTimes(2);
+    expect(services.readCleanedFile).toHaveBeenCalledWith(`${ROOT}\\notes.txt`);
+    expect(services.readFilePreview).toHaveBeenCalledTimes(1);
+  });
+
   it('reads a live folder as it is', async () => {
     const services: ResultsServices = { readFilePreview: vi.fn(async () => text), readCleanedFile: vi.fn(), cleanedFolder: vi.fn(async (): Promise<CleanedFolderState> => ({ state: 'live' })) };
     await act(async () => show('s-live', services));

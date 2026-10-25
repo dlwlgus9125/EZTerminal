@@ -73,6 +73,20 @@ describe('RunFolderCleanupDialog', () => {
     expect(row.textContent).toContain('Something still runs there. Stop it and clean up again.');
   });
 
+  it('still shows why a folder stayed when the list read again no longer has its run (Codex I2-7c recheck)', async () => {
+    let plans = 0;
+    const access: RunRetentionAccess = {
+      plan: vi.fn(async () => ({ ok: true as const, value: plans++ === 0 ? plan : { runs: [], cleaned: [] } })),
+      cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
+      cleanup: vi.fn(async () => ({ ok: true as const, value: { removed: 0, kept: [{ path: 'C:/work/attempt-1', code: 'busy' as const, reason: 'Something still runs there.' }] } })),
+      folderState: vi.fn(), readFile: vi.fn(),
+    };
+    await act(async () => root.render(<RunFolderCleanupDialog open onOpenChange={vi.fn()} projectId="P" subprojectId="flow" access={access} text={text} />));
+    await act(async () => (document.querySelector('[data-testid="run-folder-cleanup-confirm"]') as HTMLButtonElement).click());
+    const row = [...document.querySelectorAll('[data-testid="run-folder-cleanup"] li[data-state="kept"]')].find(item => item.textContent?.includes('C:/work/attempt-1'));
+    expect(row?.textContent).toContain('Something still runs there. Stop it and clean up again.');
+  });
+
   it('words every reason a folder stays, falling back to the host’s own words', () => {
     expect(runFolderKeepText('lfs', 'x', (ko) => ko)).toBe('Git LFS를 씁니다.');
     expect(runFolderKeepText(undefined, 'Host words.', text)).toBe('Host words.');
