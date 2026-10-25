@@ -86,6 +86,9 @@ async function verifyInteractionBudget(canvasElement: HTMLElement): Promise<void
 const meta = {
   title: 'Diagnostics/Interaction responsiveness',
   component: InteractionFixture,
+  // Measured in a browser of its own after the other stories (vitest.storybook.config.ts): the heap those leave
+  // behind is collected at some point, and a collection during the typing sample is not the composer's cost.
+  tags: ['interaction-budget'],
   parameters: {
     layout: 'fullscreen',
     a11y: { test: 'error' },

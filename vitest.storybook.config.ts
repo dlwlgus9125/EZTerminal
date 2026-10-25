@@ -44,9 +44,26 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        plugins: [storybookTest({ configDir: path.join(dirname, '.storybook') })],
+        plugins: [storybookTest({ configDir: path.join(dirname, '.storybook'), tags: { exclude: ['interaction-budget'] } })],
         test: {
           name: 'storybook',
+          sequence: { groupOrder: 0 },
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            api: { host: '127.0.0.1' },
+            instances: [{ browser: 'chromium' }],
+          },
+        },
+      },
+      {
+        // The interaction budget is timed in a fresh browser once the other stories have finished.
+        extends: true,
+        plugins: [storybookTest({ configDir: path.join(dirname, '.storybook'), tags: { include: ['interaction-budget'] } })],
+        test: {
+          name: 'storybook-interaction-budget',
+          sequence: { groupOrder: 1 },
           browser: {
             enabled: true,
             headless: true,
