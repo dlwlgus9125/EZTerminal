@@ -159,6 +159,23 @@ describe('judgeDisposable (real Git)', () => {
     expect(await judge(storage.folder, storage.expected)).toMatchObject({ disposable: false, code: 'lfs' });
   });
 
+  it('keeps a folder whose files Git runs a named filter on (Codex I2-7e v3)', async () => {
+    const filteredFolder = attempt({ capture: true });
+    writeFileSync(path.join(filteredFolder.folder, '.gitattributes'), '*.dat filter=mydriver\n');
+    writeFileSync(path.join(filteredFolder.folder, 'data.dat'), 'x\n');
+    git(filteredFolder.folder, ['add', '-A']);
+    const tree = git(filteredFolder.folder, ['write-tree']).trim();
+    const result = git(filteredFolder.folder, ['-c', 'user.name=E', '-c', 'user.email=e@localhost', 'commit-tree', tree, '-p', filteredFolder.baseCommit, '-m', 'result']).trim();
+    expect(await judge(filteredFolder.folder, { ...filteredFolder.expected, tree: result })).toMatchObject({ disposable: false, code: 'filter' });
+    // An attribute that turns the filter off explicitly is no filter.
+    const off = attempt({ capture: true });
+    writeFileSync(path.join(off.folder, '.gitattributes'), '*.md -filter\n');
+    git(off.folder, ['add', '-A']);
+    const offTree = git(off.folder, ['write-tree']).trim();
+    const offResult = git(off.folder, ['-c', 'user.name=E', '-c', 'user.email=e@localhost', 'commit-tree', offTree, '-p', off.baseCommit, '-m', 'result']).trim();
+    expect(await judge(off.folder, { ...off.expected, tree: offResult })).toEqual({ disposable: true });
+  });
+
   it('keeps a folder it cannot check', async () => {
     const gone = attempt();
     expect(await judge(path.join(gone.folder, 'missing'), gone.expected)).toMatchObject({ disposable: false, reason: expect.stringContaining('could not be checked') });

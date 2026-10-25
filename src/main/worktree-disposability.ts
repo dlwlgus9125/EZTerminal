@@ -15,7 +15,7 @@ export interface DisposableExpectation {
   readonly keptRef?: { readonly name: string; readonly commit: string };
 }
 /** Why a folder stays, for screens to word (`reason` is the host's own English). */
-export type KeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'nested-repository' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'result-mismatch' | 'unchecked';
+export type KeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'nested-repository' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'filter' | 'result-mismatch' | 'unchecked';
 export type Disposability = { readonly disposable: true } | { readonly disposable: false; readonly code: KeepCode; readonly reason: string };
 
 /** No pager, no hooks, no fsmonitor, no optional index writes: the check changes nothing. */
@@ -49,6 +49,8 @@ export async function judgeDisposable(git: Pick<GitRunner, 'run'>, folder: strin
     const nested = await nestedRepository(folder);
     if (nested !== false) return nested === 'unchecked' ? keep('unchecked', 'It is too large to check.') : keep('nested-repository', 'It holds a Git repository of its own.');
     if (await usesLfs(run, [...new Set([expected.head, expected.tree, ...(expected.detachedAt ? [expected.detachedAt] : [])])])) return keep('lfs', 'It uses Git LFS.');
+    // A file with any filter (set or named: filter=mydriver) makes Git run that program to compare or remove it.
+    if (await filtered(run)) return keep('filter', 'Git runs a filter program on some of its files.');
     if (await differs(run, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', '--'])) return keep('changed', 'It has changes not added to Git.');
     if (await differs(run, ['diff', '--cached', '--quiet', '--no-ext-diff', '--no-textconv', expected.tree, '--'])) return keep('staged-differs', 'Its staged files are not exactly this run’s result.');
     if (expected.keptRef) {
@@ -111,6 +113,12 @@ async function usesLfs(run: (args: readonly string[]) => Promise<string>, commit
     if (text.includes('filter=lfs')) return true;
   }
   return false;
+}
+
+/** Whether any tracked file has the filter attribute set or named: every file is either unspecified or explicitly unset otherwise. */
+async function filtered(run: (args: readonly string[]) => Promise<string>): Promise<boolean> {
+  const count = async (pathspec?: string) => (await run(['ls-files', '-z', ...(pathspec ? ['--', pathspec] : [])])).split('\0').filter(Boolean).length;
+  return await count() !== await count(':(attr:!filter)') + await count(':(attr:-filter)');
 }
 
 /** A value that may be unset (exit 1 = unset; anything else is an error). */

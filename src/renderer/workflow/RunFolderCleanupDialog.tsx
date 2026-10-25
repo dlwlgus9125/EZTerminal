@@ -18,6 +18,7 @@ export function runFolderKeepText(code: RunFolderKeepCode | undefined, reason: s
     changed: ['Git에 넣지 않은 변경이 있습니다.', 'It has changes not added to Git.'],
     'staged-differs': ['올려 둔 파일이 이 실행의 결과와 다릅니다.', 'Its staged files differ from this run’s result.'],
     lfs: ['Git LFS를 씁니다.', 'It uses Git LFS.'],
+    filter: ['Git이 일부 파일에 필터 프로그램을 실행합니다.', 'Git runs a filter program on some of its files.'],
     unchecked: ['확인하지 못했습니다.', 'It could not be checked.'],
     'not-ezterminal': ['EZTerminal이 이 프로젝트에 만든 작업 폴더가 아닙니다.', 'It is not a work folder EZTerminal created for this project.'],
     locked: ['Git에서 잠겨 있습니다.', 'It is locked in Git.'],

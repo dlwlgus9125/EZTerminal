@@ -15,7 +15,7 @@ export interface RunFolderPlan {
   readonly code?: RunFolderKeepCode;
   readonly reason?: string;
 }
-export type RunFolderKeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'nested-repository' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'unchecked'
+export type RunFolderKeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'nested-repository' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'filter' | 'unchecked'
   | 'not-ezterminal' | 'locked' | 'project-inside' | 'shared' | 'no-record' | 'result-mismatch' | 'busy' | 'in-use' | 'held' | 'run-changed' | 'failed';
 
 /** A folder this host removed: which run, which attempt, and whether it was the stage's work folder or its validation folder. */

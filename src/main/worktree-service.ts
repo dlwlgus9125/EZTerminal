@@ -457,7 +457,7 @@ export class WorktreeService {
           await this.git.run(target.path, ['--no-pager', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', 'checkout', '--quiet', '--detach', '--no-overwrite-ignore', '--no-recurse-submodules', expected.detachTo], signal);
         }
         // Deliberately no --force and no filesystem deletion fallback.
-        try { await this.git.run(repo.mainPath, ['worktree', 'remove', target.path], signal); } catch (error) { removeError = error; }
+        try { await this.git.run(repo.mainPath, ['--no-pager', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', 'worktree', 'remove', target.path], signal); } catch (error) { removeError = error; }
       });
     });
     if (kept) return { ok: false, kept: true, ...kept };
