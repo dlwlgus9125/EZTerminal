@@ -309,7 +309,9 @@ test.describe("Subproject flow canvas", () => {
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await expectNoAccessibilityViolations(page);
-      await expect(page).toHaveScreenshot(visualCase.screenshot, { animations: "disabled" });
+      // One glyph of the model select ("A" of GPT-6-Astra) gets another ClearType subpixel colour on Windows 11 than on the
+      // Server 2022 runner (1 pixel). A few pixels cannot hide a layout change, which moves thousands.
+      await expect(page).toHaveScreenshot(visualCase.screenshot, { animations: "disabled", maxDiffPixels: 4 });
     });
   }
 });
