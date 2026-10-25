@@ -430,14 +430,18 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const beginCreate = (sourceSessionId?: string): void => { const id = `subproject-${crypto.randomUUID()}`; setCreate({ id, title: '', goal: '', preset: 'feature', mode: 'preset', graph: graphForPreset('feature', id, text), ...(sourceSessionId ? { linkSessionId: sourceSessionId } : {}) }); setPreviewExpired(false); setCreationVisible(true); };
   const switchPreset = async (preset = create?.preset): Promise<void> => {
     if (!create || !preset) return;
-    if (create.previewSessionId && access.workflowPreview) { const result = await access.workflowPreview({ action: 'discard', projectId, previewId: create.id }); if (!result.ok) { setError(result.message); return; } }
-    setCreate({ ...create, preset, mode: 'preset', graph: graphForPreset(preset, create.id, text), previewSessionId: undefined, previewRevision: undefined }); setPreviewExpired(false);
+    const id = create.id;
+    if (create.previewSessionId && access.workflowPreview) { const result = await access.workflowPreview({ action: 'discard', projectId, previewId: id }); if (!result.ok) { setError(result.message); return; } }
+    // Applied to the setup as it is now: what was typed while the host answered stays.
+    setCreate(previous => previous?.id === id ? { ...previous, preset, mode: 'preset', graph: graphForPreset(preset, id, text), previewSessionId: undefined, previewRevision: undefined } : previous); setPreviewExpired(false);
   };
   const reconnectPreview = async (): Promise<void> => {
     if (!create?.previewSessionId || !access.workflowPreview) return;
-    const result = await access.workflowPreview({ action: 'open', projectId, sessionId: create.previewSessionId, previewId: create.id, graph: cleanGraph(create.graph) });
+    const id = create.id;
+    const result = await access.workflowPreview({ action: 'open', projectId, sessionId: create.previewSessionId, previewId: id, graph: cleanGraph(create.graph) });
     if (!result.ok || !result.preview) { setError(result.ok ? text('생성 초안을 다시 연결하지 못했습니다.', 'The creation draft could not be reconnected.') : result.message); return; }
-    setCreate({ ...create, graph: result.preview.graph, previewRevision: result.preview.revision }); setPreviewExpired(false);
+    const preview = result.preview;
+    setCreate(previous => previous?.id === id ? { ...previous, graph: preview.graph, previewRevision: preview.revision } : previous); setPreviewExpired(false);
   };
   const discardCreate = async (): Promise<void> => {
     if (create?.previewSessionId && access.workflowPreview) { const result = await access.workflowPreview({ action: 'discard', projectId, previewId: create.id }); if (!result.ok) { setError(result.message); return; } }
@@ -456,11 +460,14 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   };
   /** A conversation is being requested: its dialog stays open (the flow cannot be edited or sent meanwhile). */
   const [conversationSending, setConversationSending] = useState(false);
+  const conversationInFlight = useRef(false);
   /** The conversation request is settled or let go: no save keeps it any more. */
   const clearConversationRecovery = (): void => { sendingConversation.current = null; conversationRecoveryRef.current = undefined; setConversationRecovery(undefined); };
   const createConversation = async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
-    setConversationSending(true);
-    try { return await requestConversation(input); } finally { setConversationSending(false); }
+    // One at a time: its form may be shown again ("이전 대화" and back) and send again while the first is handled.
+    if (conversationInFlight.current) return { ok: false, message: text('이 대화 요청을 아직 처리하는 중입니다. 끝나면 다시 시도하세요.', 'This conversation request is still being handled. Try again once it finishes.') };
+    conversationInFlight.current = true; setConversationSending(true);
+    try { return await requestConversation(input); } finally { conversationInFlight.current = false; setConversationSending(false); }
   };
   const requestConversation = async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
     if (!daemonAccess || !chatTarget || !authorityReady || disabled) return { ok: false, message: text('호스트 연결이 필요합니다.', 'Connect to the host first.') };

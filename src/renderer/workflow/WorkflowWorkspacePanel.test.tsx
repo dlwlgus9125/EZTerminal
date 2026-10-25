@@ -369,6 +369,25 @@ describe('workflow project workspace', () => {
     expect(document.body.textContent).not.toContain('A subproject setup is in progress');
     await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
   });
+  it('keeps what is typed while a setup change waits for the host', async () => {
+    const snapshot = workflowFixture();
+    const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'custom' as const, mode: 'conversation' as const, graph: snapshot.subprojects[0]!.graph, previewSessionId: 'setup-chat', previewRevision: 1 };
+    const stored: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, creation };
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: stored } }),
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    // Letting the conversational draft go answers slowly.
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn(),
+      workflowPreview: async request => { if (request.action === 'discard') await new Promise(resolve => setTimeout(resolve, 300)); return { ok: true, preview: request.action === 'read' ? { id: creation.id, projectId: snapshot.projectId, sessionId: 'setup-chat', revision: 1, graph: creation.graph } : null }; } };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+    await click('Continue setup');
+    await act(async () => { button('From preset').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await edit('Goal', 'Goal typed while switching');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
+    expect(button('From preset').getAttribute('aria-pressed')).toBe('true');
+    expect([...document.querySelectorAll('label')].find(item => item.firstChild?.textContent?.trim() === 'Goal')!.querySelector('textarea')!.value).toBe('Goal typed while switching');
+  });
   it('finishes a subproject creation confirmed by reconciling its request', async () => {
     const snapshot = workflowFixture();
     const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'research' as const, mode: 'preset' as const, graph: snapshot.subprojects[0]!.graph };
