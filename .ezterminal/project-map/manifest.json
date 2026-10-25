@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:ffe1dda604a60b6af773524633ccba0bcb76aee508296514edaac4e70a1d4660",
+        "inputDigest": "sha256:761db0ece5942acb46b3cdae693b9e36f514a150a0e2594121aed5ec6906c927",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 checkpoint A): an older app's drafts are marked one by one (reduced) and only those are rebased on the host once it answers; drafts kept from this version are never refilled. Claims hold."
+        "reason": "Reviewed (I2-4 checkpoint A): older drafts are marked one by one and only those are rebased; a stored draft read by hand is taken in only for the host and project it was read for (cleared on host change). Claims hold."
       }
     }
   ]

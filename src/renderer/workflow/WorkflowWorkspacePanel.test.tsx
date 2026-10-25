@@ -238,6 +238,35 @@ describe('workflow project workspace', () => {
     expect(stored.state.olderVersion).toBeUndefined();
     expect(Object.values(stored.state.drafts).some(draft => draft.reduced)).toBe(false);
   });
+  it('drops a stored recovery read for another host once the host changes', async () => {
+    const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
+    // The same project and subproject ids on another host.
+    const other = { ...snapshot, hostId: 'host-b' };
+    const reduced = snapshot.subprojects[0]!.graph;
+    const older: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: { commandId: 'older-save', projectId: snapshot.projectId, hostId: snapshot.hostId, expectedRevision: 2, subprojectId: 'login', type: 'workflow.patch',
+      payload: { graph: { ...reduced, nodes: reduced.nodes.map(node => node.id === stage.id ? { ...node, document: 'Host A older edit' } : node) }, summary: 'Older app save' } } };
+    let reads = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => { reads += 1; if (reads === 1) return { ok: false, error: 'unavailable', message: 'Busy' }; if (reads === 2) return { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: older, olderVersion: true } }; return { ok: true, snapshot: { projectId: snapshot.projectId, revision: 0, state: null } }; },
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    const commands: WorkflowCommand[] = [];
+    const accessFor = (value: typeof snapshot): WorkflowAccess => ({ getWorkflowSnapshot: async () => ({ ok: true, snapshot: value }), executeWorkflowCommand: async command => { commands.push(WorkflowCommandSchema.parse(command)); return { ok: true, snapshot: value, commandId: command.commandId }; } });
+    const render = async (access: WorkflowAccess): Promise<void> => { await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} navigationTarget={{ subprojectId: 'login', nodeId: stage.id, key: 'host' }} conversations={[]} />)); };
+    await render(accessFor(snapshot));
+    await click('Read stored draft');
+    expect(document.body.textContent).toContain('Choose the stored draft or your current input');
+    // Host B answers: the choice read for host A is gone and cannot be taken in.
+    await render(accessFor(other));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    expect(document.body.textContent).not.toContain('Choose the stored draft or your current input');
+    expect([...document.querySelectorAll('button')].some(item => item.textContent?.trim() === 'Keep current input')).toBe(false);
+    // Nothing of host A's became a draft here.
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('.workflow-item')].find(item => item.textContent?.includes('Login improvements'))!.click());
+    expect(document.body.textContent).toContain('Investigation');
+    expect([...document.querySelectorAll('button')].some(item => item.textContent?.trim() === 'Save draft')).toBe(false);
+    expect(commands).toHaveLength(0);
+  });
   it('keeps current input as it is when an older recovery turns up on a storage conflict', async () => {
     const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
     const hostSnapshot = { ...snapshot, subprojects: snapshot.subprojects.map((item, index) => index === 0 ? { ...item, graph: { ...item.graph, nodes: item.graph.nodes.map(node => node.id === stage.id ? { ...node, reasoningEffort: 'high' } : node) } } : item) };
