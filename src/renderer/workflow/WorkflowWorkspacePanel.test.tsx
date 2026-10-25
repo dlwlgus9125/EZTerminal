@@ -7,7 +7,7 @@ import { WorkflowWorkspacePanel } from './WorkflowWorkspacePanel';
 import { workflowFixture } from './workflow-fixtures';
 import { workflowCanvasFixture } from './workflow-canvas-fixtures';
 import type { WorkflowDraftAccess, WorkflowDraftState } from '../../shared/workflow-draft';
-import type { DaemonSnapshot } from '../../shared/daemon-protocol';
+import { DAEMON_PROTOCOL_VERSION, parseDaemonCommand, type DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 
 vi.mock('../i18n', () => ({ useAppTranslation: () => ({ i18n: { language: 'en' } }) }));
@@ -237,6 +237,59 @@ describe('workflow project workspace', () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
     expect(stored.state.olderVersion).toBeUndefined();
     expect(Object.values(stored.state.drafts).some(draft => draft.reduced)).toBe(false);
+  });
+  it('keeps a stored conversation request and a subproject being created when a stored draft is taken in by hand', async () => {
+    const snapshot = workflowFixture();
+    const command = parseDaemonCommand({ protocolVersion: DAEMON_PROTOCOL_VERSION, commandId: 'chat-create', idempotencyKey: 'chat-create', expectedRevision: 1, issuedAt: '2026-10-25T00:00:00.000Z', principal: { kind: 'desktop', id: 'workflow-conversation-ui' }, type: 'agent.create',
+      payload: { sessionId: 'chat-new', workspaceId: 'workspace-1', title: 'Stage chat', providerId: 'codex', permissionPreset: 'standard' } });
+    if (command.type !== 'agent.create') throw new Error('Wrong command');
+    const stored: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null,
+      pendingConversation: { command, subprojectId: 'login', nodeId: 'login:research', scope: 'stage', draft: { text: 'Unsent question' } },
+      creation: { id: 'new-plan', title: 'New plan', goal: 'A goal', preset: 'research', mode: 'preset', graph: snapshot.subprojects[0]!.graph } };
+    for (const choice of ['Use stored draft', 'Keep current input']) {
+      let reads = 0; const writes: WorkflowDraftState[] = [];
+      const recovery: WorkflowDraftAccess = {
+        workflowDraftRead: async () => { reads += 1; return reads === 1 ? { ok: false, error: 'unavailable', message: 'Busy' } : { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: stored } }; },
+        workflowDraftWrite: async (_, request) => { writes.push(request.state); return { ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }; },
+      };
+      const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn() };
+      await act(async () => root.render(<WorkflowWorkspacePanel key={choice} projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+      await click('Read stored draft');
+      await click(choice);
+      await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+      // The next save still holds them: nothing stored is lost by the choice.
+      expect(writes.at(-1)?.pendingConversation).toMatchObject({ command: { commandId: 'chat-create' }, draft: { text: 'Unsent question' } });
+      expect(writes.at(-1)?.creation?.title).toBe('New plan');
+    }
+  });
+  it('ignores a stored-draft answer for the previous host', async () => {
+    const snapshot = workflowFixture(); const other = { ...snapshot, hostId: 'host-b' };
+    for (const late of ['failure', 'success'] as const) {
+      // Reads: 1 = host A (fails), 2 = host A by hand (answers late), 3 = host B, 4 = host B by hand.
+      let reads = 0; let answerLate: (value: Awaited<ReturnType<WorkflowDraftAccess['workflowDraftRead']>>) => void = () => undefined;
+      const recovery: WorkflowDraftAccess = {
+        workflowDraftRead: async () => {
+          reads += 1;
+          if (reads === 1) return { ok: false, error: 'unavailable', message: 'Busy' };
+          if (reads === 2) return new Promise(resolve => { answerLate = resolve; });
+          if (reads === 3 && late === 'success') return { ok: false, error: 'unavailable', message: 'Busy on B' };
+          return { ok: true, snapshot: { projectId: snapshot.projectId, revision: 0, state: null } };
+        },
+        workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+      };
+      const accessFor = (value: typeof snapshot): WorkflowAccess => ({ getWorkflowSnapshot: async () => ({ ok: true, snapshot: value }), executeWorkflowCommand: vi.fn() });
+      const render = async (access: WorkflowAccess): Promise<void> => { await act(async () => root.render(<WorkflowWorkspacePanel key={late} projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />)); };
+      await render(accessFor(snapshot));
+      await click('Read stored draft');
+      await render(accessFor(other));
+      await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+      if (late === 'success') { await click('Read stored draft'); expect(document.body.textContent).toContain('Choose the stored draft or your current input'); }
+      else expect(document.body.textContent).not.toContain('Secure draft recovery needs attention');
+      // Host A's answer arrives now.
+      await act(async () => { answerLate(late === 'failure' ? { ok: false, error: 'unavailable', message: 'Late A failure' } : { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null } } }); await new Promise(resolve => setTimeout(resolve, 20)); });
+      if (late === 'success') expect(document.body.textContent).toContain('Choose the stored draft or your current input');
+      else { expect(document.body.textContent).not.toContain('Late A failure'); expect(document.body.textContent).not.toContain('Secure draft recovery needs attention'); }
+    }
   });
   it('drops a stored recovery read for another host once the host changes', async () => {
     const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;

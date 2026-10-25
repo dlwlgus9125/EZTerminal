@@ -159,6 +159,9 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const recovery = useMemo(() => recoveryAccess && hostId ? new WorkflowRecovery(projectId, hostId, recoveryAccess) : null, [projectId, hostId, recoveryAccess]);
   // Only a comparison read for this host and project can be taken in (another host's answer may still arrive late).
   const comparison = storedComparison && storedComparison.source === recovery ? storedComparison : null;
+  // An answer for a recovery that is no longer the current one changes nothing here.
+  const recoveryRef = useRef(recovery);
+  recoveryRef.current = recovery;
   /** The shown flow is an older version's cached copy (a reduced view) and the host has not answered yet. */
   const olderSnapshot = useRef(false);
   /**
@@ -176,6 +179,24 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     }
     return { drafts: next, pendingCommand };
   };
+  const restoreConversation = (saved: NonNullable<WorkflowDraftState['pendingConversation']>): void => {
+    setConversationRecovery(saved); setChatPending(saved.command); setChatTarget({ subprojectId: saved.subprojectId, nodeId: saved.nodeId, scope: saved.scope, previewId: saved.previewId });
+  };
+  /**
+   * Takes in a stored recovery read by hand. The drafts are the chosen side's; an unconfirmed command or
+   * conversation request is kept whichever side is chosen (it may already have reached the host), and a
+   * subproject being created is the chosen side's, else the other side's.
+   */
+  const takeStored = (stored: { state: WorkflowDraftState | null; older: boolean }, keepCurrent: boolean): void => {
+    const saved = stored.state;
+    if (saved) {
+      const taken = adoptRecovery(saved, stored.older, keepCurrent ? drafts : undefined);
+      setDrafts(taken.drafts); setPending(taken.pendingCommand ?? pending);
+      if (saved.pendingConversation) restoreConversation(saved.pendingConversation);
+      if (saved.creation && !(keepCurrent && create)) setCreate(saved.creation);
+    } else if (!keepCurrent) setDrafts({});
+    setRecoveryReady(true); setRecoveryError(null); setStoredComparison(null);
+  };
   const recoveryExtras = useRef<Pick<WorkflowDraftState, 'creation' | 'view' | 'snapshot'>>({});
   recoveryExtras.current = { snapshot: snapshot ?? undefined, creation: create ?? undefined, view: { subprojectId: selectedId ?? undefined, nodeId: nodeId ?? undefined, page: view, scrollTop },
     // Kept with every save of that cached copy (an offline save or a restart must not lose it).
@@ -183,15 +204,15 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const cachedRevision = snapshot ? `${snapshot.hostId}:${snapshot.registryRevision}:${snapshot.subprojects.map(item => `${item.id}:${item.revision}`).join(',')}:${snapshot.runs.map(run => `${run.runId}:${run.revision}`).join(',')}` : '';
   const persist = useCallback(async (state: WorkflowDraftState): Promise<void> => {
     if (!recovery) return;
-    try { await recovery.write({ ...recoveryExtras.current, ...state, ...(!('pendingConversation' in state) && conversationRecoveryRef.current ? { pendingConversation: conversationRecoveryRef.current } : {}) }); setRecoveryError(null); }
-    catch (reason) { setRecoveryError(String(reason)); throw reason; }
+    try { await recovery.write({ ...recoveryExtras.current, ...state, ...(!('pendingConversation' in state) && conversationRecoveryRef.current ? { pendingConversation: conversationRecoveryRef.current } : {}) }); if (recoveryRef.current === recovery) setRecoveryError(null); }
+    catch (reason) { if (recoveryRef.current === recovery) setRecoveryError(String(reason)); throw reason; }
   }, [recovery]);
   useEffect(() => {
     if (!recovery) return;
     let current = true; setRecoveryReady(false);
     void recovery.read().then(saved => { if (current) { if (saved) {
       const restored = adoptRecovery(saved, recovery.olderVersion);
-      setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) { setConversationRecovery(saved.pendingConversation); setChatPending(saved.pendingConversation.command); setChatTarget({ subprojectId: saved.pendingConversation.subprojectId, nodeId: saved.pendingConversation.nodeId, scope: saved.pendingConversation.scope, previewId: saved.pendingConversation.previewId }); } } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
+      setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) restoreConversation(saved.pendingConversation); } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
   }, [recovery]);
   useEffect(() => {
@@ -449,8 +470,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     {snapshot && !authorityReady ? <p role="status" className="workflow-notice">{text('기기에 보관된 화면입니다. 초안 편집은 복구되며, 다시 연결해 호스트의 권한·버전을 확인한 뒤에만 직접 저장하거나 실행할 수 있습니다.', 'Showing the copy stored on this device. Draft edits are recoverable; reconnect for a fresh host authority and version check before saving or running.')}</p> : disabled && <p role="status" className="workflow-notice">{disabledReason ?? text('호스트에 다시 연결하세요.', 'Reconnect to the host.')}</p>}
     {error && <p role="alert" className="workflow-error">{error}</p>}
     {busy && <p role="status">{text('호스트에 저장하고 결과를 확인하는 중입니다.', 'Saving to the host and confirming the result.')}</p>}
-    {recoveryError && <div className="workflow-error" role="alert"><p>{text('초안 복구 저장을 확인해야 합니다. 현재 입력은 유지됩니다.', 'Secure draft recovery needs attention. Your current input is preserved.')} {recoveryError}</p><Button onClick={() => { const source = recovery; void source?.read().then(state => setStoredComparison({ state, older: source.olderVersion, source })).catch(reason => setRecoveryError(String(reason))); }}>{text('저장된 초안 확인', 'Read stored draft')}</Button></div>}
-    {comparison && <div className="workflow-notice"><p>{text('저장된 초안과 현재 입력 중 유지할 내용을 선택하세요. 저장된 미확정 명령은 어느 선택에서도 유지합니다.', 'Choose the stored draft or your current input. Pending stored commands are preserved in either case.')}{comparison.older && <> {text('이전 버전 앱이 보내지 못한 흐름 저장은 초안으로 가져오며, 현재 입력을 유지하면 같은 흐름에서는 현재 입력이 우선합니다.', 'A flow save an older app could not send comes back as a draft; if you keep your current input, it wins for the same flow.')}</>}</p><Button onClick={() => { const taken = comparison.state ? adoptRecovery(comparison.state, comparison.older) : { drafts: {}, pendingCommand: null }; setDrafts(taken.drafts); setPending(taken.pendingCommand); setRecoveryReady(true); setRecoveryError(null); setStoredComparison(null); }}>{text('저장된 초안 사용', 'Use stored draft')}</Button><Button onClick={() => { const taken = comparison.state ? adoptRecovery(comparison.state, comparison.older, drafts) : null; if (taken) setDrafts(taken.drafts); setPending(taken ? taken.pendingCommand ?? pending : pending); setRecoveryReady(true); setRecoveryError(null); setStoredComparison(null); }}>{text('현재 입력 유지', 'Keep current input')}</Button></div>}
+    {recoveryError && <div className="workflow-error" role="alert"><p>{text('초안 복구 저장을 확인해야 합니다. 현재 입력은 유지됩니다.', 'Secure draft recovery needs attention. Your current input is preserved.')} {recoveryError}</p><Button onClick={() => { const source = recovery; void source?.read().then(state => { if (recoveryRef.current === source) setStoredComparison({ state, older: source.olderVersion, source }); }).catch(reason => { if (recoveryRef.current === source) setRecoveryError(String(reason)); }); }}>{text('저장된 초안 확인', 'Read stored draft')}</Button></div>}
+    {comparison && <div className="workflow-notice"><p>{text('저장된 초안과 현재 입력 중 유지할 내용을 선택하세요. 저장된 미확정 명령은 어느 선택에서도 유지합니다.', 'Choose the stored draft or your current input. Pending stored commands are preserved in either case.')}{comparison.older && <> {text('이전 버전 앱이 보내지 못한 흐름 저장은 초안으로 가져오며, 현재 입력을 유지하면 같은 흐름에서는 현재 입력이 우선합니다.', 'A flow save an older app could not send comes back as a draft; if you keep your current input, it wins for the same flow.')}</>}</p><Button onClick={() => takeStored(comparison, false)}>{text('저장된 초안 사용', 'Use stored draft')}</Button><Button onClick={() => takeStored(comparison, true)}>{text('현재 입력 유지', 'Keep current input')}</Button></div>}
     {pending && <div className="workflow-notice" role="status"><p>{text('아직 요청 결과를 확인하지 못했습니다. 확인 전에는 다른 변경을 보내지 않습니다.', 'The request is not yet confirmed. Reconcile it before sending another change.')}</p><Button disabled={busy || disabled} onClick={() => void execute(pending, undefined, pending)}>{text('같은 요청 확인', 'Reconcile request')}</Button>
       {pending.type.startsWith('run.') && <Button variant="ghost" disabled={busy} data-testid="workflow-pending-discard" onClick={() => { setPending(null); if (snapshot) void persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: null }).catch(() => undefined); }}
         title={text('이미 처리된 부분(준비된 실행 등)은 그대로 남습니다. 실행 상태를 확인한 뒤 새로 요청하세요.', 'Anything it already did (a prepared run, say) stays as recorded. Check the run, then make a new request.')}>{text('이 요청 그만두기', 'Stop waiting for this request')}</Button>}</div>}

@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:761db0ece5942acb46b3cdae693b9e36f514a150a0e2594121aed5ec6906c927",
+        "inputDigest": "sha256:987899f6a729b9313160da918fa813dd03295a13f7d6667ba667cee545c4bdf8",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-4 checkpoint A): older drafts are marked one by one and only those are rebased; a stored draft read by hand is taken in only for the host and project it was read for (cleared on host change). Claims hold."
+        "reason": "Reviewed (I2-4 checkpoint A): a stored draft taken in by hand also keeps its unconfirmed conversation request and the subproject being created; answers for a recovery no longer current change nothing. Claims hold."
       }
     }
   ]
