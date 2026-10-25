@@ -40,6 +40,16 @@ function fixture() {
 }
 
 describe('workflow project workspace', () => {
+  it('keeps a refused command’s reason when the flow is read again (B list ⑧)', async () => {
+    const state = fixture();
+    state.access.executeWorkflowCommand = async () => ({ ok: false, error: 'invalid', message: 'Refused by the host.' });
+    await state.render(true);
+    await subprojectMenu('Mark complete');
+    expect(container.querySelector('.workflow-error')?.textContent).toContain('Refused by the host.');
+    await subprojectMenu('Refresh');
+    expect(container.querySelector('.workflow-error')?.textContent).toContain('Refused by the host.');
+  });
+
   it('opens the shared draft for ordinary project conversations without creating a session', async () => {
     const state = fixture(); const onNewConversation = vi.fn();
     const daemonAccess = { getDaemonSnapshot: async () => null, sendDaemonCommand: vi.fn() };
