@@ -152,6 +152,8 @@ export function waitingItems(snapshot: DaemonSnapshot | null, projectId?: string
  * host sends none: its flow approvals stay on the flow and its terminal agents in 받은 요청.
  */
 export function hostWaitingItems(snapshot: DaemonSnapshot | null, projectId?: string): WaitingItem[] {
+  // Conversation approvals are read here from the same snapshot, by the host's own rule (pending, live session with an
+  // agent: see conversationItems in host-attention.ts), for their command or question line; keep the two rules alike.
   const conversations = waitingItems(snapshot, projectId);
   const attention = snapshot?.attention;
   if (!attention) return conversations;

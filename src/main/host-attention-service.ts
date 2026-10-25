@@ -25,6 +25,8 @@ export interface HostAttentionServiceOptions {
  */
 export class HostAttentionService {
   private readonly flows = new Map<string, readonly HostAttentionFlowRun[]>();
+  /** When each waiting approval stage was first seen, so other stages' progress does not move it (or announce). */
+  private readonly firstSeen = new Map<string, string>();
   private announced: string;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
@@ -63,13 +65,20 @@ export class HostAttentionService {
 
   private load(projectId: string): void {
     const runs = this.options.readRuns(projectId).filter((run) => run.state !== 'completed' && run.state !== 'cancelled');
+    const waiting = new Set(runs.flatMap((run) => (run.workflowRuntime?.activations ?? [])
+      .filter((activation) => activation.state === 'awaiting-approval').map((activation) => `${projectId}/${run.runId}/${activation.id}`)));
+    for (const key of [...this.firstSeen.keys()]) if (key.startsWith(`${projectId}/`) && !waiting.has(key)) this.firstSeen.delete(key);
+    for (const run of runs) for (const key of waiting) if (key.startsWith(`${projectId}/${run.runId}/`) && !this.firstSeen.has(key)) this.firstSeen.set(key, run.updatedAt);
     if (!runs.length) { this.flows.delete(projectId); return; }
     // A refusal is itself a ledger commit, so it is read here once rather than for every snapshot.
     this.flows.set(projectId, runs.map((run) => {
       const refused = new Set(run.preparation.approvalPolicy !== 'auto' ? [] : (run.workflowRuntime?.activations ?? [])
         .filter((activation) => activation.state === 'awaiting-approval' && this.options.autoApprovalRefused(projectId, run.runId, activation.id))
         .map((activation) => activation.id));
-      return { projectId, run, autoApprovalRefused: (activationId: string) => refused.has(activationId) };
+      return {
+        projectId, run, autoApprovalRefused: (activationId: string) => refused.has(activationId),
+        awaitingSince: (activationId: string) => this.firstSeen.get(`${projectId}/${run.runId}/${activationId}`),
+      };
     }));
   }
 

@@ -84,6 +84,8 @@ test('one canvas: run the saved flow, approve, open the working stage conversati
     await expect(gate).toHaveAttribute('data-run-state', 'awaiting-approval', { timeout: 30_000 });
     // The host counts the waiting stage for every screen: the top bar shows it (the phone's badge reads the same).
     await expect(page.getByTestId('shell-top-waits')).toContainText(/기다리는 것 1|1 waiting/u, { timeout: 15_000 });
+    // ...and on its project's tab: the flow's project id is the one the tabs use.
+    await expect(page.locator(`[data-testid="shell-project-tab"][data-project="${projectId}"] .ez-shell-count`)).toHaveText('1');
     // While the run goes on, 다시 실행 waits and says why.
     await expect(bar.getByTestId('workflow-run-again')).toBeDisabled();
     await page.screenshot({ path: path.join(evidence, '02-awaiting-approval.png') });

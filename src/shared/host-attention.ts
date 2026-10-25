@@ -40,7 +40,8 @@ export interface HostAttentionItem {
 
 export interface HostAttention {
   readonly version: typeof HOST_ATTENTION_VERSION;
-  /** Changes exactly when the set of items (or what they show) changes; independent of their order. */
+  /** Changes exactly when the set of items (or what they show) changes; independent of their order. A run's
+   * revision moves with every other stage and is left out (clients read it fresh with the snapshot). */
   readonly digest: string;
   /** Newest first. */
   readonly items: readonly HostAttentionItem[];
@@ -51,6 +52,8 @@ export interface HostAttentionFlowRun {
   readonly run: ExecutionRun;
   /** The host refused its automatic decision for this approval stage (it recorded the refusal). */
   readonly autoApprovalRefused: (activationId: string) => boolean;
+  /** When the host first saw this stage wait (the run's own time moves with every other stage). */
+  readonly awaitingSince?: (activationId: string) => string | undefined;
 }
 
 export interface HostAttentionInput {
@@ -70,7 +73,7 @@ export function computeHostAttention(input: HostAttentionInput): HostAttention {
 /** The digest of a set of items, whatever their order. */
 export function attentionDigest(items: readonly HostAttentionItem[]): string {
   const canonical = [...items].sort((left, right) => left.id.localeCompare(right.id))
-    .map((item) => JSON.stringify(Object.keys(item).sort().map((key) => [key, item[key as keyof HostAttentionItem]])));
+    .map((item) => JSON.stringify(Object.keys(item).filter((key) => key !== 'runRevision').sort().map((key) => [key, item[key as keyof HostAttentionItem]])));
   return stableHash(canonical.join('\n'));
 }
 
@@ -89,7 +92,7 @@ function conversationItems(daemon: HostAttentionInput['daemon']): HostAttentionI
 }
 
 function flowItems(flows: readonly HostAttentionFlowRun[]): HostAttentionItem[] {
-  return flows.flatMap(({ projectId, run, autoApprovalRefused }) => {
+  return flows.flatMap(({ projectId, run, autoApprovalRefused, awaitingSince }) => {
     const workflow = run.preparation.workflow;
     if (!workflow || run.state === 'completed' || run.state === 'cancelled') return [];
     return (run.workflowRuntime?.activations ?? []).flatMap((activation) => {
@@ -98,7 +101,7 @@ function flowItems(flows: readonly HostAttentionFlowRun[]): HostAttentionItem[] 
       const node = workflow.graph.nodes.find((entry) => entry.id === activation.nodeId);
       return [{
         id: itemId('flow-approval', projectId, run.runId, activation.id), kind: 'flow-approval' as const, projectId,
-        title: node?.title ?? activation.nodeId, since: run.updatedAt, subprojectId: workflow.subprojectId,
+        title: node?.title ?? activation.nodeId, since: awaitingSince?.(activation.id) ?? run.updatedAt, subprojectId: workflow.subprojectId,
         runId: run.runId, runRevision: run.revision, activationId: activation.id, nodeId: activation.nodeId,
       }];
     });

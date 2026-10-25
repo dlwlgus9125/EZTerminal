@@ -54,6 +54,16 @@ describe('HostAttentionService', () => {
     expect(h.service.attention(noDaemon).items).toEqual([]);
   });
 
+  it('keeps a waiting stage quiet while other stages of its run move on', async () => {
+    const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }, { id: 'b1', state: 'active' }])] });
+    const since = h.service.attention(noDaemon).items[0]!.since;
+    h.runs.set('project-a', [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }, { id: 'b1', state: 'completed' }], { updatedAt: '2026-10-25T05:00:00.000Z', revision: 2 })]);
+    h.service.projectChanged('project-a');
+    await h.settle();
+    expect(h.service.attention(noDaemon).items[0]!.since).toBe(since);
+    expect(h.announce).not.toHaveBeenCalled();
+  });
+
   it('stays quiet for a commit that changes nothing it shows', async () => {
     const h = harness({ 'project-a': [run('run-1', [{ id: 'a1', state: 'awaiting-approval' }])] });
     h.service.projectChanged('project-a');
