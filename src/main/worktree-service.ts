@@ -13,6 +13,8 @@ import type {
   WorktreeResult,
 } from '../shared/worktree';
 import { AsyncMutationGate, type MutationGate } from './async-mutation-gate';
+import { onlyEmptyFolders, removeEmptyFolders } from './folder-cleanup';
+import { judgeDisposable, type DisposableExpectation } from './worktree-disposability';
 import {
   SessionWorktreeGuard,
   type SessionRunIdentity,
@@ -319,6 +321,11 @@ function safeGitMessage(error: GitCommandError): string {
   return line ? `Git failed: ${line.slice(0, 300)}` : 'Git failed without an error message.';
 }
 
+/** A run work folder's cleanup: removed, kept (it holds something Git does not keep, with why), or refused. */
+export type WorktreeRetireResult = { readonly ok: true }
+  | { readonly ok: false; readonly kept: true; readonly reason: string }
+  | { readonly ok: false; readonly kept: false; readonly code: WorktreeErrorCode; readonly message: string };
+
 function failure(action: WorktreeAction, error: WorktreeErrorCode, message: string, worktree?: WorktreeInfo): WorktreeFailure {
   return { ok: false, action, error, message, ...(worktree ? { worktree } : {}) };
 }
@@ -388,6 +395,83 @@ export class WorktreeService {
     });
     this.operationChain = operation.then(() => undefined, () => undefined);
     return operation;
+  }
+
+  /**
+   * Removes a finished run's work folder (I2-7, the person's 작업 폴더 정리), in the same queue as every other
+   * worktree change. Only an EZTerminal worktree that judgeDisposable lets go is touched; it is checked again under the
+   * gate new terminals wait on and the barrier running commands respect, with nothing in use there, then detached to
+   * the run's result (so Git sees it clean; its branch stays where it was) and removed without force. A removal Git
+   * cut short is finished only if nothing but empty folders is left; files are never deleted by EZTerminal itself.
+   */
+  retire(cwd: string, worktreeId: string, expected: DisposableExpectation & { readonly detachTo?: string }, signal?: AbortSignal): Promise<WorktreeRetireResult> {
+    const operation = this.operationChain.then(async (): Promise<WorktreeRetireResult> => {
+      try {
+        await this.registry.init();
+        return await this.retireInternal(cwd, worktreeId, expected, signal);
+      } catch (error) {
+        if (error instanceof WorktreeServiceError) return { ok: false, kept: false, code: error.code, message: error.message };
+        if (error instanceof GitCommandError) return { ok: false, kept: false, code: 'GIT_FAILED', message: safeGitMessage(error) };
+        return { ok: false, kept: false, code: 'IO_ERROR', message: error instanceof Error ? error.message : 'Worktree cleanup failed.' };
+      }
+    });
+    this.operationChain = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async retireInternal(cwd: string, worktreeId: string, expected: DisposableExpectation & { readonly detachTo?: string }, signal?: AbortSignal): Promise<WorktreeRetireResult> {
+    const repo = await this.resolveRepo(cwd, signal);
+    const target = await this.ownedWorktree(cwd, repo, worktreeId, signal);
+    this.assertNoConflictingActiveRun();
+    await this.assertWorktreeNotInUse(target.path);
+    const judged = await judgeDisposable(this.git, target.path, expected);
+    if (!judged.disposable) return { ok: false, kept: true, reason: judged.reason };
+    let kept: string | undefined;
+    let removeError: unknown;
+    await this.mutationGate.runExclusive(async () => {
+      await this.runGuard.withRemovalBarrier(async () => {
+        signal?.throwIfAborted();
+        await this.ownedWorktree(cwd, repo, worktreeId, signal);
+        this.assertNoConflictingActiveRun();
+        await this.assertWorktreeNotInUse(target.path);
+        const again = await judgeDisposable(this.git, target.path, expected);
+        if (!again.disposable) { kept = again.reason; return; }
+        if (expected.detachTo && (await this.git.run(target.path, ['rev-parse', '--verify', 'HEAD^{commit}'], signal)).trim() !== expected.detachTo) {
+          await this.git.run(target.path, ['--no-pager', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', 'checkout', '--quiet', '--detach', '--no-overwrite-ignore', '--no-recurse-submodules', expected.detachTo], signal);
+        }
+        // Deliberately no --force and no filesystem deletion fallback.
+        try { await this.git.run(repo.mainPath, ['worktree', 'remove', target.path], signal); } catch (error) { removeError = error; }
+      });
+    });
+    if (kept) return { ok: false, kept: true, reason: kept };
+    const remaining = await this.listInternal(repo.mainPath, signal);
+    if (remaining.some((item) => samePath(item.path, target.path))) {
+      if (removeError instanceof GitCommandError) throw removeError;
+      throw new WorktreeServiceError('GIT_FAILED', 'Git still reports the worktree after remove returned.');
+    }
+    // Git forgot it; anything but empty folders left behind stays for the person.
+    if (removeError && !(await onlyEmptyFolders(target.path) && await removeEmptyFolders(target.path))) {
+      return { ok: false, kept: false, code: 'WORKTREE_IN_USE', message: `Git removed the worktree, but files remain in ${target.path}. They were left as they are.` };
+    }
+    await this.registry.remove(worktreeId);
+    return { ok: true };
+  }
+
+  /** An EZTerminal worktree with the identity it was registered with (main, unmanaged, locked or missing ones refused). */
+  private async ownedWorktree(cwd: string, repo: ResolvedRepo, worktreeId: string, signal?: AbortSignal): Promise<WorktreeInfo> {
+    const target = (await this.listInternal(cwd, signal)).find((item) => item.worktreeId === worktreeId);
+    if (!target) throw new WorktreeServiceError('WORKTREE_NOT_FOUND', `Worktree not found: ${worktreeId}`);
+    if (target.main) throw new WorktreeServiceError('MAIN_WORKTREE', 'The main worktree cannot be removed.');
+    if (!target.managed) throw new WorktreeServiceError('WORKTREE_UNMANAGED', 'Only worktrees created and registered by EZTerminal can be removed.');
+    if (target.locked) throw new WorktreeServiceError('WORKTREE_LOCKED', 'Unlock the Git worktree before removing it.');
+    if (target.prunable || !(await lstatIfPresent(target.path))) throw new WorktreeServiceError('WORKTREE_NOT_FOUND', 'The worktree directory is missing or prunable.');
+    const entry = this.registry.list(repo.repoId).find((item) => item.worktreeId === worktreeId);
+    if (!entry || !samePath(entry.path, target.path) || !isStrictlyContained(entry.managedRoot, target.path)) {
+      throw new WorktreeServiceError('WORKTREE_UNMANAGED', 'The worktree failed its managed-root boundary check.');
+    }
+    const gitDir = await fs.realpath((await this.git.run(target.path, ['rev-parse', '--path-format=absolute', '--absolute-git-dir'], signal)).trim());
+    if (!samePath(entry.gitDir, gitDir)) throw new WorktreeServiceError('WORKTREE_UNMANAGED', 'The worktree Git identity no longer matches its EZTerminal registration.');
+    return target;
   }
 
   private async resolveRepo(cwd: string, signal?: AbortSignal): Promise<ResolvedRepo> {
