@@ -1,5 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -7,6 +6,7 @@ import { PLANNING_REPEAT_PRINCIPAL } from '../shared/planning-execution';
 import {
   WorkflowIdSchema, type WorkflowCommand, type WorkflowPrincipal, type WorkflowRegistry, type WorkflowRepeat, type WorkflowRepeatStatus, type WorkflowResult,
 } from '../shared/workflow';
+import { RecordFile } from './atomic-record-file';
 import { nextRepeatAt, occurrenceKey, repeatConfigDigest } from './workflow-repeat-time';
 import { launchIntentDigest, repeatContentDigest, type WorkflowLaunchReceipt, type WorkflowRepeatConsentChange, type WorkflowRepeatSource } from './workflow-service';
 
@@ -426,48 +426,6 @@ export class WorkflowRepeatService {
   }
 }
 
-/**
- * The record on disk: one writer (this queue), each version written to a temporary file, flushed, then renamed over
- * the record (a crash leaves the old or the new one whole). Plain JSON in the user data folder, like the host's other
- * settings; what it protects against is a flow file from the project folder, which never writes here.
- */
-class RecordFile {
-  private chain: Promise<unknown> = Promise.resolve();
-  constructor(readonly path: string) {}
-
-  enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.chain.then(work);
-    this.chain = run.then(() => undefined, () => undefined);
-    return run;
-  }
-
-  /** Creates the folder and clears temporary files a crash left behind. */
-  async init(): Promise<void> {
-    const directory = path.dirname(this.path);
-    await fs.mkdir(directory, { recursive: true });
-    const prefix = `${path.basename(this.path)}.`;
-    for (const name of await fs.readdir(directory)) {
-      if (name.startsWith(prefix) && name.endsWith('.tmp')) await fs.rm(path.join(directory, name), { force: true });
-    }
-  }
-
-  async read(): Promise<string | undefined> {
-    try { return await fs.readFile(this.path, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
-  }
-
-  async write(text: string): Promise<void> {
-    const temporary = `${this.path}.${randomUUID()}.tmp`;
-    const handle = await fs.open(temporary, 'wx', 0o600);
-    try { await handle.writeFile(text, 'utf8'); await handle.sync(); } finally { await handle.close(); }
-    try {
-      // One retry: a scanner or indexer can hold the record for a moment on Windows.
-      await fs.rename(temporary, this.path).catch(async () => { await new Promise(resolve => setTimeout(resolve, 50)); await fs.rename(temporary, this.path); });
-    } catch (error) {
-      await fs.rm(temporary, { force: true });
-      throw error;
-    }
-  }
-}
 function entryKey(projectId: string, subprojectId: string): string { return `${projectId}\n${subprojectId}`; }
 function byTime(left: Occurrence, right: Occurrence): number { return Date.parse(left.occurrenceAt) - Date.parse(right.occurrenceAt) || Date.parse(left.at) - Date.parse(right.at); }
 function latest(entry: Entry | undefined): Occurrence | undefined { return entry?.occurrences.slice().sort(byTime).at(-1); }

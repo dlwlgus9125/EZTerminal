@@ -200,8 +200,9 @@ async function forgetWorkspaces(deps: WorkspaceWorktreeCleanupDeps, createId: ()
   }
 }
 
-async function executeAsPerson<T extends 'agent.archive' | 'workspace.archive'>(
-  deps: WorkspaceWorktreeCleanupDeps,
+/** Archives a chat or a workspace as the person who asked for the cleanup (a revision conflict is retried twice). */
+export async function executeAsPerson<T extends 'agent.archive' | 'workspace.archive'>(
+  deps: Pick<WorkspaceWorktreeCleanupDeps, 'getSnapshot' | 'executeCommand'>,
   createId: () => string,
   type: T,
   payload: DaemonCommandPayloads[T],

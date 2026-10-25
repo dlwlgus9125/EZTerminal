@@ -59,6 +59,15 @@ export class PlanningResultService {
   readLog(projectId: string, reference: string) { return this.repository.readLog(projectId, reference); }
   readDiff(projectId: string, attemptId: string) { return this.repository.readDiff(projectId, attemptId); }
   readDeviceCapture(projectId: string, reference: string) { return this.repository.readDeviceCapture(projectId, reference); }
+  /**
+   * A review or an integration of this run is still being worked on here, or its integration is still being checked
+   * (its work folders must stay; see the work-folder cleanup).
+   */
+  async busy(projectId: string, run: Pick<ExecutionRun, 'runId' | 'attempts'>): Promise<boolean> {
+    if (run.attempts.some(attempt => this.running.has(attempt.attemptId)) || this.running.has(`integration:${run.runId}`)) return true;
+    const integration = await this.repository.readIntegration(projectId, run.runId).catch(() => undefined);
+    return integration === undefined || integration?.status === 'validating' || integration?.status === 'awaiting-evidence';
+  }
   async whenIdle(): Promise<void> { await Promise.all([...this.running.values()]); }
   async dispose(): Promise<void> { this.stopped = true; this.abort.abort(); await this.whenIdle(); }
 
