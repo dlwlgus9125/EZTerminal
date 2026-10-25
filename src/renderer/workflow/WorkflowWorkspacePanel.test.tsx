@@ -50,6 +50,15 @@ describe('workflow project workspace', () => {
     expect(container.querySelector('.workflow-error')?.textContent).toContain('Refused by the host.');
   });
 
+  it('says a request is being handled, not that the host is away, while it saves (B list)', async () => {
+    const state = fixture(); state.access.executeWorkflowCommand = () => new Promise(() => undefined);
+    await state.render(true);
+    await subprojectMenu('Mark complete');
+    const bar = container.querySelector('[data-testid="workflow-run-bar"]');
+    expect(bar?.textContent).toContain('A request is being handled.');
+    expect(bar?.textContent).not.toContain('Connect to the host to run.');
+  });
+
   it('opens the shared draft for ordinary project conversations without creating a session', async () => {
     const state = fixture(); const onNewConversation = vi.fn();
     const daemonAccess = { getDaemonSnapshot: async () => null, sendDaemonCommand: vi.fn() };

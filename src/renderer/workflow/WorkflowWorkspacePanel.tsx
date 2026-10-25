@@ -611,7 +611,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         onLaunch={() => void launch()} onSaveReviewer={reviewer => void execute({ type: 'subproject.update', payload: { runSettings: { reviewer } } })}
         repeatStatus={snapshot?.repeatStatus?.[selected.id]} cleanedFolders={cleanedFolders} onSaveRepeat={canRepeat ? repeat => void execute({ type: 'subproject.update', payload: { repeat } }) : undefined} onOpenAutomationSettings={onOpenAutomationSettings}
         onAutoApprove={on => { if (on !== (selected.autoApprove === true)) void execute({ type: 'subproject.update', payload: { autoApprove: on } }); }}
-        editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
+        editLocked={editLocked} commandsDisabled={hostLocked || selected.status === 'archived'} commandsBusy={busy || !!pending} issues={issues} providers={structuredAgentProviderOptions(daemon, models)}
         selection={edgeId ? { kind: 'edge', id: edgeId } : nodeId ? { kind: 'node', id: nodeId } : null}
         onSelectionChange={next => { setEdgeId(next?.kind === 'edge' ? next.id : null); setNodeId(next?.kind === 'node' ? next.id : null); }}
         section={sectionFromPage(lastFlowPage.current)} onSectionChange={next => setView(pageFromSection(next))}

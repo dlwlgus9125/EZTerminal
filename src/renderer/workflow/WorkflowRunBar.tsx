@@ -27,6 +27,8 @@ export interface WorkflowRunBarProps {
   readonly savedRunSettings: boolean;
   /** Host writes are closed (offline, a request not confirmed yet). */
   readonly commandsDisabled: boolean;
+  /** Commands wait because a request of this screen is being handled (not because the host is away). */
+  readonly commandsBusy?: boolean;
   readonly hasLocalDraft: boolean;
   readonly issueCount: number;
   readonly awaiting: readonly { readonly nodeId: string; readonly title: string }[];
@@ -61,7 +63,8 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
   const provider = props.providers.find((entry) => entry.id === providerId);
   const archived = subproject.status === 'archived';
   const launchBlocked = archived ? text('보관된 소프로젝트입니다. 복원한 뒤 실행하세요.', 'This subproject is archived. Restore it to run.')
-    : commandsDisabled ? text('호스트에 연결된 뒤 실행할 수 있습니다.', 'Connect to the host to run.')
+    : commandsDisabled ? (props.commandsBusy ? text('요청을 처리하는 중입니다. 끝나면 실행할 수 있습니다.', 'A request is being handled. You can run once it is done.')
+      : text('호스트에 연결된 뒤 실행할 수 있습니다.', 'Connect to the host to run.'))
       : going ? text(`실행 #${flowRunNumber(runs, going)}이 아직 끝나지 않았습니다. 끝나거나 취소한 뒤 다시 실행할 수 있습니다.`, `Run #${flowRunNumber(runs, going)} has not finished. Run again once it finishes or is cancelled.`)
         : props.hasLocalDraft ? text('저장하지 않은 변경이 있습니다. 저장한 흐름을 실행합니다.', 'There are unsaved changes. Save them first: a run uses the saved flow.')
           : props.issueCount > 0 ? text('실행 전에 확인할 단계가 있습니다.', 'Some stages need attention before running.')

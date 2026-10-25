@@ -47,6 +47,7 @@ export interface WorkflowFlowSurfaceProps {
   readonly editLocked: boolean;
   /** Host writes are closed (offline, authority not ready); local edits stay possible. */
   readonly commandsDisabled: boolean;
+  readonly commandsBusy?: boolean;
   readonly issues: readonly WorkflowIssue[];
   readonly providers: readonly StructuredAgentProviderOption[];
   readonly selection: CanvasSelection;
@@ -201,7 +202,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
 
   return <div className="workflow-flow" data-mode={view.mode} data-mobile={props.mobile || undefined}>
     <VisuallyHidden role="status" aria-live="polite">{announcement}</VisuallyHidden>
-    <WorkflowRunBar text={text} run={view.run} runs={props.runs} subproject={props.subproject} providers={props.providers} savedRunSettings={props.savedRunSettings ?? true} commandsDisabled={props.commandsDisabled}
+    <WorkflowRunBar text={text} run={view.run} runs={props.runs} subproject={props.subproject} providers={props.providers} savedRunSettings={props.savedRunSettings ?? true} commandsDisabled={props.commandsDisabled} commandsBusy={props.commandsBusy}
       hasLocalDraft={!!props.draftGraph} issueCount={props.issues.length} awaiting={awaiting} onLaunch={props.onLaunch} onRunCommand={props.onRunCommand}
       onPickRun={props.onPickRun} onSaveReviewer={props.onSaveReviewer} onAutoApprove={props.onAutoApprove} onJumpToNode={id => jumpTo(id, 'run')}
       repeatStatus={props.repeatStatus} onSaveRepeat={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings}
