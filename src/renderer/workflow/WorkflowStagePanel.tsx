@@ -83,7 +83,8 @@ export function WorkflowStagePanel(props: WorkflowStagePanelProps): JSX.Element 
   return <div className="workflow-stage-panel" data-testid="workflow-stage-panel">
     <div className="workflow-flow__panel-head"><small>{workflowOperationLabel(node.operation, text)}{graph.entryNodeId === node.id ? text(' · 시작', ' · Entry') : ''}</small><h3>{node.title}</h3></div>
     {run && <p className="workflow-stage-panel__state" data-testid="workflow-stage-state">
-      {text(`실행 #${props.runNumber}`, `Run #${props.runNumber}`)}
+      {/* An element, so WebView 74's flex-gap fallback spaces it too (mobile-shared.css). */}
+      <span>{text(`실행 #${props.runNumber}`, `Run #${props.runNumber}`)}</span>
       {status ? <Status variant={status.variant} icon={status.variant === 'loading' ? undefined : status.icon}>{status.label}</Status> : <span>{text('이 실행에 표시하지 않음', 'Not shown for this run')}</span>}
     </p>}
     {awaiting && <div className="workflow-approval" data-testid="workflow-stage-approval">
