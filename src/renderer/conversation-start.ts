@@ -21,6 +21,15 @@ export interface ConversationStartAccess {
  * level the person last chose (`lastAccess`), never another conversation's plan mode; and one
  * `/clear` opened starts with exactly what the cleared conversation ran with (`seed`).
  */
+/**
+ * Why a previous conversation cannot be continued here, as the host prepared it (its work folder is gone, its
+ * provider is not ready...): `null` when it can, or when the host could not say (sending then tries and reports).
+ */
+export function historyResumeBlock(prepared: { readonly ok: boolean; readonly canResume?: boolean; readonly message?: string }): { readonly message?: string } | null {
+  if (!prepared.ok || prepared.canResume !== false) return null;
+  return prepared.message ? { message: prepared.message } : {};
+}
+
 export function initialConversationSettings(input: {
   readonly entry?: { readonly providerId: string; readonly workspaceId?: string };
   readonly seed?: ConversationSettings;

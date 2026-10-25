@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatStateSnapshot, ChatStateScope } from '../shared/chat-state';
 import type { DaemonCommand, DaemonSnapshot } from '../shared/daemon-protocol';
 import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
-import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
+import { ConversationStartController, historyResumeBlock, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 
 const settings = { workspaceId: 'workspace', providerId: 'codex', permissionPreset: 'standard' as const };
 const scope: ChatStateScope = { projectId: 'project', sessionId: 'draft-1', kind: 'draft' };
@@ -126,5 +126,15 @@ describe('start form settings', () => {
     const cleared = { providerId: 'claude', workspaceId: 'cleared', model: 'claude-opus-5-5', permissionPreset: 'plan' as const, reasoningEffort: 'high' };
     expect(initialConversationSettings({ seed: cleared, recent: { providerId: 'codex', permissionPreset: 'standard' }, fallbackWorkspaceId: 'w' }))
       .toEqual(cleared);
+  });
+});
+
+describe('historyResumeBlock', () => {
+  it('keeps a conversation the host cannot continue from offering to send', () => {
+    expect(historyResumeBlock({ ok: true, canResume: true })).toBeNull();
+    expect(historyResumeBlock({ ok: true, canResume: false, message: 'The working folder is gone.' })).toEqual({ message: 'The working folder is gone.' });
+    expect(historyResumeBlock({ ok: true, canResume: false })).toEqual({});
+    // The host could not prepare it: sending tries and reports what it says.
+    expect(historyResumeBlock({ ok: false })).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ import type { ConversationSettings } from '../shared/conversation-start';
 import type { DaemonSnapshot, DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
 import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
-import { ConversationStartController, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
+import { ConversationStartController, historyResumeBlock, initialConversationSettings, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
 import { structuredAgentProviderOptions, structuredAgentWorkspaceOptions } from './structured-agent-create';
 import { inheritPlanAccess, movePlanAccess, readLastAccess } from './agent-plan-access';
@@ -117,11 +117,13 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   // A previous conversation continues with what it last ran with; the host reads that from its own
   // record or the provider's transcript. Until it answers, sending would use the wrong settings.
   const [source, setSource] = useState<{ model?: string; permissionPreset: PermissionPreset } | null | undefined>(initialEntry ? undefined : null);
+  // The host can also say it cannot be continued here (its work folder was cleaned up, say): then it is read only.
+  const [resumeBlocked, setResumeBlocked] = useState<{ readonly message?: string } | null>(null);
   useEffect(() => {
     if (!originalId || disconnected) return;
     let alive = true;
     void access.history.prepareHistoryResume({ conversationId: originalId })
-      .then(prepared => { if (alive) setSource(prepared.ok ? { ...(prepared.model ? { model: prepared.model } : {}), permissionPreset: prepared.permissionPreset } : null); })
+      .then(prepared => { if (alive) { setResumeBlocked(historyResumeBlock(prepared)); setSource(prepared.ok ? { ...(prepared.model ? { model: prepared.model } : {}), permissionPreset: prepared.permissionPreset } : null); } })
       .catch(() => { if (alive) setSource(null); });
     return () => { alive = false; };
   }, [access, originalId, disconnected]);
@@ -155,7 +157,7 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   };
   const activeProfile = profiles.find(profile => profile.providerId === settings.providerId && profile.model === settings.model
     && profile.permissionPreset === settings.permissionPreset && profile.reasoningEffort === settings.reasoningEffort);
-  const canSend = !disconnected && view.status === 'ready' && !loading && !draftLoading && !draftLoadFailed && !inheritedPending && (!entry || (!!page && source !== undefined))
+  const canSend = !disconnected && !resumeBlocked && view.status === 'ready' && !loading && !draftLoading && !draftLoadFailed && !inheritedPending && (!entry || (!!page && source !== undefined))
     && !!settings.providerId && (!!entry || !!selectedWorkspace) && !selectedProvider?.disabled;
   useEffect(() => {
     if (!initialEntry?.linkedSessionId) return;
@@ -308,10 +310,12 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
       {...(folderSetting && !entry ? { providerChoices: { onSelect: selectProvider, options: providers.map(provider => ({ id: provider.id, label: provider.label,
         ...(provider.disabled ? { disabled: true, description: provider.description ?? text('준비가 필요합니다', 'Needs setup') } : {}) })) } } : {})}
       model={settings.model} modelOptions={selectedProvider?.models} permissionPreset={settings.permissionPreset} state="idle" items={items}
-      statusLabel={busy ? text('메시지 준비 중…', 'Preparing message…') : entry ? text('기록 · 전송하면 이어집니다', 'History · send to continue') : text('첫 메시지를 입력하세요', 'Write your first message')}
+      statusLabel={busy ? text('메시지 준비 중…', 'Preparing message…') : entry && resumeBlocked ? text('기록 · 여기서 이어 쓸 수 없음', 'History · cannot be continued here')
+        : entry ? text('기록 · 전송하면 이어집니다', 'History · send to continue') : text('첫 메시지를 입력하세요', 'Write your first message')}
       awaitingFirstMessage={!entry} transcriptLoading={loading} transcriptError={page ? null : error} onRetryTranscript={() => setRevision(value => value + 1)}
       disabled={busy} allowDraftWhenDisabled draftState={view.draft} onDraftChange={recovery.updateDraft}
       sendDisabled={!canSend || !!view.start} sendDisabledReason={!canSend ? disconnected ? text('오프라인 · 초안은 보존됩니다', 'Offline · draft retained')
+        : resumeBlocked ? resumeBlocked.message ?? text('이 대화는 여기서 이어 쓸 수 없습니다. 기록은 그대로 읽을 수 있습니다.', 'This conversation cannot be continued here. Its history stays readable.')
         : selectedProvider?.disabled ? text('PC의 AI 설정을 준비하면 이 대화에서 이어갈 수 있습니다.', 'Prepare this provider in PC settings to continue here.')
         : entry && source === undefined ? text('이 대화의 이전 설정을 확인하는 중…', 'Checking this conversation’s settings…')
         : text('AI와 작업 위치를 확인하세요', 'Check AI and working folder') : undefined}
