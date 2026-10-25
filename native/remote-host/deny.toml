@@ -5,7 +5,12 @@ targets = ["x86_64-pc-windows-msvc"]
 [advisories]
 unmaintained = "workspace"
 yanked = "deny"
-ignore = []
+ignore = [
+  # Timing variability in crypto-bigint 0.5, reached only through the pinned webrtc 0.17 -> dtls 0.17 -> p256/p384 ->
+  # elliptic-curve 0.13 (the DTLS handshake of the remote-desktop path, after a device has paired over the bridge).
+  # The fix needs webrtc >= 0.21, a sans-IO rewrite of that stack: tracked as the native host migration. Review by 2026-12-01.
+  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 via pinned webrtc 0.17 DTLS; fix needs the webrtc 0.21 migration (review by 2026-12-01)" },
+]
 
 [licenses]
 confidence-threshold = 0.8

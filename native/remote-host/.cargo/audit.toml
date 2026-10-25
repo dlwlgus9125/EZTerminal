@@ -1,0 +1,5 @@
+# Advisories accepted for a limited time. Each one has its reason and review date in deny.toml.
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0387", # crypto-bigint 0.5 timing (via webrtc 0.17 -> dtls -> p256/p384); review by 2026-12-01
+]
