@@ -1,12 +1,12 @@
 import { test, expect } from './test';
 
 import { launchApp } from './launch-app';
-import { toggleWorkbenchTool } from './workbench-navigation';
+import { toggleWorkbenchTool, resizeWindow } from './workbench-navigation';
 
 test('narrow status panel isolates focus and restores terminal use without reflow', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1024, height: 720 });
+  await resizeWindow(window, { width: 1024, height: 720 });
   await expect.poll(() => window.evaluate(
     () => matchMedia('(max-width: 1199px)').matches,
   )).toBe(true);

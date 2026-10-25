@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
@@ -90,7 +91,7 @@ test('Results open beside the conversation on the first change, keep focus, revi
   const app = await launchApp(profile, fakeCodexEnvironment(profile));
   const page = await app.firstWindow();
   try {
-    await page.setViewportSize({ width: 1600, height: 950 });
+    await resizeWindow(page, { width: 1600, height: 950 });
     await expect(page.getByTestId('cmd-input')).toBeVisible();
     await startConversation(page, projectRoot);
     const session = page.getByTestId('structured-agent-session').first();
@@ -176,7 +177,7 @@ test('the Results tab comes back with its conversation after a restart', async (
   let app = await launchApp(profile, fakeCodexEnvironment(profile));
   try {
     let page = await app.firstWindow();
-    await page.setViewportSize({ width: 1600, height: 950 });
+    await resizeWindow(page, { width: 1600, height: 950 });
     await expect(page.getByTestId('cmd-input')).toBeVisible();
     await startConversation(page, projectRoot);
     await send(page, 'EZTERMINAL_E2E_RESULTS change the answer');
@@ -186,7 +187,7 @@ test('the Results tab comes back with its conversation after a restart', async (
 
     app = await launchApp(profile, fakeCodexEnvironment(profile));
     page = await app.firstWindow();
-    await page.setViewportSize({ width: 1600, height: 950 });
+    await resizeWindow(page, { width: 1600, height: 950 });
     const results = page.getByTestId('conversation-results');
     await expect(results).toBeVisible({ timeout: 30_000 });
     await expect(results.getByRole('button', { name: /^results-app\.ts/u })).toBeVisible({ timeout: 20_000 });
@@ -203,7 +204,7 @@ test('an AI-made HTML page shows as an isolated static preview (no scripts, no n
   const app = await launchApp(profile, fakeCodexEnvironment(profile));
   const page = await app.firstWindow();
   try {
-    await page.setViewportSize({ width: 1600, height: 950 });
+    await resizeWindow(page, { width: 1600, height: 950 });
     await expect(page.getByTestId('cmd-input')).toBeVisible();
     await startConversation(page, projectRoot);
     await send(page, 'EZTERMINAL_E2E_ARTIFACTS write a report');
@@ -262,7 +263,7 @@ test('a Results tab popped out to its own window keeps its previews and is not c
   const app = await launchApp(profile, fakeCodexEnvironment(profile));
   const page = await app.firstWindow();
   try {
-    await page.setViewportSize({ width: 1600, height: 950 });
+    await resizeWindow(page, { width: 1600, height: 950 });
     await expect(page.getByTestId('cmd-input')).toBeVisible();
     await startConversation(page, projectRoot);
     await send(page, 'EZTERMINAL_E2E_ARTIFACTS write a report');

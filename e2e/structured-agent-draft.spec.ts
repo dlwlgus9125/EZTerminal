@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -121,7 +122,7 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
   let receipt: DaemonCommandReceipt | undefined;
   try {
     const baselineWindow = await baselineApp.firstWindow();
-    await baselineWindow.setViewportSize({ width: 1440, height: 900 });
+    await resizeWindow(baselineWindow, { width: 1440, height: 900 });
     await expect(baselineWindow.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
     const claude = await baselineWindow.evaluate(async () => (
@@ -183,7 +184,7 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
   const app = await launchApp(userDataDir, fakeCodexEnvironment(userDataDir));
   try {
     const window = await app.firstWindow();
-    await window.setViewportSize({ width: 1440, height: 900 });
+    await resizeWindow(window, { width: 1440, height: 900 });
     await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
     const restoredSnapshot = await window.evaluate(async () => (
@@ -361,7 +362,7 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
     const app = await launchApp(userDataDir);
     try {
       const window = await app.firstWindow();
-      await window.setViewportSize({ width: 1440, height: 900 });
+      await resizeWindow(window, { width: 1440, height: 900 });
       await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
       await window.getByTestId('rail-agents').click();
       const registered = await window.evaluate(async () => (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items);

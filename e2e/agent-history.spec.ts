@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -255,7 +256,7 @@ test('lists a local Claude session for a terminal project and opens it read-only
   // The adapter resolves the Claude store from the user's home directory.
   const app = await launchApp(userDataDir, { USERPROFILE: home, HOME: home });
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
 
   await window.getByTestId('rail-agents').click();
   await expect(window.getByTestId('agent-hub')).toBeVisible();
@@ -332,7 +333,7 @@ test('keeps the complete current file and an unplaced provider record in one rev
 
   const app = await launchApp(userDataDir, { USERPROFILE: home, HOME: home });
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
 
   await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
@@ -369,7 +370,10 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
 
   const app = await launchApp(userDataDir, { USERPROFILE: home, HOME: home });
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
+  // The wide shell docks the sidebar beside the transcript; opened before the resize lands (a slow runner), it is a
+  // modal overlay and the transcript behind it cannot be clicked.
+  await expect.poll(() => window.evaluate(() => matchMedia('(min-width: 1200px)').matches)).toBe(true);
 
   await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
@@ -402,7 +406,7 @@ test('explicit terminal continuation opens a Claude run rooted at the recorded p
 
   const app = await launchApp(userDataDir, { USERPROFILE: home, HOME: home });
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
 
   await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);

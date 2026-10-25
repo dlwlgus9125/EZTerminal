@@ -1,4 +1,4 @@
-import type { Page } from './test';
+import { expect, type Page } from './test';
 
 /**
  * Board + Desk (2.0): the tools sit in the live list's tool row, which shows in
@@ -18,4 +18,13 @@ export async function toggleWorkbenchTool(
 ): Promise<void> {
   await enterWorkMode(page);
   await page.getByTestId(destinationTestId).click();
+}
+
+/**
+ * Resizes the window and waits until the page has the new width: the shell (SidebarShell reads matchMedia) docks or
+ * overlays its sidebar by width, and on a slow runner the next click could land while the old layout still holds.
+ */
+export async function resizeWindow(page: Page, size: { readonly width: number; readonly height: number }): Promise<void> {
+  await page.setViewportSize(size);
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(size.width);
 }

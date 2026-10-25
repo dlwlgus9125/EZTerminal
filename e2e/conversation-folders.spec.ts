@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
@@ -63,7 +64,7 @@ test('a conversation works in every project folder and drops a removed one from 
   const app = await launchApp(profile, fakeCodexEnvironment(profile));
   const page = await app.firstWindow();
   try {
-    await page.setViewportSize({ width: 1600, height: 950 });
+    await resizeWindow(page, { width: 1600, height: 950 });
     await expect(page.getByTestId('cmd-input')).toBeVisible();
     const saved = await page.evaluate(([primaryRoot, shared]) => window.ezterminal.saveAgentProject({
       name: 'Folders acceptance', primaryRoot, additionalRoots: [shared], pinned: false,

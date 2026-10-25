@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { enterWorkMode, toggleWorkbenchTool } from './workbench-navigation';
+import { enterWorkMode, toggleWorkbenchTool, resizeWindow } from './workbench-navigation';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 
 import { launchApp } from './launch-app';
@@ -115,7 +115,7 @@ test('the live list, scrim and overlay sidebar share one scaled geometry at 800 
       });
     };
 
-    await window.setViewportSize({ width: 800, height: 600 });
+    await resizeWindow(window, { width: 800, height: 600 });
     await toggleWorkbenchTool(window, 'btn-toggle-files');
     await window.getByTestId('btn-toggle-settings').click();
     await expect(window.getByTestId('settings-panel')).toBeVisible();
@@ -127,7 +127,7 @@ test('the live list, scrim and overlay sidebar share one scaled geometry at 800 
     }
     await sampleGeometry('800x600@150');
 
-    await window.setViewportSize({ width: 1024, height: 720 });
+    await resizeWindow(window, { width: 1024, height: 720 });
     await sampleGeometry('1024x720@150');
 
     for (const expectedScale of [140, 130, 120, 110, 100]) {
@@ -151,7 +151,7 @@ test('a nested sidebar dialog keeps ownership when the wide shell becomes narrow
   const app = await launchApp();
   try {
     const window = await app.firstWindow();
-    await window.setViewportSize({ width: 1440, height: 900 });
+    await resizeWindow(window, { width: 1440, height: 900 });
     await expect.poll(() => window.evaluate(
       () => matchMedia('(min-width: 1200px)').matches,
     )).toBe(true);
@@ -175,7 +175,7 @@ test('a nested sidebar dialog keeps ownership when the wide shell becomes narrow
     await expect(dialog).toBeVisible();
     await expect(backdrop).not.toHaveAttribute('inert', '');
 
-    await window.setViewportSize({ width: 1024, height: 720 });
+    await resizeWindow(window, { width: 1024, height: 720 });
     await expect(sidebar).toHaveAttribute('aria-modal', 'true');
     await expect(backdrop).not.toHaveAttribute('inert', '');
     await expect(backdrop).not.toHaveAttribute('aria-hidden', 'true');
@@ -209,7 +209,7 @@ test('wide shell reflows once, switches destinations in place, and resizes by ke
   const app = await launchApp();
   try {
     const window = await app.firstWindow();
-    await window.setViewportSize({ width: 1440, height: 900 });
+    await resizeWindow(window, { width: 1440, height: 900 });
     await expect.poll(() => window.evaluate(() => matchMedia('(min-width: 1200px)').matches)).toBe(true);
 
     const dockBefore = await window.locator('.dock-host').boundingBox();
@@ -257,7 +257,7 @@ test('the folded strip opens the full list over the dock and closes it after a c
     await window.keyboard.press('Escape');
     await expect(overlay).toHaveCount(0);
     // From 1100px the full list stands in place of the strip.
-    await window.setViewportSize({ width: 1440, height: 900 });
+    await resizeWindow(window, { width: 1440, height: 900 });
     await expect(window.getByTestId('shell-live-list')).toBeVisible();
     await expect(window.getByTestId('shell-live-strip')).toHaveCount(0);
   } finally {

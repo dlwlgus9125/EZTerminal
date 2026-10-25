@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -44,7 +45,7 @@ test('Project Map create opens a fresh Agent tab and binds the job to that sessi
     EZTERMINAL_E2E_PROJECT_MAP_AGENT: '1',
   });
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
   const project = await window.evaluate(async () => {

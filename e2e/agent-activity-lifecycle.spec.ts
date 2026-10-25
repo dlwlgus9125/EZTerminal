@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -43,7 +44,7 @@ test('terminating an Agent terminal session removes its activity and focus targe
 
   const app = await launchApp(userDataDir, pathEnvironment());
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
   const input = window.getByTestId('cmd-input');

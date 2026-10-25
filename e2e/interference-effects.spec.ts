@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { test, expect } from './test';
 
 import { launchApp } from './launch-app';
@@ -5,7 +6,7 @@ import { launchApp } from './launch-app';
 test('Matrix UI composes flicker with micro-jitter and keeps the rollbar inside the viewport', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1_200, height: 655 });
+  await resizeWindow(window, { width: 1_200, height: 655 });
   await window.emulateMedia({ reducedMotion: 'no-preference' });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   await window.getByTestId('btn-toggle-settings').click();

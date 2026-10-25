@@ -1,3 +1,4 @@
+import { resizeWindow } from './workbench-navigation';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -55,7 +56,7 @@ test('direct Codex terminal retains every sequential output line in scrollback',
     EZTERMINAL_E2E_CODEX_SCROLLBACK: '1',
   });
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
   const input = window.getByTestId('cmd-input');

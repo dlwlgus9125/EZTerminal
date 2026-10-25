@@ -1,4 +1,4 @@
-import { toggleWorkbenchTool } from './workbench-navigation';
+import { toggleWorkbenchTool, resizeWindow } from './workbench-navigation';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -202,7 +202,7 @@ test('registered project can be deleted from the Projects menu', async () => {
   const { userDataDir } = createProjectFixture();
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   const project = (await window.evaluate(async () =>
     globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
@@ -225,7 +225,7 @@ test('registered project can be deleted after its detached terminal exits with t
   const { userDataDir } = createProjectFixture();
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   const project = (await window.evaluate(async () =>
     globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
@@ -248,7 +248,7 @@ test('registered project can be deleted after its detached terminal exits with t
 
   const restartedApp = await launchApp(userDataDir);
   const restarted = await restartedApp.firstWindow();
-  await restarted.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(restarted, { width: 1440, height: 900 });
   await expect(restarted.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   expect(await restarted.evaluate(async (id) =>
     (await globalThis.window.ezterminal.listSessions()).some((session) => session.sessionId === id),
@@ -270,7 +270,7 @@ test('project root terminal preserves fixed-root identity across rename and rest
   const canonicalProjectRoot = realpathSync.native(projectRoot);
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
   const publicProjectId = await window.evaluate(async () =>
@@ -354,7 +354,7 @@ test('project root terminal preserves fixed-root identity across rename and rest
 
   const restoredApp = await launchApp(userDataDir);
   const restored = await restoredApp.firstWindow();
-  await restored.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(restored, { width: 1440, height: 900 });
   const restoredTabs = restored.locator('.project-session-tab');
   await expect(restoredTabs).toHaveCount(3, { timeout: 15_000 });
   await expect(restoredTabs.locator('.project-session-tab__label')).toHaveText([
@@ -394,7 +394,7 @@ test('newly approved worktree terminal keeps its project daemon identity', async
   git(projectRoot, 'worktree', 'add', '-b', 'e2e-external-review', externalRoot, 'HEAD');
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
   const publicProjectId = await window.evaluate(async () =>
@@ -591,7 +591,7 @@ test('Agent Project opens changed files in one VS Code-style read-only editor', 
     if (message.type() === 'error') errors.push(message.text());
   });
   window.on('pageerror', (error) => errors.push(error.stack ?? error.message));
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
 
   const publicProjectId = await window.evaluate(async () =>
     (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
@@ -706,7 +706,7 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
   const { projectRoot, userDataDir } = createNestedProjectFixture();
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
 
   await toggleWorkbenchTool(window, 'btn-toggle-files');
   const pathInput = window.getByTestId('file-path-input');
@@ -771,7 +771,7 @@ test('narrow project workspace reuses one editor and preserves live PTY state th
   const { projectRoot, userDataDir } = createProjectFixture();
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
 
   const publicProjectId = await window.evaluate(async () =>
     (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
@@ -824,7 +824,7 @@ test('narrow project workspace reuses one editor and preserves live PTY state th
   await expect(draftInput).toBeFocused();
   expect(await selectionRange(draftInput)).toEqual([3, 11]);
 
-  await window.setViewportSize({ width: 800, height: 600 });
+  await resizeWindow(window, { width: 800, height: 600 });
   await openRegisteredProject(window, publicProjectId!);
   await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
   await openTreeFile(window);
@@ -895,12 +895,12 @@ test('narrow project workspace reuses one editor and preserves live PTY state th
     await draftInput.evaluate((element) => (element as HTMLInputElement).setSelectionRange(3, 11));
     await expect(draftInput).toBeFocused({ timeout: 500 });
   }).toPass({ timeout: 10_000 });
-  await window.setViewportSize({ width: 1440, height: 900 });
+  await resizeWindow(window, { width: 1440, height: 900 });
   await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'wide');
   await expect(draftInput).toBeFocused();
   await expect(draftInput).toHaveValue('preserve this draft');
   expect(await selectionRange(draftInput)).toEqual([3, 11]);
-  await window.setViewportSize({ width: 800, height: 600 });
+  await resizeWindow(window, { width: 800, height: 600 });
   await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'narrow');
   await expect(draftInput).toBeFocused();
   await expect(liveProjectPane).toHaveAttribute('data-session-id', projectSessionId!);

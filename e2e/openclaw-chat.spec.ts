@@ -88,10 +88,13 @@ test('running: opening chat from the drawer auto-closes the drawer and shows exa
     await expect
       .poll(async () => (await chatViewInfo(app))[0]?.url ?? '', { timeout: 10_000 })
       .toContain('#token=e2e-fake-token');
+    // The title follows the document load, after the URL (later on a slow runner).
+    await expect
+      .poll(async () => (await chatViewInfo(app))[0]?.title ?? '', { timeout: 10_000 })
+      .toBe('OpenClaw Control');
     const [view] = await chatViewInfo(app);
     expect(await chatViewInfo(app)).toHaveLength(1);
     expect(view.url.startsWith(`http://127.0.0.1:${gateway.port}`)).toBe(true);
-    expect(view.title).toBe('OpenClaw Control');
 
     // (b) The [채팅 열기] button lives INSIDE the drawer, and the drawer feeds
     // the chat panel's z-order hide rule — so opening chat must AUTO-CLOSE the
