@@ -373,7 +373,8 @@ describe('DaemonAgentRuntime conversation folders', () => {
   });
 });
 
-describe('DaemonAgentRuntime', () => {
+// Restarts, stores and provider fakes: a test here takes seconds on a slow Windows runner (6-7 s seen), over the 5 s default.
+describe('DaemonAgentRuntime', { timeout: 20_000 }, () => {
   it('binds host stage references to the accepted transcript and provider turn while rejecting forged client references', async () => {
     const reference = { projectId: 'project-1', subprojectId: 'sub', nodeId: 'stage', graphRevision: 3, fingerprint: 'a'.repeat(64), title: 'Plan', document: 'Saved document', instructions: '', references: [] };
     const context = vi.fn(async (_projectId: string, sessionId: string) => sessionId === 'stage-chat' ? reference : undefined);
