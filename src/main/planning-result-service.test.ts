@@ -240,6 +240,16 @@ describe('planning result authority', () => {
     await f.service.processIntegration(f.current()); await f.service.whenIdle(); expect(adopt).toHaveBeenCalledOnce();
     expect(await f.service.readIntegration('P', 'R')).toMatchObject({ status: 'passed' });
   }, 60_000);
+  it('reads a past result diff from the project checkout once the attempt work folder is gone', async () => {
+    const f = await fixture();
+    await f.capture();
+    const diff = await f.service.readDiff('P', 'A');
+    expect(diff).toContain('+updated');
+    // Retention removes the attempt's work folder; its result stays reachable through the shared result ref.
+    await f.git.run(f.root, ['worktree', 'remove', '--force', f.worker]);
+    await expect(fs.stat(f.worker)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await f.service.readDiff('P', 'A')).toBe(diff);
+  }, 60_000);
   it('captures exact owned changes, preserves the dirty original and requires an independent read-only review before integration', async () => {
     const f = await fixture();
     const artifacts = await f.capture();

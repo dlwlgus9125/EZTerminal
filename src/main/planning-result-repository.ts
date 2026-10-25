@@ -154,8 +154,9 @@ export class PlanningResultRepository {
   async readDiff(projectId: string, attemptId: string): Promise<string | null> {
     const record = await this.readResult(projectId, attemptId);
     if (!record?.baseCommit || !record.commit) return null;
-    await this.assertOwnedWorktree(projectId, record.rootPath);
-    const output = await this.runGit(record.rootPath, ['diff', '--no-ext-diff', '--no-textconv', record.baseCommit, record.commit, '--']);
+    // Read from the project's own checkout: the result commit is kept by a shared ref (refs/ezterminal/results/*),
+    // so it stays readable after retention removes the attempt's work folder.
+    const output = await this.runGit(this.projectRoot(projectId), ['diff', '--no-ext-diff', '--no-textconv', record.baseCommit, record.commit, '--']);
     const limit = 1_048_576;
     return Buffer.byteLength(output) <= limit ? output : `${Buffer.from(output).subarray(0, limit).toString('utf8')}\n[Diff preview truncated at 1 MiB; exact Git artifact retained.]`;
   }
