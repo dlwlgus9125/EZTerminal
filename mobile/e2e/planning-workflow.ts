@@ -14,8 +14,8 @@ import path from 'node:path';
 
 import { OwnedDesktopProfileRegistry } from '../../e2e/owned-desktop-profile.ts';
 import {
-  APK_PATH, APP_ID, MAIN_ENTRY, closeMobileE2eResources, closeWebViewDevtools, connectAndAuth,
-  evaluateWebView, launchDesktop, runAdb, runAdbBinary, setTestIdTextValue, sleep,
+  APK_PATH, APP_ID, MAIN_ENTRY, closeMobileE2eResources, connectAndAuth,
+  evaluateWebView, launchDesktop, restartApp, runAdb, runAdbBinary, setTestIdTextValue, sleep,
   waitForTestId, waitForTestIdHidden,
 } from './lib.ts';
 
@@ -218,9 +218,7 @@ async function main(): Promise<void> {
     await writeFile(path.join(artifactDir, 'planning-offline.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     phases.push('Offline editing retained locally; save disabled and host unchanged');
 
-    runAdb(['shell', 'am', 'force-stop', APP_ID]);
-    closeWebViewDevtools();
-    runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
+    await restartApp();
     await waitForTestId('connect-screen', 45_000);
     await clickSelector('[data-testid="connect-submit"]');
     // This is an intentionally offline reconnect: the encrypted project cache
@@ -350,7 +348,7 @@ async function main(): Promise<void> {
     await host.evaluate(() => window.ezterminal.setRemoteEnabled(false)); await waitForTestId('mobile-reconnect-scrim');
     await fillSelector('.workflow-stage textarea', 'Android offline graph draft');
     await waitForCondition('encrypted offline graph receipt', `(async () => { const r = await window.ezterminal.workflowDraftRead(${JSON.stringify(projectId)}); const state = r.ok && r.snapshot.state; const draft = state && state.drafts[${JSON.stringify(subproject.id)}]; const node = draft && draft.graph.nodes.find(n => n.id === ${JSON.stringify(subproject.graph.entryNodeId)}); return !!node && node.document === 'Android offline graph draft'; })()`);
-    runAdb(['shell', 'am', 'force-stop', APP_ID]); closeWebViewDevtools(); runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
+    await restartApp();
     await waitForTestId('connect-screen', 45_000); await recordWorkflowRuntimeErrors(); await clickSelector('[data-testid="connect-submit"]'); await waitForTestId('mobile-workspace', 30_000); await openProject(name, false);
     await waitForCondition('offline graph cache and draft restored after force-stop', `(document.querySelector('.workflow-stage textarea') || {}).value === 'Android offline graph draft'`);
     await assertWorkflowHealthy('Offline graph recovery');
@@ -444,15 +442,27 @@ async function main(): Promise<void> {
     await writeFile(path.join(artifactDir, 'i2-run-again.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     // 반복 (I2-6): set on the phone, saved on the PC in the phone's zone, shown with its next run or why it waits.
     const chooseOption = async (testId: string, value: string) => {
-      const select = `document.querySelector(${JSON.stringify(`[data-testid="${testId}"]`)})`;
+      const select = `[...document.querySelectorAll(${JSON.stringify(`[data-testid="${testId}"]`)})].reverse().find(node => { const box = node.getBoundingClientRect(); const style = getComputedStyle(node); return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'; })`;
       await waitForCondition(`the ${testId} select`, `!!${select} && !${select}.disabled`, 30_000);
       await evaluateWebView(`(() => { const select = ${select}; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
     };
     const savedRepeat = async () => (await readWorkflow()).subprojects.find(item => item.id === 'android-run')?.repeat;
-    await chooseOption('workflow-repeat-cadence', 'daily');
-    await waitHost('반복 saved on the PC', async () => (await savedRepeat())?.enabled === true);
-    await chooseOption('workflow-repeat-hour', '07');
-    await waitHost('반복 time saved on the PC', async () => (await savedRepeat())?.time === '07:00');
+    // What the run bar says when a save does not land (kept in the report).
+    const repeatState = () => evaluateWebView<string>(`JSON.stringify({ bar: (document.querySelector('[data-testid="workflow-run-bar"]') || {}).innerText,
+      cadence: (() => { const select = document.querySelector('[data-testid="workflow-repeat-cadence"]'); return select && { value: select.value, disabled: select.disabled, options: [...select.options].map(option => option.value + (option.disabled ? ':off' : '')) }; })(),
+      alerts: [...document.querySelectorAll('[role="alert"], [role="status"]')].map(node => node.textContent).filter(Boolean).slice(0, 8) })`);
+    // A choice the PC does not save fails with what the run bar and the selects said (zone included).
+    const chooseAndConfirm = async (testId: string, value: string, label: string, saved: () => Promise<boolean>) => {
+      await chooseOption(testId, value);
+      try { await waitHost(label, saved, 30_000); } catch (error) {
+        const probe = await evaluateWebView<string>(`(() => { const all = [...document.querySelectorAll(${JSON.stringify(`[data-testid="${testId}"]`)})];
+          return JSON.stringify({ count: all.length, visible: all.map(node => node.getBoundingClientRect().width > 0), values: all.map(node => node.value), disabled: all.map(node => node.disabled), zone: Intl.DateTimeFormat().resolvedOptions().timeZone }); })()`).catch((cause: unknown) => String(cause));
+        report.repeatFailure = { state: await repeatState().catch((cause: unknown) => String(cause)), probe };
+        throw error;
+      }
+    };
+    await chooseAndConfirm('workflow-repeat-cadence', 'daily', '반복 saved on the PC', async () => (await savedRepeat())?.enabled === true);
+    await chooseAndConfirm('workflow-repeat-hour', '07', '반복 time saved on the PC', async () => (await savedRepeat())?.time === '07:00');
     await waitForCondition('반복 status on the phone', `/Next run|다음 실행|Repeats run only while|PC 앱이 로그인할 때/.test((document.querySelector('[data-testid="workflow-repeat-status"]') || {}).textContent || '')`, 30_000);
     const repeat = await savedRepeat();
     assert.equal(repeat?.cadence, 'daily', 'The phone saved a daily repeat');

@@ -75,6 +75,13 @@ test('one canvas: run the saved flow, approve, open the working stage conversati
       const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
       return result.ok ? result.snapshot.subprojects.find(item => item.id === 'canvas-flow')?.runSettings?.reviewer.model ?? null : null;
     }, { timeout: 30_000 }).toBe('gpt-5.6-fixture');
+    // 반복 (I2-6): chosen on the run bar, saved on the host in this PC's zone; it says why it waits (automation is off here).
+    await bar.getByTestId('workflow-repeat-cadence').selectOption('daily');
+    await expect.poll(async () => {
+      const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);
+      return result.ok ? result.snapshot.subprojects.find(item => item.id === 'canvas-flow')?.repeat?.enabled ?? null : null;
+    }, { timeout: 30_000 }).toBe(true);
+    await expect(bar.getByTestId('workflow-repeat-status')).toContainText(/로그인할 때 시작|starts at login/u);
     // One button prepares and starts the saved flow.
     await bar.getByTestId('workflow-run-again').click();
     await expect(bar.getByTestId('workflow-run-phase')).toContainText(/실행 #1|Run #1/u, { timeout: 30_000 });

@@ -290,6 +290,36 @@ export async function clearAppDataAndWaitForQuiescence(timeoutMs = 15_000): Prom
   }
 }
 
+/** Whether the app has a running process (`pidof` prints nothing, or fails, when it has none). */
+function appRunning(): boolean {
+  try { return runAdb(['shell', 'pidof', APP_ID], ADB_PROBE_TIMEOUT_MS).trim().length > 0; } catch { return false; }
+}
+
+/**
+ * Force-stops the app and starts it again. API 35 can fold an `am start` sent right after a force-stop into the dying
+ * task ("app died, no saved state"), so nothing relaunches: wait until the old process is gone, then start and re-send
+ * the start until a new process is up.
+ */
+export async function restartApp(timeoutMs = 30_000): Promise<void> {
+  runAdb(['shell', 'am', 'force-stop', APP_ID]);
+  closeWebViewDevtools();
+  const stopDeadline = Date.now() + timeoutMs;
+  while (appRunning()) {
+    if (Date.now() >= stopDeadline) throw new Error(`The app was still running ${timeoutMs}ms after a force-stop.`);
+    await sleep(250);
+  }
+  const startDeadline = Date.now() + timeoutMs;
+  for (;;) {
+    runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
+    const resend = Date.now() + 3_000;
+    while (Date.now() < resend) {
+      if (appRunning()) return;
+      await sleep(250);
+    }
+    if (Date.now() >= startDeadline) throw new Error(`The app did not start within ${timeoutMs}ms of a force-stop.`);
+  }
+}
+
 export interface Point {
   readonly x: number;
   readonly y: number;
