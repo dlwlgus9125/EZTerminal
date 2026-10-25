@@ -408,12 +408,16 @@ async function main(): Promise<void> {
     await clickSelector('[data-testid="workflow-back"]');
     await openListItem('[data-testid="workflow-subproject-item"]', 'Android run');
     await waitForTestId('workflow-run-bar', 30_000);
-    // The phone lists the models its host advertises; this flow's review AI was saved on the PC and the phone shows it.
-    const runFlow = (await readWorkflow()).subprojects.find(item => item.id === 'android-run')!;
-    const savedSettings = await host.evaluate(command => window.ezterminal.executeWorkflowCommand(command), { commandId: 'android-run-settings', projectId, hostId: beforeRunFlow.hostId,
-      expectedRevision: runFlow.revision, subprojectId: 'android-run', type: 'subproject.update' as const, payload: { runSettings: { reviewer: { providerId: 'codex', model: 'gpt-5.6-fixture' } } } });
-    assert.equal(savedSettings.ok, true, 'The review AI was saved on the PC');
-    await waitForCondition('the saved review AI on the phone', `(document.querySelector('[data-testid="workflow-run-bar"] select[aria-label="Reviewer model"], [data-testid="workflow-run-bar"] select[aria-label="검토 모델"]') || {}).value === 'gpt-5.6-fixture'`, 30_000);
+    // I2-9: the phone reads the PC's model catalog (provider-models-read) and saves the review AI itself.
+    const pickReviewer = async (labels: readonly string[], value: string) => {
+      const select = `[...document.querySelectorAll('[data-testid="workflow-run-bar"] select')].find(node => ${JSON.stringify(labels)}.includes(node.getAttribute('aria-label') || ''))`;
+      await waitForCondition(`the ${labels[0]} offers ${value}`, `!!${select} && !${select}.disabled && [...${select}.options].some(option => option.value === ${JSON.stringify(value)})`, 30_000);
+      await evaluateWebView(`(() => { const select = ${select}; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    };
+    await pickReviewer(['Review AI provider', '검토 AI 제공자'], 'codex');
+    await pickReviewer(['Reviewer model', '검토 모델'], 'gpt-5.6-fixture');
+    await waitHost('the review AI chosen on the phone is saved on the PC', async () => (await readWorkflow()).subprojects.find(item => item.id === 'android-run')?.runSettings?.reviewer.model === 'gpt-5.6-fixture');
+    report.phoneModelCatalog = await evaluateWebView<string>(`[...(([...document.querySelectorAll('[data-testid="workflow-run-bar"] select')].find(node => ['Reviewer model', '검토 모델'].includes(node.getAttribute('aria-label') || '')) || {}).options || [])].map(option => option.value).join(',')`);
     await clickSelector('[data-testid="workflow-run-again"]');
     await waitHost('run #1 waits for its approval', async () => (await flowRuns())[0]?.workflowRuntime?.activations.some(entry => entry.nodeId === 'gate' && entry.state === 'awaiting-approval') === true);
     await waitForCondition('run #1 on the phone', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
