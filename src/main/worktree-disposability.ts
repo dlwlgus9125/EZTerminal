@@ -11,7 +11,9 @@ export interface DisposableExpectation {
   /** A commit HEAD may already be detached at (a cleanup that stopped after detaching). */
   readonly detachedAt?: string;
 }
-export type Disposability = { readonly disposable: true } | { readonly disposable: false; readonly reason: string };
+/** Why a folder stays, for screens to word (`reason` is the host's own English). */
+export type KeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'unchecked';
+export type Disposability = { readonly disposable: true } | { readonly disposable: false; readonly code: KeepCode; readonly reason: string };
 
 /** No pager, no hooks, no fsmonitor, no optional index writes: the check changes nothing. */
 const SAFE = ['--no-pager', '--no-optional-locks', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false'] as const;
@@ -26,24 +28,24 @@ const IN_PROGRESS = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'BISECT_LO
  */
 export async function judgeDisposable(git: Pick<GitRunner, 'run'>, folder: string, expected: DisposableExpectation): Promise<Disposability> {
   const run = (args: readonly string[]) => git.run(folder, [...SAFE, ...args]);
-  const keep = (reason: string): Disposability => ({ disposable: false, reason });
+  const keep = (code: KeepCode, reason: string): Disposability => ({ disposable: false, code, reason });
   try {
     const head = (await run(['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
-    if (head !== expected.head && head !== expected.detachedAt) return keep('Its HEAD is not where this run left it.');
+    if (head !== expected.head && head !== expected.detachedAt) return keep('head-moved', 'Its HEAD is not where this run left it.');
     for (const name of IN_PROGRESS) {
-      if (await exists((await run(['rev-parse', '--path-format=absolute', '--git-path', name])).trim())) return keep(`Git work is in progress there (${name}).`);
+      if (await exists((await run(['rev-parse', '--path-format=absolute', '--git-path', name])).trim())) return keep('git-in-progress', `Git work is in progress there (${name}).`);
     }
-    if ((await run(['config', '--bool', '--default', 'false', 'core.sparseCheckout'])).trim() !== 'false') return keep('It is a sparse checkout.');
-    if ((await run(['ls-files', '-v', '-z'])).split('\0').filter(Boolean).some(line => line[0] !== 'H')) return keep('Some files are set so that Git does not check them.');
-    if ((await run(['ls-files', '--stage', '-z'])).split('\0').filter(Boolean).some(line => line.startsWith('160000 '))) return keep('It has a submodule.');
+    if ((await run(['config', '--bool', '--default', 'false', 'core.sparseCheckout'])).trim() !== 'false') return keep('sparse', 'It is a sparse checkout.');
+    if ((await run(['ls-files', '-v', '-z'])).split('\0').filter(Boolean).some(line => line[0] !== 'H')) return keep('unchecked-entries', 'Some files are set so that Git does not check them.');
+    if ((await run(['ls-files', '--stage', '-z'])).split('\0').filter(Boolean).some(line => line.startsWith('160000 '))) return keep('submodule', 'It has a submodule.');
     // Untracked and ignored alike (no exclude rules): any file Git does not keep.
-    if ((await run(['ls-files', '--others', '-z'])).length > 0) return keep('It has files Git does not keep (untracked or ignored).');
-    if (await differs(run, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', '--'])) return keep('It has changes not added to Git.');
-    if (await differs(run, ['diff', '--cached', '--quiet', '--no-ext-diff', '--no-textconv', expected.tree, '--'])) return keep('Its staged files are not exactly this run’s result.');
-    if (await usesLfs(run, [...new Set([expected.head, expected.tree, ...(expected.detachedAt ? [expected.detachedAt] : [])])])) return keep('It uses Git LFS.');
+    if ((await run(['ls-files', '--others', '-z'])).length > 0) return keep('untracked', 'It has files Git does not keep (untracked or ignored).');
+    if (await differs(run, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', '--'])) return keep('changed', 'It has changes not added to Git.');
+    if (await differs(run, ['diff', '--cached', '--quiet', '--no-ext-diff', '--no-textconv', expected.tree, '--'])) return keep('staged-differs', 'Its staged files are not exactly this run’s result.');
+    if (await usesLfs(run, [...new Set([expected.head, expected.tree, ...(expected.detachedAt ? [expected.detachedAt] : [])])])) return keep('lfs', 'It uses Git LFS.');
     return { disposable: true };
   } catch {
-    return keep('It could not be checked.');
+    return keep('unchecked', 'It could not be checked.');
   }
 }
 

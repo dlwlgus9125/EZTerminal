@@ -164,3 +164,13 @@ describe('WorkflowFlowSurface 반복', () => {
     expect(container.querySelector('[data-testid="workflow-repeat"]')).toBeNull();
   });
 });
+
+describe('WorkflowFlowSurface 작업 폴더 정리', () => {
+  it('tells a stage of a run whose work folders were cleaned up that its conversations stay readable', async () => {
+    const { run } = workflowCanvasFixture('retry-running', 'en');
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedRunIds: [run!.runId], selection: { kind: 'node', id: 'login:implement' }, section: 'run' })} />));
+    expect(document.querySelector('[data-testid="workflow-stage-cleaned"]')?.textContent).toContain('work folders were cleaned up');
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ cleanedRunIds: [], selection: { kind: 'node', id: 'login:implement' }, section: 'run' })} />));
+    expect(document.querySelector('[data-testid="workflow-stage-cleaned"]')).toBeNull();
+  });
+});

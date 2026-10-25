@@ -210,6 +210,7 @@ export function PlanningWorkspaceDockPanel(
     <WorkflowWorkspacePanel
       onOpenHistory={navigation?.openHistory ? () => navigation.openHistory?.(projectId) : undefined}
       onOpenAutomationSettings={navigation?.openAutomationSettings}
+      retentionAccess={window.ezterminal.runRetention}
       projectId={projectId}
       projectName={projectName}
       access={workflowAccess}

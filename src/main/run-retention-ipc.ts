@@ -6,7 +6,7 @@ import type { RunWorktreeCleanup } from './run-worktree-cleanup';
 /** Desktop-only 작업 폴더 정리: list a project's removable run work folders, and remove the ones the person confirms. */
 export function installRunRetentionIpc(input: {
   readonly ipc: Pick<IpcMain, 'handle' | 'removeHandler'>;
-  readonly cleanup: Pick<RunWorktreeCleanup, 'plan' | 'cleanup'>;
+  readonly cleanup: Pick<RunWorktreeCleanup, 'plan' | 'cleanup' | 'cleaned'>;
   /** The execution ledger and results are read only once they are ready. */
   readonly ready: Promise<unknown>;
 }): () => void {
@@ -18,6 +18,9 @@ export function installRunRetentionIpc(input: {
   ipc.handle('run-retention:plan', (_event, projectId: unknown): Promise<RunRetentionResult<RunCleanupPlan>> => (
     id(projectId) ? answer(() => cleanup.plan(projectId)) : Promise.resolve({ ok: false, message: 'Choose a project.' })
   ));
+  ipc.handle('run-retention:cleaned', (_event, projectId: unknown): Promise<RunRetentionResult<readonly string[]>> => (
+    id(projectId) ? answer(() => cleanup.cleaned(projectId)) : Promise.resolve({ ok: false, message: 'Choose a project.' })
+  ));
   ipc.handle('run-retention:cleanup', (_event, projectId: unknown, runIds: unknown): Promise<RunRetentionResult<RunCleanupOutcome>> => (
     id(projectId) && Array.isArray(runIds) && runIds.length <= 1_000 && runIds.every(id)
       ? answer(() => cleanup.cleanup(projectId, runIds as string[]))
@@ -25,6 +28,7 @@ export function installRunRetentionIpc(input: {
   ));
   return () => {
     ipc.removeHandler('run-retention:plan');
+    ipc.removeHandler('run-retention:cleaned');
     ipc.removeHandler('run-retention:cleanup');
   };
 }

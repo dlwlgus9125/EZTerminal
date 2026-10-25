@@ -8,8 +8,12 @@ export interface RunFolderPlan {
   readonly path: string;
   /** removable: nothing of a person's is there; kept: why it stays; removed: already gone (an earlier cleanup). */
   readonly state: 'removable' | 'kept' | 'removed';
+  /** Why it stays: a stable code for screens to word, with the host's own English. */
+  readonly code?: RunFolderKeepCode;
   readonly reason?: string;
 }
+export type RunFolderKeepCode = 'head-moved' | 'git-in-progress' | 'sparse' | 'unchecked-entries' | 'submodule' | 'untracked' | 'changed' | 'staged-differs' | 'lfs' | 'unchecked'
+  | 'not-ezterminal' | 'locked' | 'project-inside' | 'no-record' | 'result-mismatch' | 'busy' | 'in-use' | 'held' | 'run-changed' | 'failed';
 
 export interface RunCleanupPlan {
   readonly runs: readonly {
@@ -26,12 +30,14 @@ export interface RunCleanupPlan {
 
 export interface RunCleanupOutcome {
   readonly removed: number;
-  readonly kept: readonly { readonly path: string; readonly reason: string }[];
+  readonly kept: readonly { readonly path: string; readonly code?: RunFolderKeepCode; readonly reason: string }[];
 }
 
 export type RunRetentionResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly message: string };
 
 export interface RunRetentionAccess {
   plan(projectId: string): Promise<RunRetentionResult<RunCleanupPlan>>;
+  /** The runs whose work folders were cleaned up (the host's record only: cheap enough to read when a flow opens). */
+  cleaned(projectId: string): Promise<RunRetentionResult<readonly string[]>>;
   cleanup(projectId: string, runIds: readonly string[]): Promise<RunRetentionResult<RunCleanupOutcome>>;
 }

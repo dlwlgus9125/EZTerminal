@@ -14,7 +14,7 @@ import type {
 } from '../shared/worktree';
 import { AsyncMutationGate, type MutationGate } from './async-mutation-gate';
 import { onlyEmptyFolders, removeEmptyFolders } from './folder-cleanup';
-import { judgeDisposable, type DisposableExpectation } from './worktree-disposability';
+import { judgeDisposable, type DisposableExpectation, type KeepCode } from './worktree-disposability';
 import {
   SessionWorktreeGuard,
   type SessionRunIdentity,
@@ -323,7 +323,7 @@ function safeGitMessage(error: GitCommandError): string {
 
 /** A run work folder's cleanup: removed, kept (it holds something Git does not keep, with why), or refused. */
 export type WorktreeRetireResult = { readonly ok: true }
-  | { readonly ok: false; readonly kept: true; readonly reason: string }
+  | { readonly ok: false; readonly kept: true; readonly code: KeepCode; readonly reason: string }
   | { readonly ok: false; readonly kept: false; readonly code: WorktreeErrorCode; readonly message: string };
 
 function failure(action: WorktreeAction, error: WorktreeErrorCode, message: string, worktree?: WorktreeInfo): WorktreeFailure {
@@ -425,8 +425,8 @@ export class WorktreeService {
     this.assertNoConflictingActiveRun();
     await this.assertWorktreeNotInUse(target.path);
     const judged = await judgeDisposable(this.git, target.path, expected);
-    if (!judged.disposable) return { ok: false, kept: true, reason: judged.reason };
-    let kept: string | undefined;
+    if (!judged.disposable) return { ok: false, kept: true, code: judged.code, reason: judged.reason };
+    let kept: { code: KeepCode; reason: string } | undefined;
     let removeError: unknown;
     await this.mutationGate.runExclusive(async () => {
       await this.runGuard.withRemovalBarrier(async () => {
@@ -435,7 +435,7 @@ export class WorktreeService {
         this.assertNoConflictingActiveRun();
         await this.assertWorktreeNotInUse(target.path);
         const again = await judgeDisposable(this.git, target.path, expected);
-        if (!again.disposable) { kept = again.reason; return; }
+        if (!again.disposable) { kept = { code: again.code, reason: again.reason }; return; }
         if (expected.detachTo && (await this.git.run(target.path, ['rev-parse', '--verify', 'HEAD^{commit}'], signal)).trim() !== expected.detachTo) {
           await this.git.run(target.path, ['--no-pager', '-c', 'core.hooksPath=', '-c', 'core.fsmonitor=false', 'checkout', '--quiet', '--detach', '--no-overwrite-ignore', '--no-recurse-submodules', expected.detachTo], signal);
         }
@@ -443,7 +443,7 @@ export class WorktreeService {
         try { await this.git.run(repo.mainPath, ['worktree', 'remove', target.path], signal); } catch (error) { removeError = error; }
       });
     });
-    if (kept) return { ok: false, kept: true, reason: kept };
+    if (kept) return { ok: false, kept: true, ...kept };
     const remaining = await this.listInternal(repo.mainPath, signal);
     if (remaining.some((item) => samePath(item.path, target.path))) {
       if (removeError instanceof GitCommandError) throw removeError;

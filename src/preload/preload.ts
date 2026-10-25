@@ -437,6 +437,7 @@ const api: EzTerminalApi = {
     ipcRenderer.invoke('worktrees:execute', request),
   runRetention: {
     plan: (projectId: string) => ipcRenderer.invoke('run-retention:plan', projectId),
+    cleaned: (projectId: string) => ipcRenderer.invoke('run-retention:cleaned', projectId),
     cleanup: (projectId: string, runIds: readonly string[]) => ipcRenderer.invoke('run-retention:cleanup', projectId, runIds),
   },
   workspaceWorktrees: {
