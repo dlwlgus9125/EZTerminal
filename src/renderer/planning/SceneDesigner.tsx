@@ -79,6 +79,8 @@ export function SceneDesigner({ snapshot, sceneDrafts, componentDrafts, disabled
   }, [mobile]);
   const fileInput = useRef<HTMLInputElement>(null);
   const baseline = snapshot.baselines.find((entry) => entry.id === baselineId);
+  // The baseline shown was cleaned up (기획 기준본 정리): not silently the draft; nothing is edited until the person picks one.
+  const baselineGone = baselineId !== 'draft' && !baseline;
   const base = baseline?.draft ?? snapshot.draft;
   const scenes = useMemo(() => baseline ? base.scenes : overlay(base.scenes, sceneDrafts), [base.scenes, baseline, sceneDrafts]);
   const components = useMemo(() => baseline ? base.components : overlay(base.components, componentDrafts), [base.components, baseline, componentDrafts]);
@@ -90,7 +92,7 @@ export function SceneDesigner({ snapshot, sceneDrafts, componentDrafts, disabled
   const component = mode === 'components' ? entity as PlanningComponent | undefined : undefined;
   const selection = scene?.elements.find((element) => element.id === elementId);
   const activeState = scene?.states.find((state) => state.id === stateId) ?? scene?.states[0];
-  const editBlocked = readOnly || !!baseline;
+  const editBlocked = readOnly || !!baseline || baselineGone;
   const saveBlocked = disabled || editBlocked || assetBusy || importSubmitted !== null;
   const previousDisabled = useRef(disabled);
   useEffect(() => {
@@ -310,7 +312,7 @@ export function SceneDesigner({ snapshot, sceneDrafts, componentDrafts, disabled
       onTransition={navigate} />
   </section>;
 
-  const versionControl = <Field label={copy('설계 버전', 'Design version')}><Select value={baseline ? baseline.id : 'draft'} onChange={(event) => { setBaselineId(event.target.value); choose(''); }}><option value="draft">{copy('현재 초안', 'Current draft')}</option>{snapshot.baselines.map((entry) => <option key={entry.id} value={entry.id}>{entry.title} · {copy('확정본', 'Frozen')}</option>)}</Select></Field>;
+  const versionControl = <Field label={copy('설계 버전', 'Design version')}><Select value={baseline ? baseline.id : baselineGone ? baselineId : 'draft'} onChange={(event) => { setBaselineId(event.target.value); choose(''); }}>{baselineGone && <option value={baselineId} disabled>{copy('정리된 실행 기준본', 'Cleaned-up run baseline')}</option>}<option value="draft">{copy('현재 초안', 'Current draft')}</option>{snapshot.baselines.map((entry) => <option key={entry.id} value={entry.id}>{entry.title} · {copy('확정본', 'Frozen')}</option>)}</Select></Field>;
   const collectionControl = <Field label={copy('편집 대상', 'Edit collection')}><Select value={mode} onChange={(event) => { setMode(event.target.value as typeof mode); choose(''); }}><option value="scenes">{copy('화면', 'Screens')}</option><option value="components">{copy('공통 요소', 'Reusable components')}</option></Select></Field>;
   const chooseControl = <Field label={mode === 'scenes' ? copy('화면 선택', 'Choose screen') : copy('공통 요소 선택', 'Choose component')}><Select value={entity?.id ?? ''} onChange={(event) => choose(event.target.value)}>{!entity && <option value="">{copy('없음', 'None')}</option>}{(mode === 'scenes' ? scenes : components).map((value) => <option key={value.id} value={value.id}>{value.title || copy('이름 없는 초안', 'Untitled draft')}</option>)}</Select></Field>;
   const saveControl = <Button size="sm" disabled={saveBlocked || !entity} leadingIcon={<Save />} onClick={save}>{copy('저장', 'Save')}</Button>;

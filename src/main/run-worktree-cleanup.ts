@@ -65,6 +65,10 @@ export interface RunWorktreeCleanupOptions {
   readonly liveTerminalIds: () => ReadonlySet<string>;
   /** After every record change (screens ask again about the folders they show). */
   readonly onChange?: () => void;
+  /** Whether the run's captured planning baseline is still in its flow's planning file (기획 기준본 정리, I2-7f). */
+  readonly baselinePresent?: (projectId: string, run: ExecutionRun) => Promise<boolean>;
+  /** Removes those runs' baselines that are provably theirs and unused (PlanningRunService.pruneWorkflowBaselines). */
+  readonly pruneBaselines?: (projectId: string, runIds: readonly string[]) => Promise<readonly string[]>;
   readonly folderReleaseMs?: number;
   readonly now?: () => Date;
 }
@@ -122,7 +126,7 @@ export class RunWorktreeCleanup {
     const snapshot = this.options.getSnapshot();
     const root = snapshot?.projects.find(entry => entry.id === projectId && !entry.archivedAt)?.rootPath;
     const cleaned = removedEntries(record, projectId);
-    if (!snapshot || !root) return { runs: [], cleaned };
+    if (!snapshot || !root) return { runs: [], cleaned, baselines: 0 };
     const runs = this.options.runs(projectId);
     const busy = new Set<string>();
     for (const run of runs) if (await this.options.resultBusy(projectId, run)) busy.add(run.runId);
@@ -131,6 +135,7 @@ export class RunWorktreeCleanup {
     const listed = await this.options.worktrees.execute({ action: 'list', cwd: root }, 'desktop');
     const worktrees = listed.ok ? listed.worktrees : [];
     const planned: RunCleanupPlan['runs'][number][] = [];
+    let baselines = 0;
     for (const candidate of candidates) {
       const run = runs.find(entry => entry.runId === candidate.runId)!;
       const folders: RunFolderPlan[] = [];
@@ -143,9 +148,12 @@ export class RunWorktreeCleanup {
         const judged = await judgeDisposable(this.options.git, folder.path, folder.expected!);
         folders.push(judged.disposable ? { ...folder.plan, state: 'removable' } : { ...folder.plan, state: 'kept', code: judged.code, reason: judged.reason });
       }
-      if (folders.length) planned.push({ runId: run.runId, runNumber: flowRunNumber(runs, run), subprojectId: candidate.subprojectId, why: candidate.why, folders });
+      // With its folders gone (or none), the run's planning baseline can go too.
+      const baseline = folders.every(folder => folder.state === 'removed') && !!this.options.baselinePresent && await this.options.baselinePresent(projectId, run).catch(() => false);
+      if (baseline) baselines += 1;
+      if (folders.length || baseline) planned.push({ runId: run.runId, runNumber: flowRunNumber(runs, run), subprojectId: candidate.subprojectId, why: candidate.why, folders, ...(baseline ? { baseline: true } : {}) });
     }
-    return { runs: planned, cleaned };
+    return { runs: planned, cleaned, baselines };
   }
 
   /** What keeps a folder before its contents are looked at: its records, its worktree, and anything else rooted in it. */
@@ -176,7 +184,11 @@ export class RunWorktreeCleanup {
           if (outcome.ok) removed += 1; else kept.push({ path: folder.path, code: outcome.code, reason: outcome.reason });
         }
       }
-      return { removed, kept };
+      // Then the baselines of those runs whose folders are all gone now (or had none).
+      const after = await this.plan(projectId);
+      const ready = after.runs.filter(run => runIds.includes(run.runId) && run.baseline).map(run => run.runId);
+      const baselinesRemoved = ready.length && this.options.pruneBaselines ? (await this.options.pruneBaselines(projectId, ready).catch(() => [])).length : 0;
+      return { removed, kept, ...(baselinesRemoved ? { baselinesRemoved } : {}) };
     } finally {
       this.cleaning.delete(projectId);
     }

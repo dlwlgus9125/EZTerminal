@@ -33,13 +33,19 @@ export interface RunCleanupPlan {
     /** older: past the flow's newest runs; launch-leftover: a run a refused launch prepared and cancelled. */
     readonly why: 'older' | 'launch-leftover';
     readonly folders: readonly RunFolderPlan[];
+    /** Its folders are all gone (or it had none) and its planning baseline can go (기획 기준본 정리). */
+    readonly baseline?: true;
   }[];
+  /** How many of these runs' planning baselines can go. */
+  readonly baselines: number;
   /** Folders this host has removed (their stage conversations stay readable as history). */
   readonly cleaned: readonly CleanedFolderEntry[];
 }
 
 export interface RunCleanupOutcome {
   readonly removed: number;
+  /** Planning baselines removed with them. */
+  readonly baselinesRemoved?: number;
   readonly kept: readonly { readonly path: string; readonly code?: RunFolderKeepCode; readonly reason: string }[];
 }
 

@@ -190,6 +190,58 @@ export class PlanningService {
     });
   }
 
+  /**
+   * 기획 기준본 정리 (I2-7f): removes workflow-run baselines (targets: id + the hash the run froze) that this host made
+   * (createdBy workflow-runtime), unless something kept refers to them: the draft, any history 'before', any profile
+   * proposal, a kept baseline (followed until closed), or `protectedIds` (other runs' own baselines). Same gate, hash
+   * check and integrity rewrite as every planning write; any mismatch removes nothing. Never in the legacy root file.
+   */
+  pruneWorkflowBaselines(projectId: string, subprojectId: string, targets: readonly { readonly id: string; readonly hash: string }[], protectedIds: readonly string[]): Promise<{ ok: true; removed: readonly string[] } | PlanningError> {
+    if (subprojectId === 'legacy-default') return Promise.resolve({ ok: true, removed: [] });
+    if (subprojectId !== this.options.subprojectId) {
+      const service = this.scope(subprojectId);
+      return service ? service.pruneWorkflowBaselines(projectId, subprojectId, targets, protectedIds) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
+    }
+    return this.exclusive(projectId, async () => {
+      const loaded = await this.load(projectId);
+      if (!loaded.ok) return loaded;
+      const snapshot = clone(loaded.file.snapshot);
+      const owned = new Set(targets.filter(target => snapshot.baselines.some(baseline => baseline.id === target.id && baseline.hash === target.hash
+        && baseline.createdBy.kind === 'user' && baseline.createdBy.id === 'workflow-runtime')).map(target => target.id));
+      // Everything kept refers to: start from what is not a candidate, follow kept baselines until nothing new is reached.
+      const kept = new Set(protectedIds);
+      const referenced = (value: unknown): void => {
+        if (Array.isArray(value)) { for (const entry of value) referenced(entry); return; }
+        if (!value || typeof value !== 'object') return;
+        for (const [key, entry] of Object.entries(value)) {
+          if ((key === 'baselineId' || key === 'basedOnBaselineId') && typeof entry === 'string') kept.add(entry);
+          else referenced(entry);
+        }
+      };
+      referenced(snapshot.draft);
+      for (const entry of snapshot.history) referenced(entry.before);
+      referenced(snapshot.profileProposals);
+      let grown = true;
+      while (grown) {
+        grown = false;
+        for (const baseline of snapshot.baselines) {
+          if (owned.has(baseline.id) && !kept.has(baseline.id)) continue;
+          const before = kept.size;
+          kept.add(baseline.id); referenced(baseline.draft);
+          if (kept.size !== before) grown = true;
+        }
+      }
+      const removed = [...owned].filter(id => !kept.has(id));
+      if (!removed.length) return { ok: true, removed: [] };
+      snapshot.baselines = snapshot.baselines.filter(baseline => !removed.includes(baseline.id));
+      snapshot.revision += 1;
+      const parsed = PlanningSnapshotSchema.safeParse(snapshot);
+      if (!parsed.success) return failure('invalid', 'The planning file would not be valid after the cleanup.');
+      await this.write(loaded.target, envelope(snapshot, loaded.file.receipts), loaded.bytesHash);
+      return { ok: true, removed };
+    });
+  }
+
   async flush(): Promise<void> { while (this.pending.size) await Promise.allSettled([...this.pending]); await Promise.all([...this.scoped.values()].map(service => service.flush())); }
 
   private scope(subprojectId: string): PlanningService | undefined {

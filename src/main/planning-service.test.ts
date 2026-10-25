@@ -342,3 +342,75 @@ describe('PlanningService durable project authority', () => {
     expect(await service.read('project-1')).toEqual({ ok: true, snapshot: before });
   });
 });
+
+describe('PlanningService 기획 기준본 정리 (I2-7f)', () => {
+  const A = `workflow-${'a'.repeat(32)}`;
+  const B = `workflow-${'b'.repeat(32)}`;
+  const scoped = () => new PlanningService({ resolveProjectRoot: (id) => id === 'project-1' ? root : null, now, subprojectId: 'flow-1' });
+  /** Two workflow-run baselines captured the way a run does, each with a ready item. */
+  async function captured(planning: PlanningService) {
+    const read = await planning.read('project-1', 'flow-1'); if (!read.ok) throw new Error(read.message);
+    const empty = read.snapshot.draft;
+    const draft = { ...empty, items: [item('requirement-1')] };
+    const first = await planning.captureWorkflowBaseline('project-1', 'flow-1', A, 'Run 1', draft);
+    const second = await planning.captureWorkflowBaseline('project-1', 'flow-1', B, 'Run 2', draft);
+    if (!first.ok || !second.ok) throw new Error('capture failed');
+    const snapshot = second.snapshot;
+    return { snapshot, hash: (id: string) => snapshot.baselines.find(entry => entry.id === id)!.hash };
+  }
+
+  it('removes a baseline this host made for a run, keeps the rest and the file valid', async () => {
+    const planning = scoped();
+    const { snapshot, hash } = await captured(planning);
+    const result = await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], []);
+    expect(result).toEqual({ ok: true, removed: [A] });
+    const after = await createService().read('project-1', 'flow-1');
+    if (!after.ok) throw new Error(after.message);
+    expect(after.snapshot.baselines.map(entry => entry.id)).toEqual([B]);
+    expect(after.snapshot.revision).toBe(snapshot.revision + 1);
+    expect(after.snapshot.draft).toEqual(snapshot.draft);
+    await planning.flush();
+  });
+
+  it('removes nothing it cannot prove is a run’s own: another hash, another maker, another run’s, the root file', async () => {
+    const planning = scoped();
+    const { hash } = await captured(planning);
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: '0'.repeat(64) }], [])).toEqual({ ok: true, removed: [] });
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [A])).toEqual({ ok: true, removed: [] });
+    expect(await planning.pruneWorkflowBaselines('project-1', 'legacy-default', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
+    // A person's frozen baseline named like a run's is not the host's to remove.
+    const current = await planning.read('project-1', 'flow-1'); if (!current.ok) throw new Error(current.message);
+    const frozen = accepted(await planning.execute({ projectId: 'project-1', subprojectId: 'flow-1', commandId: 'person-freeze', expectedRevision: current.snapshot.revision, actor, type: 'planning.quick-freeze',
+      payload: { baselineId: `workflow-${'c'.repeat(32)}`, title: 'Mine', task: task('mine'), profileIds: [] } }));
+    const mine = frozen.baselines.find(entry => entry.id === `workflow-${'c'.repeat(32)}`)!;
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: mine.id, hash: mine.hash }], [])).toEqual({ ok: true, removed: [] });
+    await planning.flush();
+  });
+
+  it('keeps a baseline the draft or a kept baseline refers to, following the chain', async () => {
+    const planning = scoped();
+    const { snapshot, hash } = await captured(planning);
+    const refersTo = (baselineId: string) => task('uses-run-1', { inputRefs: [{ id: 'requirement-1', kind: 'item', revision: 0, baselineId }] });
+    // The draft refers to A: it stays.
+    const withRef = accepted(await planning.execute({ ...patch(snapshot.revision, [{ op: 'task.put', value: refersTo(A) }]), subprojectId: 'flow-1' }));
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
+    // A person's baseline frozen from that draft refers to A; the draft no longer does: A still stays, through it.
+    const frozen = accepted(await planning.execute({ projectId: 'project-1', subprojectId: 'flow-1', commandId: 'freeze-ref', expectedRevision: withRef.revision, actor, type: 'planning.freeze', payload: { baselineId: 'person-baseline', title: 'Mine', taskIds: ['uses-run-1'] } }));
+    accepted(await planning.execute({ ...patch(frozen.revision, [{ op: 'entity.delete', kind: 'task', id: 'uses-run-1' }]), subprojectId: 'flow-1' }));
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
+    // B nothing refers to: it goes.
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: B, hash: hash(B) }], [])).toEqual({ ok: true, removed: [B] });
+    await planning.flush();
+  });
+
+  it('keeps a baseline only a kept baseline refers to (no draft or history in between)', async () => {
+    const planning = scoped();
+    const { snapshot, hash } = await captured(planning);
+    const C = `workflow-${'d'.repeat(32)}`;
+    const referring = { ...snapshot.draft, items: [item('requirement-1')], tasks: [task('uses-run-1', { inputRefs: [{ id: 'requirement-1', kind: 'item', revision: 0, baselineId: A }] })] };
+    const kept = await planning.captureWorkflowBaseline('project-1', 'flow-1', C, 'Run 3', referring);
+    if (!kept.ok) throw new Error(kept.message);
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [C])).toEqual({ ok: true, removed: [] });
+    await planning.flush();
+  });
+});

@@ -110,7 +110,7 @@ export function planningAttemptIdentity(runId: string, taskId: string, number: n
 }
 
 export interface PlanningRunServiceOptions {
-  readonly planning: Pick<PlanningService, 'read'> & Partial<Pick<PlanningService, 'captureWorkflowBaseline'>>;
+  readonly planning: Pick<PlanningService, 'read'> & Partial<Pick<PlanningService, 'captureWorkflowBaseline' | 'pruneWorkflowBaselines'>>;
   readonly ledger: PlanningExecutionStore;
   readonly daemon: DaemonCommandRouter;
   readonly store: DaemonStore;
@@ -402,6 +402,35 @@ export class PlanningRunService {
     const binding = this.bindingForSession(sessionId);
     return binding ? { reasoningEffort: binding.task.profile.reasoningEffort, managedExecution: true,
       ...(this.options.environments?.read(sessionId) ? { environment: this.options.environments.read(sessionId)!.environment } : {}) } : undefined;
+  }
+
+  /**
+   * 기획 기준본 정리 (I2-7f): the baselines these finished workflow runs captured, owned by proof — the id the run's own
+   * id gives, the hash the run froze — and not used by any other run. Inside the execution gate, so no preparation
+   * (which runs in it) reads a baseline while it goes; the planning write follows (execution → planning).
+   */
+  pruneWorkflowBaselines(projectId: string, runIds: readonly string[]): Promise<readonly string[]> {
+    return this.gate.runExclusive(async () => {
+      const planning = this.options.planning;
+      if (!planning.pruneWorkflowBaselines) return [];
+      const runs = this.options.ledger.read(projectId).runs;
+      const removed: string[] = [];
+      const bySubproject = new Map<string, { id: string; hash: string; runId: string }[]>();
+      for (const run of runs.filter(entry => runIds.includes(entry.runId))) {
+        const subprojectId = run.preparation.workflow?.subprojectId;
+        if (!subprojectId || subprojectId === 'legacy-default' || (run.state !== 'completed' && run.state !== 'cancelled')) continue;
+        const id = `workflow-${workflowDigest([projectId, subprojectId, run.runId]).slice(0, 32)}`;
+        if (run.preparation.baseline.baselineId !== id) continue;
+        bySubproject.set(subprojectId, [...(bySubproject.get(subprojectId) ?? []), { id, hash: run.preparation.baseline.fingerprint, runId: run.runId }]);
+      }
+      for (const [subprojectId, targets] of bySubproject) {
+        // A baseline another run uses (any run, any state) stays.
+        const used = runs.filter(run => !targets.some(target => target.runId === run.runId)).map(run => run.preparation.baseline.baselineId);
+        const result = await planning.pruneWorkflowBaselines(projectId, subprojectId, targets.map(({ id, hash }) => ({ id, hash })), used);
+        if (result.ok) removed.push(...result.removed); else this.options.reportError?.(new Error(`Baseline cleanup in ${subprojectId}: ${result.message}`));
+      }
+      return removed;
+    });
   }
 
   /** Called after a durable planning mutation; profile edits do not rewrite active attempts. */

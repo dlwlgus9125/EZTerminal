@@ -3236,6 +3236,13 @@ app.on('ready', async () => {
     }),
     liveTerminalIds: () => new Set(broker?.listSessions().map((session) => session.sessionId) ?? []),
     onChange: () => broadcast('run-retention:changed'),
+    baselinePresent: async (projectId, run) => {
+      const subprojectId = run.preparation.workflow?.subprojectId;
+      if (!subprojectId) return false;
+      const planning = await planningService.read(projectId, subprojectId);
+      return planning.ok && planning.snapshot.baselines.some(baseline => baseline.id === run.preparation.baseline.baselineId && baseline.hash === run.preparation.baseline.fingerprint);
+    },
+    pruneBaselines: (projectId, runIds) => planningRunService.pruneWorkflowBaselines(projectId, runIds),
   });
   runCleanupRef.current = runCleanup;
   // A cleanup the app stopped part way is settled against the real Git and folder state once runs can be read.

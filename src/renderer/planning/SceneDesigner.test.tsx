@@ -77,6 +77,21 @@ describe('SceneDesigner controlled editing', () => {
     expect(control('Screen name').value).toBe('Unsaved current draft');
     expect(changed).toHaveBeenCalledOnce();
   });
+  it('stays read-only on a baseline that was cleaned up until the person picks the draft (I2-7f)', () => {
+    const snapshot = structuredClone(sceneSnapshot);
+    snapshot.baselines.push({ id: 'baseline', title: 'Reviewed', sourceRevision: 2, createdAt: '2026-10-13T08:00:00.000Z', createdBy: { kind: 'user', id: 'workflow-runtime' }, hash: 'a'.repeat(64), draft: structuredClone(snapshot.draft) });
+    const show = (value: typeof snapshot) => act(() => root.render(<AppI18nProvider locale="en" languages={['en']}>
+      <SceneDesigner snapshot={value} sceneDrafts={{}} componentDrafts={{}} onSceneDraftChange={vi.fn()} onComponentDraftChange={vi.fn()} onPatch={vi.fn()} /></AppI18nProvider>));
+    show(snapshot);
+    setValue(control('Design version'), 'baseline');
+    // The baseline goes away under the open designer.
+    show({ ...snapshot, baselines: [] });
+    expect(control('Screen name').disabled).toBe(true);
+    expect((control('Design version') as HTMLSelectElement).value).toBe('baseline');
+    expect(container.textContent).toContain('Cleaned-up run baseline');
+    setValue(control('Design version'), 'draft');
+    expect(control('Screen name').disabled).toBe(false);
+  });
   it('allows offline draft editing while save is disabled', () => {
     const { changed, onPatch } = fixture({ disabled: true });
     expect(control('Screen name').disabled).toBe(false);

@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:159d1a11677224b80e44ea6e5a46bac4c87f36114b5c49347533f64782b7f234",
+        "inputDigest": "sha256:45b0aec3c329969593f3c5b32f2b885fb456fd06902c620b4af3d9f3631d965d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c recheck): the cleanup record's changes are broadcast so Results asks again about the folder it shows; a folder Git let go of part way is recorded ambiguous and only its verified result is read. Claims hold."
+        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:146dffd30d952b7b731400fcad794745e4883283644796276dd03ab23476d7fc",
+        "inputDigest": "sha256:b78c6c26b8cf4a718bd5e61e1ad249b3cc9a3eef7115214b298eb6c163a0578b",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c recheck): the cleanup record's changes are broadcast so Results asks again about the folder it shows; a folder Git let go of part way is recorded ambiguous and only its verified result is read. Claims hold."
+        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1f1b1ebb618eeae1201250876ac3ca960e541ca736ffdc135c5c9d71db46ff7d",
+        "inputDigest": "sha256:b4d215f87f23c80fa0825ab6690f4bf7b8fa45e5a008f38b75771e1d9c2ea267",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c recheck): the cleanup record's changes are broadcast so Results asks again about the folder it shows; a folder Git let go of part way is recorded ambiguous and only its verified result is read. Claims hold."
+        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d93e6aaf22c074de3b1720be371c66b33456729734e2ff225b1aabf69cc85a38",
+        "inputDigest": "sha256:3c55bdcdb761bfdbba357da88d5e57225356c4ad295a7783f3b8f168d9cb87fd",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7d): work-folder cleanup also removes a passed integration's folder once the integrations ref names its candidate; a result branch whose folder went is never attached again by name (planning-result-repository workspace()). Claims hold."
+        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9110e2af5913a9a4176c98950bf5e2a1750aa68067006fe308e12996adc6ec24",
+        "inputDigest": "sha256:6cc2ce9a191f8a139a943895b4172bbc44271d91333b6809523df5a8a73d5b45",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7c recheck 2, B list 8 and 9): cleanup recovery trusts only the same managed worktree; schedules and heartbeats save an IANA zone; a refreshed flow keeps a refused command's reason. Claims hold."
+        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
       }
     }
   ]

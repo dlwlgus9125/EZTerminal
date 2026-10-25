@@ -184,6 +184,28 @@ describe('planning provider dispatch', () => {
     expect(await f.service.executeWorkflow({ ...start, payload: { runId: 'another' } }, { id: 'sub' } as never, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: false, error: 'command-conflict' });
     expect(f.options.processIntegration).not.toHaveBeenCalled(); expect(f.errors).toEqual([]);
   });
+  it('cleans up a finished workflow run’s planning baseline it can prove is that run’s, and nothing else (I2-7f)', async () => {
+    const f = await fixture(); const directory = f.store.getSnapshot().projects[0].rootPath!;
+    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
+      runs: () => f.ledger.read('project').runs, session: () => undefined, executeRun: (...args) => f.service.executeWorkflow(...args) });
+    const graph = createWorkflowGraph('research', 'sub'); graph.nodes[0] = { ...graph.nodes[0], providerId: 'codex', model: 'model', instructions: 'Research with evidence', acceptance: ['Explain observed evidence'] };
+    const common = { projectId: 'project', hostId: 'host', expectedRevision: 0 };
+    expect(await workflows.execute({ ...common, commandId: 'create-sub', type: 'subproject.create', payload: { id: 'sub', title: 'Research', goal: '', presetId: 'research', graph } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
+    expect(await workflows.execute({ ...common, commandId: 'workflow-prepare', subprojectId: 'sub', type: 'run.prepare', payload: { runId: 'workflow-run', reviewer: { providerId: 'codex', model: 'model' } } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
+    const baselineId = f.ledger.read('project').runs[0]!.preparation.baseline.baselineId;
+    const baselines = async () => { const read = await f.options.planning.read('project', 'sub'); if (!read.ok) throw new Error(read.message); return read.snapshot.baselines.map(entry => entry.id); };
+    expect(await baselines()).toContain(baselineId);
+    // Not finished yet: it stays; the root planning file's own baseline is never a candidate either.
+    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run', 'run'])).toEqual([]);
+    const read = await workflows.read('project'); if (!read.ok) throw new Error(read.message);
+    const revision = read.snapshot.subprojects.find(entry => entry.id === 'sub')!.revision;
+    expect(await workflows.execute({ ...common, expectedRevision: revision, commandId: 'workflow-cancel', subprojectId: 'sub', type: 'run.cancel', payload: { runId: 'workflow-run' } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(f.ledger.read('project').runs[0]!.state).toBe('cancelled'));
+    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run'])).toEqual([baselineId]);
+    expect(await baselines()).not.toContain(baselineId);
+    expect(f.errors).toEqual([]);
+  });
+
   it('replays a phone’s prepare in the real ledger after the phone moved from a v16 to a v17 connection', async () => {
     const f = await fixture(); const directory = f.store.getSnapshot().projects[0].rootPath!;
     const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,

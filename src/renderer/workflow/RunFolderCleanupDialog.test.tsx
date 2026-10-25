@@ -13,7 +13,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 const text = (_ko: string, en: string) => en;
 
 const plan: RunCleanupPlan = {
-  cleaned: [],
+  cleaned: [], baselines: 0,
   runs: [
     { runId: 'r1', runNumber: 1, subprojectId: 'flow', why: 'older', folders: [
       { runId: 'r1', attemptId: 'A1', kind: 'attempt', path: 'C:/work/attempt-1', state: 'removable' },
@@ -49,7 +49,7 @@ describe('RunFolderCleanupDialog', () => {
 
   it('says so when nothing can be cleaned up, and offers no button', async () => {
     const access: RunRetentionAccess = {
-      plan: vi.fn(async () => ({ ok: true as const, value: { runs: [], cleaned: [] } })),
+      plan: vi.fn(async () => ({ ok: true as const, value: { runs: [], cleaned: [], baselines: 0 } })),
       cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
       cleanup: vi.fn(),
       folderState: vi.fn(), readFile: vi.fn(),
@@ -76,7 +76,7 @@ describe('RunFolderCleanupDialog', () => {
   it('still shows why a folder stayed when the list read again no longer has its run (Codex I2-7c recheck)', async () => {
     let plans = 0;
     const access: RunRetentionAccess = {
-      plan: vi.fn(async () => ({ ok: true as const, value: plans++ === 0 ? plan : { runs: [], cleaned: [] } })),
+      plan: vi.fn(async () => ({ ok: true as const, value: plans++ === 0 ? plan : { runs: [], cleaned: [], baselines: 0 } })),
       cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
       cleanup: vi.fn(async () => ({ ok: true as const, value: { removed: 0, kept: [{ path: 'C:/work/attempt-1', code: 'busy' as const, reason: 'Something still runs there.' }] } })),
       folderState: vi.fn(), readFile: vi.fn(),
@@ -85,6 +85,25 @@ describe('RunFolderCleanupDialog', () => {
     await act(async () => (document.querySelector('[data-testid="run-folder-cleanup-confirm"]') as HTMLButtonElement).click());
     const row = [...document.querySelectorAll('[data-testid="run-folder-cleanup"] li[data-state="kept"]')].find(item => item.textContent?.includes('C:/work/attempt-1'));
     expect(row?.textContent).toContain('Something still runs there. Stop it and clean up again.');
+  });
+
+  it('offers a run’s planning baseline once its folders are all gone (I2-7f)', async () => {
+    const baselineOnly: RunCleanupPlan = { cleaned: [], baselines: 1, runs: [{ runId: 'r1', runNumber: 1, subprojectId: 'flow', why: 'older', baseline: true,
+      folders: [{ runId: 'r1', attemptId: 'A1', kind: 'attempt', path: 'C:/work/attempt-1', state: 'removed' }] }] };
+    const access: RunRetentionAccess = {
+      plan: vi.fn(async () => ({ ok: true as const, value: baselineOnly })),
+      cleaned: vi.fn(async () => ({ ok: true as const, value: [] })),
+      cleanup: vi.fn(async () => ({ ok: true as const, value: { removed: 0, kept: [], baselinesRemoved: 1 } })),
+      folderState: vi.fn(), readFile: vi.fn(),
+    };
+    await act(async () => root.render(<RunFolderCleanupDialog open onOpenChange={vi.fn()} projectId="P" subprojectId="flow" access={access} text={text} />));
+    expect(document.querySelector('[data-testid="run-folder-cleanup-baseline"]')).not.toBeNull();
+    const confirm = document.querySelector('[data-testid="run-folder-cleanup-confirm"]') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+    expect(confirm.textContent).toBe('Clean up 1 planning baseline');
+    await act(async () => confirm.click());
+    expect(access.cleanup).toHaveBeenCalledWith('P', ['r1']);
+    expect(document.body.textContent).toContain('1 planning baseline too.');
   });
 
   it('words every reason a folder stays, falling back to the host’s own words', () => {

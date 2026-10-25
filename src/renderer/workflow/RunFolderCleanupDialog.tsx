@@ -67,10 +67,12 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
   }, [open, access, projectId, generation]);
   const runs = plan?.runs.filter(run => run.subprojectId === subprojectId) ?? [];
   const removable = runs.flatMap(run => run.folders.filter(folder => folder.state === 'removable'));
+  // A run whose folders are all gone (or had none) can still let its planning baseline go (기획 기준본 정리).
+  const baselines = runs.filter(run => run.baseline).length;
   const clean = async (): Promise<void> => {
     setBusy(true); setError(null);
     try {
-      const result = await access.cleanup(projectId, runs.filter(run => run.folders.some(folder => folder.state === 'removable')).map(run => run.runId));
+      const result = await access.cleanup(projectId, runs.filter(run => run.baseline || run.folders.some(folder => folder.state === 'removable')).map(run => run.runId));
       if (!result.ok) { setError(result.message); return; }
       // The outcome shows with the list read again, so the two never disagree.
       const next = await access.plan(projectId);
@@ -82,14 +84,16 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
     : value === 'validation' ? text('검증 폴더', 'Validation folder') : text('통합 폴더', 'Integration folder'));
   return <Dialog open={open} onOpenChange={next => { if (!busy) onOpenChange(next); }} dismissible={!busy} size="lg" icon={<FolderX aria-hidden="true" />}
     title={text('작업 폴더 정리', 'Clean up work folders')} closeLabel={text('닫기', 'Close')}
-    description={text('흐름마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리합니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',
-      'Each flow keeps the work folders of its newest 3 runs. Of older finished runs, only folders holding no file Git does not keep (ignored ones included) are cleaned up. Results, changes and stage conversations stay readable afterwards.')}
+    description={text('흐름마다 최근 실행 3개의 작업 폴더는 남깁니다. 그보다 오래된 끝난 실행의 폴더 중 Git이 보관하지 않는 파일(무시된 파일 포함)이 없는 것만 정리하고, 폴더가 모두 정리된 실행이 만든 기획 기준본도 지웁니다. 결과·변경·단계 대화는 정리 뒤에도 그대로 볼 수 있습니다.',
+      'Each flow keeps the work folders of its newest 3 runs. Of older finished runs, only folders holding no file Git does not keep (ignored ones included) are cleaned up, and the planning baselines of runs whose folders are all gone go too. Results, changes and stage conversations stay readable afterwards.')}
     footer={<><Button disabled={busy} onClick={() => onOpenChange(false)} data-testid="run-folder-cleanup-close">{text('닫기', 'Close')}</Button>
-      <Button variant="primary" disabled={busy || removable.length === 0} onClick={() => void clean()} data-testid="run-folder-cleanup-confirm">
-        {busy ? text('정리하는 중…', 'Cleaning up…') : text(`폴더 ${removable.length}개 정리`, `Clean up ${removable.length} folder${removable.length === 1 ? '' : 's'}`)}</Button></>}>
+      <Button variant="primary" disabled={busy || (removable.length === 0 && baselines === 0)} onClick={() => void clean()} data-testid="run-folder-cleanup-confirm">
+        {busy ? text('정리하는 중…', 'Cleaning up…') : removable.length === 0 && baselines > 0 ? text(`기획 기준본 ${baselines}개 정리`, `Clean up ${baselines} planning baseline${baselines === 1 ? '' : 's'}`)
+          : text(`폴더 ${removable.length}개 정리`, `Clean up ${removable.length} folder${removable.length === 1 ? '' : 's'}`)}</Button></>}>
     <div className="workflow-folder-cleanup" data-testid="run-folder-cleanup">
       {error && <p role="alert" className="workflow-error">{error} <Button size="sm" variant="ghost" onClick={() => setGeneration(value => value + 1)}>{text('다시 확인', 'Check again')}</Button></p>}
       {outcome && <p role="status">{text(`폴더 ${outcome.removed}개를 정리했습니다.`, `Cleaned up ${outcome.removed} folder${outcome.removed === 1 ? '' : 's'}.`)}
+        {!!outcome.baselinesRemoved && text(` 기획 기준본 ${outcome.baselinesRemoved}개도 정리했습니다.`, ` ${outcome.baselinesRemoved} planning baseline${outcome.baselinesRemoved === 1 ? '' : 's'} too.`)}
         {outcome.kept.length > 0 && text(` ${outcome.kept.length}개는 남겼습니다(아래 이유).`, ` ${outcome.kept.length} stayed (see why below).`)}</p>}
       {/* A folder the cleanup just kept may be gone from the list read again (its run became busy): its reason still shows. */}
       {outcome && outcome.kept.some(entry => entry.path && !runs.some(run => run.folders.some(folder => folder.path === entry.path))) && <ul className="workflow-folder-cleanup__runs">
@@ -101,6 +105,7 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
           : <ul className="workflow-folder-cleanup__runs">{runs.map(run => <li key={run.runId}>
             <strong>{text(`실행 #${run.runNumber}`, `Run #${run.runNumber}`)}</strong>
             {run.why === 'launch-leftover' && <Badge>{text('시작하지 못한 실행', 'Run that never started')}</Badge>}
+            {run.baseline && <small data-testid="run-folder-cleanup-baseline">{text('이 실행이 만든 기획 기준본도 정리할 수 있습니다.', 'The planning baseline this run made can go too.')}</small>}
             <ul>{run.folders.map(listed => {
               // What the cleanup just reported for a folder wins over the list read again (a busy chat is not in the plan).
               const stayed = outcome?.kept.find(entry => entry.path === listed.path);

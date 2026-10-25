@@ -192,16 +192,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 294,
-          "endLine": 344,
+          "startLine": 346,
+          "endLine": 396,
           "lineDigest": "sha256:bc7d06ffd5a9060600ea28e674ac2d644a2ca01604d6f916494f904c992188e9",
           "claim": "Baseline freezing validates the selected task subset and its references before hashing copied content; branch and undo retain immutable prior baselines."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 488,
-          "endLine": 509,
+          "startLine": 540,
+          "endLine": 561,
           "lineDigest": "sha256:d32871b3cb543b2f215362669dc24b57a95dd6a3f18a13d88bce1831c6b755f3",
           "claim": "The writer fsyncs a private temporary file, checks the expected disk hash and project boundary, then atomically renames."
         }
@@ -319,16 +319,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 604,
-          "endLine": 670,
+          "startLine": 633,
+          "endLine": 699,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 604,
-          "endLine": 709,
+          "startLine": 633,
+          "endLine": 738,
           "lineDigest": "sha256:245a107024462c92ac6ba78518cae026848ba1499849218f52b9a414a80a3689",
           "claim": "Submission includes frozen predecessor context; reconciliation records authoritative outcomes and captures partial artifacts without treating uncertainty as completion."
         }
@@ -503,8 +503,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-run-service.ts",
-          "startLine": 604,
-          "endLine": 670,
+          "startLine": 633,
+          "endLine": 699,
           "lineDigest": "sha256:a81a13d08714201ae16775c73f3bf20c8be3e92a284ef4be354f4f748c1766fd",
           "claim": "Managed worktrees receive only accepted activations selected by the frozen graph, alongside deterministic attempt identity, environment leases and exact provider profile."
         }
