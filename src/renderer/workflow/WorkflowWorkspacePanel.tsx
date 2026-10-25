@@ -106,7 +106,8 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const [error, setError] = useState<string | null>(null);
   // Reading the flow again does not clear a refused command's reason (B list ⑧): read failures are kept apart.
   const [readError, setReadError] = useState<string | null>(null);
-  const shownError = error ?? readError;
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const shownError = error ?? previewError ?? readError;
   const [pending, setPendingState] = useState<WorkflowCommand | null>(null);
   /** The unconfirmed command, also before the render that shows it (a conversation request saves from an older render). */
   const pendingRef = useRef<WorkflowCommand | null>(null);
@@ -369,13 +370,15 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       try { const result = await access.workflowPreview!({ action: 'read', projectId, previewId });
         if (!current || sequence < applied) return;
         applied = sequence;
-        if (!result.ok) { setError(result.message); return; }
+        // A read that fails says so until a newer read succeeds (kept apart from command errors).
+        if (!result.ok) { setPreviewError(result.message); return; }
+        setPreviewError(null);
         setPreviewExpired(!result.preview);
         if (result.preview) setCreate(previous => previous?.id === previewId && previous.previewRevision !== result.preview!.revision ? { ...previous, graph: result.preview!.graph, preset: 'custom', previewRevision: result.preview!.revision } : previous);
-      } catch (reason) { if (current) setError(String(reason)); }
+      } catch (reason) { if (current && sequence >= applied) setPreviewError(String(reason)); }
     };
     void read(); const timer = window.setInterval(() => void read(), 2000);
-    return () => { current = false; window.clearInterval(timer); };
+    return () => { current = false; window.clearInterval(timer); setPreviewError(null); };
   }, [create?.previewSessionId, create?.id, access, disabled, projectId]);
   useEffect(() => {
     if (!active || disabled) return;

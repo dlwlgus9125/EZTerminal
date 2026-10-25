@@ -86,10 +86,15 @@ describe('SceneDesigner controlled editing', () => {
     setValue(control('Design version'), 'baseline');
     // The baseline goes away under the open designer.
     show({ ...snapshot, baselines: [] });
-    expect(control('Screen name').disabled).toBe(true);
+    // Its screens are not shown (nor the draft's in their place): no field to edit.
+    expect(control('Screen name')).toBeNull();
     expect((control('Design version') as HTMLSelectElement).value).toBe('baseline');
     expect(container.textContent).toContain('Cleaned-up run baseline');
+    // Nothing of the draft is shown or exported in its place (Codex I2-7f impl review).
+    expect(container.querySelector('[data-testid="scene-designer-baseline-gone"]')).not.toBeNull();
+    expect([...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Export')?.disabled).toBe(true);
     setValue(control('Design version'), 'draft');
+    expect(container.querySelector('[data-testid="scene-designer-baseline-gone"]')).toBeNull();
     expect(control('Screen name').disabled).toBe(false);
   });
   it('allows offline draft editing while save is disabled', () => {

@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:45b0aec3c329969593f3c5b32f2b885fb456fd06902c620b4af3d9f3631d965d",
+        "inputDigest": "sha256:602a0ec2729478235e1a955b0b217d045692ea1f6b0c77b3fec55b42164e758a",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
+        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b78c6c26b8cf4a718bd5e61e1ad249b3cc9a3eef7115214b298eb6c163a0578b",
+        "inputDigest": "sha256:30097e73fd8565a32a883b46b313914aa9ba03fc3b471a6d12d424aab0cd46a3",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
+        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b4d215f87f23c80fa0825ab6690f4bf7b8fa45e5a008f38b75771e1d9c2ea267",
+        "inputDigest": "sha256:672e94163248c88d3800b31ffe5af3efcac747814c6f8ffae4b6e9f3d45878a2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
+        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3c55bdcdb761bfdbba357da88d5e57225356c4ad295a7783f3b8f168d9cb87fd",
+        "inputDigest": "sha256:bfe27a54ebab0ac88830cf447131a8002620a7668b9c1307a8a24b263aedc60b",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
+        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6cc2ce9a191f8a139a943895b4172bbc44271d91333b6809523df5a8a73d5b45",
+        "inputDigest": "sha256:751b7786ee1f98b04b7c67552810614411662122a7eeab12d270ca5a54ee33ec",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7e/f, B list): no automatic cleanup; the person's cleanup disables hooks and keeps filtered folders, and removes runs' own planning baselines under the execution gate when nothing refers to them; flow-setup answers are ordered. Claims hold."
+        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
       }
     }
   ]

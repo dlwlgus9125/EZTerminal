@@ -192,16 +192,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 346,
-          "endLine": 396,
+          "startLine": 347,
+          "endLine": 397,
           "lineDigest": "sha256:bc7d06ffd5a9060600ea28e674ac2d644a2ca01604d6f916494f904c992188e9",
           "claim": "Baseline freezing validates the selected task subset and its references before hashing copied content; branch and undo retain immutable prior baselines."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/planning-service.ts",
-          "startLine": 540,
-          "endLine": 561,
+          "startLine": 541,
+          "endLine": 562,
           "lineDigest": "sha256:d32871b3cb543b2f215362669dc24b57a95dd6a3f18a13d88bce1831c6b755f3",
           "claim": "The writer fsyncs a private temporary file, checks the expected disk hash and project boundary, then atomically renames."
         }

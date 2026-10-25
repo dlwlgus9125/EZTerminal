@@ -46,6 +46,9 @@ export interface RunCleanupOutcome {
   readonly removed: number;
   /** Planning baselines removed with them. */
   readonly baselinesRemoved?: number;
+  /** Offered planning baselines that stayed (now referred to, or not written), and why when it failed. */
+  readonly baselinesKept?: number;
+  readonly baselineError?: string;
   readonly kept: readonly { readonly path: string; readonly code?: RunFolderKeepCode; readonly reason: string }[];
 }
 

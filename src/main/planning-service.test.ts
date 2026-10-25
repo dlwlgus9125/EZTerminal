@@ -376,6 +376,10 @@ describe('PlanningService 기획 기준본 정리 (I2-7f)', () => {
     const planning = scoped();
     const { hash } = await captured(planning);
     expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: '0'.repeat(64) }], [])).toEqual({ ok: true, removed: [] });
+    // A dry run answers what would go and writes nothing.
+    expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [], { dryRun: true })).toEqual({ ok: true, removed: [A] });
+    const still = await planning.read('project-1', 'flow-1'); if (!still.ok) throw new Error(still.message);
+    expect(still.snapshot.baselines.some(entry => entry.id === A)).toBe(true);
     expect(await planning.pruneWorkflowBaselines('project-1', 'flow-1', [{ id: A, hash: hash(A) }], [A])).toEqual({ ok: true, removed: [] });
     expect(await planning.pruneWorkflowBaselines('project-1', 'legacy-default', [{ id: A, hash: hash(A) }], [])).toEqual({ ok: true, removed: [] });
     // A person's frozen baseline named like a run's is not the host's to remove.

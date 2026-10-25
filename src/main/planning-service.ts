@@ -196,11 +196,11 @@ export class PlanningService {
    * proposal, a kept baseline (followed until closed), or `protectedIds` (other runs' own baselines). Same gate, hash
    * check and integrity rewrite as every planning write; any mismatch removes nothing. Never in the legacy root file.
    */
-  pruneWorkflowBaselines(projectId: string, subprojectId: string, targets: readonly { readonly id: string; readonly hash: string }[], protectedIds: readonly string[]): Promise<{ ok: true; removed: readonly string[] } | PlanningError> {
+  pruneWorkflowBaselines(projectId: string, subprojectId: string, targets: readonly { readonly id: string; readonly hash: string }[], protectedIds: readonly string[], options: { readonly dryRun?: boolean } = {}): Promise<{ ok: true; removed: readonly string[] } | PlanningError> {
     if (subprojectId === 'legacy-default') return Promise.resolve({ ok: true, removed: [] });
     if (subprojectId !== this.options.subprojectId) {
       const service = this.scope(subprojectId);
-      return service ? service.pruneWorkflowBaselines(projectId, subprojectId, targets, protectedIds) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
+      return service ? service.pruneWorkflowBaselines(projectId, subprojectId, targets, protectedIds, options) : Promise.resolve(failure('invalid', 'Invalid subproject identity.'));
     }
     return this.exclusive(projectId, async () => {
       const loaded = await this.load(projectId);
@@ -232,7 +232,8 @@ export class PlanningService {
         }
       }
       const removed = [...owned].filter(id => !kept.has(id));
-      if (!removed.length) return { ok: true, removed: [] };
+      // A dry run answers what would go, writing nothing (the cleanup list offers only those).
+      if (!removed.length || options.dryRun) return { ok: true, removed };
       snapshot.baselines = snapshot.baselines.filter(baseline => !removed.includes(baseline.id));
       snapshot.revision += 1;
       const parsed = PlanningSnapshotSchema.safeParse(snapshot);

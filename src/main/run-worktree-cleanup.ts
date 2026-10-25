@@ -65,8 +65,8 @@ export interface RunWorktreeCleanupOptions {
   readonly liveTerminalIds: () => ReadonlySet<string>;
   /** After every record change (screens ask again about the folders they show). */
   readonly onChange?: () => void;
-  /** Whether the run's captured planning baseline is still in its flow's planning file (기획 기준본 정리, I2-7f). */
-  readonly baselinePresent?: (projectId: string, run: ExecutionRun) => Promise<boolean>;
+  /** Whether the run's captured planning baseline would go now (the same proof and protection as the cleanup, writing nothing). */
+  readonly baselineRemovable?: (projectId: string, run: ExecutionRun) => Promise<boolean>;
   /** Removes those runs' baselines that are provably theirs and unused (PlanningRunService.pruneWorkflowBaselines). */
   readonly pruneBaselines?: (projectId: string, runIds: readonly string[]) => Promise<readonly string[]>;
   readonly folderReleaseMs?: number;
@@ -149,7 +149,7 @@ export class RunWorktreeCleanup {
         folders.push(judged.disposable ? { ...folder.plan, state: 'removable' } : { ...folder.plan, state: 'kept', code: judged.code, reason: judged.reason });
       }
       // With its folders gone (or none), the run's planning baseline can go too.
-      const baseline = folders.every(folder => folder.state === 'removed') && !!this.options.baselinePresent && await this.options.baselinePresent(projectId, run).catch(() => false);
+      const baseline = folders.every(folder => folder.state === 'removed') && !!this.options.baselineRemovable && await this.options.baselineRemovable(projectId, run).catch(() => false);
       if (baseline) baselines += 1;
       if (folders.length || baseline) planned.push({ runId: run.runId, runNumber: flowRunNumber(runs, run), subprojectId: candidate.subprojectId, why: candidate.why, folders, ...(baseline ? { baseline: true } : {}) });
     }
@@ -187,8 +187,14 @@ export class RunWorktreeCleanup {
       // Then the baselines of those runs whose folders are all gone now (or had none).
       const after = await this.plan(projectId);
       const ready = after.runs.filter(run => runIds.includes(run.runId) && run.baseline).map(run => run.runId);
-      const baselinesRemoved = ready.length && this.options.pruneBaselines ? (await this.options.pruneBaselines(projectId, ready).catch(() => [])).length : 0;
-      return { removed, kept, ...(baselinesRemoved ? { baselinesRemoved } : {}) };
+      let baselinesRemoved = 0;
+      let baselineError: string | undefined;
+      if (ready.length && this.options.pruneBaselines) {
+        try { baselinesRemoved = (await this.options.pruneBaselines(projectId, ready)).length; } catch (error) { baselineError = error instanceof Error ? error.message : String(error); }
+      }
+      // One that stayed (something came to refer to it meanwhile, or it could not be written) says so.
+      const baselinesKept = ready.length - baselinesRemoved;
+      return { removed, kept, ...(baselinesRemoved ? { baselinesRemoved } : {}), ...(baselinesKept ? { baselinesKept } : {}), ...(baselineError ? { baselineError } : {}) };
     } finally {
       this.cleaning.delete(projectId);
     }

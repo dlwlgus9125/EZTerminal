@@ -80,7 +80,7 @@ async function project(options: { turn?: boolean; onRelease?: (folder: string, r
   const cleanup = new RunWorktreeCleanup({
     directory: userData, getSnapshot: () => snapshot, runs: () => runs, readResult: async (_projectId, attemptId) => (attemptId === 'A1' ? record : null),
     readIntegration: async (_projectId, runId) => (runId === 'r1' ? integration as never : null),
-    ...(options.baselines ? { baselinePresent: async () => options.baselines!.present(), pruneBaselines: options.baselines.prune } : {}),
+    ...(options.baselines ? { baselineRemovable: async () => options.baselines!.present(), pruneBaselines: options.baselines.prune } : {}),
     resultBusy: async () => options.busy?.() ?? false, worktrees, git: new GitRunner(),
     preview: (filePath, handle) => new FileService({ trashItem: async () => undefined }).readFilePreview(filePath, handle),
     executeCommand: vi.fn(async (command: DaemonCommand) => { commands.push(command); return { ok: true, status: 'committed', commandId: command.commandId, revision: 2 } as never; }),
@@ -256,6 +256,11 @@ describe('RunWorktreeCleanup (real Git)', () => {
     // A baseline still there after its folders went (say it was in use then) is offered on its own.
     present = true;
     expect(await p.cleanup.plan('P')).toMatchObject({ baselines: 1, runs: [expect.objectContaining({ runId: 'r1', baseline: true })] });
+    // One that stays when cleaned (it came to be referred to) is reported, not passed over in silence.
+    prune.mockImplementationOnce(async () => []);
+    expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0, baselinesKept: 1 });
+    prune.mockImplementationOnce(async () => { throw new Error('planning file busy'); });
+    expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ baselinesKept: 1, baselineError: 'planning file busy' });
   }, 60_000);
 
   it('offers nothing of the newest three runs', async () => {

@@ -409,7 +409,7 @@ export class PlanningRunService {
    * id gives, the hash the run froze — and not used by any other run. Inside the execution gate, so no preparation
    * (which runs in it) reads a baseline while it goes; the planning write follows (execution → planning).
    */
-  pruneWorkflowBaselines(projectId: string, runIds: readonly string[]): Promise<readonly string[]> {
+  pruneWorkflowBaselines(projectId: string, runIds: readonly string[], options: { readonly dryRun?: boolean } = {}): Promise<readonly string[]> {
     return this.gate.runExclusive(async () => {
       const planning = this.options.planning;
       if (!planning.pruneWorkflowBaselines) return [];
@@ -426,7 +426,7 @@ export class PlanningRunService {
       for (const [subprojectId, targets] of bySubproject) {
         // A baseline another run uses (any run, any state) stays.
         const used = runs.filter(run => !targets.some(target => target.runId === run.runId)).map(run => run.preparation.baseline.baselineId);
-        const result = await planning.pruneWorkflowBaselines(projectId, subprojectId, targets.map(({ id, hash }) => ({ id, hash })), used);
+        const result = await planning.pruneWorkflowBaselines(projectId, subprojectId, targets.map(({ id, hash }) => ({ id, hash })), used, options);
         if (result.ok) removed.push(...result.removed); else this.options.reportError?.(new Error(`Baseline cleanup in ${subprojectId}: ${result.message}`));
       }
       return removed;

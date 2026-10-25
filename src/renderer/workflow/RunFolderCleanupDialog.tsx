@@ -94,6 +94,8 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
       {error && <p role="alert" className="workflow-error">{error} <Button size="sm" variant="ghost" onClick={() => setGeneration(value => value + 1)}>{text('다시 확인', 'Check again')}</Button></p>}
       {outcome && <p role="status">{text(`폴더 ${outcome.removed}개를 정리했습니다.`, `Cleaned up ${outcome.removed} folder${outcome.removed === 1 ? '' : 's'}.`)}
         {!!outcome.baselinesRemoved && text(` 기획 기준본 ${outcome.baselinesRemoved}개도 정리했습니다.`, ` ${outcome.baselinesRemoved} planning baseline${outcome.baselinesRemoved === 1 ? '' : 's'} too.`)}
+        {!!outcome.baselinesKept && text(` 기획 기준본 ${outcome.baselinesKept}개는 남겼습니다(다른 기획 내용이 참조하게 됐거나 저장하지 못함${outcome.baselineError ? `: ${outcome.baselineError}` : ''}).`,
+          ` ${outcome.baselinesKept} planning baseline${outcome.baselinesKept === 1 ? '' : 's'} stayed (something came to refer to it, or it could not be written${outcome.baselineError ? `: ${outcome.baselineError}` : ''}).`)}
         {outcome.kept.length > 0 && text(` ${outcome.kept.length}개는 남겼습니다(아래 이유).`, ` ${outcome.kept.length} stayed (see why below).`)}</p>}
       {/* A folder the cleanup just kept may be gone from the list read again (its run became busy): its reason still shows. */}
       {outcome && outcome.kept.some(entry => entry.path && !runs.some(run => run.folders.some(folder => folder.path === entry.path))) && <ul className="workflow-folder-cleanup__runs">

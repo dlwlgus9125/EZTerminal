@@ -3236,12 +3236,7 @@ app.on('ready', async () => {
     }),
     liveTerminalIds: () => new Set(broker?.listSessions().map((session) => session.sessionId) ?? []),
     onChange: () => broadcast('run-retention:changed'),
-    baselinePresent: async (projectId, run) => {
-      const subprojectId = run.preparation.workflow?.subprojectId;
-      if (!subprojectId) return false;
-      const planning = await planningService.read(projectId, subprojectId);
-      return planning.ok && planning.snapshot.baselines.some(baseline => baseline.id === run.preparation.baseline.baselineId && baseline.hash === run.preparation.baseline.fingerprint);
-    },
+    baselineRemovable: async (projectId, run) => (await planningRunService.pruneWorkflowBaselines(projectId, [run.runId], { dryRun: true })).length > 0,
     pruneBaselines: (projectId, runIds) => planningRunService.pruneWorkflowBaselines(projectId, runIds),
   });
   runCleanupRef.current = runCleanup;
