@@ -37,7 +37,8 @@ export type WorkflowRepeat = z.infer<typeof WorkflowRepeatSchema>;
 export const WorkflowRepeatStatusSchema = z.object({
   /** The next occurrence it will run; absent while it cannot (see `blocked`) or is off. */
   nextAt: z.string().datetime().optional(),
-  blocked: z.enum(['automation-off', 'missing-reviewer', 'unreadable']).optional(),
+  /** `unconfirmed`: on in the flow file but never turned on through this host (it came with the project folder). */
+  blocked: z.enum(['automation-off', 'missing-reviewer', 'unreadable', 'unconfirmed']).optional(),
   last: z.object({
     key: z.string().min(1).max(32), occurrenceAt: z.string().datetime(),
     state: z.enum(['claimed', 'started', 'skipped-running', 'missed', 'failed']), at: z.string().datetime(),

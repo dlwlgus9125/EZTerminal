@@ -129,6 +129,12 @@ describe('WorkflowFlowSurface 반복', () => {
     const open = [...container.querySelectorAll('[data-testid="workflow-repeat-status"] button')].find(button => button.textContent === 'Open settings') as HTMLButtonElement;
     await act(async () => open.click());
     expect(onOpenAutomationSettings).toHaveBeenCalledOnce();
+    // A repeat that came with the project folder: it says so and offers to turn it on here, as it is.
+    const onSaveRepeat = vi.fn();
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat, subproject, repeatStatus: { blocked: 'unconfirmed' } })} />));
+    expect(status()).toContain('This repeat came with the project folder, so it does not run on this PC yet.');
+    await act(async () => (container.querySelector('[data-testid="workflow-repeat-confirm"]') as HTMLButtonElement).click());
+    expect(onSaveRepeat).toHaveBeenCalledWith(repeat);
     // A completed flow keeps its setting and says it does not repeat; it cannot be turned on.
     await act(async () => root.render(<WorkflowFlowSurface {...props({ onSaveRepeat: vi.fn(), subproject: { ...subproject, status: 'completed' }, repeatStatus: {} })} />));
     expect(status()).toContain('A completed or archived subproject does not repeat.');

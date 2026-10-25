@@ -583,7 +583,7 @@ describe('flow replies for remote protocol v16 readers', () => {
   const v17Snapshot = () => ({ schemaVersion: 1, projectId: 'project', registryRevision: 1, hostId: 'host', runs: [], sessionLinks: [], legacyBaselineOwners: {},
     repeatStatus: { next: '2026-10-26T00:00:00.000Z' },
     subprojects: [{ id: 'sub', title: 'Login', goal: '', status: 'active', revision: 1, createdAt: '2026-10-24T00:00:00.000Z', updatedAt: '2026-10-24T00:00:00.000Z', presetId: 'feature',
-      runSettings: { reviewer: { providerId: 'codex', model: 'm' } }, history: [], archivedNodes: [],
+      runSettings: { reviewer: { providerId: 'codex', model: 'm' } }, repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true }, history: [], archivedNodes: [],
       graph: { entryNodeId: 'plan', edges: [], nodes: [{ id: 'plan', title: 'Plan', reasoningEffort: 'high' }] } }] });
   const workflowCommand = { commandId: 'edit-1', projectId: 'project', hostId: 'host', expectedRevision: 1, subprojectId: 'sub', type: 'workflow.undo', payload: { changeId: 'change-1' } };
 
@@ -596,7 +596,7 @@ describe('flow replies for remote protocol v16 readers', () => {
     legacy.clientSend({ kind: 'workflow-execute', requestId: 'edit-16', command: workflowCommand }); await flush();
     const legacyReplies = legacy.sent.filter((message) => message.kind === 'workflow-read-reply' || message.kind === 'workflow-execute-reply');
     expect(legacyReplies).toHaveLength(2);
-    expect(JSON.stringify(legacyReplies)).not.toMatch(/reasoningEffort|runSettings|repeatStatus/u);
+    expect(JSON.stringify(legacyReplies)).not.toMatch(/reasoningEffort|runSettings|"repeat"|repeatStatus/u);
     expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001', reducedFlowView: true });
     legacy.close();
 
@@ -606,6 +606,7 @@ describe('flow replies for remote protocol v16 readers', () => {
     const currentReplies = current.sent.filter((message) => message.kind === 'workflow-read-reply' || message.kind === 'workflow-execute-reply');
     expect(JSON.stringify(currentReplies)).toMatch(/reasoningEffort/u);
     expect(JSON.stringify(currentReplies)).toMatch(/repeatStatus/u);
+    expect(JSON.stringify(currentReplies)).toMatch(/"repeat"/u);
     expect(source.execute).toHaveBeenLastCalledWith(workflowCommand, { kind: 'android', id: 'android:00000000-0000-4000-8000-000000000001' });
     current.close();
   });

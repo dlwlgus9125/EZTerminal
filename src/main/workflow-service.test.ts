@@ -139,6 +139,8 @@ describe('workflow authority and storage', () => {
     expect(await planning.read('project', 'b')).toMatchObject({ ok: true, snapshot: { history: [], baselines: [], draft: { items: [{ body: 'document', status: 'review-needed' }] } } });
   });
   it('saves 반복 with a canonical zone, only on with a review AI, and starts a copy with it off', async () => {
+    const repeatConsent = vi.fn(async () => undefined);
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, repeatConsent });
     await service.execute(create('a'), user);
     const update = (commandId: string, expectedRevision: number, payload: Record<string, unknown>) => service.execute({ ...base, commandId, subprojectId: 'a', expectedRevision, type: 'subproject.update', payload } as WorkflowCommand, user);
     const daily = { cadence: 'daily', time: '09:00', timezone: 'US/Eastern', enabled: true };
@@ -146,6 +148,13 @@ describe('workflow authority and storage', () => {
     expect(await update('bad-zone', 0, { repeat: { ...daily, timezone: 'Mars/Olympus' }, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: false, error: 'invalid-command' });
     expect(await update('on', 0, { repeat: daily, runSettings: { reviewer: { providerId: 'codex', model: 'm' } } })).toMatchObject({ ok: true });
     expect((await snapshot()).subprojects[0].repeat).toEqual({ ...daily, timezone: 'America/New_York' });
+    // The host records the person's consent for exactly what is saved, before saving it.
+    expect(repeatConsent).toHaveBeenCalledOnce();
+    expect(repeatConsent).toHaveBeenCalledWith('project', 'a', { ...daily, timezone: 'America/New_York' });
+    // A host that cannot record it refuses to turn 반복 on.
+    repeatConsent.mockRejectedValueOnce(new Error('The repeat record cannot be read, so 반복 cannot be changed now.'));
+    expect(await update('consent-fails', 1, { repeat: { ...daily, time: '10:00' } })).toMatchObject({ ok: false, message: expect.stringContaining('cannot be read') });
+    expect((await snapshot()).subprojects[0].repeat?.time).toBe('09:00');
     // A weekly repeat names its weekday.
     expect(() => WorkflowCommandSchema.parse({ ...base, commandId: 'weekly', subprojectId: 'a', type: 'subproject.update', payload: { repeat: { ...daily, cadence: 'weekly' } } })).toThrow();
     expect(await service.execute({ ...base, commandId: 'copy-repeat', subprojectId: 'a', expectedRevision: 1, type: 'subproject.copy', payload: { id: 'b', title: 'Copied' } }, user)).toMatchObject({ ok: true });
@@ -155,7 +164,7 @@ describe('workflow authority and storage', () => {
     const onCommitted = vi.fn();
     const repeatStatus = vi.fn((registry: { subprojects: readonly { id: string; repeat?: unknown }[] }) =>
       Object.fromEntries(registry.subprojects.filter(entry => entry.repeat).map(entry => [entry.id, { nextAt: '2026-10-26T00:00:00.000Z' }])));
-    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, repeatStatus, onCommitted });
+    service = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning, runs: () => [], session: () => undefined, repeatStatus, onCommitted, repeatConsent: async () => undefined });
     expect(await service.repeatSources('project')).toEqual([]);
     await service.execute(create('a'), user);
     expect(onCommitted).toHaveBeenLastCalledWith('project');

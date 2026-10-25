@@ -165,7 +165,8 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
   })();
   const blockedText = status?.blocked === 'automation-off' ? text('PC 앱이 로그인할 때 시작하고 창을 닫아도 계속 실행되도록 켜야 반복합니다.', 'Repeats run only while the PC app starts at login and keeps running when closed.')
     : status?.blocked === 'missing-reviewer' ? text('검토 AI를 고르면 반복합니다.', 'Choose the review AI to repeat.')
-      : status?.blocked === 'unreadable' ? text('반복 기록을 읽을 수 없어 반복을 멈췄습니다. PC 앱 기록(main.log)을 확인하세요.', 'The repeat record cannot be read, so repeats are stopped. Check the PC app log (main.log).') : null;
+      : status?.blocked === 'unreadable' ? text('반복 기록을 읽을 수 없어 반복을 멈췄습니다. PC 앱 기록(main.log)을 확인하세요.', 'The repeat record cannot be read, so repeats are stopped. Check the PC app log (main.log).')
+        : status?.blocked === 'unconfirmed' ? text('프로젝트 폴더에 함께 들어온 반복 설정이라 이 PC에서는 아직 돌지 않습니다. 이대로 반복하려면 켜기를 누르세요.', 'This repeat came with the project folder, so it does not run on this PC yet. Turn it on to repeat as it is.') : null;
   return <span className="workflow-run-bar__group" role="group" aria-label={text('반복', 'Repeat')} data-testid="workflow-repeat">
     <span className="workflow-run-bar__label"><Repeat aria-hidden="true" size={12} /> {text('반복', 'Repeat')}</span>
     <Select aria-label={text('반복', 'Repeat')} value={on ? repeat!.cadence : 'off'} disabled={disabled} data-testid="workflow-repeat-cadence"
@@ -192,6 +193,7 @@ function WorkflowRepeatGroup({ text, repeat, status, canTurnOn: reviewerSaved, a
       {!active ? text('완료되거나 보관된 소프로젝트는 반복하지 않습니다. 다시 진행하면 그때부터 반복합니다.', 'A completed or archived subproject does not repeat. It repeats again from when it is reopened.')
         : blockedText ?? (status?.nextAt ? text(`다음 실행 ${when(status.nextAt, true)}`, `Next run ${when(status.nextAt, true)}`) : text('다음 실행 시각을 계산하는 중입니다.', 'Working out the next run.'))}
       {status?.blocked === 'automation-off' && onOpenAutomationSettings && <> <Button size="sm" variant="ghost" leadingIcon={<Settings />} onClick={onOpenAutomationSettings}>{text('설정 열기', 'Open settings')}</Button></>}
+      {status?.blocked === 'unconfirmed' && canTurnOn && <> <Button size="sm" variant="ghost" disabled={disabled} onClick={() => save({ enabled: true })} data-testid="workflow-repeat-confirm">{text('켜기', 'Turn on')}</Button></>}
       {lastText && <><br />{text('마지막: ', 'Last: ')}{lastText}</>}
     </small>}
   </span>;

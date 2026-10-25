@@ -25,11 +25,14 @@ import { stageEditScope } from '../shared/planning-execution';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 
-/** The host's repeat schedule over a real flow service (fake clock, timers left to the test). */
+const repeats = new WeakMap<WorkflowService, WorkflowRepeatService>();
+/** The host's repeat schedule over a real flow service (fake clock, timers left to the test); it records consent for that service. */
 function repeatService(workflows: WorkflowService, now: () => Date): WorkflowRepeatService {
-  return new WorkflowRepeatService({ directory: mkdtempSync(path.join(os.tmpdir(), 'ez-repeat-run-')), file: { windowsAcl: async () => undefined }, hostId: 'host',
+  const created = new WorkflowRepeatService({ directory: mkdtempSync(path.join(os.tmpdir(), 'ez-repeat-run-')), file: { windowsAcl: async () => undefined }, hostId: 'host',
     projectIds: () => ['project'], sources: (projectId) => workflows.repeatSources(projectId), hasReceipt: (projectId, commandId) => workflows.hasReceipt(projectId, commandId),
     launch: (command, principal) => workflows.execute(command, principal), automationEnabled: () => true, now, setTimer: () => 0, clearTimer: () => undefined });
+  repeats.set(workflows, created);
+  return created;
 }
 async function fixture(realResults = false, bindStages = false) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ez-planning-run-'));
@@ -504,9 +507,10 @@ describe('run settings and 다시 실행 (run.launch)', () => {
   async function launchFlow(options: { staleRuns?: boolean } = {}) {
     const f = await fixture(false, true); const directory = f.store.getSnapshot().projects[0].rootPath!;
     // `staleRuns`: the flow service sees no runs, so only the execution side can refuse a second start.
-    const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
+    const workflows: WorkflowService = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
       runs: () => options.staleRuns ? [] : f.ledger.read('project').runs, session: () => undefined,
-      executeRun: (...args) => f.service.executeWorkflow(...args), executionGate: (work) => f.service.exclusive(work) });
+      executeRun: (...args) => f.service.executeWorkflow(...args), executionGate: (work) => f.service.exclusive(work),
+      repeatConsent: (projectId, subprojectId, repeat) => repeats.get(workflows)?.consent(projectId, subprojectId, repeat) ?? Promise.resolve() });
     f.committed.source = (projectId, subprojectId) => workflows.committedSubproject(projectId, subprojectId);
     const graph = createWorkflowGraph('research', 'sub');
     graph.nodes[0] = { ...graph.nodes[0]!, providerId: 'codex', model: 'model', instructions: 'Original instructions', acceptance: ['Explain observed evidence'] };
@@ -621,9 +625,9 @@ describe('run settings and 다시 실행 (run.launch)', () => {
   it('lets the repeat schedule run the saved flow once a day under the host’s own principal, and nothing else', async () => {
     const { f, workflows, send, save, subproject, runs } = await launchFlow();
     expect(await save('settings')).toMatchObject({ ok: true });
-    expect(await send('repeat-on', 'subproject.update', { repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true } })).toMatchObject({ ok: true });
     let clock = new Date('2026-10-25T23:00:00.000Z'); // 08:00 in Seoul
     const repeat = repeatService(workflows, () => clock);
+    expect(await send('repeat-on', 'subproject.update', { repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true } })).toMatchObject({ ok: true });
     await repeat.start();
     clock = new Date('2026-10-26T00:00:02.000Z');
     await repeat.wake();
@@ -649,9 +653,9 @@ describe('run settings and 다시 실행 (run.launch)', () => {
     for (const staleRuns of [false, true]) {
       const { f, workflows, send, save, runs } = await launchFlow({ staleRuns });
       expect(await save('settings')).toMatchObject({ ok: true });
-      expect(await send('repeat-on', 'subproject.update', { repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true } })).toMatchObject({ ok: true });
       let clock = new Date('2026-10-25T23:00:00.000Z');
       const repeat = repeatService(workflows, () => clock);
+      expect(await send('repeat-on', 'subproject.update', { repeat: { cadence: 'daily', time: '09:00', timezone: 'Asia/Seoul', enabled: true } })).toMatchObject({ ok: true });
       await repeat.start();
       // The person's run started a minute before the schedule's time.
       expect(await send('launch-by-person', 'run.launch', { runId: 'person-run' })).toMatchObject({ ok: true });

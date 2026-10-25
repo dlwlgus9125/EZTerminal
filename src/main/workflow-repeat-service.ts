@@ -31,6 +31,11 @@ const OccurrenceSchema = z.object({
 type Occurrence = z.infer<typeof OccurrenceSchema>;
 const EntrySchema = z.object({
   projectId: z.string().min(1).max(200), subprojectId: WorkflowIdSchema,
+  /**
+   * A person turned this repeat on through this host. The flow file sits in the project folder, so a repeat
+   * that arrives with it (a clone, a pull) never runs until someone turns it on here.
+   */
+  consent: z.object({ configDigest: z.string().regex(/^[0-9a-f]{32}$/u), at: instant }).strict().optional(),
   /** Occurrences before this (turned on, its time changed, restored, automation turned on) never run. */
   armed: z.object({ configDigest: z.string().regex(/^[0-9a-f]{32}$/u), armedAt: instant }).strict().optional(),
   occurrences: z.array(OccurrenceSchema),
@@ -74,6 +79,7 @@ export class WorkflowRepeatService {
   private entries = new Map<string, Entry>();
   private state: 'unloaded' | 'ready' | 'unreadable' = 'unloaded';
   private initialized = false;
+  private loading: Promise<boolean> | undefined;
   private started = false;
   private disposed = false;
   private running: Promise<void> | undefined;
@@ -106,6 +112,17 @@ export class WorkflowRepeatService {
     return this.running;
   }
 
+  /**
+   * Called by the flow service before it saves a person's 반복 (desktop or phone): on records this host's
+   * consent for exactly that setting, off withdraws it. A record that cannot be written refuses the save.
+   */
+  async consent(projectId: string, subprojectId: string, repeat: WorkflowRepeat): Promise<void> {
+    if (this.state !== 'ready' && !await this.load()) throw new Error('The repeat record cannot be read, so 반복 cannot be changed now.');
+    const configDigest = repeatConfigDigest(repeat);
+    const at = this.now().toISOString();
+    await this.update(projectId, subprojectId, entry => ({ ...entry, consent: repeat.enabled ? { configDigest, at } : undefined }));
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     this.cancelTimer();
@@ -125,8 +142,9 @@ export class WorkflowRepeatService {
       const last = latest(entry);
       const blocked = !repeat.enabled ? undefined
         : this.state === 'unreadable' ? 'unreadable' as const
-          : !auto ? 'automation-off' as const
-            : !subproject.runSettings?.reviewer ? 'missing-reviewer' as const : undefined;
+          : this.state === 'ready' && entry?.consent?.configDigest !== repeatConfigDigest(repeat) ? 'unconfirmed' as const
+            : !auto ? 'automation-off' as const
+              : !subproject.runSettings?.reviewer ? 'missing-reviewer' as const : undefined;
       const nextAt = repeat.enabled && !blocked && subproject.status === 'active' ? this.nextAt(repeat, entry, now) : undefined;
       result[subproject.id] = {
         ...(nextAt ? { nextAt } : {}), ...(blocked ? { blocked } : {}),
@@ -153,7 +171,12 @@ export class WorkflowRepeatService {
   }
 
   /** Reads the record. One that cannot be read is left exactly as it is, and nothing repeats until it can. */
-  private async load(): Promise<boolean> {
+  private load(): Promise<boolean> {
+    this.loading ??= this.read().finally(() => { this.loading = undefined; });
+    return this.loading;
+  }
+
+  private async read(): Promise<boolean> {
     try {
       if (!this.initialized) { await this.file.init(); this.initialized = true; }
       const text = await this.file.readText();
@@ -191,12 +214,15 @@ export class WorkflowRepeatService {
   private async check(projectId: string, source: WorkflowRepeatSource): Promise<number> {
     const id = entryKey(projectId, source.subprojectId);
     const auto = this.options.automationEnabled();
-    const eligible = auto && source.repeat.enabled && source.status === 'active';
     const digest = repeatConfigDigest(source.repeat);
     let entry = this.entries.get(id) ?? { projectId, subprojectId: source.subprojectId, occurrences: [] };
-    // Off, completed, archived or automation off: whatever comes before turning it back on never runs.
-    if (!eligible && entry.armed) entry = await this.save({ ...entry, armed: undefined });
-    if (eligible && entry.armed?.configDigest !== digest) entry = await this.save({ ...entry, armed: { configDigest: digest, armedAt: this.now().toISOString() } });
+    const eligible = auto && source.repeat.enabled && source.status === 'active' && entry.consent?.configDigest === digest;
+    // Off, not turned on here, completed, archived or automation off: what comes before turning it back on never runs.
+    if (!eligible && entry.armed) entry = await this.update(projectId, source.subprojectId, current => ({ ...current, armed: undefined }));
+    if (eligible && entry.armed?.configDigest !== digest) {
+      const armedAt = this.now().toISOString();
+      entry = await this.update(projectId, source.subprojectId, current => (current.armed?.configDigest === digest ? current : { ...current, armed: { configDigest: digest, armedAt } }));
+    }
     if (!auto) return REPEAT_RECHECK_MS;
     let wait = REPEAT_RECHECK_MS;
     for (const claim of entry.occurrences.filter(occurrence => occurrence.state === 'claimed')) {
@@ -267,22 +293,27 @@ export class WorkflowRepeatService {
   }
 
   private async record(projectId: string, subprojectId: string, occurrence: Occurrence): Promise<Occurrence> {
-    const entry = this.entries.get(entryKey(projectId, subprojectId)) ?? { projectId, subprojectId, occurrences: [] };
-    await this.save({ ...entry, occurrences: [...entry.occurrences.filter(item => item.key !== occurrence.key), stripUndefined(occurrence)] });
+    await this.update(projectId, subprojectId, entry => ({ ...entry, occurrences: [...entry.occurrences.filter(item => item.key !== occurrence.key), stripUndefined(occurrence)] }));
     return occurrence;
   }
 
-  /** Saved before it is used: the record on disk is never behind what the schedule acted on. */
-  private async save(entry: Entry): Promise<Entry> {
-    const open = entry.occurrences.filter(occurrence => occurrence.state === 'claimed');
-    const settled = entry.occurrences.filter(occurrence => occurrence.state !== 'claimed').sort(byTime).slice(-REPEAT_HISTORY_LIMIT);
-    const saved: Entry = stripUndefined({ ...entry, occurrences: [...settled, ...open].sort(byTime) });
-    const next = new Map(this.entries).set(entryKey(entry.projectId, entry.subprojectId), saved);
-    const data = `${JSON.stringify({ version: 1, entries: [...next.values()] }, null, 2)}\n`;
-    await this.file.enqueue(() => this.file.writeAtomic(data));
-    this.entries = next;
-    this.options.onChanged?.(entry.projectId);
-    return saved;
+  /**
+   * Saved before it is used: the record on disk is never behind what the schedule acted on. One change at a
+   * time, each made to the record as the last one left it (a person's consent and a tick never overwrite each other).
+   */
+  private update(projectId: string, subprojectId: string, change: (entry: Entry) => Entry): Promise<Entry> {
+    return this.file.enqueue(async () => {
+      const key = entryKey(projectId, subprojectId);
+      const changed = change(this.entries.get(key) ?? { projectId, subprojectId, occurrences: [] });
+      const open = changed.occurrences.filter(occurrence => occurrence.state === 'claimed');
+      const settled = changed.occurrences.filter(occurrence => occurrence.state !== 'claimed').sort(byTime).slice(-REPEAT_HISTORY_LIMIT);
+      const saved: Entry = stripUndefined({ ...changed, occurrences: [...settled, ...open].sort(byTime) });
+      const next = new Map(this.entries).set(key, saved);
+      await this.file.writeAtomic(`${JSON.stringify({ version: 1, entries: [...next.values()] }, null, 2)}\n`);
+      this.entries = next;
+      this.options.onChanged?.(projectId);
+      return saved;
+    });
   }
 
   /** The next occurrence it would run (a day already tried is skipped), from now or when it was armed. */

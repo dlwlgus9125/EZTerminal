@@ -89,6 +89,8 @@ export interface WorkflowServiceOptions {
   readonly repeatStatus?: (registry: WorkflowRegistry) => Readonly<Record<string, WorkflowRepeatStatus>> | undefined;
   /** After a command or a restore saved a new registry (the repeat schedule arms from it at once). */
   readonly onCommitted?: (projectId: string) => void;
+  /** Records on this host, before the save, that a person set this 반복 (see WorkflowRepeatService.consent). */
+  readonly repeatConsent?: (projectId: string, subprojectId: string, repeat: WorkflowRepeat) => Promise<void>;
   readonly continuationSource?: (sessionId: string) => string | undefined;
   /**
    * `transient` marks a failure whose outcome is not settled (the host or a provider was unreachable, or
@@ -361,6 +363,9 @@ export class WorkflowService {
           if (repeat) {
             try { repeat = { ...repeat, timezone: canonicalTimezone(repeat.timezone) }; } catch (error) { return failure('invalid-command', error instanceof Error ? error.message : String(error)); }
             if (repeat.enabled && !(command.payload.runSettings ?? subproject!.runSettings)?.reviewer) return failure('missing-reviewer', 'Choose the review AI for this flow before turning on 반복.');
+            // Only a person saves 반복 (the schedule and agents cannot send subproject.update): their consent is this host's.
+            if (repeat.enabled && !this.options.repeatConsent) return failure('unavailable', 'This host cannot run 반복.');
+            await this.options.repeatConsent?.(command.projectId, subproject!.id, repeat);
           }
           Object.assign(subproject!, command.payload, repeat ? { repeat } : {}); subproject!.revision += 1; subproject!.updatedAt = now; registry.registryRevision += 1;
         } else if (command.type === 'workflow.patch' || command.type === 'workflow.undo') {
