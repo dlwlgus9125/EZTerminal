@@ -291,6 +291,79 @@ describe('workflow project workspace', () => {
       else { expect(document.body.textContent).not.toContain('Late A failure'); expect(document.body.textContent).not.toContain('Secure draft recovery needs attention'); }
     }
   });
+  it('never lets an autosave scheduled earlier overwrite an unconfirmed request saved after it', async () => {
+    const snapshot = workflowFixture();
+    let stored: WorkflowDraftState | null = null; let revision = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision, state: stored } }),
+      // Saves answer slowly: an earlier autosave would land after the request's own save.
+      workflowDraftWrite: async (_, request) => { await new Promise(resolve => setTimeout(resolve, 240)); stored = request.state; revision += 1; return { ok: true, snapshot: { projectId: snapshot.projectId, revision, state: request.state } }; },
+    };
+    // The host has not answered the request when the screen is left.
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: () => new Promise(() => undefined) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} navigationTarget={{ subprojectId: 'login', nodeId: 'login:research', key: 'save' }} conversations={[]} />));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
+    await edit('Stage document', 'Edit sent before leaving');
+    await act(async () => { button('Save draft').click(); await new Promise(resolve => setTimeout(resolve, 300)); });
+    await act(async () => root.render(<></>));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 600)));
+    expect(stored).toMatchObject({ pendingCommand: { type: 'workflow.patch' } });
+  });
+  it('finishes a subproject creation confirmed by reconciling its request', async () => {
+    const snapshot = workflowFixture();
+    const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'research' as const, mode: 'preset' as const, graph: snapshot.subprojects[0]!.graph };
+    const pendingCommand = WorkflowCommandSchema.parse({ commandId: 'create-1', projectId: snapshot.projectId, hostId: snapshot.hostId, expectedRevision: snapshot.registryRevision, type: 'subproject.create', payload: { id: creation.id, title: creation.title, goal: creation.goal, presetId: 'research', graph: creation.graph } });
+    const created = { ...snapshot, registryRevision: snapshot.registryRevision + 1, subprojects: [...snapshot.subprojects, { ...snapshot.subprojects[0]!, id: creation.id, title: creation.title }] };
+    let stored: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand, creation };
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: stored } }),
+      workflowDraftWrite: async (_, request) => { stored = request.state; return { ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }; },
+    };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: async command => ({ ok: true, snapshot: created, commandId: command.commandId }) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+    expect(document.body.textContent).toContain('A subproject setup is in progress');
+    await click('Reconcile request');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+    // Created: the setup is not offered again (it would try the same id) and is no longer kept.
+    expect(document.body.textContent).not.toContain('A subproject setup is in progress');
+    expect(stored.creation).toBeUndefined();
+    expect(stored.pendingCommand).toBeNull();
+  });
+  it('retries reading the copy kept on this device after the first read fails', async () => {
+    const snapshot = workflowFixture();
+    const saved: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, snapshot, drafts: {}, pendingCommand: null };
+    let reads = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => { reads += 1; return reads === 1 ? { ok: false, error: 'unavailable', message: 'Storage busy' } : { ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: saved } }; },
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    const offline: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: false, error: 'unavailable', message: 'Disconnected' }), executeWorkflowCommand: vi.fn() };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={offline} recoveryAccess={recovery} disabled conversations={[]} />));
+    expect(document.body.textContent).toContain('Storage busy');
+    await click('Read stored draft');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    expect(document.body.textContent).toContain('Showing the copy stored on this device');
+    expect(document.body.textContent).not.toContain('Storage busy');
+  });
+  it('starts a restored subproject setup without the previous setup’s expiry', async () => {
+    const snapshot = workflowFixture(); const graph = snapshot.subprojects[0]!.graph;
+    const expiredSetup: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, creation: { id: 'setup-a', title: 'Chat setup', goal: 'A goal', preset: 'custom', mode: 'conversation', graph, previewSessionId: 'preview-chat', previewRevision: 1 } };
+    const presetSetup: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, creation: { id: 'setup-b', title: 'Preset setup', goal: 'A goal', preset: 'research', mode: 'preset', graph } };
+    let reads = 0; let writes = 0;
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => { reads += 1; return { ok: true, snapshot: { projectId: snapshot.projectId, revision: reads, state: reads === 1 ? expiredSetup : presetSetup } }; },
+      workflowDraftWrite: async (_, request) => { writes += 1; return writes === 1 ? { ok: false, error: 'stale', message: 'Changed elsewhere' } : { ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }; },
+    };
+    // The host no longer has the conversational setup's draft.
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn(), workflowPreview: async () => ({ ok: true, preview: null }) };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 260)));
+    await click('Read stored draft');
+    await click('Use stored draft');
+    await click('Continue setup');
+    expect(document.body.textContent).not.toContain('The host creation draft expired');
+    expect(button('Create subproject').disabled).toBe(false);
+  });
   it('drops a stored recovery read for another host once the host changes', async () => {
     const snapshot = workflowFixture(); const stage = snapshot.subprojects[0]!.graph.nodes[0]!;
     // The same project and subproject ids on another host.

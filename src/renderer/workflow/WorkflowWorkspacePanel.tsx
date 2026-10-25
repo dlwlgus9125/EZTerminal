@@ -193,7 +193,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       const taken = adoptRecovery(saved, stored.older, keepCurrent ? drafts : undefined);
       setDrafts(taken.drafts); setPending(taken.pendingCommand ?? pending);
       if (saved.pendingConversation) restoreConversation(saved.pendingConversation);
-      if (saved.creation && !(keepCurrent && create)) setCreate(saved.creation);
+      if (saved.creation && !(keepCurrent && create)) { setCreate(saved.creation); setPreviewExpired(false); }
     } else if (!keepCurrent) setDrafts({});
     setRecoveryReady(true); setRecoveryError(null); setStoredComparison(null);
   };
@@ -202,8 +202,11 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     // Kept with every save of that cached copy (an offline save or a restart must not lose it).
     ...(olderSnapshot.current ? { olderVersion: true as const } : {}) };
   const cachedRevision = snapshot ? `${snapshot.hostId}:${snapshot.registryRevision}:${snapshot.subprojects.map(item => `${item.id}:${item.revision}`).join(',')}:${snapshot.runs.map(run => `${run.runId}:${run.revision}`).join(',')}` : '';
+  /** Counts saves: an autosave scheduled before a later save is stale and is not written (see the autosave effect). */
+  const writeGeneration = useRef(0);
   const persist = useCallback(async (state: WorkflowDraftState): Promise<void> => {
     if (!recovery) return;
+    writeGeneration.current += 1;
     try { await recovery.write({ ...recoveryExtras.current, ...state, ...(!('pendingConversation' in state) && conversationRecoveryRef.current ? { pendingConversation: conversationRecoveryRef.current } : {}) }); if (recoveryRef.current === recovery) setRecoveryError(null); }
     catch (reason) { if (recoveryRef.current === recovery) setRecoveryError(String(reason)); throw reason; }
   }, [recovery]);
@@ -212,12 +215,14 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     let current = true; setRecoveryReady(false);
     void recovery.read().then(saved => { if (current) { if (saved) {
       const restored = adoptRecovery(saved, recovery.olderVersion);
-      setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) restoreConversation(saved.pendingConversation); } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
+      setDrafts(restored.drafts); setPending(restored.pendingCommand); setCreate(saved.creation ?? null); setPreviewExpired(false); if (saved.view && !targetRef.current) { setSelectedId(saved.view.subprojectId ?? null); setNodeId(saved.view.nodeId ?? null); setView(saved.view.page); setScrollTop(saved.view.scrollTop); restoreScroll.current = saved.view.scrollTop; } if (saved.pendingConversation) restoreConversation(saved.pendingConversation); } setRecoveryReady(true); setRecoveryError(null); } }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
   }, [recovery]);
   useEffect(() => {
     if (!recoveryReady || !hostId || recoveryError) return;
-    const timer = window.setTimeout(() => { void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
+    // A request saved since (a command or a conversation about to be sent) holds newer state than this render.
+    const generation = writeGeneration.current;
+    const timer = window.setTimeout(() => { if (writeGeneration.current === generation) void persist({ projectId, hostId, drafts, pendingCommand: pending }).catch(() => undefined); }, 180);
     return () => window.clearTimeout(timer);
   }, [drafts, pending, conversationRecovery, create, selectedId, nodeId, view, scrollTop, recoveryReady, persist, projectId, hostId, cachedRevision, recoveryError]);
   // Rebase an older version's drafts on the host's flow (not on a cached copy, which is reduced too), once the
@@ -242,17 +247,21 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   const currentScope = useRef(projectId);
   const currentHost = useRef<string>();
   currentScope.current = projectId;
+  const [cacheRead, setCacheRead] = useState(0);
   useEffect(() => {
     if (!disabled || hostId || !recoveryAccess) return;
     let current = true;
     void recoveryAccess.workflowDraftRead(projectId).then(value => {
       const result = WorkflowDraftResultSchema.parse(value);
-      if (!current || currentHost.current || !result.ok || result.snapshot.projectId !== projectId) return;
+      if (!current || currentHost.current) return;
+      if (!result.ok) { setRecoveryError(result.message); return; }
+      if (result.snapshot.projectId !== projectId) return;
       const cached = result.snapshot.state?.snapshot;
       if (cached && cached.projectId === projectId && cached.hostId === result.snapshot.state?.hostId) { olderSnapshot.current = result.snapshot.olderVersion === true || result.snapshot.state?.olderVersion === true; setSnapshot(cached); setLoading(false); }
     }).catch(reason => { if (current) setRecoveryError(String(reason)); });
     return () => { current = false; };
-  }, [disabled, hostId, projectId, recoveryAccess]);
+    // "Read stored draft" before any host has answered reads the copy kept on this device again.
+  }, [disabled, hostId, projectId, recoveryAccess, cacheRead]);
   useEffect(() => { if (disabled) setAuthorityReady(false); }, [disabled]);
   const selected = snapshot?.subprojects.find(item => item.id === selectedId);
   const local = selected ? drafts[selected.id] : undefined;
@@ -283,7 +292,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         const previousHost = currentHost.current ?? recoveryExtras.current.snapshot?.hostId;
         if (previousHost && previousHost !== result.snapshot.hostId) {
           chatDraftForm.current = undefined;
-          setDrafts({}); setPending(null); setSelectedId(null); setNodeId(null); setCreate(null); setCreationVisible(false); setChatTarget(null); setChatPending(null); setConversationRecovery(undefined); setUnlinkedSession(null); setStoredComparison(null); setRecoveryReady(!recoveryAccess);
+          setDrafts({}); setPending(null); setSelectedId(null); setNodeId(null); setCreate(null); setCreationVisible(false); setChatTarget(null); setChatPending(null); setConversationRecovery(undefined); setUnlinkedSession(null); setStoredComparison(null); setCompareGraph(false); setRecoveryReady(!recoveryAccess);
         }
         const previousSnapshot = recoveryExtras.current.snapshot;
         setDrafts(current => rebaseUnchangedGraphs(current, previousSnapshot, result.snapshot));
@@ -394,6 +403,13 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     void launch();
   });
   const selectSubproject = (id: string): void => { launchRequest.current = undefined; setSelectedId(id); setNodeId(snapshot?.subprojects.find(item => item.id === id)?.graph.entryNodeId ?? null); setView('flow'); setEdgeId(null); setRunView(false); };
+  /** After the host confirms a subproject creation (at once or by reconciling the request): open it, let its setup go. */
+  const finishCreate = async (created: NonNullable<typeof create>): Promise<void> => {
+    setSelectedId(created.id); setNodeId(created.graph.entryNodeId); setView('flow');
+    if (created.previewSessionId) await access.workflowPreview?.({ action: 'discard', projectId, previewId: created.id });
+    if (created.linkSessionId) { setLinkSessionId(created.linkSessionId); setLinkTarget({ subprojectId: created.id, nodeId: created.graph.entryNodeId ?? '' }); }
+    setCreate(null); setCreationVisible(false);
+  };
   const beginCreate = (sourceSessionId?: string): void => { const id = `subproject-${crypto.randomUUID()}`; setCreate({ id, title: '', goal: '', preset: 'feature', mode: 'preset', graph: graphForPreset('feature', id, text), ...(sourceSessionId ? { linkSessionId: sourceSessionId } : {}) }); setPreviewExpired(false); setCreationVisible(true); };
   const switchPreset = async (preset = create?.preset): Promise<void> => {
     if (!create || !preset) return;
@@ -423,11 +439,23 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
   };
   const createConversation = async (input: StructuredAgentDraftInput): Promise<StructuredAgentUiResult> => {
     if (!daemonAccess || !chatTarget || !authorityReady || disabled) return { ok: false, message: text('호스트 연결이 필요합니다.', 'Connect to the host first.') };
+    // Every answer below belongs to this host: after a host change nothing of it is taken on.
+    const host = currentHost.current;
+    const hostChanged = (): boolean => currentHost.current !== host;
+    const changed = { ok: false as const, message: text('연결된 PC가 바뀌었습니다. 대화를 다시 시작하세요.', 'The connected PC changed. Start the conversation again.') };
     let sessionId: string;
     if (unlinkedSession) sessionId = unlinkedSession;
     else {
       if (chatPending) {
         const receipt = await daemonAccess.sendDaemonCommand(chatPending).catch(() => null);
+        if (hostChanged()) return changed;
+        if (receipt && !receipt.ok && receipt.status === 'rejected') {
+          // A definite refusal: nothing was created, so the request is no longer unconfirmed and can be edited.
+          setChatPending(null);
+          if (snapshot) await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: undefined });
+          if (!hostChanged()) setConversationRecovery(undefined);
+          return { ok: false, message: receipt.error.message };
+        }
         if (!receipt?.ok) return { ok: false, message: receipt && !receipt.ok ? receipt.error.message : text('응답 미확정', 'Receipt unconfirmed'), deliveryUncertain: true };
         sessionId = chatPending.payload.sessionId; setChatPending(null);
       } else {
@@ -435,9 +463,11 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
           if (!snapshot || !recoveryReady || recoveryError) throw new Error('Secure workflow recovery is not ready.');
           const record = { command, subprojectId: chatTarget.subprojectId, nodeId: chatTarget.nodeId, scope: chatTarget.scope, previewId: chatTarget.previewId, draft: ChatComposerDraftSchema.parse({ text: input.draftText ?? chatTarget.prompt ?? '', ...(input.draftSkills ? { skills: input.draftSkills } : {}) }) };
           await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: record });
+          if (hostChanged()) throw new Error('The connected PC changed. Start the conversation again.');
           setConversationRecovery(record); setChatPending(command);
         } });
-        if (result.kind !== 'created') { if (result.kind === 'rejected') { setChatPending(null); if (snapshot && result.reason !== 'recovery-unavailable') { await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: undefined }); setConversationRecovery(undefined); } } return { ok: false, message: result.message, deliveryUncertain: result.kind === 'delivery-uncertain' }; }
+        if (result.kind !== 'created') { if (result.kind === 'rejected') { setChatPending(null); if (snapshot && result.reason !== 'recovery-unavailable') { await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: pending, pendingConversation: undefined }); if (!hostChanged()) setConversationRecovery(undefined); } } return { ok: false, message: result.message, deliveryUncertain: result.kind === 'delivery-uncertain' }; }
+        if (hostChanged()) return changed;
         sessionId = result.sessionId; setChatPending(null);
       }
       setUnlinkedSession(sessionId);
@@ -459,20 +489,26 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       catch (reason) { return { ok: false, message: String(reason) }; }
     }
     if (snapshot) await persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: null, pendingConversation: undefined });
+    if (hostChanged()) return changed;
     setConversationRecovery(undefined); setUnlinkedSession(null); setChatTarget(null); onOpenConversation?.(sessionId); return { ok: true };
   };
   const shownSubprojects = snapshot?.subprojects.filter(item => (filter === 'all' || (filter === 'archived') === (item.status === 'archived')) && `${item.title} ${item.goal}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) ?? [];
   const shownGeneral = filter === 'archived' ? [] : general.filter(item => item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const runs = snapshot?.runs.filter(run => run.preparation.workflow?.subprojectId === selectedId) ?? [];
+  // Recovery needs attention: reachable from the conversation dialog too while it is open (it may not close mid-link).
+  const chatOpen = active && !!chatTarget;
+  const recoveryControls = <>
+    {recoveryError && <div className="workflow-error" role="alert"><p>{text('초안 복구 저장을 확인해야 합니다. 현재 입력은 유지됩니다.', 'Secure draft recovery needs attention. Your current input is preserved.')} {recoveryError}</p><Button onClick={() => { const source = recovery; if (!source) { setRecoveryError(null); setCacheRead(count => count + 1); return; } void source.read().then(state => { if (recoveryRef.current === source) setStoredComparison({ state, older: source.olderVersion, source }); }).catch(reason => { if (recoveryRef.current === source) setRecoveryError(String(reason)); }); }}>{text('저장된 초안 확인', 'Read stored draft')}</Button></div>}
+    {comparison && <div className="workflow-notice"><p>{text('저장된 초안과 현재 입력 중 유지할 내용을 선택하세요. 저장된 미확정 명령은 어느 선택에서도 유지합니다.', 'Choose the stored draft or your current input. Pending stored commands are preserved in either case.')}{comparison.older && <> {text('이전 버전 앱이 보내지 못한 흐름 저장은 초안으로 가져오며, 현재 입력을 유지하면 같은 흐름에서는 현재 입력이 우선합니다.', 'A flow save an older app could not send comes back as a draft; if you keep your current input, it wins for the same flow.')}</>}</p><Button onClick={() => takeStored(comparison, false)}>{text('저장된 초안 사용', 'Use stored draft')}</Button><Button onClick={() => takeStored(comparison, true)}>{text('현재 입력 유지', 'Keep current input')}</Button></div>}
+  </>;
   return <section ref={scrollElement} onScroll={event => setScrollTop(event.currentTarget.scrollTop)} className="workflow-workspace" data-mobile={mobile || undefined} data-view={view === 'planning' ? 'planning' : selected && flowPage && !mobile ? 'flow' : undefined} data-testid="workflow-workspace">
     <header className="workflow-header"><IconButton icon={ArrowLeft} aria-label={selected && view !== 'flow' && view !== 'stage' && view !== 'run' ? text('흐름으로', 'Back to the flow') : selected && onBoard ? text('판으로', 'Back to the board') : selected || view === 'planning' ? text('프로젝트 항목으로', 'Back to project items') : text('프로젝트 목록으로', 'Back to projects')}
       onClick={() => { launchRequest.current = undefined; if (selected && !flowPage) setView(lastFlowPage.current); else if (selectedId && onBoard) { setSelectedId(null); setView('flow'); onBoard(); } else if (selectedId) { setSelectedId(null); setView('flow'); } else if (view === 'planning') setView('flow'); else onBack?.(); }} data-testid="workflow-back" /><div className="workflow-header__title"><small>{selected ? projectName : text('프로젝트', 'Project')}</small><h2>{selected?.title ?? projectName}</h2></div><div className="workflow-header__actions">{!selected && <IconButton icon={RefreshCw} aria-label={text('다시 불러오기', 'Refresh')} disabled={busy || disabled} onClick={() => void refresh()} />}{selected && <Button disabled={readOnly} onClick={() => setRename({ title: selected.title, goal: selected.goal })}>{text('이름·목표', 'Name and goal')}</Button>}{selected && <Button leadingIcon={<MessageSquarePlus />} disabled={readOnly || !daemonAccess} onClick={() => startChat({ subprojectId: selected.id, scope: 'flow-edit' })}>{text('AI와 흐름 편집', 'Edit flow with AI')}</Button>}{selected && <Button leadingIcon={<History />} aria-pressed={view === 'history'} onClick={() => setView(view === 'history' ? lastFlowPage.current : 'history')}>{text('변경 기록', 'History')}</Button>}{selected && <Menu label={text('소프로젝트 작업', 'Subproject actions')} placement="bottom-end" trigger={<IconButton icon={MoreHorizontal} aria-label={text('소프로젝트 작업', 'Subproject actions')} />}><MenuItem icon={RefreshCw} disabled={busy || disabled} onSelect={() => void refresh()}>{text('다시 불러오기', 'Refresh')}</MenuItem><MenuItem icon={Play} disabled={hostLocked || !!local || issues.length > 0 || selected.status === 'archived'} onSelect={openPrepare}>{text('실행 준비만', 'Prepare a run only')}</MenuItem>{renderPlanning && <MenuItem icon={ClipboardList} onSelect={() => setView('planning')}>{text('기획·설계·검토', 'Planning, design and review')}</MenuItem>}<MenuSeparator />{flowLinks.map(link => <MenuItem key={link.sessionId} icon={MessageSquare} onSelect={() => onOpenConversation?.(link.sessionId)}>{conversations.find(item => item.id === link.sessionId)?.title ?? text('흐름 편집 대화', 'Flow editing conversation')}</MenuItem>)}{flowLinks.length > 0 && <MenuSeparator />}<MenuItem icon={CheckCheck} disabled={readOnly || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'completed' ? 'active' : 'completed' } })}>{selected.status === 'completed' ? text('다시 진행', 'Reopen') : text('완료로 표시', 'Mark complete')}</MenuItem><MenuItem icon={Copy} disabled={hostLocked || !!local} onSelect={() => setCopyTitle(`${selected.title} ${text('복사본', 'copy')}`)}>{text('소프로젝트 복사', 'Copy subproject')}</MenuItem><MenuItem icon={Archive} disabled={hostLocked || !!local} onSelect={() => void execute({ type: 'subproject.update', payload: { status: selected.status === 'archived' ? 'active' : 'archived' } })}>{selected.status === 'archived' ? text('복원', 'Restore') : text('보관', 'Archive')}</MenuItem></Menu>}</div></header>
     {snapshot && !authorityReady ? <p role="status" className="workflow-notice">{text('기기에 보관된 화면입니다. 초안 편집은 복구되며, 다시 연결해 호스트의 권한·버전을 확인한 뒤에만 직접 저장하거나 실행할 수 있습니다.', 'Showing the copy stored on this device. Draft edits are recoverable; reconnect for a fresh host authority and version check before saving or running.')}</p> : disabled && <p role="status" className="workflow-notice">{disabledReason ?? text('호스트에 다시 연결하세요.', 'Reconnect to the host.')}</p>}
     {error && <p role="alert" className="workflow-error">{error}</p>}
     {busy && <p role="status">{text('호스트에 저장하고 결과를 확인하는 중입니다.', 'Saving to the host and confirming the result.')}</p>}
-    {recoveryError && <div className="workflow-error" role="alert"><p>{text('초안 복구 저장을 확인해야 합니다. 현재 입력은 유지됩니다.', 'Secure draft recovery needs attention. Your current input is preserved.')} {recoveryError}</p><Button onClick={() => { const source = recovery; void source?.read().then(state => { if (recoveryRef.current === source) setStoredComparison({ state, older: source.olderVersion, source }); }).catch(reason => { if (recoveryRef.current === source) setRecoveryError(String(reason)); }); }}>{text('저장된 초안 확인', 'Read stored draft')}</Button></div>}
-    {comparison && <div className="workflow-notice"><p>{text('저장된 초안과 현재 입력 중 유지할 내용을 선택하세요. 저장된 미확정 명령은 어느 선택에서도 유지합니다.', 'Choose the stored draft or your current input. Pending stored commands are preserved in either case.')}{comparison.older && <> {text('이전 버전 앱이 보내지 못한 흐름 저장은 초안으로 가져오며, 현재 입력을 유지하면 같은 흐름에서는 현재 입력이 우선합니다.', 'A flow save an older app could not send comes back as a draft; if you keep your current input, it wins for the same flow.')}</>}</p><Button onClick={() => takeStored(comparison, false)}>{text('저장된 초안 사용', 'Use stored draft')}</Button><Button onClick={() => takeStored(comparison, true)}>{text('현재 입력 유지', 'Keep current input')}</Button></div>}
-    {pending && <div className="workflow-notice" role="status"><p>{text('아직 요청 결과를 확인하지 못했습니다. 확인 전에는 다른 변경을 보내지 않습니다.', 'The request is not yet confirmed. Reconcile it before sending another change.')}</p><Button disabled={busy || disabled} onClick={() => void execute(pending, undefined, pending)}>{text('같은 요청 확인', 'Reconcile request')}</Button>
+    {!chatOpen && recoveryControls}
+    {pending && <div className="workflow-notice" role="status"><p>{text('아직 요청 결과를 확인하지 못했습니다. 확인 전에는 다른 변경을 보내지 않습니다.', 'The request is not yet confirmed. Reconcile it before sending another change.')}</p><Button disabled={busy || disabled} onClick={() => { const request = pending; void execute(request, undefined, request).then(async ok => { if (ok && request.type === 'subproject.create' && create?.id === request.payload.id) await finishCreate(create); }); }}>{text('같은 요청 확인', 'Reconcile request')}</Button>
       {pending.type.startsWith('run.') && <Button variant="ghost" disabled={busy} data-testid="workflow-pending-discard" onClick={() => { setPending(null); if (snapshot) void persist({ projectId, hostId: snapshot.hostId, drafts, pendingCommand: null }).catch(() => undefined); }}
         title={text('이미 처리된 부분(준비된 실행 등)은 그대로 남습니다. 실행 상태를 확인한 뒤 새로 요청하세요.', 'Anything it already did (a prepared run, say) stays as recorded. Check the run, then make a new request.')}>{text('이 요청 그만두기', 'Stop waiting for this request')}</Button>}</div>}
     {!selected && renderPlanning && <div className="workflow-toolbar workflow-switch" role="group" aria-label={text('프로젝트 보기', 'Project view')}><Button size="sm" aria-pressed={view !== 'planning'} onClick={() => setView('flow')}>{text('소프로젝트·대화', 'Subprojects and conversations')}</Button><Button size="sm" aria-pressed={view === 'planning'} onClick={() => setView('planning')}>{text('빠른 작업·기존 자료', 'Quick tasks and existing work')}</Button></div>}
@@ -510,7 +546,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
       {selected && local && <div className="workflow-create"><div><h3>{text('호스트 저장본', 'Host saved version')} · v{selected.revision}</h3>{selected.graph.nodes.map(node => <details key={node.id}><summary>{node.title}</summary><p>{node.instructions}</p><pre className="workflow-document-comparison">{node.document}</pre></details>)}</div><div><h3>{text('현재 미저장 초안', 'Current unsaved draft')} · v{local.baseRevision}</h3>{local.graph.nodes.map(node => <details key={node.id}><summary>{node.title}</summary><p>{node.instructions}</p><pre className="workflow-document-comparison">{node.document}</pre></details>)}</div></div>}
     </Dialog>
     {create && !creationVisible && <div className="workflow-notice"><p>{text('아직 만들지 않은 소프로젝트 구성이 있습니다. 대화에서 바뀐 흐름을 확인하세요.', 'A subproject setup is in progress. Review the workflow updated in your conversation.')}</p><Button onClick={() => setCreationVisible(true)}>{text('구성 이어가기', 'Continue setup')}</Button></div>}
-    <Dialog open={active && !!create && creationVisible} onOpenChange={open => { if (!open && !busy) void discardCreate(); }} title={text('새 소프로젝트', 'New subproject')} size="lg" closeLabel={text('닫기', 'Close')} footer={<><Button disabled={busy} onClick={() => void discardCreate()}>{text('취소', 'Cancel')}</Button><Button variant="primary" disabled={hostLocked || previewExpired || !create?.title.trim()} onClick={() => { if (create) void execute({ type: 'subproject.create', payload: { id: create.id, title: create.title, goal: create.goal, presetId: create.preset, graph: cleanGraph(create.graph), ...(create.previewSessionId ? { previewId: create.id, previewRevision: create.previewRevision } : {}) } }, undefined).then(async ok => { if (ok) { setSelectedId(create.id); setNodeId(create.graph.entryNodeId); setView('flow'); if (create.previewSessionId) await access.workflowPreview?.({ action: 'discard', projectId, previewId: create.id }); if (create.linkSessionId) { setLinkSessionId(create.linkSessionId); setLinkTarget({ subprojectId: create.id, nodeId: create.graph.entryNodeId ?? '' }); } setCreate(null); setCreationVisible(false); } }); }}>{text('소프로젝트 만들기', 'Create subproject')}</Button></>}>
+    <Dialog open={active && !!create && creationVisible} onOpenChange={open => { if (!open && !busy) void discardCreate(); }} title={text('새 소프로젝트', 'New subproject')} size="lg" closeLabel={text('닫기', 'Close')} footer={<><Button disabled={busy} onClick={() => void discardCreate()}>{text('취소', 'Cancel')}</Button><Button variant="primary" disabled={hostLocked || previewExpired || !create?.title.trim()} onClick={() => { if (create) void execute({ type: 'subproject.create', payload: { id: create.id, title: create.title, goal: create.goal, presetId: create.preset, graph: cleanGraph(create.graph), ...(create.previewSessionId ? { previewId: create.id, previewRevision: create.previewRevision } : {}) } }, undefined).then(async ok => { if (ok) await finishCreate(create); }); }}>{text('소프로젝트 만들기', 'Create subproject')}</Button></>}>
       {create && <div className="workflow-create">{error && <p className="workflow-error" role="alert">{error}</p>}{recoveryError && <p className="workflow-error" role="alert">{recoveryError}</p>}<div className="workflow-create__settings">
         <Field label={text('이름', 'Name')}><Input autoFocus value={create.title} maxLength={300} onChange={event => setCreate({ ...create, title: event.target.value })} /></Field>
         <label className="workflow-field">{text('목표', 'Goal')}<textarea rows={3} value={create.goal} onChange={event => setCreate({ ...create, goal: event.target.value })} /></label>
@@ -530,7 +566,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
     <Dialog open={active && copyTitle !== null} onOpenChange={open => { if (!open) setCopyTitle(null); }} title={text('소프로젝트 복사', 'Copy subproject')} description={text('저장된 흐름·문서·설정을 새 소프로젝트로 복사합니다. 대화·실행·승인 기록은 원본에 유지됩니다.', 'Copy the saved workflow, documents and settings into a new subproject. Conversations, runs and approval history remain with the original.')} closeLabel={text('닫기', 'Close')} footer={<><Button onClick={() => setCopyTitle(null)}>{text('취소', 'Cancel')}</Button><Button disabled={!copyTitle?.trim() || hostLocked} onClick={() => { if (copyTitle) { const id = `subproject-${crypto.randomUUID()}`; void execute({ type: 'subproject.copy', payload: { id, title: copyTitle } }).then(ok => { if (ok) { setCopyTitle(null); setSelectedId(id); setNodeId(null); setView('flow'); } }); } }}>{text('복사', 'Copy')}</Button></>}><Field label={text('복사본 이름', 'Copy name')}><Input value={copyTitle ?? ''} onChange={event => setCopyTitle(event.target.value)} /></Field></Dialog>
     <Dialog open={active && !!rename} onOpenChange={open => { if (!open) setRename(null); }} title={text('이름과 목표 편집', 'Edit name and goal')} closeLabel={text('닫기', 'Close')} footer={<><Button onClick={() => setRename(null)}>{text('취소', 'Cancel')}</Button><Button disabled={!rename?.title.trim() || readOnly} onClick={() => { if (rename) void execute({ type: 'subproject.update', payload: rename }).then(ok => { if (ok) setRename(null); }); }}>{text('저장', 'Save')}</Button></>}>{rename && <><Field label={text('이름', 'Name')}><Input value={rename.title} onChange={event => setRename({ ...rename, title: event.target.value })} /></Field><label className="workflow-field">{text('목표', 'Goal')}<textarea value={rename.goal} onChange={event => setRename({ ...rename, goal: event.target.value })} /></label></>}</Dialog>
     <Dialog open={active && !!linkSessionId} onOpenChange={open => { if (!open) setLinkSessionId(null); }} title={text('대화를 단계에 연결', 'Link conversation to a stage')} description={text('현재 메시지·입력·모델은 그대로 유지합니다. 문서나 실행은 바꾸지 않습니다.', 'Keep the same messages, draft and model. Documents and execution are unchanged.')} closeLabel={text('닫기', 'Close')} footer={<><Button onClick={() => setLinkSessionId(null)}>{text('취소', 'Cancel')}</Button><Button disabled={!linkTarget.subprojectId || !linkTarget.nodeId || hostLocked} onClick={() => { if (linkSessionId) void linkTo(linkSessionId, linkTarget.subprojectId, linkTarget.nodeId).then(ok => { if (ok) { setLinkSessionId(null); selectSubproject(linkTarget.subprojectId); setNodeId(linkTarget.nodeId); setView('stage'); } }); }}>{text('연결', 'Link')}</Button></>}><Button disabled={disabled || busy} onClick={() => { if (linkSessionId) { beginCreate(linkSessionId); setLinkSessionId(null); } }}>{text('\uc0c8 \uc18c\ud504\ub85c\uc81d\ud2b8\ub97c \ub9cc\ub4e4\uc5b4 \uc5f0\uacb0', 'Create a subproject to link')}</Button><Field label={text('소프로젝트', 'Subproject')}><Select value={linkTarget.subprojectId} onChange={event => setLinkTarget({ subprojectId: event.target.value, nodeId: '' })}><option value="">{text('선택하세요', 'Choose')}</option>{snapshot?.subprojects.filter(item => item.status !== 'archived').map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</Select></Field><Field label={text('단계', 'Stage')}><Select value={linkTarget.nodeId} onChange={event => setLinkTarget({ ...linkTarget, nodeId: event.target.value })}><option value="">{text('선택하세요', 'Choose')}</option>{snapshot?.subprojects.find(item => item.id === linkTarget.subprojectId)?.graph.nodes.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</Select></Field></Dialog>
-    <Dialog open={active && !!chatTarget} onOpenChange={open => { if (!open && !chatPending && !unlinkedSession) setChatTarget(null); }} dismissible={!chatPending && !unlinkedSession} title={chatTarget?.scope === 'flow-edit' ? text('흐름 편집 대화', 'Flow editing conversation') : chatTarget?.nodeId ? text('새 단계 대화', 'New stage conversation') : text('새 일반 대화', 'New conversation')} closeLabel={text('닫기', 'Close')} size="lg">{chatTarget && <StructuredAgentDraftPanel embedded initialFormState={chatDraftForm.current} onFormStateChange={state => { chatDraftForm.current = state; }} onOpenHistory={onOpenHistory} capabilityClient={capabilityClient} providers={structuredAgentProviderOptions(daemon, models)} workspaces={structuredAgentWorkspaceOptions(daemon, projectId)} initialProviderId={chatPending?.payload.providerId ?? chatNode?.providerId} initialModel={chatPending?.payload.model ?? chatNode?.model} initialWorkspaceId={chatPending?.payload.workspaceId} initialPermissionPreset={chatPending?.payload.permissionPreset ?? (chatTarget.scope === 'flow-edit' ? 'standard' : chatNode?.permissionPreset ?? 'standard')} initialDraftText={conversationRecovery?.draft?.text ?? chatTarget.prompt} initialDraftSkills={conversationRecovery?.draft?.skills} deliveryRecovery={!!chatPending || !!unlinkedSession} loading={!daemon} variant={mobile ? 'mobile' : 'desktop'} onCreate={createConversation} />}{unlinkedSession && <Button onClick={() => onOpenConversation?.(unlinkedSession)}>{text('생성된 대화 열기', 'Open created conversation')}</Button>}</Dialog>
+    <Dialog open={chatOpen} onOpenChange={open => { if (!open && !chatPending && !unlinkedSession) setChatTarget(null); }} dismissible={!chatPending && !unlinkedSession} title={chatTarget?.scope === 'flow-edit' ? text('흐름 편집 대화', 'Flow editing conversation') : chatTarget?.nodeId ? text('새 단계 대화', 'New stage conversation') : text('새 일반 대화', 'New conversation')} closeLabel={text('닫기', 'Close')} size="lg">{chatTarget && <StructuredAgentDraftPanel embedded initialFormState={chatDraftForm.current} onFormStateChange={state => { chatDraftForm.current = state; }} onOpenHistory={onOpenHistory} capabilityClient={capabilityClient} providers={structuredAgentProviderOptions(daemon, models)} workspaces={structuredAgentWorkspaceOptions(daemon, projectId)} initialProviderId={chatPending?.payload.providerId ?? chatNode?.providerId} initialModel={chatPending?.payload.model ?? chatNode?.model} initialWorkspaceId={chatPending?.payload.workspaceId} initialPermissionPreset={chatPending?.payload.permissionPreset ?? (chatTarget.scope === 'flow-edit' ? 'standard' : chatNode?.permissionPreset ?? 'standard')} initialDraftText={conversationRecovery?.draft?.text ?? chatTarget.prompt} initialDraftSkills={conversationRecovery?.draft?.skills} deliveryRecovery={!!chatPending || !!unlinkedSession} loading={!daemon} variant={mobile ? 'mobile' : 'desktop'} onCreate={createConversation} />}{chatOpen && recoveryControls}{unlinkedSession && <Button onClick={() => onOpenConversation?.(unlinkedSession)}>{text('생성된 대화 열기', 'Open created conversation')}</Button>}</Dialog>
     <Dialog open={active && prepareOpen} onOpenChange={setPrepareOpen} title={text('실행 준비', 'Prepare execution')} description={text('이 버전의 흐름·설정·참조를 고정합니다. 준비 후 실행 시작을 눌러야 작업합니다.', 'Freeze this graph, settings and references. Work begins only after you start the prepared run.')} closeLabel={text('닫기', 'Close')}
       footer={<><Button onClick={() => setPrepareOpen(false)}>{text('취소', 'Cancel')}</Button><Button disabled={readOnly || !!local || issues.length > 0 || !models[reviewer.providerId]?.some(model => model.id === reviewer.model) || !daemon?.providers.some(provider => provider.id === reviewer.providerId && provider.enabled && provider.health === 'ready')} onClick={() => { const runId = `run-${crypto.randomUUID()}`; void execute({ type: 'run.prepare', payload: { runId, reviewer } }).then(ok => { if (ok) { setPreparedRunId(runId); setPrepareOpen(false); setRunView(false); setView('run'); } }); }}>{text('이 버전 준비', 'Prepare this version')}</Button></>}>
       <p>{selected?.title} · v{selected?.revision}</p>
