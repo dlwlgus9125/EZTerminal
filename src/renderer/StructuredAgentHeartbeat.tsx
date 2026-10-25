@@ -5,6 +5,7 @@ import type { DaemonHeartbeat } from '../shared/daemon-protocol';
 import { useAppTranslation } from './i18n';
 import type { StructuredAgentUiResult } from './StructuredAgentSession';
 import { Button, Field, Input, Switch } from './ui';
+import { deviceTimezone } from './device-timezone';
 
 interface HeartbeatCopy {
   readonly title: string;
@@ -119,13 +120,8 @@ export interface StructuredAgentHeartbeatProps {
   readonly defaultOpen?: boolean;
 }
 
-function localTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
+// An offset-only device zone ("+00:00") would be refused by the host: it becomes an IANA name (B list ⑨).
+const localTimezone = deviceTimezone;
 
 function displayTime(value: string, locale: string): string {
   const timestamp = Date.parse(value);

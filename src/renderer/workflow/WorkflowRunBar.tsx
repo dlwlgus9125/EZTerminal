@@ -1,4 +1,5 @@
 import { FileSearch, Hand, MessageSquare, Pause, Play, Repeat, RotateCw, Settings, Square } from 'lucide-react';
+import { deviceTimezone } from '../device-timezone';
 import { useEffect, useId, useState } from 'react';
 import { PLANNING_AUTO_APPROVAL_PRINCIPAL, blockingRunOf, type ExecutionRun } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
@@ -118,20 +119,8 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
   </div>;
 }
 
-/**
- * This device's zone as an IANA name (the host accepts nothing else). A device set to a bare offset reports it as
- * "+00:00" (Chrome 124 on an Android set to GMT): a whole-hour offset becomes its Etc zone, anything else UTC, and the
- * run bar names the zone next to the time whenever it differs from what the device reports.
- */
-export function deviceTimezone(): string {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const offset = /^([+-])(\d{2}):(\d{2})$/u.exec(zone ?? '');
-  if (!offset) return zone || 'UTC';
-  const hours = Number(offset[2]);
-  if (offset[3] !== '00' || hours === 0) return 'UTC';
-  // Etc zones count the other way: UTC+9 is Etc/GMT-9.
-  return `Etc/GMT${offset[1] === '+' ? '-' : '+'}${hours}`;
-}
+// The run bar names the zone next to the time whenever it differs from what the device reports.
+export { deviceTimezone };
 
 const MINUTES = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, '0'));
 const HOURS = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));

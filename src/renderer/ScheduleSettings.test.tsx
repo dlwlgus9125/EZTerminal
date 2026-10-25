@@ -198,6 +198,22 @@ describe('ScheduleSettings validation', () => {
 });
 
 describe('ScheduleSettings', () => {
+  it('starts a new schedule in an IANA zone on a device that reports a bare offset (B list ⑨)', async () => {
+    const real = Intl.DateTimeFormat;
+    vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(((...args: ConstructorParameters<typeof Intl.DateTimeFormat>) => {
+      const format = new real(...args);
+      return Object.assign(Object.create(format), { resolvedOptions: () => ({ ...format.resolvedOptions(), timeZone: '+09:00' }) });
+    }) as never);
+    try {
+      renderSettings(capabilities());
+      await flush();
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="schedule-create-open"]')!.click());
+      expect(container.querySelector<HTMLInputElement>('[data-testid="schedule-timezone"]')!.value).toBe('Etc/GMT-9');
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('keeps activation fail-closed while allowing a disabled schedule to be saved', async () => {
     const authority = snapshot({ revision: 11, ready: false, schedules: [SCHEDULE] });
     const sendCommand = vi.fn(async (command: DaemonCommand): Promise<DaemonCommandReceipt> => ({

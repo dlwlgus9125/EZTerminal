@@ -24,6 +24,7 @@ import {
   Status,
   Switch,
 } from './ui';
+import { deviceTimezone } from './device-timezone';
 
 interface ScheduleSettingsProps {
   readonly capabilities?: CapabilityAccess;
@@ -65,13 +66,8 @@ function opaqueId(prefix: string): string {
   return uuid ? `${prefix}-${uuid}` : `${prefix}-${Date.now().toString(36)}`;
 }
 
-function detectedTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
+// An offset-only device zone ("+00:00") would be refused by the host: it becomes an IANA name (B list ⑨).
+const detectedTimeZone = deviceTimezone;
 
 export function isExactFiveFieldCron(value: string): boolean {
   return value.trim().split(/\s+/u).filter(Boolean).length === 5;
