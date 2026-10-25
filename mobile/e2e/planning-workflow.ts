@@ -419,7 +419,11 @@ async function main(): Promise<void> {
     await clickSelector('[data-testid="workflow-run-again"]');
     await waitHost('run #1 waits for its approval', async () => (await flowRuns())[0]?.workflowRuntime?.activations.some(entry => entry.nodeId === 'gate' && entry.state === 'awaiting-approval') === true);
     await waitForCondition('run #1 on the phone', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
+    // The host counts the waiting stage (I2-5): the phone's tab badge shows it, and it clears once approved.
+    await waitForCondition('the phone badges the waiting approval', `Number((document.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge') || {}).textContent || 0) >= 1`, 30_000);
+    await writeFile(path.join(artifactDir, 'i2-attention-badge.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     await approveGate();
+    await waitForCondition('the badge clears after the approval', `!document.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')`, 30_000);
     await waitHost('run #1 sends its AI stage', async () => !!(await flowRuns())[0]?.attempts[0]?.sessionId);
     const firstSession = (await flowRuns())[0]!.attempts[0]!.sessionId;
     await openListItem('.workflow-outline button', 'Build');
