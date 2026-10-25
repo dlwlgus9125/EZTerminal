@@ -9,6 +9,9 @@ import { expect, test as base } from '@playwright/test';
  * runner does not have, and the two systems ship different Consolas builds. So
  * here, and only here: Segoe UI Variable resolves to Segoe UI (identical on
  * both), and the Cascadia names resolve to the bundled JetBrains Mono file. The
+ * body stack also starts with Noto Sans KR, which a developer machine may have
+ * installed but the runner (and most Windows installs) does not: it resolves to
+ * Segoe UI too, so Korean text falls back the same way on both. The
  * application's own font stacks are unchanged.
  */
 const FONT_ROUTE = '/__ez-visual-fonts/';
@@ -21,7 +24,7 @@ const SEGOE_FACES = [
 ] as const;
 
 export const VISUAL_FONT_ALIASES = [
-  ...['Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI Variable Display', 'Segoe UI Variable Small'].flatMap((family) => SEGOE_FACES.map(([local, weight]) =>
+  ...['Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI Variable Display', 'Segoe UI Variable Small', 'Noto Sans KR'].flatMap((family) => SEGOE_FACES.map(([local, weight]) =>
     `@font-face { font-family: "${family}"; src: local("${local}"); font-weight: ${weight}; font-style: normal; }`)),
   ...['Cascadia Code', 'Cascadia Mono'].map((family) =>
     `@font-face { font-family: "${family}"; src: url("${FONT_ROUTE}mono.woff2") format("woff2"); font-weight: 100 900; font-style: normal; }`),
