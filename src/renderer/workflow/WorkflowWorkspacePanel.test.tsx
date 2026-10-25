@@ -388,6 +388,32 @@ describe('workflow project workspace', () => {
     expect(button('From preset').getAttribute('aria-pressed')).toBe('true');
     expect([...document.querySelectorAll('label')].find(item => item.firstChild?.textContent?.trim() === 'Goal')!.querySelector('textarea')!.value).toBe('Goal typed while switching');
   });
+  it('lets a setup go without clearing one begun while the host answered', async () => {
+    const snapshot = workflowFixture();
+    const creation = { id: 'subproject-old', title: 'Old setup', goal: 'A goal', preset: 'custom' as const, mode: 'conversation' as const, graph: snapshot.subprojects[0]!.graph, previewSessionId: 'setup-chat', previewRevision: 1 };
+    const stored: WorkflowDraftState = { projectId: snapshot.projectId, hostId: snapshot.hostId, drafts: {}, pendingCommand: null, creation };
+    const recovery: WorkflowDraftAccess = {
+      workflowDraftRead: async () => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: 1, state: stored } }),
+      workflowDraftWrite: async (_, request) => ({ ok: true, snapshot: { projectId: snapshot.projectId, revision: request.expectedRevision + 1, state: request.state } }),
+    };
+    const access: WorkflowAccess = { getWorkflowSnapshot: async () => ({ ok: true, snapshot }), executeWorkflowCommand: vi.fn(),
+      workflowPreview: async request => { if (request.action === 'discard') await new Promise(resolve => setTimeout(resolve, 300)); return { ok: true, preview: request.action === 'read' ? { id: creation.id, projectId: snapshot.projectId, sessionId: 'setup-chat', revision: 1, graph: creation.graph } : null }; } };
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId={snapshot.projectId} projectName="Project" access={access} recoveryAccess={recovery} conversations={[]} />));
+    await click('Continue setup');
+    await act(async () => { button('Cancel').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    // A new setup begun before the old one's cancel is answered.
+    await click('New subproject'); await edit('Name', 'New setup');
+    await act(async () => new Promise(resolve => setTimeout(resolve, 400)));
+    expect([...document.querySelectorAll('input')].some(item => item.value === 'New setup')).toBe(true);
+  });
+  it('keeps the name and goal form as sent while its save is answered', async () => {
+    const state = fixture(); state.access.executeWorkflowCommand = () => new Promise(() => undefined);
+    await state.render(true);
+    await click('Name and goal');
+    await act(async () => { button('Save').click(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    const goal = [...document.querySelectorAll('label')].find(item => item.firstChild?.textContent?.trim() === 'Goal')?.querySelector('textarea');
+    expect(goal?.disabled).toBe(true);
+  });
   it('finishes a subproject creation confirmed by reconciling its request', async () => {
     const snapshot = workflowFixture();
     const creation = { id: 'subproject-new', title: 'New plan', goal: 'A goal', preset: 'research' as const, mode: 'preset' as const, graph: snapshot.subprojects[0]!.graph };
