@@ -55,6 +55,7 @@ import {
   type RuntimeLifecycleTier,
 } from '../shared/runtime-lifecycle';
 import { PtyWriteScheduler } from './pty-write-scheduler';
+import { readXtermText } from './xterm-text';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
 // live PTY (any single, non-piped external command, or `!cmd`); render is
@@ -514,6 +515,8 @@ function PtyXtermView({
     // text gets bracketed-paste framing / \n→\r normalization when the child
     // enabled it — same term.paste path the context-menu Paste below uses.
     const unregisterPaste = controller.setPasteHandler((text) => term.paste(text));
+    // The desktop terminal quotes a block's output to an AI conversation; xterm holds the only copy.
+    const unregisterTextReader = controller.setTextReader(() => readXtermText(term.buffer.active));
 
     attachSink();
     if (runtimeLifecycleTierRef.current === 'active') term.focus();
@@ -637,6 +640,7 @@ function PtyXtermView({
       window.removeEventListener('ez:ui-scale', applyTypography);
       window.removeEventListener('ez:scrollback', applyScrollbackSetting);
       unregisterPaste();
+      unregisterTextReader();
       imeHygiene.dispose();
       dataDisposable.dispose();
       unsink?.();

@@ -241,8 +241,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/block-controller.ts",
-          "startLine": 623,
-          "endLine": 637,
+          "startLine": 695,
+          "endLine": 709,
           "lineDigest": "sha256:1e1658cf69922e6c5649bb4644b9065d6a6194ab091a75b636a6746a88143c93",
           "claim": "BlockController advances consumed byte counts only through the render flush path."
         }

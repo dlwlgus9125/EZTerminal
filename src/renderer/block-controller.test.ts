@@ -1019,3 +1019,65 @@ describe('BlockController — control handoff (M8b, dynamic hasControl)', () => 
     expect(port.posted).toContainEqual({ type: 'pty-claim-control' });
   });
 });
+
+describe('BlockController — time and quoted text (desktop terminal)', () => {
+  const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+  it('knows no time unless the view knew when the run started', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'end', exitCode: 0 });
+    expect(controller.getSnapshot()).toMatchObject({ startedAtMs: null, endedAtMs: null });
+  });
+
+  it('records the end once, for terminal frames and a lost transport', () => {
+    let now = 5_000;
+    const port = new FakePort();
+    const controller = new BlockController('cmd', port as unknown as MessagePort, { startedAtMs: 1_000, clock: () => now });
+    expect(controller.getSnapshot()).toMatchObject({ startedAtMs: 1_000, endedAtMs: null });
+    port.deliver({ type: 'end', exitCode: 1 });
+    now = 9_000;
+    port.deliver({ type: 'cancelled' });
+    expect(controller.getSnapshot()).toMatchObject({ startedAtMs: 1_000, endedAtMs: 5_000 });
+
+    const lost = new BlockController('cmd', new FakePort() as unknown as MessagePort, { startedAtMs: 1, clock: () => 7 });
+    lost.markTransportInterrupted('gone');
+    expect(lost.getSnapshot().endedAtMs).toBe(7);
+  });
+
+  it('keeps an end carried over from an earlier view instead of the replayed end frame time', () => {
+    const port = new FakePort();
+    const controller = new BlockController('cmd', port as unknown as MessagePort, { startedAtMs: 10, endedAtMs: 20, clock: () => 99 });
+    port.deliver({ type: 'end', exitCode: 0 });
+    expect(controller.getSnapshot()).toMatchObject({ startedAtMs: 10, endedAtMs: 20 });
+  });
+
+  it('returns the cached tail of append-only rows and the first run of a table', () => {
+    const { port, controller } = make();
+    expect(controller.getCachedRows()).toEqual({ start: 0, rows: [] });
+    port.deliver({ type: 'chunk', start: 0, rows: [{ value: 'a' }, { value: 'b' }] });
+    port.deliver({ type: 'chunk', start: 5, rows: [{ value: 'f' }, { value: 'g' }] });
+    expect(controller.getCachedRows('end')).toEqual({ start: 5, rows: [{ value: 'f' }, { value: 'g' }] });
+    expect(controller.getCachedRows('start')).toEqual({ start: 0, rows: [{ value: 'a' }, { value: 'b' }] });
+  });
+
+  it('decodes retained plain PTY bytes across chunk boundaries', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'schema', shape: 'pty', columns: [] });
+    const bytes = encode('한글 ok');
+    port.deliver({ type: 'pty-data', data: bytes.slice(0, 2) });
+    port.deliver({ type: 'pty-data', data: bytes.slice(2) });
+    expect(controller.readRetainedPtyText()).toBe('한글 ok');
+  });
+
+  it('reads a mounted view through its registered reader only while it is registered', () => {
+    const { controller } = make();
+    expect(controller.readTerminalText()).toBeNull();
+    const stop = controller.setTextReader(() => 'screen');
+    expect(controller.readTerminalText()).toBe('screen');
+    const other = controller.setTextReader(() => 'other');
+    stop();
+    expect(controller.readTerminalText()).toBe('other');
+    other();
+    expect(controller.readTerminalText()).toBeNull();
+  });
+});

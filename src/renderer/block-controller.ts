@@ -61,6 +61,19 @@ export interface PtyControlTargetIdentity {
 export interface BlockControllerOptions {
   readonly mirror?: boolean;
   readonly controlTarget?: PtyControlTargetIdentity;
+  /** When the run started, if this view knows it (its own run, or a live
+   * mirror). Unknown for late catch-up; the block then shows no time. */
+  readonly startedAtMs?: number;
+  /** When an already-finished run ended, carried over from an earlier view. */
+  readonly endedAtMs?: number;
+  /** Clock for the end time; tests pass a fixed one. */
+  readonly clock?: () => number;
+}
+
+/** A contiguous run of rows that are in the controller's windowed cache. */
+export interface CachedRowRun {
+  readonly start: number;
+  readonly rows: readonly ResultRow[];
 }
 
 /** An outstanding pre-schema `ssh-connect` prompt (E5) — password/passphrase
@@ -111,6 +124,9 @@ export interface BlockSnapshot {
    * Starts `!opts.mirror` (a primary starts in control; an attach mirror does
    * not) and moves on `pty-control` frames as control is claimed/reverted. */
   readonly hasControl: boolean;
+  /** Run start/end in this renderer's clock, or null when it is not known. */
+  readonly startedAtMs: number | null;
+  readonly endedAtMs: number | null;
   /** Bumped on every change so memoized consumers know to re-read row data. */
   readonly version: number;
 }
@@ -241,6 +257,14 @@ export class BlockController {
    * falls back to a raw `sendPtyInput`. */
   private pasteHandler: ((text: string) => void) | null = null;
 
+  /** Text seam: a mounted xterm view registers a reader of its buffer so the
+   * desktop terminal can quote the output (xterm keeps no raw copy here). */
+  private textReader: (() => string) | null = null;
+
+  private readonly clock: () => number;
+  private readonly startedAtMs: number | null;
+  private endedAtMs: number | null;
+
   /** Phase 3 adaptive render: mode + the plain-mode ansi->html pipeline. A
    * single `AnsiHtmlStream` instance is reused for the block's entire plain
    * phase so SGR state (current fg/bg/bold) carries across chunks. Raw replay
@@ -287,6 +311,9 @@ export class BlockController {
     this.port = port;
     this.isMirror = opts?.mirror ?? false;
     this.hasControl = !this.isMirror;
+    this.clock = opts?.clock ?? Date.now;
+    this.startedAtMs = opts?.startedAtMs ?? null;
+    this.endedAtMs = this.startedAtMs === null ? null : opts?.endedAtMs ?? null;
     this.snapshot = this.buildSnapshot();
     liveControllers.add(this);
     if (typeof window !== 'undefined') {
@@ -330,6 +357,45 @@ export class BlockController {
   /** Read a cached row by absolute index (undefined while it is being fetched). */
   getRow(index: number): ResultRow | undefined {
     return this.cache.get(index);
+  }
+
+  /** The contiguous cached rows that end at the newest cached row (text output
+   * is append-only, so this is its tail), or the run that starts at the oldest
+   * cached row (`from: 'start'`, a table's first rows). Never fetches. */
+  getCachedRows(from: 'start' | 'end' = 'end'): CachedRowRun {
+    if (this.cache.size === 0) return { start: 0, rows: [] };
+    const indexes = [...this.cache.keys()].sort((left, right) => left - right);
+    if (from === 'start') {
+      let end = 0;
+      while (end + 1 < indexes.length && indexes[end + 1] === indexes[end] + 1) end += 1;
+      const start = indexes[0];
+      return { start, rows: indexes.slice(0, end + 1).map((index) => this.cache.get(index)!) };
+    }
+    let first = indexes.length - 1;
+    while (first > 0 && indexes[first - 1] === indexes[first] - 1) first -= 1;
+    return { start: indexes[first], rows: indexes.slice(first).map((index) => this.cache.get(index)!) };
+  }
+
+  /** Raw PTY bytes this controller still retains (plain-mode history, bounded by
+   * the scrollback setting), decoded as UTF-8. Terminal controls are left in. */
+  readRetainedPtyText(): string {
+    const decoder = new TextDecoder();
+    let text = '';
+    for (const entry of this.ptyBuffer.snapshot()) text += decoder.decode(entry.bytes, { stream: true });
+    return text + decoder.decode();
+  }
+
+  /** Register the mounted xterm view's buffer reader — same shape as `setPasteHandler`. */
+  setTextReader(reader: () => string): () => void {
+    this.textReader = reader;
+    return () => {
+      if (this.textReader === reader) this.textReader = null;
+    };
+  }
+
+  /** The mounted xterm view's text, or null when no view registered a reader. */
+  readTerminalText(): string | null {
+    return this.textReader ? this.textReader() : null;
   }
 
   // ── controls (renderer → interpreter) ───────────────────────────────────────
@@ -406,7 +472,13 @@ export class BlockController {
     this.status = 'error';
     this.errorMessage = message;
     this.sshPrompt = null;
+    this.markEnded();
     this.emitChange(true);
+  }
+
+  /** Record the end time once, and only for a run whose start this view knows. */
+  private markEnded(): void {
+    if (this.startedAtMs !== null && this.endedAtMs === null) this.endedAtMs = this.clock();
   }
 
   // ── PTY block (Phase 2 TUI + Phase 3 adaptive render) ────────────────────────
@@ -815,6 +887,7 @@ export class BlockController {
         this.exitCode = frame.exitCode ?? null;
         // cwd AFTER the command — a `cd` updates the live prompt off this.
         this.endCwd = frame.cwd ?? this.endCwd;
+        this.markEnded();
         break;
       case 'error':
         this.clearCodexRecovery();
@@ -823,6 +896,7 @@ export class BlockController {
         this.status = 'error';
         this.errorMessage = frame.message;
         this.sshPrompt = null;
+        this.markEnded();
         break;
       case 'cancelled':
         this.clearCodexRecovery();
@@ -830,6 +904,7 @@ export class BlockController {
         this.flushPlainSink();
         this.status = 'cancelled';
         this.sshPrompt = null;
+        this.markEnded();
         break;
       case 'pty-render-upgrade':
         // Irreversible: plain -> xterm only. The plain view's sink is dropped
@@ -922,6 +997,8 @@ export class BlockController {
       ptyRenderMode: this.ptyRenderMode,
       ptyDims: this.ptyDims,
       hasControl: this.hasControl,
+      startedAtMs: this.startedAtMs,
+      endedAtMs: this.endedAtMs,
       version: this.version,
     };
   }
