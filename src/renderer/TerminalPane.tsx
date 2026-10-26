@@ -7,8 +7,8 @@ import type {
 } from '../shared/agent';
 import { BlockController } from './block-controller';
 import { retainTerminalBlocks, takeRetainedTerminalBlocks } from './retained-terminal-blocks';
-import { TerminalBlockEntries } from './TerminalBlockEntries';
-import { Button } from './ui';
+import { TerminalBlockEntries, type TerminalBlockEntry } from './TerminalBlockEntries';
+import { Button, Menu, MenuItem } from './ui';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import {
@@ -69,6 +69,12 @@ import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 import type { AgentOrchestrationSnapshot } from '../shared/agent-orchestration';
 import { LeadWorkersStrip } from './LeadWorkersStrip';
 import { rememberBlockEnd, rememberBlockStart, rememberedBlockTiming } from './terminal/block-timing';
+import { excerptFromController, terminalOutputAttachment } from './terminal/block-excerpt';
+import { TerminalAiDock, TerminalTargetPicker, type PendingTerminalAttachment } from './terminal/TerminalAiDock';
+import { useTerminalAiHost } from './terminal/terminal-ai-host';
+import { resolveTerminalProjectId, resolveTerminalTarget, type TerminalTarget } from './terminal/terminal-target';
+import { readConversationViews } from './conversation-views';
+import { readSessionViewState, saveSessionViewState } from './session-view-state';
 
 // A TerminalPane is one independent shell surface: its own stack of command Blocks,
 // pinned prompt, and an authority-issued binding to a shell session. The host owns
@@ -86,7 +92,11 @@ interface PaneContextMenuSource {
   readonly ownerDocument: Document;
   readonly draftSelectionStart: number;
   readonly draftSelectionEnd: number;
+  /** The block the menu was opened on, if any. */
+  readonly blockId?: string;
 }
+
+type TerminalInputMode = 'shell' | 'ai';
 
 interface PaneContextMenuState {
   readonly invocation: TerminalContextMenuInvocation;
@@ -315,12 +325,134 @@ export function TerminalPane({
     if (sel && !sel.isCollapsed) return; // preserve drag-to-select/copy
     const target = e.target as HTMLElement;
     if (target.closest('.pty-block')) return; // xterm block keeps its own focus
-    if (target.closest('button, a, input, textarea, select')) return; // interactive controls
+    if (target.closest('button, a, input, textarea, select, summary, details')) return; // interactive controls
+    // The input the prompt line shows takes the focus back.
+    if (inputModeRef.current === 'ai') {
+      paneRef.current?.querySelector<HTMLTextAreaElement>('.terminal-ai [data-testid="structured-agent-composer-input"]')?.focus();
+      return;
+    }
     cmdInputRef.current?.focus();
   };
 
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
+
+  // ── AI input (Ctrl .) ────────────────────────────────────────────────────
+  // The prompt line types either a shell command or a message to a conversation: that
+  // conversation's own message box, sharing its draft. Blocks attach as quoted chips.
+  const aiHost = useTerminalAiHost();
+  const modeKey = `terminal-input-mode:${panelId}`;
+  const pickKey = `terminal-ai-target:${panelId}`;
+  const [inputMode, setInputMode] = useState<TerminalInputMode>('shell');
+  const inputModeRef = useRef(inputMode);
+  inputModeRef.current = inputMode;
+  // Resolved when the AI input opens and kept while it stays open; a person's pick sticks to this terminal.
+  const [aiTarget, setAiTarget] = useState<TerminalTarget | null>(null);
+  const pickedRef = useRef<string | undefined>(readSessionViewState<string>(pickKey));
+  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingTerminalAttachment[]>([]);
+  // Blocks already put in a draft (or refused): the automatic attach never offers them again.
+  const offeredRunsRef = useRef(new Set<string>());
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  const currentCwdRef = useRef(currentCwd);
+  currentCwdRef.current = currentCwd;
+
+  const terminalProjectId = useCallback((): string | undefined => resolveTerminalProjectId({
+    ...(projectTarget?.projectId ? { tabProjectId: projectTarget.projectId } : {}),
+    paneSessionId: sessionIdRef.current,
+    cwd: currentCwdRef.current,
+  }, aiHost?.getSnapshot() ?? null), [aiHost, projectTarget?.projectId]);
+
+  const computeAiTarget = useCallback((): TerminalTarget => {
+    const projectId = terminalProjectId();
+    const picked = pickedRef.current;
+    if (picked === 'new') return projectId ? { kind: 'new', projectId } : { kind: 'new' };
+    const target = resolveTerminalTarget({
+      snapshot: aiHost?.getSnapshot() ?? null,
+      views: readConversationViews(),
+      ...(projectId ? { projectId } : {}),
+      ...(picked ? { pickedSessionId: picked } : {}),
+    });
+    if (picked && (target.kind !== 'conversation' || target.sessionId !== picked)) {
+      // The picked conversation is gone: forget the pick.
+      pickedRef.current = undefined;
+      saveSessionViewState<string | undefined>(pickKey, undefined);
+    }
+    return target;
+  }, [aiHost, pickKey, terminalProjectId]);
+
+  const focusAiInput = useCallback((): void => {
+    requestAnimationFrame(() => paneRef.current
+      ?.querySelector<HTMLTextAreaElement>('.terminal-ai [data-testid="structured-agent-composer-input"]')?.focus());
+  }, []);
+  const focusShellInput = useCallback((): void => {
+    requestAnimationFrame(() => cmdInputRef.current?.focus());
+  }, []);
+
+  const queueBlockAttachment = useCallback((entry: TerminalBlockEntry): void => {
+    const controller = entry.controller;
+    if (!controller) return;
+    const attachment = terminalOutputAttachment(entry.id, controller.command, excerptFromController(controller), t('terminalAi.chipLabel'));
+    setPendingAttachments((current) => [...current.filter((item) => item.runId !== entry.id), { runId: entry.id, attachment }]);
+  }, [t]);
+
+  /** Open the AI input; attach the given block, or else the newest finished one if it was not offered yet. */
+  const enterAiInput = useCallback((block?: TerminalBlockEntry): void => {
+    if (!aiHost) return;
+    setAiTarget(computeAiTarget());
+    if (block) {
+      queueBlockAttachment(block);
+    } else {
+      const latest = [...blocksRef.current].reverse()
+        .find((entry) => entry.controller && entry.controller.getSnapshot().status !== 'running');
+      if (latest && !offeredRunsRef.current.has(latest.id)) queueBlockAttachment(latest);
+    }
+    setAiNotice(null);
+    setInputMode('ai');
+    saveSessionViewState<TerminalInputMode>(modeKey, 'ai');
+    focusAiInput();
+  }, [aiHost, computeAiTarget, focusAiInput, modeKey, queueBlockAttachment]);
+
+  const leaveAiInput = useCallback((): void => {
+    setInputMode('shell');
+    saveSessionViewState<TerminalInputMode>(modeKey, 'shell');
+    focusShellInput();
+  }, [focusShellInput, modeKey]);
+
+  /** A block's "AI에게 보내기": into the open AI input's draft, or open it with that block. */
+  const sendBlockToAi = useCallback((block: TerminalBlockEntry): void => {
+    if (inputModeRef.current === 'ai') {
+      queueBlockAttachment(block);
+      focusAiInput();
+      return;
+    }
+    enterAiInput(block);
+  }, [enterAiInput, focusAiInput, queueBlockAttachment]);
+
+  const pickAiTarget = useCallback((choice: string): void => {
+    pickedRef.current = choice;
+    saveSessionViewState<string>(pickKey, choice);
+    setAiTarget(computeAiTarget());
+    focusAiInput();
+  }, [computeAiTarget, focusAiInput, pickKey]);
+
+  const settleAttachments = useCallback((applied: readonly string[], refused: readonly string[]): void => {
+    for (const runId of [...applied, ...refused]) offeredRunsRef.current.add(runId);
+    setPendingAttachments((current) => current.filter((item) => !applied.includes(item.runId) && !refused.includes(item.runId)));
+    if (refused.length > 0) setAiNotice(t('terminalAi.attachmentsFull'));
+  }, [t]);
+
+  const announceSent = useCallback((sentSessionId: string): void => {
+    aiHost?.notifySent(sentSessionId, paneRef.current?.ownerDocument ?? document);
+  }, [aiHost]);
+
+  // A pane reopened in AI mode (tab moved, window changed) comes back to it.
+  useEffect(() => {
+    if (!aiHost || readSessionViewState<TerminalInputMode>(modeKey) !== 'ai') return;
+    setAiTarget(computeAiTarget());
+    setInputMode('ai');
+    // Mount only: later mode changes are the person's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // M4 attach-on-bind: latest `attachToRun` (defined below, after
   // `bindActiveController`) in a ref so the committed-session catch-up effect
@@ -530,7 +662,13 @@ export function TerminalPane({
     const wasActive = previousTakeoverRef.current;
     previousTakeoverRef.current = activeTakeover;
     if (!wasActive || activeTakeover) return;
-    const raf = requestAnimationFrame(() => cmdInputRef.current?.focus());
+    const raf = requestAnimationFrame(() => {
+      if (inputModeRef.current === 'ai') {
+        paneRef.current?.querySelector<HTMLTextAreaElement>('.terminal-ai [data-testid="structured-agent-composer-input"]')?.focus();
+      } else {
+        cmdInputRef.current?.focus();
+      }
+    });
     return () => cancelAnimationFrame(raf);
   }, [activeTakeover]);
 
@@ -897,6 +1035,8 @@ export function TerminalPane({
       getSnapshot,
       insertText: (text): PaneActionResult => {
         if (sessionDead) return { ok: false, reason: 'dead' };
+        // Text for the shell (a path, a launched command) goes to the shell line.
+        if (inputMode === 'ai') leaveAiInput();
         setCommand((previous) =>
           previous === '' || /\s$/.test(previous) ? `${previous}${text}` : `${previous} ${text}`,
         );
@@ -918,13 +1058,15 @@ export function TerminalPane({
       },
       focus: (): boolean => {
         const active = activeController.current?.getSnapshot();
-        return focusPaneSurface(
-          cmdInputRef.current,
-          active?.status === 'running' && active.shape === 'pty',
-        );
+        const runningPty = active?.status === 'running' && active.shape === 'pty';
+        if (inputMode === 'ai' && !runningPty) {
+          const box = paneRef.current?.querySelector<HTMLTextAreaElement>('.terminal-ai [data-testid="structured-agent-composer-input"]');
+          if (box?.isConnected) { box.focus(); return box.ownerDocument.activeElement === box; }
+        }
+        return focusPaneSurface(cmdInputRef.current, runningPty);
       },
     };
-  }, [panelId, sessionId, currentCwd, history, command, activeRunning, sessionDead, runText]);
+  }, [panelId, sessionId, currentCwd, history, command, activeRunning, sessionDead, runText, inputMode, leaveAiInput]);
 
   useEffect(() => registerPane(panelId, {
     getSnapshot: () => paneHandleRef.current!.getSnapshot(),
@@ -1106,6 +1248,7 @@ export function TerminalPane({
       const inputWasClicked = input !== null
         && isDomNode(target)
         && (target === input || input.contains(target));
+      const blockId = isDomElement(target) ? target.closest('[data-block-id]')?.getAttribute('data-block-id') ?? undefined : undefined;
       return {
         kind: inputWasClicked ? 'input' : 'pane',
         selectedText: inputWasClicked
@@ -1114,6 +1257,7 @@ export function TerminalPane({
         ownerDocument: input?.ownerDocument ?? paneRef.current?.ownerDocument ?? document,
         draftSelectionStart,
         draftSelectionEnd,
+        ...(blockId ? { blockId } : {}),
       };
     },
     [command],
@@ -1207,6 +1351,12 @@ export function TerminalPane({
           }
         },
       },
+      ...((): TerminalContextMenuItem[] => {
+        const block = aiHost && paneContextMenu.source.blockId
+          ? blocksRef.current.find((entry) => entry.id === paneContextMenu.source.blockId && entry.controller)
+          : undefined;
+        return block ? [{ action: 'send-to-ai', label: t('terminalAi.sendBlock'), onClick: () => sendBlockToAi(block) }] : [];
+      })(),
     ]
     : [];
 
@@ -1251,13 +1401,24 @@ export function TerminalPane({
       data-testid="pane"
       data-session-id={sessionId ?? undefined}
       data-runtime-tier={runtimeLifecycleTier}
+      onKeyDownCapture={(event) => {
+        // Ctrl+. switches the prompt line between the shell and the AI input. A full-screen
+        // program keeps every key; '.' is not a letter or digit, so the shell loses nothing.
+        if (!aiHost || event.code !== 'Period' || !event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+        if (event.nativeEvent.isComposing || activeTakeover) return;
+        if (isDomElement(event.target) && event.target.closest('.xterm')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (inputModeRef.current === 'ai') leaveAiInput();
+        else enterAiInput();
+      }}
       onContextMenu={(event) => {
         if (
           event.defaultPrevented
           || event.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches
           || (
             isDomElement(event.target)
-            && event.target.closest('.terminal-context-menu')
+            && event.target.closest('.terminal-context-menu, .terminal-ai')
           )
         ) {
           return;
@@ -1278,7 +1439,7 @@ export function TerminalPane({
           || !isTerminalContextMenuKey(event.nativeEvent)
           || (
             isDomElement(event.target)
-            && event.target.closest('.terminal-context-menu')
+            && event.target.closest('.terminal-context-menu, .terminal-ai')
           )
         ) {
           return;
@@ -1337,6 +1498,19 @@ export function TerminalPane({
           pendingLabel={t('terminalPane.starting')}
           onDismiss={handleDismiss}
           variant="instrument"
+          {...(aiHost ? { menuFor: (entry: TerminalBlockEntry & { readonly controller: BlockController }) => (
+            <Menu
+              label={t('terminalAi.blockMenu')}
+              placement="bottom-end"
+              trigger={(
+                <button type="button" className="btn block-menu" aria-label={t('terminalAi.blockMenu')} data-testid="block-menu">
+                  <span aria-hidden="true">⋯</span>
+                </button>
+              )}
+            >
+              <MenuItem onSelect={() => sendBlockToAi(entry)} data-testid="block-send-to-ai">{t('terminalAi.sendBlock')}</MenuItem>
+            </Menu>
+          ) } : {})}
         />
       </div>
 
@@ -1399,11 +1573,13 @@ export function TerminalPane({
 
       {/* The prompt dock: one big prompt line (sign, command, its actions) and under it the
           line naming the terminal and its folder. Hidden while a full-screen program owns the pane. */}
-      <div className="term-dock" data-testid="term-dock">
+      <div className="term-dock" data-testid="term-dock" data-mode={inputMode}>
       <div className="term-dock__line">
         <span className="prompt-sigil prompt-sigil--input term-dock__sig" aria-hidden="true">
-          &gt;
+          {inputMode === 'ai' ? '?' : '>'}
         </span>
+        {/* The shell line stays mounted (draft, recovery, IME) while the AI input shows. */}
+        <div className="term-dock__shell" hidden={inputMode === 'ai'}>
         <input
           ref={cmdInputRef}
           className="cmd-input"
@@ -1605,13 +1781,55 @@ export function TerminalPane({
         >
           {activeIsCodex ? t('terminalPane.forceStop') : t('common.cancel')}
         </button>
+        </div>
+        {/* Mounted once opened and kept while hidden: switching back and forth keeps the box and its catalogs. */}
+        {aiHost && aiTarget && (
+          <div className="term-dock__ai" hidden={inputMode !== 'ai'}>
+            <TerminalAiDock
+              host={aiHost}
+              target={aiTarget}
+              {...((): { projectId?: string } => { const projectId = terminalProjectId(); return projectId ? { projectId } : {}; })()}
+              pending={pendingAttachments}
+              onPendingSettled={settleAttachments}
+              onSent={announceSent}
+              onStarted={(startedSessionId) => { pickAiTarget(startedSessionId); announceSent(startedSessionId); }}
+              onNewConversation={() => pickAiTarget('new')}
+            />
+          </div>
+        )}
+        {aiHost && (
+          <div className="term-mode" role="group" aria-label={t('terminalAi.modeGroup')}>
+            <button type="button" className="term-mode__option" aria-pressed={inputMode === 'shell'}
+              onClick={() => { if (inputMode !== 'shell') leaveAiInput(); }} data-testid="terminal-mode-shell">
+              {t('terminalAi.modeShell')}
+            </button>
+            <button type="button" className="term-mode__option" aria-pressed={inputMode === 'ai'}
+              onClick={() => { if (inputMode !== 'ai') enterAiInput(); }} data-testid="terminal-mode-ai">
+              {t('terminalAi.modeAi')}
+            </button>
+          </div>
+        )}
       </div>
+      {aiNotice && inputMode === 'ai' && (
+        <p className="term-dock__notice" role="status" data-testid="terminal-ai-notice">{aiNotice}</p>
+      )}
       <div className="term-dock__ctx">
         {title && <span className="term-dock__title">{title}</span>}
         {currentCwd && (
           <span className="prompt-cwd" title={currentCwd} data-testid="prompt-cwd">
             {formatCwd(currentCwd, 72)}
           </span>
+        )}
+        {aiHost && inputMode === 'ai' && aiTarget && (
+          <TerminalTargetPicker
+            host={aiHost}
+            target={aiTarget}
+            {...((): { projectId?: string } => { const projectId = terminalProjectId(); return projectId ? { projectId } : {}; })()}
+            onPick={pickAiTarget}
+          />
+        )}
+        {aiHost && (
+          <span className="term-dock__hint"><kbd>Ctrl .</kbd> {t('terminalAi.modeHint')}</span>
         )}
       </div>
       </div>

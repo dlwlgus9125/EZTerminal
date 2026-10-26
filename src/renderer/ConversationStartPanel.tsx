@@ -68,10 +68,16 @@ export interface ConversationStartPanelProps {
   readonly workspaceFolders?: (workspaceId: string) => ConversationFolders | undefined;
   /** Opens the editor of the chosen working folder's project. */
   readonly onEditProject?: (projectId: string) => void;
+  /**
+   * `composer`: only the message box with its settings (a terminal's AI input when it has no
+   * conversation to send to yet); the start form's notices and recovery actions sit above it.
+   */
+  readonly presentation?: 'full' | 'composer';
 }
 
 export function ConversationStartPanel({ identity, viewStateScope = 'desktop', entry: initialEntry, projectId, workspaceId, seed, seedDraftText, onSeedDraftApplied,
-  snapshot, access, storage, capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted, workspaceFolders, onEditProject }: ConversationStartPanelProps): JSX.Element {
+  snapshot, access, storage, capabilityClient, disconnected, variant = 'desktop', onOpenHistory, onOpenSettings, onContinueCli, onReviewChange, onStarted, workspaceFolders, onEditProject,
+  presentation = 'full' }: ConversationStartPanelProps): JSX.Element {
   const { i18n } = useAppTranslation();
   const ko = i18n.language.startsWith('ko');
   const text = useCallback((k: string, e: string) => ko ? k : e, [ko]);
@@ -326,8 +332,10 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
     {!!view.start && !busy && <Button variant="ghost" onClick={() => void retry()} disabled={disconnected}>{text('전송 상태 확인 · 다시 시도', 'Check delivery / retry')}</Button>}
     {!!view.start && !view.start.create && !view.start.resume && !view.start.sessionId && !view.start.submit && !busy && <Button variant="ghost" onClick={() => void recovery.saveComposition({ start: undefined })}>{text('메시지와 설정 수정', 'Edit message and settings')}</Button>}
   </div>;
-  return <div ref={host} className="conversation-start" data-testid="conversation-start" aria-busy={busy || undefined}>
-    <StructuredAgentSessionPanel sessionId={identity} viewStateKey={`${viewStateScope}:conversation:${identity}`} title={entry?.title ?? text('새 대화', 'New conversation')}
+  return <div ref={host} className="conversation-start" data-testid="conversation-start" aria-busy={busy || undefined}
+    {...(presentation === 'composer' ? { 'data-presentation': 'composer' } : {})}>
+    {presentation === 'composer' && settingsControls}
+    <StructuredAgentSessionPanel sessionId={identity} {...(presentation === 'composer' ? { presentation } : {})} viewStateKey={`${viewStateScope}:conversation:${identity}`} title={entry?.title ?? text('새 대화', 'New conversation')}
       providerId={settings.providerId} providerLabel={selectedProvider?.label ?? entry?.providerId ?? 'AI'}
       usage={disconnected ? undefined : snapshot?.providerUsage?.[settings.providerId]}
       workspace={selectedWorkspace ?? { id: settings.workspaceId, label: entry?.projectTitle ?? text('프로젝트', 'Project'), kind: 'local', path: entry?.roots[0] }}

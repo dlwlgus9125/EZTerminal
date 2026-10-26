@@ -1882,6 +1882,260 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   font-size: 0.75rem;
 }
 
+/* The shell line and the AI input share the prompt line; the hidden one stays mounted. */
+.term-dock__shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.term-dock__shell[hidden],
+.term-dock__ai[hidden] {
+  display: none;
+}
+
+.term-dock__ai {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-block: 0.5rem;
+}
+
+/* The AI sign turns to the info signal; Matrix lights it. */
+.term-dock[data-mode='ai'] .term-dock__sig {
+  align-self: flex-start;
+  margin-top: 0.75rem;
+  color: var(--ui-info);
+}
+
+.term-dock[data-mode='ai'] .term-dock__line {
+  align-items: flex-start;
+}
+
+[data-theme='matrix'] .dv-groupview.dv-active-group .term-dock[data-mode='ai'] .term-dock__sig,
+[data-theme='matrix'] .term-dock[data-mode='ai'] .term-dock__sig {
+  text-shadow: 0 0 12px rgba(111, 214, 232, 0.6);
+}
+
+/* Segmented Shell | AI switch. */
+.term-mode {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+}
+
+.term-dock[data-mode='ai'] .term-mode {
+  align-self: flex-start;
+  margin-top: 0.75rem;
+}
+
+.term-mode__option {
+  min-width: 2.75rem;
+  padding: 0.2rem 0.6rem;
+  border: none;
+  border-radius: calc(var(--ui-radius-sm) - 1px);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-label);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.term-mode__option[aria-pressed='true'] {
+  background: var(--ui-accent);
+  color: var(--ui-on-accent);
+  font-weight: 700;
+}
+
+.term-mode__option:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
+.term-dock__notice {
+  margin: 0;
+  padding: 0.35rem 1.125rem;
+  border-top: 1px solid var(--ui-border-subtle);
+  color: var(--ui-warning);
+  font-size: var(--ui-font-size-12);
+}
+
+.term-dock__hint {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.term-dock__hint kbd {
+  font-family: var(--ui-font-label);
+  padding: 0 0.3rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: 3px;
+  color: var(--ui-text-secondary);
+}
+
+.terminal-ai-target {
+  min-width: 0;
+  padding: 0 0.25rem;
+  border: none;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.terminal-ai-target b {
+  color: var(--ui-text-secondary);
+}
+
+.terminal-ai-target:hover b,
+.terminal-ai-target:focus-visible b {
+  color: var(--ui-text-primary);
+}
+
+/* The AI box inside the dock: no panel chrome of its own, the full width of the line. */
+.terminal-ai .structured-agent--composer-only,
+.terminal-ai .conversation-start {
+  min-height: 0;
+  background: transparent;
+}
+
+.terminal-ai .structured-agent--live .structured-agent-composer {
+  width: 100%;
+  margin: 0;
+}
+
+/* Terminal output shows once, in the chips above with its preview — not again in the box. */
+.terminal-ai .structured-agent-composer__attachments li[data-attachment-id^='terminal-output-'] {
+  display: none;
+}
+
+.terminal-ai .structured-agent-composer__attachments:not(:has(li:not([data-attachment-id^='terminal-output-']))) {
+  display: none;
+}
+
+.terminal-ai-target-menu {
+  flex: 0 1 auto;
+  min-width: 8rem;
+  max-width: 40%;
+  display: inline-flex;
+}
+
+.terminal-ai-target-menu .terminal-ai-target {
+  max-width: 100%;
+}
+
+.terminal-ai-chips {
+  font-family: var(--ui-font-body);
+}
+
+.terminal-ai-missing {
+  margin: 0.75rem 0;
+  color: var(--ui-text-muted);
+}
+
+/* The output attached to the message, readable before it is sent. */
+.terminal-ai-chips {
+  margin-bottom: 0.5rem;
+}
+
+.terminal-ai-chips__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.terminal-ai-chip {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  max-width: 100%;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+}
+
+.terminal-ai-chip details {
+  min-width: 0;
+}
+
+.terminal-ai-chip summary {
+  padding: 0.2rem 0.5rem;
+  font-family: var(--ui-font-terminal);
+  font-size: 0.75rem;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24rem;
+}
+
+.terminal-ai-chip__preview {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  max-height: 12rem;
+  max-width: min(48rem, 70vw);
+  overflow: auto;
+  border-top: 1px solid var(--ui-border-subtle);
+  font-family: var(--ui-font-terminal);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--ui-text-secondary);
+  white-space: pre;
+}
+
+.terminal-ai-chip__remove {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+}
+
+.terminal-ai-chip__remove:hover,
+.terminal-ai-chip__remove:focus-visible {
+  color: var(--ui-danger);
+}
+
+.terminal-ai-chips__warning {
+  margin: 0.3rem 0 0;
+  font-size: var(--ui-font-size-12);
+  color: var(--ui-text-muted);
+}
+
+.terminal-ai-chips__warning[data-sensitive] {
+  color: var(--ui-warning);
+  font-weight: 600;
+}
+
+/* The block's ⋯ menu shows with the other block actions. */
+.block-menu {
+  padding: 0.05rem 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.block:hover .block-menu,
+.block-menu:focus-visible,
+.block-menu[aria-expanded='true'] {
+  opacity: 1;
+}
+
 /* Agent Attention Hub ----------------------------------------------------- */
 
 .agent-hub {

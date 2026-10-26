@@ -88,7 +88,7 @@ describe('tableToText', () => {
 describe('terminalOutputAttachment', () => {
   it('is a valid text attachment the conversation can send', () => {
     const excerpt = buildBlockExcerpt({ ...base, output: 'ok' });
-    const attachment = terminalOutputAttachment('run-1', 'git log --oneline -3', excerpt);
+    const attachment = terminalOutputAttachment('run-1', 'git log --oneline -3', excerpt, '터미널');
     expect(attachment).toMatchObject({ id: 'terminal-output-run-1', name: '터미널 · git log --oneline -3', kind: 'text', mimeType: 'text/plain' });
     expect(attachment.data).toBe(excerpt.text);
     expect(isTerminalAttachment(attachment)).toBe(true);
@@ -97,7 +97,7 @@ describe('terminalOutputAttachment', () => {
 
   it('shortens a long command in the name', () => {
     const attachment = terminalOutputAttachment('r', 'x'.repeat(100), buildBlockExcerpt({ ...base, output: '' }));
-    expect(attachment.name).toBe(`터미널 · ${'x'.repeat(60)}…`);
+    expect(attachment.name).toBe(`Terminal · ${'x'.repeat(60)}…`);
   });
 
   it('four full excerpts still fit the message size limit', () => {

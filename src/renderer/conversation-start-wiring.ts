@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 
 import type { ConversationFolders } from '../shared/conversation-folders';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import type { ChatStateAccess } from './chat-recovery';
 import type { ConversationStartAccess } from './conversation-start';
+import { desktopChatStateAccess } from './use-chat-recovery';
 
 /**
  * What the production new-conversation form needs from the desktop host: the
@@ -11,13 +13,14 @@ import type { ConversationStartAccess } from './conversation-start';
  */
 export function useConversationStartWiring(snapshot: DaemonSnapshot | null, projectId: string | undefined): {
   readonly access: ConversationStartAccess;
-  readonly storage: { readonly chatStateRead: typeof window.ezterminal.chatStateRead; readonly chatStateWrite: typeof window.ezterminal.chatStateWrite };
+  readonly storage: ChatStateAccess;
   readonly capabilityClient: { readonly list: typeof window.ezterminal.agentCapabilitiesList; readonly manage: typeof window.ezterminal.agentCapabilitiesManage };
   readonly workspaceFolders?: (workspaceId: string) => ConversationFolders | undefined;
 } {
   const access = useMemo<ConversationStartAccess>(() => ({ history: window.ezterminal,
     getSnapshot: () => window.ezterminal.getDaemonSnapshot(), sendCommand: command => window.ezterminal.sendDaemonCommand(command), principal: { kind: 'desktop', id: 'renderer-agent-ui' } }), []);
-  const storage = useMemo(() => ({ chatStateRead: window.ezterminal.chatStateRead, chatStateWrite: window.ezterminal.chatStateWrite }), []);
+  // The renderer-wide storage object, so two boxes on one draft share its controller.
+  const storage = desktopChatStateAccess;
   const capabilityClient = useMemo(() => ({ list: window.ezterminal.agentCapabilitiesList, manage: window.ezterminal.agentCapabilitiesManage }), []);
   // The folders each workspace of the project would bring, for the start form's folder setting.
   // Asked again whenever the project's workspaces change (folders added, removed or moved).

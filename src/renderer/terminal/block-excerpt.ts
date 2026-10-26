@@ -182,12 +182,12 @@ export function excerptFromController(controller: BlockController): BlockExcerpt
 
 export const TERMINAL_ATTACHMENT_PREFIX = 'terminal-output-';
 
-/** The excerpt as a text attachment of the conversation draft. */
-export function terminalOutputAttachment(runId: string, command: string, excerpt: BlockExcerpt): ChatAttachment {
+/** The excerpt as a text attachment of the conversation draft, named `<label> · <command>`. */
+export function terminalOutputAttachment(runId: string, command: string, excerpt: BlockExcerpt, label = 'Terminal'): ChatAttachment {
   const short = command.length > NAME_COMMAND_CHARS ? `${command.slice(0, NAME_COMMAND_CHARS)}…` : command;
   return {
     id: `${TERMINAL_ATTACHMENT_PREFIX}${runId}`.slice(0, 200),
-    name: `터미널 · ${short}`.slice(0, 240),
+    name: `${label} · ${short}`.slice(0, 240),
     mimeType: 'text/plain',
     kind: 'text',
     data: excerpt.text.length > 0 ? excerpt.text : `$ ${command}`,

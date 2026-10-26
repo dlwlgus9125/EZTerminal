@@ -1,5 +1,7 @@
 import { useRendererRecovery } from './useRendererRecovery';
 import { useAppChatInbox } from './use-app-chat-inbox';
+import { createTerminalAiHost, TerminalAiContext } from './terminal/terminal-ai-host';
+import { noteConversationViewed } from './conversation-views';
 import { useDesktopAppearance } from './useDesktopAppearance';
 import { useTerminalPreferences } from './useTerminalPreferences';
 import { useProjectDocumentNavigation } from './useProjectDocumentNavigation';
@@ -1910,6 +1912,35 @@ export function App(): JSX.Element {
     revealOpenedSession();
   }, [panelPreview, sessionMirroringCoordinator, revealOpenedSession]);
 
+  // Terminal AI input (I3): the shell's live snapshot, opening a conversation, and the note
+  // after a message went from a terminal. One host for every terminal; only an open AI dock
+  // re-renders when the snapshot changes.
+  const terminalAiHostRef = useRef<ReturnType<typeof createTerminalAiHost> | null>(null);
+  terminalAiHostRef.current ??= createTerminalAiHost({ openConversation: () => undefined, notifySent: () => undefined });
+  const terminalAiHost = terminalAiHostRef.current;
+  terminalAiHost.setActions({
+    openConversation: (sessionId) => {
+      const title = appChatInbox.snapshot?.sessions.find((session) => session.id === sessionId)?.title;
+      // The opening helper also brings the work mode forward (revealOpenedSession).
+      openStructuredAgentSession({ sessionId, ...(title ? { title } : {}) }, { preview: false });
+    },
+    notifySent: (sessionId, ownerDocument) => {
+      const title = appChatInbox.snapshot?.sessions.find((session) => session.id === sessionId)?.title ?? '';
+      pushToast({
+        title: t('terminalAi.sent', { title }),
+        variant: 'success',
+        action: (
+          <Button size="sm" variant="ghost" onClick={() => terminalAiHost.openConversation(sessionId)} data-testid="terminal-ai-open-conversation">
+            {t('terminalAi.openConversation')}
+          </Button>
+        ),
+      }, ownerDocument);
+    },
+  });
+  useEffect(() => { terminalAiHost.set(appChatInbox.snapshot); }, [appChatInbox.snapshot, terminalAiHost]);
+  // "The last conversation I was in": the terminal sends there by default.
+  useEffect(() => { if (activeConversationSessionId) noteConversationViewed(activeConversationSessionId); }, [activeConversationSessionId]);
+
   // A clicked notification for a structured Agent conversation opens it.
   useEffect(() => window.ezterminalDesktop?.onStructuredAgentReveal?.((sessionId) => openStructuredAgentSession({ sessionId })),
     [openStructuredAgentSession]);
@@ -3449,6 +3480,7 @@ export function App(): JSX.Element {
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
                 <PaneApprovalContext.Provider value={paneApprovalValue}>
+                <TerminalAiContext.Provider value={terminalAiHost}>
                 <AgentOrchestrationContext.Provider value={agentOrchestrationSnapshot}>
                 <StructuredAgentCreateRecoveryContext.Provider value={structuredAgentCreateRecoveryValue}>
                 <StructuredAgentNavigationContext.Provider value={structuredAgentNavigationValue}>
@@ -3489,6 +3521,7 @@ export function App(): JSX.Element {
                 </StructuredAgentNavigationContext.Provider>
                 </StructuredAgentCreateRecoveryContext.Provider>
                 </AgentOrchestrationContext.Provider>
+                </TerminalAiContext.Provider>
                 </PaneApprovalContext.Provider>
               </AgentTabStatusContext.Provider>
             </OpenClawOverlayContext.Provider>

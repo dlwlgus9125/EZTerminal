@@ -1590,7 +1590,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             onClick={() => updateDraft({ ...valueRef.current, replyTo: undefined })}><X /></Button>
         </div>}
         {attachments.length > 0 && <ul className="structured-agent-composer__attachments">
-          {attachments.map((attachment) => <li key={attachment.id} data-kind={attachment.kind}>
+          {attachments.map((attachment) => <li key={attachment.id} data-kind={attachment.kind} data-attachment-id={attachment.id}>
             {attachment.kind === 'image'
               ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} />
               : <Paperclip aria-hidden="true" />}
