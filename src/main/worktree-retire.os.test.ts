@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,7 +18,8 @@ function git(cwd: string, args: readonly string[]): string {
 
 /** A repository and an EZTerminal worktree holding a captured run result (staged, kept by a ref), as an attempt leaves it. */
 async function capturedAttempt(options: { sessionCwds?: () => string[]; runner?: GitRunner } = {}) {
-  const base = mkdtempSync(path.join(tmpdir(), 'ez-retire-'));
+  // The long form: Git lists worktrees by it, and a CI runner's TEMP is an 8.3 alias (RUNNER~1).
+  const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'ez-retire-')));
   bases.add(base);
   const repo = path.join(base, 'repo');
   const userData = path.join(base, 'user-data');
