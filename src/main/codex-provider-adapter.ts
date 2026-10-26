@@ -70,11 +70,14 @@ const MAX_SUBMITTED_COMMANDS = 64;
 /** /btw: said in the fork's user text, after the cached conversation, so the prefix stays cached. */
 const SIDE_QUESTION_INSTRUCTION = 'This is a side question about the conversation so far. You have NO tools: do not run commands, '
   + 'read files, edit anything or start sub-agents. Answer only from what is already in this conversation, in one short reply.';
-/** Items a side question's fork may produce; any other item is a tool and stops it. */
-// Talking, thinking, a plan outline and an automatic compaction are not tools; anything else stops the fork.
+/** Items a side question's fork may produce (talking, thinking, a plan outline, an automatic compaction); any other item is a tool and stops it. */
 const SIDE_QUESTION_ITEM_TYPES = new Set(['userMessage', 'agentMessage', 'reasoning', 'plan', 'contextCompaction']);
-/** Forks whose ask ended; their late frames (an interrupted turn's end, late usage) are still dropped. */
-const MAX_ENDED_SIDE_QUESTIONS = 64;
+/**
+ * `thread/fork` can answer late; a reply after its timeout would leave the fork loaded with no id to let go.
+ * The client's longest timeout (10 min) is twice the host's limit; a fork answered later stays loaded only
+ * until that app-server exits (ephemeral: nothing of it is written).
+ */
+const SIDE_QUESTION_FORK_TIMEOUT_MS = 600_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
 const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
@@ -118,6 +121,8 @@ interface StartedItem {
 interface SessionState {
   readonly sessionId: string;
   readonly providerSessionId: string;
+  /** The app-server died under this thread; no side question until a turn starts on it again. */
+  appServerExited?: boolean;
   readonly workspaceRoot: string;
   /** The project's other folders the thread works in, as last sent to Codex. */
   additionalRoots: readonly string[];
@@ -819,6 +824,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly sideQuestions = new Set<SideQuestion>();
   private readonly endedSideQuestionThreads = new Set<string>();
+  /** Unexpected app-server exits so far: a turn/start answered just before one must not mark its thread live again. */
+  private appServerExits = 0;
   private readonly unregister: Array<() => void> = [];
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
   private lifecycleTail: Promise<void> = Promise.resolve();
@@ -1108,6 +1115,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
         ...(context.managedExecution ? { 'features.multi_agent': false } : {}),
         ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
+      const exitsBeforeStart = this.appServerExits;
       const result = asObject(await this.requireConnection().request('thread/start', {
         cwd: context.workspaceRoot,
         runtimeWorkspaceRoots: [context.workspaceRoot, ...(context.additionalRoots ?? [])],
@@ -1123,6 +1131,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       if (!providerSessionId) throw new Error('Codex thread/start returned no thread id.');
       this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, providerSessionId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
+      // Answered just before the app-server exited (a close read in the same chunk runs first): born dead.
+      if (this.appServerExits !== exitsBeforeStart) state.appServerExited = true;
       state.threadMode = 'default';
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
       return this.handleFor(state);
@@ -1152,6 +1162,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         ...(context.environment ? { 'shell_environment_policy.set': context.environment, 'shell_environment_policy.include_only': ['*'] } : {}),
         ...(context.managedExecution ? { 'features.multi_agent': false } : {}),
         ...(this.enableUpdatePlan ? { 'tools.update_plan': { enabled: true } } : {}) };
+      const exitsBeforeResume = this.appServerExits;
       const result = asObject(await this.requireConnection().request('thread/resume', {
         threadId: context.providerSessionId,
         cwd: context.workspaceRoot,
@@ -1168,6 +1179,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       }
       this.assertLifecycleGeneration(lifecycleGeneration);
       const state = this.registerSession(context, resumedId, asString(result?.model) ?? context.model, asString(result?.reasoningEffort));
+      if (this.appServerExits !== exitsBeforeResume) state.appServerExited = true;
       const resumedMode = asString(asObject(result?.collaborationMode)?.mode);
       if (resumedMode === 'plan' || resumedMode === 'default') state.threadMode = resumedMode;
       this.emit({ kind: 'session-state', sessionId: state.sessionId, state: 'idle' });
@@ -1224,6 +1236,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
           ...permissionUpdateSettings('standard', [state.workspaceRoot, ...nextRoots]),
         }, { signal }));
       }
+      const exitsBeforeTurn = this.appServerExits;
       const result = asObject(await this.requireConnection().request('turn/start', {
         threadId: input.providerSessionId,
         clientUserMessageId: input.commandId,
@@ -1241,6 +1254,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const turn = asObject(result?.turn);
       const providerTurnId = asString(turn?.id);
       if (!providerTurnId) throw new Error('Codex turn/start returned no turn id.');
+      // A turn started on this thread: its app-server is live again, so side questions may fork it — unless that
+      // app-server exited after answering (a close read in the same chunk runs before this continuation).
+      if (this.appServerExits === exitsBeforeTurn) state.appServerExited = false;
       if (nextRoots) state.additionalRoots = [...nextRoots];
       if (collaborationMode) state.threadMode = collaborationMode.mode;
       const activeTurn = state.activeTurn;
@@ -1437,7 +1453,10 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
    */
   async askSideQuestion(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer> {
     const connection = this.connection;
-    if (this.disposed || !connection || this.sessions.get(input.sessionId)?.providerSessionId !== input.providerSessionId) {
+    const exitsAtAsk = this.appServerExits;
+    const live = this.sessions.get(input.sessionId);
+    // After the app-server died, a request would relaunch Codex just to ask: the thread is not live until a turn starts again.
+    if (this.disposed || !connection || live?.providerSessionId !== input.providerSessionId || live.appServerExited) {
       throw new ProviderSideQuestionError('not-live');
     }
     if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
@@ -1449,7 +1468,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       const answer = (): string | null => (completedText || streamed).slice(0, SIDE_QUESTION_MAX_ANSWER_CHARS) || null;
       const release = (): void => {
         const threadId = question.threadId;
-        if (!threadId || this.connection !== connection) return;
+        // The fork died with its app-server; a request now would only relaunch Codex (e.g. a fork answered just before a close).
+        if (!threadId || this.connection !== connection || this.appServerExits !== exitsAtAsk) return;
         if (question.turnId && !turnDone) void connection.request('turn/interrupt', { threadId, turnId: question.turnId }).catch(() => undefined);
         void connection.request('thread/unsubscribe', { threadId }).catch(() => undefined);
       };
@@ -1510,7 +1530,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
           forked = asObject(await connection.request('thread/fork', {
             threadId: input.providerSessionId, ephemeral: true, excludeTurns: true,
             sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
-          }));
+          }, { timeoutMs: SIDE_QUESTION_FORK_TIMEOUT_MS }));
         } catch (error) {
           finish(forkUnsupported(error) ? 'unsupported' : 'failed');
           return;
@@ -1548,11 +1568,13 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     return this.endedSideQuestionThreads.has(threadId) ? null : undefined;
   }
 
+  /**
+   * Kept for the adapter's life (one short id per side question asked in this app run), even across app-server
+   * restarts: a fork's late error or usage — possibly already queued when its connection closed — must never turn
+   * into a global provider error, which is logged and could echo the question.
+   */
   private retireSideQuestionThread(threadId: string): void {
     this.endedSideQuestionThreads.add(threadId);
-    if (this.endedSideQuestionThreads.size > MAX_ENDED_SIDE_QUESTIONS) {
-      this.endedSideQuestionThreads.delete(this.endedSideQuestionThreads.values().next().value as string);
-    }
   }
 
   subscribe(listener: AgentProviderEventListener): () => void {
@@ -1657,7 +1679,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       approval.resolve(this.approvalResponse(approval, 'deny'));
     }
     try {
-      await this.requireConnection().request('thread/unsubscribe', { threadId: providerSessionId });
+      // A thread that died with its app-server is subscribed nowhere; asking would only relaunch Codex.
+      if (!state.appServerExited) await this.requireConnection().request('thread/unsubscribe', { threadId: providerSessionId });
     } finally {
       const stillOwnsSession = this.sessions.get(state.sessionId) === state;
       if (stillOwnsSession) this.sessions.delete(state.sessionId);
@@ -1816,14 +1839,17 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.unregister.push(
       connection.onNotification('*', (params, method) => this.handleNotification(method, params)),
       connection.onClose((event) => {
-        // The forks died with the app-server: nothing is left to interrupt or unsubscribe.
+        // The forks died with the app-server: nothing is left to interrupt or unsubscribe. Their ids stay retired:
+        // frames already queued from them may still be delivered after this close.
         for (const question of [...this.sideQuestions]) question.end('failed', true);
         if (event.expected || this.disposed) return;
         for (const approval of this.pendingApprovals.values()) {
           approval.resolve(this.approvalResponse(approval, 'deny'));
         }
         this.pendingApprovals.clear();
+        this.appServerExits += 1;
         for (const state of this.sessions.values()) {
+          state.appServerExited = true;
           state.deltas.dispose();
           this.clearPreResponseLifecycle(state);
           if (state.activeTurn) {

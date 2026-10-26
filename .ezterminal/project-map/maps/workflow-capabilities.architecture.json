@@ -137,8 +137,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/agent-completion.ts",
-          "startLine": 38,
-          "endLine": 71,
+          "startLine": 39,
+          "endLine": 72,
           "lineDigest": "sha256:5fec3fac777f37d182fe578b790513e983e0a2ca85dab856722be0883eea0776",
           "claim": "Suggestions distinguish application actions (history, plan, model, new conversation, start over in place) from native skills; insertion replaces only the current token and preserves other draft fields."
         }
@@ -324,8 +324,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 971,
-          "endLine": 1060,
+          "startLine": 978,
+          "endLine": 1067,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         },
@@ -480,8 +480,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/codex-provider-adapter.ts",
-          "startLine": 971,
-          "endLine": 1060,
+          "startLine": 978,
+          "endLine": 1067,
           "lineDigest": "sha256:ead3e1024a2c2eaa1df987c905a1613617acf4209b1d04d0f45edcfde5780450",
           "claim": "Codex metadata uses model, skill, installed-plugin, MCP-status and cwd-specific config RPCs without thread or turn creation; disabled state and native scopes are distinct."
         }

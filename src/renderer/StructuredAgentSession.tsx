@@ -1224,8 +1224,8 @@ export interface StructuredAgentComposerProps {
     readonly open: boolean;
     readonly controlsId: string;
     readonly buttonRef: RefObject<HTMLButtonElement>;
-    /** Ask the message box's text and open the window. */
-    readonly onAsk: (text: string) => void;
+    /** Ask the message box's text and open the window; false when it was not taken (the box keeps it). */
+    readonly onAsk: (text: string) => boolean;
     readonly onOpen: () => void;
   };
   /** Shift+Tab in the message box switches plan mode, as the plan button does. */
@@ -1236,6 +1236,14 @@ export interface StructuredAgentComposerProps {
     /** Why it cannot switch now; announced instead of switching. */
     readonly blockedReason?: string;
   };
+}
+
+/** A message box holding `/btw …` is a side question being typed: its text never reaches draft storage. */
+const SIDE_QUESTION_DRAFT = /^\s*\/btw(?:\s|$)/u;
+export function storableDraft(draft: ChatComposerDraft): ChatComposerDraft {
+  const parked = draft.parkedDraft;
+  const kept = parked && SIDE_QUESTION_DRAFT.test(parked.text) ? { ...draft, parkedDraft: { ...parked, text: '', selectionStart: 0, selectionEnd: 0 } } : draft;
+  return SIDE_QUESTION_DRAFT.test(kept.text) ? { ...kept, text: '', selectionStart: 0, selectionEnd: 0 } : kept;
 }
 
 /** Owns the draft below the transcript so streamed items never disturb typing. */
@@ -1296,7 +1304,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     valueRef.current = next;
     setValue(next);
     if (stateKey) saveSessionViewState(stateKey, next);
-    onDraftChange?.(next);
+    onDraftChange?.(storableDraft(next));
   };
   const completion = useAgentCompletion({ value, onChange: updateDraft, inputRef, catalog: capabilityCatalog,
     discovery: capabilityDiscovery, onOpenHistory, disabled, mobile: variant === 'mobile', ...(fileSearch ? { fileSearch } : {}),
@@ -1312,7 +1320,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
     input.style.height = `${input.scrollHeight}px`;
   }, [value.text]);
   useEffect(() => {
-    if (draftState && JSON.stringify(draftState) !== JSON.stringify(valueRef.current)) {
+    // Storage echoes what it was given; a side question it was not given is not overwritten by that echo.
+    if (draftState && JSON.stringify(draftState) !== JSON.stringify(valueRef.current)
+      && JSON.stringify(draftState) !== JSON.stringify(storableDraft(valueRef.current))) {
       valueRef.current = draftState;
       setValue(draftState);
       if (stateKey) saveSessionViewState(stateKey, draftState);
@@ -1665,8 +1675,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
                 const text = valueRef.current.text.trim();
                 const plain = !(valueRef.current.attachments?.length) && !valueRef.current.replyTo && !text.startsWith('/');
                 if (text && plain) {
-                  sideQuestion.onAsk(text);
-                  updateDraft(valueRef.current.parkedDraft ?? { text: '', selectionStart: 0, selectionEnd: 0 });
+                  if (sideQuestion.onAsk(text)) updateDraft(valueRef.current.parkedDraft ?? { text: '', selectionStart: 0, selectionEnd: 0 });
                 } else sideQuestion.onOpen();
               }}
               data-testid="structured-agent-btw"
@@ -2219,7 +2228,8 @@ export function StructuredAgentSessionPanel({
     : !SIDE_QUESTION_PROVIDER_IDS.includes(providerId) ? copy.btwProviderOnly
       : !sideQuestion.available ? copy.btwAfterSend : undefined;
   const openSide = (): void => setSideOpen(true);
-  const askSide = (text: string): void => { sideThread.ask(text); setSideOpen(true); };
+  /** False when the thread refuses it (one already pending, or too long): the caller keeps the text. */
+  const askSide = (text: string): boolean => { const accepted = sideThread.ask(text); setSideOpen(true); return accepted; };
   const appCommands: readonly AppCommand[] = [
     ...(!settingsReadOnly ? [{
       name: 'plan', description: planOn ? copy.planCommandOff : copy.planCommandOn,
@@ -2237,7 +2247,7 @@ export function StructuredAgentSessionPanel({
       ...(!onClearConversation ? { disabledReason: copy.clearUnavailable }
         : settingsLocked || turnCurrent ? { disabledReason: copy.clearAfterTurn } : {}) },
     // Always reserved: `/btw …` is never a prompt. Chosen from the list (no text) it opens the window.
-    { name: 'btw', description: copy.btwCommand, takesText: true, run: (text?: string) => (text?.trim() ? askSide(text) : openSide()),
+    { name: 'btw', description: copy.btwCommand, takesText: true, run: (text?: string) => (text?.trim() ? askSide(text) : (openSide(), true)),
       ...(btwReason ? { disabledReason: btwReason } : {}) },
   ];
   // The Results tab puts review comments into this draft (never sends) and can point at the decision above.

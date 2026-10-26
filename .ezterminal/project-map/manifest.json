@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:318d21d5d43bf290a3f6c12844b38d679d997d90d4302486c9444d053226bd85",
+        "inputDigest": "sha256:795032214b09316c76ddde11dd865d0921efdec21dde1f4908783d5716b5912a",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
+        "reason": "Reviewed (/btw review fixes): drafts never store /btw text, a refused ask keeps the box text, Codex fork timeout, app-server exit races and late frames handled; a dead thread is not unsubscribed. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0443db1cc05d8340f2c9fdbb3f63245c4cac33e6fe7491c21e9bee193de76bcb",
+        "inputDigest": "sha256:f7033d2c0cae16adaaa3b4dcb190dd3f3f75a370447abdb80fad09fef42e21b6",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
+        "reason": "Reviewed (/btw review fixes): drafts never store /btw text, a refused ask keeps the box text, Codex fork timeout/app-server exit/late frames handled. Moved blocks reanchored; one changed block keeps its claim. Existing claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:57258c8ad18c23958187a659e76503430a10ae76a581962365e5f48fcb811bbf",
+        "inputDigest": "sha256:ba59122191eb2e74abeba954e6c56a8e11a9be64cca0e165837c09e900cd6578",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
+        "reason": "Reviewed (/btw review fixes): drafts never store /btw text, a refused ask keeps the box text, Codex fork timeout/app-server exit/late frames handled. Moved blocks reanchored; one changed block keeps its claim. Existing claims hold."
       }
     }
   ]

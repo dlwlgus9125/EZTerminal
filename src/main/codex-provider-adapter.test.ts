@@ -2521,4 +2521,110 @@ describe('Codex side questions (/btw)', () => {
     expect(sent('thread/unsubscribe')).toEqual([]);
     await adapter.dispose();
   });
+
+  it('keeps a dead fork quiet when its frames are delivered after the app-server closed', async () => {
+    const { adapter, connection, events, ask, forkTurnStarted, fork } = await sideQuestionFixture();
+    const pending = ask();
+    await forkTurnStarted();
+    // Read in the same chunk as the frame that closes the connection, so its handlers run after the close.
+    connection.crash();
+    await expectFailure(pending, 'failed');
+    // Only the conversation's own crash report.
+    expect(events.map((event) => event.kind)).toEqual(['provider-error', 'session-state']);
+    await fork('error', { error: { message: `The model failed on "${question}"` }, willRetry: false });
+    await fork('thread/tokenUsage/updated', { tokenUsage: { last: { inputTokens: 1, cachedInputTokens: 1 } } });
+    expect(events).toHaveLength(2);
+    expect(JSON.stringify(events)).not.toContain(question);
+    await adapter.dispose();
+  });
+
+  it('does not ask after the app-server died (that would relaunch Codex) until a turn starts on the thread again', async () => {
+    const { adapter, connection, ask, sent, forkTurnStarted, fork } = await sideQuestionFixture();
+    connection.crash();
+    await expectFailure(ask(), 'not-live');
+    expect(sent('thread/fork')).toEqual([]);
+    await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-2', commandId: 'command-2', prompt: 'Again' });
+    const answered = ask();
+    await forkTurnStarted();
+    await fork('item/completed', { item: { id: 'msg-1', type: 'agentMessage', text: 'Live again.' } });
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', error: null, items: [] } });
+    await expect(answered).resolves.toMatchObject({ text: 'Live again.' });
+    await adapter.dispose();
+  });
+
+  it('keeps the thread dead when the app-server exits right after answering turn/start', async () => {
+    const { adapter, connection, ask, sent } = await sideQuestionFixture();
+    const answer = connection.requestImpl;
+    connection.requestImpl = async (method, params, options) => {
+      const result = await answer(method, params, options);
+      // The close is read in the same chunk as the response, so it lands before submit's continuation.
+      if (method === 'turn/start') connection.crash();
+      return result;
+    };
+    await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-2', commandId: 'command-2', prompt: 'Again' })
+      .catch(() => undefined);
+    await expectFailure(ask(), 'not-live');
+    expect(sent('thread/fork')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('sends nothing more when the app-server exits right after answering thread/fork', async () => {
+    const { adapter, connection, ask, sent, forkTurnStarts } = await sideQuestionFixture();
+    const answer = connection.requestImpl;
+    connection.requestImpl = async (method, params, options) => {
+      const result = await answer(method, params, options);
+      // Read in the same chunk as the fork's response: the ask has ended before its continuation runs.
+      if (method === 'thread/fork') connection.crash();
+      return result;
+    };
+    await expectFailure(ask(), 'failed');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Any request now would relaunch Codex just to let a dead fork go.
+    expect(forkTurnStarts()).toEqual([]);
+    expect(sent('thread/unsubscribe')).toEqual([]);
+    expect(sent('turn/interrupt')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it.each(['thread/start', 'thread/resume'])('keeps a thread dead when the app-server exits right after answering %s', async (opening) => {
+    const connection = new FakeCodexConnection();
+    connection.requestImpl = async (method) => {
+      if (method !== opening) throw new Error(`Unexpected request: ${method}`);
+      // The close is read in the same chunk as the response, so it lands before the session is registered.
+      queueMicrotask(() => connection.crash());
+      return { thread: { id: 'thread-1' }, model: 'gpt-5.6-sol' };
+    };
+    const adapter = new CodexProviderAdapter({ connection, now: () => new Date('2026-09-04T03:00:00.000Z') });
+    if (opening === 'thread/start') await adapter.createSession(context());
+    else await adapter.resumeSession({ ...context(), providerSessionId: 'thread-1' });
+    await expectFailure(adapter.askSideQuestion({ sessionId: 'session-1', providerSessionId: 'thread-1', question, history: [] }, new AbortController().signal), 'not-live');
+    // Stopping it asks nothing either: the thread is subscribed nowhere.
+    await adapter.disposeSession('session-1', 'thread-1');
+    expect(connection.requests.map((request) => request.method)).toEqual([opening]);
+    await adapter.dispose();
+  });
+
+  it('stops a conversation whose app-server died without relaunching Codex to unsubscribe it', async () => {
+    const { adapter, connection, sent } = await sideQuestionFixture();
+    connection.crash();
+    await adapter.disposeSession('session-1', 'thread-1');
+    expect(sent('thread/unsubscribe')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('gives thread/fork time to answer and keeps every finished fork quiet, however many came before', async () => {
+    const { adapter, connection, events, ask, forkTurnStarted, fork } = await sideQuestionFixture();
+    // More than the 64 a bounded list once kept, so the first fork would have been forgotten.
+    for (let index = 1; index <= 66; index += 1) {
+      const answered = ask();
+      await forkTurnStarted(index);
+      await fork('turn/completed', { turn: { id: `fork-${index}-turn`, status: 'completed', error: null, items: [] } }, `fork-${index}`);
+      await answered;
+    }
+    expect(connection.requests.find((request) => request.method === 'thread/fork')?.options).toMatchObject({ timeoutMs: 600_000 });
+    await fork('error', { error: { message: 'late failure about PORTAL_SECRET_7' }, willRetry: false }, 'fork-1');
+    await fork('thread/tokenUsage/updated', { tokenUsage: { last: { inputTokens: 1, cachedInputTokens: 1 } } }, 'fork-2');
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  }, 30_000);
 });

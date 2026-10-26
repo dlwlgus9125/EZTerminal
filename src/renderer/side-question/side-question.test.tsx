@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentSideQuestionClient, AgentSideQuestionResult } from '../../shared/agent-side-question';
 import { AppI18nProvider } from '../i18n';
 import { clearSessionViewStates } from '../session-view-state';
-import { StructuredAgentDraftPanel, StructuredAgentSessionPanel, type StructuredAgentSessionPanelProps } from '../StructuredAgentSession';
+import { StructuredAgentDraftPanel, StructuredAgentSessionPanel, storableDraft, type StructuredAgentSessionPanelProps } from '../StructuredAgentSession';
 import { createSideQuestionClient } from './side-question-client';
+import type { ChatComposerDraft } from '../chat-view-state';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -196,6 +197,51 @@ describe('/btw side questions in a conversation', () => {
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="side-question-stop"]')!.click());
     expect(signal?.aborted).toBe(true);
     expect(sideWindow()?.textContent).toContain('Stopped.');
+  });
+});
+
+describe('/btw and stored drafts', () => {
+  it('keeps /btw text out of stored drafts, and the stored echo does not overwrite the box', async () => {
+    const { client } = fakeClient();
+    const stored: string[] = [];
+    function Host(): JSX.Element {
+      const [draft, setDraft] = useState<ChatComposerDraft | undefined>(undefined);
+      return panel({ sideQuestion: { client, available: true }, draftState: draft,
+        onDraftChange: (next) => { stored.push(next.text); setDraft(next); } });
+    }
+    render(<Host />);
+    type(composerInput(), '/btw where is the SECRET_9 key?');
+    await flush();
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.filter((text) => text.includes('SECRET_9'))).toEqual([]);
+    expect(composerInput().value).toBe('/btw where is the SECRET_9 key?');
+    type(composerInput(), 'an ordinary draft');
+    await flush();
+    expect(stored.at(-1)).toBe('an ordinary draft');
+  });
+
+  it('stores neither a /btw box nor a /btw draft parked under a queued edit', () => {
+    expect(storableDraft({ text: '/btw secret?', selectionStart: 12, selectionEnd: 12 })).toEqual({ text: '', selectionStart: 0, selectionEnd: 0 });
+    expect(storableDraft({ text: 'queued edit', parkedDraft: { text: '/btw secret?', selectionStart: 3, selectionEnd: 3 } }))
+      .toEqual({ text: 'queued edit', parkedDraft: { text: '', selectionStart: 0, selectionEnd: 0 } });
+    expect(storableDraft({ text: 'by the way, /btw is fine mid-text' })).toEqual({ text: 'by the way, /btw is fine mid-text' });
+  });
+
+  it('keeps a refused side question in the message box', async () => {
+    const client: AgentSideQuestionClient = { ask: () => new Promise(() => undefined) };
+    render(panel({ sideQuestion: { client, available: true } }));
+    type(composerInput(), '/btw first?');
+    submitComposer();
+    await flush();
+    expect(composerInput().value).toBe('');
+    type(composerInput(), '/btw second?');
+    submitComposer();
+    await flush();
+    expect(composerInput().value).toBe('/btw second?');
+    type(composerInput(), 'third?');
+    act(() => btwButton()!.click());
+    await flush();
+    expect(composerInput().value).toBe('third?');
   });
 });
 

@@ -13,7 +13,8 @@ export interface AppCommand {
   readonly disabledReason?: string;
   /** Text after the command is handed to `run` instead of turning the input into a prompt. */
   readonly takesText?: boolean;
-  readonly run: (text?: string) => void;
+  /** `false`: the command did not take the text, so the message box keeps it. */
+  readonly run: (text?: string) => void | boolean;
 }
 /** A token at the caret, never a URL, path, code span, or selected passage. */
 export function completionToken(text: string, start = text.length, end = start): CompletionToken | undefined {

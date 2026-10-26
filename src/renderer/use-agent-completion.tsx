@@ -124,7 +124,8 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
       const command = typed ? appCommands.find((entry) => entry.name === typed[1] && (!rest || entry.takesText)) : undefined;
       if (command) {
         if (command.disabledReason) { setManual('commands'); setDismissed(undefined); return true; }
-        onChange({ ...value, text: '', selectionStart: 0, selectionEnd: 0 }); close(); command.run(rest || undefined);
+        onChange({ ...value, text: '', selectionStart: 0, selectionEnd: 0 }); close();
+        if (command.run(rest || undefined) === false) onChange(value);
         return true;
       }
       // /btw is never a prompt, even where no surface offers it: show the commands instead.
