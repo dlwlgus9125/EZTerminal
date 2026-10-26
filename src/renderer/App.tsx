@@ -1230,8 +1230,9 @@ export function App(): JSX.Element {
   // One adaptive sidebar owns every navigation destination. At >=1200px it
   // reflows the workspace; below that breakpoint the same shell overlays it.
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
-  const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox' | 'files'>('projects');
-  const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
+  // The 'agents' sidebar is 받은 요청 or a project's files; projects are managed in dialogs.
+  const [agentHubView, setAgentHubView] = useState<'inbox' | 'files'>('inbox');
+  const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string; source?: 'native' } | null>(null);
   // The project dialogs (add, edit, delete, new worktree): one at a time, over whatever is shown.
   const [projectDialog, setProjectDialog] = useState<ProjectDialogState | null>(null);
   const projectRegistryAccess = useMemo<ProjectRegistryAccess>(() => {
@@ -2127,7 +2128,7 @@ export function App(): JSX.Element {
     newConversation: (projectId, name) => openStructuredAgentDraft({ projectId, name }),
     openFiles: showProjectWorkspace,
     openTerminal: (projectId, projectName) => openProjectTerminal({ projectId, projectName, titleMode: 'generated' }),
-    openProjects: () => { setActiveProjectId(null); setAgentHubView('projects'); setSidebarDestination('agents'); },
+    openProjects: () => setProjectDialog({ kind: 'list' }),
     openBoard: (projectId) => shellNavigation.showBoard(projectId),
     openAutomationSettings: () => {
       setSettingsCategoryRequest((current) => ({ category: 'general', id: current.id + 1 }));
@@ -2709,7 +2710,8 @@ export function App(): JSX.Element {
           setSidebarOpen('explorer', true);
           break;
         case 'open-agents':
-          setSidebarOpen('agents', true);
+          // 프로젝트: every project in the 모든 프로젝트 dialog (the project sidebar is gone).
+          setProjectDialog({ kind: 'list' });
           break;
         case 'open-monitor':
           setSidebarOpen('monitor', true);
@@ -3017,7 +3019,6 @@ export function App(): JSX.Element {
       setResultsWide(false);
     }
   }, [panelSetRevision]);
-  useEffect(() => { if (sidebarDestination !== 'agents') setProjectsRevision((value) => value + 1); }, [sidebarDestination]);
   // The project follows the active main-window tab; a tab without one keeps it.
   useEffect(() => {
     if (shellNav.mode !== 'work') return;
@@ -3114,8 +3115,8 @@ export function App(): JSX.Element {
     updateAvailable: appUpdateAvailable,
     activeTool: sidebarDestination,
     openclawVisible,
-    // The project registry (pins, names, recency) may have changed while the project screen was open.
-    projectsRevision: sidebarDestination === 'agents' ? -1 : projectsRevision,
+    // Bumped by every project change made in the project dialogs (pins, names, folders, removal).
+    projectsRevision,
     folded: !workListRoom || resultsWide,
     externalWaiting: terminalAgentAttention,
     layoutMenu: (
@@ -3175,6 +3176,7 @@ export function App(): JSX.Element {
       },
       openTool: (id) => toggleSidebarTool(id as SidebarDestination),
       addProject: () => setProjectDialog({ kind: 'add' }),
+      openAllProjects: () => setProjectDialog({ kind: 'list' }),
       openProjectFiles: (projectId) => showProjectWorkspace(projectId),
       newWorktree: (project) => setProjectDialog({ kind: 'worktree-new', project }),
       editProject: openProjectEditor,
@@ -3186,9 +3188,9 @@ export function App(): JSX.Element {
 
   const sidebarTitle: Record<SidebarDestination, string> = {
     explorer: t('rail.explorer'),
-    agents: agentHubView === 'inbox' ? (i18n.language.startsWith('ko') ? '받은 요청' : 'Inbox')
-      : agentHubView === 'files' ? (i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files')
-        : (i18n.language.startsWith('ko') ? '프로젝트' : 'Projects'),
+    agents: agentHubView === 'inbox'
+      ? (i18n.language.startsWith('ko') ? '받은 요청' : 'Inbox')
+      : (i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files'),
     monitor: t('rail.monitor'),
     remote: t('rail.remote'),
     openclaw: 'OpenClaw',
@@ -3197,7 +3199,7 @@ export function App(): JSX.Element {
   // Live sublabels. The shell has always had the slot; nothing filled it, so a
   // destination could only ever say its own name.
   const sidebarDescription: Partial<Record<SidebarDestination, string>> = {
-    agents: userFacingAgentSnapshot.items.length > 0
+    agents: agentHubView === 'inbox' && userFacingAgentSnapshot.items.length > 0
       ? t('agentHub.tracked', { value: userFacingAgentSnapshot.items.length })
       : undefined,
     remote: remoteDesktopStatus?.controllerName
@@ -3529,6 +3531,7 @@ export function App(): JSX.Element {
       {conversationHistory && <ConversationHistoryDialog open onOpenChange={open => { if (!open) setConversationHistory(null); }}
         onOpenConversation={entry => openConversationHistory(entry)}
         client={window.ezterminal} currentProjectId={conversationHistory.projectId} initialConversationId={conversationHistory.conversationId}
+        {...(conversationHistory.source ? { initialSource: conversationHistory.source } : {})}
         onOpenSession={input => { openStructuredAgentSession(input); setConversationHistory(null); }}
         onOpenCliHistory={async entry => {
           if (!entry.historyId || (entry.providerId !== 'codex' && entry.providerId !== 'claude')) return;
@@ -3554,6 +3557,9 @@ export function App(): JSX.Element {
           setProjectsRevision((value) => value + 1);
           deskShell.forgetProject(projectId);
         }}
+        onChanged={() => setProjectsRevision((value) => value + 1)}
+        onOpenBoard={(project) => deskShell.showProject(project)}
+        onCliHistory={(project) => setConversationHistory({ projectId: project.projectId, source: 'native' })}
       />
       {quickOpenMode && (
         <QuickOpenModal

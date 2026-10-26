@@ -50,6 +50,14 @@ describe('Unified conversation history', () => {
     expect(client.resumeHistory).not.toHaveBeenCalled();
   });
 
+  it('opens on CLI history alone when asked for a project’s CLI records', async () => {
+    const client = clientFor();
+    render({ client, currentProjectId: 'project', initialSource: 'native' }); await flush();
+    expect(client.listConversations).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project', source: 'native' }));
+    const sourceFilter = [...container.querySelectorAll('select')].find((candidate) => [...candidate.options].some((option) => option.value === 'native'));
+    expect(sourceFilter?.value).toBe('native');
+  });
+
   it('continues a native record only after the explicit action using its prepared revision', async () => {
     const client = clientFor(); const onOpenSession = vi.fn();
     render({ client, initialConversationId: native.conversationId, onOpenSession }); await flush();

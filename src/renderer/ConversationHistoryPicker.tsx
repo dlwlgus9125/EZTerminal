@@ -20,6 +20,8 @@ export interface ConversationHistoryPickerProps {
   readonly client?: ConversationHistoryClient;
   readonly currentProjectId?: string;
   readonly initialConversationId?: string;
+  /** Opens filtered to one source (a project's CLI 기록 opens on `native`). */
+  readonly initialSource?: '' | 'app' | 'native';
   readonly projects?: readonly { readonly id: string; readonly name: string }[];
   readonly variant?: 'desktop' | 'mobile';
   readonly disconnected?: boolean;
@@ -56,13 +58,14 @@ function failureText(reason: ConversationHistoryFailureReason, ko: boolean): str
 export function ConversationHistoryPicker(props: ConversationHistoryPickerProps): JSX.Element {
   let scope = props.client ? clientScopes.get(props.client) : 0;
   if (props.client && scope === undefined) { scope = nextClientScope++; clientScopes.set(props.client, scope); }
-  return <ConversationHistoryPickerView key={`${scope}:${props.currentProjectId ?? ''}`} {...props} />;
+  return <ConversationHistoryPickerView key={`${scope}:${props.currentProjectId ?? ''}:${props.initialSource ?? ''}`} {...props} />;
 }
 
 function ConversationHistoryPickerView({
   client,
   currentProjectId,
   initialConversationId,
+  initialSource,
   projects = [],
   variant = 'desktop',
   disconnected = false,
@@ -79,7 +82,7 @@ function ConversationHistoryPickerView({
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [providerId, setProviderId] = useState('');
-  const [source, setSource] = useState<'' | 'app' | 'native'>('');
+  const [source, setSource] = useState<'' | 'app' | 'native'>(initialSource ?? '');
   const [archived, setArchived] = useState<'exclude' | 'include' | 'only'>('include');
   const [items, setItems] = useState<readonly ConversationEntry[]>([]);
   const [discoveredProjects, setDiscoveredProjects] = useState<readonly { readonly id: string; readonly name: string }[]>([]);

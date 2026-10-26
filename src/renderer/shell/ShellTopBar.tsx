@@ -21,6 +21,8 @@ export interface ShellTopBarProps {
   readonly settingsActive?: boolean;
   readonly onSelectProject: (projectId: string) => void;
   readonly onAddProject: () => void;
+  /** Every project in one list (the ones past the tabs too): open, pin, manage. */
+  readonly onAllProjects: () => void;
   readonly onWaits: () => void;
   readonly onFind: () => void;
   readonly onHost: () => void;
@@ -65,9 +67,11 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
           );
         })}
       </nav>
-      {/* Outside the tab list so it never scrolls away with the tabs. */}
+      {/* Outside the tab list so they never scroll away with the tabs. */}
       <button type="button" className="ez-shell-ptab ez-shell-ptab--add" aria-label={text('프로젝트 추가', 'Add project')} aria-haspopup="dialog"
         title={text('프로젝트 추가', 'Add project')} onClick={props.onAddProject} data-testid="shell-add-project">+</button>
+      <button type="button" className="ez-shell-ptab ez-shell-ptab--add" aria-label={text('모든 프로젝트', 'All projects')} aria-haspopup="dialog"
+        title={text('모든 프로젝트', 'All projects')} onClick={props.onAllProjects} data-testid="shell-all-projects"><Glyph name="proj" size={16} /></button>
       <div className="ez-shell-top__right">
         {!board && props.waitingTotal > 0 && (
           <button type="button" className="ez-shell-waits" onClick={props.onWaits} data-testid="shell-top-waits">

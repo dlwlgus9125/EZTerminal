@@ -48,6 +48,8 @@ export interface DeskShellActions {
   readonly openInbox: () => void;
   /** The add-project dialog (`+` and the empty board). */
   readonly addProject: () => void;
+  /** The list of every project (모든 프로젝트). */
+  readonly openAllProjects: () => void;
   readonly openProjectFiles: (projectId: string) => void;
   readonly newWorktree: (project: { readonly projectId: string; readonly name: string }) => void;
   readonly editProject: (projectId: string) => void;
@@ -322,6 +324,7 @@ export function useDeskShell(props: DeskShellProps): DeskShell {
       settingsActive={props.activeTool === 'settings'}
       onSelectProject={(id) => navigation.showBoard(id)}
       onAddProject={actions.addProject}
+      onAllProjects={actions.openAllProjects}
       onWaits={() => { const first = waiting[0] ?? allWaiting[0]; if (first) openWaiting(first); else actions.openInbox(); }}
       onFind={actions.openFind}
       onHost={actions.openRemote}

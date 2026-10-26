@@ -23,6 +23,8 @@ describe('buildCommandCenterActionRows', () => {
       'toggle-locale',
     ]);
     expect(rows.find((row) => row.id === 'open-settings')?.title).toBe(i18n.t('rail.settings'));
+    // 프로젝트 opens the 모든 프로젝트 dialog, not a sidebar.
+    expect(rows.find((row) => row.id === 'open-agents')).toMatchObject({ title: '프로젝트', detail: '모든 프로젝트를 찾아 열고, 고정하고, 관리' });
   });
 
   it('omits OpenClaw when the product capability is not visible', () => {

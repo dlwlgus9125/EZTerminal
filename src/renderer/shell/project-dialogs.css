@@ -1,0 +1,83 @@
+/* The shell's project dialogs (모든 프로젝트, 워크트리): one list of rows inside the shared dialog. */
+
+.ez-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  min-width: 0;
+}
+
+.ez-project-list__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-block-start: 1px solid var(--ui-border-subtle);
+}
+
+.ez-project-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  min-width: 0;
+  padding-inline-end: var(--ui-space-1);
+  border-block-end: 1px solid var(--ui-border-subtle);
+}
+
+.ez-project-list__row:hover {
+  background: var(--ui-surface-hover);
+}
+
+.ez-project-list__open {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  min-width: 0;
+  padding: var(--ui-space-3);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ez-project-list__open:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+
+.ez-project-list__name {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  min-width: 0;
+  color: var(--ui-text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ez-project-list__name svg {
+  flex: 0 0 auto;
+  color: var(--ui-text-muted);
+}
+
+.ez-project-list__path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ez-project-list__meta {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.ez-project-list__error {
+  margin: 0;
+  color: var(--ui-danger);
+}

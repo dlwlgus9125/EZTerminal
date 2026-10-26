@@ -82,7 +82,7 @@ export function buildCommandCenterActionRows(
       id: 'open-agents',
       kind: 'action',
       title: t('rail.agents'),
-      detail: t('commandCenter.actions.openDestinationDetail', { destination: t('rail.agents') }),
+      detail: t('commandCenter.actions.openAllProjectsDetail'),
       target: { type: 'action', action: 'open-agents' },
     },
     {

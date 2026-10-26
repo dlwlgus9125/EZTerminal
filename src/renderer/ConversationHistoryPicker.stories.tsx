@@ -43,6 +43,15 @@ export const CombinedList: Story = {
   },
 };
 export const NativePreview: Story = { args: { initialConversationId: 'native-cli' } };
+/** 모든 프로젝트 → a project's ⋯ → CLI 기록: the same history, on its CLI records. */
+export const CliHistoryOnly: Story = {
+  args: { initialSource: 'native' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText('Android 연결 복구')).toBeVisible();
+    await expect(canvas.queryByText('입력 UX 검토')).toBeNull();
+  },
+};
 export const ExistingConversation: Story = { args: { initialConversationId: 'app-current' } };
 export const ArchivedStage: Story = { args: { initialConversationId: 'stage-review' } };
 export const EnglishNativePreview: Story = { globals: { locale: 'en' }, args: NativePreview.args };

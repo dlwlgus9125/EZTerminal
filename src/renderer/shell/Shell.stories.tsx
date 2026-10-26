@@ -74,6 +74,7 @@ function ShellStory({ args, locale }: { readonly args: ShellStoryArgs; readonly 
           host={{ label: ko ? '작업 PC · 원격 켜짐' : 'This PC · remote on', tone: 'on' }}
           onSelectProject={() => undefined}
           onAddProject={() => undefined}
+          onAllProjects={() => undefined}
           onWaits={() => undefined}
           onFind={() => undefined}
           onHost={() => undefined}
