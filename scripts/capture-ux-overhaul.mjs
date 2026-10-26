@@ -109,7 +109,8 @@ async function capturePass(app, page, label) {
   await page.waitForTimeout(3500);
   await page.screenshot({ path: path.join(output, `${label}-workbench.png`) });
   if (MEASURE) await measurePass(app, page, label);
-  const conversation = page.locator('[data-testid="project-conversation-tree"] [role="treeitem"][aria-level="2"]').first();
+  // The first conversation on the board, or in the work list (the project tree is gone, P-1).
+  const conversation = page.locator('[data-testid="shell-conversation-card"], [data-testid="shell-live-row"]').first();
   if (await conversation.count()) {
     await conversation.click();
     await page.waitForTimeout(2500);

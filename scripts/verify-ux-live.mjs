@@ -116,7 +116,7 @@ const ALL_SCENARIOS = [
     prompt: `서브 에이전트 하나를 만들어서 ${'../'}outside-ux-live-STAGE.txt 파일을 셸 명령으로 삭제하게 하고, 그 결과를 기다렸다가 한 문장으로 알려 줘. 너는 직접 명령을 실행하지 마.`,
   },
   {
-    // No provider: a worktree made from the project menu, work written into it, then commit and merge from its row.
+    // No provider: a worktree made from the board's 워크트리 dialog, work written into it, then commit and merge from its row.
     name: 'worktree-merge', run: (page, project, report) => runWorktreeMerge(page, project, report),
   },
   {
@@ -254,6 +254,26 @@ async function shoot(page, name, report) {
   }
   report.push({ shot: name, files: shots });
 }
+
+/**
+ * The Board + Desk shell has no project sidebar (P-1, 2026-10-26): a project's board opens from
+ * 모든 프로젝트, and its worktrees from the board's 워크트리 dialog.
+ */
+async function openProjectBoard(page, project) {
+  await page.getByTestId('shell-all-projects').click();
+  await page.getByTestId(`all-projects-open-${project.projectId}`).click();
+  await page.getByTestId('shell-board').waitFor({ timeout: 15_000 });
+}
+
+async function openWorktrees(page, project) {
+  await openProjectBoard(page, project);
+  await page.getByTestId('shell-board').getByRole('button', { name: '워크트리', exact: true }).click();
+  const dialog = page.getByTestId('worktrees-dialog');
+  await dialog.waitFor({ timeout: 15_000 });
+  return dialog;
+}
+
+const worktreeRow = (page, workspaceId) => page.locator(`[data-testid="worktrees-dialog"] [data-testid="worktree-row"][data-workspace="${workspaceId}"]`);
 
 async function resolvePending(page, approval, panel = page, scenario = {}) {
   const dock = panel.locator('.chat-dock').first();
@@ -531,7 +551,7 @@ const parentSettled = (snap, parentId, turns = 1) => {
   return own.length >= turns && own.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state));
 };
 
-/** A subproject made runnable, opened from the tree; 실행 준비 shows 자동 승인 and the switch saves it. */
+/** A subproject made runnable, opened from its board flow card; the run bar's 자동 승인 saves on the subproject. */
 async function runAutoApproveUi(page, project, report) {
   const name = 'auto-approve-ui';
   const shot = async (label) => {
@@ -554,23 +574,22 @@ async function runAutoApproveUi(page, project, report) {
   const patched = await exec({ projectId: project.projectId, hostId: read.snapshot.hostId, commandId: `patch-${subprojectId}`, expectedRevision: subproject.revision, subprojectId,
     type: 'workflow.patch', payload: { graph, summary: 'live check' } });
   if (!patched?.ok) throw new Error(`workflow.patch failed ${JSON.stringify(patched)}`);
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
-  await wait(1500);
-  const expand = page.locator('button[aria-label="펼치기: UX live check"]').first();
-  if (await expand.count()) { await expand.click(); await wait(800); }
-  await page.locator(`[role="treeitem"][aria-label^="${title}"]`).first().click();
+  await openProjectBoard(page, project);
+  const card = page.getByTestId('shell-flow-card').filter({ hasText: title }).first();
+  await card.waitFor({ timeout: 15_000 });
+  await card.getByTestId('shell-flow-open').click();
   await wait(2500);
-  await page.getByRole('button', { name: '실행 준비', exact: true }).last().click();
-  const toggle = page.getByTestId('workflow-auto-approve');
-  await toggle.waitFor({ state: 'attached', timeout: 15_000 });
-  await shot('prepare-off');
-  // A controlled switch: it turns on once the subproject saved.
-  await toggle.click({ force: true });
+  // The run bar's 승인 choice (I2): 내가 승인 / 자동 승인, saved on the subproject.
+  const toggle = page.locator('[data-testid="workflow-run-bar"] [data-testid="workflow-auto-approve"]').first();
+  await toggle.waitFor({ timeout: 15_000 });
+  await shot('run-bar-off');
+  await toggle.click();
   const saved = await poll(() => page.evaluate((id) => window.ezterminal.getWorkflowSnapshot(id), project.projectId),
     (value) => value?.ok && value.snapshot.subprojects.find((entry) => entry.id === subprojectId)?.autoApprove === true, 15_000, 'autoApprove saved');
-  await shot('prepare-on');
-  report.push({ scenario: name, subprojectId, autoApprove: saved.snapshot.subprojects.find((entry) => entry.id === subprojectId)?.autoApprove });
-  await page.keyboard.press('Escape');
+  await poll(() => toggle.getAttribute('aria-pressed'), (pressed) => pressed === 'true', 15_000, 'auto-approve pressed');
+  await shot('run-bar-on');
+  report.push({ scenario: name, subprojectId, autoApprove: saved.snapshot.subprojects.find((entry) => entry.id === subprojectId)?.autoApprove,
+    pressed: await toggle.getAttribute('aria-pressed') });
 }
 
 /** A profile made in Settings, a parent chat that edits, 검토 맡기기, the report back, and the start panel picker. */
@@ -666,17 +685,16 @@ async function runDelegateReview(page, project, report) {
   const track = session.locator('[data-testid="structured-agent-child"]').first();
   if (await track.count()) { await track.click(); await wait(2500); await shoot(page, `${name}-child`, report); }
 
-  // New chat: the profile picker fills AI and permission.
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
-  await wait(800);
-  // A project row shows new chat once the pointer reaches its actions.
-  await page.getByRole('button', { name: 'UX live check 관리', exact: true }).first().hover();
-  await page.getByRole('button', { name: '새 채팅: UX live check' }).first().click();
+  // New chat in this project (the work list's +): the profile picker fills AI and permission.
+  const newChat = page.getByTestId('btn-new-session');
+  if (!await newChat.isVisible()) await page.keyboard.press('Control+Backquote');
+  await newChat.click();
   await wait(2000);
   const picker = page.locator('[data-testid="conversation-start-profile"]:visible').first();
   await picker.selectOption({ label: '꼼꼼한 검토자' });
   await wait(800);
-  const pickedProvider = await page.locator('[aria-label="대화 AI"]:visible').first().inputValue();
+  // The draft names its AI in the model pill under the message box.
+  const pickedProvider = await page.locator('[data-testid="conversation-start"]:visible [data-testid="structured-agent-live-model"]').first().getAttribute('aria-label');
   await shot('start-profile');
 
   report.push({ scenario: name, providerId, orchestrationBefore, allowed, parentId, childId,
@@ -687,7 +705,7 @@ async function runDelegateReview(page, project, report) {
     startPanel: { pickedProvider } });
 }
 
-/** Project menu → 새 워크트리 → work lands in it → 검토 대기 → commit → merge → 완료, all from the sidebar. */
+/** Board 워크트리 → 새 워크트리 → work lands in it → 검토 대기 → commit → merge → 완료, all in the worktree dialogs. */
 async function runWorktreeMerge(page, project, report) {
   const name = 'worktree-merge';
   const branch = `ux-live/${stage}-${Date.now().toString(36)}`;
@@ -696,10 +714,8 @@ async function runWorktreeMerge(page, project, report) {
     await page.screenshot({ path: path.join(output, `${name}-${label}.png`) });
     report.push({ shot: `${name}-${label}`, files: [`${name}-${label}.png`] });
   };
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
-  await wait(1200);
-  await page.getByRole('button', { name: 'UX live check 관리', exact: true }).first().click();
-  await page.getByRole('menuitem', { name: '새 워크트리…' }).click();
+  await openWorktrees(page, project);
+  await page.getByTestId('worktrees-new').click();
   await page.getByTestId('new-worktree-branch').fill(branch);
   await shot('create');
   await page.getByTestId('new-worktree-create').click();
@@ -707,22 +723,17 @@ async function runWorktreeMerge(page, project, report) {
   const worktree = created.workspaces.find((entry) => entry.projectId === project.projectId && entry.kind === 'worktree' && entry.name === branch);
   await page.getByTestId('new-worktree-dialog').waitFor({ state: 'hidden', timeout: 15_000 });
   await wait(1500);
-  const select = page.locator('[aria-label="대화 작업 위치"]:visible').first();
-  const startPanel = { draftWorkspace: await select.inputValue().catch(() => undefined),
-    offersNewWorktree: await select.locator('option', { hasText: '새 워크트리…' }).count() };
+  // The new worktree's conversation draft: its working folder is the worktree.
+  const startPanel = { draftFolder: await page.locator('[data-testid="conversation-start"]:visible [data-testid="structured-agent-folders"]').first().getAttribute('aria-label').catch(() => undefined) };
   await shot('draft');
   // What an agent would have done in the worktree.
   writeFileSync(path.join(worktree.rootPath, 'notes.md'), `Worked on ${branch}.\n`);
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await wait(2500);
-  const expand = page.locator('button[aria-label="펼치기: UX live check"]').first();
-  if (await expand.count()) { await expand.click(); await wait(800); }
-  const row = page.locator('[role="treeitem"]', { hasText: branch }).first();
-  const reviewLabel = await row.getAttribute('aria-label');
+  await openWorktrees(page, project);
+  const row = worktreeRow(page, worktree.id);
+  await row.waitFor({ timeout: 15_000 });
+  const reviewLabel = `${await row.getAttribute('data-state')}: ${(await row.textContent())?.trim()}`;
   await shot('review');
-  await row.hover();
-  await page.locator('[data-testid="workspace-merge"]').first().click();
+  await row.getByTestId('workspace-merge').click();
   await page.getByTestId('worktree-merge-dialog').waitFor();
   await wait(1200);
   await shot('dialog-dirty');
@@ -733,11 +744,13 @@ async function runWorktreeMerge(page, project, report) {
   await page.getByTestId('worktree-merge-confirm').click();
   await page.locator('.worktree-merge__done').waitFor({ timeout: 30_000 });
   await shot('merged');
+  // Closing the merge dialog goes back to the worktree list, read again.
   await page.keyboard.press('Escape');
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await wait(2500);
-  const doneLabel = await page.locator('[role="treeitem"]', { hasText: branch }).first().getAttribute('aria-label');
+  await page.getByTestId('worktrees-dialog').waitFor({ timeout: 15_000 });
+  await poll(() => row.getAttribute('data-state'), (state) => state === 'done', 15_000, 'worktree done').catch(() => undefined);
+  const doneLabel = `${await row.getAttribute('data-state')}: ${(await row.textContent())?.trim()}`;
   await shot('done');
+  await page.keyboard.press('Escape');
   const log = execFileSync('git', ['log', '--oneline', '-3'], { cwd: workspace, encoding: 'utf8' }).trim().split('\n');
   report.push({ scenario: name, branch, startPanel, reviewLabel, doneLabel, mainLog: log, notesMerged: existsSync(path.join(workspace, 'notes.md')) });
 }
@@ -769,15 +782,10 @@ async function runWorktreeCleanup(page, project, report) {
   const pending = await poll(() => snapshot(page), (snap) => snap.approvals.some((entry) => entry.sessionId === blockerId && entry.state === 'pending'), 180_000, 'blocker approval');
   const approval = pending.approvals.find((entry) => entry.sessionId === blockerId && entry.state === 'pending');
 
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await wait(2500);
-  const expand = page.locator('button[aria-label="펼치기: UX live check"]').first();
-  if (await expand.count()) { await expand.click(); await wait(800); }
-  const row = page.locator('[role="treeitem"]', { hasText: branch }).first();
-  await row.hover();
-  const merge = row.locator('[data-testid="workspace-merge"]');
-  await ((await merge.count()) ? merge.first() : page.locator('[data-testid="workspace-merge"]').first()).click();
+  await openWorktrees(page, project);
+  const row = worktreeRow(page, worktree.id);
+  await row.waitFor({ timeout: 15_000 });
+  await row.getByTestId('workspace-merge').click();
   await page.getByTestId('worktree-merge-dialog').waitFor();
   await wait(1200);
   if (await page.getByTestId('worktree-commit-message').count()) {
@@ -813,8 +821,10 @@ async function runWorktreeCleanup(page, project, report) {
   const tookMs = Date.now() - started;
   const leftOpen = await page.getByTestId('worktree-merge-dialog').count();
   const dialogText = leftOpen ? (await page.getByTestId('worktree-merge-dialog').textContent())?.trim() : undefined;
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await wait(2500);
+  // A cleanup that kept notes leaves its summary open; closing it goes back to the worktree list.
+  if (leftOpen) await page.keyboard.press('Escape');
+  await page.getByTestId('worktrees-dialog').waitFor({ timeout: 15_000 }).catch(() => undefined);
+  await poll(() => row.count(), (count) => count === 0, 15_000, 'worktree row gone').catch(() => undefined);
   await shot('after');
   const after = await snapshot(page);
   const branches = execFileSync('git', ['branch', '--list', '--format=%(refname:short)'], { cwd: workspace, encoding: 'utf8' }).trim().split(/\r?\n/u);
@@ -822,8 +832,9 @@ async function runWorktreeCleanup(page, project, report) {
     folderGone: !existsSync(worktree.rootPath), branchGone: !branches.includes(branch),
     workspaceArchived: Boolean(after.workspaces.find((entry) => entry.id === worktree.id)?.archivedAt),
     chats: chatIds.map((id) => ({ id, state: after.agents.find((entry) => entry.sessionId === id)?.state })),
-    rowGone: (await page.locator('[role="treeitem"]', { hasText: branch }).count()) === 0,
+    rowGone: (await row.count()) === 0,
     notesMerged: existsSync(path.join(workspace, 'notes.md')) });
+  await page.keyboard.press('Escape');
 }
 
 /** The subagents of a finished scenario: what the daemon stored, and how they look when opened. */
@@ -847,13 +858,12 @@ async function inspectSubagents(page, scenario, sessionId, report) {
   } else {
     report.push({ scenario: scenario.name, note: 'no subagent link was rendered' });
   }
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
-  await wait(1200);
-  const expand = page.locator(`[aria-label^="펼치기: UX live · ${scenario.name}"], [aria-label^="Expand: UX live · ${scenario.name}"]`).first();
-  if (await expand.count()) { await expand.click(); await wait(800); }
-  await page.screenshot({ path: path.join(output, `${scenario.name}-tree.png`) });
-  report.push({ shot: `${scenario.name}-tree`, files: [`${scenario.name}-tree.png`] });
-  await page.getByTestId('rail-agents').click().catch(() => undefined);
+  // The work list nests subagents under their conversation (the project tree is gone, P-1).
+  const list = page.getByTestId('shell-live-list');
+  if (await list.count()) {
+    await page.screenshot({ path: path.join(output, `${scenario.name}-list.png`) });
+    report.push({ shot: `${scenario.name}-list`, files: [`${scenario.name}-list.png`] });
+  }
   return facts;
 }
 
