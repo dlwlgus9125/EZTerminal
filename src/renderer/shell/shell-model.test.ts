@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { shellSnapshot, shellWorkflow } from './shell-fixtures';
-import { hostWaitingItems, otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
+import type { AgentProjectSummary } from '../../shared/agent-history';
+import { hostWaitingItems, knownProjects, otherProjects, projectConversations, projectFlows, waitingItems } from './shell-model';
 import { workflowRepeatLabel } from '../workflow/workflow-copy';
 
 describe('projectConversations', () => {
@@ -113,5 +114,28 @@ describe('otherProjects', () => {
     expect(otherProjects(shellSnapshot(), 'p-ez')).toEqual([
       { projectId: 'p-kestrel', name: 'Kestrel', waiting: 0, failed: 1, working: 0 },
     ]);
+  });
+});
+
+describe('knownProjects', () => {
+  const summary = (projectId: string, name: string): AgentProjectSummary => ({
+    projectId, name, primaryRoot: `C:/${name}`, additionalRoots: [], pinned: false, saved: true, sessionCount: 0, providers: [], lastActiveAt: 1,
+  });
+
+  it('is nothing until the registry is read', () => {
+    expect(knownProjects(null, shellSnapshot(), [summary('p-new', 'New')])).toBeNull();
+  });
+
+  it('lists the registry, then projects only the host knows, then ones chosen here that neither lists', () => {
+    const registry = [summary('p-ez', 'EZTerminal')];
+    const known = knownProjects(registry, shellSnapshot(), [summary('p-new', 'New'), summary('p-garnet', 'Garnet (chosen)')]);
+    expect(known?.map((project) => project.projectId)).toEqual(['p-ez', 'p-garnet', 'p-kestrel', 'p-new']);
+    // The host's own record wins over a chosen copy; the chosen one only fills a gap.
+    expect(known?.find((project) => project.projectId === 'p-garnet')).toMatchObject({ name: 'Garnet', saved: false });
+  });
+
+  it('drops a chosen project once the registry lists it', () => {
+    const fresh = summary('p-new', 'New');
+    expect(knownProjects([fresh], null, [fresh])).toEqual([fresh]);
   });
 });

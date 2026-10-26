@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 
 import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { GitDirectoryStatus } from '../../shared/git-status';
@@ -11,7 +12,7 @@ import { LiveList, type ShellTerminal, type ShellTool } from './LiveList';
 import { ProjectBoard } from './ProjectBoard';
 import { ShellTopBar } from './ShellTopBar';
 import { projectTabs, type ShellNavigation } from './navigation-store';
-import { flattenConversations, hostWaitingItems, otherProjects, projectConversations, projectFlows, type WaitingItem } from './shell-model';
+import { flattenConversations, hostWaitingItems, knownProjects, otherProjects, projectConversations, projectFlows, type WaitingItem } from './shell-model';
 import { useShellText } from './shell-text';
 import './shell.css';
 
@@ -45,7 +46,8 @@ export interface DeskShellActions {
   readonly openTool: (id: string) => void;
   /** 받은 요청: everything that asked for the person, including finished turns and terminal agents. */
   readonly openInbox: () => void;
-  readonly openProjects: () => void;
+  /** The add-project dialog (`+` and the empty board). */
+  readonly addProject: () => void;
   readonly openProjectFiles: (projectId: string) => void;
   readonly newWorktree: (projectId: string) => void;
   readonly editProject: (projectId: string) => void;
@@ -65,7 +67,7 @@ export interface DeskShellProps {
   readonly updateAvailable: boolean;
   readonly activeTool: string | null;
   readonly openclawVisible: boolean;
-  /** Changes when the project registry may have changed; -1 while the project screen is open. */
+  /** Changes when the project registry changed (a project added, edited, removed or pinned). */
   readonly projectsRevision: number;
   /** Below 1200px the live list folds into a strip. */
   readonly folded: boolean;
@@ -79,10 +81,9 @@ export interface DeskShellProps {
 function useAgentProjects(snapshot: DaemonSnapshot | null, revision: number): readonly AgentProjectSummary[] | null {
   const [projects, setProjects] = useState<readonly AgentProjectSummary[] | null>(null);
   // Added, edited or removed projects reach the daemon's list; pins and recency live only in the
-  // registry, so it is read again after the project screen closes (revision) and once a minute.
+  // registry, so it is read again after each change made here (revision) and once a minute.
   const key = useMemo(() => (snapshot?.projects ?? []).map((project) => `${project.id}:${project.updatedAt}:${project.archivedAt ?? ''}`).join('|'), [snapshot]);
   useEffect(() => {
-    if (revision < 0) return undefined;
     let alive = true;
     const read = (): void => {
       void window.ezterminal.listAgentProjects(false, undefined, 100)
@@ -150,21 +151,44 @@ function useWorkflow(projectId: string | null, revision: number | undefined): Wo
  * work mode's live list and the project board, fed by the host's daemon and
  * workflow snapshots. App owns the dock; this owns what is around it.
  */
-export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element; readonly list: JSX.Element | null; readonly board: JSX.Element | null } {
+export interface DeskShell {
+  readonly top: JSX.Element;
+  readonly list: JSX.Element | null;
+  readonly board: JSX.Element | null;
+  /** Shows a project's board now, before the registry read lists it (just added, or past its first page). */
+  readonly showProject: (project: AgentProjectSummary) => void;
+  /** An edit gave the project a new id (a new primary folder): the selection follows it, the mode stays. */
+  readonly followProject: (project: AgentProjectSummary, previousProjectId: string) => void;
+  /** A removed project is not kept on the board. */
+  readonly forgetProject: (projectId: string) => void;
+}
+
+export function useDeskShell(props: DeskShellProps): DeskShell {
   const { navigation, snapshot, actions } = props;
   const nav = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot);
   const { text } = useShellText();
   const projects = useAgentProjects(snapshot, props.projectsRevision);
-  // Projects the host knows but the registry list does not (unsaved, or past its first page) still have a board.
-  const known = useMemo<readonly AgentProjectSummary[] | null>(() => {
-    if (projects === null) return null;
-    const listed = new Set(projects.map((project) => project.projectId));
-    const extra = (snapshot?.projects ?? []).filter((project) => !project.archivedAt && !listed.has(project.id)).map((project): AgentProjectSummary => ({
-      projectId: project.id, name: project.name, primaryRoot: project.rootPath ?? '', additionalRoots: [], pinned: false, saved: false,
-      sessionCount: 0, providers: [], lastActiveAt: Date.parse(project.updatedAt) || null,
-    }));
-    return [...projects, ...extra];
-  }, [projects, snapshot]);
+  // Projects chosen here that the registry read does not list yet.
+  const [remembered, setRemembered] = useState<readonly AgentProjectSummary[]>([]);
+  const known = useMemo(() => knownProjects(projects, snapshot, remembered), [projects, snapshot, remembered]);
+  // Committed before the selection moves, so the fallback below never sees a project it does not know.
+  const remember = useCallback((project: AgentProjectSummary, forget?: string): void => {
+    flushSync(() => setRemembered((current) => [
+      ...current.filter((item) => item.projectId !== project.projectId && item.projectId !== forget),
+      project,
+    ]));
+  }, []);
+  const showProject = useCallback((project: AgentProjectSummary): void => {
+    remember(project);
+    navigation.showBoard(project.projectId);
+  }, [navigation, remember]);
+  const followProject = useCallback((project: AgentProjectSummary, previousProjectId: string): void => {
+    remember(project, previousProjectId);
+    if (navigation.getSnapshot().projectId === previousProjectId) navigation.followPanel(project.projectId);
+  }, [navigation, remember]);
+  const forgetProject = useCallback((projectId: string): void => {
+    setRemembered((current) => current.filter((item) => item.projectId !== projectId));
+  }, []);
 
   // First start without a stored place: the first screen is chosen once the projects are known,
   // unless the person already clicked or typed somewhere before they arrived.
@@ -297,7 +321,7 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
       updateAvailable={props.updateAvailable}
       settingsActive={props.activeTool === 'settings'}
       onSelectProject={(id) => navigation.showBoard(id)}
-      onAddProject={actions.openProjects}
+      onAddProject={actions.addProject}
       onWaits={() => { const first = waiting[0] ?? allWaiting[0]; if (first) openWaiting(first); else actions.openInbox(); }}
       onFind={actions.openFind}
       onHost={actions.openRemote}
@@ -378,10 +402,10 @@ export function useDeskShell(props: DeskShellProps): { readonly top: JSX.Element
         onFiles={() => { if (projectId) actions.openProjectFiles(projectId); }}
         onProjectSettings={() => { if (projectId) actions.editProject(projectId); }}
         onWorktree={() => { if (projectId) actions.newWorktree(projectId); }}
-        onAddProject={actions.openProjects}
+        onAddProject={actions.addProject}
       />
     </div>
   ) : null;
 
-  return { top, list, board };
+  return { top, list, board, showProject, followProject, forgetProject };
 }

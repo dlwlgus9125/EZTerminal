@@ -66,8 +66,8 @@ export function ShellTopBar(props: ShellTopBarProps): JSX.Element {
         })}
       </nav>
       {/* Outside the tab list so it never scrolls away with the tabs. */}
-      <button type="button" className="ez-shell-ptab ez-shell-ptab--add" aria-label={text('프로젝트 · 추가와 관리', 'Projects: add and manage')}
-        title={text('프로젝트 추가와 관리', 'Add and manage projects')} onClick={props.onAddProject} data-testid="rail-agents">+</button>
+      <button type="button" className="ez-shell-ptab ez-shell-ptab--add" aria-label={text('프로젝트 추가', 'Add project')} aria-haspopup="dialog"
+        title={text('프로젝트 추가', 'Add project')} onClick={props.onAddProject} data-testid="shell-add-project">+</button>
       <div className="ez-shell-top__right">
         {!board && props.waitingTotal > 0 && (
           <button type="button" className="ez-shell-waits" onClick={props.onWaits} data-testid="shell-top-waits">

@@ -183,6 +183,8 @@ import {
 import { DockWindowCoordinator } from './dock-window-coordinator';
 import { PanelPreviewContext, PanelPreviewSlot, usePanelPreview } from './shell/panel-preview';
 import { useDeskShell, type DeskTerminal } from './shell/DeskShell';
+import { ProjectDialogHost, type ProjectDialogState } from './shell/ProjectDialogHost';
+import type { ProjectRegistryAccess } from './ProjectDialogs';
 import { ShellLayoutMenu } from './shell/ShellLayoutMenu';
 import { PaneActionsContext, installConversationGroupHeaders, type PaneActions } from './shell/pane-actions';
 import { ShellNavigation, parseShellNavigation } from './shell/navigation-store';
@@ -1234,6 +1236,17 @@ export function App(): JSX.Element {
   // Request ids only ever grow: a handled request is cleared, and the next one must still look new.
   const worktreeRequestSeq = useRef(0);
   const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
+  // The project dialogs (add, edit, delete): one at a time, over whatever is shown.
+  const [projectDialog, setProjectDialog] = useState<ProjectDialogState | null>(null);
+  const projectRegistryAccess = useMemo<ProjectRegistryAccess>(() => {
+    const desktop = window.ezterminalDesktop;
+    return {
+      listAgentProjects: (force, cursor, limit, query) => window.ezterminal.listAgentProjects(force, cursor, limit, query),
+      saveAgentProject: (input) => window.ezterminal.saveAgentProject(input),
+      removeAgentProject: (projectId) => window.ezterminal.removeAgentProject(projectId),
+      ...(desktop ? { selectFolders: (multiple?: boolean) => desktop.selectAgentProjectFolders(multiple) } : {}),
+    };
+  }, []);
   const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
     const api = apiRef.current;
     const windows = dockWindowCoordinatorRef.current;
@@ -3161,7 +3174,7 @@ export function App(): JSX.Element {
         shellNavigation.showWork();
       },
       openTool: (id) => toggleSidebarTool(id as SidebarDestination),
-      openProjects: () => { setAgentHubView('projects'); setActiveProjectId(null); setSidebarDestination('agents'); },
+      addProject: () => setProjectDialog({ kind: 'add' }),
       openProjectFiles: (projectId) => showProjectWorkspace(projectId),
       newWorktree: (projectId) => {
         worktreeRequestSeq.current += 1;
@@ -3531,6 +3544,20 @@ export function App(): JSX.Element {
           setConversationHistory(null);
           revealOpenedSession();
         }} />}
+      <ProjectDialogHost
+        state={projectDialog}
+        onStateChange={setProjectDialog}
+        access={projectRegistryAccess}
+        onSaved={(project, kind, previousProjectId) => {
+          setProjectsRevision((value) => value + 1);
+          if (kind === 'add') deskShell.showProject(project);
+          else if (previousProjectId && previousProjectId !== project.projectId) deskShell.followProject(project, previousProjectId);
+        }}
+        onDeleted={(projectId) => {
+          setProjectsRevision((value) => value + 1);
+          deskShell.forgetProject(projectId);
+        }}
+      />
       {quickOpenMode && (
         <QuickOpenModal
           ownerDocument={quickOpenOwnerDocument}

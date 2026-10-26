@@ -1,3 +1,4 @@
+import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { DaemonApproval, DaemonSnapshot } from '../../shared/daemon-protocol';
 import { blockingRunOf } from '../../shared/planning-execution';
 import type { WorkflowRepeat, WorkflowSnapshot } from '../../shared/workflow';
@@ -212,6 +213,26 @@ export function projectFlows(workflow: Pick<WorkflowSnapshot, 'subprojects' | 'r
 /** A conversation and every subagent under it. */
 export function flattenConversations(items: readonly LiveConversation[]): LiveConversation[] {
   return items.flatMap((item) => [item, ...flattenConversations(item.children)]);
+}
+
+/**
+ * The projects that have a board: the registry's saved projects, then ones only the host knows
+ * (unsaved, or past the registry's first page), then ones chosen here that neither lists yet
+ * (just added or re-rooted). Null until the registry is read.
+ */
+export function knownProjects(
+  registry: readonly AgentProjectSummary[] | null,
+  snapshot: DaemonSnapshot | null,
+  chosen: readonly AgentProjectSummary[],
+): readonly AgentProjectSummary[] | null {
+  if (registry === null) return null;
+  const listed = new Set(registry.map((project) => project.projectId));
+  const hostOnly = (snapshot?.projects ?? []).filter((project) => !project.archivedAt && !listed.has(project.id)).map((project): AgentProjectSummary => ({
+    projectId: project.id, name: project.name, primaryRoot: project.rootPath ?? '', additionalRoots: [], pinned: false, saved: false,
+    sessionCount: 0, providers: [], lastActiveAt: Date.parse(project.updatedAt) || null,
+  }));
+  for (const project of hostOnly) listed.add(project.projectId);
+  return [...registry, ...hostOnly, ...chosen.filter((project) => !listed.has(project.projectId))];
 }
 
 /** Other projects that need a look: waiting, failed or working counts (subagents included), busiest first. */
