@@ -4,6 +4,7 @@ import { createDaemonCommand } from '../src/shared/daemon-protocol';
 import { createWorkflowGraph } from '../src/shared/workflow';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 import { launchApp } from './launch-app';
+import { openProjectItems } from './project-navigation';
 
 test('ordinary chat keeps its session and unsent draft when linked; a provider edits creation preview through the app tool', async () => {
   test.setTimeout(180_000);
@@ -27,8 +28,7 @@ test('ordinary chat keeps its session and unsent draft when linked; a provider e
     const read = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId); if (!read.ok) throw new Error(read.message);
     const created = await page.evaluate(command => window.ezterminal.executeWorkflowCommand(command), { commandId: 'create-stage-work', projectId, hostId: read.snapshot.hostId, expectedRevision: read.snapshot.registryRevision, type: 'subproject.create' as const, payload: { id: 'stage-work', title: 'Stage work', goal: '', presetId: 'research' as const, graph } });
     expect(created.ok).toBe(true);
-    await page.getByTestId('rail-agents').click(); await page.getByTestId(`agent-project-open-${projectId}`).click();
-    const workspace = page.getByTestId('workflow-workspace'); await expect(workspace).toBeVisible();
+    const workspace = await openProjectItems(page, projectId);
     await workspace.getByRole('button', { name: 'New conversation', exact: true }).click();
     await expect(page.getByTestId('conversation-start')).toBeVisible();
     expect((await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.agents).toHaveLength(0);
@@ -38,8 +38,7 @@ test('ordinary chat keeps its session and unsent draft when linked; a provider e
     const chat = page.locator('[data-testid=structured-agent-session]:visible'); await expect(chat).toBeVisible({ timeout: 30_000 });
     const sessionId = (await chat.getAttribute('data-session-id'))!;
     await chat.getByTestId('structured-agent-composer-input').fill('Keep this unsent draft');
-    if (!await page.getByTestId(`agent-project-open-${projectId}`).isVisible()) await page.getByTestId('rail-agents').click();
-    await page.getByTestId(`agent-project-open-${projectId}`).click(); await expect(workspace).toBeVisible();
+    await openProjectItems(page, projectId);
     await workspace.locator('.workflow-conversation-row').getByRole('button', { name: 'Link to stage' }).click();
     await page.getByRole('dialog').getByLabel('Subproject', { exact: true }).selectOption('stage-work');
     await page.getByRole('dialog').getByLabel('Stage', { exact: true }).selectOption(graph.entryNodeId!);
@@ -66,8 +65,7 @@ test('ordinary chat keeps its session and unsent draft when linked; a provider e
     await expect(chat.getByTestId('structured-agent-send')).toBeEnabled({ timeout: 30_000 });
     await chat.getByTestId('structured-agent-send').click();
     await expect(chat).toContainText('AI preview updated through the authenticated app tool.', { timeout: 20_000 });
-    if (!await page.getByTestId(`agent-project-open-${projectId}`).isVisible()) await page.getByTestId('rail-agents').click();
-    await page.getByTestId(`agent-project-open-${projectId}`).click(); await workspace.getByRole('button', { name: 'Continue setup' }).click();
+    await openProjectItems(page, projectId); await workspace.getByRole('button', { name: 'Continue setup' }).click();
     await expect(page.getByRole('dialog').getByText('AI preview stage', { exact: true })).toBeVisible();
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     const result = await page.evaluate(id => window.ezterminal.getWorkflowSnapshot(id), projectId);

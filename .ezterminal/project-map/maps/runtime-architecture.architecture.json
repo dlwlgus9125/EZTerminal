@@ -130,7 +130,7 @@
           "relativePath": "src/renderer/ProjectConversationNavigator.tsx",
           "startLine": 36,
           "endLine": 143,
-          "lineDigest": "sha256:75c7b45b2170596d7b21510c77d1359f53165a1dc5dd8ac583ab0af6cee54f87",
+          "lineDigest": "sha256:7a9e556462ad52d6092434f3138c440d211a04f1ca5eae695f879acdfd3efe9c",
           "claim": "Navigation filters transcript-only events and coalesces refresh, reads worktree git status only when worktrees or their running chats change, opens existing Session IDs directly and native rows as history preview."
         }
       ]

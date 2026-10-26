@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { createDaemonCommand } from '../src/shared/daemon-protocol';
 import { launchApp } from './launch-app';
+import { startNewConversation } from './project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 
 /**
@@ -43,10 +44,7 @@ test('a running agent turn holds off idle sleep and releases it when the turn en
       if (receipt.ok) break;
       if (receipt.error.code !== 'revision-conflict' || attempt === 3) throw new Error(receipt.error.message);
     }
-    await page.getByTestId('rail-agents').click();
-    await page.getByTestId('agent-new-run').click();
-    const draft = page.getByTestId('conversation-start');
-    await expect(draft).toBeVisible();
+    const draft = await startNewConversation(page);
     await expect.poll(async () => (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(0);
     const composer = draft.getByTestId('structured-agent-composer-input');
     await composer.fill('Keep the PC awake while you work.');

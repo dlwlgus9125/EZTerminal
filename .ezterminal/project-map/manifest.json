@@ -205,7 +205,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:95770b20ba38c05ba0c7b6c21e62d7bf67816bb7ed07bdccb16b1e361e565a9f",
+        "inputDigest": "sha256:c83cd114bc8da5e28d20e1409873978dabe81dd0c171437a6a536418211f0246",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
       }
@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d5ab32c86008af85d51cffdcac4e9a085fff2bea7ae4d40498f5250ae549f042",
+        "inputDigest": "sha256:316f13f145ac49a3875ebd5fd598e695b7734a88569693b71e158c6da88fe518",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
       }
@@ -749,7 +749,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:cad29cdcb5a13cd4e4a44f65a74f373d96d57a76895c6cd5cb517bd5c2d8add4",
+        "inputDigest": "sha256:d097e8c1cc18eb6a43e955bfed2a539b3a3723de342b77bbc4c4ab7810838dff",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
       }

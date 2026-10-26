@@ -1,5 +1,6 @@
 import { createRegisteredE2eTempDir, expect, test } from './test';
 import { launchApp } from './launch-app';
+import { openProjectItems } from './project-navigation';
 import type { PlanningCommand } from '../src/shared/planning';
 
 test('planning and binary scenes survive host restart without starting execution', async () => {
@@ -38,9 +39,7 @@ test('planning and binary scenes survive host restart without starting execution
     expect(await page.evaluate(id => window.ezterminal.getPlanningExecutionSnapshot(id), projectId)).toMatchObject({ ok: true, snapshot: { runs: [] } });
     const after = await page.evaluate(() => window.ezterminal.getDaemonSnapshot());
     expect(after?.turns).toEqual(before?.turns);
-    await page.getByTestId('rail-agents').click();
-    await page.getByTestId(`agent-project-open-${projectId}`).click();
-    await expect(page.getByTestId('workflow-workspace')).toBeVisible();
+    await openProjectItems(page, projectId);
     await expect(page.getByTestId('workflow-workspace').getByRole('heading', { name: 'V2 planning test' })).toBeVisible();
     await page.getByRole('button', { name: /빠른 작업·기존 자료|Quick tasks and existing work/u }).click();
     await expect(page.getByTestId('planning-workspace')).toBeVisible();

@@ -1,5 +1,6 @@
 import { createRegisteredE2eTempDir, expect, test } from './test';
 import { launchApp } from './launch-app';
+import { openProjectItems } from './project-navigation';
 import { mkdir } from 'node:fs/promises';
 
 test('subproject creation and stage edits persist through real IPC and restart without a model turn', async () => {
@@ -15,9 +16,7 @@ test('subproject creation and stage edits persist through real IPC and restart w
     if (!saved.ok) throw new Error(saved.reason);
     const projectId = saved.project.projectId;
     const before = await page.evaluate(() => window.ezterminal.getDaemonSnapshot());
-    await page.getByTestId('rail-agents').click();
-    await page.getByTestId(`agent-project-open-${projectId}`).click();
-    await expect(page.getByTestId('workflow-workspace')).toBeVisible();
+    await openProjectItems(page, projectId);
     await page.screenshot({ path: 'artifacts/r4-implementation-review/real-app/project-home.png' });
     await page.getByRole('button', { name: /새 소프로젝트|New subproject/u, exact: true }).click();
     await page.getByRole('dialog').getByLabel(/이름|Name/u, { exact: true }).fill('Cancelled setup');

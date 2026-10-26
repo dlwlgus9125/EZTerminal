@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { createDaemonCommand } from '../src/shared/daemon-protocol';
 import { launchApp } from './launch-app';
+import { startNewConversation } from './project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 
 type Page = Awaited<ReturnType<Awaited<ReturnType<typeof launchApp>>['firstWindow']>>;
@@ -79,10 +80,7 @@ test('a conversation works in every project folder and drops a removed one from 
     const mainWorkspace = snapshot!.workspaces.find((workspace) => key(workspace.rootPath) === key(mainReal))!;
 
     // New conversation: the working folder is chosen from the folder setting under the message box.
-    await page.getByTestId('rail-agents').click();
-    await page.getByTestId('agent-new-run').click();
-    const draft = page.getByTestId('conversation-start');
-    await expect(draft).toBeVisible();
+    const draft = await startNewConversation(page);
     await expect(draft.getByRole('combobox', { name: 'Conversation workspace' })).toHaveCount(0);
     const folders = draft.getByTestId('structured-agent-folders');
     await folders.click();

@@ -174,20 +174,23 @@ export function useDeskShell(props: DeskShellProps): DeskShell {
   // Projects chosen here that the registry read does not list yet.
   const [remembered, setRemembered] = useState<readonly AgentProjectSummary[]>([]);
   const known = useMemo(() => knownProjects(projects, snapshot, remembered), [projects, snapshot, remembered]);
-  // Committed before the selection moves, so the fallback below never sees a project it does not know.
-  const remember = useCallback((project: AgentProjectSummary, forget?: string): void => {
-    flushSync(() => setRemembered((current) => [
-      ...current.filter((item) => item.projectId !== project.projectId && item.projectId !== forget),
-      project,
-    ]));
+  // The project is remembered and selected in one commit, so the fallback below never sees a
+  // selection it does not know (nor a forgotten id still selected).
+  const remember = useCallback((project: AgentProjectSummary, select: () => void, forget?: string): void => {
+    flushSync(() => {
+      setRemembered((current) => [
+        ...current.filter((item) => item.projectId !== project.projectId && item.projectId !== forget),
+        project,
+      ]);
+      select();
+    });
   }, []);
   const showProject = useCallback((project: AgentProjectSummary): void => {
-    remember(project);
-    navigation.showBoard(project.projectId);
+    remember(project, () => navigation.showBoard(project.projectId));
   }, [navigation, remember]);
   const followProject = useCallback((project: AgentProjectSummary, previousProjectId: string): void => {
-    remember(project, previousProjectId);
-    if (navigation.getSnapshot().projectId === previousProjectId) navigation.followPanel(project.projectId);
+    const selected = navigation.getSnapshot().projectId === previousProjectId;
+    remember(project, () => { if (selected) navigation.followPanel(project.projectId); }, previousProjectId);
   }, [navigation, remember]);
   const forgetProject = useCallback((projectId: string): void => {
     setRemembered((current) => current.filter((item) => item.projectId !== projectId));

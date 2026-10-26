@@ -96,9 +96,11 @@ export function AllProjectsDialog({ access, reloadKey, onClose, onOpen, onAdd, o
     const body = event.currentTarget.closest('.ez-ui-dialog__body')?.getBoundingClientRect();
     setMenuPlacement(body && body.bottom - trigger.bottom < MENU_ROOM ? 'top-end' : 'bottom-end');
   };
-  // Escape in a row's menu closes the menu, not the whole dialog.
+  // Escape in a row's menu closes the menu, not the whole dialog. (No instanceof: in a popout window
+  // the target belongs to that window's Element.)
   const keepEscapeInMenu = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Escape' && event.target instanceof Element && event.target.closest('[role="menu"]')) event.stopPropagation();
+    const target = event.target as { closest?: (selector: string) => unknown };
+    if (event.key === 'Escape' && typeof target.closest === 'function' && target.closest('[role="menu"]')) event.stopPropagation();
   };
 
   return (

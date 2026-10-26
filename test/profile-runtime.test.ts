@@ -27,7 +27,9 @@ describe('profile-runtime', () => {
 
   it('opens Monitor and Remote straight from the live list tool row', () => {
     expect(FEATURES.filter((feature) => 'menu' in feature)).toEqual([]);
-    expect(FEATURES.map((feature) => feature.button)).toEqual(['rail-agents', 'btn-toggle-stats', 'rail-remote', 'btn-toggle-settings']);
+    expect(FEATURES.map((feature) => feature.button)).toEqual(['shell-all-projects', 'btn-toggle-stats', 'rail-remote', 'btn-toggle-settings']);
+    // 모든 프로젝트 is a dialog over the shell: it is closed before the next button.
+    expect(FEATURES[0]).toMatchObject({ target: 'all-projects-dialog', close: 'Escape' });
   });
 
   it('keeps chat launches separate from interaction launches', () => {

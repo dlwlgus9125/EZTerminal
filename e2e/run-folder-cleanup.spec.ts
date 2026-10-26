@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createDaemonCommand } from '../src/shared/daemon-protocol';
 import type { WorkflowGraph } from '../src/shared/workflow';
 import { launchApp } from './launch-app';
+import { openProjectItems } from './project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 
 /**
@@ -79,8 +80,7 @@ test('작업 폴더 정리: the oldest run’s folders go, its conversation and 
     const newest = folderOf((await runOf('cleanup-run-4'))!.attempts[0]!.workspaceId!);
     expect(existsSync(oldest)).toBe(true);
 
-    await page.getByTestId('rail-agents').click(); await page.getByTestId(`agent-project-open-${projectId}`).click();
-    const workspace = page.getByTestId('workflow-workspace'); await expect(workspace).toBeVisible();
+    const workspace = await openProjectItems(page, projectId);
     await workspace.getByTestId('workflow-subproject-item').filter({ hasText: 'Cleanup flow' }).click();
     await expect(workspace.locator('.react-flow__node[data-id="build"]')).toBeVisible({ timeout: 30_000 });
 

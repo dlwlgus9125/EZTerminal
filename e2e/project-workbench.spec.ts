@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { daemonWorkspaceId } from '../src/main/daemon-project-sync';
 import { launchApp } from './launch-app';
+import { manageProject, openProjectBoard, openProjectItems } from './project-navigation';
 import { readXtermBuffer } from './xterm-buffer';
 import { createRegisteredE2eTempDir, expect, test, type Locator, type Page } from './test';
 
@@ -156,19 +157,14 @@ async function paneAtCwd(panes: Locator, cwd: string): Promise<Locator> {
 }
 
 async function openRegisteredProject(window: Page, projectId: string): Promise<void> {
-  await window.getByTestId('rail-agents').click();
   const panel = window.getByTestId('project-workspace-panel');
-  const projectButton = window.getByTestId(`agent-project-open-${projectId}`);
-  await expect.poll(async () => await panel.isVisible() || await projectButton.isVisible(), {
-    timeout: 15_000,
-    message: 'Agent sidebar should restore the active project or show its project entry',
-  }).toBe(true);
   if (!await panel.isVisible()) {
-    await projectButton.click();
-    await window.getByTestId('workflow-workspace').getByRole('button', { name: 'Quick tasks and existing work', exact: true }).click();
+    // The project's flow tab (from its board), then its files.
+    const workspace = await openProjectItems(window, projectId);
+    await workspace.getByRole('button', { name: 'Quick tasks and existing work', exact: true }).click();
     await window.getByTestId('planning-workspace').getByRole('button', { name: 'Files', exact: true }).click();
   }
-  await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
+  await expect(panel).toBeVisible();
   await expect(window.locator('.project-path-tree')).toBeVisible({ timeout: 15_000 });
 }
 
@@ -206,15 +202,16 @@ test('registered project can be deleted from the Projects menu', async () => {
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   const project = (await window.evaluate(async () =>
     globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
-  await window.getByTestId('rail-agents').click();
-  await window.getByRole('button', { name: `Manage ${project.name}`, exact: true }).click();
-  await window.getByRole('menuitem', { name: 'Delete project', exact: true }).click();
+  await manageProject(window, project.name, 'Delete project');
   const confirmation = window.getByTestId('agent-project-delete');
   await expect(confirmation).toBeVisible();
   await confirmation.getByRole('button', { name: 'Delete project', exact: true }).click();
   await expect(confirmation).not.toBeVisible();
-  await expect(window.getByTestId(`agent-project-open-${project.projectId}`)).toHaveCount(0);
-  await expect(window.getByTestId('agent-projects')).not.toContainText(project.name);
+  // Back in 모든 프로젝트, without it.
+  const list = window.getByTestId('all-projects-dialog');
+  await expect(list).toBeVisible();
+  await expect(window.getByTestId(`all-projects-open-${project.projectId}`)).toHaveCount(0);
+  await expect(list).not.toContainText(project.name);
   await expect.poll(async () => window.evaluate(async (projectId) =>
     (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))
       .items.some((item) => item.projectId === projectId), project.projectId)).toBe(false);
@@ -229,9 +226,9 @@ test('registered project can be deleted after its detached terminal exits with t
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   const project = (await window.evaluate(async () =>
     globalThis.window.ezterminal.listAgentProjects(false, undefined, 100))).items[0]!;
-  await window.getByTestId('rail-agents').click();
-  await window.getByRole('button', { name: `Manage ${project.name}`, exact: true }).click();
-  await window.getByRole('menuitem', { name: 'New Terminal', exact: true }).click();
+  // The project's board opens a terminal in the project.
+  await openProjectBoard(window, project.projectId);
+  await window.getByTestId('shell-board-new-terminal').click();
   const tab = window.locator('.project-session-tab');
   await expect(tab).toHaveCount(1);
   const pane = window.locator('[data-testid="pane"]:visible');
@@ -253,14 +250,11 @@ test('registered project can be deleted after its detached terminal exits with t
   expect(await restarted.evaluate(async (id) =>
     (await globalThis.window.ezterminal.listSessions()).some((session) => session.sessionId === id),
   sessionId)).toBe(false);
-  const manage = restarted.getByRole('button', { name: `Manage ${project.name}`, exact: true });
-  if (!await manage.isVisible()) await restarted.getByTestId('rail-agents').click();
-  await manage.click();
-  await restarted.getByRole('menuitem', { name: 'Delete project', exact: true }).click();
+  await manageProject(restarted, project.name, 'Delete project');
   const confirmation = restarted.getByTestId('agent-project-delete');
   await confirmation.getByRole('button', { name: 'Delete project', exact: true }).click();
   await expect(confirmation).not.toBeVisible();
-  await expect(restarted.getByTestId('agent-projects')).not.toContainText(project.name);
+  await expect(restarted.getByTestId('all-projects-dialog')).not.toContainText(project.name);
   await restartedApp.close();
 });
 

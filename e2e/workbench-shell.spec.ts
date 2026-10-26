@@ -26,6 +26,9 @@ test('Board + Desk shell: top bar, layout menu and a focus-restoring overlay sid
     await expect(window.getByTestId('btn-command-center')).toBeVisible();
     await expect(window.getByTestId('btn-workspace-menu')).toBeVisible();
     await expect(window.getByTestId('btn-toggle-settings')).toBeVisible();
+    // Projects are added and listed in dialogs from the top bar (no project sidebar).
+    await expect(window.getByTestId('shell-add-project')).toBeVisible();
+    await expect(window.getByTestId('shell-all-projects')).toBeVisible();
     // The old chrome is gone: no activity rail, workbench bar or status bar.
     await expect(window.locator('.activity-rail')).toHaveCount(0);
     await expect(window.locator('.workbench-bar')).toHaveCount(0);

@@ -19,7 +19,6 @@ import { _electron as electron } from '@playwright/test';
 
 import {
   CHAT_REPLY,
-  CODEX_PROJECT_NAME,
   HISTORY_PROJECT_NAME,
   HISTORY_TURNS,
   REPLY_SENTINEL,
@@ -47,7 +46,8 @@ const SHELL = '2.0-project-navigation';
  * in work mode, so they are clicked directly.
  */
 export const FEATURES = [
-  { name: 'agents', button: 'rail-agents', target: 'agent-hub' },
+  // 모든 프로젝트 is a dialog: it is closed again so the next button is not behind it.
+  { name: 'projects', button: 'shell-all-projects', target: 'all-projects-dialog', close: 'Escape' },
   { name: 'monitor', button: 'btn-toggle-stats', target: 'status-panel' },
   { name: 'remote', button: 'rail-remote', target: 'remote-panel' },
   { name: 'settings', button: 'btn-toggle-settings', target: 'settings-panel' },
@@ -57,8 +57,8 @@ export const FEATURES = [
 export const TEST_IDS = [
   'pane', 'cmd-input',
   ...new Set(FEATURES.flatMap((feature) => [feature.menu, feature.button, feature.target].filter(Boolean))),
-  'agent-new-run', 'conversation-start', 'structured-agent-session', 'structured-agent-composer-input',
-  'structured-agent-transcript', 'project-conversation-tree', 'agent-project-history',
+  'btn-new-session', 'conversation-start', 'structured-agent-session', 'structured-agent-composer-input',
+  'structured-agent-transcript', 'shell-live-row', 'conversation-history-dialog',
 ];
 
 /**
@@ -68,7 +68,7 @@ export const TEST_IDS = [
 export const COMPARABILITY = {
   interactiveMs: 'same definition (terminal command input visible); the 2.0 workbench does more at boot',
   commandInputFeedbackMs: 'yes: the same terminal command input',
-  'featureReadyMs.agents': 'no: in 2.0 this opens the Projects tree, not the agent hub',
+  'featureReadyMs.projects': 'no: in 2.0 this opens the 모든 프로젝트 dialog, not the agent hub',
   'featureReadyMs.monitor': 'roughly: now timed from the Tools menu item',
   'featureReadyMs.remote': 'roughly: now timed from the Tools menu item',
   'featureReadyMs.settings': 'yes',
@@ -341,13 +341,20 @@ async function measureFeature(page, feature, interactions) {
   await button.click();
   await page.getByTestId(feature.target).waitFor({ state: 'visible', timeout: 15_000 });
   const readyMs = performance.now() - startedAt;
-  if (!interactions) return { readyMs, feedbackMs: null, toolsMenuOpenMs };
+  // A dialog covers the next destination's button: close it once measured.
+  const close = async () => {
+    if (!feature.close) return;
+    await page.keyboard.press(feature.close);
+    await page.getByTestId(feature.target).waitFor({ state: 'hidden', timeout: 15_000 });
+  };
+  if (!interactions) { await close(); return { readyMs, feedbackMs: null, toolsMenuOpenMs }; }
   await page.waitForFunction(() => typeof window.__ezInteractionProfile.feedback === 'number');
   await page.evaluate(() => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
   const feedbackMs = await page.evaluate(() => window.__ezInteractionProfile.feedback);
   await endPhase(page, phaseIndex);
+  await close();
   return { readyMs, feedbackMs, toolsMenuOpenMs };
 }
 
@@ -521,24 +528,19 @@ function sessionLocator(page, sessionId) {
 }
 
 async function openNewConversation(page, workspaceId) {
-  if (!await page.getByTestId('agent-hub').isVisible()) await page.getByTestId('rail-agents').click();
-  await page.getByTestId('agent-new-run').click();
+  // The work list's + (on the board, Ctrl+` goes to work mode first).
+  if (!await page.getByTestId('btn-new-session').isVisible()) await page.keyboard.press('Control+Backquote');
+  await page.getByTestId('btn-new-session').click();
   const draft = page.getByTestId('conversation-start').last();
   await draft.waitFor({ state: 'visible', timeout: 15_000 });
   await draft.getByRole('combobox', { name: 'Conversation workspace' }).selectOption(workspaceId);
   return draft.getByTestId('structured-agent-composer-input');
 }
 
-/** Click a conversation in the project tree until its session shows a reply. */
+/** Click a conversation in the work list until its session shows a reply. */
 async function measureSwitch(page, sessionId) {
-  if (!await page.getByTestId('agent-hub').isVisible()) await page.getByTestId('rail-agents').click();
-  const tree = page.getByTestId('project-conversation-tree');
-  const item = tree.locator(`[role="treeitem"][data-session-id="${sessionId}"]`);
-  if (!await item.isVisible()) {
-    const project = tree.locator('[data-kind="project"]').filter({ hasText: CODEX_PROJECT_NAME }).first();
-    if (await project.getAttribute('aria-expanded') === 'false') await project.click();
-    await item.waitFor({ state: 'visible', timeout: 15_000 });
-  }
+  const item = page.locator(`[data-testid="shell-live-row"][data-session="${sessionId}"]`);
+  await item.waitFor({ state: 'visible', timeout: 15_000 });
   await item.evaluate((element) => {
     element.addEventListener('click', () => { window.__ezClickAt = performance.now(); }, { capture: true, once: true });
   });
@@ -591,11 +593,12 @@ async function measureScroll(scroll) {
 
 /** Opens the seeded Claude CLI history and loads every earlier page by scrolling to the top. */
 async function measureHistory(page) {
-  if (!await page.getByTestId('agent-hub').isVisible()) await page.getByTestId('rail-agents').click();
+  // 모든 프로젝트 → the project's ⋯ → CLI history: the history dialog on its CLI records.
+  await page.getByTestId('shell-all-projects').click();
   await page.getByRole('button', { name: `Manage ${HISTORY_PROJECT_NAME}` }).click();
   await page.getByRole('menuitem', { name: 'CLI history', exact: true }).click();
-  await page.getByTestId('agent-project-history').waitFor({ state: 'visible', timeout: 15_000 });
-  const row = page.locator('.agent-history-row').first();
+  await page.getByTestId('conversation-history-dialog').waitFor({ state: 'visible', timeout: 15_000 });
+  const row = page.locator('[data-testid="conversation-history-dialog"] .conversation-history__row').first();
   await row.waitFor({ state: 'visible', timeout: 15_000 });
   await row.evaluate((element) => {
     element.addEventListener('click', () => { window.__ezClickAt = performance.now(); }, { capture: true, once: true });
@@ -653,7 +656,7 @@ async function collectChatSample(index) {
     application = await electron.launch({ args: [MAIN_ENTRY, '--lang=en-US'], env: launchEnvironment(profileDirectory, fixture.env) });
     const page = await application.firstWindow();
     await page.setViewportSize(CHAT_VIEWPORT);
-    await page.getByTestId('rail-agents').waitFor({ state: 'visible', timeout: 20_000 });
+    await page.getByTestId('shell-all-projects').waitFor({ state: 'visible', timeout: 20_000 });
     const interactiveMs = performance.now() - startedAt;
     const runtime = await application.evaluate(() => ({ ...process.versions }));
     await installInteractionObserver(page);

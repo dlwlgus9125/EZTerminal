@@ -1244,12 +1244,16 @@ export function App(): JSX.Element {
       ...(desktop ? { selectFolders: (multiple?: boolean) => desktop.selectAgentProjectFolders(multiple) } : {}),
     };
   }, []);
-  // Each request reads the project afresh (it may sit past the registry's first page); the latest wins.
+  // Each request reads the project afresh (it may sit past the registry's first page); the latest wins,
+  // and a dialog opened meanwhile (say + while the read was slow) is not replaced by it.
   const projectEditorRequest = useRef(0);
   const openProjectEditor = useCallback((projectId: string): void => {
     const request = ++projectEditorRequest.current;
     void findAgentProject(projectRegistryAccess.listAgentProjects, projectId)
-      .then((project) => { if (project && request === projectEditorRequest.current) setProjectDialog({ kind: 'edit', project }); })
+      .then((project) => {
+        if (!project || request !== projectEditorRequest.current) return;
+        setProjectDialog((current) => current ?? { kind: 'edit', project });
+      })
       .catch(() => undefined);
   }, [projectRegistryAccess]);
   const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
@@ -3281,7 +3285,8 @@ export function App(): JSX.Element {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
           },
-          onEditProject: (project: AgentProjectSummary) => setProjectDialog({ kind: 'edit', project }),
+          // Read afresh: the hub's own list may hold the project as it was before an edit made here.
+          onEditProject: (project: AgentProjectSummary) => openProjectEditor(project.projectId),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}

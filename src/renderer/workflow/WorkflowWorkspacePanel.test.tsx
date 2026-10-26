@@ -59,6 +59,18 @@ describe('workflow project workspace', () => {
     expect(bar?.textContent).not.toContain('Connect to the host to run.');
   });
 
+  it('goes back to the board from the project items where there is one, else to the project list', async () => {
+    const state = fixture(); const onBoard = vi.fn(); const onBack = vi.fn();
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} conversations={[]} onBoard={onBoard} onBack={onBack} />));
+    await click('Back to the board');
+    expect(onBoard).toHaveBeenCalledOnce();
+    expect(onBack).not.toHaveBeenCalled();
+    // A phone has no board: its back closes the layer as before.
+    await act(async () => root.render(<WorkflowWorkspacePanel projectId="project-story" projectName="Project" access={state.access} conversations={[]} onBack={onBack} />));
+    await click('Back to projects');
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
   it('opens the shared draft for ordinary project conversations without creating a session', async () => {
     const state = fixture(); const onNewConversation = vi.fn();
     const daemonAccess = { getDaemonSnapshot: async () => null, sendDaemonCommand: vi.fn() };

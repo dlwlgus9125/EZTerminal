@@ -105,8 +105,8 @@
 | 4.06–4.09 | Project Explorer(사이드바 본문 교체): 프로젝트 ⋯ 프로젝트 파일, 옛 기획 "파일", 결과물 "프로젝트 파일 열기", 변경 검토 "현재 프로젝트 파일 열기" | **파일 목적지**(루트: 프로젝트 먼저) + 파일 탭 | 이동 | B2 | e2e/project-workbench, project-map-agent-session |
 | 4.10 | Project Explorer 헤더(뒤로, 새 터미널, Agent 실행, Project Map, 관리) | 프로젝트 홈의 동작으로 | 이동 | B2·B3 | e2e/project-map-agent-session; u:ProjectWorkspacePanel |
 | 4.11 | 작업 위치 선택 `R/ProjectWorkspacePanel.tsx:775` | 파일 목적지의 루트·작업 폴더 전환 | 이동 | B2 | e2e/project-workbench |
-| 4.12–4.13 | 입력창 "프로젝트 편집…", 프로젝트 ⋯ 프로젝트 편집 → 사이드바 대화상자 | 프로젝트 홈 설정(어디서든 같은 편집 화면) | 이동 | B3 | e2e/conversation-folders; u:AgentHub |
-| 4.14–4.16 | 프로젝트 추가·고정·삭제·새 터미널 | 목록 주인(D①-1)과 프로젝트 홈 | 이동 | B1·B3 | e2e/project-workbench, structured-agent-draft |
+| 4.12–4.13 | 입력창 "프로젝트 편집…", 프로젝트 ⋯ 프로젝트 편집 → 사이드바 대화상자 | 편집 대화상자만(사이드바 없이), 판 머리 프로젝트 설정·모든 프로젝트 ⋯ 편집과 같은 화면 — P-1(2026-10-26) | 이동 | B3 | e2e/conversation-folders, project-dialogs; u:ProjectDialogs |
+| 4.14–4.16 | 프로젝트 추가·고정·삭제·새 터미널 | 추가 = 위 막대 `+` 대화상자, 고정·삭제 = 모든 프로젝트 대화상자, 새 터미널 = 판 — P-1(2026-10-26) | 이동 | B1·B3 | e2e/project-dialogs, project-workbench, structured-agent-draft; u:AllProjectsDialog, ProjectDialogHost |
 | 4.17–4.18 | Android 프로젝트 페이지·파일 | Android 프로젝트 탭, 파일(더보기 또는 프로젝트 홈) | 통합 | B3·B2 | me2e/planning-workflow, apk-stabilization, parity |
 
 ## 5. 소프로젝트 실행
@@ -202,7 +202,7 @@
 | 12.04–12.05 | Ctrl+Tab 최근 패널, Alt+Shift+=/- 분할 | 유지 | — | e2e/recent-panel-switcher, splits |
 | 12.06 | 창 항목: **터미널 패널만**(대화 탭은 안 나옴) | 대화 탭 포함 | B1 | 없음 |
 | 12.07–12.09, 12.11, 12.13 | 백그라운드 세션, 파일, 기록·빠른 명령, 프리셋, 관리 | 유지(파일은 파일 탭으로, B2) | B2 | e2e/background-session, popout-interaction-parity |
-| 12.10 | 동작: 새 탭·분할·테마·프리셋 저장·목적지 열기·언어. **"프로젝트" 동작이 마지막 보기가 받은 요청이면 받은 요청을 엶**(`R/App.tsx:2643`) | 목적지 동작은 해당 목적지로 정확히 이동 | ② | e2e/palette, workbench-shell |
+| 12.10 | 동작: 새 탭·분할·테마·프리셋 저장·목적지 열기·언어. **"프로젝트" 동작이 마지막 보기가 받은 요청이면 받은 요청을 엶**(`R/App.tsx:2643`) | 목적지 동작은 해당 목적지로 정확히 이동. "프로젝트"는 모든 프로젝트 대화상자(P-1, 2026-10-26) | ② | e2e/palette, workbench-shell; u:command-center-actions |
 | 12.12 | 에이전트(1.19) | 1.19 | B1 | 없음 |
 | 신규 | — | 프로젝트·소프로젝트·대화(기록 포함) 색인, 새 대화 명령 | B1 | — |
 
@@ -217,7 +217,7 @@
 | 13.06 | FX·NEON 버튼 | 상태줄 효과 popover | ② | vis/storybook; u:EffectProfileMenu |
 | 13.07 | 에이전트 알림(9.01) | 삭제 | ② | — |
 | 13.08 | 창 제어(aria 영어 고정) | 유지, aria 번역 | ② | e2e/popout-window; vis/session-navigation |
-| 13.09–13.16 | 레일: 프로젝트 · 받은 요청 · 도구 메뉴(모니터·원격·탐색기·OpenClaw) · 설정 | 레일 구성 D①-2(A안 평면 / B안 대화 첫 칸) | ② | rail-agents 13개 e2e + pkg 2개, rail-tools 3개 + `e2e/workbench-navigation.ts` helper 6개, btn-toggle-settings 8개 — §15 |
+| 13.09–13.16 | 레일: 프로젝트 · 받은 요청 · 도구 메뉴(모니터·원격·탐색기·OpenClaw) · 설정 | 레일 구성 D①-2(A안 평면 / B안 대화 첫 칸). 프로젝트는 위 막대 `+`(`shell-add-project`)·`모든 프로젝트`(`shell-all-projects`) 대화상자(P-1) | ② | `e2e/project-navigation.ts` helper(14개 e2e + pkg 2개), rail-tools 3개 + `e2e/workbench-navigation.ts` helper 6개, btn-toggle-settings 8개 — §15 |
 | 13.17–13.18 | 사이드바 셸(1200px 미만 오버레이, 프로젝트는 1024px 미만), 목적지 6종 | 사이드바 하나에 목적지 하나(유지), 목적지 구성 D①-2 | ② | e2e/workbench-shell, status-panel, agent-experience; vis/storybook, workbench-tools; u:SidebarShell |
 | 13.19 | 작업 공간 탭 바 | 탭 줄 오른쪽 [작업 세트] | ② | e2e/conversation-workbench-r7 |
 | 13.20 | 워크스페이스 바 레이아웃 칩(위아래·2×1·1+2·단일) | [배치] 메뉴로 흡수 | ② | 없음 |
@@ -249,14 +249,19 @@ Android에는 `/new`가 없고 `/clear`는 사유와 함께 비활성, 위임도
   popout-interaction-parity, popout-window, recent-panel-switcher, renderer-recovery, structured-agent-draft,
   tab-overflow, tabs, theme-effects-font, workbench-shell. 분할·프리셋: drag-layout, layout-persistence, popout-window,
   splits.
-- 레일: `rail-agents` 13개(agent-activity-lifecycle, agent-experience, agent-history, agent-results,
-  conversation-folders, planning-workflow, power-save, project-map-agent-session, project-workbench,
-  structured-agent-draft, subproject-workflow, workflow-canvas-run, workflow-conversation). `rail-tools`와 helper
+- 프로젝트(2026-10-26 P-1부터): `rail-agents`는 위 막대에서 사라졌다. helper `e2e/project-navigation.ts`
+  (`openAllProjects`, `openProjectBoard`, `openProjectItems` = 판 `새 흐름`, `startNewConversation` = 작업 목록
+  `btn-new-session`, `manageProject` = 모든 프로젝트 ⋯)를 14개가 쓴다(agent-activity-lifecycle, agent-experience,
+  agent-history, agent-results, conversation-folders, planning-workflow, power-save, project-map-agent-session,
+  project-workbench, run-folder-cleanup, structured-agent-draft, subproject-workflow, workflow-canvas-run,
+  workflow-conversation). 대화상자 자체는 `e2e/project-dialogs`. `rail-tools`와 helper
   `e2e/workbench-navigation.ts`(file-explorer, openclaw-chat, openclaw-panel, project-workbench, status-panel,
   workbench-shell, openclaw-visibility). `btn-toggle-settings` 8개(interference-effects, openclaw-visibility,
   remote-toggle, settings, structured-agent-draft, theme-effects-font, theme, workbench-shell).
-- 사이드바 내부: `agent-new-run`, `agent-project-open-*`, `project-conversation-tree`, `agent-project-history`,
-  Project Explorer(`project-workspace-*`) — 위 e2e 다수.
+- 사이드바 내부: 데스크톱은 받은 요청과 프로젝트 파일(`project-workspace-*`)만 남았다. 예전 `agent-new-run`,
+  `agent-project-open-*`, `project-conversation-tree`, `agent-project-history` 대신 `btn-new-session`,
+  `all-projects-open-*`, `conversation-history-dialog`(출처 CLI 기록), 판의 `shell-board-new-flow`·`shell-board-new-terminal`.
+  트리의 `session-end`를 쓰던 2개(agent-activity-lifecycle, structured-agent-draft)는 같은 guarded 종료를 API로 부른다.
 - 작업 공간 탭: `e2e/conversation-workbench-r7`.
 - 받은 요청을 여는 e2e는 **없다**(B1에서 추가).
 - 패키지 e2e: `pkg/conversation-restart`, `pkg/project-history-navigation`, `pkg/terminal-copy-packaged`.

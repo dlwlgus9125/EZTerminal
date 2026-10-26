@@ -1,6 +1,7 @@
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { manageProject, openAllProjects } from '../e2e/project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from '../e2e/test';
 import { launchPackagedRenderer } from './packaged-renderer';
 import { encodeClaudeProjectDirName } from '../src/main/claude-history-adapter';
@@ -13,7 +14,7 @@ test('packaged project history navigation stays usable while scrolling a populat
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   try {
-    await expect(page.getByTestId('rail-agents')).toBeVisible();
+    await expect(page.getByTestId('shell-all-projects')).toBeVisible();
     for (let index = 0; index < 24; index += 1) {
       const root = path.join(fixtureRoot, String(index));
       mkdirSync(root);
@@ -22,17 +23,16 @@ test('packaged project history navigation stays usable while scrolling a populat
       });
       expect(saved.ok).toBe(true);
     }
-    await page.getByTestId('rail-agents').click();
-    const tree = page.getByTestId('project-conversation-tree');
-    await expect(tree).toBeVisible();
-    await expect(tree.locator('[data-kind="project"]').filter({ hasText: 'History scroll fixture' })).toHaveCount(24);
-    await tree.hover();
+    // 모든 프로젝트 lists them all and scrolls.
+    const list = await openAllProjects(page);
+    await expect(list.locator('.ez-project-list__row').filter({ hasText: 'History scroll fixture' })).toHaveCount(24);
+    await list.locator('.ez-project-list__rows').hover();
     for (let index = 0; index < 6; index += 1) {
       await page.mouse.wheel(0, 250);
       await page.waitForTimeout(80);
     }
     await expect(page.locator('.feature-load-error'), JSON.stringify(errors)).toHaveCount(0);
-    await expect(tree).toBeVisible();
+    await expect(list).toBeVisible();
     expect(errors.filter(error => /feature-loader|TypeError|Maximum update/.test(error))).toEqual([]);
   } finally {
     console.log(JSON.stringify({ rendererErrors: errors }));
@@ -72,19 +72,16 @@ test('packaged previous CLI conversations open and scroll without losing project
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   try {
-    await expect(page.getByTestId('rail-agents')).toBeVisible();
+    await expect(page.getByTestId('shell-all-projects')).toBeVisible();
     const saved = await page.evaluate(root => window.ezterminal.saveAgentProject({ name: 'Prior conversations', primaryRoot: root, additionalRoots: [], pinned: true }), projectRoot);
     expect(saved.ok).toBe(true);
-    await page.getByTestId('rail-agents').click();
-    const tree = page.getByTestId('project-conversation-tree');
-    const project = tree.locator('[data-kind="project"]').filter({ hasText: 'Prior conversations' });
-    await expect(project).toBeVisible();
-    if (await project.getAttribute('aria-expanded') !== 'true') {
-      await project.getByRole('button', { name: /^(Expand|펼치기): Prior conversations$/ }).click();
-    }
-    await expect(tree.locator('[data-kind="conversation"]')).toHaveCount(24, { timeout: 15_000 });
+    // 모든 프로젝트 → the project's ⋯ → CLI history: its 24 CLI records in the history dialog.
+    await manageProject(page, 'Prior conversations', /CLI history|CLI 기록/u);
+    const history = page.getByTestId('conversation-history-dialog');
+    const rows = history.locator('.conversation-history__row');
+    await expect(rows).toHaveCount(24, { timeout: 15_000 });
     // Opening an older row also scrolls it into view without requiring a wheel.
-    await tree.locator('[data-kind="conversation"]').last().click({ timeout: 10_000 });
+    await rows.last().click({ timeout: 10_000 });
     const conversation = page.getByTestId('conversation-start');
     await expect(conversation).toBeVisible();
     await expect(page.getByTestId('conversation-history-dialog')).toHaveCount(0);
@@ -102,10 +99,10 @@ test('packaged previous CLI conversations open and scroll without losing project
     await page.screenshot({ path: path.join(evidence, 'previous-conversation.png') });
     await testInfo.attach('previous-conversation', { path: path.join(evidence, 'previous-conversation.png'), contentType: 'image/png' });
     await expect(page.locator('.feature-load-error'), JSON.stringify(errors)).toHaveCount(0);
-    await expect(tree).toBeVisible();
-    await tree.hover();
-    await page.mouse.wheel(0, -600);
-    await page.mouse.wheel(0, 600);
+    // The project stays one click away in 모든 프로젝트.
+    const list = await openAllProjects(page);
+    await expect(list.getByTestId(`all-projects-open-${saved.ok ? saved.project.projectId : ''}`)).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.locator('.feature-load-error'), JSON.stringify(errors)).toHaveCount(0);
     expect(errors.filter(error => /feature-loader|TypeError|Maximum update/.test(error))).toEqual([]);
   } finally {

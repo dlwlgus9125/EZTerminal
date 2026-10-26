@@ -214,7 +214,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
         <div className="ez-shell-launch__composer">{props.startBar}</div>
         <span className="ez-shell-launch__actions">
           <button type="button" className="ez-shell-btn" onClick={props.onNewTerminal}>{text('새 터미널', 'New terminal')}</button>
-          <button type="button" className="ez-shell-btn" onClick={props.onNewFlow}>{text('새 흐름', 'New flow')}</button>
+          <button type="button" className="ez-shell-btn" onClick={props.onNewFlow} data-testid="shell-board-new-flow">{text('새 흐름', 'New flow')}</button>
         </span>
       </div>
     </>

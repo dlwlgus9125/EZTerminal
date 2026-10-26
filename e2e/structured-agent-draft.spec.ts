@@ -11,6 +11,7 @@ import {
   type DaemonSnapshot,
 } from '../src/shared/daemon-protocol';
 import { launchApp } from './launch-app';
+import { openProjectBoard, startNewConversation } from './project-navigation';
 
 const FAKE_CODEX_DIR = path.resolve(__dirname, 'fixtures', 'fake-codex');
 const FAKE_CODEX_VERSION_FILE = 'ezterminal-e2e-codex-version.txt';
@@ -82,12 +83,8 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
     ));
     expect(before).not.toBeNull();
 
-    await window.getByTestId('rail-agents').click();
-    await window.getByTestId('agent-new-run').click();
-
+    const draft = await startNewConversation(window);
     await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
-    const draft = window.getByTestId('conversation-start');
-    await expect(draft).toBeVisible();
     await expect(draft.getByTestId('structured-agent-composer-input')).toBeVisible();
     // Plan mode is a switch beside the permission, which offers access levels only.
     const plan = draft.getByTestId('structured-agent-live-plan');
@@ -205,12 +202,8 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(codexCard.getByTestId('provider-enable-codex')).toHaveCount(0);
     await window.getByTestId('btn-toggle-settings').click();
 
-    await window.getByTestId('rail-agents').click();
-    await window.getByTestId('agent-new-run').click();
-
+    const draft = await startNewConversation(window);
     await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
-    const draft = window.getByTestId('conversation-start');
-    await expect(draft).toBeVisible();
     // The AI and the working folder are chosen under the message box.
     const model = draft.getByTestId('structured-agent-live-model');
     await expect(
@@ -364,13 +357,13 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
       const window = await app.firstWindow();
       await resizeWindow(window, { width: 1440, height: 900 });
       await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
-      await window.getByTestId('rail-agents').click();
       const registered = await window.evaluate(async () => (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items);
       const projectId = registered.find((entry) => entry.name === 'Session UX fixture')?.projectId;
       expect(projectId, JSON.stringify(registered)).toBeTruthy();
       const before = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
-      await window.getByRole('button', { name: 'Manage Session UX fixture', exact: true }).click();
-      await window.getByRole('menuitem', { name: 'New Terminal', exact: true }).click();
+      // The project's board opens a terminal in the project.
+      await openProjectBoard(window, projectId!);
+      await window.getByTestId('shell-board-new-terminal').click();
       await expect(window.getByTestId('new-session-draft')).toHaveCount(0);
       const pane = window.locator('[data-testid="pane"]:visible');
       await expect(pane).toHaveCount(1);
@@ -378,7 +371,11 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
       const sessionId = await pane.getAttribute('data-session-id');
       expect(sessionId).toBeTruthy();
       const sessions = await window.evaluate(() => globalThis.window.ezterminal.listSessions());
-      expect(sessions).toHaveLength(before.length + 1);
+      // One new terminal in the project. (Leaving the board for work mode also starts the dock's
+      // first terminal, which is not in the project.)
+      const opened = sessions.filter((session) => !before.some((earlier) => earlier.sessionId === session.sessionId)
+        && path.resolve(session.cwd) === realpathSync.native(projectRoot));
+      expect(opened.map((session) => session.sessionId)).toEqual([sessionId]);
       const sessionTitle = await window.evaluate(async id => (await globalThis.window.ezterminal.getDaemonSnapshot())?.sessions.find(item => item.id === id)?.title, sessionId!);
       expect(sessionTitle).toBeTruthy();
       // Project terminal identity is canonical, even when TEMP uses a DOS 8.3 alias.
@@ -386,17 +383,19 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
       await pane.getByTestId('cmd-input').fill('echo preserved-draft');
       await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();
       await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`)).toHaveCount(0);
-      const projectRow = window.getByTestId(`agent-project-open-${projectId}`);
-      if (await projectRow.getAttribute('aria-expanded') !== 'true') await projectRow.getByRole('button', { name: 'Expand: Session UX fixture', exact: true }).click();
-      const row = window.getByTestId('project-conversation-tree').getByRole('treeitem', { name: `${sessionTitle} · Terminal`, exact: true });
-      await expect(row).toBeVisible();
-      await row.click();
+      // The closed tab's session keeps running and the Command Center hands it back, draft and all.
+      await window.getByTestId('btn-command-center').click();
+      await window.getByTestId(`quick-open-row-background-session-${sessionId}`).click();
       const reopened = window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`);
       await expect(reopened).toBeVisible();
       await expect(reopened.getByTestId('cmd-input')).toHaveValue('echo preserved-draft');
-      await row.getByTestId('session-end').click();
-      await expect(window.getByTestId('session-end-dialog')).toBeVisible();
-      await window.getByTestId('session-end-confirm').click();
+      // The guarded end the session-end button sends (its dialog: TerminalSessionActions.test.tsx).
+      const ended = await window.evaluate(async (id) => {
+        const api = globalThis.window.ezterminal;
+        const runs = (await api.listRuns()).filter((run) => run.sessionId === id).map((run) => run.runId);
+        return api.terminateSessionGuarded(id, runs);
+      }, sessionId!);
+      expect(ended.ok).toBe(true);
       await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).some((session) => session.sessionId === sessionId)).toBe(false);
     } finally { await app.close(); }
   });

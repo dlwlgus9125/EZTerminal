@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test, expect, createRegisteredE2eTempDir, type Page } from './test';
 
 import { launchApp } from './launch-app';
+import { manageProject, openAllProjects } from './project-navigation';
 import { encodeClaudeProjectDirName } from '../src/main/claude-history-adapter';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
@@ -233,11 +234,15 @@ function seedTerminalProject(userDataDir: string, projectRoot: string): void {
   );
 }
 
+/** 모든 프로젝트 → Handoff's ⋯ → CLI history: the history dialog on that project's CLI records. */
 async function openProjectHistory(window: Page): Promise<void> {
-  await window.getByRole('button', { name: 'Manage Handoff' }).click();
-  await window.getByRole('menuitem', { name: 'CLI history', exact: true }).click();
-  await expect(window.getByTestId('agent-project-history')).toBeVisible();
+  await manageProject(window, 'Handoff', 'CLI history');
+  const history = window.getByTestId('conversation-history-dialog');
+  await expect(history).toBeVisible();
+  await expect(history.getByRole('combobox', { name: 'Source' })).toHaveValue('native');
 }
+
+const historyRows = (window: Page) => window.getByTestId('conversation-history-dialog').locator('.conversation-history__row');
 
 test('lists a local Claude session for a terminal project and opens it read-only', async () => {
   const home = createRegisteredE2eTempDir('ezterm-e2e-claude-home-');
@@ -258,21 +263,20 @@ test('lists a local Claude session for a terminal project and opens it read-only
   const window = await app.firstWindow();
   await resizeWindow(window, { width: 1440, height: 900 });
 
-  await window.getByTestId('rail-agents').click();
-  await expect(window.getByTestId('agent-hub')).toBeVisible();
+  // The terminal project is listed in 모든 프로젝트.
+  const projects = await openAllProjects(window);
+  await expect(projects).toContainText('Handoff');
+  await window.keyboard.press('Escape');
 
-  const project = window.getByTestId('project-conversation-tree').locator('[data-kind="project"]').filter({ hasText: 'Handoff' });
-  await expect(project).toContainText('Handoff');
-
-  // The session list is fetched no earlier than Session history being chosen
+  // The session list is fetched no earlier than CLI history being chosen
   // from the project's overflow menu.
   await openProjectHistory(window);
-  const rows = window.locator('.agent-history-row');
+  const rows = historyRows(window);
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await expect(rows.first()).toContainText('Claude');
   await expect(rows.first()).toContainText(PROMPT);
   // The provider's session id and transcript path never reach the renderer.
-  await expect(window.getByTestId('agent-hub')).not.toContainText(SESSION_ID);
+  await expect(window.getByTestId('conversation-history-dialog')).not.toContainText(SESSION_ID);
 
   // The conversation body is fetched no earlier than the session being opened,
   // and opening it must not start a run.
@@ -335,9 +339,8 @@ test('keeps the complete current file and an unplaced provider record in one rev
   const window = await app.firstWindow();
   await resizeWindow(window, { width: 1440, height: 900 });
 
-  await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
-  await window.locator('.agent-history-row').first().click();
+  await historyRows(window).first().click();
   const transcript = window.getByTestId('conversation-start').getByTestId('structured-agent-transcript');
   await transcript.locator('.conversation-history__changes summary').click();
   const fileChange = transcript.getByRole('button', { name: 'src/app.ts', exact: true });
@@ -375,9 +378,8 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
   // modal overlay and the transcript behind it cannot be clicked.
   await expect.poll(() => window.evaluate(() => matchMedia('(min-width: 1200px)').matches)).toBe(true);
 
-  await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
-  const rows = window.locator('.agent-history-row');
+  const rows = historyRows(window);
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
 
@@ -408,9 +410,8 @@ test('explicit terminal continuation opens a Claude run rooted at the recorded p
   const window = await app.firstWindow();
   await resizeWindow(window, { width: 1440, height: 900 });
 
-  await window.getByTestId('rail-agents').click();
   await openProjectHistory(window);
-  const rows = window.locator('.agent-history-row');
+  const rows = historyRows(window);
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
   await expect(window.getByTestId('conversation-start')).toBeVisible({ timeout: 15_000 });

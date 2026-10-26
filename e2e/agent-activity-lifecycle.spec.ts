@@ -58,23 +58,14 @@ test('terminating an Agent terminal session removes its activity and focus targe
     .toContain('FAKE-CODEX-READY');
   const sessionId = await pane.getAttribute('data-session-id');
   expect(sessionId).toBeTruthy();
-  await window.getByTestId('rail-agents').click();
-  const projectId = await window.evaluate(async id => (await globalThis.window.ezterminal.getDaemonSnapshot())?.sessions.find(item => item.id === id)?.projectId, sessionId!);
-  const project = window.getByTestId(`agent-project-open-${projectId}`);
-  const row = window.locator(`[role="treeitem"][data-session-id="${sessionId}"]`);
-  // The tree also opens the project by itself (first project, active session) once its list arrives,
-  // which renames Expand to Collapse: expand only while it is still closed, and retry until the row shows.
-  await expect(async () => {
-    if (!await row.isVisible() && await project.getAttribute('aria-expanded') !== 'true') {
-      await project.getByRole('button', { name: /^Expand:/ }).click({ timeout: 1_000 });
-    }
-    await expect(row).toBeVisible({ timeout: 1_000 });
-  }).toPass({ timeout: 15_000 });
-  await row.getByTestId('session-end').click();
-  const dialog = window.getByTestId('session-end-dialog');
-  await expect(dialog).toBeVisible();
-  await window.getByTestId('session-end-confirm').click();
-  await expect(dialog).toHaveCount(0);
+  // The guarded end the session-end button sends (its dialog is covered by TerminalSessionActions.test.tsx;
+  // the project tree that showed it on desktop is gone with the project sidebar).
+  const ended = await window.evaluate(async (id) => {
+    const api = globalThis.window.ezterminal;
+    const runs = (await api.listRuns()).filter((run) => run.sessionId === id).map((run) => run.runId);
+    return api.terminateSessionGuarded(id, runs);
+  }, sessionId!);
+  expect(ended.ok).toBe(true);
 
   await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId!}"]`))
     .toHaveCount(0, { timeout: 15_000 });
@@ -84,7 +75,6 @@ test('terminating an Agent terminal session removes its activity and focus targe
     .toBe(false);
   await expect(window.getByTestId('agent-row')).toHaveCount(0, { timeout: 15_000 });
   await expect(window.getByTestId('agent-focus')).toHaveCount(0);
-  await expect(row).toHaveCount(0);
 
   await app.close();
 });

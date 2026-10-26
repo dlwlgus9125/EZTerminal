@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { startNewConversation } from '../e2e/project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from '../e2e/test';
 import { launchPackagedRenderer } from './packaged-renderer';
 
@@ -22,9 +23,8 @@ test('production restart retains an encrypted draft and labels an unlinked old t
     await page.screenshot({ path: path.join(evidence, 'previous-terminal-ended.png') });
     await ended.getByRole('button', { name: /Open new terminal|새 터미널 열기/, exact: true }).click();
     await expect(page.getByTestId('pane')).toBeVisible();
-    await page.getByTestId('rail-agents').click();
-    await page.getByTestId('agent-new-run').click();
-    await page.getByTestId('conversation-start').getByTestId('structured-agent-composer-input').fill('Draft retained across a Windows restart');
+    const draftPanel = await startNewConversation(page);
+    await draftPanel.getByTestId('structured-agent-composer-input').fill('Draft retained across a Windows restart');
     await expect.poll(() => page.evaluate(async () => {
       const saved = await window.ezterminal.loadLayout();
       const layout = saved?.layout as { panels?: Record<string, { params?: { historyId?: string; projectId?: string } }> };

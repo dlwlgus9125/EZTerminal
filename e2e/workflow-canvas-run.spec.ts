@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createDaemonCommand } from '../src/shared/daemon-protocol';
 import type { WorkflowGraph } from '../src/shared/workflow';
 import { launchApp } from './launch-app';
+import { openProjectItems } from './project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 
 /**
@@ -59,8 +60,7 @@ test('one canvas: run the saved flow, approve, open the working stage conversati
     const created = await page.evaluate(command => window.ezterminal.executeWorkflowCommand(command), { commandId: 'create-canvas-flow', projectId, hostId: read.snapshot.hostId, expectedRevision: read.snapshot.registryRevision, type: 'subproject.create' as const, payload: { id: 'canvas-flow', title: 'Canvas flow', goal: 'Run from the canvas', presetId: 'custom' as const, graph } });
     expect(created.ok).toBe(true);
 
-    await page.getByTestId('rail-agents').click(); await page.getByTestId(`agent-project-open-${projectId}`).click();
-    const workspace = page.getByTestId('workflow-workspace'); await expect(workspace).toBeVisible();
+    const workspace = await openProjectItems(page, projectId);
     await workspace.getByTestId('workflow-subproject-item').filter({ hasText: 'Canvas flow' }).click();
     // The desktop canvas is the lazily loaded React Flow chunk, not the static fallback.
     await expect(workspace.locator('[data-renderer="react-flow"]')).toBeVisible({ timeout: 30_000 });
