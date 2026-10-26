@@ -110,28 +110,43 @@ describe('completeLine', () => {
     expect(result.commonText).toBe('"Program Files\\\\"');
     expect(result.commonCaretBack).toBe(1);
     expect(result.candidates[0]).toMatchObject({ insertText: '"Program Files\\\\"', caretBack: 1 });
-    // Tab again from inside the quote: the closing quote is part of what is replaced.
+    // Tab again from inside the quote: the quote already closes after the caret, so the word goes in open.
     const again = 'cd "Program Files\\\\"';
     const deeper = await completeLine(again, again.length - 1, source());
     if (!deeper.ok) throw new Error('expected candidates');
     expect(deeper.replaceStart).toBe(3);
-    expect(deeper.replaceEnd).toBe(again.length);
-    expect(deeper.commonText).toBe('"Program Files\\\\Tool\\\\"');
-    expect(deeper.commonCaretBack).toBe(1);
-    // A quote the person opened and did not close is closed too.
+    expect(deeper.replaceEnd).toBe(again.length - 1);
+    expect(deeper.commonText).toBe('"Program Files\\\\Tool\\\\');
+    expect(deeper.commonCaretBack).toBeUndefined();
+    // A quote the person opened and did not close is closed.
     const typed = await completeLine('cd "Program Files\\\\T', 20, source());
     if (!typed.ok) throw new Error('expected candidates');
     expect(typed.replaceEnd).toBe(20);
     expect(typed.commonText).toBe('"Program Files\\\\Tool\\\\"');
+    expect(typed.commonCaretBack).toBe(1);
   });
 
-  it('writes words the shell parses back as typed', async () => {
-    // What a completed folder line becomes once run: the lexer reads one closed word.
+  it('writes words the shell parses back, wherever the caret is in the word', async () => {
     const { tokenize } = await import('./lexer');
-    const result = await completeLine('cd Pro', 6, source());
-    if (!result.ok) throw new Error('expected candidates');
-    const line = `cd ${result.commonText}`;
-    expect(() => tokenize(line)).not.toThrow();
+    const apply = (line: string, start: number, end: number, text: string): string => `${line.slice(0, start)}${text}${line.slice(end)}`;
+    for (const [line, caret] of [
+      ['cd Pro', 6],
+      ['cd "Pro', 7],
+      ['cd "Pro"', 7],
+      ['ls "Pro" | count', 7],
+      ['ls "Program" | count', 7],
+      ["ls 'Pro' | count", 7],
+      ['cat "보" | count', 6],
+    ] as const) {
+      const result = await completeLine(line, caret, source());
+      if (!result.ok) throw new Error(`expected candidates for ${line}`);
+      const filled = apply(line, result.replaceStart, result.replaceEnd, result.commonText);
+      expect(() => tokenize(filled), `${line} -> ${filled}`).not.toThrow();
+      for (const candidate of result.candidates) {
+        const chosen = apply(line, result.replaceStart, result.replaceEnd, candidate.insertText);
+        expect(() => tokenize(chosen), `${line} -> ${chosen}`).not.toThrow();
+      }
+    }
   });
 
   it('quotes Korean names and closes the quote for a file', async () => {

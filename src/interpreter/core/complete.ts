@@ -198,20 +198,39 @@ function commonPrefix(values: readonly string[]): string {
   return common;
 }
 
+/** Where the quote the caret is in closes later in the line (escapes skipped), or -1. */
+function closingQuoteAfter(line: string, caret: number, quote: '"' | "'"): number {
+  for (let index = caret; index < line.length; index += 1) {
+    if (line[index] === '\\') index += 1;
+    else if (line[index] === quote) return index;
+  }
+  return -1;
+}
+
 /**
- * A quoted word is always closed, so the line runs as it stands. A folder (or a
+ * How a word goes in so the line still parses. Inside a quote that already
+ * closes later in the line, it goes in open and that quote closes it (the rest
+ * of the word stays). Otherwise a quoted word is written closed; a folder (or a
  * shared part still being typed) keeps the caret inside the closing quote, so
- * typing and Tab go on into the folder.
+ * typing and Tab go on into it, and a file gets a space after it.
  */
-function written(value: string, quote: CompletionWord['quote'], stayInside: boolean): { readonly text: string; readonly caretBack?: number } {
-  const text = encodeWord(value, { open: false, ...(quote ? { quote } : {}) });
+interface Writing {
+  readonly quote: CompletionWord['quote'];
+  readonly closedLater: boolean;
+}
+
+function written(value: string, writing: Writing, stayInside: boolean): { readonly text: string; readonly caretBack?: number } {
+  const quote = writing.quote ? { quote: writing.quote } : {};
+  if (writing.closedLater) return { text: encodeWord(value, { open: true, ...quote }) };
+  const text = encodeWord(value, { open: false, ...quote });
   return stayInside && text !== value ? { text, caretBack: 1 } : { text };
 }
 
-function candidateOf(match: Match, quote: CompletionWord['quote']): TerminalCompletionCandidate {
+function candidateOf(match: Match, writing: Writing): TerminalCompletionCandidate {
   const folder = match.kind === 'directory' || match.kind === 'drive';
-  const { text, caretBack } = written(match.value, quote, folder);
-  return { label: match.label, kind: match.kind, insertText: folder ? text : `${text} `, ...(caretBack ? { caretBack } : {}) };
+  const { text, caretBack } = written(match.value, writing, folder);
+  const insertText = folder || writing.closedLater ? text : `${text} `;
+  return { label: match.label, kind: match.kind, insertText, ...(caretBack ? { caretBack } : {}) };
 }
 
 /** Complete the word that ends at `caret`. */
@@ -223,18 +242,20 @@ export async function completeLine(line: string, caret: number, source: Completi
     : await pathMatches(word, source);
   if (matches.length === 0) return { ok: false, reason: 'none' };
   const shown = matches.slice(0, TERMINAL_COMPLETION_MAX_CANDIDATES);
-  const candidates = shown.map((match) => candidateOf(match, word.quote));
-  // Inside a quote that closes right after the caret, the closing quote is replaced too (the new text closes it).
-  const replaceEnd = word.open && word.quote && line[caret] === word.quote ? caret + 1 : caret;
-  let commonText = line.slice(word.start, replaceEnd);
-  let commonCaretBack: number | undefined = replaceEnd - caret || undefined;
+  const writing: Writing = {
+    quote: word.quote,
+    closedLater: Boolean(word.open && word.quote && closingQuoteAfter(line, caret, word.quote) >= 0),
+  };
+  const candidates = shown.map((match) => candidateOf(match, writing));
+  let commonText = line.slice(word.start, caret);
+  let commonCaretBack: number | undefined;
   if (matches.length === 1) {
     commonText = candidates[0]!.insertText;
     commonCaretBack = candidates[0]!.caretBack;
   } else {
     const common = commonPrefix(matches.map((match) => match.value));
     if (common.length > word.prefix.length) {
-      const shared = written(common, word.quote, true);
+      const shared = written(common, writing, true);
       commonText = shared.text;
       commonCaretBack = shared.caretBack;
     }
@@ -242,7 +263,7 @@ export async function completeLine(line: string, caret: number, source: Completi
   return {
     ok: true,
     replaceStart: word.start,
-    replaceEnd,
+    replaceEnd: caret,
     commonText,
     ...(commonCaretBack ? { commonCaretBack } : {}),
     candidates,
