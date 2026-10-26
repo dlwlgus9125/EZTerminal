@@ -61,7 +61,7 @@ export const PinnedAndRecent: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await waitFor(() => expect(page.getByRole('dialog', { name: '모든 프로젝트' })).toBeVisible());
-    await expect(await page.findByTestId('all-projects-open-wallugames')).toBeVisible();
+    await waitFor(() => expect(page.getByTestId('all-projects-open-wallugames')).toBeVisible());
   },
 };
 
@@ -103,8 +103,10 @@ export const Loading: Story = { args: { access: registry(projects, { listAgentPr
 export const MenuOpen: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
+    // The dialog and the menu both fade in: wait for them rather than read the first frame.
+    await waitFor(() => expect(page.getByRole('dialog', { name: '모든 프로젝트' })).toBeVisible());
     await userEvent.click(await page.findByRole('button', { name: 'EZPowers 관리' }));
-    await expect(await page.findByRole('menu', { name: 'EZPowers 관리' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'CLI 기록' })).toBeVisible();
+    await waitFor(() => expect(page.getByRole('menu', { name: 'EZPowers 관리' })).toBeVisible());
+    await waitFor(() => expect(page.getByRole('menuitem', { name: 'CLI 기록' })).toBeVisible());
   },
 };
