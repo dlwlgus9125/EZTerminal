@@ -1793,9 +1793,61 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .term-dock {
+  position: relative;
   flex: 0 0 auto;
   border-top: 1px solid var(--ui-border-mid);
   background: var(--ui-floor);
+}
+
+/* Tab completion candidates, just over the prompt line, starting under the typed text. */
+.term-completion {
+  position: absolute;
+  bottom: calc(100% + 0.25rem);
+  left: 3.5rem;
+  z-index: 5;
+  min-width: 12rem;
+  max-width: min(36rem, calc(100% - 4.5rem));
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.term-completion__list {
+  max-height: 14rem;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.term-completion__option {
+  padding: 0.2rem 0.5rem;
+  border-radius: calc(var(--ui-radius-sm) - 1px);
+  font-family: var(--ui-font-terminal);
+  font-size: 0.8125rem;
+  color: var(--ui-text-primary);
+  white-space: pre;
+  cursor: pointer;
+}
+
+.term-completion__option[data-kind='directory'],
+.term-completion__option[data-kind='drive'] {
+  color: var(--ui-info);
+}
+
+.term-completion__option[aria-selected='true'] {
+  background: var(--ui-surface-selected);
+  box-shadow: inset 2px 0 0 var(--ui-accent);
+}
+
+.term-completion__more {
+  margin: 0;
+  padding: 0.25rem 0.75rem 0.35rem;
+  border-top: 1px solid var(--ui-border-subtle);
+  font-family: var(--ui-font-label);
+  font-size: 0.75rem;
+  color: var(--ui-text-secondary);
 }
 
 .term-dock__line {
@@ -1969,6 +2021,10 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .term-dock__hint {
   margin-left: auto;
   white-space: nowrap;
+}
+
+.term-dock__hint + .term-dock__hint {
+  margin-left: 0;
 }
 
 .term-dock__hint kbd {

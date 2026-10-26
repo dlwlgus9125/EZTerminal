@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentApproval,
@@ -75,6 +75,15 @@ import { useTerminalAiHost } from './terminal/terminal-ai-host';
 import { pickedConversationGone, resolveTerminalProjectId, resolveTerminalTarget, type TerminalTarget } from './terminal/terminal-target';
 import { readConversationViews } from './conversation-views';
 import { readSessionViewState, saveSessionViewState } from './session-view-state';
+import {
+  applyCompletion,
+  chooseCandidate,
+  moveActive,
+  wantsCompletion,
+  type CompletionList,
+  type LineEdit,
+} from './terminal/terminal-completion-state';
+import { TerminalCompletionList } from './terminal/TerminalCompletionList';
 
 // A TerminalPane is one independent shell surface: its own stack of command Blocks,
 // pinned prompt, and an authority-issued binding to a shell session. The host owns
@@ -224,6 +233,10 @@ export function TerminalPane({
   clockRef.current = clock;
   const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
   const [command, setCommand] = useState(() => recoveryState?.draft ?? '');
+  // Tab completion: the open candidate list and the line it was opened on; answers to an older Tab are dropped.
+  const [completion, setCompletion] = useState<{ readonly line: string; readonly list: CompletionList } | null>(null);
+  const completionSeqRef = useRef(0);
+  const completionListId = `${useId()}completion`;
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
   // so this list stays consistent with the interpreter's session history.
@@ -1055,6 +1068,47 @@ export function TerminalPane({
     runText(command);
   }, [command, runText]);
 
+  // Tab completion, answered by the session's interpreter (desktop only).
+  const completeLine = typeof window === 'undefined' ? undefined : window.ezterminalDesktop?.completeTerminalLine;
+  const openCompletion = completion && completion.line === command && inputMode === 'shell'
+    && !activeRunning && !activeTakeover ? completion.list : null;
+
+  const applyLineEdit = (edit: LineEdit): void => {
+    if (edit.line === command) {
+      cmdInputRef.current?.setSelectionRange(edit.caret, edit.caret);
+      return;
+    }
+    pendingDraftCaretRef.current = edit.caret;
+    setCommand(edit.line);
+  };
+
+  const closeCompletion = (): void => {
+    completionSeqRef.current += 1;
+    setCompletion(null);
+  };
+
+  /** Ask for completions of the word before the caret; false when Tab should keep its usual meaning. */
+  const requestCompletion = (input: HTMLInputElement): boolean => {
+    const caret = input.selectionStart ?? command.length;
+    if (!completeLine || !sessionId || input.selectionEnd !== caret || !wantsCompletion(command, caret)) return false;
+    const asked: LineEdit = { line: command, caret };
+    const seq = ++completionSeqRef.current;
+    void completeLine({ sessionId, line: command, caret }).then((result) => {
+      const current = cmdInputRef.current;
+      if (seq !== completionSeqRef.current || !current) return;
+      const applied = applyCompletion(asked, { line: current.value, caret: current.selectionStart ?? current.value.length }, result);
+      if (applied.edit) applyLineEdit(applied.edit);
+      setCompletion(applied.list ? { line: applied.edit?.line ?? asked.line, list: applied.list } : null);
+    }, () => undefined);
+    return true;
+  };
+
+  const chooseCompletion = (list: CompletionList, index = list.active): void => {
+    const edit = chooseCandidate(command, list, index);
+    closeCompletion();
+    if (edit) applyLineEdit(edit);
+  };
+
   // The registry owns one stable registration for this mount. The current
   // snapshot/actions live behind a ref, so typing a draft no longer tears down
   // and re-registers the pane (which previously invalidated the whole App).
@@ -1626,6 +1680,15 @@ export function TerminalPane({
       {/* The prompt dock: one big prompt line (sign, command, its actions) and under it the
           line naming the terminal and its folder. Hidden while a full-screen program owns the pane. */}
       <div className="term-dock" data-testid="term-dock" data-mode={inputMode}>
+      {openCompletion && (
+        <TerminalCompletionList
+          id={completionListId}
+          list={openCompletion}
+          label={t('terminalPane.completionList')}
+          moreLabel={t('terminalPane.completionMore')}
+          onChoose={(index) => chooseCompletion(openCompletion, index)}
+        />
+      )}
       <div className="term-dock__line">
         <span className="prompt-sigil prompt-sigil--input term-dock__sig" aria-hidden="true">
           {inputMode === 'ai' ? '?' : '>'}
@@ -1645,7 +1708,16 @@ export function TerminalPane({
           // PTY child (onKeyDown/onPaste below, activePlainPty) instead of
           // disabling input entirely, so the user never has to click back in.
           disabled={!sessionId || sessionDead || activeTakeover}
-          onChange={(e) => setCommand(e.target.value)}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={openCompletion !== null}
+          aria-controls={openCompletion ? completionListId : undefined}
+          aria-activedescendant={openCompletion ? `${completionListId}-${openCompletion.active}` : undefined}
+          onChange={(e) => {
+            setCommand(e.target.value);
+            closeCompletion();
+          }}
+          onBlur={closeCompletion}
           onKeyDown={(e) => {
             const copySelection = capturePaneCopySelection();
             if (copySelection) {
@@ -1714,6 +1786,33 @@ export function TerminalPane({
               if (bytes === null) return; // unsupported key — leave default input behavior alone
               e.preventDefault();
               activeController.current?.sendPtyInput(bytes);
+              return;
+            }
+            const plainKey = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.nativeEvent.isComposing;
+            if (openCompletion) {
+              // The open list: arrows move, Enter/Tab take, Esc closes; any other key closes it and goes on.
+              if (plainKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault();
+                setCompletion({ line: command, list: moveActive(openCompletion, e.key === 'ArrowDown' ? 1 : -1) });
+                return;
+              }
+              if (plainKey && (e.key === 'Enter' || e.key === 'Tab')) {
+                e.preventDefault();
+                chooseCompletion(openCompletion);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                closeCompletion();
+                return;
+              }
+              if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) closeCompletion();
+            }
+            // Tab completes the word before the caret; with nothing to complete it moves focus as usual.
+            // Shift+Tab and Ctrl+Tab are never taken.
+            if (e.key === 'Tab' && plainKey && inputMode === 'shell' && !activeRunning) {
+              if (requestCompletion(e.currentTarget)) e.preventDefault();
               return;
             }
             if (
@@ -1883,6 +1982,9 @@ export function TerminalPane({
             {...(aiProjectId ? { projectId: aiProjectId } : {})}
             onPick={pickAiTarget}
           />
+        )}
+        {completeLine && inputMode === 'shell' && (
+          <span className="term-dock__hint"><kbd>Tab</kbd> {t('terminalPane.completionHint')}</span>
         )}
         {aiHost && (
           <span className="term-dock__hint"><kbd>Ctrl .</kbd> {t('terminalAi.modeHint')}</span>
