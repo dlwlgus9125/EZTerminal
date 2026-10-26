@@ -42,7 +42,7 @@ describe('RunFolderCleanupDialog', () => {
     const confirm = document.querySelector('[data-testid="run-folder-cleanup-confirm"]') as HTMLButtonElement;
     expect(confirm.textContent).toBe('Clean up 1 folder');
     await act(async () => confirm.click());
-    expect(access.cleanup).toHaveBeenCalledWith('P', ['r1']);
+    expect(access.cleanup).toHaveBeenCalledWith('P', ['r1'], []);
     expect(document.body.textContent).toContain('Cleaned up 1 folder.');
     expect(onCleaned).toHaveBeenCalledWith([]);
   });
@@ -102,7 +102,7 @@ describe('RunFolderCleanupDialog', () => {
     expect(confirm.disabled).toBe(false);
     expect(confirm.textContent).toBe('Clean up 1 planning baseline');
     await act(async () => confirm.click());
-    expect(access.cleanup).toHaveBeenCalledWith('P', ['r1']);
+    expect(access.cleanup).toHaveBeenCalledWith('P', ['r1'], ['r1']);
     expect(document.body.textContent).toContain('1 planning baseline too.');
   });
 

@@ -271,6 +271,9 @@ describe('RunWorktreeCleanup (real Git)', () => {
       return { removed: options?.dryRun && calls === 1 ? runIds.map(runId => ({ runId })) : [], errors: [] as string[] };
     });
     expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0, baselinesKept: 1 });
+    // A baseline the person was shown but that a fresh list no longer offers (it became protected) is still accounted for.
+    prune.mockImplementation(async () => ({ removed: [], errors: [] as string[] }));
+    expect(await p.cleanup.cleanup('P', ['r1'], ['r1'])).toMatchObject({ removed: 0, baselinesKept: 1 });
     // A read or write failure says why.
     calls = 0;
     prune.mockImplementation(async (_projectId: string, runIds: readonly string[], options?: { dryRun?: boolean }) => {

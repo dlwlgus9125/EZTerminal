@@ -72,7 +72,8 @@ export function RunFolderCleanupDialog({ open, onOpenChange, projectId, subproje
   const clean = async (): Promise<void> => {
     setBusy(true); setError(null);
     try {
-      const result = await access.cleanup(projectId, runs.filter(run => run.baseline || run.folders.some(folder => folder.state === 'removable')).map(run => run.runId));
+      const result = await access.cleanup(projectId, runs.filter(run => run.baseline || run.folders.some(folder => folder.state === 'removable')).map(run => run.runId),
+        runs.filter(run => run.baseline).map(run => run.runId));
       if (!result.ok) { setError(result.message); return; }
       // The outcome shows with the list read again, so the two never disagree.
       const next = await access.plan(projectId);

@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:983aef9be2bf58ed062aa474002843f6d02cb5d93af145c6b429cea00b302fa6",
+        "inputDigest": "sha256:95770b20ba38c05ba0c7b6c21e62d7bf67816bb7ed07bdccb16b1e361e565a9f",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (startup, issue 18k): main no longer awaits OpenClaw control initialization before the first window; every coordinator call awaits it, and disposal still awaits initialization and bootstrap recovery. Claims hold."
+        "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d2c34638459e076f58373b6da3fb12e711def3b97f8ac7c512eb0b9a5a1fea73",
+        "inputDigest": "sha256:32e8684f194634ac877dfadee7f75a2129fab7f92623f5031388a3a3b87f0275",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (startup, issue 18k): main no longer awaits OpenClaw control initialization before the first window; every coordinator call awaits it, and disposal still awaits initialization and bootstrap recovery. Claims hold."
+        "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:47fd638474e338b900afc460ec39b701709b701f85a16b2ed27dad2707643944",
+        "inputDigest": "sha256:2c813c470b0e109e6d8fbb667bf9ce50cd6693a4666c440378eed5e1e57a58ac",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (startup, issue 18k): main no longer awaits OpenClaw control initialization before the first window; every coordinator call awaits it, and disposal still awaits initialization and bootstrap recovery. Claims hold."
+        "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
       }
     },
     {

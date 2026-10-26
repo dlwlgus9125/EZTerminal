@@ -23,9 +23,10 @@ export function installRunRetentionIpc(input: {
   ipc.handle('run-retention:cleaned', (_event, projectId: unknown): Promise<RunRetentionResult<readonly CleanedFolderEntry[]>> => (
     id(projectId) ? answer(() => cleanup.cleaned(projectId)) : Promise.resolve({ ok: false, message: 'Choose a project.' })
   ));
-  ipc.handle('run-retention:cleanup', (_event, projectId: unknown, runIds: unknown): Promise<RunRetentionResult<RunCleanupOutcome>> => (
+  ipc.handle('run-retention:cleanup', (_event, projectId: unknown, runIds: unknown, baselineRunIds: unknown): Promise<RunRetentionResult<RunCleanupOutcome>> => (
     id(projectId) && Array.isArray(runIds) && runIds.length <= 1_000 && runIds.every(id)
-      ? answer(() => cleanup.cleanup(projectId, runIds as string[]))
+      && (baselineRunIds === undefined || (Array.isArray(baselineRunIds) && baselineRunIds.length <= 1_000 && baselineRunIds.every(id)))
+      ? answer(() => cleanup.cleanup(projectId, runIds as string[], baselineRunIds as string[] | undefined))
       : Promise.resolve({ ok: false, message: 'Choose the runs to clean up.' })
   ));
   ipc.handle('run-retention:folder-state', (_event, folderPath: unknown): Promise<RunRetentionResult<CleanedFolderState>> => (

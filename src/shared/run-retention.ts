@@ -69,7 +69,8 @@ export interface RunRetentionAccess {
   plan(projectId: string): Promise<RunRetentionResult<RunCleanupPlan>>;
   /** The runs whose work folders were cleaned up (the host's record only: cheap enough to read when a flow opens). */
   cleaned(projectId: string): Promise<RunRetentionResult<readonly CleanedFolderEntry[]>>;
-  cleanup(projectId: string, runIds: readonly string[]): Promise<RunRetentionResult<RunCleanupOutcome>>;
+  /** `baselineRunIds`: the runs whose planning baseline the person was shown as cleanable (each is proven again). */
+  cleanup(projectId: string, runIds: readonly string[], baselineRunIds?: readonly string[]): Promise<RunRetentionResult<RunCleanupOutcome>>;
   /** Whether this conversation folder was cleaned up. */
   folderState(folderPath: string): Promise<RunRetentionResult<CleanedFolderState>>;
   /** A file of a cleaned-up folder, read from the run's verified result commit in the project checkout. */

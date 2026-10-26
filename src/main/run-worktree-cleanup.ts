@@ -173,7 +173,7 @@ export class RunWorktreeCleanup {
   }
 
   /** Removes the removable work folders of these runs (the person confirmed them); anything else is left as it is. */
-  async cleanup(projectId: string, runIds: readonly string[]): Promise<RunCleanupOutcome> {
+  async cleanup(projectId: string, runIds: readonly string[], baselineRunIds: readonly string[] = []): Promise<RunCleanupOutcome> {
     if (this.cleaning.has(projectId)) return { removed: 0, kept: [{ path: '', code: 'busy', reason: 'A cleanup of this project is already running.' }] };
     this.cleaning.add(projectId);
     try {
@@ -189,7 +189,9 @@ export class RunWorktreeCleanup {
         }
       }
       // Then the baselines of the chosen runs whose folders are all gone now (or had none): the cleanup proves each again.
-      const offered = new Set(plan.runs.filter(run => runIds.includes(run.runId) && run.baseline).map(run => run.runId));
+      // The baselines the person was shown (and any this list offers now) are the ones accounted for.
+      const offered = new Set([...baselineRunIds.filter(runId => runIds.includes(runId)),
+        ...plan.runs.filter(run => runIds.includes(run.runId) && run.baseline).map(run => run.runId)]);
       const after = await this.plan(projectId);
       const ready = after.runs.filter(run => runIds.includes(run.runId) && (run.baseline || offered.has(run.runId))).map(run => run.runId);
       for (const runId of offered) if (!ready.includes(runId)) ready.push(runId);

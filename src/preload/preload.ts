@@ -445,7 +445,7 @@ const api: EzTerminalApi = {
       ipcRenderer.on('run-retention:changed', handler);
       return () => ipcRenderer.removeListener('run-retention:changed', handler);
     },
-    cleanup: (projectId: string, runIds: readonly string[]) => ipcRenderer.invoke('run-retention:cleanup', projectId, runIds),
+    cleanup: (projectId: string, runIds: readonly string[], baselineRunIds?: readonly string[]) => ipcRenderer.invoke('run-retention:cleanup', projectId, runIds, baselineRunIds),
   },
   workspaceWorktrees: {
     create: (projectId: string, branch: string) => ipcRenderer.invoke('workspace-worktrees:create', projectId, branch),

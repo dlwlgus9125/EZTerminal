@@ -2679,7 +2679,8 @@ app.on('ready', async () => {
       },
       {
         name: 'OpenClaw service',
-        after: ['main-owned runtime startup'],
+        // Its coordinator may still be initializing (startup no longer waits for it) and asking this service.
+        after: ['main-owned runtime startup', 'OpenClaw lifecycle coordinator'],
         run: () => {
           const service = openClawService;
           if (openClawService === service) openClawService = null;
