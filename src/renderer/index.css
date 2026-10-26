@@ -1836,9 +1836,11 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   color: var(--ui-info);
 }
 
+/* The active one reads in the primary text colour (a folder's info colour is under 4.5:1 on Light's selection). */
 .term-completion__option[aria-selected='true'] {
   background: var(--ui-surface-selected);
   box-shadow: inset 2px 0 0 var(--ui-accent);
+  color: var(--ui-text-primary);
 }
 
 .term-completion__more {
