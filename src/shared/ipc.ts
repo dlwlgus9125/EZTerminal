@@ -28,6 +28,7 @@ import type { PlanningAiRequest, PlanningAiResult } from './planning-ai';
 import type { PlanningAssetRequest, PlanningAssetResult } from './planning-asset';
 import type { ProjectArchiveRequest, ProjectArchiveResult } from './project-archive';
 import type { FilePreviewResult } from './file-preview';
+import type { TerminalCompletionRequest, TerminalCompletionResult } from './terminal-completion';
 import type { QuickCommand, QuickCommandInput, QuickCommandMutationResult } from './quick-command';
 import type { WorkspaceFileSearchRequest, WorkspaceFileSearchResult } from './workspace-search';
 import type {
@@ -739,6 +740,15 @@ export interface PtyTextReadRequestMessage {
   readonly maxBytes: number;
 }
 
+/** Main-only Tab completion of a session's command line (desktop terminal). */
+export interface CompletionRequestMessage {
+  readonly type: 'complete';
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly line: string;
+  readonly caret: number;
+}
+
 /** Main-only structured prompt submission. It never traverses an attach port. */
 export interface PtyTextSubmitRequestMessage {
   readonly type: 'pty-text-submit';
@@ -892,6 +902,7 @@ export type MainToInterpreter =
   | ListRunsMessage
   | PtyTextReadRequestMessage
   | PtyTextSubmitRequestMessage
+  | CompletionRequestMessage
   | InterpreterShutdownMessage
   | ScriptHostReadyMessage
   | ScriptHostErrorMessage
@@ -936,6 +947,12 @@ export interface PtyTextReadResponseMessage {
   readonly type: 'pty-text-read-result';
   readonly requestId: string;
   readonly result: PtyTextReadResult;
+}
+
+export interface CompletionResponseMessage {
+  readonly type: 'complete-result';
+  readonly requestId: string;
+  readonly result: TerminalCompletionResult;
 }
 
 export type PtyTextSubmitResult =
@@ -1020,6 +1037,7 @@ export type InterpreterToMain =
   | RunListMessage
   | PtyTextReadResponseMessage
   | PtyTextSubmitResponseMessage
+  | CompletionResponseMessage
   | SessionDestroyResultMessage
   | InterpreterShutdownCompleteMessage
   | RunAttachResultMessage
@@ -1652,6 +1670,8 @@ export interface EzTerminalDesktopApi {
   resolveProjectTerminalDirectory: (
     request: ProjectTerminalDirectoryRequest,
   ) => Promise<ProjectTerminalDirectoryResult>;
+  /** Tab completion of a terminal session's command line, answered by its interpreter. */
+  completeTerminalLine: (request: TerminalCompletionRequest) => Promise<TerminalCompletionResult>;
   /** Canonicalize tree/search/PTY/Agent targets to one workspace-qualified tab identity. */
   resolveProjectDocument: (request: ProjectDocumentTargetRequest) => Promise<ProjectDocumentTargetResult>;
   /** Lazy project tree entries with current working-tree status merged in main. */

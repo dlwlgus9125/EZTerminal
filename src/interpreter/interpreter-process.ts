@@ -46,13 +46,16 @@ import type {
   PtyTextSubmitResult,
 } from '../shared/ipc';
 import type { SshForwardAction, SshForwardResult } from '../shared/ssh-forward';
+import type { TerminalCompletionResult } from '../shared/terminal-completion';
 import { SshForwardError } from '../shared/ssh-forward';
 import type {
   WorktreeRequest,
   WorktreeRequestOrigin,
   WorktreeResult,
 } from '../shared/worktree';
-import { evaluate, parse } from './core';
+import { BUILTIN_DEFS, evaluate, parse } from './core';
+import { completeLine } from './core/complete';
+import { completionSource } from './completion-fs';
 import { describeError, runBlock } from './block-runner';
 import {
   disposeExecutionAdapterWithRetry,
@@ -788,6 +791,9 @@ console.log(`[interpreter] started — pid ${process.pid}, type: ${process.type}
 // Sessions are created ONLY via `create-session` — never lazily on `run` (Codex B1).
 const registry = new SessionRegistry(() => randomUUID());
 
+/** Builtin command names offered by Tab completion. */
+const COMPLETION_BUILTINS: readonly string[] = BUILTIN_DEFS.map((def) => def.name);
+
 // runId -> its ExecutionSession + the RunStartedInfo announced for it (M2
 // mirroring), so a later `attach-run` can find the run it names and `list-runs`
 // (M1 mirror-active-runs) can report it without reconstructing the info.
@@ -1328,6 +1334,19 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
           result,
         } satisfies InterpreterToMain);
       });
+      break;
+    }
+    case 'complete': {
+      // Tab completion reads the session's own folder and environment. A session running a
+      // command (a program, an SSH session) gets its keys, Tab included, so it is not completed.
+      const record = registry.get(msg.sessionId);
+      const reply = (result: TerminalCompletionResult): void => {
+        process.parentPort.postMessage({ type: 'complete-result', requestId: msg.requestId, result } satisfies InterpreterToMain);
+      };
+      if (!record || record.state !== 'live') { reply({ ok: false, reason: 'unavailable' }); break; }
+      if (record.activeRun) { reply({ ok: false, reason: 'busy' }); break; }
+      const source = completionSource({ cwd: record.shell.cwd, env: record.shell.env, builtins: COMPLETION_BUILTINS });
+      void completeLine(msg.line, msg.caret, source).then(reply, () => reply({ ok: false, reason: 'unavailable' }));
       break;
     }
     case 'pty-text-submit': {

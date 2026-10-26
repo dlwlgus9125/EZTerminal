@@ -865,3 +865,34 @@ describe('InterpreterBroker — dead-interpreter contract', () => {
     expect(interpreter.posted).toHaveLength(postsAfterExit);
   });
 });
+
+describe('InterpreterBroker.complete (terminal Tab completion)', () => {
+  it('forwards the line and caret and resolves with the interpreter answer', async () => {
+    const { broker, interpreter } = makeBroker();
+    const answer = broker.complete({ sessionId: 's1', line: 'cd sr', caret: 5 });
+    expect(interpreter.posted.at(-1)?.msg).toEqual({ type: 'complete', requestId: 'id-1', sessionId: 's1', line: 'cd sr', caret: 5 });
+    interpreter.emit({ type: 'complete-result', requestId: 'id-1', result: { ok: false, reason: 'busy' } });
+    await expect(answer).resolves.toEqual({ ok: false, reason: 'busy' });
+  });
+
+  it('gives up after a moment, and on interpreter exit or a failed post', async () => {
+    vi.useFakeTimers();
+    try {
+      const { broker, interpreter } = makeBroker();
+      const slow = broker.complete({ sessionId: 's1', line: 'g', caret: 1 });
+      vi.advanceTimersByTime(1_600);
+      await expect(slow).resolves.toEqual({ ok: false, reason: 'unavailable' });
+      interpreter.emit({ type: 'complete-result', requestId: 'id-1', result: { ok: false, reason: 'none' } });
+
+      const pending = broker.complete({ sessionId: 's1', line: 'g', caret: 1 });
+      interpreter.emitExit(1);
+      await expect(pending).resolves.toEqual({ ok: false, reason: 'unavailable' });
+      await expect(broker.complete({ sessionId: 's1', line: 'g', caret: 1 })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    } finally {
+      vi.useRealTimers();
+    }
+    const failing = makeBroker();
+    failing.interpreter.throwOnPost = true;
+    await expect(failing.broker.complete({ sessionId: 's1', line: 'g', caret: 1 })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+});

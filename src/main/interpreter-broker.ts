@@ -45,6 +45,7 @@ import type {
   PtyTextSubmitResult,
 } from '../shared/ipc';
 import type { WorktreeRequestOrigin } from '../shared/worktree';
+import type { TerminalCompletionRequest, TerminalCompletionResult } from '../shared/terminal-completion';
 import { AsyncMutationGate, type MutationGate } from './async-mutation-gate';
 import { SessionDirectory } from './session-directory';
 import {
@@ -130,6 +131,8 @@ const DEFAULT_DESTROY_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_DESTROY_TOMBSTONE_TTL_MS = 60_000;
 const MAX_PENDING_DESTROYS = 128;
 const PTY_CONTROL_TIMEOUT_MS = 5_000;
+/** A completion slower than this is dropped; the person keeps typing. */
+const COMPLETION_TIMEOUT_MS = 1_500;
 
 function hasExactSessionIds(expected: readonly string[], actual: readonly string[]): boolean {
   if (expected.length !== actual.length) return false;
@@ -158,6 +161,10 @@ export class InterpreterBroker {
   private readonly pendingDestroys = new Map<string, PendingDestroy>();
   private readonly pendingPtyReads = new Map<string, PendingPtyRead>();
   private readonly pendingPtySubmits = new Map<string, PendingPtySubmit>();
+  private readonly pendingCompletions = new Map<string, {
+    readonly timer: ReturnType<typeof setTimeout>;
+    readonly resolve: (result: TerminalCompletionResult) => void;
+  }>();
   private readonly runStartedListeners = new Set<
     (info: RunStartedInfo) => void
   >();
@@ -253,6 +260,12 @@ export class InterpreterBroker {
           this.pendingPtyReads.delete(msg.requestId);
           clearTimeout(pending.timer);
           pending.resolve(msg.result);
+        } else if (msg.type === 'complete-result') {
+          const pending = this.pendingCompletions.get(msg.requestId);
+          if (!pending) return;
+          this.pendingCompletions.delete(msg.requestId);
+          clearTimeout(pending.timer);
+          pending.resolve(msg.result);
         } else if (msg.type === 'pty-text-submit-result') {
           const pending = this.pendingPtySubmits.get(msg.requestId);
           if (!pending) return;
@@ -345,6 +358,11 @@ export class InterpreterBroker {
           clearTimeout(pending.timer);
           pending.resolve({ ok: false, reason: 'unavailable' });
         }
+        for (const pending of this.pendingCompletions.values()) {
+          clearTimeout(pending.timer);
+          pending.resolve({ ok: false, reason: 'unavailable' });
+        }
+        this.pendingCompletions.clear();
         this.pendingCreates.clear();
         this.pendingRunLists.clear();
         this.pendingAttaches.clear();
@@ -766,6 +784,27 @@ export class InterpreterBroker {
         });
       } catch {
         this.pendingPtyReads.delete(requestId);
+        clearTimeout(timer);
+        resolve({ ok: false, reason: 'unavailable' });
+      }
+    });
+  }
+
+  /** Tab completion of a session's command line; never rejects, and gives up after a moment. */
+  complete(request: TerminalCompletionRequest): Promise<TerminalCompletionResult> {
+    if (!this.alive || this.shuttingDown) return Promise.resolve({ ok: false, reason: 'unavailable' });
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (!this.pendingCompletions.delete(requestId)) return;
+        resolve({ ok: false, reason: 'unavailable' });
+      }, COMPLETION_TIMEOUT_MS);
+      timer.unref?.();
+      this.pendingCompletions.set(requestId, { timer, resolve });
+      try {
+        this.interpreter.postMessage({ type: 'complete', requestId, sessionId: request.sessionId, line: request.line, caret: request.caret });
+      } catch {
+        this.pendingCompletions.delete(requestId);
         clearTimeout(timer);
         resolve({ ok: false, reason: 'unavailable' });
       }

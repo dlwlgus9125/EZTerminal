@@ -252,6 +252,7 @@ import { RemoteDeviceRoster } from './remote-device-roster';
 import { RendererCrashRecovery } from './renderer-crash-recovery';
 import { RendererRecoveryCheckpointStore } from './renderer-recovery-checkpoint-store';
 import { installRunCommandIpc } from './run-command-ipc';
+import { installTerminalCompletionIpc } from './terminal-completion-ipc';
 import { ScriptHostRegistry } from './script-host-registry';
 import { SessionSurfaceAuthority } from './session-surface-authority';
 import { SessionWorktreeGuard } from './session-worktree-guard';
@@ -3096,6 +3097,10 @@ app.on('ready', async () => {
     ipc: ipcMain,
     getBroker: () => broker,
   });
+  featureIpcDisposers.push(installTerminalCompletionIpc(
+    ipcMain,
+    (request) => broker?.complete(request) ?? Promise.resolve({ ok: false, reason: 'unavailable' }),
+  ));
 
   const bindSshForwardService = (target: UtilityProcess): void => {
     sshForwardService = new SshForwardService({
