@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
 import { shellSnapshot } from '../shell/shell-fixtures';
-import { resolveTerminalProjectId, resolveTerminalTarget, terminalTargetCandidates } from './terminal-target';
+import { pickedConversationGone, resolveTerminalProjectId, resolveTerminalTarget, terminalTargetCandidates } from './terminal-target';
 
 const record = { revision: 1, createdAt: '2026-10-24T09:00:00.000Z', updatedAt: '2026-10-24T09:00:00.000Z' };
 
@@ -11,6 +11,8 @@ function snapshot(): DaemonSnapshot {
   const base = shellSnapshot();
   return {
     ...base,
+    // Finished turns wait for the next message (idle), as top-level conversations do.
+    agents: base.agents.map((agent) => (agent.state === 'done' ? { ...agent, state: 'idle' } : agent)),
     projects: [
       ...base.projects.map((project) => (project.id === 'p-ez' ? { ...project, rootPath: 'C:\\Working\\EZTerminal' } : project)),
       { id: 'legacy-project-abc', name: 'dlwlg', rootPath: 'C:\\Users\\dlwlg', source: 'legacy-import', ...record },
@@ -58,6 +60,16 @@ describe('terminalTargetCandidates', () => {
       .toEqual(['s-merge', 's-font', 's-notify', 's-pdf']);
   });
 
+  it('leaves out conversations that take no new message', () => {
+    const base = snapshot();
+    const ended: DaemonSnapshot = { ...base, agents: base.agents.map((agent) => (
+      agent.sessionId === 's-font' ? { ...agent, state: 'done' } : agent.sessionId === 's-merge' ? { ...agent, state: 'interrupted' } : agent)) };
+    const ids = terminalTargetCandidates(ended, {}, 'p-ez').map((item) => item.sessionId);
+    expect(ids).not.toContain('s-font');
+    expect(ids).not.toContain('s-merge');
+    expect(ids).toContain('s-notify');
+  });
+
   it('leaves out subagents, terminals, archived and flow-stage sessions', () => {
     const base = snapshot();
     const withExtras: DaemonSnapshot = {
@@ -89,8 +101,15 @@ describe('resolveTerminalTarget', () => {
       .toEqual({ kind: 'conversation', sessionId: 's-pdf', title: '결과 탭 PDF 저장 버튼', providerId: 'codex' });
   });
 
-  it('otherwise sends to the last conversation looked at in the terminal\'s project', () => {
-    expect(resolveTerminalTarget({ snapshot: snapshot(), views, projectId: 'p-ez', pickedSessionId: 's-gone' }))
+  it('keeps a pick the snapshot does not list yet (a conversation just started), and drops one that ended', () => {
+    expect(resolveTerminalTarget({ snapshot: snapshot(), views, projectId: 'p-ez', pickedSessionId: 's-just-started' }))
+      .toEqual({ kind: 'conversation', sessionId: 's-just-started', title: '', providerId: '' });
+    expect(resolveTerminalTarget({ snapshot: null, views, pickedSessionId: 's-pdf' })).toMatchObject({ kind: 'conversation', sessionId: 's-pdf' });
+    const base = snapshot();
+    const ended: DaemonSnapshot = { ...base, agents: base.agents.map((agent) => (agent.sessionId === 's-pdf' ? { ...agent, state: 'error' } : agent)) };
+    expect(pickedConversationGone(ended, 's-pdf')).toBe(true);
+    expect(pickedConversationGone(ended, 's-just-started')).toBe(false);
+    expect(resolveTerminalTarget({ snapshot: ended, views, projectId: 'p-ez', pickedSessionId: 's-pdf' }))
       .toMatchObject({ kind: 'conversation', sessionId: 's-font' });
   });
 

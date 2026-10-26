@@ -1081,3 +1081,12 @@ describe('BlockController — time and quoted text (desktop terminal)', () => {
     expect(controller.readTerminalText()).toBeNull();
   });
 });
+
+describe('BlockController — a run that finished unwatched', () => {
+  it('keeps its start but records no end from the replayed end frame', () => {
+    const port = new FakePort();
+    const controller = new BlockController('cmd', port as unknown as MessagePort, { startedAtMs: 10, recordEnd: false, clock: () => 600_000 });
+    port.deliver({ type: 'end', exitCode: 0 });
+    expect(controller.getSnapshot()).toMatchObject({ startedAtMs: 10, endedAtMs: null });
+  });
+});

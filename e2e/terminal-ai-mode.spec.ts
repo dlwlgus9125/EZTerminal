@@ -143,3 +143,43 @@ test('Ctrl+. sends a question and the last output to the last conversation, shar
     await app.close();
   }
 });
+
+test('with no conversation yet, Ctrl+. starts one and the terminal keeps sending there', async () => {
+  test.setTimeout(240_000);
+  const profile = createRegisteredE2eTempDir('ezterm-terminal-ai-new-profile-');
+  const app = await launchApp(profile, fakeCodexEnvironment(profile));
+  const page = await app.firstWindow();
+  try {
+    await resizeWindow(page, { width: 1600, height: 950 });
+    const pane = page.locator('[data-testid="pane"]:visible').first();
+    const shell = pane.getByTestId('cmd-input');
+    await expect(shell).toBeVisible();
+    await enableCodex(page);
+    await shell.fill('echo first-terminal-output');
+    await shell.press('Enter');
+    await expect(pane.getByTestId('block').last()).toHaveAttribute('data-status', 'done', { timeout: 20_000 });
+
+    // No conversation: the AI input is a new conversation's start box, the output attached.
+    await shell.press('Control+Period');
+    const ai = pane.getByTestId('terminal-ai');
+    await expect(ai).toHaveAttribute('data-target', 'new');
+    await expect(ai.getByTestId('terminal-ai-chip')).toHaveCount(1);
+    const box = ai.getByTestId('structured-agent-composer-input');
+    await expect(box).toBeVisible();
+    await box.fill('Start from this output.');
+    await box.press('Enter');
+    // The conversation is created, the terminal now sends to it, and the note offers to open it.
+    await expect(ai).toHaveAttribute('data-target', 'conversation', { timeout: 30_000 });
+    await expect(page.getByTestId('terminal-ai-open-conversation')).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => lastCodexInput(profile), { timeout: 30_000 }).toContain('Start from this output.');
+    expect(lastCodexInput(profile)).toContain('first-terminal-output');
+    // Out and back in: the same conversation.
+    const target = pane.getByTestId('terminal-ai-target');
+    const name = (await target.textContent()) ?? '';
+    await ai.getByTestId('structured-agent-composer-input').press('Control+Period');
+    await shell.press('Control+Period');
+    await expect(target).toHaveText(name);
+  } finally {
+    await app.close();
+  }
+});

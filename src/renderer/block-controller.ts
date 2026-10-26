@@ -66,6 +66,8 @@ export interface BlockControllerOptions {
   readonly startedAtMs?: number;
   /** When an already-finished run ended, carried over from an earlier view. */
   readonly endedAtMs?: number;
+  /** False for a run that finished while no view watched it: its replayed end is not when it ended. */
+  readonly recordEnd?: boolean;
   /** Clock for the end time; tests pass a fixed one. */
   readonly clock?: () => number;
 }
@@ -264,6 +266,7 @@ export class BlockController {
   private readonly clock: () => number;
   private readonly startedAtMs: number | null;
   private endedAtMs: number | null;
+  private readonly recordEnd: boolean;
 
   /** Phase 3 adaptive render: mode + the plain-mode ansi->html pipeline. A
    * single `AnsiHtmlStream` instance is reused for the block's entire plain
@@ -314,6 +317,7 @@ export class BlockController {
     this.clock = opts?.clock ?? Date.now;
     this.startedAtMs = opts?.startedAtMs ?? null;
     this.endedAtMs = this.startedAtMs === null ? null : opts?.endedAtMs ?? null;
+    this.recordEnd = opts?.recordEnd ?? true;
     this.snapshot = this.buildSnapshot();
     liveControllers.add(this);
     if (typeof window !== 'undefined') {
@@ -478,7 +482,7 @@ export class BlockController {
 
   /** Record the end time once, and only for a run whose start this view knows. */
   private markEnded(): void {
-    if (this.startedAtMs !== null && this.endedAtMs === null) this.endedAtMs = this.clock();
+    if (this.recordEnd && this.startedAtMs !== null && this.endedAtMs === null) this.endedAtMs = this.clock();
   }
 
   // ── PTY block (Phase 2 TUI + Phase 3 adaptive render) ────────────────────────

@@ -8,6 +8,8 @@ import type { ConversationViews } from '../conversation-views';
  */
 
 const SYNTHETIC_PROJECT = 'legacy-project-';
+/** A conversation in one of these states takes no new message (its box is read only). */
+const ENDED_STATES = new Set(['done', 'interrupted', 'error', 'archived']);
 
 export interface TerminalProjectInputs {
   /** `projectSession.projectId` of the tab (native projects open this way). */
@@ -68,7 +70,7 @@ export interface TerminalTargetCandidate {
   readonly updatedAt: string;
 }
 
-/** Conversations a terminal can send to: live top-level app conversations (not flow stages or subagents). */
+/** Conversations a terminal can send to: live top-level app conversations that take messages (not flow stages, subagents or ended ones). */
 export function terminalTargetCandidates(
   snapshot: DaemonSnapshot | null,
   views: ConversationViews,
@@ -84,7 +86,7 @@ export function terminalTargetCandidates(
       && !children.has(session.id) && (projectId === undefined || session.projectId === projectId))
     .flatMap((session) => {
       const agent = agents.get(session.id);
-      if (!agent || agent.state === 'archived') return [];
+      if (!agent || ENDED_STATES.has(agent.state)) return [];
       const viewedAt = views[session.id];
       return [{
         sessionId: session.id, title: session.title, providerId: agent.providerId, projectId: session.projectId,
@@ -101,9 +103,21 @@ export type TerminalTarget =
   | { readonly kind: 'new'; readonly projectId?: string };
 
 /**
- * The conversation a person picked for this terminal while it is still live;
- * else the one last looked at in the terminal's project (any project for a
- * terminal without one); else a new conversation in the terminal's project.
+ * Whether a picked conversation can no longer take messages. A conversation the
+ * snapshot does not list (yet) is not gone: one just started reaches the
+ * snapshot a moment later, and without a snapshot nothing is known.
+ */
+export function pickedConversationGone(snapshot: DaemonSnapshot | null, sessionId: string): boolean {
+  if (!snapshot) return false;
+  const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+  if (!session) return false;
+  return !terminalTargetCandidates(snapshot, {}).some((candidate) => candidate.sessionId === sessionId);
+}
+
+/**
+ * The conversation a person picked for this terminal unless it is gone; else
+ * the one last looked at in the terminal's project (any project for a terminal
+ * without one); else a new conversation in the terminal's project.
  */
 export function resolveTerminalTarget(input: {
   readonly snapshot: DaemonSnapshot | null;
@@ -112,9 +126,12 @@ export function resolveTerminalTarget(input: {
   readonly pickedSessionId?: string;
 }): TerminalTarget {
   const all = terminalTargetCandidates(input.snapshot, input.views);
-  const picked = input.pickedSessionId ? all.find((candidate) => candidate.sessionId === input.pickedSessionId) : undefined;
+  if (input.pickedSessionId && !pickedConversationGone(input.snapshot, input.pickedSessionId)) {
+    const listed = all.find((candidate) => candidate.sessionId === input.pickedSessionId);
+    return { kind: 'conversation', sessionId: input.pickedSessionId, title: listed?.title ?? '', providerId: listed?.providerId ?? '' };
+  }
   const scoped = input.projectId === undefined ? all : all.filter((candidate) => candidate.projectId === input.projectId);
-  const chosen = picked ?? scoped.find((candidate) => candidate.viewedAt !== undefined);
+  const chosen = scoped.find((candidate) => candidate.viewedAt !== undefined);
   if (chosen) return { kind: 'conversation', sessionId: chosen.sessionId, title: chosen.title, providerId: chosen.providerId };
   return input.projectId === undefined ? { kind: 'new' } : { kind: 'new', projectId: input.projectId };
 }

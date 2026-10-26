@@ -1691,7 +1691,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
    Scoped to the terminal pane — the history composer keeps `.cmd-row`, and
    Android renders the default block markup from its own stylesheet. */
 .pane--terminal {
-  --term-gutter: 4.375rem;
+  --terminal-gutter: 4.375rem;
 }
 
 .pane--terminal .block-list {
@@ -1711,14 +1711,14 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .block-time {
-  flex: 0 0 var(--term-gutter);
+  flex: 0 0 var(--terminal-gutter);
   box-sizing: border-box;
   padding-right: 0.75rem;
   text-align: right;
   font-family: var(--ui-font-label);
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   white-space: nowrap;
 }
 
@@ -1746,7 +1746,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   gap: 0.75rem;
   font-family: var(--ui-font-label);
   font-size: 0.78125rem;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   white-space: nowrap;
 }
 
@@ -1754,7 +1754,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   max-width: 16rem;
   font-family: var(--ui-font-terminal);
   font-size: 0.75rem;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   opacity: 1;
 }
 
@@ -1776,13 +1776,13 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 .block--instrument .block-body {
-  margin-left: var(--term-gutter);
+  margin-left: var(--terminal-gutter);
   padding: 0 1.375rem 0 0.75rem;
   border-left: 1px solid var(--ui-border-mid);
 }
 
 .block--instrument .block-pending {
-  margin-left: var(--term-gutter);
+  margin-left: var(--terminal-gutter);
   padding-left: 0.75rem;
 }
 
@@ -1819,7 +1819,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 /* One live prompt per workspace: an inactive split's sign rests. */
 .dv-groupview:not(.dv-active-group) .term-dock .term-dock__sig {
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   text-shadow: none;
 }
 
@@ -1866,7 +1866,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   border-top: 1px solid var(--ui-border-subtle);
   font-family: var(--ui-font-label);
   font-size: 0.75rem;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   overflow: hidden;
 }
 
@@ -1984,7 +1984,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   padding: 0 0.25rem;
   border: none;
   background: transparent;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   font: inherit;
   white-space: nowrap;
   overflow: hidden;
@@ -2039,7 +2039,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 .terminal-ai-missing {
   margin: 0.75rem 0;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
 }
 
 /* The output attached to the message, readable before it is sent. */
@@ -2101,7 +2101,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   padding: 0.25rem 0.35rem;
   border: none;
   background: transparent;
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
   cursor: pointer;
 }
 
@@ -2113,7 +2113,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .terminal-ai-chips__warning {
   margin: 0.3rem 0 0;
   font-size: var(--ui-font-size-12);
-  color: var(--ui-text-muted);
+  color: var(--ui-text-secondary);
 }
 
 .terminal-ai-chips__warning[data-sensitive] {
