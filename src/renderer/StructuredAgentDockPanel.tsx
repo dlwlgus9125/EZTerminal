@@ -14,10 +14,21 @@ import type { ChatComposerDraft, ChatMessageContext } from '../shared/chat-messa
 import type { ChatStateAccess } from './chat-recovery';
 import type { ConversationSettings } from '../shared/conversation-start';
 import { useChatRecovery } from './use-chat-recovery';
+import { useProviderModelCatalogs } from './use-provider-models';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { NewSessionDraftPanel } from './NewSessionDraftPanel';
 
 import { conversationQueue } from './conversation-queue';
+import {
+  changeConversationSettings,
+  opaqueId,
+  queueConversationTurn,
+  reconcileConversationSubmit,
+  resultOf,
+  runConversationLifecycle,
+  submitConversationMessage,
+  type ConversationCommandAccess,
+} from './conversation-commands';
 import {
   createDaemonCommand,
   type DaemonCommand,
@@ -29,7 +40,6 @@ import {
 } from '../shared/daemon-protocol';
 import { setStructuredAgentTabStatus, structuredTabStatus, tabProvider } from './structured-agent-tab-status';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
-import type { ProviderModel } from '../shared/daemon-provider';
 import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
 import type { ChatAgentProfile } from '../shared/chat-agent-profiles';
@@ -100,8 +110,6 @@ export interface StructuredAgentClearRequest {
   readonly planAccess?: AccessLevel;
 }
 
-let fallbackId = 0;
-
 const TRANSCRIPT_PAGE_SIZE = 500;
 const TRANSCRIPT_PAGES_PER_YIELD = 10;
 /** A reopened conversation loads its newest items first; older ones load on demand. */
@@ -119,17 +127,6 @@ const HEARTBEAT_SESSION_STATES = new Set([
   'idle',
   'delivery-uncertain',
 ]);
-
-function opaqueId(prefix: string): string {
-  const random = globalThis.crypto?.randomUUID?.();
-  if (random) return `${prefix}-${random}`;
-  fallbackId += 1;
-  return `${prefix}-${Date.now().toString(36)}-${fallbackId.toString(36)}`;
-}
-
-function resultOf(receipt: DaemonCommandReceipt): StructuredAgentUiResult {
-  return receipt.ok ? { ok: true } : { ok: false, message: receipt.error.message, deliveryUncertain: false };
-}
 
 function localUserItem(
   sessionId: string,
@@ -157,7 +154,7 @@ function openLink(url: string): void {
 }
 
 /** Electron's File -> absolute path bridge, for files dropped on the composer. */
-function pathForDrop(file: File): string | null {
+export function pathForDrop(file: File): string | null {
   try {
     return window.ezterminalDesktop?.getPathForFile(file) ?? null;
   } catch {
@@ -170,7 +167,7 @@ let mentionSearchSequence = 0;
 const mentionSearches = new Map<string, (query: string) => Promise<readonly string[]>>();
 
 /** `@` mentions search the session's workspace with the Quick Open file index. */
-function desktopFileSearch(root: string | undefined): ((query: string) => Promise<readonly string[]>) | undefined {
+export function desktopFileSearch(root: string | undefined): ((query: string) => Promise<readonly string[]>) | undefined {
   const desktop = window.ezterminalDesktop;
   if (!root || typeof desktop?.searchWorkspaceFiles !== 'function') return undefined;
   const existing = mentionSearches.get(root);
@@ -373,13 +370,9 @@ export function StructuredAgentDockPanel(
   const [authoritativeItems, setAuthoritativeItems] = useState<readonly DaemonTranscriptItem[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(restoredSessionId !== null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
-  const [providerModelCatalogs, setProviderModelCatalogs] = useState<Readonly<Record<
-    string,
-    readonly { readonly id: string; readonly displayName: string }[]
-  >>>({});
+  const providerModelCatalogs = useProviderModelCatalogs(snapshot, capabilities);
   const snapshotRef = useRef<DaemonSnapshot | null>(null);
   const refreshInFlight = useRef<Promise<DaemonSnapshot | null> | null>(null);
-  const providerModelRevisionRef = useRef<Readonly<Record<string, number>>>({});
   const authoritativeItemsRef = useRef<readonly DaemonTranscriptItem[]>([]);
   const transcriptCursorRef = useRef(0);
   const transcriptTargetRef = useRef(0);
@@ -631,41 +624,6 @@ export function StructuredAgentDockPanel(
     const head = snapshot.transcriptHeads.find((candidate) => candidate.sessionId === sessionId);
     void syncTranscript(sessionId, head?.lastSequence ?? 0);
   }, [sessionId, snapshot, syncTranscript]);
-
-  useEffect(() => {
-    if (!snapshot) return;
-    const targets = snapshot.providers.filter((provider) => (
-      provider.enabled
-      && provider.health === 'ready'
-      && providerModelRevisionRef.current[provider.id] !== provider.revision
-    ));
-    if (targets.length === 0) return;
-    // Claimed before asking: Claude answers by launching its CLI, which takes seconds, and the
-    // snapshot changes many times meanwhile. Asking again on each change launched a CLI each time.
-    providerModelRevisionRef.current = {
-      ...providerModelRevisionRef.current,
-      ...Object.fromEntries(targets.map((provider) => [provider.id, provider.revision])),
-    };
-    void Promise.all(targets
-      .map(async (provider) => {
-        const result = await Promise.resolve()
-          .then(() => capabilities.structuredProviders.listModels(provider.id))
-          .catch(() => null);
-        return [provider.id, provider.revision, result?.ok ? result.value : null] as const;
-      }))
-      .then((entries) => {
-        const revisions = { ...providerModelRevisionRef.current };
-        const answered: Record<string, readonly ProviderModel[]> = {};
-        for (const [providerId, providerRevision, models] of entries) {
-          // A newer provider revision was asked for meanwhile; its answer wins.
-          if (revisions[providerId] !== providerRevision) continue;
-          if (models) answered[providerId] = models;
-          else delete revisions[providerId];
-        }
-        providerModelRevisionRef.current = revisions;
-        if (Object.keys(answered).length > 0) setProviderModelCatalogs((current) => ({ ...current, ...answered }));
-      });
-  }, [capabilities, snapshot]);
 
   useEffect(() => {
     if (availability === undefined || availability?.state === 'legacy-only-safe-mode') return undefined;
@@ -1016,98 +974,33 @@ export function StructuredAgentDockPanel(
   const shownFolders = conversationFolders
     ?? (readFolders && workspace ? { primary: workspace.rootPath, additional: [], missing: [] } : undefined);
 
-  const runSessionCommand = async (
+  const commandAccess: ConversationCommandAccess = { latestSnapshot, sendCommand };
+  const showSent = (commandId: string, prompt: string, context?: ChatMessageContext): void => {
+    setLocalItems((current) => current.some((item) => item.id === `local-${commandId}`)
+      ? current
+      : [...current, localUserItem(sessionId, commandId, current.length + 1, prompt, context)]);
+    void syncTranscript(sessionId);
+  };
+
+  const runSessionCommand = (
     type: 'agent.submit' | 'agent.interrupt-and-submit',
     prompt: string,
     context?: ChatMessageContext,
-  ): Promise<StructuredAgentUiResult> => {
-    const recovery = chatRecovery.controller;
-    if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
-    if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
-    const authority = await latestSnapshot();
-    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
-    const commandId = opaqueId('command');
-    const command = type === 'agent.submit'
-      ? createDaemonCommand({
-          commandId,
-          idempotencyKey: commandId,
-          expectedRevision: authority.revision,
-          issuedAt: new Date().toISOString(),
-          principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-          type,
-          payload: { sessionId, prompt, ...(context ? { context } : {}) },
-        })
-      : createDaemonCommand({
-          commandId,
-          idempotencyKey: commandId,
-          expectedRevision: authority.revision,
-          issuedAt: new Date().toISOString(),
-          principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-          type,
-          payload: { sessionId, prompt, ...(context ? { context } : {}) },
-        });
-    const prepared = await recovery.prepare(command);
-    if (!prepared.ok) return prepared;
-    const receipt = await sendCommand(command);
-    if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
-      return { ok: false, message: 'Message delivery could not be confirmed. Check delivery before sending again.', deliveryUncertain: true };
-    }
-    const stored = await recovery.complete(command.commandId, receipt.ok);
-    const result = resultOf(receipt);
-    if (result.ok) {
-      setLocalItems((current) => current.some((item) => item.id === `local-${commandId}`)
-        ? current
-        : [...current, localUserItem(sessionId, commandId, current.length + 1, prompt, context)]);
-      void syncTranscript(sessionId);
-    }
-    return stored.ok ? result : stored;
-  };
+  ): Promise<StructuredAgentUiResult> => submitConversationMessage(commandAccess, {
+    sessionId, recovery: chatRecovery.controller, type, prompt, ...(context ? { context } : {}),
+    onAccepted: (commandId) => showSent(commandId, prompt, context),
+  });
 
-  const reconcileSubmit = async (): Promise<StructuredAgentUiResult> => {
-    const recovery = chatRecovery.controller;
-    const pending = recovery?.getSnapshot().pendingSubmit?.command;
-    if (!pending) return { ok: true };
-    if (recovery?.getSnapshot().status !== 'ready') return { ok: false, message: 'Check stored recovery data before confirming delivery.', deliveryUncertain: true };
-    const receipt = await sendCommand(pending);
-    if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
-      return { ok: false, message: 'Message delivery is still unconfirmed.', deliveryUncertain: true };
-    }
-    if (receipt.ok) {
-      const { commandId, payload } = pending;
-      setLocalItems((current) => current.some((item) => item.id === `local-${commandId}`) ? current
-        : [...current, localUserItem(sessionId, commandId, current.length + 1, payload.prompt, payload.context)]);
-      void syncTranscript(sessionId);
-    }
-    const stored = await recovery.complete(pending.commandId, receipt.ok);
-    return stored.ok ? resultOf(receipt) : stored;
-  };
+  const reconcileSubmit = (): Promise<StructuredAgentUiResult> => reconcileConversationSubmit(commandAccess, {
+    recovery: chatRecovery.controller,
+    onAccepted: ({ commandId, payload }) => showSent(commandId, payload.prompt, payload.context),
+  });
 
-  const changeSettings = async (settings: {
+  const changeSettings = (settings: {
     readonly model?: string;
     readonly permissionPreset?: PermissionPreset;
     readonly reasoningEffort?: string;
-  }): Promise<StructuredAgentUiResult> => {
-    const authority = await latestSnapshot();
-    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
-    const commandId = opaqueId('command');
-    const receipt = await sendCommand(createDaemonCommand({
-      commandId,
-      idempotencyKey: commandId,
-      expectedRevision: authority.revision,
-      issuedAt: new Date().toISOString(),
-      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-      type: 'agent.set-settings',
-      payload: {
-        sessionId,
-        ...(settings.permissionPreset ? { permissionPreset: settings.permissionPreset } : {}),
-        ...(settings.model ? { model: settings.model } : {}),
-        ...(settings.reasoningEffort && authority.capabilities?.includes('agent-effort-v1')
-          ? { reasoningEffort: settings.reasoningEffort }
-          : {}),
-      },
-    }));
-    return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
-  };
+  }): Promise<StructuredAgentUiResult> => changeConversationSettings(commandAccess, sessionId, settings);
 
   const resolveApproval = async (
     approvalId: string,
@@ -1226,37 +1119,9 @@ export function StructuredAgentDockPanel(
     });
   };
 
-  const runLifecycleCommand = async (
+  const runLifecycleCommand = (
     type: 'agent.cancel' | 'agent.archive' | 'agent.detach',
-  ): Promise<StructuredAgentUiResult> => {
-    const authority = await latestSnapshot();
-    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
-    const currentSession = authority.sessions.find((candidate) => candidate.id === sessionId);
-    const currentAgent = authority.agents.find((candidate) => candidate.sessionId === sessionId);
-    const currentRelation = authority.agentRelations.find((relation) => (
-      relation.childSessionId === sessionId && relation.detachedAt === undefined
-    ));
-    if (!currentSession || !currentAgent) {
-      return { ok: false, message: 'This Agent session is no longer available.' };
-    }
-    if (currentRelation?.owner === 'provider-native') {
-      return { ok: false, message: 'This provider-owned subagent is read-only.' };
-    }
-    if (type === 'agent.detach' && !currentRelation) {
-      return { ok: false, message: 'This Agent is already a top-level session.' };
-    }
-    const commandId = opaqueId('command');
-    const receipt = await sendCommand(createDaemonCommand({
-      commandId,
-      idempotencyKey: commandId,
-      expectedRevision: authority.revision,
-      issuedAt: new Date().toISOString(),
-      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-      type,
-      payload: { sessionId },
-    }));
-    return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
-  };
+  ): Promise<StructuredAgentUiResult> => runConversationLifecycle(commandAccess, sessionId, type);
 
   const configureHeartbeat = async (
     input: StructuredAgentHeartbeatInput,
@@ -1370,15 +1235,9 @@ export function StructuredAgentDockPanel(
       state={historyOnly ? 'archived' : agent?.state ?? (createdDraft ? createdDraft.initialPrompt ? 'starting' : 'idle' : loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
       queueItems={conversationQueue(sessionId, snapshot?.turns ?? [], transcriptItems)}
-      onQueueAction={!historyOnly && owner === 'managed' && snapshot?.capabilities?.includes('agent-queue') ? async (item, action) => {
-        const authority = await latestSnapshot();
-        if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
-        const commandId = opaqueId('command');
-        const receipt = await sendCommand(createDaemonCommand({ commandId, idempotencyKey: commandId,
-          expectedRevision: authority.revision, issuedAt: new Date().toISOString(), principal: { kind: 'desktop', id: 'renderer-agent-ui' },
-          type: 'agent.queue', payload: { sessionId, turnId: item.turnId, turnRevision: item.revision, action } }));
-        return receipt ? resultOf(receipt) : { ok: false, message: 'Queue result unknown. Refresh before trying again.' };
-      } : undefined}
+      onQueueAction={!historyOnly && owner === 'managed' && snapshot?.capabilities?.includes('agent-queue')
+        ? (item, action) => queueConversationTurn(commandAccess, sessionId, item, action)
+        : undefined}
       items={transcriptItems}
       turns={sessionTurns}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}

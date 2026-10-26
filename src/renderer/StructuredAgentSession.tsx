@@ -171,6 +171,8 @@ interface StructuredAgentCopy {
   readonly settingsLockedDuringTurn: string;
   readonly settingsFailed: string;
   readonly decisionHint: string;
+  /** The message box shown away from the conversation (a terminal): the decision is not above it. */
+  readonly decisionElsewhereHint: string;
   readonly planCommandOn: string;
   readonly planCommandOff: string;
   readonly modelCommand: string;
@@ -323,6 +325,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settingsLockedDuringTurn: 'Model, access and plan mode can change after this turn. Esc stops it.',
     settingsFailed: 'The setting was not changed.',
     decisionHint: 'Shift+Tab goes to the waiting decision · Esc stops the turn',
+    decisionElsewhereHint: 'This conversation waits for your decision · open it to answer · Esc stops the turn',
     planCommandOn: 'Turn plan mode on (Shift+Tab)',
     planCommandOff: 'Turn plan mode off (Shift+Tab)',
     modelCommand: 'Choose the model',
@@ -440,6 +443,7 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settingsLockedDuringTurn: '모델·권한·계획은 이 작업이 끝난 뒤 바꿀 수 있습니다. Esc로 멈춥니다.',
     settingsFailed: '설정을 바꾸지 못했습니다.',
     decisionHint: 'Shift+Tab 기다리는 결정으로 이동 · Esc 멈춤',
+    decisionElsewhereHint: '이 대화가 결정을 기다립니다 · 대화를 열어 답하세요 · Esc 멈춤',
     planCommandOn: '계획 모드 켜기 (Shift+Tab)',
     planCommandOff: '계획 모드 끄기 (Shift+Tab)',
     modelCommand: '모델 고르기',
@@ -1898,6 +1902,11 @@ export interface StructuredAgentSessionPanelProps {
   readonly onArchive?: () => Promise<StructuredAgentUiResult>;
   readonly onDetach?: () => Promise<StructuredAgentUiResult>;
   readonly variant?: 'desktop' | 'mobile';
+  /**
+   * `composer`: only the message box with its settings and banners, for typing into this
+   * conversation from elsewhere (a terminal's AI input). The conversation tab stays `full`.
+   */
+  readonly presentation?: 'full' | 'composer';
 }
 
 const BUSY_AGENT_STATES = new Set<ManagedAgentState>(['starting', 'queued', 'working']);
@@ -2002,11 +2011,14 @@ export function StructuredAgentSessionPanel({
   onArchive,
   onDetach,
   variant = 'desktop',
+  presentation = 'full',
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
+  const full = presentation === 'full';
   const paneActions = usePaneActions();
   // This header carries the tab's actions, so a group of one may hide its tab strip while it is shown.
-  const paneHeaderId = paneActions?.panelId;
+  // A message box shown elsewhere (in a terminal tab) has no header and never hides that tab's strip.
+  const paneHeaderId = full ? paneActions?.panelId : undefined;
   useEffect(() => {
     if (!paneHeaderId) return undefined;
     announceConversationHeader(paneHeaderId, true);
@@ -2020,6 +2032,23 @@ export function StructuredAgentSessionPanel({
   const [capabilityDiscovery, setCapabilityDiscovery] = useState<CapabilityDiscoveryState>({ loading: !!capabilityClient });
   const [selectedCapabilities, setSelectedCapabilities] = useState<readonly AgentCapabilityItem[]>([]);
   useEffect(() => { setCapabilityCatalog(undefined); setSelectedCapabilities([]); }, [sessionId, providerId, workspace.id]);
+  // Without the header's extensions panel, the message box still reads the catalog for its models and `/` skills.
+  const discoverHere = !full && !historyOnly && owner !== 'provider-native' && capabilityClient !== undefined
+    && (providerId === 'codex' || providerId === 'claude');
+  const discoverySessionId = capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId;
+  useEffect(() => {
+    if (!discoverHere || !capabilityClient) return undefined;
+    let alive = true;
+    setCapabilityDiscovery({ loading: true });
+    void capabilityClient.list({ providerId, workspaceId: workspace.id, ...(discoverySessionId ? { sessionId: discoverySessionId } : {}) })
+      .then((result) => {
+        if (!alive) return;
+        if (result.ok) { setCapabilityCatalog(result.value); setCapabilityDiscovery({ loading: false }); }
+        else setCapabilityDiscovery({ loading: false, error: result.message });
+      })
+      .catch(() => { if (alive) setCapabilityDiscovery({ loading: false, error: 'Extensions could not be read.' }); });
+    return () => { alive = false; };
+  }, [capabilityClient, discoverHere, discoverySessionId, providerId, workspace.id]);
   const listedModels = capabilityCatalog?.providerId === providerId && capabilityCatalog.workspaceId === workspace.id && capabilityCatalog.models.length
     ? capabilityCatalog.models.map((entry) => ({ id: entry.id, label: entry.displayName, resolvedModel: entry.resolvedModel, isDefault: entry.isDefault })) : modelOptions;
   const availableModels = withCurrentModel(listedModels, model);
@@ -2425,7 +2454,7 @@ export function StructuredAgentSessionPanel({
     <section
       ref={panelRef}
       onKeyDown={stopOnEscape}
-      className="structured-agent structured-agent--live"
+      className={full ? 'structured-agent structured-agent--live' : 'structured-agent structured-agent--live structured-agent--composer-only'}
       data-variant={variant}
       data-session-id={sessionId}
       data-provider={providerId}
@@ -2433,10 +2462,11 @@ export function StructuredAgentSessionPanel({
       data-skin={activeSkin}
       data-review-aside={reviewAside || undefined}
       data-history-only={historyOnly || undefined}
+      data-presentation={full ? undefined : presentation}
       data-testid="structured-agent-session"
-      aria-labelledby={titleId}
+      {...(full ? { 'aria-labelledby': titleId } : { 'aria-label': `${title} · ${providerLabel}` })}
     >
-      <header className="structured-agent-session-header">
+      {full && <header className="structured-agent-session-header">
         <div className="structured-agent-session-header__identity">
           {parent && onOpenRelatedSession ? (
             <button type="button" className="structured-agent-session-header__parent" onClick={() => onOpenRelatedSession(parent.sessionId)}
@@ -2607,7 +2637,7 @@ export function StructuredAgentSessionPanel({
             </Menu>
           </div>
         )}
-      </header>
+      </header>}
       {/* Below the header, full width: a failure is read, not squeezed beside the controls. */}
       {settingsError && (
         <div className="structured-agent__banner structured-agent__banner--error structured-agent-session-error" role="alert" data-testid="structured-agent-session-error">
@@ -2624,15 +2654,15 @@ export function StructuredAgentSessionPanel({
         </div>
       )}
 
-      {variant === 'mobile' && capabilitiesPanel}
-      {!results && <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
+      {full && variant === 'mobile' && capabilitiesPanel}
+      {full && !results && <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
         onAsideChange={setReviewAside}
         openRequest={reviewRequest}
         hideTrigger={variant !== 'mobile'}
         onOpenProjectFiles={onOpenProjectFiles}
         onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />}
-      {workflowContext}
-      <StructuredAgentTranscript
+      {full && workflowContext}
+      {full && <StructuredAgentTranscript
         beforeMessages={beforeMessages}
         key={`transcript:${viewStateKey ?? sessionId}`}
         stateKey={viewStateKey ? `${viewStateKey}:transcript` : variant === 'desktop' ? `desktop-agent-transcript:${sessionId}` : undefined}
@@ -2661,20 +2691,20 @@ export function StructuredAgentSessionPanel({
         {...(!settingsReadOnly && !composerDisabled && !planProposals ? {
           planReview: { providerId, permissionPreset: selectedPermission, state, onApprove: approveProposedPlan, onKeepPlanning: (message: string) => onSend(message) },
         } : {})}
-      />
-      {childTrack !== undefined && (
+      />}
+      {full && childTrack !== undefined && (
         <section className="structured-agent-child-track" data-testid="structured-agent-child-track">
           {childTrack}
         </section>
       )}
-      {variant === 'mobile' && heartbeatControl}
-      {variant !== 'mobile' && heartbeatControl !== undefined && (
+      {full && variant === 'mobile' && heartbeatControl}
+      {full && variant !== 'mobile' && heartbeatControl !== undefined && (
         <Dialog open={heartbeatOpen} onOpenChange={setHeartbeatOpen} title={copy.heartbeatOn} ownerDocument={panelRef.current?.ownerDocument} closeLabel={copy.close}>
           {heartbeatControl}
         </Dialog>
       )}
       {recoveryControl}
-      {!historyOnly && providerOwned && parent && (
+      {full && !historyOnly && providerOwned && parent && (
         // A provider-owned subagent takes no messages: say who runs it and lead back.
         <footer className="structured-agent-subagent-footer" data-attention={parentApprovalPending || undefined} data-testid="structured-agent-subagent-footer">
           <p role={parentApprovalPending ? 'status' : undefined}>{parentApprovalPending ? copy.subagentApprovalWaiting : copy.subagentManaged}</p>
@@ -2685,7 +2715,7 @@ export function StructuredAgentSessionPanel({
           )}
         </footer>
       )}
-      {sideOpen && !historyOnly && !(providerOwned && parent) && (
+      {full && sideOpen && !historyOnly && !(providerOwned && parent) && (
         <div className="side-question-anchor">
           <SideQuestionSurface
             variant={variant}
@@ -2710,7 +2740,7 @@ export function StructuredAgentSessionPanel({
           key={`composer:${viewStateKey ?? sessionId}`}
           stateKey={viewStateKey ? `${viewStateKey}:composer` : variant === 'desktop' ? `desktop-agent-composer:${sessionId}` : undefined}
           busy={busy}
-          autoFocus={awaitingFirstMessage && variant === 'desktop'}
+          autoFocus={full && awaitingFirstMessage && variant === 'desktop'}
           queuedCount={queuedCount}
           disabled={composerDisabled || lifecycleBusy !== null}
           disabledReason={composerDisabledReason ?? lifecycleDisabledReason}
@@ -2731,8 +2761,8 @@ export function StructuredAgentSessionPanel({
           {...(fileSearch ? { fileSearch } : {})}
           {...(pathForDrop ? { pathForDrop } : {})}
           {...(!settingsReadOnly ? { plan: { on: planOn, onToggle: togglePlan, disabled: settingsLocked || turnCurrent, ...(planBlockedReason ? { blockedReason: planBlockedReason } : {}) } } : {})}
-          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? copy.decisionHint : copy.settingsLockedDuringTurn } : {})}
-          onFocusDecision={focusDecision}
+          {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? (full ? copy.decisionHint : copy.decisionElsewhereHint) : copy.settingsLockedDuringTurn } : {})}
+          {...(full ? { onFocusDecision: focusDecision } : {})}
           appCommands={appCommands}
           {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}
         />
