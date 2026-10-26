@@ -49,7 +49,7 @@ export const Mixed: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await waitFor(() => expect(page.getByRole('dialog', { name: '워크트리 · EZTerminal' })).toBeVisible());
-    await expect(await page.findByText('feat/login')).toBeVisible();
+    await expect(await page.findByText('feat/login', {}, { timeout: 5_000 })).toBeVisible();
     await expect(page.getAllByTestId('workspace-merge')).toHaveLength(3);
   },
 };

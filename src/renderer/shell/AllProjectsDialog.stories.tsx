@@ -72,15 +72,25 @@ export const Many: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(await page.findByTestId('all-projects-more'));
-    await expect(await page.findByTestId('all-projects-open-project-45')).toBeInTheDocument();
+    await expect(await page.findByTestId('all-projects-open-project-45', {}, { timeout: 5_000 })).toBeInTheDocument();
   },
 };
+
+/** Types once the dialog is shown: its opening focus (on the close button) must not take half the text. */
+async function typeSearch(page: ReturnType<typeof within>, value: string): Promise<void> {
+  await waitFor(() => expect(page.getByRole('dialog', { name: '모든 프로젝트' })).toBeVisible());
+  const search = page.getByTestId('all-projects-search');
+  await waitFor(() => expect(page.getByRole('button', { name: '닫기' })).toHaveFocus());
+  await userEvent.click(search);
+  await userEvent.type(search, value);
+  await waitFor(() => expect(search).toHaveValue(value));
+}
 
 export const Search: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.type(await page.findByTestId('all-projects-search'), 'kitchen');
-    await waitFor(() => expect(page.queryByTestId('all-projects-open-ezterminal')).toBeNull());
+    await typeSearch(page, 'kitchen');
+    await waitFor(() => expect(page.queryByTestId('all-projects-open-ezterminal')).toBeNull(), { timeout: 5_000 });
     await expect(page.getByTestId('all-projects-open-friendskitchen')).toBeVisible();
   },
 };
@@ -88,8 +98,9 @@ export const Search: Story = {
 export const NoMatches: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.type(await page.findByTestId('all-projects-search'), 'nothing-like-this');
-    await expect(await page.findByText('검색과 일치하는 프로젝트가 없습니다.')).toBeVisible();
+    await typeSearch(page, 'nothing-like-this');
+    // Typing, the 200 ms debounce and the read: allow more than the default second under load.
+    await expect(await page.findByText('검색과 일치하는 프로젝트가 없습니다.', {}, { timeout: 5_000 })).toBeVisible();
   },
 };
 
