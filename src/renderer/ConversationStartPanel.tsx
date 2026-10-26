@@ -6,7 +6,8 @@ import type { ChatStateScope, ChatStateSnapshot } from '../shared/chat-state';
 import { hasConversationDraft, importConversationDraft } from './conversation-draft-migration';
 import type { ConversationSettings } from '../shared/conversation-start';
 import type { DaemonSnapshot, DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
-import { ChatRecoveryController, type ChatStateAccess } from './chat-recovery';
+import type { ChatRecoveryController, ChatStateAccess } from './chat-recovery';
+import { retainChatRecovery, sharedChatRecovery } from './chat-recovery-registry';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { ConversationStartController, historyResumeBlock, initialConversationSettings, resumeAvailabilityKey, type ConversationStartAccess } from './conversation-start';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from './StructuredAgentSession';
@@ -21,6 +22,22 @@ import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
 import type { ConversationFolders } from '../shared/conversation-folders';
 
 const NEW_WORKTREE = '__new-worktree__';
+
+/** One start controller per shared draft, so its one-send-at-a-time guard covers every box showing it. */
+const startControllers = new WeakMap<ConversationStartAccess, WeakMap<ChatRecoveryController, ConversationStartController>>();
+function sharedStartController(recovery: ChatRecoveryController, access: ConversationStartAccess): ConversationStartController {
+  let byRecovery = startControllers.get(access);
+  if (!byRecovery) {
+    byRecovery = new WeakMap();
+    startControllers.set(access, byRecovery);
+  }
+  let controller = byRecovery.get(recovery);
+  if (!controller) {
+    controller = new ConversationStartController(recovery, access);
+    byRecovery.set(recovery, controller);
+  }
+  return controller;
+}
 
 export interface ConversationStartPanelProps {
   readonly identity: string;
@@ -62,10 +79,16 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const hasHistory = !!initialEntry;
   const originalId = initialEntry?.conversationId;
   const scope = useMemo<ChatStateScope>(() => ({ projectId: initialEntry?.projectId ?? projectId ?? 'drafts', sessionId: identity, kind: hasHistory ? 'conversation' : 'draft' }), [identity, initialEntry?.projectId, projectId, hasHistory]);
-  const recovery = useMemo(() => new ChatRecoveryController(scope, storage), [scope, storage]);
+  // Shared with any other start box of the same identity (two terminals of one project), so one
+  // draft and one send are in flight per identity.
+  const recovery = useMemo(() => sharedChatRecovery(scope, storage), [scope, storage]);
   const view = useSyncExternalStore(recovery.subscribe, recovery.getSnapshot);
-  const controller = useMemo(() => new ConversationStartController(recovery, access), [access, recovery]);
-  useEffect(() => { void recovery.load(); }, [recovery]);
+  const controller = useMemo(() => sharedStartController(recovery, access), [access, recovery]);
+  useEffect(() => {
+    const release = retainChatRecovery(recovery, storage);
+    void recovery.load();
+    return release;
+  }, [recovery, storage]);
   // Continuing a conversation keeps the level its plan was set to run with. Done while rendering,
   // not in an effect: the conversation panel below reads it as it mounts, and child effects run
   // before this component's. Idempotent: it never replaces a level already chosen here.
