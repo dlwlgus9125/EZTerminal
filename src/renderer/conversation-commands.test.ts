@@ -61,6 +61,25 @@ describe('submitConversationMessage', () => {
     view();
   });
 
+  it('never sends through a draft that was forgotten and reopened elsewhere meanwhile', async () => {
+    const chat = storage({ draft: { text: 'hello' } });
+    const stale = sharedChatRecovery(scope, chat.access);
+    const view = retainChatRecovery(stale)!;
+    await stale.load();
+    // The box closes while its skill check waits; the draft is forgotten and opened again elsewhere.
+    view();
+    await stale.flush();
+    await flush();
+    const reopened = sharedChatRecovery(scope, chat.access);
+    expect(reopened).not.toBe(stale);
+    const reopenedView = retainChatRecovery(reopened)!;
+    const daemon = host();
+    const result = await submitConversationMessage(daemon.access, { sessionId: scope.sessionId, recovery: stale, type: 'agent.submit', prompt: 'hello' });
+    expect(result).toMatchObject({ ok: false });
+    expect(daemon.sent).toHaveLength(0);
+    reopenedView();
+  });
+
   it('keeps the shared draft while its message is delivered after the box that sent it closed', async () => {
     const chat = storage({ draft: { text: 'hello' } });
     const recovery = sharedChatRecovery(scope, chat.access);

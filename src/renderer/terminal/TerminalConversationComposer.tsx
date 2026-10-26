@@ -58,9 +58,12 @@ function useQueuedMessages(
   const head = snapshot?.transcriptHeads.find((candidate) => candidate.sessionId === sessionId)?.lastSequence ?? 0;
   const headRef = useRef(head);
   headRef.current = head;
-  const [state, setState] = useState<{ readonly key: string; readonly items: readonly DaemonTranscriptItem[]; readonly complete: boolean }>(
-    { key: '', items: [], complete: true },
-  );
+  const [state, setState] = useState<{
+    readonly key: string; readonly items: readonly DaemonTranscriptItem[]; readonly complete: boolean; readonly failed?: boolean;
+  }>({ key: '', items: [], complete: true });
+  // A read that failed (host busy, reconnecting) is tried again on the next snapshot; one that
+  // looked as far back as it may and did not find a message is not.
+  const retry = state.key === queuedKey && state.failed ? snapshot?.revision ?? 0 : -1;
   useEffect(() => {
     if (!queuedKey) { setState({ key: '', items: [], complete: true }); return undefined; }
     const wanted = new Set(queuedKey.split('\0'));
@@ -77,9 +80,9 @@ function useQueuedMessages(
         before = after;
       }
       if (alive) setState({ key: queuedKey, items: [...found.values()], complete: found.size === wanted.size });
-    })().catch(() => { if (alive) setState({ key: queuedKey, items: [], complete: false }); });
+    })().catch(() => { if (alive) setState({ key: queuedKey, items: [], complete: false, failed: true }); });
     return () => { alive = false; };
-  }, [capabilities, queuedKey, sessionId]);
+  }, [capabilities, queuedKey, sessionId, retry]);
   return state.key === queuedKey ? state : { items: [], complete: !queuedKey };
 }
 

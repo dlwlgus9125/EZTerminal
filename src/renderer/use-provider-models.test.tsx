@@ -49,6 +49,12 @@ describe('capability discovery cache', () => {
     await discoverCapabilities(client, request, () => now);
     expect(list).toHaveBeenCalledTimes(2);
 
+    // Two boxes wrap the same bridge function in their own client objects: one listing.
+    const shared = vi.fn(async () => ({ ok: true as const, value: { items: [] } }));
+    await discoverCapabilities({ list: shared, manage: vi.fn() } as never, request, () => 0);
+    await discoverCapabilities({ list: shared, manage: vi.fn() } as never, request, () => 0);
+    expect(shared).toHaveBeenCalledTimes(1);
+
     const failing = vi.fn(async () => ({ ok: false as const, code: 'unavailable', message: 'down' }));
     const broken = { list: failing, manage: vi.fn() } as never;
     await discoverCapabilities(broken, request, () => 0);

@@ -5,7 +5,11 @@ type ListResult = Awaited<ReturnType<AgentCapabilitiesClient['list']>>;
 /** How long one answer serves every box of the same conversation scope. */
 export const CAPABILITY_DISCOVERY_REUSE_MS = 60_000;
 
-const caches = new WeakMap<AgentCapabilitiesClient, Map<string, { readonly at: number; readonly answer: Promise<ListResult> }>>();
+/**
+ * Keyed by the bridge's `list` function, not the client object: each box wraps
+ * the same preload function in its own small client, and they must share.
+ */
+const caches = new WeakMap<AgentCapabilitiesClient['list'], Map<string, { readonly at: number; readonly answer: Promise<ListResult> }>>();
 
 /**
  * The extensions catalog for a scope, asked once and shared for a minute.
@@ -18,10 +22,10 @@ export function discoverCapabilities(
   request: AgentCapabilitiesRequest,
   now: () => number = Date.now,
 ): Promise<ListResult> {
-  let cache = caches.get(client);
+  let cache = caches.get(client.list);
   if (!cache) {
     cache = new Map();
-    caches.set(client, cache);
+    caches.set(client.list, cache);
   }
   const key = `${request.providerId}\0${request.workspaceId}\0${request.sessionId ?? ''}`;
   const cached = cache.get(key);

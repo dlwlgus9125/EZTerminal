@@ -53,14 +53,17 @@ const busy = new WeakSet<ChatRecoveryController>();
 /** Run `transaction` as the recovery's only send, holding the shared draft until it settles. */
 async function exclusively(recovery: ChatRecoveryController, transaction: () => Promise<StructuredAgentUiResult>): Promise<StructuredAgentUiResult> {
   if (busy.has(recovery)) return { ok: false, message: 'This message is already being sent. Wait for it before sending again.' };
-  busy.add(recovery);
   // A box that closes mid-send must not let the registry forget the escrow the receipt settles.
   const hold = retainChatRecovery(recovery);
+  // This draft was forgotten and reopened elsewhere while the box waited (its skill check):
+  // the reopened copy is the live one, so this stale one never sends.
+  if (!hold) return { ok: false, message: 'This draft was reopened in another place. Check it there before sending.' };
+  busy.add(recovery);
   try {
     return await transaction();
   } finally {
     busy.delete(recovery);
-    hold?.();
+    hold();
   }
 }
 

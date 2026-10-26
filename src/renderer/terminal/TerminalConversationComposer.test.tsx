@@ -191,6 +191,45 @@ describe('TerminalConversationComposer', () => {
     expect(container.querySelector('[data-testid="structured-agent-stop"]')).toBeNull();
   });
 
+  it('reads the queue again on the next snapshot after a failed read', async () => {
+    const turnRecord = { revision: 1, createdAt: NOW, updatedAt: NOW };
+    const working = (revision: number): DaemonSnapshot => ({
+      ...snapshot, revision,
+      capabilities: ['agent-queue'],
+      agents: [{ ...snapshot.agents[0]!, state: 'working', queuedTurnCount: 1 }],
+      turns: [
+        { ...turnRecord, id: 'turn-now', sessionId: scope.sessionId, commandId: 'c-now', state: 'working' },
+        { ...turnRecord, id: 'turn-queued', sessionId: scope.sessionId, commandId: 'c-queued', state: 'queued', enqueueSequence: 2 },
+      ] as DaemonSnapshot['turns'],
+      transcriptHeads: [{ sessionId: scope.sessionId, lastSequence: 10, itemCount: 10 }] as unknown as DaemonSnapshot['transcriptHeads'],
+    });
+    const { chat } = fixture();
+    let fail = true;
+    const capabilities: CapabilityAccess = { ...rendererCapabilities,
+      daemon: { ...rendererCapabilities.daemon, sendCommand: vi.fn(), observeEvents: () => () => undefined,
+        getTranscript: async () => {
+          if (fail) throw new Error('host busy');
+          return [{ id: 'm', sessionId: scope.sessionId, sequence: 9, kind: 'user-message', text: 'Then update the docs', turnId: 'turn-queued',
+            isDelta: false, isSensitive: false, createdAt: NOW }];
+        } },
+      structuredProviders: { ...rendererCapabilities.structuredProviders, listModels: async () => ({ ok: true, value: [] }) },
+    };
+    const show = async (revision: number): Promise<void> => {
+      act(() => root.render(
+        <AppI18nProvider locale="en" languages={['en']}>
+          <TerminalConversationComposer sessionId={scope.sessionId} snapshot={working(revision)} capabilities={capabilities} chatStateAccess={chat} />
+        </AppI18nProvider>,
+      ));
+      await flush();
+    };
+    await show(3);
+    expect(container.querySelector('[data-testid="structured-agent-stop"]')).toBeNull();
+    fail = false;
+    await show(4);
+    expect(container.querySelector('.chat-queue__item')?.textContent).toContain('Then update the docs');
+    expect(container.querySelector('[data-testid="structured-agent-stop"]')).not.toBeNull();
+  });
+
   it('says so when the conversation is gone', async () => {
     const { chat } = fixture();
     act(() => root.render(

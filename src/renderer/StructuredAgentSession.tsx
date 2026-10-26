@@ -1933,6 +1933,9 @@ const TERMINAL_AGENT_STATES = new Set<ManagedAgentState>([
 
 type StructuredAgentLifecycleAction = 'cancel' | 'archive' | 'detach';
 
+/** Conversations with a send in progress from any box in this renderer. */
+const sendingSessions = new Set<string>();
+
 export function StructuredAgentSessionPanel({
   onOpenProjectFiles,
   queueItems,
@@ -2056,7 +2059,18 @@ export function StructuredAgentSessionPanel({
   // The models arrive with the provider's catalog; until then only the current model is known.
   const modelsLoading = capabilityDiscovery.loading && listedModels.length === 0;
   const providerName = providerId === 'codex' ? 'Codex' : providerId === 'claude' ? 'Claude' : providerLabel;
-  const sendWithCapabilities =async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
+  const sendWithCapabilities = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
+    // One send per conversation at a time across every box showing it (its tab, a terminal):
+    // taken before the skill check awaits, so a second box cannot send the same draft meanwhile.
+    if (sendingSessions.has(sessionId)) return { ok: false, message: 'This message is already being sent. Wait for it before sending again.' };
+    sendingSessions.add(sessionId);
+    try {
+      return await checkedSend(prompt, context, send);
+    } finally {
+      sendingSessions.delete(sessionId);
+    }
+  };
+  const checkedSend = async (prompt: string, context: ChatMessageContext | undefined, send: typeof onSend): Promise<StructuredAgentUiResult> => {
     if (context?.skills?.some((skill) => skill.providerId !== providerId)) return { ok: false, message: 'The selected skills belong to another provider. Remove or select them again.' };
     const selected = [...selectedCapabilities.filter((item) => item.invocation && prompt.includes(item.invocation)),
       ...(context?.skills ?? []).map((skill) => ({ ...skill, kind: 'skill' as const, enabled: true, actions: [] }))];
