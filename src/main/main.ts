@@ -4177,7 +4177,9 @@ app.on('ready', async () => {
       })
     : null;
   openClawLifecycleCoordinator = openclawControl;
-  await openclawControl?.initialize();
+  // The first window does not wait for OpenClaw: asking its CLI can take many seconds (more when its gateway is busy).
+  // Every coordinator call waits for this initialization itself; a failure is logged and answered by those calls.
+  void openclawControl?.initialize().catch((error: unknown) => mainLog?.line(`openclaw control initialize failed: ${String(error)}`));
   assertMainStartupActive();
 
   const transientControlSnapshot = async (force = false): Promise<OpenClawControlSnapshot> => {

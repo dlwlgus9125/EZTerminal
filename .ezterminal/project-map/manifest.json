@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0769d0da833292d3076dd46ad4bb322a91810db3ae1aa2178e1a5cbaeb88b6e2",
+        "inputDigest": "sha256:983aef9be2bf58ed062aa474002843f6d02cb5d93af145c6b429cea00b302fa6",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
+        "reason": "Reviewed (startup, issue 18k): main no longer awaits OpenClaw control initialization before the first window; every coordinator call awaits it, and disposal still awaits initialization and bootstrap recovery. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b345c221dae78e913c6f49c635f791e58189c83f516643fb6afd38f8da5c62a2",
+        "inputDigest": "sha256:d2c34638459e076f58373b6da3fb12e711def3b97f8ac7c512eb0b9a5a1fea73",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
+        "reason": "Reviewed (startup, issue 18k): main no longer awaits OpenClaw control initialization before the first window; every coordinator call awaits it, and disposal still awaits initialization and bootstrap recovery. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:6886626dd4ee89032d7f035b7659f654925178ac043ca8285eebb50838145873",
+        "inputDigest": "sha256:47fd638474e338b900afc460ec39b701709b701f85a16b2ed27dad2707643944",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
+        "reason": "Reviewed (startup, issue 18k): main no longer awaits OpenClaw control initialization before the first window; every coordinator call awaits it, and disposal still awaits initialization and bootstrap recovery. Claims hold."
       }
     },
     {
