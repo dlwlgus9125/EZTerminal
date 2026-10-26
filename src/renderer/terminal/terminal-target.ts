@@ -103,14 +103,15 @@ export type TerminalTarget =
   | { readonly kind: 'new'; readonly projectId?: string };
 
 /**
- * Whether a picked conversation can no longer take messages. A conversation the
- * snapshot does not list (yet) is not gone: one just started reaches the
- * snapshot a moment later, and without a snapshot nothing is known.
+ * Whether a picked conversation can no longer take messages. Without a snapshot
+ * nothing is known. A conversation the snapshot does not list is gone unless it
+ * is `awaitingListing` — one this terminal just started reaches the snapshot a
+ * moment later.
  */
-export function pickedConversationGone(snapshot: DaemonSnapshot | null, sessionId: string): boolean {
+export function pickedConversationGone(snapshot: DaemonSnapshot | null, sessionId: string, awaitingListing = false): boolean {
   if (!snapshot) return false;
   const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
-  if (!session) return false;
+  if (!session) return !awaitingListing;
   return !terminalTargetCandidates(snapshot, {}).some((candidate) => candidate.sessionId === sessionId);
 }
 
@@ -124,9 +125,11 @@ export function resolveTerminalTarget(input: {
   readonly views: ConversationViews;
   readonly projectId?: string;
   readonly pickedSessionId?: string;
+  /** The pick is a conversation this terminal just started, not listed yet. */
+  readonly pickAwaitingListing?: boolean;
 }): TerminalTarget {
   const all = terminalTargetCandidates(input.snapshot, input.views);
-  if (input.pickedSessionId && !pickedConversationGone(input.snapshot, input.pickedSessionId)) {
+  if (input.pickedSessionId && !pickedConversationGone(input.snapshot, input.pickedSessionId, input.pickAwaitingListing)) {
     const listed = all.find((candidate) => candidate.sessionId === input.pickedSessionId);
     return { kind: 'conversation', sessionId: input.pickedSessionId, title: listed?.title ?? '', providerId: listed?.providerId ?? '' };
   }

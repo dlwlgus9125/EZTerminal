@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { CONVERSATION_VIEWS_KEY } from './conversation-views';
-import { clearSessionViewStates } from './session-view-state';
+import { clearSessionViewStates, readSessionViewState, saveSessionViewState } from './session-view-state';
 import { shellSnapshot } from './shell/shell-fixtures';
 import { createTerminalAiHost, TerminalAiContext } from './terminal/terminal-ai-host';
 import type { TerminalAiDockProps } from './terminal/TerminalAiDock';
@@ -145,6 +145,40 @@ describe('TerminalPane AI input', () => {
     act(() => lateStarted('s-late'));
     expect(stubTarget()).toBe('s-pdf');
     expect(notifySent).toHaveBeenCalledWith('s-late', expect.anything());
+  });
+
+  it('switching to the shell and back while the start box sends still makes its conversation the destination', () => {
+    const host = createTerminalAiHost({ openConversation: vi.fn(), notifySent: vi.fn() });
+    host.set(snapshot());
+    render(host);
+    ctrlPeriod();
+    act(() => lastDock!.onNewConversation());
+    const started = lastDock!.onStarted;
+    ctrlPeriod();
+    ctrlPeriod();
+    expect(stubTarget()).toBe('new:');
+    act(() => started('s-made-here'));
+    expect(stubTarget()).toBe('s-made-here');
+  });
+
+  it('drops a remembered pick the app no longer lists', () => {
+    const host = createTerminalAiHost({ openConversation: vi.fn(), notifySent: vi.fn() });
+    host.set(snapshot());
+    saveSessionViewState('terminal-ai-target:pane-old-pick', 's-removed');
+    render(host, { panelId: 'pane-old-pick' });
+    ctrlPeriod();
+    expect(stubTarget()).toBe('s-font');
+    expect(readSessionViewState('terminal-ai-target:pane-old-pick')).toBeUndefined();
+  });
+
+  it('a remembered "new conversation" waits for the snapshot to know the terminal\'s project', () => {
+    const host = createTerminalAiHost({ openConversation: vi.fn(), notifySent: vi.fn() });
+    saveSessionViewState('terminal-ai-target:pane-new-pick', 'new');
+    render(host, { initialCwd: 'C:\\Work\\ez\\src', panelId: 'pane-new-pick' });
+    ctrlPeriod();
+    expect(stubTarget()).toBeNull();
+    act(() => host.set(snapshot()));
+    expect(stubTarget()).toBe('new:p-ez');
   });
 
   it('reads the terminal\'s project from the folder it was opened in before its session binds', () => {

@@ -101,14 +101,20 @@ describe('resolveTerminalTarget', () => {
       .toEqual({ kind: 'conversation', sessionId: 's-pdf', title: '결과 탭 PDF 저장 버튼', providerId: 'codex' });
   });
 
-  it('keeps a pick the snapshot does not list yet (a conversation just started), and drops one that ended', () => {
-    expect(resolveTerminalTarget({ snapshot: snapshot(), views, projectId: 'p-ez', pickedSessionId: 's-just-started' }))
+  it('keeps a pick the snapshot does not list yet only while it awaits listing (just started), and drops one that ended', () => {
+    expect(resolveTerminalTarget({ snapshot: snapshot(), views, projectId: 'p-ez', pickedSessionId: 's-just-started', pickAwaitingListing: true }))
       .toEqual({ kind: 'conversation', sessionId: 's-just-started', title: '', providerId: '' });
+    // Not listed and not just started: removed from the app (or an old pick) — the next candidate.
+    expect(resolveTerminalTarget({ snapshot: snapshot(), views, projectId: 'p-ez', pickedSessionId: 's-removed' }))
+      .toMatchObject({ kind: 'conversation', sessionId: 's-font' });
     expect(resolveTerminalTarget({ snapshot: null, views, pickedSessionId: 's-pdf' })).toMatchObject({ kind: 'conversation', sessionId: 's-pdf' });
     const base = snapshot();
     const ended: DaemonSnapshot = { ...base, agents: base.agents.map((agent) => (agent.sessionId === 's-pdf' ? { ...agent, state: 'error' } : agent)) };
     expect(pickedConversationGone(ended, 's-pdf')).toBe(true);
-    expect(pickedConversationGone(ended, 's-just-started')).toBe(false);
+    expect(pickedConversationGone(ended, 's-pdf', true)).toBe(true);
+    expect(pickedConversationGone(ended, 's-just-started', true)).toBe(false);
+    expect(pickedConversationGone(ended, 's-just-started')).toBe(true);
+    expect(pickedConversationGone(null, 's-just-started')).toBe(false);
     expect(resolveTerminalTarget({ snapshot: ended, views, projectId: 'p-ez', pickedSessionId: 's-pdf' }))
       .toMatchObject({ kind: 'conversation', sessionId: 's-font' });
   });

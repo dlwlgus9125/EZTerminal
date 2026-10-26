@@ -368,11 +368,13 @@ export function TerminalPane({
   // Resolved when the AI input opens and kept while it stays open; a person's pick sticks to this terminal.
   const [aiTarget, setAiTarget] = useState<TerminalTarget | null>(null);
   const aiTargetKeyRef = useRef('');
-  // Bumped whenever the target is set: an answer for an earlier target (the conversation a start box
-  // created) never overrides a newer choice.
+  // Bumped whenever the person chooses where to send: the conversation a start box created only
+  // becomes the destination if nothing was chosen since that box sent.
   const targetGenerationRef = useRef(0);
   const pickedRef = useRef<string | undefined>(readSessionViewState<string>(pickKey));
-  // Excerpts not yet in a draft, with the target they go to (moved along when the target changes).
+  // A conversation this terminal just started: kept as the pick until the snapshot lists it.
+  const awaitingListingRef = useRef<string | null>(null);
+  // Excerpts not yet in a draft, with the target they were attached for (they wait for it).
   const [pendingAttachments, setPendingAttachments] = useState<readonly (PendingTerminalAttachment & { readonly targetKey: string })[]>([]);
   // Blocks already put in a draft (or refused), per terminal session: the automatic attach never
   // offers them again, also after the pane is reopened.
@@ -396,8 +398,14 @@ export function TerminalPane({
   const computeAiTarget = useCallback((): TerminalTarget | null => {
     const snapshot = aiHost?.getSnapshot() ?? null;
     const projectId = terminalProjectId();
-    if (pickedRef.current === 'new') return projectId ? { kind: 'new', projectId } : { kind: 'new' };
-    if (pickedRef.current && pickedConversationGone(snapshot, pickedRef.current)) {
+    const picked = pickedRef.current;
+    // A new conversation starts in the terminal's project, which takes a snapshot to know.
+    if (picked === 'new') return !snapshot ? null : projectId ? { kind: 'new', projectId } : { kind: 'new' };
+    if (picked && awaitingListingRef.current === picked && snapshot?.sessions.some((session) => session.id === picked)) {
+      awaitingListingRef.current = null;
+    }
+    const awaiting = picked !== undefined && awaitingListingRef.current === picked;
+    if (picked && pickedConversationGone(snapshot, picked, awaiting)) {
       pickedRef.current = undefined;
       saveSessionViewState<string | undefined>(pickKey, undefined);
     }
@@ -406,17 +414,19 @@ export function TerminalPane({
       snapshot,
       views: readConversationViews(),
       ...(projectId ? { projectId } : {}),
-      ...(pickedRef.current ? { pickedSessionId: pickedRef.current } : {}),
+      ...(pickedRef.current ? { pickedSessionId: pickedRef.current, pickAwaitingListing: awaiting } : {}),
     });
   }, [aiHost, pickKey, terminalProjectId]);
 
   const setTarget = useCallback((target: TerminalTarget | null): void => {
-    targetGenerationRef.current += 1;
     const key = targetKeyOf(target);
     aiTargetKeyRef.current = key;
     setAiTarget(target);
-    setPendingAttachments((current) => (current.some((item) => item.targetKey !== key)
-      ? current.map((item) => ({ ...item, targetKey: key }))
+    // Excerpts attached before the target was known go to it; the others stay with their own target.
+    if (target === null) return;
+    const unresolved = targetKeyOf(null);
+    setPendingAttachments((current) => (current.some((item) => item.targetKey === unresolved)
+      ? current.map((item) => (item.targetKey === unresolved ? { ...item, targetKey: key } : item))
       : current));
   }, []);
 
@@ -470,6 +480,7 @@ export function TerminalPane({
   }, [enterAiInput, focusAiInput, queueBlockAttachment]);
 
   const pickAiTarget = useCallback((choice: string): void => {
+    targetGenerationRef.current += 1;
     pickedRef.current = choice;
     saveSessionViewState<string>(pickKey, choice);
     setTarget(computeAiTarget());
@@ -1939,13 +1950,15 @@ export function TerminalPane({
             <TerminalAiDock
               host={aiHost}
               target={aiTarget}
-              {...(aiProjectId ? { projectId: aiProjectId } : {})}
               pending={aiPending}
               onPendingSettled={settleAttachments}
               onSent={announceSent}
               onStarted={(startedSessionId) => {
                 // A start box that finishes after the person chose elsewhere only reports the send.
-                if (startGeneration === targetGenerationRef.current) pickAiTarget(startedSessionId);
+                if (startGeneration === targetGenerationRef.current) {
+                  awaitingListingRef.current = startedSessionId;
+                  pickAiTarget(startedSessionId);
+                }
                 announceSent(startedSessionId);
               }}
               onNewConversation={() => pickAiTarget('new')}
