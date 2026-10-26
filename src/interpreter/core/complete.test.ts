@@ -110,14 +110,23 @@ describe('completeLine', () => {
     expect(result.commonText).toBe('"Program Files\\\\"');
     expect(result.commonCaretBack).toBe(1);
     expect(result.candidates[0]).toMatchObject({ insertText: '"Program Files\\\\"', caretBack: 1 });
-    // Tab again from inside the quote: the quote already closes after the caret, so the word goes in open.
+    // Tab again from inside the quote: the closing quote right after the caret is replaced with the new word.
     const again = 'cd "Program Files\\\\"';
     const deeper = await completeLine(again, again.length - 1, source());
     if (!deeper.ok) throw new Error('expected candidates');
     expect(deeper.replaceStart).toBe(3);
-    expect(deeper.replaceEnd).toBe(again.length - 1);
-    expect(deeper.commonText).toBe('"Program Files\\\\Tool\\\\');
-    expect(deeper.commonCaretBack).toBeUndefined();
+    expect(deeper.replaceEnd).toBe(again.length);
+    expect(deeper.commonText).toBe('"Program Files\\\\Tool\\\\"');
+    expect(deeper.commonCaretBack).toBe(1);
+    // In the middle of a quoted word the word goes in open and the existing quote closes it.
+    const middle = await completeLine('ls "Program" | count', 7, source());
+    if (!middle.ok) throw new Error('expected candidates');
+    expect(middle).toMatchObject({ replaceEnd: 7, commonText: '"Program Files\\\\' });
+    // A file before a closing quote ends with the quote and a space, the caret after them.
+    const file = await completeLine('cat "보"', 6, source());
+    expect(file).toMatchObject({ ok: true, replaceEnd: 7, commonText: '"보고서.md" ' });
+    // A caret between an escape and what it escapes completes nothing.
+    expect(await completeLine('ls "src\\\\\\"b" | count', 8, source())).toEqual({ ok: false, reason: 'none' });
     // A quote the person opened and did not close is closed.
     const typed = await completeLine('cd "Program Files\\\\T', 20, source());
     if (!typed.ok) throw new Error('expected candidates');

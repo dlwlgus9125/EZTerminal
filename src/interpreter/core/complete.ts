@@ -51,6 +51,9 @@ export function completionWord(line: string, caret: number): CompletionWord | nu
         const next = line[index + 1]!;
         decoded += next === 'n' ? '\n' : next === 't' ? '\t' : next;
         index += 1;
+      } else if (ch === '\\' && end < line.length) {
+        // The caret splits an escape: completing here would re-pair the escapes after it.
+        return null;
       } else if (ch === quote) {
         quote = null;
       } else {
@@ -208,9 +211,10 @@ function closingQuoteAfter(line: string, caret: number, quote: '"' | "'"): numbe
 }
 
 /**
- * How a word goes in so the line still parses. Inside a quote that already
- * closes later in the line, it goes in open and that quote closes it (the rest
- * of the word stays). Otherwise a quoted word is written closed; a folder (or a
+ * How a word goes in so the line still parses. Inside a quote that closes later
+ * in the word (text after the caret), it goes in open and that quote closes it,
+ * the rest of the word kept. Otherwise a quoted word is written closed (a
+ * closing quote right after the caret is replaced with it); a folder (or a
  * shared part still being typed) keeps the caret inside the closing quote, so
  * typing and Tab go on into it, and a file gets a space after it.
  */
@@ -242,13 +246,13 @@ export async function completeLine(line: string, caret: number, source: Completi
     : await pathMatches(word, source);
   if (matches.length === 0) return { ok: false, reason: 'none' };
   const shown = matches.slice(0, TERMINAL_COMPLETION_MAX_CANDIDATES);
-  const writing: Writing = {
-    quote: word.quote,
-    closedLater: Boolean(word.open && word.quote && closingQuoteAfter(line, caret, word.quote) >= 0),
-  };
+  const closing = word.open && word.quote ? closingQuoteAfter(line, caret, word.quote) : -1;
+  // A closing quote right after the caret goes with the replaced text; one further on closes the open insert.
+  const replaceEnd = closing === caret ? caret + 1 : caret;
+  const writing: Writing = { quote: word.quote, closedLater: closing > caret };
   const candidates = shown.map((match) => candidateOf(match, writing));
-  let commonText = line.slice(word.start, caret);
-  let commonCaretBack: number | undefined;
+  let commonText = line.slice(word.start, replaceEnd);
+  let commonCaretBack: number | undefined = replaceEnd - caret || undefined;
   if (matches.length === 1) {
     commonText = candidates[0]!.insertText;
     commonCaretBack = candidates[0]!.caretBack;
@@ -263,7 +267,7 @@ export async function completeLine(line: string, caret: number, source: Completi
   return {
     ok: true,
     replaceStart: word.start,
-    replaceEnd: caret,
+    replaceEnd,
     commonText,
     ...(commonCaretBack ? { commonCaretBack } : {}),
     candidates,
