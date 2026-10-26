@@ -211,6 +211,13 @@ export const ShellMode: Story = {
     const canvas = within(canvasElement);
     await run(canvas, 'git status --short', 1);
     await expect(canvas.getByTestId('term-dock')).toHaveAttribute('data-mode', 'shell');
+    // The sign and the Shell | AI switch sit on the command row's middle.
+    const middle = (element: Element): number => { const box = element.getBoundingClientRect(); return box.top + box.height / 2; };
+    const row = middle(canvas.getByTestId('cmd-input'));
+    const sign = canvasElement.querySelector('.term-dock__sig')!;
+    const modes = canvasElement.querySelector('.term-mode')!;
+    await expect(Math.abs(middle(sign) - row)).toBeLessThanOrEqual(2);
+    await expect(Math.abs(middle(modes) - row)).toBeLessThanOrEqual(2);
   },
 };
 

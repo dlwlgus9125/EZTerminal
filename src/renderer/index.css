@@ -1869,14 +1869,32 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   text-shadow: var(--ui-glow-text);
 }
 
+/* Shell mode: the sign and the switch line up with the command row, also when the actions wrap under it
+   (same positions as centring in a one-row line: 3px + 9px + half the 38px sign = the row's middle). */
+.term-dock[data-mode='shell'] .term-dock__line {
+  align-items: flex-start;
+  padding-block: 0.1875rem;
+}
+
+.term-dock[data-mode='shell'] .term-dock__sig {
+  margin-top: 0.5625rem;
+}
+
+.term-dock[data-mode='shell'] .term-mode {
+  align-self: flex-start;
+  margin-top: 0.875rem;
+}
+
 /* One live prompt per workspace: an inactive split's sign rests. */
 .dv-groupview:not(.dv-active-group) .term-dock .term-dock__sig {
   color: var(--ui-text-secondary);
   text-shadow: none;
 }
 
+/* The command keeps a usable width; in a narrow pane its actions wrap under it. */
 .term-dock .cmd-input {
-  min-width: 0;
+  flex: 1 1 12rem;
+  min-width: min(10rem, 100%);
   height: 2.5rem;
   font-size: 0.9375rem;
 }
@@ -1939,8 +1957,11 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+  padding-block: 0.5rem;
 }
 
 .term-dock__shell[hidden],
