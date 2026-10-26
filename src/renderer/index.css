@@ -1682,6 +1682,206 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   color: var(--term-amber);
 }
 
+/* ── Desktop terminal (I3): instrument blocks + the prompt dock ─────────────
+   A block reads like a logged instrument line: the start time in a gutter, the
+   `>` sign in the display face, the command, then where it ran, how long it
+   took and how it ended; its output sits in a well with a groove on its left.
+   The prompt is a dock at the foot of the pane (not a floating pill): one big
+   prompt line and, under it, the line naming the terminal and its folder.
+   Scoped to the terminal pane — the history composer keeps `.cmd-row`, and
+   Android renders the default block markup from its own stylesheet. */
+.pane--terminal {
+  --term-gutter: 4.375rem;
+}
+
+.pane--terminal .block-list {
+  padding: 0.875rem 0 0.75rem;
+}
+
+.block--instrument {
+  border-top: none;
+  padding: 0;
+  margin-bottom: 0.75rem;
+}
+
+.block--instrument .block-head {
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.15rem 1.375rem 0.15rem 0;
+}
+
+.block-time {
+  flex: 0 0 var(--term-gutter);
+  box-sizing: border-box;
+  padding-right: 0.75rem;
+  text-align: right;
+  font-family: var(--ui-font-label);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+}
+
+.block--instrument .block-toggle {
+  align-self: center;
+}
+
+.block--instrument .prompt-sigil {
+  font-family: var(--ui-font-display);
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--ui-accent);
+}
+
+.block--instrument .block-command {
+  font-size: 0.84375rem;
+}
+
+.block-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  font-family: var(--ui-font-label);
+  font-size: 0.78125rem;
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+}
+
+.block--instrument .block-cwd {
+  max-width: 16rem;
+  font-family: var(--ui-font-terminal);
+  font-size: 0.75rem;
+  color: var(--ui-text-muted);
+  opacity: 1;
+}
+
+.block--instrument .block-count {
+  font-size: inherit;
+  color: inherit;
+}
+
+.block-count__unit {
+  margin-left: 0.25rem;
+}
+
+.block-exit[data-exit='fail'] {
+  color: var(--ui-danger);
+}
+
+.block--instrument .block-status {
+  font-size: inherit;
+}
+
+.block--instrument .block-body {
+  margin-left: var(--term-gutter);
+  padding: 0 1.375rem 0 0.75rem;
+  border-left: 1px solid var(--ui-border-mid);
+}
+
+.block--instrument .block-pending {
+  margin-left: var(--term-gutter);
+  padding-left: 0.75rem;
+}
+
+.pane--tui-takeover .block--instrument .block-body {
+  margin-left: 0;
+  padding: 0;
+  border-left: none;
+}
+
+.term-dock {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--ui-border-mid);
+  background: var(--ui-floor);
+}
+
+.term-dock__line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.875rem;
+  padding: 0 1.125rem;
+}
+
+.term-dock .term-dock__sig {
+  flex: 0 0 1.625rem;
+  font-family: var(--ui-font-display);
+  font-size: 2.375rem;
+  font-weight: 400;
+  line-height: 1;
+  text-align: center;
+  color: var(--ui-accent);
+  text-shadow: var(--ui-glow-text);
+}
+
+/* One live prompt per workspace: an inactive split's sign rests. */
+.dv-groupview:not(.dv-active-group) .term-dock .term-dock__sig {
+  color: var(--ui-text-muted);
+  text-shadow: none;
+}
+
+.term-dock .cmd-input {
+  min-width: 0;
+  height: 2.5rem;
+  font-size: 0.9375rem;
+}
+
+.term-dock__line .btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: var(--ui-radius-sm);
+  border-color: var(--ui-border-mid);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+  line-height: var(--ui-line-height-normal);
+}
+
+.term-dock__line .btn:not(:disabled):hover {
+  color: var(--ui-text-primary);
+  border-color: var(--ui-accent);
+}
+
+/* Run stays the emphasised action — it is what Enter does. */
+.term-dock__line .btn-run:not(:disabled) {
+  color: var(--ui-on-accent);
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+  font-weight: 700;
+}
+
+.term-dock__line .btn-cancel:not(:disabled) {
+  color: var(--ui-danger);
+  border-color: var(--ui-danger);
+}
+
+.term-dock__ctx {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 1.875rem;
+  padding: 0 1.125rem;
+  border-top: 1px solid var(--ui-border-subtle);
+  font-family: var(--ui-font-label);
+  font-size: 0.75rem;
+  color: var(--ui-text-muted);
+  overflow: hidden;
+}
+
+.term-dock__title {
+  flex: 0 0 auto;
+  color: var(--ui-text-secondary);
+  white-space: nowrap;
+}
+
+.term-dock .prompt-cwd {
+  max-width: 50%;
+  font-family: var(--ui-font-terminal);
+  font-size: 0.75rem;
+}
+
 /* Agent Attention Hub ----------------------------------------------------- */
 
 .agent-hub {
@@ -2214,6 +2414,12 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   flex: none;
   display: flex;
   gap: 6px;
+}
+
+/* An unfocused pane recedes (group opacity); red label text on the muted red
+   plate then falls under 4.5:1. The border and the word keep the meaning. */
+.pane-approval .ez-ui-button[data-variant='danger'] {
+  color: var(--ui-text-primary);
 }
 
 /* Inset like the hub body above it; the rule still spans the full width. */
@@ -4275,7 +4481,8 @@ button.agent-work-activity:focus-visible {
 .pane--tui-takeover .block:not(.block--takeover) {
   display: none;
 }
-.pane--tui-takeover .cmd-row {
+.pane--tui-takeover .cmd-row,
+.pane--tui-takeover .term-dock {
   display: none;
 }
 .pane--tui-takeover .block--takeover {

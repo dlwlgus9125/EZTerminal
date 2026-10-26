@@ -68,6 +68,7 @@ import type { ProjectSessionTarget } from '../shared/project-workspace';
 import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 import type { AgentOrchestrationSnapshot } from '../shared/agent-orchestration';
 import { LeadWorkersStrip } from './LeadWorkersStrip';
+import { rememberBlockEnd, rememberBlockStart, rememberedBlockTiming } from './terminal/block-timing';
 
 // A TerminalPane is one independent shell surface: its own stack of command Blocks,
 // pinned prompt, and an authority-issued binding to a shell session. The host owns
@@ -164,6 +165,10 @@ interface TerminalPaneProps {
     decision: AgentDecision,
   ) => Promise<AgentDecisionResult>;
   readonly orchestrationSnapshot?: AgentOrchestrationSnapshot;
+  /** The tab's title, named in the line under the prompt. */
+  readonly title?: string;
+  /** Clock for block start and end times; tests and stories pass a fixed one. */
+  readonly clock?: () => number;
 }
 
 /** The pending permission call for the agent running in a given pane, so the
@@ -195,8 +200,12 @@ export function TerminalPane({
   workerApprovals,
   onDecideApproval,
   orchestrationSnapshot,
+  title,
+  clock = Date.now,
 }: TerminalPaneProps): JSX.Element {
   const { t } = useAppTranslation();
+  const clockRef = useRef(clock);
+  clockRef.current = clock;
   const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
   const [command, setCommand] = useState(() => recoveryState?.draft ?? '');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
@@ -532,6 +541,10 @@ export function TerminalPane({
     const knownRunIds = knownRunIdsRef.current;
     return () => {
       activeUnsub.current?.();
+      // Blocks reopened later keep how long their run took.
+      for (const entry of blocksRef.current) {
+        if (entry.controller) rememberBlockEnd(entry.id, entry.controller.getSnapshot().endedAtMs);
+      }
       const retainedSessionId = retainedSessionIdRef.current;
       if (retainedSessionId && window.ezterminal) {
         retainTerminalBlocks(window.ezterminal, retainedSessionId, blocksRef.current);
@@ -602,6 +615,8 @@ export function TerminalPane({
     draftBeforeRecall.current = '';
     setCommand('');
 
+    const startedAtMs = clockRef.current();
+    rememberBlockStart(runId, startedAtMs);
     setBlocks((prev) => [...prev, { id: runId, command: text, controller: null }]);
 
     // The singleton broker registers the runId correlation before asking the
@@ -629,6 +644,8 @@ export function TerminalPane({
       try {
         const controller = new BlockController(text, port, {
           controlTarget: { panelId, sessionId: runSessionId, runId },
+          startedAtMs,
+          clock: () => clockRef.current(),
         });
         bindActiveController(controller);
         setBlocks((prev) =>
@@ -688,6 +705,8 @@ export function TerminalPane({
     // command. Keep it out of command recall/history and only restore it as a
     // draft if resume startup fails.
     const resumeLabel = bootstrap.kind === 'resume' ? bootstrap.provider : bootstrap.name;
+    const startedAtMs = clockRef.current();
+    rememberBlockStart(runId, startedAtMs);
     setBlocks([{ id: runId, command: resumeLabel, controller: null }]);
 
     void getRunPortBroker().request({
@@ -741,6 +760,8 @@ export function TerminalPane({
       try {
         const controller = new BlockController(resumeLabel, port, {
           controlTarget: { panelId, sessionId: runSessionId, runId },
+          startedAtMs,
+          clock: () => clockRef.current(),
         });
         if (bootstrap.kind === 'resume') controller.submitPtyWhenReady(bootstrap.initialPrompt);
         bindActiveController(controller);
@@ -949,8 +970,11 @@ export function TerminalPane({
   // progress when this pane bound to the session) — both already know the
   // run isn't one of this pane's own before calling this.
   const attachToRun = useCallback(
-    (info: RunStartedInfo, activate = true): void => {
+    (info: RunStartedInfo, activate = true, live = false): void => {
       if (knownRunIdsRef.current.has(info.runId)) return;
+      // A run announced as it starts is timed from now; a caught-up one keeps what this renderer saw, if anything.
+      if (live) rememberBlockStart(info.runId, clockRef.current());
+      const timing = rememberedBlockTiming(info.runId);
       const handoffController = new AbortController();
       const handoffSignal = handoffController.signal;
       handoffAbortByRunRef.current.set(info.runId, handoffController);
@@ -980,6 +1004,8 @@ export function TerminalPane({
           const controller = new BlockController(info.commandText, port, {
             mirror: true,
             controlTarget: { panelId, sessionId: info.sessionId, runId: info.runId },
+            ...timing,
+            clock: () => clockRef.current(),
           });
           if (activate) bindActiveController(controller);
           setBlocks((prev) =>
@@ -1016,7 +1042,7 @@ export function TerminalPane({
     const unsub = window.ezterminal?.onRunStarted?.((info: RunStartedInfo) => {
       if (info.sessionId !== sessionIdRef.current) return; // not my session
       if (knownRunIdsRef.current.has(info.runId)) return; // my own/already-pending run
-      attachToRun(info);
+      attachToRun(info, true, true);
     });
     return () => unsub?.();
   }, [attachToRun]);
@@ -1221,7 +1247,7 @@ export function TerminalPane({
     // asserts they all DIFFER after a restart-restore (B1/B5 — fresh sessions).
     <div
       ref={paneRef}
-      className={activeTakeover ? 'pane pane--tui-takeover' : 'pane'}
+      className={activeTakeover ? 'pane pane--terminal pane--tui-takeover' : 'pane pane--terminal'}
       data-testid="pane"
       data-session-id={sessionId ?? undefined}
       data-runtime-tier={runtimeLifecycleTier}
@@ -1310,6 +1336,7 @@ export function TerminalPane({
           runtimeLifecycleTier={runtimeLifecycleTier}
           pendingLabel={t('terminalPane.starting')}
           onDismiss={handleDismiss}
+          variant="instrument"
         />
       </div>
 
@@ -1370,14 +1397,12 @@ export function TerminalPane({
         </div>
       )}
 
-      <div className="cmd-row">
-        {currentCwd && (
-          <span className="prompt-cwd" title={currentCwd} data-testid="prompt-cwd">
-            {formatCwd(currentCwd)}
-          </span>
-        )}
-        <span className="prompt-sigil prompt-sigil--input" aria-hidden="true">
-          ❯
+      {/* The prompt dock: one big prompt line (sign, command, its actions) and under it the
+          line naming the terminal and its folder. Hidden while a full-screen program owns the pane. */}
+      <div className="term-dock" data-testid="term-dock">
+      <div className="term-dock__line">
+        <span className="prompt-sigil prompt-sigil--input term-dock__sig" aria-hidden="true">
+          &gt;
         </span>
         <input
           ref={cmdInputRef}
@@ -1580,6 +1605,15 @@ export function TerminalPane({
         >
           {activeIsCodex ? t('terminalPane.forceStop') : t('common.cancel')}
         </button>
+      </div>
+      <div className="term-dock__ctx">
+        {title && <span className="term-dock__title">{title}</span>}
+        {currentCwd && (
+          <span className="prompt-cwd" title={currentCwd} data-testid="prompt-cwd">
+            {formatCwd(currentCwd, 72)}
+          </span>
+        )}
+      </div>
       </div>
       {paneContextMenu && (
         <TerminalContextMenu

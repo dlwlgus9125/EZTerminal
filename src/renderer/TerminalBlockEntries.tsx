@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 
 import { Block } from './Block';
 import type { BlockController } from './block-controller';
@@ -17,6 +17,8 @@ export const TerminalBlockEntries = memo(function TerminalBlockEntries({
   runtimeLifecycleTier = 'active',
   pendingLabel,
   onDismiss,
+  variant = 'default',
+  menuFor,
 }: {
   readonly entries: readonly TerminalBlockEntry[];
   readonly activeTakeoverController: BlockController | null;
@@ -24,7 +26,12 @@ export const TerminalBlockEntries = memo(function TerminalBlockEntries({
   readonly runtimeLifecycleTier?: RuntimeLifecycleTier;
   readonly pendingLabel: string;
   readonly onDismiss: (id: string) => void;
+  /** The desktop terminal's instrument blocks; Android keeps `default`. */
+  readonly variant?: 'default' | 'instrument';
+  /** Header actions of an instrument block (its menu). */
+  readonly menuFor?: (entry: TerminalBlockEntry & { readonly controller: BlockController }) => ReactNode;
 }): JSX.Element {
+  const instrument = variant === 'instrument';
   return (
     <>
       {entries.map((entry) => entry.controller ? (
@@ -35,9 +42,19 @@ export const TerminalBlockEntries = memo(function TerminalBlockEntries({
           isTakeover={activeTakeoverController === entry.controller}
           terminalRuntimeOptions={terminalRuntimeOptions}
           runtimeLifecycleTier={runtimeLifecycleTier}
+          {...(instrument ? {
+            variant,
+            blockId: entry.id,
+            ...(menuFor ? { menu: menuFor({ ...entry, controller: entry.controller }) } : {}),
+          } : {})}
         />
       ) : (
-        <section key={entry.id} className="block" data-testid="block" data-status="running">
+        <section
+          key={entry.id}
+          className={instrument ? 'block block--instrument' : 'block'}
+          data-testid="block"
+          data-status="running"
+        >
           <div className="block-pending">{pendingLabel}</div>
         </section>
       ))}

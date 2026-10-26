@@ -1,9 +1,10 @@
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
-import { memo, useState, useSyncExternalStore } from 'react';
+import { memo, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import type { PtyRestoreWarningFrame } from '../shared/ipc';
 import type { BlockController } from './block-controller';
+import { blockDuration, formatBlockClock } from './block-time';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import { PtyBlock } from './PtyBlock';
@@ -45,6 +46,9 @@ export const Block = memo(function Block({
   isTakeover = false,
   terminalRuntimeOptions,
   runtimeLifecycleTier = 'active',
+  variant = 'default',
+  blockId,
+  menu,
 }: {
   controller: BlockController;
   onDismiss?: () => void;
@@ -54,12 +58,22 @@ export const Block = memo(function Block({
   /** Platform integration for renderer policy and safe external links. */
   terminalRuntimeOptions?: TerminalRuntimeOptions;
   runtimeLifecycleTier?: RuntimeLifecycleTier;
+  /**
+   * `instrument`: the desktop terminal's block (start time in a gutter, `>` sign, where it ran,
+   * how long, how it ended). `default` is the markup Android and the other surfaces render.
+   */
+  variant?: 'default' | 'instrument';
+  /** The run id, exposed as `data-block-id` on an instrument block. */
+  blockId?: string;
+  /** Extra header actions of an instrument block (its menu), before Dismiss. */
+  menu?: ReactNode;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [collapsed, setCollapsed] = useState(false);
   const isDesktopCodex = terminalRuntimeOptions?.platform === 'desktop'
     && classifyDirectAgentCommand(controller.command) === 'codex';
+  const instrument = variant === 'instrument';
 
   const {
     status,
@@ -71,16 +85,46 @@ export const Block = memo(function Block({
     sshConnectionId,
     sshConnectionState,
     codexRecoveryPending,
+    exitCode,
+    startedAtMs,
+    endedAtMs,
   } = snapshot;
+  const statusLabel = (
+    <span
+      className={`block-status block-status--${status}`}
+      data-status={status}
+      data-testid="block-status"
+    >
+      {status in STATUS_LABEL_KEY
+        ? t(STATUS_LABEL_KEY[status as keyof typeof STATUS_LABEL_KEY])
+        : status}
+    </span>
+  );
+  const duration = instrument && startedAtMs !== null && endedAtMs !== null
+    ? blockDuration(endedAtMs - startedAtMs)
+    : null;
 
   return (
     <section
-      className={isTakeover ? 'block block--takeover' : 'block'}
+      className={`${isTakeover ? 'block block--takeover' : 'block'}${instrument ? ' block--instrument' : ''}`}
       data-testid="block"
       data-status={status}
       data-runtime-tier={runtimeLifecycleTier}
+      {...(instrument && blockId ? { 'data-block-id': blockId } : {})}
     >
       <header className="block-head">
+        {instrument && (
+          <time
+            className="block-time"
+            data-testid="block-time"
+            {...(startedAtMs !== null ? {
+              dateTime: new Date(startedAtMs).toISOString(),
+              title: t('block.startedAt', { time: formatBlockClock(startedAtMs) }),
+            } : {})}
+          >
+            {startedAtMs !== null ? formatBlockClock(startedAtMs) : ''}
+          </time>
+        )}
         <button
           className="block-toggle"
           onClick={() => setCollapsed((c) => !c)}
@@ -92,31 +136,54 @@ export const Block = memo(function Block({
             ? <ChevronRight aria-hidden="true" size={14} />
             : <ChevronDown aria-hidden="true" size={14} />}
         </button>
-        {startCwd && (
+        {!instrument && startCwd && (
           <span className="block-cwd" title={startCwd} data-testid="block-cwd">
             {formatCwd(startCwd)}
           </span>
         )}
         <span className="prompt-sigil" aria-hidden="true">
-          ❯
+          {instrument ? '>' : '❯'}
         </span>
         <code className="block-command" data-testid="block-command">
           {controller.command}
         </code>
-        {shape === 'table' && (
-          <span className="block-count" data-testid="row-count">
-            {rowCount}
+        {instrument ? (
+          <span className="block-meta">
+            {startCwd && (
+              <span className="block-cwd" title={startCwd} data-testid="block-cwd">
+                {formatCwd(startCwd)}
+              </span>
+            )}
+            {shape === 'table' && (
+              <span className="block-count">
+                <span data-testid="row-count">{rowCount}</span>
+                <span className="block-count__unit">{t('block.rows')}</span>
+              </span>
+            )}
+            {duration && (
+              <span className="block-duration" data-testid="block-duration">
+                {duration.key === 'block.durationSeconds'
+                  ? t('block.durationSeconds', { value: duration.values.value })
+                  : t('block.durationMinutes', { minutes: duration.values.minutes, seconds: duration.values.seconds })}
+              </span>
+            )}
+            {status === 'done' && exitCode !== null && (
+              <span className="block-exit" data-exit={exitCode === 0 ? 'ok' : 'fail'} data-testid="block-exit">
+                {t('block.exitCode', { code: exitCode })}
+              </span>
+            )}
+            {statusLabel}
           </span>
+        ) : (
+          <>
+            {shape === 'table' && (
+              <span className="block-count" data-testid="row-count">
+                {rowCount}
+              </span>
+            )}
+            {statusLabel}
+          </>
         )}
-        <span
-          className={`block-status block-status--${status}`}
-          data-status={status}
-          data-testid="block-status"
-        >
-          {status in STATUS_LABEL_KEY
-            ? t(STATUS_LABEL_KEY[status as keyof typeof STATUS_LABEL_KEY])
-            : status}
-        </span>
         {sshConnectionId && sshConnectionState === 'ready' && (
           <button
             type="button"
@@ -152,6 +219,7 @@ export const Block = memo(function Block({
             {isDesktopCodex ? t('terminalPane.forceStop') : t('common.cancel')}
           </button>
         )}
+        {instrument && menu}
         {onDismiss && (
           <button
             className="btn block-dismiss"

@@ -413,6 +413,13 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     return () => disposable.dispose();
   }, [props.api]);
   const runtimeLifecycleTier = usePanelRuntimeLifecycle(props.api);
+  // The tab's title is named under the prompt; it follows renames (a CLI agent names its tab).
+  const [title, setTitle] = useState(() => props.api.title ?? '');
+  useEffect(() => {
+    setTitle(props.api.title ?? '');
+    const disposable = props.api.onDidTitleChange?.((event) => setTitle(event.title));
+    return () => disposable?.dispose();
+  }, [props.api]);
   const recoveryStateRef = useRef(peekRendererRecoveryPane(props.api.id)
     ?? readSessionViewState<RendererRecoveryPane>(`desktop-terminal:${String(props.params?.adoptSessionId ?? '')}`));
   const recoveryState = recoveryStateRef.current;
@@ -467,6 +474,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
       quickCommands={quickCommandShelf?.commands}
       onManageQuickCommands={quickCommandShelf?.onManage}
       orchestrationSnapshot={orchestrationSnapshot}
+      title={title}
     />
   );
 }
