@@ -245,8 +245,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/TerminalPane.tsx",
-          "startLine": 987,
-          "endLine": 1040,
+          "startLine": 990,
+          "endLine": 1043,
           "lineDigest": "sha256:89aec42c8a7ff0e40e79c04563114057bb3d698e0d81d19b9ff8e3aa5f214ab2",
           "claim": "The fresh Agent terminal dispatches the Project Map request through its own BlockController and retains an in-tab retry path for startup or queue failure."
         }

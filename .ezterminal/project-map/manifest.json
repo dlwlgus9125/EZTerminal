@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b13645f8150745fd0095f21aee3b8fd433c6f0c911486765057d9b8c52447508",
+        "inputDigest": "sha256:9a96c08be3a8828ac71ea9de86464d66ed4d04c22ee4e5a6afedd6fcba84686e",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
@@ -241,9 +241,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:7c932b2ca38e9d5e273790614121d878d2701cfb1b2001d977421bd5ed9c5b23",
+        "inputDigest": "sha256:1dc5b38cb141f5ca99ea2f30a7f6385b08fc459467b823c0fc44e17aac66defd",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:5a4cbb3f48f513d9309fb9ff386cbea321b60ff10a99fb3ae15d54aefaca7333",
+        "inputDigest": "sha256:2e3d4693fa61cae4f0427118389fee79995c8c53c1a3ce9a2495290da8c32427",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d73aaeb4b6b7c5ce2925cf6ac49c0b05f8974d0959eb8616d083ce204ea02ad1",
+        "inputDigest": "sha256:9b85a6367b64d8cb8e82e8006ad5f918f85d23d05a3d38122b460e8cc1e02b0d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:37788a73ab6b5cfd856e791309eb40bfa00dbd75e3ad939e9ff8e6175678eb1d",
+        "inputDigest": "sha256:b8196b6fb31af60258585e6451cda1380a686777e15e6e3d7b6e45811c13c874",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
