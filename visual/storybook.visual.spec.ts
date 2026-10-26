@@ -28,6 +28,14 @@ const designReferenceCases = [
     theme: "matrix",
     viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
   },
+  {
+    storyId: "production-terminal-terminal-pane--terminal-reference",
+    screenshot: "reference-2-0-desk-terminal-matrix-ko.png",
+    readySelector: "[data-testid='terminal-ai-chip']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
+  },
 ] as const;
 
 for (const item of designReferenceCases) {

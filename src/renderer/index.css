@@ -2078,11 +2078,18 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   display: none;
 }
 
+/* "Send to" sits at the right of the context line, beside the Ctrl . hint (as in the approved prototype). */
 .terminal-ai-target-menu {
   flex: 0 1 auto;
   min-width: 8rem;
   max-width: 40%;
   display: inline-flex;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.terminal-ai-target-menu ~ .term-dock__hint {
+  margin-left: 0;
 }
 
 .terminal-ai-target-menu .terminal-ai-target {

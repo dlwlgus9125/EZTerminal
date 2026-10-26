@@ -53,9 +53,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/TerminalPane.tsx",
-          "startLine": 595,
-          "endLine": 617,
-          "lineDigest": "sha256:2ec7eb3628fc84be7e39162a986d916dbcebf19889c51c407f7310abc5935d8b",
+          "startLine": 825,
+          "endLine": 849,
+          "lineDigest": "sha256:3f1d99872d9babf10d93ad5037d5afebd436b008f962f255c171a1db1fc9e99b",
           "claim": "TerminalPane registers run correlation before asking preload to submit the command."
         }
       ]
@@ -83,8 +83,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/interpreter-broker.ts",
-          "startLine": 500,
-          "endLine": 533,
+          "startLine": 518,
+          "endLine": 551,
           "lineDigest": "sha256:cd5458b7f310ae71ce7d536e78a838ce406ca8e6718647086e0990c5fd531892",
           "claim": "The broker creates a MessageChannel and transfers port2 with the typed run message."
         }
@@ -98,8 +98,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/interpreter-process.ts",
-          "startLine": 1082,
-          "endLine": 1128,
+          "startLine": 1088,
+          "endLine": 1134,
           "lineDigest": "sha256:489749075dc83f715f4019ce2fde4afec1c2dfa59a3323dab5efbf20214bcbd6",
           "claim": "The utility runtime accepts typed parent-port requests and posts bounded replies."
         }
@@ -133,8 +133,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/TerminalPane.tsx",
-          "startLine": 607,
-          "endLine": 615,
+          "startLine": 839,
+          "endLine": 847,
           "lineDigest": "sha256:7e0a45a9a19a0f6b71da0246acb57141229280fc80cd7522820f0de88bc2ca92",
           "claim": "The renderer sends command text only after recording the runId correlation."
         }
@@ -169,8 +169,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/interpreter-broker.ts",
-          "startLine": 511,
-          "endLine": 527,
+          "startLine": 529,
+          "endLine": 545,
           "lineDigest": "sha256:74481166c5b0c8a02ac7748cd5b9399f63e0e68db1ca1ac233e65a0de5bc1823",
           "claim": "The broker posts the run envelope with one end of a new MessageChannel."
         }
@@ -205,8 +205,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/interpreter/interpreter-process.ts",
-          "startLine": 1208,
-          "endLine": 1254,
+          "startLine": 1214,
+          "endLine": 1260,
           "lineDigest": "sha256:cf918282513f475625374ce14cd92d5cf945520dfd4d252cf3d40126c6528f5d",
           "claim": "A run message enters the interpreter execution path that owns its transferred port."
         }
@@ -241,9 +241,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/block-controller.ts",
-          "startLine": 695,
-          "endLine": 709,
-          "lineDigest": "sha256:1e1658cf69922e6c5649bb4644b9065d6a6194ab091a75b636a6746a88143c93",
+          "startLine": 771,
+          "endLine": 785,
+          "lineDigest": "sha256:181e7af71f33ce8368732a18bc179c38f336d9560fd601ccb7d6b0fcefe8c80f",
           "claim": "BlockController advances consumed byte counts only through the render flush path."
         }
       ]

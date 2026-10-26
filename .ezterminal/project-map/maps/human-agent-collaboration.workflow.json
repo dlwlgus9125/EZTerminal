@@ -183,8 +183,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/App.tsx",
-          "startLine": 2103,
-          "endLine": 2111,
+          "startLine": 2142,
+          "endLine": 2150,
           "lineDigest": "sha256:269830d8137e1d7644219237fbf0421fd14414ce31b5cc6a69f7671d4548a92b",
           "claim": "The Project Map navigation callback routes the validated bootstrap and project session into a new workbench terminal and reports whether it opened."
         },
@@ -245,8 +245,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/TerminalPane.tsx",
-          "startLine": 749,
-          "endLine": 802,
+          "startLine": 987,
+          "endLine": 1040,
           "lineDigest": "sha256:89aec42c8a7ff0e40e79c04563114057bb3d698e0d81d19b9ff8e3aa5f214ab2",
           "claim": "The fresh Agent terminal dispatches the Project Map request through its own BlockController and retains an in-tab retry path for startup or queue failure."
         }

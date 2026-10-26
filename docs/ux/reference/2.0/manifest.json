@@ -88,6 +88,27 @@
         "decidedAt": "2026-10-25"
       },
       "replaces": []
+    },
+    {
+      "id": "desk-terminal",
+      "title": "Desktop terminal (instrument blocks, prompt dock) in its AI input: the last conversation's own message box with the last block attached",
+      "story": {
+        "file": "src/renderer/terminal/TerminalReference.stories.tsx",
+        "export": "TerminalReference"
+      },
+      "visual": {
+        "storyId": "production-terminal-terminal-pane--terminal-reference",
+        "snapshot": "reference-2-0-desk-terminal-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/desk-terminal.png",
+        "sha256": "c6985e50866d8f2d994f2a9608f7fceed3acfa393acbe322a5ded1fd86a72e7c"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i3-터미널",
+        "decidedAt": "2026-10-27"
+      },
+      "replaces": []
     }
   ]
 }

@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:795032214b09316c76ddde11dd865d0921efdec21dde1f4908783d5716b5912a",
+        "inputDigest": "sha256:b13645f8150745fd0095f21aee3b8fd433c6f0c911486765057d9b8c52447508",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw review fixes): drafts never store /btw text, a refused ask keeps the box text, Codex fork timeout, app-server exit races and late frames handled; a dead thread is not unsubscribed. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
@@ -241,9 +241,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:e444d707989d1f2c36b61a322355b3138febecacf390204b003381c6d3836dda",
+        "inputDigest": "sha256:7c932b2ca38e9d5e273790614121d878d2701cfb1b2001d977421bd5ed9c5b23",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed R7.1 workspace identity, host queue revisions, parked drafts and recorded patch review. Preserved current v16 identity and authenticated compatibility. Relocated source anchors and checked changed claims against current code."
+        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:8f030cf60d18bcdea9edc81cdf3e39a8c24eac193cba3e25b1ccce2ffe2e1be2",
+        "inputDigest": "sha256:5a4cbb3f48f513d9309fb9ff386cbea321b60ff10a99fb3ae15d54aefaca7333",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
+        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1df3a4ef5e33d013b9e0bd84a8fa8767c84e17c62312918b4f49d2c54b5acb43",
+        "inputDigest": "sha256:d73aaeb4b6b7c5ce2925cf6ac49c0b05f8974d0959eb8616d083ce204ea02ad1",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
+        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:485b8c1c50117d79d5d3db36d81a7b29596dbf2675bb02a592e8d88efe45c057",
+        "inputDigest": "sha256:37788a73ab6b5cfd856e791309eb40bfa00dbd75e3ad939e9ff8e6175678eb1d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-6): flows repeat daily or weekly from the host (src/main/workflow-repeat-service.ts); a claim is saved before each run.launch under the schedule principal, which may only launch; it runs only on this host's consent to the flow. Claims hold."
+        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:f7033d2c0cae16adaaa3b4dcb190dd3f3f75a370447abdb80fad09fef42e21b6",
+        "inputDigest": "sha256:c6faec43e58cf17bed96565b169da5e5133e0eaa19c73d0162d619d534e4b0d0",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw review fixes): drafts never store /btw text, a refused ask keeps the box text, Codex fork timeout/app-server exit/late frames handled. Moved blocks reanchored; one changed block keeps its claim. Existing claims hold."
+        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
       }
     },
     {
