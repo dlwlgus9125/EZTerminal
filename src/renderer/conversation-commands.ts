@@ -7,6 +7,7 @@ import {
   type PermissionPreset,
 } from '../shared/daemon-protocol';
 import type { ChatRecoveryController } from './chat-recovery';
+import { retainChatRecovery } from './chat-recovery-registry';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
 import type { StructuredAgentUiResult } from './StructuredAgentSession';
 
@@ -41,6 +42,28 @@ export function resultOf(receipt: DaemonCommandReceipt): StructuredAgentUiResult
   return receipt.ok ? { ok: true } : { ok: false, message: receipt.error.message, deliveryUncertain: false };
 }
 
+/**
+ * Draft recoveries with a send or delivery check in flight. Two boxes on one
+ * conversation (its tab and a terminal) share the recovery: the second send is
+ * refused at once instead of passing the escrow check while the first still
+ * awaits the host, which would send the same draft twice.
+ */
+const busy = new WeakSet<ChatRecoveryController>();
+
+/** Run `transaction` as the recovery's only send, holding the shared draft until it settles. */
+async function exclusively(recovery: ChatRecoveryController, transaction: () => Promise<StructuredAgentUiResult>): Promise<StructuredAgentUiResult> {
+  if (busy.has(recovery)) return { ok: false, message: 'This message is already being sent. Wait for it before sending again.' };
+  busy.add(recovery);
+  // A box that closes mid-send must not let the registry forget the escrow the receipt settles.
+  const hold = retainChatRecovery(recovery);
+  try {
+    return await transaction();
+  } finally {
+    busy.delete(recovery);
+    hold?.();
+  }
+}
+
 /** Send a message: escrow it in the draft recovery, send, then settle the escrow with the receipt. */
 export async function submitConversationMessage(access: ConversationCommandAccess, input: {
   readonly sessionId: string;
@@ -51,9 +74,21 @@ export async function submitConversationMessage(access: ConversationCommandAcces
   /** The host accepted it (before the escrow is settled), with the command id it was sent as. */
   readonly onAccepted?: (commandId: string) => void;
 }): Promise<StructuredAgentUiResult> {
-  const { sessionId, recovery, type, prompt, context } = input;
+  const { recovery } = input;
   if (!recovery || recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Secure draft recovery must be ready before sending.' };
   if (recovery.getSnapshot().pendingSubmit) return { ok: false, message: 'Confirm the previous message delivery before sending again.', deliveryUncertain: true };
+  return exclusively(recovery, () => submitNow(access, { ...input, recovery }));
+}
+
+async function submitNow(access: ConversationCommandAccess, input: {
+  readonly sessionId: string;
+  readonly recovery: ChatRecoveryController;
+  readonly type: 'agent.submit' | 'agent.interrupt-and-submit';
+  readonly prompt: string;
+  readonly context?: ChatMessageContext;
+  readonly onAccepted?: (commandId: string) => void;
+}): Promise<StructuredAgentUiResult> {
+  const { sessionId, recovery, type, prompt, context } = input;
   const authority = await access.latestSnapshot();
   if (!authority) return { ok: false, message: UNAVAILABLE };
   const commandId = opaqueId('command');
@@ -97,13 +132,15 @@ export async function reconcileConversationSubmit(access: ConversationCommandAcc
   const pending = recovery?.getSnapshot().pendingSubmit?.command;
   if (!recovery || !pending) return { ok: true };
   if (recovery.getSnapshot().status !== 'ready') return { ok: false, message: 'Check stored recovery data before confirming delivery.', deliveryUncertain: true };
-  const receipt = await access.sendCommand(pending);
-  if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
-    return { ok: false, message: 'Message delivery is still unconfirmed.', deliveryUncertain: true };
-  }
-  if (receipt.ok) input.onAccepted?.(pending);
-  const stored = await recovery.complete(pending.commandId, receipt.ok);
-  return stored.ok ? resultOf(receipt) : stored;
+  return exclusively(recovery, async () => {
+    const receipt = await access.sendCommand(pending);
+    if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {
+      return { ok: false, message: 'Message delivery is still unconfirmed.', deliveryUncertain: true };
+    }
+    if (receipt.ok) input.onAccepted?.(pending);
+    const stored = await recovery.complete(pending.commandId, receipt.ok);
+    return stored.ok ? resultOf(receipt) : stored;
+  });
 }
 
 export async function changeConversationSettings(access: ConversationCommandAccess, sessionId: string, settings: {

@@ -114,10 +114,14 @@ function statusLine(status: BlockStatus, exitCode: number | null): string {
   return exitCode === null ? status : `exit ${exitCode} · ${status}`;
 }
 
-/** The quoted block: header lines, then the output trimmed head + tail and capped in size. */
+const HEADER_COMMAND_CHARS = 1_000;
+const HEADER_CWD_CHARS = 500;
+const clip = (value: string, max: number): string => (value.length > max ? `${value.slice(0, max)}…` : value);
+
+/** The quoted block: header lines, then the output trimmed head + tail, the whole capped in size. */
 export function buildBlockExcerpt(source: BlockExcerptSource): BlockExcerpt {
-  const header = [`$ ${source.command}`];
-  if (source.cwd) header.push(`cwd: ${source.cwd}`);
+  const header = [`$ ${clip(source.command.replace(/[\r\n]+/gu, ' '), HEADER_COMMAND_CHARS)}`];
+  if (source.cwd) header.push(`cwd: ${clip(source.cwd, HEADER_CWD_CHARS)}`);
   header.push(statusLine(source.status, source.exitCode));
   const lines = source.output.replace(/\n+$/u, '').split('\n')
     .map((line) => (line.length > EXCERPT_MAX_LINE_CHARS ? `${line.slice(0, EXCERPT_MAX_LINE_CHARS)}…` : line));

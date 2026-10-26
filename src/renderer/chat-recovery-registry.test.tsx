@@ -71,7 +71,7 @@ describe('shared chat recovery', () => {
   it('refuses a second send from another view while the first is pending', async () => {
     const { access } = store({ draft: { text: 'hello' } });
     const controller = sharedChatRecovery(scope, access);
-    const release = retainChatRecovery(controller, access);
+    const release = retainChatRecovery(controller)!;
     await controller.load();
     const [first, second] = await Promise.all([
       sharedChatRecovery(scope, access).prepare(submit('c-1')),
@@ -87,12 +87,12 @@ describe('shared chat recovery', () => {
   it('forgets a controller only after its writes finish and no view holds it again', async () => {
     const { access } = store();
     const controller = sharedChatRecovery(scope, access);
-    const release = retainChatRecovery(controller, access);
+    const release = retainChatRecovery(controller)!;
     await controller.load();
     controller.updateDraft({ text: 'unsaved' });
     release();
     // Held again before the pending write finished: the live draft stays.
-    const again = retainChatRecovery(controller, access);
+    const again = retainChatRecovery(controller)!;
     await controller.flush();
     await Promise.resolve();
     expect(sharedChatRecovery(scope, access)).toBe(controller);
@@ -108,12 +108,57 @@ describe('shared chat recovery', () => {
   it('puts back a controller looked up while rendering but forgotten before its view committed', async () => {
     const { access } = store();
     const looked = sharedChatRecovery(scope, access);
-    const early = retainChatRecovery(looked, access);
+    const early = retainChatRecovery(looked)!;
     early();
     await looked.flush();
     await Promise.resolve();
-    const release = retainChatRecovery(looked, access);
+    const release = retainChatRecovery(looked)!;
     expect(sharedChatRecovery(scope, access)).toBe(looked);
     release();
   });
+
+  it('an older release never forgets an entry that was held and edited again meanwhile', async () => {
+    const { access, stored } = store();
+    const controller = sharedChatRecovery(scope, access);
+    const first = retainChatRecovery(controller)!;
+    await controller.load();
+    // The first release's flush settles only when the test says so.
+    let settleFirst!: () => void;
+    vi.spyOn(controller, 'flush').mockImplementationOnce(() => new Promise<void>((resolve) => { settleFirst = resolve; }));
+    // The newer edit's write stays in flight.
+    let finishWrite!: () => void;
+    const write = vi.mocked(access.chatStateWrite).getMockImplementation()!;
+    vi.mocked(access.chatStateWrite).mockImplementationOnce((target, request) => new Promise((resolve) => {
+      finishWrite = () => resolve(write(target, request));
+    }));
+    first();
+    const second = retainChatRecovery(controller)!;
+    controller.updateDraft({ text: 'newer text' });
+    second();
+    settleFirst();
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    // The first release saw no holders, but it is not the latest release: the live controller stays.
+    expect(sharedChatRecovery(scope, access)).toBe(controller);
+    finishWrite();
+    await controller.flush();
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect((await stored()).state.draft.text).toBe('newer text');
+    expect(sharedChatRecovery(scope, access)).not.toBe(controller);
+  });
+
+  it('says a controller was replaced instead of holding a second live copy', async () => {
+    const { access } = store();
+    const stale = sharedChatRecovery(scope, access);
+    const held = retainChatRecovery(stale)!;
+    held();
+    await stale.flush();
+    await Promise.resolve();
+    const replacement = sharedChatRecovery(scope, access);
+    expect(replacement).not.toBe(stale);
+    expect(retainChatRecovery(stale)).toBeNull();
+    const release = retainChatRecovery(replacement)!;
+    expect(sharedChatRecovery(scope, access)).toBe(replacement);
+    release();
+  });
+
 });

@@ -1117,6 +1117,11 @@ export const appResources = {
         copySshConnectionId: 'Copy SSH connection id {{id}}',
         dismiss: 'Dismiss block',
         running: 'running…',
+        startedAt: 'Started at {{time}}',
+        durationSeconds: '{{value}}s',
+        durationMinutes: '{{minutes}}m {{seconds}}s',
+        exitCode: 'exit {{code}}',
+        rows: 'rows',
         restoreSshLateAttach:
           'This SSH terminal cannot be restored on a late-attached device. The original session is still running.',
         restoreQueueOverflow:
@@ -1215,6 +1220,10 @@ export const appResources = {
         recoveringCodex: 'Recovering\u2026',
         recoverCodexDescription: 'Interrupt the current Codex turn and continue in this session.',
         forceStop: 'Force stop',
+      },
+      terminalAi: {
+        targetMissing: 'This conversation is no longer available. Choose where to send.',
+        targetLoading: 'Loading the conversation…',
       },
       terminalSafety: {
         codexInterruptTitle: 'Codex keeps running',
@@ -3206,6 +3215,11 @@ export const appResources = {
         copySshConnectionId: 'SSH 연결 ID {{id}} 복사',
         dismiss: '블록 닫기',
         running: '실행 중…',
+        startedAt: '{{time}}에 시작',
+        durationSeconds: '{{value}}초',
+        durationMinutes: '{{minutes}}분 {{seconds}}초',
+        exitCode: '종료 {{code}}',
+        rows: '행',
         restoreSshLateAttach:
           '나중에 연결한 기기에서는 이 SSH 터미널을 복원할 수 없습니다. 원래 세션은 계속 실행 중입니다.',
         restoreQueueOverflow:
@@ -3304,6 +3318,10 @@ export const appResources = {
         recoveringCodex: '복구 중\u2026',
         recoverCodexDescription: '현재 Codex 턴을 중단하고 이 세션에서 계속 진행합니다.',
         forceStop: '강제 종료',
+      },
+      terminalAi: {
+        targetMissing: '이 대화를 찾을 수 없습니다. 보낼 곳을 다시 고르세요.',
+        targetLoading: '대화를 불러오는 중…',
       },
       terminalSafety: {
         codexInterruptTitle: 'Codex는 계속 실행 중입니다',

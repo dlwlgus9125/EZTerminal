@@ -30,6 +30,16 @@ describe('conversation views', () => {
     expect(noteConversationViewed('s', later, storage).s).toBe(later.toISOString());
   });
 
+  it('always records a switch to another conversation, so the latest one wins', () => {
+    const storage = memoryStorage();
+    const start = new Date('2026-10-27T10:00:00.000Z').getTime();
+    noteConversationViewed('a', new Date(start), storage);
+    noteConversationViewed('b', new Date(start + 1_000), storage);
+    const views = noteConversationViewed('a', new Date(start + 2_000), storage);
+    expect(views.a).toBe(new Date(start + 2_000).toISOString());
+    expect(Object.entries(views).sort((l, r) => r[1].localeCompare(l[1]))[0]![0]).toBe('a');
+  });
+
   it('keeps the newest views only and survives a broken record', () => {
     const sessions = Object.fromEntries(Array.from({ length: MAX_CONVERSATION_VIEWS + 5 }, (_, index) => [
       `s${index}`, new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),

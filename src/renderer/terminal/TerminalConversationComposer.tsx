@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ChatMessageContext } from '../../shared/chat-message';
 import type { ConversationFolders } from '../../shared/conversation-folders';
@@ -15,15 +15,18 @@ import {
   submitConversationMessage,
   type ConversationCommandAccess,
 } from '../conversation-commands';
+import { desktopFileSearch, pathForDrop } from '../conversation-desktop-access';
 import { conversationQueue } from '../conversation-queue';
-import { desktopFileSearch, pathForDrop } from '../StructuredAgentDockPanel';
+import { useAppTranslation } from '../i18n';
 import { StructuredAgentSessionPanel, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { structuredAgentModelOptions } from '../structured-agent-create';
 import { useChatRecovery } from '../use-chat-recovery';
 import { useProviderModelCatalogs } from '../use-provider-models';
+import { useWorkflowConversationScope } from '../workflow/WorkflowConversationContext';
 
-/** Queued messages are read from this many newest transcript items. */
-const QUEUE_TAIL = 200;
+/** Queued messages are looked for this far back, page by page, before giving up. */
+const QUEUE_PAGE = 500;
+const QUEUE_MAX_PAGES = 6;
 
 export interface TerminalConversationComposerProps {
   readonly sessionId: string;
@@ -38,6 +41,49 @@ export interface TerminalConversationComposerProps {
 }
 
 /**
+ * The text of every queued message: read back from the transcript page by page
+ * until each queued turn's message is found. `complete` is false while any is
+ * missing — Stop then is not offered, because stopping hands queued messages
+ * back to the box and the daemon drops the ones it could not hand back.
+ */
+function useQueuedMessages(
+  snapshot: DaemonSnapshot | null,
+  sessionId: string,
+  capabilities: CapabilityAccess,
+): { readonly items: readonly DaemonTranscriptItem[]; readonly complete: boolean } {
+  const queued = useMemo(() => (snapshot?.turns ?? [])
+    .filter((turn) => turn.sessionId === sessionId && turn.state === 'queued')
+    .map((turn) => turn.id), [sessionId, snapshot?.turns]);
+  const queuedKey = queued.join('\0');
+  const head = snapshot?.transcriptHeads.find((candidate) => candidate.sessionId === sessionId)?.lastSequence ?? 0;
+  const headRef = useRef(head);
+  headRef.current = head;
+  const [state, setState] = useState<{ readonly key: string; readonly items: readonly DaemonTranscriptItem[]; readonly complete: boolean }>(
+    { key: '', items: [], complete: true },
+  );
+  useEffect(() => {
+    if (!queuedKey) { setState({ key: '', items: [], complete: true }); return undefined; }
+    const wanted = new Set(queuedKey.split('\0'));
+    let alive = true;
+    void (async () => {
+      const found = new Map<string, DaemonTranscriptItem>();
+      let before = headRef.current;
+      for (let page = 0; page < QUEUE_MAX_PAGES && before > 0 && found.size < wanted.size; page += 1) {
+        const after = Math.max(0, before - QUEUE_PAGE);
+        const items = await capabilities.daemon.getTranscript(sessionId, after, before - after);
+        for (const item of items) {
+          if (item.sessionId === sessionId && item.kind === 'user-message' && item.turnId && wanted.has(item.turnId)) found.set(item.turnId, item);
+        }
+        before = after;
+      }
+      if (alive) setState({ key: queuedKey, items: [...found.values()], complete: found.size === wanted.size });
+    })().catch(() => { if (alive) setState({ key: queuedKey, items: [], complete: false }); });
+    return () => { alive = false; };
+  }, [capabilities, queuedKey, sessionId]);
+  return state.key === queuedKey ? state : { items: [], complete: !queuedKey };
+}
+
+/**
  * The conversation's own message box, for typing into it from a terminal: the same
  * settings, slash commands, queue, stop and send as its tab, and the same draft
  * (one shared recovery controller), so text typed in either place is in both and a
@@ -46,6 +92,7 @@ export interface TerminalConversationComposerProps {
 export function TerminalConversationComposer({
   sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation,
 }: TerminalConversationComposerProps): JSX.Element {
+  const { t } = useAppTranslation();
   const session = snapshot?.sessions.find((candidate) => candidate.id === sessionId);
   const agent = snapshot?.agents.find((candidate) => candidate.sessionId === sessionId);
   // The same scope source as the conversation tab (the snapshot session's project), so both share one draft.
@@ -54,7 +101,12 @@ export function TerminalConversationComposer({
     list: window.ezterminal.agentCapabilitiesList,
     manage: window.ezterminal.agentCapabilitiesManage,
   } : undefined, []);
+  // A flow stage's conversation follows its stage: read only once the stage or flow is archived, like its tab.
+  const workflowAccess = useMemo(() => typeof window.ezterminal?.getWorkflowSnapshot === 'function'
+    ? { getWorkflowSnapshot: (id: string) => window.ezterminal.getWorkflowSnapshot(id) } : undefined, []);
+  const workflow = useWorkflowConversationScope(workflowAccess, session?.projectId, session ? sessionId : null);
   const catalogs = useProviderModelCatalogs(snapshot, capabilities);
+  const queue = useQueuedMessages(snapshot, sessionId, capabilities);
   const workspace = snapshot?.workspaces.find((candidate) => candidate.id === session?.workspaceId);
   const provider = snapshot?.providers.find((candidate) => candidate.id === agent?.providerId);
 
@@ -71,25 +123,10 @@ export function TerminalConversationComposer({
     return () => { alive = false; };
   }, [readFolders, folderKey, sessionId]);
 
-  // Queued messages show with their text: read the transcript's tail while any wait.
-  const queued = agent?.queuedTurnCount ?? 0;
-  const head = snapshot?.transcriptHeads.find((candidate) => candidate.sessionId === sessionId)?.lastSequence ?? 0;
-  const [tail, setTail] = useState<readonly DaemonTranscriptItem[]>([]);
-  useEffect(() => {
-    if (queued === 0) { setTail([]); return undefined; }
-    let alive = true;
-    const after = Math.max(0, head - QUEUE_TAIL);
-    void Promise.resolve()
-      .then(() => capabilities.daemon.getTranscript(sessionId, after, QUEUE_TAIL))
-      .then((items) => { if (alive) setTail(items.filter((item) => item.sessionId === sessionId)); })
-      .catch(() => undefined);
-    return () => { alive = false; };
-  }, [capabilities, head, queued, sessionId]);
-
   if (!session || !agent) {
     return (
       <p className="terminal-ai-missing" role="status" data-testid="terminal-ai-missing">
-        {snapshot ? '이 대화를 찾을 수 없습니다. 보낼 곳을 다시 고르세요.' : '대화를 불러오는 중…'}
+        {snapshot ? t('terminalAi.targetMissing') : t('terminalAi.targetLoading')}
       </p>
     );
   }
@@ -100,7 +137,7 @@ export function TerminalConversationComposer({
   };
   const relation = snapshot?.agentRelations.find((candidate) => candidate.childSessionId === sessionId && candidate.detachedAt === undefined);
   const owner = relation?.owner ?? 'managed';
-  const historyOnly = isDaemonSessionArchived(session, agent);
+  const historyOnly = isDaemonSessionArchived(session, agent) || workflow.scope?.readOnly === true;
   const providerId = agent.providerId;
   const fileSearch = desktopFileSearch(workspace?.rootPath);
   const shownFolders = folders ?? (readFolders && workspace ? { primary: workspace.rootPath, additional: [], missing: [] } : undefined);
@@ -125,8 +162,8 @@ export function TerminalConversationComposer({
       modelOptions={structuredAgentModelOptions(provider?.capabilities ?? [], agent.model, catalogs[providerId])}
       permissionPreset={agent.permissionPreset}
       state={historyOnly ? 'archived' : agent.state}
-      queuedCount={queued}
-      queueItems={conversationQueue(sessionId, snapshot?.turns ?? [], tail)}
+      queuedCount={agent.queuedTurnCount}
+      queueItems={conversationQueue(sessionId, snapshot?.turns ?? [], queue.items)}
       onQueueAction={!historyOnly && owner === 'managed' && snapshot?.capabilities?.includes('agent-queue')
         ? (item, action) => queueConversationTurn(access, sessionId, item, action)
         : undefined}
@@ -141,7 +178,7 @@ export function TerminalConversationComposer({
       supportsMessageContext={provider?.protocol === 'codex-app-server' || provider?.protocol === 'claude-agent-sdk'}
       draftState={recovery.controller ? recovery.view.draft : undefined}
       onDraftChange={(draft) => recovery.controller?.updateDraft(draft)}
-      sendDisabled={recovery.view.status !== 'ready'}
+      sendDisabled={recovery.view.status !== 'ready' || workflow.loading}
       sendDisabledReason={recovery.view.status === 'loading' ? 'Restoring secure draft…' : recovery.view.message}
       recoveryControl={<ChatRecoveryNotice controller={recovery.controller} view={recovery.view} />}
       deliveryUncertain={recovery.view.pendingSubmit !== undefined}
@@ -149,7 +186,7 @@ export function TerminalConversationComposer({
       onSend={send('agent.submit')}
       onInterruptAndSend={historyOnly ? undefined : send('agent.interrupt-and-submit')}
       onChangeSettings={historyOnly ? undefined : (settings) => changeConversationSettings(access, sessionId, settings)}
-      onCancel={!historyOnly && owner === 'managed' ? () => runConversationLifecycle(access, sessionId, 'agent.cancel') : undefined}
+      onCancel={!historyOnly && owner === 'managed' && queue.complete ? () => runConversationLifecycle(access, sessionId, 'agent.cancel') : undefined}
       {...(onNewConversation ? { onNewConversation } : {})}
     />
   );

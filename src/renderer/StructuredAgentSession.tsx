@@ -60,6 +60,7 @@ import {
 } from 'react';
 import { insertCompletion, type AppCommand } from './agent-completion';
 import { useAgentCompletion, type CapabilityDiscoveryState, type ComposerFileSearch } from './use-agent-completion';
+import { discoverCapabilities } from './capability-discovery-cache';
 
 import type {
   DaemonApproval,
@@ -2040,7 +2041,7 @@ export function StructuredAgentSessionPanel({
     if (!discoverHere || !capabilityClient) return undefined;
     let alive = true;
     setCapabilityDiscovery({ loading: true });
-    void capabilityClient.list({ providerId, workspaceId: workspace.id, ...(discoverySessionId ? { sessionId: discoverySessionId } : {}) })
+    void discoverCapabilities(capabilityClient, { providerId, workspaceId: workspace.id, ...(discoverySessionId ? { sessionId: discoverySessionId } : {}) })
       .then((result) => {
         if (!alive) return;
         if (result.ok) { setCapabilityCatalog(result.value); setCapabilityDiscovery({ loading: false }); }

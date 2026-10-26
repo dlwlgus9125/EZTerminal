@@ -6,6 +6,7 @@ import type { ConversationSettings, ConversationStart } from '../shared/conversa
 import { conversationOperationId } from '../shared/conversation-start';
 import type { AccessLevel } from './agent-permission-copy';
 import { ChatRecoveryController } from './chat-recovery';
+import { retainChatRecovery } from './chat-recovery-registry';
 import { structuredAgentSessionTitle } from './structured-agent-create';
 
 export interface ConversationStartAccess {
@@ -75,6 +76,8 @@ export class ConversationStartController {
   async send(settings: ConversationSettings, prompt: string, context?: ChatMessageContext, conversationId?: string): Promise<ConversationStarted> {
     if (this.running) return { ok: false, message: 'A message is already being prepared.' };
     this.running = true;
+    // The draft and its escrow stay shared until the host answers, even if the box that sent it closes.
+    const hold = retainChatRecovery(this.recovery);
     try {
       await this.recovery.load();
       if (this.recovery.getSnapshot().status !== 'ready') return { ok: false, message: this.recovery.getSnapshot().message ?? 'Draft storage is unavailable.' };
@@ -152,6 +155,6 @@ export class ConversationStartController {
         && JSON.stringify(draft.skills ?? []) === JSON.stringify(pending.context?.skills ?? [])) this.recovery.updateDraft({ text: '' });
       return { ok: true, sessionId: pending.sessionId!, conversationId: pending.conversationId };
     } catch (error) { return { ok: false, message: error instanceof Error ? error.message : 'The message could not be prepared. Your draft was retained.', deliveryUncertain: !!this.recovery.getSnapshot().start }; }
-    finally { this.running = false; }
+    finally { this.running = false; hold?.(); }
   }
 }

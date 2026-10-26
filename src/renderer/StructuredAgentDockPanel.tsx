@@ -15,6 +15,7 @@ import type { ChatStateAccess } from './chat-recovery';
 import type { ConversationSettings } from '../shared/conversation-start';
 import { useChatRecovery } from './use-chat-recovery';
 import { useProviderModelCatalogs } from './use-provider-models';
+import { desktopFileSearch, pathForDrop } from './conversation-desktop-access';
 import { ChatRecoveryNotice } from './ChatRecoveryNotice';
 import { NewSessionDraftPanel } from './NewSessionDraftPanel';
 
@@ -151,35 +152,6 @@ function localUserItem(
 /** Chat links open in the OS browser; main accepts only credential-free http(s). */
 function openLink(url: string): void {
   if (/^https?:/iu.test(url)) void window.ezterminalDesktop?.openExternalHttpUrl(url);
-}
-
-/** Electron's File -> absolute path bridge, for files dropped on the composer. */
-export function pathForDrop(file: File): string | null {
-  try {
-    return window.ezterminalDesktop?.getPathForFile(file) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-let mentionSearchSequence = 0;
-/** One stable function per root: the composer re-runs its search whenever the function changes. */
-const mentionSearches = new Map<string, (query: string) => Promise<readonly string[]>>();
-
-/** `@` mentions search the session's workspace with the Quick Open file index. */
-export function desktopFileSearch(root: string | undefined): ((query: string) => Promise<readonly string[]>) | undefined {
-  const desktop = window.ezterminalDesktop;
-  if (!root || typeof desktop?.searchWorkspaceFiles !== 'function') return undefined;
-  const existing = mentionSearches.get(root);
-  if (existing) return existing;
-  const search = async (query: string): Promise<readonly string[]> => {
-    if (!query.trim()) return [];
-    mentionSearchSequence += 1;
-    const result = await desktop.searchWorkspaceFiles({ requestId: `agent-mention-${mentionSearchSequence}`, root, query });
-    return result.ok ? result.matches.map((match) => match.relativePath.replace(/\\/gu, '/')) : [];
-  };
-  mentionSearches.set(root, search);
-  return search;
 }
 
 export function mergeAuthoritativeTranscript(

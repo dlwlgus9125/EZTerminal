@@ -81,14 +81,17 @@ export function ConversationStartPanel({ identity, viewStateScope = 'desktop', e
   const scope = useMemo<ChatStateScope>(() => ({ projectId: initialEntry?.projectId ?? projectId ?? 'drafts', sessionId: identity, kind: hasHistory ? 'conversation' : 'draft' }), [identity, initialEntry?.projectId, projectId, hasHistory]);
   // Shared with any other start box of the same identity (two terminals of one project), so one
   // draft and one send are in flight per identity.
-  const recovery = useMemo(() => sharedChatRecovery(scope, storage), [scope, storage]);
+  const [lookup, relookup] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `lookup` forces a fresh lookup after a replaced controller
+  const recovery = useMemo(() => sharedChatRecovery(scope, storage), [scope, storage, lookup]);
   const view = useSyncExternalStore(recovery.subscribe, recovery.getSnapshot);
   const controller = useMemo(() => sharedStartController(recovery, access), [access, recovery]);
   useEffect(() => {
-    const release = retainChatRecovery(recovery, storage);
+    const release = retainChatRecovery(recovery);
+    if (!release) { relookup((value) => value + 1); return undefined; }
     void recovery.load();
     return release;
-  }, [recovery, storage]);
+  }, [recovery]);
   // Continuing a conversation keeps the level its plan was set to run with. Done while rendering,
   // not in an effect: the conversation panel below reads it as it mounts, and child effects run
   // before this component's. Idempotent: it never replaces a level already chosen here.

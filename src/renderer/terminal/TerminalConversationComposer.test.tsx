@@ -145,6 +145,52 @@ describe('TerminalConversationComposer', () => {
     expect(inputIn('tab').value).toBe('Second');
   });
 
+  it('finds a queued message far back in the transcript and offers Stop only once every queued message is known', async () => {
+    const turnRecord = { revision: 1, createdAt: NOW, updatedAt: NOW };
+    const working: DaemonSnapshot = {
+      ...snapshot,
+      capabilities: ['agent-queue'],
+      agents: [{ ...snapshot.agents[0]!, state: 'working', queuedTurnCount: 1 }],
+      turns: [
+        { ...turnRecord, id: 'turn-now', sessionId: scope.sessionId, commandId: 'c-now', state: 'working' },
+        { ...turnRecord, id: 'turn-queued', sessionId: scope.sessionId, commandId: 'c-queued', state: 'queued', enqueueSequence: 2 },
+      ] as DaemonSnapshot['turns'],
+      transcriptHeads: [{ sessionId: scope.sessionId, lastSequence: 900, itemCount: 900 }] as unknown as DaemonSnapshot['transcriptHeads'],
+    };
+    const { chat } = fixture();
+    const reads: Array<[number, number]> = [];
+    const queuedAt = (sequence: number): CapabilityAccess => ({ ...rendererCapabilities,
+      daemon: { ...rendererCapabilities.daemon, getSnapshot: async () => working, sendCommand: vi.fn(), observeEvents: () => () => undefined,
+        getTranscript: async (_session: string, after = 0, limit = 0) => {
+          reads.push([after, limit]);
+          return sequence > after && sequence <= after + limit ? [{
+            id: 'm-queued', sessionId: scope.sessionId, sequence, kind: 'user-message', text: 'Then update the docs', turnId: 'turn-queued',
+            isDelta: false, isSensitive: false, createdAt: NOW,
+          }] : [];
+        } },
+      structuredProviders: { ...rendererCapabilities.structuredProviders, listModels: async () => ({ ok: true, value: [] }) },
+    });
+    const show = async (capabilities: CapabilityAccess): Promise<void> => {
+      act(() => root.render(
+        <AppI18nProvider locale="en" languages={['en']}>
+          <TerminalConversationComposer sessionId={scope.sessionId} snapshot={working} capabilities={capabilities} chatStateAccess={chat} />
+        </AppI18nProvider>,
+      ));
+      await flush();
+    };
+    await show(queuedAt(5));
+    expect(container.querySelector('.chat-queue__item')?.textContent).toContain('Then update the docs');
+    expect(container.querySelector('[data-testid="structured-agent-stop"]')).not.toBeNull();
+    expect(reads[0]).toEqual([400, 500]);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    // Further back than the composer looks: the message is unknown, so Stop (which would drop it) is not offered.
+    await show(queuedAt(-1));
+    expect(container.querySelector('.chat-queue__item')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-stop"]')).toBeNull();
+  });
+
   it('says so when the conversation is gone', async () => {
     const { chat } = fixture();
     act(() => root.render(

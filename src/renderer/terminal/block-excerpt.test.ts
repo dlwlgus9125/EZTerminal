@@ -54,6 +54,14 @@ describe('buildBlockExcerpt', () => {
     expect(body.at(-1)).toBe('line 499');
   });
 
+  it('caps a very long command and folder too, so the whole excerpt stays under the limit', () => {
+    const output = Array.from({ length: 50 }, () => 'y'.repeat(1_500)).join('\n');
+    const excerpt = buildBlockExcerpt({ ...base, command: `echo ${'x'.repeat(20_000)}`, cwd: `C:\\${'d'.repeat(5_000)}`, output });
+    expect(excerpt.text.length).toBeLessThanOrEqual(EXCERPT_MAX_CHARS);
+    expect(excerpt.text.split('\n')[0]!.length).toBeLessThanOrEqual(1_003);
+    expect(excerpt.text.endsWith('y')).toBe(true);
+  });
+
   it('caps the size and keeps the end of the output', () => {
     const lines = Array.from({ length: 150 }, (_, index) => `${index}`.padEnd(1_500, 'x'));
     const excerpt = buildBlockExcerpt({ ...base, output: lines.join('\n') });
