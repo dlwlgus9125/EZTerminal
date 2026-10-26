@@ -25,7 +25,7 @@ const access: ProjectRegistryAccess = {
   selectFolders: vi.fn(async () => ({ canceled: false, paths: ['C:\\Work\\Fresh'] })),
 };
 
-type Handlers = Omit<ProjectDialogHostProps, 'state' | 'onStateChange' | 'access'>;
+type Handlers = Omit<ProjectDialogHostProps, 'state' | 'onStateChange' | 'access' | 'worktrees' | 'snapshot'> & Pick<Partial<ProjectDialogHostProps>, 'worktrees' | 'snapshot'>;
 let openDialog: (state: ProjectDialogState) => void = () => undefined;
 function Harness(handlers: Handlers): JSX.Element {
   const [state, setState] = useState<ProjectDialogState | null>(null);
@@ -104,6 +104,56 @@ describe('ProjectDialogHost', () => {
     await flush();
     chooseFromMenu('CLI history');
     expect(handlers.onCliHistory).toHaveBeenCalledWith(kitchen);
+    expect(dialogs()).toBe(0);
+  });
+
+  it('goes from the worktrees to a merge and back, reading git again; a new worktree cancelled goes back too', async () => {
+    const status = vi.fn(async () => ({ ok: true as const, value: [{ workspaceId: 'wt-1', branch: 'feature/a', dirty: false, ahead: 1, merged: false, status: 'review' as const }] }));
+    const worktrees = {
+      create: vi.fn(async () => ({ ok: true as const, value: { workspaceId: 'wt-2' } })),
+      status,
+      commit: vi.fn(), merge: vi.fn(), remove: vi.fn(),
+    };
+    const record = { revision: 1, createdAt: '2026-10-24T09:00:00.000Z', updatedAt: '2026-10-24T09:00:00.000Z' };
+    const snapshot = { workspaces: [{ id: 'wt-1', projectId: 'p-kitchen', name: 'a', kind: 'worktree', rootPath: 'C:/wt/a', ...record }], sessions: [], agents: [], agentRelations: [], turns: [], approvals: [] };
+    const handlers = render();
+    act(() => root.render(<Harness {...handlers} worktrees={worktrees as never} snapshot={snapshot as never} />));
+    const project = { projectId: 'p-kitchen', name: 'Kitchen' };
+    act(() => openDialog({ kind: 'worktrees', project }));
+    await flush();
+    expect(byTestId('worktrees-dialog')).toBeTruthy();
+    const reads = status.mock.calls.length;
+    act(() => byTestId('workspace-merge').click());
+    await flush();
+    expect(byTestId('worktree-merge-dialog')).toBeTruthy();
+    expect(dialogs()).toBe(1);
+    pressEscape();
+    await flush();
+    expect(byTestId('worktrees-dialog')).toBeTruthy();
+    expect(status.mock.calls.length).toBeGreaterThan(reads + 1);
+
+    act(() => byTestId('worktrees-new').click());
+    await flush();
+    expect(byTestId('new-worktree-dialog')).toBeTruthy();
+    pressEscape();
+    await flush();
+    expect(byTestId('worktrees-dialog')).toBeTruthy();
+  });
+
+  it('closes once a new worktree is made, and its conversation opens', async () => {
+    const worktrees = { create: vi.fn(async () => ({ ok: true as const, value: { workspaceId: 'wt-2' } })), status: vi.fn(), commit: vi.fn(), merge: vi.fn(), remove: vi.fn() };
+    const handlers = render();
+    act(() => root.render(<Harness {...handlers} worktrees={worktrees as never} />));
+    const project = { projectId: 'p-kitchen', name: 'Kitchen' };
+    act(() => openDialog({ kind: 'worktree-new', project, returnTo: 'worktrees' }));
+    await flush();
+    const input = byTestId<HTMLInputElement>('new-worktree-branch');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => { setter.call(input, 'feature/b'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    act(() => byTestId('new-worktree-create').click());
+    await flush();
+    expect(worktrees.create).toHaveBeenCalledWith('p-kitchen', 'feature/b');
+    expect(handlers.onWorktreeCreated).toHaveBeenCalledWith(project, 'wt-2');
     expect(dialogs()).toBe(0);
   });
 

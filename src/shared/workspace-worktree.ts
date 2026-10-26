@@ -43,6 +43,16 @@ export function worktreeCleanupScope(
   return { chats, busy };
 }
 
+/**
+ * What the merge dialog's cleanup says for one worktree: the chats it archives and whether
+ * something still runs there. Before the host answers, cleanup waits (busy).
+ */
+export function worktreeCleanupSummary(snapshot: DaemonSnapshot | null, workspaceId: string): { readonly chats: number; readonly busy: boolean } {
+  if (!snapshot) return { chats: 0, busy: true };
+  const scope = worktreeCleanupScope(snapshot, new Set([workspaceId]));
+  return { chats: scope.chats.length, busy: scope.busy };
+}
+
 /** Desktop worktree workspaces: what the renderer asks the main process for. */
 export type WorkspaceWorktreeIpcResult<T> =
   | { readonly ok: true; readonly value: T }

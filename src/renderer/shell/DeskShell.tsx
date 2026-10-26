@@ -51,7 +51,8 @@ export interface DeskShellActions {
   /** The list of every project (모든 프로젝트). */
   readonly openAllProjects: () => void;
   readonly openProjectFiles: (projectId: string) => void;
-  readonly newWorktree: (project: { readonly projectId: string; readonly name: string }) => void;
+  /** The project's worktrees: where each stands, merge and cleanup, a new one. */
+  readonly openWorktrees: (project: { readonly projectId: string; readonly name: string }) => void;
   readonly editProject: (projectId: string) => void;
   readonly openFind: () => void;
   readonly openRemote: () => void;
@@ -404,7 +405,7 @@ export function useDeskShell(props: DeskShellProps): DeskShell {
         onOtherProject={(id) => navigation.showBoard(id)}
         onFiles={() => { if (projectId) actions.openProjectFiles(projectId); }}
         onProjectSettings={() => { if (projectId) actions.editProject(projectId); }}
-        onWorktree={() => { if (projectRef) actions.newWorktree(projectRef); }}
+        onWorktree={() => { if (projectRef) actions.openWorktrees(projectRef); }}
         onAddProject={actions.addProject}
       />
     </div>

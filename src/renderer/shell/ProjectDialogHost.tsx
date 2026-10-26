@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { AgentProjectSummary } from '../../shared/agent-history';
+import type { DaemonSnapshot } from '../../shared/daemon-protocol';
+import type { GitDiffResult } from '../../shared/git-status';
 import type { WorkspaceWorktreeAccess } from '../../shared/workspace-worktree';
 import { ProjectDeleteDialog, ProjectEditorDialog, type ProjectRegistryAccess } from '../ProjectDialogs';
+import type { useLiveTerminalSessions } from '../use-live-terminal-sessions';
 import { NewWorktreeDialog } from '../WorktreeDialogs';
 import { AllProjectsDialog } from './AllProjectsDialog';
+import { WorktreeDiffDialog, WorktreeMergeStep, WorktreesDialog, type ProjectWorktree } from './WorktreesDialog';
 
 /** A project as the worktree dialogs need it. */
 export interface ProjectRef {
@@ -21,14 +25,23 @@ export type ProjectDialogState =
   | { readonly kind: 'add'; readonly returnTo?: 'list' }
   | { readonly kind: 'edit'; readonly project: AgentProjectSummary; readonly returnTo?: 'list' }
   | { readonly kind: 'delete'; readonly project: AgentProjectSummary; readonly returnTo?: 'list' }
-  | { readonly kind: 'worktree-new'; readonly project: ProjectRef };
+  | { readonly kind: 'worktrees'; readonly project: ProjectRef }
+  | { readonly kind: 'worktree-new'; readonly project: ProjectRef; readonly returnTo?: 'worktrees' }
+  | { readonly kind: 'merge'; readonly project: ProjectRef; readonly worktree: ProjectWorktree }
+  | { readonly kind: 'diff'; readonly project: ProjectRef; readonly worktree: ProjectWorktree };
 
 export interface ProjectDialogHostProps {
   readonly state: ProjectDialogState | null;
   readonly onStateChange: (next: ProjectDialogState | null) => void;
   readonly access: ProjectRegistryAccess;
   /** Absent where worktrees cannot be made (not the desktop host). */
-  readonly worktrees?: Pick<WorkspaceWorktreeAccess, 'create'>;
+  readonly worktrees?: WorkspaceWorktreeAccess;
+  /** The host's state: which worktrees there are and what runs in them. */
+  readonly snapshot?: DaemonSnapshot | null;
+  /** Which terminals still run (for what a worktree cleanup would stop). */
+  readonly terminals?: Parameters<typeof useLiveTerminalSessions>[0];
+  /** git's view of a worktree's changes (the merge dialog's 변경 검토). */
+  readonly loadDiff?: (directory: string) => Promise<GitDiffResult>;
   /** A project was added or edited (`previousProjectId` when editing; a new primary folder changes the id). */
   readonly onSaved: (project: AgentProjectSummary, kind: 'add' | 'edit', previousProjectId?: string) => void;
   readonly onDeleted: (projectId: string) => void;
@@ -52,8 +65,11 @@ const LIST = { kind: 'list' } as const;
 export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | null {
   const { state, onStateChange, access } = props;
   const invoker = useRef<HTMLElement | null>(null);
-  // Bumped whenever the list is returned to after a change, so it reads the registry again.
+  // Bumped whenever a list is returned to after a change, so it reads the registry or git again.
   const [listRevision, setListRevision] = useState(0);
+  const [worktreesRevision, setWorktreesRevision] = useState(0);
+  // The new-worktree dialog closes the same way when cancelled and when done: this tells them apart.
+  const worktreeCreated = useRef(false);
   const open = state !== null;
   useEffect(() => {
     if (open) {
@@ -71,10 +87,20 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
 
   if (!state) return null;
   const close = (): void => onStateChange(null);
+  // Back to the dialog this one was opened from, read again when something changed.
   const back = (changed: boolean): void => {
-    if (!('returnTo' in state) || state.returnTo !== 'list') { close(); return; }
-    if (changed) setListRevision((value) => value + 1);
-    onStateChange(LIST);
+    const returnTo = 'returnTo' in state ? state.returnTo : undefined;
+    if (returnTo === 'list') {
+      if (changed) setListRevision((value) => value + 1);
+      onStateChange(LIST);
+    } else if (returnTo === 'worktrees' && 'project' in state) {
+      if (changed) setWorktreesRevision((value) => value + 1);
+      onStateChange({ kind: 'worktrees', project: state.project });
+    } else close();
+  };
+  const backToWorktrees = (project: ProjectRef): void => {
+    setWorktreesRevision((value) => value + 1);
+    onStateChange({ kind: 'worktrees', project });
   };
 
   switch (state.kind) {
@@ -101,19 +127,67 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
           onDeleted={(projectId) => { props.onDeleted(projectId); back(true); }}
         />
       );
+    case 'worktrees': {
+      const { worktrees } = props;
+      if (!worktrees) return null;
+      return (
+        <WorktreesDialog
+          project={state.project}
+          snapshot={props.snapshot ?? null}
+          worktrees={worktrees}
+          reloadKey={worktreesRevision}
+          onClose={close}
+          onNew={() => onStateChange({ kind: 'worktree-new', project: state.project, returnTo: 'worktrees' })}
+          onMerge={(worktree) => onStateChange({ kind: 'merge', project: state.project, worktree })}
+        />
+      );
+    }
     case 'worktree-new': {
       const { worktrees } = props;
       if (!worktrees) return null;
       return (
         <NewWorktreeDialog
           open
-          onOpenChange={(next) => { if (!next) close(); }}
+          onOpenChange={(next) => {
+            if (next) return;
+            // Made: its conversation opens, nothing to go back to. Cancelled: back where it came from.
+            if (worktreeCreated.current) { worktreeCreated.current = false; close(); } else back(false);
+          }}
           projectName={state.project.name}
           onCreate={async (branch) => {
             const created = await worktrees.create(state.project.projectId, branch);
-            if (created.ok) props.onWorktreeCreated(state.project, created.value.workspaceId);
+            if (created.ok) {
+              worktreeCreated.current = true;
+              props.onWorktreeCreated(state.project, created.value.workspaceId);
+            }
             return created;
           }}
+        />
+      );
+    }
+    case 'merge': {
+      const { worktrees, loadDiff } = props;
+      if (!worktrees) return null;
+      return (
+        <WorktreeMergeStep
+          project={state.project}
+          worktree={state.worktree}
+          snapshot={props.snapshot ?? null}
+          worktrees={worktrees}
+          {...(props.terminals ? { terminals: props.terminals } : {})}
+          onClose={() => backToWorktrees(state.project)}
+          {...(loadDiff ? { onReview: () => onStateChange({ kind: 'diff', project: state.project, worktree: state.worktree }) } : {})}
+        />
+      );
+    }
+    case 'diff': {
+      const { loadDiff } = props;
+      if (!loadDiff) return null;
+      return (
+        <WorktreeDiffDialog
+          worktree={state.worktree}
+          loadDiff={loadDiff}
+          onClose={() => onStateChange({ kind: 'merge', project: state.project, worktree: state.worktree })}
         />
       );
     }

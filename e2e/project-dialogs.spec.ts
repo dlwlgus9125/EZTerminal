@@ -1,4 +1,5 @@
-import { mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
@@ -14,6 +15,10 @@ type App = Awaited<ReturnType<typeof launchApp>>;
 
 const evidence = path.resolve('artifacts/project-dialogs/e2e');
 mkdirSync(evidence, { recursive: true });
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+}
 
 /** The native folder picker answers with these folders (no OS dialog in the harness). */
 async function stubFolderPicker(app: App, folders: readonly string[]): Promise<void> {
@@ -138,7 +143,7 @@ test('모든 프로젝트 lists every project: open, pin, edit, CLI history and 
   }
 });
 
-test('the board opens project settings and a new worktree as dialogs, and files as the project-files sidebar', async () => {
+test('the board opens project settings and worktrees as dialogs, and files as the project-files sidebar', async () => {
   test.setTimeout(120_000);
   const root = createRegisteredE2eTempDir('ezterm-dialog-board-');
   const app = await launchApp();
@@ -167,12 +172,18 @@ test('the board opens project settings and a new worktree as dialogs, and files 
     await expect(editor).toHaveCount(0);
     await expect(settings).toBeFocused();
 
-    // 워크트리: the new-worktree dialog, nothing behind it.
+    // 워크트리: the project's worktrees, nothing behind it; 새 워크트리… goes there and back.
     await board.getByRole('button', { name: 'Worktree', exact: true }).click();
-    await expect(page.getByTestId('new-worktree-dialog')).toBeVisible();
+    const worktrees = page.getByTestId('worktrees-dialog');
+    await expect(worktrees).toBeVisible();
+    await expect(worktrees).toContainText('This project has no worktrees.');
     await expect(page.getByTestId('workbench-sidebar')).toHaveCount(0);
+    await worktrees.getByTestId('worktrees-new').click();
+    await expect(page.getByTestId('new-worktree-dialog')).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByTestId('new-worktree-dialog')).toHaveCount(0);
+    await expect(worktrees).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(worktrees).toHaveCount(0);
 
     // 파일: the project's files in the sidebar, with no project list behind a back button.
     await board.getByRole('button', { name: 'Files', exact: true }).click();
@@ -183,6 +194,73 @@ test('the board opens project settings and a new worktree as dialogs, and files 
     await expect(page.getByTestId('project-workspace-back')).toHaveCount(0);
     await expect(page.getByTestId('agent-projects')).toHaveCount(0);
     await page.screenshot({ path: path.join(evidence, 'board-files.png') });
+  } finally {
+    await app.close();
+  }
+});
+
+test('the board’s worktrees: where each stands, then commit, merge home and clean up', async () => {
+  test.setTimeout(180_000);
+  const root = createRegisteredE2eTempDir('ezterm-dialog-worktrees-');
+  git(root, 'init', '-b', 'main');
+  git(root, 'config', 'user.email', 'tests@example.invalid');
+  git(root, 'config', 'user.name', 'EZTerminal Tests');
+  writeFileSync(path.join(root, 'README.md'), 'worktree fixture\n');
+  git(root, 'add', 'README.md');
+  git(root, 'commit', '-m', 'initial');
+  const app = await launchApp();
+  const page = await app.firstWindow();
+  try {
+    await resizeWindow(page, { width: 1600, height: 950 });
+    const saved = await page.evaluate((primaryRoot) => window.ezterminal.saveAgentProject({ name: 'Worktree dialogs', primaryRoot, additionalRoots: [], pinned: true }), root);
+    if (!saved.ok) throw new Error(saved.reason);
+    const projectId = saved.project.projectId;
+    await expect.poll(async () => (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces.some((workspace) => workspace.projectId === projectId) ?? false, { timeout: 30_000 }).toBe(true);
+    const created = await page.evaluate((id) => window.ezterminal.workspaceWorktrees!.create(id, 'feature/dialogs'), projectId);
+    if (!created.ok) throw new Error(created.message);
+    const workspaceId = created.value.workspaceId;
+    let folder = '';
+    await expect.poll(async () => {
+      const workspace = (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces.find((candidate) => candidate.id === workspaceId);
+      folder = workspace?.rootPath ?? '';
+      return folder;
+    }, { timeout: 30_000 }).not.toBe('');
+    writeFileSync(path.join(folder, 'notes.md'), 'work in the worktree\n');
+
+    const tab = page.locator(`[data-testid="shell-project-tab"][data-project="${projectId}"]`);
+    await expect(tab).toBeVisible({ timeout: 70_000 });
+    await tab.click();
+    const board = page.getByTestId('shell-board');
+    await board.getByRole('button', { name: 'Worktree', exact: true }).click();
+    const dialog = page.getByTestId('worktrees-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId('workbench-sidebar')).toHaveCount(0);
+    const row = dialog.locator(`[data-testid="worktree-row"][data-workspace="${workspaceId}"]`);
+    await expect(row).toContainText('feature/dialogs');
+    await expect(row).toHaveAttribute('data-state', 'review');
+    await expect(row).toContainText('Uncommitted changes');
+    await page.screenshot({ path: path.join(evidence, 'worktrees.png') });
+
+    // 병합…: the existing merge dialog, alone; commit, merge into main, then clean up.
+    await row.getByTestId('workspace-merge').click();
+    const merge = page.getByTestId('worktree-merge-dialog');
+    await expect(merge).toBeVisible();
+    await expect(page.locator('[role="dialog"], [role="alertdialog"]')).toHaveCount(1);
+    await merge.getByTestId('worktree-commit-message').fill('Add notes');
+    await merge.getByTestId('worktree-commit').click();
+    await expect(merge.getByTestId('worktree-merge-ahead')).toHaveText('1', { timeout: 30_000 });
+    await merge.getByTestId('worktree-merge-confirm').click();
+    await expect(merge.getByTestId('worktree-cleanup')).toBeVisible({ timeout: 30_000 });
+    await merge.getByTestId('worktree-cleanup').click();
+    await merge.getByTestId('worktree-cleanup-confirm').click();
+    // A cleanup with notes says what stayed; either way the list comes back without the worktree.
+    const notes = page.getByTestId('worktree-cleanup-notes');
+    await expect.poll(async () => (await notes.isVisible()) || (await dialog.isVisible()), { timeout: 30_000 }).toBe(true);
+    if (await notes.isVisible()) await merge.getByRole('button', { name: 'Close', exact: true }).last().click();
+    await expect(dialog).toBeVisible({ timeout: 30_000 });
+    await expect(row).toHaveCount(0, { timeout: 30_000 });
+    // The worktree's commit is in main now.
+    expect(git(root, 'log', '--oneline', 'main')).toContain('Add notes');
   } finally {
     await app.close();
   }

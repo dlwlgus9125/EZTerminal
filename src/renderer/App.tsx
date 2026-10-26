@@ -3178,7 +3178,7 @@ export function App(): JSX.Element {
       addProject: () => setProjectDialog({ kind: 'add' }),
       openAllProjects: () => setProjectDialog({ kind: 'list' }),
       openProjectFiles: (projectId) => showProjectWorkspace(projectId),
-      newWorktree: (project) => setProjectDialog({ kind: 'worktree-new', project }),
+      openWorktrees: (project) => setProjectDialog({ kind: 'worktrees', project }),
       editProject: openProjectEditor,
       openFind: () => openQuickOpen('all'),
       openRemote: () => setSidebarOpen('remote', true),
@@ -3547,6 +3547,9 @@ export function App(): JSX.Element {
         onStateChange={setProjectDialog}
         access={projectRegistryAccess}
         {...(window.ezterminal?.workspaceWorktrees ? { worktrees: window.ezterminal.workspaceWorktrees } : {})}
+        snapshot={shellSnapshot}
+        terminals={window.ezterminal}
+        loadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
         onWorktreeCreated={(project, workspaceId) => openStructuredAgentDraft(project, { workspaceId })}
         onSaved={(project, kind, previousProjectId) => {
           setProjectsRevision((value) => value + 1);
