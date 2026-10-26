@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AppI18nProvider } from './i18n';
-import { TerminalSessionActions } from './TerminalSessionActions';
+import { TerminalSessionActions, TerminalSessionEndDialog } from './TerminalSessionActions';
 import { withLiveTerminalSessions } from './use-live-terminal-sessions';
 import { sessionStartSnapshot } from './session-start.fixtures';
 
@@ -44,6 +44,33 @@ it('does not offer an unverified termination when observation fails', async () =
   expect(access.terminateSessionGuarded).not.toHaveBeenCalled();
   expect(document.querySelector('[data-testid="session-end-confirm"]')).toBeNull();
   expect(host.querySelector('[role="alert"]')).not.toBeNull();
+});
+function renderDialog(onClose = vi.fn()) {
+  const access = {
+    listRuns: vi.fn(async () => [{ sessionId: 'terminal', runId: 'build', commandText: 'build', executionKind: 'local' as const }]),
+    terminateSessionGuarded: vi.fn(async () => ({ ok: true as const })),
+  };
+  return { access, onClose, mount: async () => {
+    await act(async () => { root.render(<AppI18nProvider locale="en" languages={['en']}><TerminalSessionEndDialog sessionId="terminal" title="Build terminal" access={access} onClose={onClose} /></AppI18nProvider>); await Promise.resolve(); });
+  } };
+}
+it('a terminal tab’s 세션 종료 reads the runs as it opens and ends only once confirmed', async () => {
+  const { access, onClose, mount } = renderDialog(); await mount();
+  expect(document.querySelector('[data-testid="session-end-dialog"]')?.textContent).toContain('Active runs: 1');
+  expect(access.terminateSessionGuarded).not.toHaveBeenCalled();
+  await click('session-end-confirm');
+  expect(access.terminateSessionGuarded).toHaveBeenCalledExactlyOnceWith('terminal', ['build']);
+  expect(onClose).toHaveBeenCalledWith(true);
+});
+it('a terminal tab’s 세션 종료 offers no end when the runs cannot be read, and cancels', async () => {
+  const { access, onClose, mount } = renderDialog();
+  access.listRuns.mockRejectedValue(new Error('disconnected'));
+  await mount();
+  expect(document.querySelector('[data-testid="session-end-confirm"]')).toBeNull();
+  expect(document.querySelector('[data-testid="session-end-dialog"] [role="alert"]')).not.toBeNull();
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[data-testid="session-end-dialog"] button')].find((item) => item.textContent === 'Cancel')!.click(); });
+  expect(onClose).toHaveBeenCalledWith(false);
+  expect(access.terminateSessionGuarded).not.toHaveBeenCalled();
 });
 it('treats a missing persisted PTY as ended without changing the host snapshot', () => {
   const snapshot = { ...sessionStartSnapshot, sessions: [{ ...sessionStartSnapshot.workspaces[0], id: 'old-pty', workspaceId: 'main', kind: 'terminal' as const, title: 'Old terminal', state: 'running' as const, source: 'legacy-pty' as const }] };

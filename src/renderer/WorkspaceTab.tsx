@@ -60,6 +60,8 @@ export type WorkspaceTabProps = IDockviewPanelHeaderProps & {
   readonly onMoveToNewWindow: (panelId: string) => void;
   readonly onMoveToMainWindow: (panelId: string) => void;
   readonly onTitleChanged: (title: string) => void;
+  /** Terminal tabs: 세션 종료, the guarded end of the session (화면 닫기 keeps it running). */
+  readonly onEndSession?: (panelId: string, title: string) => void;
 };
 
 const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
@@ -267,6 +269,7 @@ export function WorkspaceTab({
   onMoveToNewWindow,
   onMoveToMainWindow,
   onTitleChanged,
+  onEndSession,
   ...props
 }: WorkspaceTabProps): JSX.Element {
   const { t } = useAppTranslation();
@@ -425,6 +428,11 @@ export function WorkspaceTab({
       shortcut: 'Delete',
       onClick: () => requestClose(() => props.api.close()),
     },
+    ...(onEndSession ? [{
+      action: 'end-session',
+      label: t('sessionNavigation.end'),
+      onClick: () => onEndSession(props.api.id, props.api.title ?? generatedPanelTitle(props.api.id, props.api.component, generatedTitleLabels)),
+    }] : []),
   ];
 
   return (

@@ -58,14 +58,13 @@ test('terminating an Agent terminal session removes its activity and focus targe
     .toContain('FAKE-CODEX-READY');
   const sessionId = await pane.getAttribute('data-session-id');
   expect(sessionId).toBeTruthy();
-  // The guarded end the session-end button sends (its dialog is covered by TerminalSessionActions.test.tsx;
-  // the project tree that showed it on desktop is gone with the project sidebar).
-  const ended = await window.evaluate(async (id) => {
-    const api = globalThis.window.ezterminal;
-    const runs = (await api.listRuns()).filter((run) => run.sessionId === id).map((run) => run.runId);
-    return api.terminateSessionGuarded(id, runs);
-  }, sessionId!);
-  expect(ended.ok).toBe(true);
+  // The terminal tab's menu: 세션 종료 (화면 닫기 would only detach), then the guarded confirmation.
+  await window.locator('.ez-dock .dv-tab.dv-active-tab .agent-aware-tab').click({ button: 'right' });
+  await window.getByTestId('tab-ctx-end-session').click();
+  const dialog = window.getByTestId('session-end-dialog');
+  await expect(dialog).toBeVisible();
+  await window.getByTestId('session-end-confirm').click();
+  await expect(dialog).toHaveCount(0);
 
   await expect(window.locator(`[data-testid="pane"][data-session-id="${sessionId!}"]`))
     .toHaveCount(0, { timeout: 15_000 });

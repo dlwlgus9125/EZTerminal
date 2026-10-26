@@ -261,7 +261,8 @@ Android에는 `/new`가 없고 `/clear`는 사유와 함께 비활성, 위임도
 - 사이드바 내부: 데스크톱은 받은 요청과 프로젝트 파일(`project-workspace-*`)만 남았다. 예전 `agent-new-run`,
   `agent-project-open-*`, `project-conversation-tree`, `agent-project-history` 대신 `btn-new-session`,
   `all-projects-open-*`, `conversation-history-dialog`(출처 CLI 기록), 판의 `shell-board-new-flow`·`shell-board-new-terminal`.
-  트리의 `session-end`를 쓰던 2개(agent-activity-lifecycle, structured-agent-draft)는 같은 guarded 종료를 API로 부른다.
+  트리의 `session-end`를 쓰던 2개(agent-activity-lifecycle, structured-agent-draft)는 터미널 탭 메뉴의
+  `tab-ctx-end-session` → `session-end-dialog` → `session-end-confirm`으로 같은 guarded 종료를 거친다(P-2).
 - 작업 공간 탭: `e2e/conversation-workbench-r7`.
 - 받은 요청을 여는 e2e는 **없다**(B1에서 추가).
 - 패키지 e2e: `pkg/conversation-restart`, `pkg/project-history-navigation`, `pkg/terminal-copy-packaged`.

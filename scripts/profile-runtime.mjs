@@ -58,7 +58,7 @@ export const TEST_IDS = [
   'pane', 'cmd-input',
   ...new Set(FEATURES.flatMap((feature) => [feature.menu, feature.button, feature.target].filter(Boolean))),
   'btn-new-session', 'conversation-start', 'structured-agent-session', 'structured-agent-composer-input',
-  'structured-agent-transcript', 'shell-live-row', 'conversation-history-dialog',
+  'structured-agent-transcript', 'structured-agent-folders', 'shell-live-row', 'conversation-history-dialog',
 ];
 
 /**
@@ -533,7 +533,11 @@ async function openNewConversation(page, workspaceId) {
   await page.getByTestId('btn-new-session').click();
   const draft = page.getByTestId('conversation-start').last();
   await draft.waitFor({ state: 'visible', timeout: 15_000 });
-  await draft.getByRole('combobox', { name: 'Conversation workspace' }).selectOption(workspaceId);
+  // The working folder is chosen from the folder setting under the message box.
+  const name = (await page.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.workspaces.find((entry) => entry.id === workspaceId)?.name;
+  if (!name) throw new Error(`No workspace ${workspaceId} in the host snapshot`);
+  await draft.getByTestId('structured-agent-folders').click();
+  await page.getByRole('menuitemradio').filter({ has: page.getByText(name, { exact: true }) }).click();
   return draft.getByTestId('structured-agent-composer-input');
 }
 

@@ -265,3 +265,43 @@ test('the board’s worktrees: where each stands, then commit, merge home and cl
     await app.close();
   }
 });
+
+test('the project files pane keeps managing a project after a new primary folder gives it a new id', async () => {
+  test.setTimeout(120_000);
+  const first = createRegisteredE2eTempDir('ezterm-dialog-files-a-');
+  const second = createRegisteredE2eTempDir('ezterm-dialog-files-b-');
+  const app = await launchApp();
+  const page = await app.firstWindow();
+  try {
+    await resizeWindow(page, { width: 1600, height: 950 });
+    const saved = await page.evaluate(([primaryRoot, other]) => window.ezterminal.saveAgentProject({
+      name: 'Files pane', primaryRoot, additionalRoots: [other], pinned: true,
+    }), [first, second] as const);
+    if (!saved.ok) throw new Error(saved.reason);
+    const tab = page.locator(`[data-testid="shell-project-tab"][data-project="${saved.project.projectId}"]`);
+    await expect(tab).toBeVisible({ timeout: 70_000 });
+    await tab.click();
+    await page.getByTestId('shell-board').getByRole('button', { name: 'Files', exact: true }).click();
+    const panel = page.getByTestId('project-workspace-panel');
+    const manage = panel.getByRole('button', { name: 'Manage Files pane', exact: true });
+    await expect(manage).toBeVisible({ timeout: 30_000 });
+
+    // A new primary folder: the project's id changes with it.
+    await manage.click();
+    const editor = page.getByTestId('agent-project-editor');
+    await expect(editor).toBeVisible();
+    await editor.getByRole('button', { name: 'Set as primary', exact: true }).click();
+    await page.getByTestId('agent-project-save').click();
+    await expect(editor).toHaveCount(0);
+    await expect.poll(async () => (await page.evaluate(() => window.ezterminal.listAgentProjects(true, undefined, 100)))
+      .items.some((project) => project.name === 'Files pane' && project.projectId !== saved.project.projectId), { timeout: 15_000 }).toBe(true);
+
+    // The pane still manages it: the editor opens with the new primary first.
+    await expect(manage).toBeVisible({ timeout: 30_000 });
+    await manage.click();
+    await expect(editor).toBeVisible();
+    await expect(editor.locator('.agent-project-roots li').first()).toContainText(path.basename(second));
+  } finally {
+    await app.close();
+  }
+});

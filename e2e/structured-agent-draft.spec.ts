@@ -389,13 +389,11 @@ for (const storedRootKind of ['directory', 'DOS alias'] as const) {
       const reopened = window.locator(`[data-testid="pane"][data-session-id="${sessionId}"]`);
       await expect(reopened).toBeVisible();
       await expect(reopened.getByTestId('cmd-input')).toHaveValue('echo preserved-draft');
-      // The guarded end the session-end button sends (its dialog: TerminalSessionActions.test.tsx).
-      const ended = await window.evaluate(async (id) => {
-        const api = globalThis.window.ezterminal;
-        const runs = (await api.listRuns()).filter((run) => run.sessionId === id).map((run) => run.runId);
-        return api.terminateSessionGuarded(id, runs);
-      }, sessionId!);
-      expect(ended.ok).toBe(true);
+      // 세션 종료 from the reopened tab's menu ends the session for good.
+      await window.locator('.ez-dock .dv-tab.dv-active-tab .agent-aware-tab').click({ button: 'right' });
+      await window.getByTestId('tab-ctx-end-session').click();
+      await expect(window.getByTestId('session-end-dialog')).toBeVisible();
+      await window.getByTestId('session-end-confirm').click();
       await expect.poll(async () => (await window.evaluate(() => globalThis.window.ezterminal.listSessions())).some((session) => session.sessionId === sessionId)).toBe(false);
     } finally { await app.close(); }
   });

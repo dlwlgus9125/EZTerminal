@@ -251,6 +251,22 @@ describe('WorkspaceTab interactions', () => {
     expect(api.setTitle).not.toHaveBeenCalledWith('Do not save');
   });
 
+  it('offers 세션 종료 beside 화면 닫기 only where the tab can end its session', () => {
+    const onEndSession = vi.fn();
+    renderTab({ onEndSession });
+    openContextMenu();
+    const end = document.querySelector<HTMLButtonElement>('[data-testid="tab-ctx-end-session"]')!;
+    expect(end.textContent).toContain('End session');
+    act(() => end.click());
+    expect(onEndSession).toHaveBeenCalledWith('tab-3', 'Terminal 3');
+    act(() => root.unmount());
+    document.querySelector('[data-testid="workspace-tab-context-menu"]')?.remove();
+    root = createRoot(container);
+    renderTab();
+    openContextMenu();
+    expect(document.querySelector('[data-testid="tab-ctx-end-session"]')).toBeNull();
+  });
+
   it('keeps close behind the supplied risky-close guard', () => {
     const { api, requestClose } = renderTab();
     openContextMenu();

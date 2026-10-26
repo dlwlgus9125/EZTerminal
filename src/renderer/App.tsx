@@ -184,6 +184,7 @@ import { DockWindowCoordinator } from './dock-window-coordinator';
 import { PanelPreviewContext, PanelPreviewSlot, usePanelPreview } from './shell/panel-preview';
 import { useDeskShell, type DeskTerminal } from './shell/DeskShell';
 import { ProjectDialogHost, type ProjectDialogState } from './shell/ProjectDialogHost';
+import { TerminalSessionEndDialog } from './TerminalSessionActions';
 import { findAgentProject, type ProjectRegistryAccess } from './ProjectDialogs';
 import { ShellLayoutMenu } from './shell/ShellLayoutMenu';
 import { PaneActionsContext, installConversationGroupHeaders, type PaneActions } from './shell/pane-actions';
@@ -327,12 +328,15 @@ interface WorkspaceTabActionContextValue {
   readonly moveToNewWindow: (panelId: string) => void;
   readonly moveToMainWindow: (panelId: string) => void;
   readonly titleChanged: () => void;
+  /** 세션 종료 from a terminal tab: the guarded end of its session (closing the tab only detaches). */
+  readonly endSession: (panelId: string, title: string) => void;
 }
 const WorkspaceTabActionContext = createContext<WorkspaceTabActionContextValue>({
   split: () => undefined,
   moveToNewWindow: () => undefined,
   moveToMainWindow: () => undefined,
   titleChanged: () => undefined,
+  endSession: () => undefined,
 });
 
 interface PaneCloseContextValue {
@@ -389,6 +393,7 @@ function AgentAwareTab(props: IDockviewPanelHeaderProps): JSX.Element {
       onMoveToNewWindow={actions.moveToNewWindow}
       onMoveToMainWindow={actions.moveToMainWindow}
       onTitleChanged={actions.titleChanged}
+      {...(props.api.component === 'terminal' ? { onEndSession: actions.endSession } : {})}
     />
   );
 }
@@ -1256,6 +1261,10 @@ export function App(): JSX.Element {
       })
       .catch(() => undefined);
   }, [projectRegistryAccess]);
+  // A dialog opened while the read was out (even one closed again since) supersedes it.
+  useEffect(() => {
+    if (projectDialog || conversationHistory) projectEditorRequest.current += 1;
+  }, [projectDialog, conversationHistory]);
   const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
     const api = apiRef.current;
     const windows = dockWindowCoordinatorRef.current;
@@ -2952,6 +2961,8 @@ export function App(): JSX.Element {
     [openQuickOpen, quickCommands],
   );
 
+  // The terminal whose session 세션 종료 is ending (one guarded dialog at a time).
+  const [sessionEnd, setSessionEnd] = useState<{ readonly sessionId: string; readonly title: string } | null>(null);
   const workspaceTabActionValue = useMemo<WorkspaceTabActionContextValue>(
     () => ({
       split: (panelId, direction) => workbenchCoordinator.splitPanel(panelId, direction),
@@ -2967,8 +2978,14 @@ export function App(): JSX.Element {
         setPanelSetRevision((value) => value + 1);
         scheduleSave();
       },
+      endSession: (panelId, title) => {
+        const bound = [...sessionMirroringCoordinator.getSnapshot().bindingsBySession]
+          .find(([, bindings]) => bindings.some((binding) => binding.panelId === panelId));
+        if (bound) setSessionEnd({ sessionId: bound[0], title });
+        else pushToast({ title: t('safetyDialog.terminalStateUnavailableDescription'), variant: 'warning' });
+      },
     }),
-    [pushToast, scheduleSave, t, workbenchCoordinator],
+    [pushToast, scheduleSave, sessionMirroringCoordinator, t, workbenchCoordinator],
   );
 
   const projectReviewNavigationValue = useMemo<ProjectReviewNavigationContextValue>(
@@ -3547,6 +3564,15 @@ export function App(): JSX.Element {
           setConversationHistory(null);
           revealOpenedSession();
         }} />}
+      {sessionEnd && window.ezterminal && (
+        <TerminalSessionEndDialog
+          key={sessionEnd.sessionId}
+          sessionId={sessionEnd.sessionId}
+          title={sessionEnd.title}
+          access={window.ezterminal}
+          onClose={() => setSessionEnd(null)}
+        />
+      )}
       <ProjectDialogHost
         state={projectDialog}
         onStateChange={setProjectDialog}
@@ -3559,7 +3585,11 @@ export function App(): JSX.Element {
         onSaved={(project, kind, previousProjectId) => {
           setProjectsRevision((value) => value + 1);
           if (kind === 'add') deskShell.showProject(project);
-          else if (previousProjectId && previousProjectId !== project.projectId) deskShell.followProject(project, previousProjectId);
+          else if (previousProjectId && previousProjectId !== project.projectId) {
+            deskShell.followProject(project, previousProjectId);
+            // The files pane follows a project that a new primary folder gave a new id.
+            setActiveProjectId((current) => (current === previousProjectId ? project.projectId : current));
+          }
         }}
         onDeleted={(projectId) => {
           setProjectsRevision((value) => value + 1);
