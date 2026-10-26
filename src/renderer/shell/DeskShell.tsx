@@ -49,7 +49,7 @@ export interface DeskShellActions {
   /** The add-project dialog (`+` and the empty board). */
   readonly addProject: () => void;
   readonly openProjectFiles: (projectId: string) => void;
-  readonly newWorktree: (projectId: string) => void;
+  readonly newWorktree: (project: { readonly projectId: string; readonly name: string }) => void;
   readonly editProject: (projectId: string) => void;
   readonly openFind: () => void;
   readonly openRemote: () => void;
@@ -401,7 +401,7 @@ export function useDeskShell(props: DeskShellProps): DeskShell {
         onOtherProject={(id) => navigation.showBoard(id)}
         onFiles={() => { if (projectId) actions.openProjectFiles(projectId); }}
         onProjectSettings={() => { if (projectId) actions.editProject(projectId); }}
-        onWorktree={() => { if (projectId) actions.newWorktree(projectId); }}
+        onWorktree={() => { if (projectRef) actions.newWorktree(projectRef); }}
         onAddProject={actions.addProject}
       />
     </div>

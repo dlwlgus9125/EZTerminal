@@ -184,7 +184,7 @@ import { DockWindowCoordinator } from './dock-window-coordinator';
 import { PanelPreviewContext, PanelPreviewSlot, usePanelPreview } from './shell/panel-preview';
 import { useDeskShell, type DeskTerminal } from './shell/DeskShell';
 import { ProjectDialogHost, type ProjectDialogState } from './shell/ProjectDialogHost';
-import type { ProjectRegistryAccess } from './ProjectDialogs';
+import { findAgentProject, type ProjectRegistryAccess } from './ProjectDialogs';
 import { ShellLayoutMenu } from './shell/ShellLayoutMenu';
 import { PaneActionsContext, installConversationGroupHeaders, type PaneActions } from './shell/pane-actions';
 import { ShellNavigation, parseShellNavigation } from './shell/navigation-store';
@@ -1230,13 +1230,9 @@ export function App(): JSX.Element {
   // One adaptive sidebar owns every navigation destination. At >=1200px it
   // reflows the workspace; below that breakpoint the same shell overlays it.
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
-  const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox'>('projects');
-  const [projectEditorRequest, setProjectEditorRequest] = useState<{ readonly projectId: string; readonly id: number }>();
-  const [worktreeRequest, setWorktreeRequest] = useState<{ readonly projectId: string; readonly id: number }>();
-  // Request ids only ever grow: a handled request is cleared, and the next one must still look new.
-  const worktreeRequestSeq = useRef(0);
+  const [agentHubView, setAgentHubView] = useState<'projects' | 'inbox' | 'files'>('projects');
   const [conversationHistory, setConversationHistory] = useState<{ projectId?: string; conversationId?: string } | null>(null);
-  // The project dialogs (add, edit, delete): one at a time, over whatever is shown.
+  // The project dialogs (add, edit, delete, new worktree): one at a time, over whatever is shown.
   const [projectDialog, setProjectDialog] = useState<ProjectDialogState | null>(null);
   const projectRegistryAccess = useMemo<ProjectRegistryAccess>(() => {
     const desktop = window.ezterminalDesktop;
@@ -1247,6 +1243,14 @@ export function App(): JSX.Element {
       ...(desktop ? { selectFolders: (multiple?: boolean) => desktop.selectAgentProjectFolders(multiple) } : {}),
     };
   }, []);
+  // Each request reads the project afresh (it may sit past the registry's first page); the latest wins.
+  const projectEditorRequest = useRef(0);
+  const openProjectEditor = useCallback((projectId: string): void => {
+    const request = ++projectEditorRequest.current;
+    void findAgentProject(projectRegistryAccess.listAgentProjects, projectId)
+      .then((project) => { if (project && request === projectEditorRequest.current) setProjectDialog({ kind: 'edit', project }); })
+      .catch(() => undefined);
+  }, [projectRegistryAccess]);
   const openConversationHistory = useCallback((entry: ConversationEntry, options?: { readonly preview?: boolean }): void => {
     const api = apiRef.current;
     const windows = dockWindowCoordinatorRef.current;
@@ -1909,11 +1913,7 @@ export function App(): JSX.Element {
       setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
       setSidebarDestination('settings');
     },
-    editProject: (projectId) => {
-      setProjectEditorRequest((current) => ({ projectId, id: (current?.id ?? 0) + 1 }));
-      setAgentHubView('projects');
-      setSidebarDestination('agents');
-    },
+    editProject: openProjectEditor,
     openTerminal: async (workspaceId, directory) => {
       let cwd = directory;
       let projectSession: ProjectSessionPanelMetadata | undefined;
@@ -1936,7 +1936,7 @@ export function App(): JSX.Element {
       const opened = workbenchCoordinator.openTerminal({ cwd: bootstrap.cwd, title: bootstrap.name, agentBootstrap: bootstrap });
       if (!opened) throw new Error(t('agentHub.projects.launchFailed'));
     },
-  }), [openStructuredAgentSession, addStructuredAgentDraft, workbenchCoordinator, t]);
+  }), [openStructuredAgentSession, addStructuredAgentDraft, workbenchCoordinator, openProjectEditor, t]);
 
   const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,
@@ -2019,7 +2019,7 @@ export function App(): JSX.Element {
   const showProjectWorkspace = useCallback((projectId: string): void => {
     window.focus();
     setActiveProjectId(projectId);
-    setAgentHubView('projects');
+    setAgentHubView('files');
     setSidebarDestination('agents');
   }, []);
 
@@ -3176,14 +3176,8 @@ export function App(): JSX.Element {
       openTool: (id) => toggleSidebarTool(id as SidebarDestination),
       addProject: () => setProjectDialog({ kind: 'add' }),
       openProjectFiles: (projectId) => showProjectWorkspace(projectId),
-      newWorktree: (projectId) => {
-        worktreeRequestSeq.current += 1;
-        setWorktreeRequest({ projectId, id: worktreeRequestSeq.current });
-        setAgentHubView('projects');
-        setActiveProjectId(null);
-        setSidebarDestination('agents');
-      },
-      editProject: (projectId) => structuredAgentNavigationValue.editProject?.(projectId),
+      newWorktree: (project) => setProjectDialog({ kind: 'worktree-new', project }),
+      editProject: openProjectEditor,
       openFind: () => openQuickOpen('all'),
       openRemote: () => setSidebarOpen('remote', true),
       openSettings: () => toggleSidebarTool('settings'),
@@ -3192,7 +3186,9 @@ export function App(): JSX.Element {
 
   const sidebarTitle: Record<SidebarDestination, string> = {
     explorer: t('rail.explorer'),
-    agents: agentHubView === 'inbox' ? (i18n.language.startsWith('ko') ? '받은 요청' : 'Inbox') : (i18n.language.startsWith('ko') ? '프로젝트' : 'Projects'),
+    agents: agentHubView === 'inbox' ? (i18n.language.startsWith('ko') ? '받은 요청' : 'Inbox')
+      : agentHubView === 'files' ? (i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files')
+        : (i18n.language.startsWith('ko') ? '프로젝트' : 'Projects'),
     monitor: t('rail.monitor'),
     remote: t('rail.remote'),
     openclaw: 'OpenClaw',
@@ -3283,8 +3279,7 @@ export function App(): JSX.Element {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
           },
-          ...(projectEditorRequest ? { projectEditorRequest } : {}),
-          ...(worktreeRequest ? { worktreeRequest, onWorktreeRequestHandled: () => setWorktreeRequest(undefined) } : {}),
+          onEditProject: (project: AgentProjectSummary) => setProjectDialog({ kind: 'edit', project }),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}
@@ -3548,6 +3543,8 @@ export function App(): JSX.Element {
         state={projectDialog}
         onStateChange={setProjectDialog}
         access={projectRegistryAccess}
+        {...(window.ezterminal?.workspaceWorktrees ? { worktrees: window.ezterminal.workspaceWorktrees } : {})}
+        onWorktreeCreated={(project, workspaceId) => openStructuredAgentDraft(project, { workspaceId })}
         onSaved={(project, kind, previousProjectId) => {
           setProjectsRevision((value) => value + 1);
           if (kind === 'add') deskShell.showProject(project);

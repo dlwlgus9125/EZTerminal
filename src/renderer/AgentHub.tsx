@@ -80,6 +80,13 @@ import { rendererCapabilities } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import { useLatestRequestGate } from './latest-request';
 import { ProjectConversationNavigator } from './ProjectConversationNavigator';
+import {
+  findAgentProject,
+  ProjectDeleteDialog,
+  ProjectEditorDialog,
+  type ProjectEditorMode,
+  type ProjectRegistryAccess,
+} from './ProjectDialogs';
 import { NewWorktreeDialog } from './WorktreeDialogs';
 import type { ProjectConversationNavigationAccess } from './use-project-conversation-navigation';
 import {
@@ -100,6 +107,7 @@ const projectNavigationAccess: ProjectConversationNavigationAccess = {
   getWorkflowNavigation: projectId => window.ezterminal.getWorkflowNavigation?.(projectId) ?? Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the host to view subprojects.' }),
 };
 
+const ADD_PROJECT: ProjectEditorMode = { kind: 'add' };
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
 
@@ -136,7 +144,12 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
 }
 
 export interface AgentHubProps {
-  readonly view?: 'all' | 'projects' | 'inbox';
+  /**
+   * `inbox`: what asks for the person. `files`: the active project's files and workspaces only
+   * (the desktop shell; projects are managed in dialogs there). `all` / `projects`: the project
+   * list too, as the legacy hub and its stories show it.
+   */
+  readonly view?: 'all' | 'projects' | 'inbox' | 'files';
   /** App conversations that need the person: shown at the top of the inbox. */
   readonly appChatInbox?: {
     readonly entries: readonly AppChatInboxEntry[];
@@ -218,12 +231,8 @@ export interface AgentHubProps {
   readonly onCreateWorkspaceTerminal?: (workspaceId: string) => void;
   readonly onCreateWorkspaceSession?: (projectId: string, workspaceId: string) => void;
   readonly onOpenAgentSettings?: () => void;
-  /** Another surface (a conversation's folder setting) asks to edit this project's folders. */
-  readonly projectEditorRequest?: { readonly projectId: string; readonly id: number };
-  /** Opens the new-worktree dialog for that project once per id (the board's Worktree button). */
-  readonly worktreeRequest?: { readonly projectId: string; readonly id: number };
-  /** The request was taken; the parent drops it so a later mount does not open the dialog again. */
-  readonly onWorktreeRequestHandled?: () => void;
+  /** The project's settings open in the shell's project dialog instead of the hub's own. */
+  readonly onEditProject?: (project: AgentProjectSummary) => void;
   readonly onDecideManagedMerge?: (
     input: ManagedMergeDecisionInput,
   ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
@@ -280,9 +289,7 @@ export function AgentHub({
   onCreateWorkspaceTerminal,
   onCreateWorkspaceSession,
   onOpenAgentSettings,
-  projectEditorRequest,
-  worktreeRequest,
-  onWorktreeRequestHandled,
+  onEditProject,
   onDecideManagedMerge,
   onClose,
   mobile = false,
@@ -328,12 +335,10 @@ export function AgentHub({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchWorkspaceMode, setLaunchWorkspaceMode] = useState<'current' | 'managed'>('current');
   const [launchWorktreeBranch, setLaunchWorktreeBranch] = useState('');
-  const [editingProject, setEditingProject] = useState<AgentProjectSummary | null>(null);
-  const [projectEditorOpen, setProjectEditorOpen] = useState(false);
-  const [projectNameDraft, setProjectNameDraft] = useState('');
-  const [projectRootsDraft, setProjectRootsDraft] = useState<readonly string[]>([]);
-  const [projectSaving, setProjectSaving] = useState(false);
+  const [projectEditor, setProjectEditor] = useState<ProjectEditorMode | null>(null);
   const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
+  // The files view's project when the loaded list page does not hold it.
+  const [drillLookup, setDrillLookup] = useState<{ readonly projectId: string; readonly project: AgentProjectSummary | null } | null>(null);
   const [worktreeProject, setWorktreeProject] = useState<AgentProjectSummary | null>(null);
   const workspaceWorktrees = window.ezterminal?.workspaceWorktrees;
   const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
@@ -389,10 +394,13 @@ export function AgentHub({
     coordinatedActivities.map((item) => item.cwd),
     onReadGitStatus ?? readNothing,
   );
+  const listedDrillProject = activeProjectId
+    ? projects.find((project) => project.projectId === activeProjectId) ?? null
+    : null;
   const drillProject = activeProjectId === undefined
     ? localDrillProject
     : activeProjectId
-      ? projects.find((project) => project.projectId === activeProjectId) ?? null
+      ? listedDrillProject ?? (drillLookup?.projectId === activeProjectId ? drillLookup.project : null)
       : null;
   const projectDrillOpen = activeProjectId === undefined
     ? drillProject !== null
@@ -459,6 +467,18 @@ export function AgentHub({
   useEffect(() => {
     void refreshProjects(false);
   }, [refreshProjects]);
+
+  // The files view of a project past the loaded page reads it on its own.
+  useEffect(() => {
+    if (!activeProjectId || listedDrillProject || projectsLoading || drillLookup?.projectId === activeProjectId) return undefined;
+    const read = window.ezterminal?.listAgentProjects;
+    if (!read) return undefined;
+    let alive = true;
+    void findAgentProject(read, activeProjectId)
+      .catch(() => null)
+      .then((project) => { if (alive) setDrillLookup({ projectId: activeProjectId, project }); });
+    return () => { alive = false; };
+  }, [activeProjectId, listedDrillProject, projectsLoading, drillLookup]);
 
   const loadInitialProjectSessions = useCallback(async (projectId: string): Promise<void> => {
     const read = window.ezterminal?.listAgentHistorySessions;
@@ -531,117 +551,20 @@ export function AgentHub({
     }
   }, [refreshProjects, t]);
 
-  const addProject = useCallback(async (): Promise<void> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop) return;
-    const selection = await desktop.selectAgentProjectFolders(true);
-    const [primaryRoot, ...additionalRoots] = selection.paths;
-    if (selection.canceled || !primaryRoot) return;
-    const name = primaryRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? primaryRoot;
-    setEditingProject(null);
-    setProjectNameDraft(name);
-    setProjectRootsDraft([primaryRoot, ...additionalRoots]);
-    setProjectActionError(null);
-    setProjectEditorOpen(true);
-  }, []);
-
   const openProjectEditor = useCallback((project: AgentProjectSummary): void => {
-    setEditingProject(project);
-    setProjectNameDraft(project.name);
-    setProjectRootsDraft([project.primaryRoot, ...project.additionalRoots]);
-    setProjectActionError(null);
-    setProjectEditorOpen(true);
+    if (onEditProject) onEditProject(project);
+    else setProjectEditor({ kind: 'edit', project });
+  }, [onEditProject]);
+
+  const projectRegistryAccess = useMemo<ProjectRegistryAccess>(() => {
+    const desktop = window.ezterminalDesktop;
+    return {
+      listAgentProjects: (force, cursor, limit, query) => window.ezterminal.listAgentProjects(force, cursor, limit, query),
+      saveAgentProject: (input) => window.ezterminal.saveAgentProject(input),
+      removeAgentProject: (projectId) => window.ezterminal.removeAgentProject(projectId),
+      ...(desktop ? { selectFolders: (multiple?: boolean) => desktop.selectAgentProjectFolders(multiple) } : {}),
+    };
   }, []);
-
-  // Each request opens the editor once, from the loaded page or, past it, a fresh read.
-  const handledEditorRequest = useRef(0);
-  useEffect(() => {
-    if (!projectEditorRequest || handledEditorRequest.current === projectEditorRequest.id || !window.ezterminalDesktop) return;
-    handledEditorRequest.current = projectEditorRequest.id;
-    const loaded = projects.find((project) => project.projectId === projectEditorRequest.projectId);
-    if (loaded) { openProjectEditor(loaded); return; }
-    void window.ezterminal.listAgentProjects(false, undefined, 100)
-      .then((page) => {
-        const found = page.items.find((project) => project.projectId === projectEditorRequest.projectId);
-        if (found) openProjectEditor(found);
-      })
-      .catch(() => undefined);
-  }, [projectEditorRequest, projects, openProjectEditor]);
-
-  const handledWorktreeRequest = useRef(0);
-  useEffect(() => {
-    if (!worktreeRequest || handledWorktreeRequest.current === worktreeRequest.id) return;
-    handledWorktreeRequest.current = worktreeRequest.id;
-    onWorktreeRequestHandled?.();
-    const loaded = projects.find((project) => project.projectId === worktreeRequest.projectId);
-    if (loaded) { setWorktreeProject(loaded); return; }
-    void window.ezterminal.listAgentProjects(false, undefined, 100)
-      .then((page) => {
-        const found = page.items.find((project) => project.projectId === worktreeRequest.projectId);
-        if (found) setWorktreeProject(found);
-      })
-      .catch(() => undefined);
-  }, [worktreeRequest, projects, onWorktreeRequestHandled]);
-
-  const addProjectFolders = useCallback(async (): Promise<void> => {
-    const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(true);
-    if (!selection || selection.canceled) return;
-    setProjectRootsDraft((previous) => {
-      const seen = new Set(previous.map((root) => root.toLocaleLowerCase('en-US')));
-      return [
-        ...previous,
-        ...selection.paths.filter((root) => {
-          const key = root.toLocaleLowerCase('en-US');
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }),
-      ];
-    });
-  }, []);
-
-  const commitProjectEditor = useCallback(async (): Promise<void> => {
-    const [primaryRoot, ...additionalRoots] = projectRootsDraft;
-    const name = projectNameDraft.trim();
-    if (!primaryRoot || !name || projectSaving) return;
-    setProjectSaving(true);
-    setProjectActionError(null);
-    const result = await window.ezterminal.saveAgentProject({
-      ...(editingProject ? { projectId: editingProject.projectId } : {}),
-      name,
-      primaryRoot,
-      additionalRoots,
-      pinned: editingProject?.pinned ?? false,
-    }).catch(() => ({ ok: false, reason: 'invalid' } as const));
-    setProjectSaving(false);
-    if (!result.ok) {
-      setProjectActionError(t('agentHub.projects.saveFailed'));
-      return;
-    }
-    setProjectEditorOpen(false);
-    setProjectSessions({});
-    void refreshProjects(true);
-  }, [
-    editingProject,
-    projectNameDraft,
-    projectRootsDraft,
-    projectSaving,
-    refreshProjects,
-    t,
-  ]);
-
-  const removeProject = useCallback(async (): Promise<void> => {
-    if (!projectToDelete) return;
-    const removed = await window.ezterminal.removeAgentProject(projectToDelete.projectId).catch(() => false);
-    if (!removed) {
-      setProjectActionError(t('agentHub.projects.deleteFailed'));
-      return;
-    }
-    setProjectToDelete(null);
-    if (historyProject?.projectId === projectToDelete.projectId) setHistoryProject(null);
-    setProjectSessions({});
-    void refreshProjects(true);
-  }, [historyProject, projectToDelete, refreshProjects, t]);
 
   const loadLaunchers = useCallback(async (): Promise<void> => {
     if (launchersLoading || launchers.length > 0) return;
@@ -1296,7 +1219,7 @@ export function AgentHub({
         {historyProject ? renderProjectHistory(historyProject) : drillProject && onOpenProjectDocument ? (
           <ProjectWorkspacePanel
             project={drillProject}
-            onBack={() => selectDrillProject(null)}
+            {...(view === 'files' ? {} : { onBack: () => selectDrillProject(null) })}
             onOpenDocument={onOpenProjectDocument}
             onOpenProjectMap={onOpenProjectMap}
             onNewSession={(target, locationLabel) => {
@@ -1311,6 +1234,12 @@ export function AgentHub({
             explorerState={projectWorkspaceState}
             onExplorerStateChange={onProjectWorkspaceStateChange}
           />
+        ) : view === 'files' ? (
+          <p className="agent-project-note" role="status" data-testid="agent-files-unavailable">
+            {activeProjectId && drillLookup?.projectId !== activeProjectId
+              ? t('agentHub.projects.loading')
+              : t('agentHub.projects.loadFailed')}
+          </p>
         ) : (
           <>
           {view !== 'projects' && appChatInbox && (
@@ -1442,7 +1371,7 @@ export function AgentHub({
                 <IconButton
                   icon={FolderPlus}
                   aria-label={t('agentHub.projects.add')}
-                  onClick={() => void addProject()}
+                  onClick={() => setProjectEditor({ kind: 'add' })}
                   data-testid="agent-add-project"
                 />
               )}
@@ -1649,7 +1578,7 @@ export function AgentHub({
           </>
         )}
       </div>
-      {view !== 'inbox' && !drillProject && !historyProject && (onOpenStructuredAgentDraft || onLaunchAgent || onOpenAgentSettings) && (
+      {view !== 'inbox' && view !== 'files' && !drillProject && !historyProject && (onOpenStructuredAgentDraft || onLaunchAgent || onOpenAgentSettings) && (
         <footer className="agent-hub-footer">
           {(onOpenStructuredAgentDraft || onLaunchAgent) && (
             <Button
@@ -1940,105 +1869,17 @@ export function AgentHub({
           )}
         </div>
       </Dialog>
-      <Dialog
-        open={projectEditorOpen}
-        onOpenChange={(open) => {
-          if (projectSaving) return;
-          setProjectEditorOpen(open);
-          if (!open) setProjectActionError(null);
+      <ProjectEditorDialog
+        open={projectEditor !== null}
+        mode={projectEditor ?? ADD_PROJECT}
+        access={projectRegistryAccess}
+        onClose={() => setProjectEditor(null)}
+        onSaved={() => {
+          setProjectEditor(null);
+          setProjectSessions({});
+          void refreshProjects(true);
         }}
-        title={editingProject
-          ? t('agentHub.projects.editorEditTitle')
-          : t('agentHub.projects.editorAddTitle')}
-        closeLabel={t('common.cancel')}
-        testId="agent-project-editor"
-        footer={(
-          <>
-            <Button
-              variant="ghost"
-              onClick={() => setProjectEditorOpen(false)}
-              disabled={projectSaving}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => void commitProjectEditor()}
-              disabled={projectSaving || !projectNameDraft.trim() || projectRootsDraft.length === 0}
-              data-testid="agent-project-save"
-            >
-              {projectSaving ? t('agentHub.projects.saving') : t('common.save')}
-            </Button>
-          </>
-        )}
-      >
-        <div className="agent-project-editor">
-          <Field label={t('agentHub.projects.name')} required>
-            <Input
-              value={projectNameDraft}
-              onChange={(event) => setProjectNameDraft(event.currentTarget.value)}
-              autoComplete="off"
-              data-testid="agent-project-name"
-            />
-          </Field>
-          <div className="agent-project-roots">
-            <span className="agent-project-roots__label">{t('agentHub.projects.roots')}</span>
-            {projectRootsDraft.length === 0 && (
-              <p className="agent-project-error" role="alert">
-                {t('agentHub.projects.selectPrimary')}
-              </p>
-            )}
-            <ol>
-              {projectRootsDraft.map((root, index) => (
-                <li key={root}>
-                  <div>
-                    <strong>
-                      {index === 0 ? t('agentHub.projects.primary') : `+${index}`}
-                    </strong>
-                    <span title={root}>{root}</span>
-                  </div>
-                  {index > 0 && (
-                    <div className="agent-project-root-actions">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setProjectRootsDraft((previous) => [
-                            root,
-                            ...previous.filter((candidate) => candidate !== root),
-                          ]);
-                        }}
-                      >
-                        {t('agentHub.projects.setPrimary')}
-                      </Button>
-                      <IconButton
-                        icon={X}
-                        aria-label={`${t('agentHub.projects.removeFolder')}: ${root}`}
-                        onClick={() => {
-                          setProjectRootsDraft((previous) => (
-                            previous.filter((candidate) => candidate !== root)
-                          ));
-                        }}
-                      />
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ol>
-            <Button
-              variant="secondary"
-              size="sm"
-              leadingIcon={<FolderPlus aria-hidden="true" />}
-              onClick={() => void addProjectFolders()}
-            >
-              {t('agentHub.projects.addFolder')}
-            </Button>
-          </div>
-          {projectActionError && (
-            <p className="agent-project-error" role="alert">{projectActionError}</p>
-          )}
-        </div>
-      </Dialog>
+      />
       {workspaceWorktrees && onOpenStructuredAgentDraft && worktreeProject && (
         <NewWorktreeDialog
           open
@@ -2052,33 +1893,17 @@ export function AgentHub({
           }}
         />
       )}
-      <Dialog
-        open={projectToDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setProjectToDelete(null);
+      <ProjectDeleteDialog
+        project={projectToDelete}
+        access={projectRegistryAccess}
+        onClose={() => setProjectToDelete(null)}
+        onDeleted={(projectId) => {
+          setProjectToDelete(null);
+          if (historyProject?.projectId === projectId) setHistoryProject(null);
+          setProjectSessions({});
+          void refreshProjects(true);
         }}
-        title={t('agentHub.projects.deleteTitle', { name: projectToDelete?.name ?? '' })}
-        description={t('agentHub.projects.deleteDescription')}
-        role="alertdialog"
-        tone="danger"
-        size="sm"
-        closeLabel={t('common.cancel')}
-        testId="agent-project-delete"
-        footer={(
-          <>
-            <Button variant="ghost" onClick={() => setProjectToDelete(null)}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="danger" onClick={() => void removeProject()}>
-              {t('agentHub.projects.deleteConfirm')}
-            </Button>
-          </>
-        )}
-      >
-        {projectActionError && (
-          <p className="agent-project-error" role="alert">{projectActionError}</p>
-        )}
-      </Dialog>
+      />
       <Dialog
         open={diffView !== null}
         onOpenChange={(next) => {

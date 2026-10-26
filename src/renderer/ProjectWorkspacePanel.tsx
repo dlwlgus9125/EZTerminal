@@ -40,7 +40,8 @@ export interface ProjectExplorerState {
 
 interface ProjectWorkspacePanelProps {
   readonly project: AgentProjectSummary;
-  readonly onBack: () => void;
+  /** Back to the project list; absent where there is none behind this panel (the desktop shell). */
+  readonly onBack?: () => void;
   readonly onOpenDocument: (
     document: ProjectEditorDocument,
     location?: ProjectCodeLocation,
@@ -694,11 +695,13 @@ export function ProjectWorkspacePanel({
     return (
       <section className="project-workspace" data-testid="project-workspace-panel">
         <header className="project-workspace__header">
-          <IconButton
-            icon={ArrowLeft}
-            aria-label={t('projectWorkbench.backToProjects')}
-            onClick={onBack}
-          />
+          {onBack && (
+            <IconButton
+              icon={ArrowLeft}
+              aria-label={t('projectWorkbench.backToProjects')}
+              onClick={onBack}
+            />
+          )}
           <div>
             <strong>{project.name}</strong>
             <small>{formatCwd(project.primaryRoot)}</small>
@@ -716,12 +719,14 @@ export function ProjectWorkspacePanel({
   return (
     <section className="project-workspace" data-testid="project-workspace-panel">
       <header className="project-workspace__header">
-        <IconButton
-          icon={ArrowLeft}
-          aria-label={t('projectWorkbench.backToProjects')}
-          onClick={onBack}
-          data-testid="project-workspace-back"
-        />
+        {onBack && (
+          <IconButton
+            icon={ArrowLeft}
+            aria-label={t('projectWorkbench.backToProjects')}
+            onClick={onBack}
+            data-testid="project-workspace-back"
+          />
+        )}
         <div className="project-workspace__identity">
           <strong>{project.name}</strong>
           <small title={workspace?.displayPath ?? selectedRoot?.displayPath}>

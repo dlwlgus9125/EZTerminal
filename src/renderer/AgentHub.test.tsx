@@ -204,27 +204,46 @@ describe('AgentHub approval integrity', () => {
   });
 });
 
-describe('AgentHub project editor requests', () => {
-  it('opens the project editor once per request from a conversation folder setting', async () => {
-    const project = {
-      projectId: 'project-folders', name: 'Folders', primaryRoot: 'C:\\Work\\app', additionalRoots: ['C:\\Work\\shared'],
-      pinned: false, saved: true, sessionCount: 0, providers: [], lastActiveAt: 20,
-    } as const;
-    Object.defineProperty(window, 'ezterminal', {
+describe('AgentHub files view', () => {
+  const project = {
+    projectId: 'project-far', name: 'Far project', primaryRoot: 'C:\\Work\\far', additionalRoots: [],
+    pinned: false, saved: true, sessionCount: 0, providers: [], lastActiveAt: 20,
+  } as const;
+  const other = { ...project, projectId: 'project-near', name: 'Near project', primaryRoot: 'C:\\Work\\near' };
+
+  async function renderFiles(listAgentProjects: ReturnType<typeof vi.fn>): Promise<void> {
+    Object.defineProperty(window, 'ezterminal', { configurable: true, value: { listAgentProjects, listAgentHistorySessions: vi.fn() } });
+    Object.defineProperty(window, 'ezterminalDesktop', {
       configurable: true,
-      value: { listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })), listAgentHistorySessions: vi.fn() },
+      value: { describeProjectWorkspace: vi.fn(async () => ({ ok: false, error: 'io-error' })) },
     });
-    Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: {} });
-    try {
-      await renderHub({ revision: 1, items: [] }, { projectEditorRequest: { projectId: 'project-folders', id: 1 } });
-      await flush();
-      const editor = document.body.querySelector('[data-testid="agent-project-editor"]');
-      expect(editor).not.toBeNull();
-      expect(editor?.textContent).toContain('C:\\Work\\app');
-      expect(editor?.textContent).toContain('C:\\Work\\shared');
-    } finally {
-      Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: originalEzTerminalDesktop });
-    }
+    await renderHub({ revision: 1, items: [] }, {
+      view: 'files', activeProjectId: 'project-far', onOpenProjectDocument: vi.fn(), onOpenStructuredAgentDraft: vi.fn(), onEditProject: vi.fn(),
+    });
+    await flush();
+  }
+  afterEach(() => {
+    Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: originalEzTerminalDesktop });
+  });
+
+  it('shows only the project’s files: no project list, no footer and no way back to a list', async () => {
+    const listAgentProjects = vi.fn(async (_force?: boolean, cursor?: string) => (
+      cursor ? { items: [project], nextCursor: null } : { items: [other], nextCursor: 'page-2' }
+    ));
+    await renderFiles(listAgentProjects);
+    // Past the first page, the project is read on its own.
+    expect(listAgentProjects).toHaveBeenCalledWith(false, 'page-2', 100);
+    const panel = container.querySelector('[data-testid="project-workspace-panel"]');
+    expect(panel?.textContent).toContain('Far project');
+    expect(container.querySelector('[data-testid="agent-projects"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-new-run"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Back to projects"]')).toBeNull();
+  });
+
+  it('says so when the project cannot be found', async () => {
+    await renderFiles(vi.fn(async () => ({ items: [other], nextCursor: null })));
+    expect(container.querySelector('[data-testid="agent-files-unavailable"]')?.textContent).toBe('Could not load projects.');
+    expect(container.querySelector('[data-testid="agent-projects"]')).toBeNull();
   });
 });
 
