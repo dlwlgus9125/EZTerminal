@@ -29,7 +29,7 @@ function git(cwd: string, args: readonly string[]): string {
  * with an idle stage conversation in it — what the person's 작업 폴더 정리 finds.
  */
 async function project(options: { turn?: boolean; onRelease?: (folder: string, repo: string, base: string) => void; busy?: () => boolean; integration?: 'passed' | 'validating';
-  baselines?: { present: () => boolean; prune: (projectId: string, runIds: readonly string[]) => Promise<readonly string[]> } } = {}) {
+  baselines?: { prune: (projectId: string, runIds: readonly string[], options?: { dryRun?: boolean }) => Promise<{ removed: { runId: string }[]; errors: string[] }> } } = {}) {
   const base = mkdtempSync(path.join(tmpdir(), 'ez-run-cleanup-'));
   bases.add(base);
   const repo = path.join(base, 'repo');
@@ -80,7 +80,7 @@ async function project(options: { turn?: boolean; onRelease?: (folder: string, r
   const cleanup = new RunWorktreeCleanup({
     directory: userData, getSnapshot: () => snapshot, runs: () => runs, readResult: async (_projectId, attemptId) => (attemptId === 'A1' ? record : null),
     readIntegration: async (_projectId, runId) => (runId === 'r1' ? integration as never : null),
-    ...(options.baselines ? { baselineRemovable: async () => options.baselines!.present(), pruneBaselines: options.baselines.prune } : {}),
+    ...(options.baselines ? { pruneBaselines: options.baselines.prune } : {}),
     resultBusy: async () => options.busy?.() ?? false, worktrees, git: new GitRunner(),
     preview: (filePath, handle) => new FileService({ trashItem: async () => undefined }).readFilePreview(filePath, handle),
     executeCommand: vi.fn(async (command: DaemonCommand) => { commands.push(command); return { ok: true, status: 'committed', commandId: command.commandId, revision: 2 } as never; }),
@@ -247,19 +247,36 @@ describe('RunWorktreeCleanup (real Git)', () => {
 
   it('cleans up a run’s planning baseline once its folders are gone, and offers it again if it was left (I2-7f)', async () => {
     let present = true;
-    const prune = vi.fn(async (_projectId: string, runIds: readonly string[]) => { present = false; return runIds.map(runId => `baseline-of-${runId}`); });
-    const p = await project({ baselines: { present: () => present, prune } });
+    const prune = vi.fn(async (_projectId: string, runIds: readonly string[], options?: { dryRun?: boolean }) => {
+      const removed = present ? runIds.map(runId => ({ runId })) : [];
+      if (!options?.dryRun) present = false;
+      return { removed, errors: [] as string[] };
+    });
+    const p = await project({ baselines: { prune } });
     // The folder is still there: only the folder is offered.
     expect(await p.cleanup.plan('P')).toMatchObject({ baselines: 0, runs: [expect.not.objectContaining({ baseline: true })] });
     expect(await p.cleanup.cleanup('P', ['r1'])).toEqual({ removed: 1, kept: [], baselinesRemoved: 1 });
-    expect(prune).toHaveBeenCalledWith('P', ['r1']);
+    expect(prune).toHaveBeenLastCalledWith('P', ['r1']);
+    // The list asks once for all runs left without folders, not once per run.
+    const dryRuns = prune.mock.calls.filter(call => call[2]?.dryRun).length;
+    await p.cleanup.plan('P');
+    expect(prune.mock.calls.filter(call => call[2]?.dryRun).length).toBe(dryRuns + 1);
     // A baseline still there after its folders went (say it was in use then) is offered on its own.
     present = true;
     expect(await p.cleanup.plan('P')).toMatchObject({ baselines: 1, runs: [expect.objectContaining({ runId: 'r1', baseline: true })] });
-    // One that stays when cleaned (it came to be referred to) is reported, not passed over in silence.
-    prune.mockImplementationOnce(async () => []);
+    // One that was offered and stays when cleaned (it came to be referred to meanwhile) is reported, not passed over.
+    let calls = 0;
+    prune.mockImplementation(async (_projectId: string, runIds: readonly string[], options?: { dryRun?: boolean }) => {
+      calls += 1;
+      return { removed: options?.dryRun && calls === 1 ? runIds.map(runId => ({ runId })) : [], errors: [] as string[] };
+    });
     expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ removed: 0, baselinesKept: 1 });
-    prune.mockImplementationOnce(async () => { throw new Error('planning file busy'); });
+    // A read or write failure says why.
+    calls = 0;
+    prune.mockImplementation(async (_projectId: string, runIds: readonly string[], options?: { dryRun?: boolean }) => {
+      calls += 1;
+      return calls === 1 && options?.dryRun ? { removed: runIds.map(runId => ({ runId })), errors: [] as string[] } : { removed: [], errors: ['planning file busy'] };
+    });
     expect(await p.cleanup.cleanup('P', ['r1'])).toMatchObject({ baselinesKept: 1, baselineError: 'planning file busy' });
   }, 60_000);
 

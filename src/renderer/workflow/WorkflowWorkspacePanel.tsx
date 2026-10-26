@@ -375,7 +375,7 @@ function WorkflowWorkspace({ projectId, projectName, access, daemonAccess, capab
         setPreviewError(null);
         setPreviewExpired(!result.preview);
         if (result.preview) setCreate(previous => previous?.id === previewId && previous.previewRevision !== result.preview!.revision ? { ...previous, graph: result.preview!.graph, preset: 'custom', previewRevision: result.preview!.revision } : previous);
-      } catch (reason) { if (current && sequence >= applied) setPreviewError(String(reason)); }
+      } catch (reason) { if (current && sequence >= applied) { applied = sequence; setPreviewError(String(reason)); } }
     };
     void read(); const timer = window.setInterval(() => void read(), 2000);
     return () => { current = false; window.clearInterval(timer); setPreviewError(null); };

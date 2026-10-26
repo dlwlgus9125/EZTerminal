@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:602a0ec2729478235e1a955b0b217d045692ea1f6b0c77b3fec55b42164e758a",
+        "inputDigest": "sha256:0769d0da833292d3076dd46ad4bb322a91810db3ae1aa2178e1a5cbaeb88b6e2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
+        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:30097e73fd8565a32a883b46b313914aa9ba03fc3b471a6d12d424aab0cd46a3",
+        "inputDigest": "sha256:b345c221dae78e913c6f49c635f791e58189c83f516643fb6afd38f8da5c62a2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
+        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:672e94163248c88d3800b31ffe5af3efcac747814c6f8ffae4b6e9f3d45878a2",
+        "inputDigest": "sha256:6886626dd4ee89032d7f035b7659f654925178ac043ca8285eebb50838145873",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
+        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:bfe27a54ebab0ac88830cf447131a8002620a7668b9c1307a8a24b263aedc60b",
+        "inputDigest": "sha256:d2dd45ab2468e8148fea478618107e015af7e746ead00ebfd08be6ca1507728a",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
+        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:751b7786ee1f98b04b7c67552810614411662122a7eeab12d270ca5a54ee33ec",
+        "inputDigest": "sha256:cad29cdcb5a13cd4e4a44f65a74f373d96d57a76895c6cd5cb517bd5c2d8add4",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f review fixes): baselines are offered only when a dry run of the same proof would remove them, a kept or failed one is reported, a removed one shows nothing of the draft; setup-preview read errors clear on recovery. Claims hold."
+        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
       }
     }
   ]

@@ -196,12 +196,15 @@ describe('planning provider dispatch', () => {
     const baselines = async () => { const read = await f.options.planning.read('project', 'sub'); if (!read.ok) throw new Error(read.message); return read.snapshot.baselines.map(entry => entry.id); };
     expect(await baselines()).toContain(baselineId);
     // Not finished yet: it stays; the root planning file's own baseline is never a candidate either.
-    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run', 'run'])).toEqual([]);
+    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run', 'run'])).toEqual({ removed: [], errors: [] });
     const read = await workflows.read('project'); if (!read.ok) throw new Error(read.message);
     const revision = read.snapshot.subprojects.find(entry => entry.id === 'sub')!.revision;
     expect(await workflows.execute({ ...common, expectedRevision: revision, commandId: 'workflow-cancel', subprojectId: 'sub', type: 'run.cancel', payload: { runId: 'workflow-run' } }, { kind: 'desktop', id: 'test' })).toMatchObject({ ok: true });
     await vi.waitFor(() => expect(f.ledger.read('project').runs[0]!.state).toBe('cancelled'));
-    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run'])).toEqual([baselineId]);
+    // A dry run answers it would go, and writes nothing.
+    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run'], { dryRun: true })).toEqual({ removed: [{ runId: 'workflow-run', baselineId }], errors: [] });
+    expect(await baselines()).toContain(baselineId);
+    expect(await f.service.pruneWorkflowBaselines('project', ['workflow-run'])).toEqual({ removed: [{ runId: 'workflow-run', baselineId }], errors: [] });
     expect(await baselines()).not.toContain(baselineId);
     expect(f.errors).toEqual([]);
   });

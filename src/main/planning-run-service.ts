@@ -409,12 +409,13 @@ export class PlanningRunService {
    * id gives, the hash the run froze — and not used by any other run. Inside the execution gate, so no preparation
    * (which runs in it) reads a baseline while it goes; the planning write follows (execution → planning).
    */
-  pruneWorkflowBaselines(projectId: string, runIds: readonly string[], options: { readonly dryRun?: boolean } = {}): Promise<readonly string[]> {
+  pruneWorkflowBaselines(projectId: string, runIds: readonly string[], options: { readonly dryRun?: boolean } = {}): Promise<{ readonly removed: readonly { readonly runId: string; readonly baselineId: string }[]; readonly errors: readonly string[] }> {
     return this.gate.runExclusive(async () => {
       const planning = this.options.planning;
-      if (!planning.pruneWorkflowBaselines) return [];
+      if (!planning.pruneWorkflowBaselines) return { removed: [], errors: [] };
       const runs = this.options.ledger.read(projectId).runs;
-      const removed: string[] = [];
+      const removed: { runId: string; baselineId: string }[] = [];
+      const errors: string[] = [];
       const bySubproject = new Map<string, { id: string; hash: string; runId: string }[]>();
       for (const run of runs.filter(entry => runIds.includes(entry.runId))) {
         const subprojectId = run.preparation.workflow?.subprojectId;
@@ -427,9 +428,10 @@ export class PlanningRunService {
         // A baseline another run uses (any run, any state) stays.
         const used = runs.filter(run => !targets.some(target => target.runId === run.runId)).map(run => run.preparation.baseline.baselineId);
         const result = await planning.pruneWorkflowBaselines(projectId, subprojectId, targets.map(({ id, hash }) => ({ id, hash })), used, options);
-        if (result.ok) removed.push(...result.removed); else this.options.reportError?.(new Error(`Baseline cleanup in ${subprojectId}: ${result.message}`));
+        if (result.ok) removed.push(...targets.filter(target => result.removed.includes(target.id)).map(target => ({ runId: target.runId, baselineId: target.id })));
+        else errors.push(result.message);
       }
-      return removed;
+      return { removed, errors };
     });
   }
 
