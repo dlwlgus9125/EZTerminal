@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import type { ReactNode } from 'react';
 
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
@@ -537,6 +537,8 @@ export const MobileSideQuestion: Story = {
   </AppI18nProvider>,
   play: async ({ canvasElement }) => {
     await askFromComposer(canvasElement, '문구 상수 이름이 뭐였지?');
-    await expect(await within(canvasElement.ownerDocument.body).findByTestId('side-question-sheet')).toBeVisible();
+    // The sheet's dialog fades in (ez-modal-in from opacity 0): wait for it rather than catch its first frame.
+    const sheet = await within(canvasElement.ownerDocument.body).findByTestId('side-question-sheet');
+    await waitFor(() => expect(sheet).toBeVisible());
   },
 };
