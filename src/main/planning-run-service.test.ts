@@ -528,7 +528,8 @@ describe('stage edits before a stage starts apply to the current run (late bindi
     expect(await command('runtime', 'bind-late')).toMatchObject({ ok: false, error: 'invalid-transition' });
   });
 });
-describe('run settings and 다시 실행 (run.launch)', () => {
+// Whole launches against fake stores: a test here can pass 5 s on a slow Windows runner (CI timed out at 593 and 610).
+describe('run settings and 다시 실행 (run.launch)', { timeout: 20_000 }, () => {
   async function launchFlow(options: { staleRuns?: boolean } = {}) {
     const f = await fixture(false, true); const directory = f.store.getSnapshot().projects[0].rootPath!;
     // `staleRuns`: the flow service sees no runs, so only the execution side can refuse a second start.

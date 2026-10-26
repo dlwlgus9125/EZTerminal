@@ -965,6 +965,8 @@ describe('MobileWorkspace - previous work', () => {
       return { ok: true, binding: { surfaceId, bindingId: `binding-${intent.sessionId}`, session: { sessionId: intent.sessionId, cwd: `/${intent.sessionId}` }, role: 'adopted' } };
     });
     const el = await renderWorkspace(transport);
+    // The restore reads the authority first (WebCrypto): wait for the adoptions rather than a fixed number of ticks (a slow runner needs more).
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3));
     await flushAsync();
     expect(open.mock.calls.map((call) => call[1])).toEqual([
       { kind: 'adopt', sessionId: 'one' }, { kind: 'adopt', sessionId: 'gone' }, { kind: 'adopt', sessionId: 'two' },

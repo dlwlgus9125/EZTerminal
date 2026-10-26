@@ -162,7 +162,8 @@ function providerMutation(): DaemonStoreMutation {
   };
 }
 
-describe('DaemonStore', () => {
+// SQLite stores, backups and restarts: a test here can pass 5 s on a slow Windows runner (CI timed out at 979 and 1020).
+describe('DaemonStore', { timeout: 20_000 }, () => {
   it('creates the complete versioned WAL schema with foreign keys enabled', async () => {
     const directory = makeDirectory();
     expect(resolveDaemonDatabasePath(directory)).toBe(path.join(directory, DAEMON_DATABASE_FILE_NAME));
