@@ -23,6 +23,8 @@ export interface TerminalCompletionCandidate {
   readonly kind: TerminalCompletionKind;
   /** The text that replaces `[replaceStart, replaceEnd)` when this one is chosen (quoted when needed). */
   readonly insertText: string;
+  /** The caret stops this many characters before the end of `insertText` (inside a quoted folder's closing quote). */
+  readonly caretBack?: number;
 }
 
 export type TerminalCompletionResult =
@@ -30,8 +32,10 @@ export type TerminalCompletionResult =
     readonly ok: true;
     readonly replaceStart: number;
     readonly replaceEnd: number;
-    /** Longest text all candidates share, ready to insert; equals the typed word when nothing is shared beyond it. */
+    /** Longest text all candidates share, ready to insert; equals the replaced text when nothing is shared beyond it. */
     readonly commonText: string;
+    /** As `caretBack`, for `commonText`. */
+    readonly commonCaretBack?: number;
     readonly candidates: readonly TerminalCompletionCandidate[];
     /** More matched than were returned. */
     readonly truncated: boolean;

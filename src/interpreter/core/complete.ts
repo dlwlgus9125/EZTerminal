@@ -30,6 +30,8 @@ export interface CompletionWord {
   readonly start: number;
   /** The quote the word was opened with. */
   readonly quote?: '"' | "'";
+  /** The caret is inside that quote (not closed before it). */
+  readonly open?: boolean;
 }
 
 const isSpace = (ch: string): boolean => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
@@ -90,6 +92,7 @@ export function completionWord(line: string, caret: number): CompletionWord | nu
     prefix: decoded,
     start,
     ...(opening ? { quote: opening } : {}),
+    ...(quote ? { open: true } : {}),
   };
 }
 
@@ -99,7 +102,7 @@ function needsQuote(value: string): boolean {
   return !BARE.test(value) || value === 'true' || value === 'false' || value === 'null';
 }
 
-/** Write `value` so the lexer reads it back as one word; `open` leaves a quote open to keep typing a path. */
+/** Write `value` so the lexer reads it back as one word; `open` leaves a quote open. */
 export function encodeWord(value: string, options: { readonly open: boolean; readonly quote?: '"' | "'" }): string {
   const quote = options.quote ?? (needsQuote(value) ? '"' : undefined);
   if (!quote) return value;
@@ -195,10 +198,20 @@ function commonPrefix(values: readonly string[]): string {
   return common;
 }
 
+/**
+ * A quoted word is always closed, so the line runs as it stands. A folder (or a
+ * shared part still being typed) keeps the caret inside the closing quote, so
+ * typing and Tab go on into the folder.
+ */
+function written(value: string, quote: CompletionWord['quote'], stayInside: boolean): { readonly text: string; readonly caretBack?: number } {
+  const text = encodeWord(value, { open: false, ...(quote ? { quote } : {}) });
+  return stayInside && text !== value ? { text, caretBack: 1 } : { text };
+}
+
 function candidateOf(match: Match, quote: CompletionWord['quote']): TerminalCompletionCandidate {
   const folder = match.kind === 'directory' || match.kind === 'drive';
-  const text = encodeWord(match.value, { open: folder, ...(quote ? { quote } : {}) });
-  return { label: match.label, kind: match.kind, insertText: folder ? text : `${text} ` };
+  const { text, caretBack } = written(match.value, quote, folder);
+  return { label: match.label, kind: match.kind, insertText: folder ? text : `${text} `, ...(caretBack ? { caretBack } : {}) };
 }
 
 /** Complete the word that ends at `caret`. */
@@ -211,19 +224,27 @@ export async function completeLine(line: string, caret: number, source: Completi
   if (matches.length === 0) return { ok: false, reason: 'none' };
   const shown = matches.slice(0, TERMINAL_COMPLETION_MAX_CANDIDATES);
   const candidates = shown.map((match) => candidateOf(match, word.quote));
-  const typed = line.slice(word.start, caret);
-  let commonText = typed;
+  // Inside a quote that closes right after the caret, the closing quote is replaced too (the new text closes it).
+  const replaceEnd = word.open && word.quote && line[caret] === word.quote ? caret + 1 : caret;
+  let commonText = line.slice(word.start, replaceEnd);
+  let commonCaretBack: number | undefined = replaceEnd - caret || undefined;
   if (matches.length === 1) {
     commonText = candidates[0]!.insertText;
+    commonCaretBack = candidates[0]!.caretBack;
   } else {
     const common = commonPrefix(matches.map((match) => match.value));
-    if (common.length > word.prefix.length) commonText = encodeWord(common, { open: true, ...(word.quote ? { quote: word.quote } : {}) });
+    if (common.length > word.prefix.length) {
+      const shared = written(common, word.quote, true);
+      commonText = shared.text;
+      commonCaretBack = shared.caretBack;
+    }
   }
   return {
     ok: true,
     replaceStart: word.start,
-    replaceEnd: caret,
+    replaceEnd,
     commonText,
+    ...(commonCaretBack ? { commonCaretBack } : {}),
     candidates,
     truncated: matches.length > shown.length,
   };

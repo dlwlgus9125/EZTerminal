@@ -103,14 +103,35 @@ describe('completeLine', () => {
     expect(result.candidates.map((candidate) => candidate.label)).toEqual(['scripts\\', 'src\\']);
   });
 
-  it('quotes a name with spaces and leaves the quote open for a folder', async () => {
+  it('quotes a folder with spaces, closed, with the caret left inside the closing quote', async () => {
     const result = await completeLine('cd Pro', 6, source());
     if (!result.ok) throw new Error('expected candidates');
-    expect(result.commonText).toBe('"Program Files\\\\');
-    const deeper = await completeLine('cd "Program Files\\\\T', 20, source());
+    // The line runs as it stands; typing and Tab go on inside the quote.
+    expect(result.commonText).toBe('"Program Files\\\\"');
+    expect(result.commonCaretBack).toBe(1);
+    expect(result.candidates[0]).toMatchObject({ insertText: '"Program Files\\\\"', caretBack: 1 });
+    // Tab again from inside the quote: the closing quote is part of what is replaced.
+    const again = 'cd "Program Files\\\\"';
+    const deeper = await completeLine(again, again.length - 1, source());
     if (!deeper.ok) throw new Error('expected candidates');
     expect(deeper.replaceStart).toBe(3);
-    expect(deeper.commonText).toBe('"Program Files\\\\Tool\\\\');
+    expect(deeper.replaceEnd).toBe(again.length);
+    expect(deeper.commonText).toBe('"Program Files\\\\Tool\\\\"');
+    expect(deeper.commonCaretBack).toBe(1);
+    // A quote the person opened and did not close is closed too.
+    const typed = await completeLine('cd "Program Files\\\\T', 20, source());
+    if (!typed.ok) throw new Error('expected candidates');
+    expect(typed.replaceEnd).toBe(20);
+    expect(typed.commonText).toBe('"Program Files\\\\Tool\\\\"');
+  });
+
+  it('writes words the shell parses back as typed', async () => {
+    // What a completed folder line becomes once run: the lexer reads one closed word.
+    const { tokenize } = await import('./lexer');
+    const result = await completeLine('cd Pro', 6, source());
+    if (!result.ok) throw new Error('expected candidates');
+    const line = `cd ${result.commonText}`;
+    expect(() => tokenize(line)).not.toThrow();
   });
 
   it('quotes Korean names and closes the quote for a file', async () => {

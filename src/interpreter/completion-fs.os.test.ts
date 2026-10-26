@@ -51,9 +51,9 @@ describe('completion on the real filesystem', () => {
   it('completes names with spaces and Korean letters into words the shell reads back', async () => {
     const source = () => completionSource({ cwd: root, env: env(), builtins: ['cd', 'ls'], budgetMs: 5_000 });
     const spaced = await completeLine('cd Prog', 7, source());
-    expect(spaced).toMatchObject({ ok: true, commonText: '"Program Files\\\\' });
+    expect(spaced).toMatchObject({ ok: true, commonText: '"Program Files\\\\"', commonCaretBack: 1 });
     const korean = await completeLine('cd 한', 4, source());
-    expect(korean).toMatchObject({ ok: true, commonText: '"한글 폴더\\\\' });
+    expect(korean).toMatchObject({ ok: true, commonText: '"한글 폴더\\\\"', commonCaretBack: 1 });
     const nested = await completeLine('ls src\\re', 9, source());
     if (!nested.ok) throw new Error('expected candidates');
     expect(nested.candidates.map((candidate) => candidate.label)).toEqual(['renderer\\', 'render.ts']);

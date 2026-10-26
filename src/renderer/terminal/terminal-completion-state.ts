@@ -10,7 +10,7 @@ export interface CompletionList {
   readonly candidates: readonly TerminalCompletionCandidate[];
   readonly active: number;
   readonly replaceStart: number;
-  /** The end of the text a chosen candidate replaces (the caret after the common part went in). */
+  /** The end of the text a chosen candidate replaces (the end of the shared part that went in). */
   readonly replaceEnd: number;
   readonly truncated: boolean;
 }
@@ -26,8 +26,9 @@ export function wantsCompletion(line: string, caret: number): boolean {
   return !/\s/u.test(line[caret - 1]!);
 }
 
-function replace(line: string, start: number, end: number, text: string): LineEdit {
-  return { line: `${line.slice(0, start)}${text}${line.slice(end)}`, caret: start + text.length };
+/** `caretBack`: the caret stops that many characters before the end of `text` (inside a closing quote). */
+function replace(line: string, start: number, end: number, text: string, caretBack = 0): LineEdit {
+  return { line: `${line.slice(0, start)}${text}${line.slice(end)}`, caret: start + text.length - caretBack };
 }
 
 /**
@@ -42,17 +43,21 @@ export function applyCompletion(
 ): { readonly edit: LineEdit | null; readonly list: CompletionList | null } {
   if (asked.line !== current.line || asked.caret !== current.caret || !result.ok) return { edit: null, list: null };
   if (result.candidates.length === 1) {
-    return { edit: replace(current.line, result.replaceStart, result.replaceEnd, result.candidates[0]!.insertText), list: null };
+    const only = result.candidates[0]!;
+    return { edit: replace(current.line, result.replaceStart, result.replaceEnd, only.insertText, only.caretBack), list: null };
   }
   const typed = current.line.slice(result.replaceStart, result.replaceEnd);
-  const edit = result.commonText !== typed ? replace(current.line, result.replaceStart, result.replaceEnd, result.commonText) : null;
+  const edit = result.commonText !== typed
+    ? replace(current.line, result.replaceStart, result.replaceEnd, result.commonText, result.commonCaretBack)
+    : null;
   return {
     edit,
     list: {
       candidates: result.candidates,
       active: 0,
       replaceStart: result.replaceStart,
-      replaceEnd: edit ? edit.caret : result.replaceEnd,
+      // A chosen candidate replaces the whole shared part, its closing quote included.
+      replaceEnd: edit ? result.replaceStart + result.commonText.length : result.replaceEnd,
       truncated: result.truncated,
     },
   };
@@ -61,7 +66,7 @@ export function applyCompletion(
 /** Choose a candidate from the open list. */
 export function chooseCandidate(line: string, list: CompletionList, index = list.active): LineEdit | null {
   const candidate = list.candidates[index];
-  return candidate ? replace(line, list.replaceStart, list.replaceEnd, candidate.insertText) : null;
+  return candidate ? replace(line, list.replaceStart, list.replaceEnd, candidate.insertText, candidate.caretBack) : null;
 }
 
 /** Move the list's active candidate, wrapping around. */

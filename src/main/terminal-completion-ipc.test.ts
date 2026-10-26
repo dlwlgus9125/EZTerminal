@@ -3,14 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { TERMINAL_COMPLETION_MAX_LINE } from '../shared/terminal-completion';
 import { installTerminalCompletionIpc, TERMINAL_COMPLETE_CHANNEL } from './terminal-completion-ipc';
 
-function install(complete = vi.fn(async () => ({ ok: false as const, reason: 'none' as const }))) {
-  let handler: ((event: unknown, request: unknown) => Promise<unknown>) | undefined;
+function install(
+  complete = vi.fn(async () => ({ ok: false as const, reason: 'none' as const })),
+  resolvePrincipal = vi.fn((_event: unknown, clientId: unknown) => (clientId === 'desktop-client' ? 'desktop:1' : null)),
+) {
+  let handler: ((event: unknown, clientId: unknown, request: unknown) => Promise<unknown>) | undefined;
   const ipcMain = {
     handle: vi.fn((channel: string, listener: typeof handler) => { if (channel === TERMINAL_COMPLETE_CHANNEL) handler = listener; }),
     removeHandler: vi.fn(),
   };
-  const dispose = installTerminalCompletionIpc(ipcMain as never, complete);
-  return { invoke: (request: unknown) => handler!({}, request), complete, ipcMain, dispose };
+  const dispose = installTerminalCompletionIpc(ipcMain as never, complete, resolvePrincipal as never);
+  return { invoke: (request: unknown, clientId: unknown = 'desktop-client') => handler!({}, clientId, request), complete, ipcMain, dispose };
 }
 
 describe('terminal completion IPC', () => {
@@ -18,6 +21,13 @@ describe('terminal completion IPC', () => {
     const { invoke, complete } = install();
     await expect(invoke({ sessionId: 's1', line: 'cd sr', caret: 5, extra: 'x' })).resolves.toEqual({ ok: false, reason: 'none' });
     expect(complete).toHaveBeenCalledWith({ sessionId: 's1', line: 'cd sr', caret: 5 });
+  });
+
+  it('refuses a caller that is not an authenticated desktop surface', async () => {
+    const { invoke, complete } = install();
+    await expect(invoke({ sessionId: 's1', line: 'cd sr', caret: 5 }, 'someone-else')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(invoke({ sessionId: 's1', line: 'cd sr', caret: 5 }, null)).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    expect(complete).not.toHaveBeenCalled();
   });
 
   it('refuses malformed requests without asking the interpreter', async () => {

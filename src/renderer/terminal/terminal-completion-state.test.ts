@@ -45,6 +45,25 @@ describe('applyCompletion', () => {
     expect(applied.list?.replaceEnd).toBe(1);
   });
 
+  it('leaves the caret inside a quoted folder and replaces through its closing quote next time', () => {
+    const line = { line: 'cd Pro', caret: 6 };
+    const first = applyCompletion(line, line, result({
+      replaceStart: 3, replaceEnd: 6, commonText: '"Program Files\\\\"', commonCaretBack: 1,
+      candidates: [{ label: 'Program Files\\', kind: 'directory', insertText: '"Program Files\\\\"', caretBack: 1 }],
+    }));
+    expect(first.edit).toEqual({ line: 'cd "Program Files\\\\"', caret: 19 });
+    // Several matches inside it: the shared part closes the quote, a chosen one replaces all of it.
+    const inside = { line: 'cd "Program Files\\\\"', caret: 19 };
+    const second = applyCompletion(inside, inside, result({
+      replaceStart: 3, replaceEnd: 20, commonText: '"Program Files\\\\T"', commonCaretBack: 1, candidates: [
+        { label: 'Tool\\', kind: 'directory', insertText: '"Program Files\\\\Tool\\\\"', caretBack: 1 },
+        { label: 'Tests\\', kind: 'directory', insertText: '"Program Files\\\\Tests\\\\"', caretBack: 1 },
+      ],
+    }));
+    expect(second.edit).toEqual({ line: 'cd "Program Files\\\\T"', caret: 20 });
+    expect(chooseCandidate(second.edit!.line, second.list!, 0)).toEqual({ line: 'cd "Program Files\\\\Tool\\\\"', caret: 25 });
+  });
+
   it('ignores an answer for a line or caret that moved, and a refusal', () => {
     expect(applyCompletion({ line: 'cd sr', caret: 5 }, { line: 'cd src', caret: 6 }, result())).toEqual({ edit: null, list: null });
     expect(applyCompletion({ line: 'cd sr', caret: 5 }, { line: 'cd sr', caret: 5 }, { ok: false, reason: 'busy' })).toEqual({ edit: null, list: null });

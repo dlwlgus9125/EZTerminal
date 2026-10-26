@@ -19,6 +19,7 @@ test('Tab completes files, folders and PATH commands; Tab on an empty line moves
   test.setTimeout(180_000);
   const work = createRegisteredE2eTempDir('ezterm-complete-work-');
   mkdirSync(path.join(work, 'alpha-folder'));
+  mkdirSync(path.join(work, 'my folder'));
   writeFileSync(path.join(work, 'alpine.txt'), 'alpine\n');
   writeFileSync(path.join(work, 'beta.txt'), 'beta\n');
   const bin = createRegisteredE2eTempDir('ezterm-complete-bin-');
@@ -67,6 +68,17 @@ test('Tab completes files, folders and PATH commands; Tab on an empty line moves
     await input.fill('cd al');
     await input.press('Tab');
     await expect(input).toHaveValue('cd alpha-folder\\');
+
+    // A folder with a space comes back quoted and closed: the line runs as it stands.
+    await input.fill('cd my');
+    await input.press('Tab');
+    await expect(input).toHaveValue('cd "my folder\\\\"');
+    await input.press('Enter');
+    await expect(pane.getByTestId('block').last()).toHaveAttribute('data-status', 'done', { timeout: 20_000 });
+    await expect(pane.getByTestId('prompt-cwd')).toHaveAttribute('title', /my folder\\?$/u);
+    await input.fill(`cd ${quoted(work)}`);
+    await input.press('Enter');
+    await expect(pane.getByTestId('block').last()).toHaveAttribute('data-status', 'done', { timeout: 20_000 });
 
     // The command position: executables on PATH, without their extension.
     await input.fill('ezfakec');

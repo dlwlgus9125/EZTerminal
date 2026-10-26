@@ -3100,6 +3100,7 @@ app.on('ready', async () => {
   featureIpcDisposers.push(installTerminalCompletionIpc(
     ipcMain,
     (request) => broker?.complete(request) ?? Promise.resolve({ ok: false, reason: 'unavailable' }),
+    resolveDesktopSessionPrincipal,
   ));
 
   const bindSshForwardService = (target: UtilityProcess): void => {

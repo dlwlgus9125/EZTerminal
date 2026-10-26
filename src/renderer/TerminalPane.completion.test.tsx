@@ -164,6 +164,33 @@ describe('TerminalPane Tab completion', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  it('Esc drops an answer still on its way', async () => {
+    const input = await renderPane();
+    type(input, 'cd sr');
+    press(input, 'Tab');
+    press(input, 'Escape');
+    await answer({ ok: true, replaceStart: 3, replaceEnd: 5, commonText: 's', truncated: false, candidates: [
+      { label: 'src\\', kind: 'directory', insertText: 'src\\' }, { label: 'srv\\', kind: 'directory', insertText: 'srv\\' },
+    ] });
+    expect(input.value).toBe('cd sr');
+    expect(list()).toBeNull();
+  });
+
+  it('clicking in the line closes the list, so Tab asks again instead of taking an old candidate', async () => {
+    const input = await renderPane();
+    type(input, 'cat s');
+    press(input, 'Tab');
+    await answer({ ok: true, replaceStart: 4, replaceEnd: 5, commonText: 's', truncated: false, candidates: [
+      { label: 'scripts\\', kind: 'directory', insertText: 'scripts\\' }, { label: 'src\\', kind: 'directory', insertText: 'src\\' },
+    ] });
+    expect(list()).not.toBeNull();
+    act(() => { input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+    expect(list()).toBeNull();
+    press(input, 'Tab');
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(input.value).toBe('cat s');
+  });
+
   it('drops an answer for a line that changed while it was on its way', async () => {
     const input = await renderPane();
     type(input, 'cd sr');

@@ -438,12 +438,15 @@ export function TerminalPane({
     requestAnimationFrame(() => cmdInputRef.current?.focus());
   }, []);
 
-  const queueBlockAttachment = useCallback((entry: TerminalBlockEntry): void => {
+  /** `automatic`: the newest-block attach on entering the AI input, which leaves a block already waiting for its target alone. */
+  const queueBlockAttachment = useCallback((entry: TerminalBlockEntry, automatic = false): void => {
     const controller = entry.controller;
     if (!controller) return;
     const attachment = terminalOutputAttachment(entry.id, controller.command, excerptFromController(controller), t('terminalAi.chipLabel'));
     const targetKey = aiTargetKeyRef.current;
-    setPendingAttachments((current) => [...current.filter((item) => item.runId !== entry.id), { runId: entry.id, attachment, targetKey }]);
+    setPendingAttachments((current) => (automatic && current.some((item) => item.runId === entry.id)
+      ? current
+      : [...current.filter((item) => item.runId !== entry.id), { runId: entry.id, attachment, targetKey }]));
   }, [t]);
 
   /** Open the AI input; attach the given block, or else the newest finished one if it was not offered yet. */
@@ -455,7 +458,7 @@ export function TerminalPane({
     } else {
       const latest = [...blocksRef.current].reverse()
         .find((entry) => entry.controller && entry.controller.getSnapshot().status !== 'running');
-      if (latest && !offeredRunsRef.current.has(latest.id)) queueBlockAttachment(latest);
+      if (latest && !offeredRunsRef.current.has(latest.id)) queueBlockAttachment(latest, true);
     }
     setAiNotice(null);
     setInputMode('ai');
@@ -1729,6 +1732,8 @@ export function TerminalPane({
             closeCompletion();
           }}
           onBlur={closeCompletion}
+          // Clicking in the line moves the caret away from what the list would replace.
+          onMouseDown={closeCompletion}
           onKeyDown={(e) => {
             const copySelection = capturePaneCopySelection();
             if (copySelection) {
@@ -1800,6 +1805,8 @@ export function TerminalPane({
               return;
             }
             const plainKey = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.nativeEvent.isComposing;
+            // Esc also drops an answer still on its way (the key goes on as usual).
+            if (e.key === 'Escape' && !openCompletion) completionSeqRef.current += 1;
             if (openCompletion) {
               // The open list: arrows move, Enter/Tab take, Esc closes; any other key closes it and goes on.
               if (plainKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
