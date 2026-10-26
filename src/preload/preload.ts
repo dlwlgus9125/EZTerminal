@@ -269,6 +269,8 @@ const api: EzTerminalApi = {
     ipcRenderer.invoke('daemon:get-claude-enablement', sessionSurfaceClientId),
   setClaudeProviderEnablement: (enablement) =>
     ipcRenderer.invoke('daemon:set-claude-enablement', sessionSurfaceClientId, enablement),
+  askSideQuestion: (request) => ipcRenderer.invoke('agent-side-question:ask', sessionSurfaceClientId, request),
+  cancelSideQuestion: (requestId) => ipcRenderer.send('agent-side-question:cancel', requestId),
 
   getAgentActivitySnapshot: () => ipcRenderer.invoke('agents:get-snapshot'),
   onAgentActivitySnapshot: (

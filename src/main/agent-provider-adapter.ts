@@ -2,6 +2,7 @@ import type { ApprovalRequest, ApprovalResponse } from '../shared/approval-reque
 import type { ChatMessageContext } from '../shared/chat-message';
 import type { AgentExtensionCommand, ProviderCapabilityCatalog } from '../shared/agent-capabilities';
 import type { AgentUsageLimitsReading } from '../shared/agent-usage';
+import type { SideQuestionExchange } from '../shared/agent-side-question';
 import type {
   DaemonCommand,
   DaemonTranscriptItem,
@@ -227,6 +228,8 @@ export interface AgentProviderAdapter {
     readonly permissionPreset?: PermissionPreset;
   }): Promise<ProviderSessionHandle>;
   resolveApproval(input: ProviderApprovalDecision): Promise<void>;
+  /** /btw: one tool-less answer from this live session's context; never a turn, never recorded or persisted. */
+  askSideQuestion?(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer>;
 
   subscribe(listener: AgentProviderEventListener): () => void;
   reconcile(input: ProviderReconciliationInput, signal?: AbortSignal): Promise<ProviderReconciliationResult>;
@@ -235,6 +238,29 @@ export interface AgentProviderAdapter {
   deactivate(): Promise<void>;
   /** Permanently release the adapter and its event listeners during application shutdown. */
   dispose(): Promise<void>;
+}
+
+export interface ProviderSideQuestionInput {
+  readonly sessionId: string;
+  readonly providerSessionId: string;
+  readonly question: string;
+  readonly history: readonly SideQuestionExchange[];
+}
+
+export interface ProviderSideQuestionAnswer {
+  readonly text: string | null;
+  readonly synthetic: boolean;
+  readonly fallbackNotice?: string;
+}
+
+export type ProviderSideQuestionFailure = 'not-live' | 'session-restarted' | 'cancelled' | 'unsupported' | 'failed';
+
+/** Carries only a code: provider errors could echo the question. */
+export class ProviderSideQuestionError extends Error {
+  constructor(readonly code: ProviderSideQuestionFailure) {
+    super(`Side question ${code}.`);
+    this.name = 'ProviderSideQuestionError';
+  }
 }
 
 export function validateProviderProbe(result: ProviderProbeResult): void {

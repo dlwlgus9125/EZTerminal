@@ -52,6 +52,8 @@ import { automationEnabled } from './automation-time';
 import { WorkflowAuthority } from './workflow-authority';
 import { WorkflowDraftStore } from './workflow-draft-store';
 import { AgentCapabilityService } from './agent-capability-service';
+import { createAgentSideQuestionHost } from './agent-side-question-service';
+import { installAgentSideQuestionIpc } from './agent-side-question-ipc';
 import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema, type AgentCapabilitiesClient } from '../shared/agent-capabilities';
 import { installPlanningIpc } from './planning-ipc';
 import { PlanningExecutionStore } from './planning-execution-store';
@@ -1030,6 +1032,7 @@ app.on('ready', async () => {
   const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
     agentUsage: (snapshot) => daemonAgentRuntime.agentUsage(snapshot),
     attention: (snapshot) => hostAttentionRef.current?.attention(snapshot),
+    sideQuestionSessions: (snapshot) => daemonAgentRuntime.sideQuestionSessionIds(snapshot),
     handlers: {
       ...daemonAgentRuntime.handlers(),
       ...daemonAutomationRuntime.handlers(),
@@ -2177,6 +2180,15 @@ app.on('ready', async () => {
   ipcMain.handle('workflow:preview', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? workflowAuthority.preview(request) : { ok: false, message: 'An authenticated application surface is required.' });
   ipcMain.handle('agent-capabilities:list', (event, clientId, request) => resolveDesktopSessionPrincipal(event, clientId) ? agentCapabilities.list(request) : { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' });
   ipcMain.handle('agent-capabilities:manage', (event, clientId, command) => resolveDesktopSessionPrincipal(event, clientId) ? agentCapabilities.manage(command) : { ok: false, code: 'forbidden', message: 'An authenticated application surface is required.' });
+  // /btw: answered from a live conversation's context; never a daemon command, never stored.
+  const sideQuestionHost = createAgentSideQuestionHost({
+    ready: () => Promise.all([projectWorkspaceAuthorityReady, daemonAvailabilityReady]),
+    available: () => daemonAvailability?.state === 'ready',
+    ask: (input, signal) => daemonAgentRuntime.askSideQuestion(input, signal),
+  });
+  featureIpcDisposers.push(installAgentSideQuestionIpc({
+    ipc: ipcMain, host: sideQuestionHost, resolveDesktopPrincipal: resolveDesktopSessionPrincipal, ingress: localAgentOperationIngress,
+  }));
   const chatStateReady = Promise.all([projectWorkspaceAuthorityReady, daemonAvailabilityReady]);
   const isChatEncryptionAvailable = (): boolean => safeStorage.isEncryptionAvailable()
     && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text');
@@ -4555,6 +4567,7 @@ app.on('ready', async () => {
       workflowPreviewSource: workflowAuthority,
       agentCapabilitiesSource: agentCapabilities,
       providerModelsSource: remoteProviderModels,
+      sideQuestionSource: sideQuestionHost,
       planningRunSource: planningRunAuthority,
         planningAiSource: planningAiAuthority,
         planningAssetSource: planningAssetAuthority,

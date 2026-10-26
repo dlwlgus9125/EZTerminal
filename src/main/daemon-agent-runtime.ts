@@ -23,7 +23,10 @@ import type {
   AgentProviderEvent,
   ProviderSessionContext,
   ProviderSessionHandle,
+  ProviderSideQuestionAnswer,
 } from './agent-provider-adapter';
+import { ProviderSideQuestionError } from './agent-provider-adapter';
+import type { SideQuestionExchange } from '../shared/agent-side-question';
 import type {
   DaemonCommandExecutionContext,
   DaemonCommandExecutionResult,
@@ -467,6 +470,56 @@ export class DaemonAgentRuntime {
   /** Usage for a snapshot: each live conversation's AI limits and context, and each AI's limits. */
   agentUsage(snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>): Pick<DaemonSnapshot, 'agentUsage' | 'providerUsage'> {
     return this.agentUsageTracker.snapshot(snapshot);
+  }
+
+  /**
+   * Conversations a /btw can be asked in right now: their provider session is attached in this
+   * run (a message was sent, or a running turn rehydrated it) and the adapter answers side questions.
+   */
+  sideQuestionSessionIds(snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>): readonly string[] {
+    return snapshot.agents
+      .filter((agent) => this.attachedProviderSessions.has(agent.sessionId) && agent.providerSessionId
+        && this.options.providers.supportsSideQuestions(agent.providerId)
+        && !snapshot.sessions.find((session) => session.id === agent.sessionId)?.archivedAt)
+      .map((agent) => agent.sessionId);
+  }
+
+  /**
+   * One side question on an attached provider session. Never attaches, resumes or commits
+   * anything: the question and answer leave no turn, transcript item, event or store change.
+   */
+  async askSideQuestion(
+    input: { readonly sessionId: string; readonly question: string; readonly history: readonly SideQuestionExchange[] },
+    signal: AbortSignal,
+  ): Promise<ProviderSideQuestionAnswer> {
+    if (this.disposed) throw new ProviderSideQuestionError('not-live');
+    const target = () => {
+      const snapshot = this.options.getSnapshot();
+      const agent = snapshot.agents.find((entry) => entry.sessionId === input.sessionId);
+      if (!agent?.providerSessionId || !this.sideQuestionSessionIds({ sessions: snapshot.sessions, agents: [agent] }).length) return undefined;
+      const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+      return provider.ok && provider.value.askSideQuestion ? { agent, provider: provider.value, providerSessionId: agent.providerSessionId } : undefined;
+    };
+    if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
+    const first = target();
+    if (!first) throw new ProviderSideQuestionError('not-live');
+    // Wait out a settings relaunch in progress without joining the queue: a side question delays nothing.
+    const pending = this.providerHandleOperations.get(JSON.stringify([first.agent.providerId, first.providerSessionId]));
+    if (pending) {
+      await Promise.race([
+        pending.catch(() => undefined),
+        new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
+      ]);
+    }
+    if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
+    const current = target();
+    if (!current || current.providerSessionId !== first.providerSessionId) throw new ProviderSideQuestionError('not-live');
+    return current.provider.askSideQuestion!({
+      sessionId: input.sessionId,
+      providerSessionId: current.providerSessionId,
+      question: input.question,
+      history: input.history,
+    }, signal);
   }
 
   dispose(mode: 'explicit-quit' | 'process-loss' = 'explicit-quit'): Promise<void> {
@@ -1610,7 +1663,7 @@ export class DaemonAgentRuntime {
       } }] },
       afterCommit: () => {
         this.advanceProviderLifecycle(current.id);
-        for (const target of providerSessions) this.attachedProviderSessions.delete(target.sessionId);
+        for (const target of providerSessions) this.setProviderAttached(target.sessionId, false);
         for (const sessionId of orchestrationSessionIds) {
           try {
             this.options.revokeOrchestrationForSession?.(sessionId);
@@ -2015,7 +2068,7 @@ export class DaemonAgentRuntime {
             continue;
           }
           providerSessionId = handle.providerSessionId;
-          this.attachedProviderSessions.add(selected.session.id);
+          this.setProviderAttached(selected.session.id, true);
         }
         await this.providerHandleOperations.get(JSON.stringify([selected.agent.providerId, providerSessionId]));
         if (!this.attachedProviderSessions.has(selected.session.id)) await this.rehydrateSession(selected.session.id);
@@ -2873,6 +2926,22 @@ export class DaemonAgentRuntime {
       : result;
   }
 
+  /**
+   * The only writer of `attachedProviderSessions`. The snapshot's `sideQuestionSessionIds` derives
+   * from it, so a real change for a provider with side questions emits one event (clients refetch).
+   */
+  private setProviderAttached(sessionId: string, attached: boolean): void {
+    if (this.attachedProviderSessions.has(sessionId) === attached) return;
+    if (attached) this.attachedProviderSessions.add(sessionId);
+    else this.attachedProviderSessions.delete(sessionId);
+    const providerId = this.options.getSnapshot().agents.find((agent) => agent.sessionId === sessionId)?.providerId;
+    if (!providerId || !this.options.providers.supportsSideQuestions(providerId)) return;
+    // Callers include afterCommit hooks, which run inside a command: never await a commit here.
+    this.runBackground('side question availability', async () => {
+      await this.transition(() => ({ events: [{ kind: 'entity.upserted', payload: { entityType: 'agent', entityId: sessionId } }] }));
+    });
+  }
+
   private transition(planner: DaemonSystemTransitionPlanner): Promise<unknown> {
     return this.options.applySystemCommit((snapshot) => (
       this.disposed ? undefined : planner(snapshot)
@@ -3310,7 +3379,7 @@ export class DaemonAgentRuntime {
       });
       if (!attached) {
         await this.disposeProviderSession(provider.value, sessionId, handle.providerSessionId);
-      } else this.attachedProviderSessions.add(sessionId);
+      } else this.setProviderAttached(sessionId, true);
     } catch (error) {
       if (!isCurrent()) return;
       await this.markSessionDeliveryUncertain(
@@ -3451,7 +3520,7 @@ export class DaemonAgentRuntime {
     sessionId: string,
     providerSessionId: string,
   ): Promise<void> {
-    this.attachedProviderSessions.delete(sessionId);
+    this.setProviderAttached(sessionId, false);
     try {
       await provider.disposeSession(sessionId, providerSessionId);
     } catch (error) {

@@ -1,6 +1,6 @@
 import { resizeWindow } from './workbench-navigation';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { createRegisteredE2eTempDir, expect, test } from './test';
@@ -95,6 +95,12 @@ test('New Agent opens a draft tab without creating structured daemon work', asyn
     await draft.getByTestId('structured-agent-composer-input').click();
     await window.keyboard.press('Shift+Tab');
     await expect(plan).toHaveAttribute('aria-pressed', 'true');
+    // A draft has no live conversation: no btw button, and `/btw …` is never the first message.
+    await expect(draft.getByTestId('structured-agent-btw')).toHaveCount(0);
+    await draft.getByTestId('structured-agent-composer-input').fill('/btw hi');
+    await draft.getByTestId('structured-agent-composer-input').press('Escape');
+    await draft.getByTestId('structured-agent-composer-input').press('Enter');
+    await expect(draft.getByTestId('structured-agent-composer-input')).toHaveValue('/btw hi');
 
     const after = await window.evaluate(async () => (
       globalThis.window.ezterminal.getDaemonSnapshot()
@@ -283,6 +289,52 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await window.screenshot({ path: path.join(evidenceDirectory, 'after-first-send.png') });
     await testInfo.attach('after-first-send', { path: path.join(evidenceDirectory, 'after-first-send.png'), contentType: 'image/png' });
 
+    // /btw: a side question on the live conversation, answered in a floating window from an
+    // ephemeral fork. It never becomes a turn, a transcript item or the conversation's input.
+    const lastInputBeforeBtw = readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8');
+    const transcriptBeforeBtw = await window.evaluate((id) => globalThis.window.ezterminal.getDaemonTranscript(id), sessionId!);
+    await expect.poll(() => window.evaluate(async (id) => (await globalThis.window.ezterminal.getDaemonSnapshot())?.sideQuestionSessionIds?.includes(id) ?? false, sessionId!)).toBe(true);
+    await expect(session.getByTestId('structured-agent-btw')).toBeVisible();
+    await composer.fill('/btw what did you just say?');
+    await composer.press('Escape');
+    await composer.press('Enter');
+    const sideWindow = session.getByTestId('side-question-window');
+    await expect(sideWindow).toHaveAttribute('aria-modal', 'false');
+    await expect(sideWindow).toContainText('Fixture side answer: the reply said the fixture was ready.');
+    await expect(composer).toHaveValue('');
+    const fork = JSON.parse(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-forks.jsonl'), 'utf8').trim().split('\n').at(-1)!) as Record<string, unknown>;
+    expect(fork).toMatchObject({ threadId: 'fixture-thread-1', ephemeral: true, excludeTurns: true, sandbox: 'read-only', approvalPolicy: 'never' });
+    expect(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-side-input.json'), 'utf8')).toContain('what did you just say?');
+    expect(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8')).toBe(lastInputBeforeBtw);
+    const afterBtw = await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot());
+    expect(afterBtw?.turns.filter((turn) => turn.sessionId === sessionId)).toHaveLength(1);
+    expect(await window.evaluate((id) => globalThis.window.ezterminal.getDaemonTranscript(id), sessionId!)).toEqual(transcriptBeforeBtw);
+    await window.screenshot({ path: path.join(evidenceDirectory, 'side-question.png') });
+    await testInfo.attach('side-question', { path: path.join(evidenceDirectory, 'side-question.png'), contentType: 'image/png' });
+    await sideWindow.getByTestId('side-question-input').press('Escape');
+    await expect(sideWindow).toHaveCount(0);
+
+    // While the next turn runs: /btw answers beside it, the turn goes on, and the message box's draft stays valid.
+    const replyConfig = path.join(userDataDir, 'ezterminal-e2e-codex-reply.json');
+    writeFileSync(replyConfig, JSON.stringify({ chars: 400, chunks: 8, chunkDelayMs: 500, startDelayMs: 2_000 }));
+    await composer.fill('Stream a slow reply.');
+    await composer.press('Enter');
+    await expect.poll(() => window.evaluate(async (id) => (await globalThis.window.ezterminal.getDaemonSnapshot())?.agents
+      .find((agent) => agent.sessionId === id)?.state, sessionId!)).toBe('working');
+    await composer.fill('/btw are you still working?');
+    await composer.press('Enter');
+    await expect(sideWindow.locator('.side-question__exchange').last()).toHaveAttribute('data-status', 'answered');
+    expect(await window.evaluate(async (id) => (await globalThis.window.ezterminal.getDaemonSnapshot())?.agents
+      .find((agent) => agent.sessionId === id)?.state, sessionId!)).toBe('working');
+    // Clearing the box for /btw mid-turn must not save the old caret into the empty draft (secure draft rejects it).
+    await expect(session.getByText('Invalid chat draft or pending submission.')).toHaveCount(0);
+    await expect.poll(() => window.evaluate(async (id) => (await globalThis.window.ezterminal.getDaemonSnapshot())?.turns
+      .filter((turn) => turn.sessionId === id).map((turn) => turn.state), sessionId!), { timeout: 30_000 }).toEqual(['completed', 'completed']);
+    await expect(session.getByText('Invalid chat draft or pending submission.')).toHaveCount(0);
+    await window.screenshot({ path: path.join(evidenceDirectory, 'side-question-during-turn.png') });
+    rmSync(replyConfig, { force: true });
+    await sideWindow.getByTestId('side-question-close').click();
+
     // `/clear` starts over in this same tab with the same settings, and never reaches the model;
     // text after it starts the new conversation's message box.
     const tabs = window.locator('.ez-dock .dv-tab');
@@ -310,7 +362,7 @@ test('New Agent keeps a newer compatible Codex ready while Claude consent is pen
     await expect(cleared.getByTestId('structured-agent-usage-context')).toHaveCount(0);
     const afterClear = await window.evaluate(() => globalThis.window.ezterminal.getDaemonSnapshot());
     expect(afterClear?.sessions.find((candidate) => candidate.id === sessionId)?.state).not.toBe('archived');
-    expect(afterClear?.turns.filter((turn) => turn.sessionId === sessionId)).toHaveLength(1);
+    expect(afterClear?.turns.filter((turn) => turn.sessionId === sessionId)).toHaveLength(2);
     expect(readFileSync(path.join(userDataDir, 'ezterminal-e2e-codex-last-input.json'), 'utf8')).toBe(providerInput);
     // The replaced conversation's provider is released rather than kept until quit.
     const clearedThread = afterClear?.agents.find((candidate) => candidate.sessionId === sessionId)?.providerSessionId;

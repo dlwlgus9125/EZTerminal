@@ -56,6 +56,8 @@ export interface DaemonCommandRouterOptions {
   readonly agentUsage?: (snapshot: Pick<DaemonSnapshot, 'sessions' | 'agents'>) => Pick<DaemonSnapshot, 'agentUsage' | 'providerUsage'>;
   /** What waits on the person (src/main/host-attention-service.ts); none until the host computes it. */
   readonly attention?: (snapshot: DaemonSnapshot) => DaemonSnapshot['attention'];
+  /** Sessions with a live provider that answers /btw (DaemonAgentRuntime.sideQuestionSessionIds). */
+  readonly sideQuestionSessions?: (snapshot: DaemonSnapshot) => readonly string[];
 }
 
 function commandError(
@@ -169,6 +171,7 @@ export class DaemonCommandRouter {
   private readonly now: () => Date;
   private readonly agentUsage: DaemonCommandRouterOptions['agentUsage'];
   private readonly attention: DaemonCommandRouterOptions['attention'];
+  private readonly sideQuestionSessions: DaemonCommandRouterOptions['sideQuestionSessions'];
   private acceptingCommands = true;
 
   constructor(
@@ -179,16 +182,19 @@ export class DaemonCommandRouter {
     this.now = options.now ?? (() => new Date());
     this.agentUsage = options.agentUsage;
     this.attention = options.attention;
+    this.sideQuestionSessions = options.sideQuestionSessions;
   }
 
   getSnapshot(): DaemonSnapshot {
     const snapshot = this.store.getSnapshot();
     const usage = this.agentUsage?.(snapshot);
     const attention = this.attention?.(snapshot);
+    const sideQuestionSessionIds = this.sideQuestionSessions?.(snapshot);
     return {
       ...snapshot,
       ...(usage && (usage.agentUsage || usage.providerUsage) ? usage : {}),
       ...(attention ? { attention } : {}),
+      ...(sideQuestionSessionIds?.length ? { sideQuestionSessionIds } : {}),
     };
   }
 

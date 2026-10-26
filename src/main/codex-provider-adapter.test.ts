@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { parseApprovalRequest } from '../shared/approval-request';
+import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
 import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import type { ProviderLaunchDescriptor } from '../shared/daemon-provider';
 import { parseTranscriptPayload } from '../shared/transcript-payload';
@@ -11,6 +12,8 @@ import type {
   AgentProviderEvent,
   ProviderSessionContext,
 } from './agent-provider-adapter';
+import { ProviderSideQuestionError } from './agent-provider-adapter';
+import { CodexJsonRpcError } from './codex-app-server-client';
 import type {
   CodexAppServerConnection,
   CodexConnectionClose,
@@ -2232,6 +2235,290 @@ describe('Codex usage', () => {
     advance(60_000);
     await adapter.listModels().catch(() => undefined);
     expect(reads()).toBe(2);
+    await adapter.dispose();
+  });
+});
+
+describe('Codex side questions (/btw)', () => {
+  const question = 'Which file holds the PORTAL_SECRET_7 setting?';
+  const instruction = 'This is a side question about the conversation so far. You have NO tools: do not run commands, '
+    + 'read files, edit anything or start sub-agents. Answer only from what is already in this conversation, in one short reply.';
+
+  async function sideQuestionFixture() {
+    const connection = new FakeCodexConnection();
+    const adapter = await attachedAdapter(connection);
+    const events: AgentProviderEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    let forks = 0;
+    const defaults = {
+      fork: async (): Promise<unknown> => ({ thread: { id: `fork-${++forks}` }, model: 'gpt-5.6-sol' }),
+      forkTurn: async (threadId: string): Promise<unknown> => ({ turn: { id: `${threadId}-turn`, status: 'inProgress', items: [] } }),
+    };
+    const replies = { ...defaults };
+    connection.requestImpl = async (method, params) => {
+      const threadId = (params as { threadId?: string }).threadId ?? '';
+      if (method === 'thread/fork') return replies.fork();
+      if (method === 'turn/start') return threadId === 'thread-1' ? { turn: { id: 'parent-turn-1' } } : replies.forkTurn(threadId);
+      if (method === 'turn/interrupt') return {};
+      if (method === 'thread/unsubscribe') return { status: 'notLoaded' };
+      throw new Error(`Unexpected request: ${method}`);
+    };
+    const ask = (signal = new AbortController().signal, history: readonly SideQuestionExchange[] = []) => adapter.askSideQuestion({
+      sessionId: 'session-1', providerSessionId: 'thread-1', question, history,
+    }, signal);
+    const sent = (method: string): unknown[] => connection.requests.filter((request) => request.method === method).map((request) => request.params);
+    const forkTurnStarts = (): Array<{ readonly threadId: string; readonly input: ReadonlyArray<{ readonly text: string }> }> => sent('turn/start')
+      .filter((params) => (params as { threadId?: string }).threadId !== 'thread-1') as Array<{ threadId: string; input: Array<{ text: string }> }>;
+    /** The fork's turn/start went out and its response was taken in. */
+    const forkTurnStarted = async (count = 1): Promise<void> => {
+      await vi.waitFor(() => expect(forkTurnStarts()).toHaveLength(count));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const fork = (method: string, params: Record<string, unknown> = {}, threadId = 'fork-1'): Promise<void> => connection.emitNotification(method, {
+      threadId, turnId: `${threadId}-turn`, ...params,
+    });
+    return { adapter, connection, events, replies, defaults, ask, sent, forkTurnStarts, forkTurnStarted, fork };
+  }
+
+  /** Every failure is a bare code: a provider message could echo the question. */
+  async function expectFailure(pending: Promise<unknown>, code: string): Promise<void> {
+    const error = await pending.then(() => undefined, (caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ProviderSideQuestionError);
+    expect(error).toMatchObject({ code });
+    expect((error as Error).message).not.toContain('PORTAL_SECRET_7');
+  }
+
+  it('forks the live thread ephemerally, read-only and without approvals, and answers from the completed agent message', async () => {
+    const { adapter, events, ask, sent, forkTurnStarts, forkTurnStarted, fork } = await sideQuestionFixture();
+    const answered = ask();
+    await forkTurnStarted();
+    expect(sent('thread/fork')).toEqual([{
+      threadId: 'thread-1', ephemeral: true, excludeTurns: true, sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
+    }]);
+    expect(forkTurnStarts()).toEqual([{
+      threadId: 'fork-1', clientUserMessageId: expect.stringMatching(/^side-question:/u),
+      input: [{ type: 'text', text: `${instruction}\n\nQuestion: ${question}`, text_elements: [] }],
+    }]);
+    await fork('item/started', { item: { id: 'msg-1', type: 'agentMessage', text: '' } });
+    await fork('item/agentMessage/delta', { itemId: 'msg-1', delta: 'It is ' });
+    await fork('item/completed', { item: { id: 'msg-1', type: 'agentMessage', text: 'It is src/config.ts.' } });
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', error: null, items: [] } });
+    await expect(answered).resolves.toEqual({ text: 'It is src/config.ts.', synthetic: false });
+    expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }]);
+    expect(sent('turn/interrupt')).toEqual([]);
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('sends earlier side questions after the instruction, and falls back to the streamed text, capped, or to no answer', async () => {
+    const { adapter, ask, sent, forkTurnStarts, forkTurnStarted, fork } = await sideQuestionFixture();
+    const streamed = ask(undefined, [{ question: 'Which port?', answer: 'Port 4100.' }, { question: 'And the host?', answer: 'localhost' }]);
+    await forkTurnStarted();
+    expect(forkTurnStarts()[0]?.input[0]?.text).toBe(
+      `${instruction}\n\nEarlier side questions in this thread:\nQ: Which port?\nA: Port 4100.\nQ: And the host?\nA: localhost\n\nQuestion: ${question}`,
+    );
+    await fork('item/agentMessage/delta', { itemId: 'msg-1', delta: 'It is ' });
+    await fork('item/agentMessage/delta', { itemId: 'msg-1', delta: 'src/config.ts.' });
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', items: [] } });
+    await expect(streamed).resolves.toEqual({ text: 'It is src/config.ts.', synthetic: false });
+
+    const capped = ask();
+    await forkTurnStarted(2);
+    await fork('item/completed', { item: { id: 'msg-2', type: 'agentMessage', text: 'x'.repeat(SIDE_QUESTION_MAX_ANSWER_CHARS + 5_000) } }, 'fork-2');
+    await fork('turn/completed', { turn: { id: 'fork-2-turn', status: 'completed', items: [] } }, 'fork-2');
+    await expect(capped).resolves.toEqual({ text: 'x'.repeat(SIDE_QUESTION_MAX_ANSWER_CHARS), synthetic: false });
+
+    const silent = ask();
+    await forkTurnStarted(3);
+    await fork('turn/completed', { turn: { id: 'fork-3-turn', status: 'completed', items: [] } }, 'fork-3');
+    await expect(silent).resolves.toEqual({ text: null, synthetic: false });
+    expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }, { threadId: 'fork-2' }, { threadId: 'fork-3' }]);
+    await adapter.dispose();
+  });
+
+  it('keeps the fork\'s whole stream away from the app while the conversation\'s own turn runs on', async () => {
+    const { adapter, connection, events, ask, forkTurnStarted, fork } = await sideQuestionFixture();
+    await adapter.submit({ sessionId: 'session-1', providerSessionId: 'thread-1', turnId: 'turn-1', commandId: 'command-1', prompt: 'Work' });
+    const before = events.length;
+    const answered = ask();
+    await forkTurnStarted();
+    const tokenUsage = { total: { totalTokens: 250_000 }, last: { totalTokens: 250_000 }, modelContextWindow: 258_400 };
+    await fork('turn/started', { turn: { id: 'fork-1-turn', status: 'inProgress', items: [] } });
+    await fork('thread/status/changed', { status: { type: 'active' } });
+    await fork('item/started', { item: { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: question }] } });
+    await fork('item/completed', { item: { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: question }] } });
+    await fork('item/started', { item: { id: 'think-1', type: 'reasoning', summary: [] } });
+    await fork('item/completed', { item: { id: 'think-1', type: 'reasoning', summary: ['Looking back'] } });
+    await fork('thread/tokenUsage/updated', { tokenUsage });
+    await fork('item/agentMessage/delta', { itemId: 'msg-1', delta: 'src/config.ts' });
+    await fork('error', { error: { message: `Reconnecting for ${question}` }, willRetry: true });
+    await fork('turn/plan/updated', { plan: [{ step: 'Answer', status: 'inProgress' }] });
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', error: null, items: [] } });
+    await expect(answered).resolves.toEqual({ text: 'src/config.ts', synthetic: false });
+    await fork('thread/tokenUsage/updated', { tokenUsage });
+    await fork('error', { error: { message: question }, willRetry: false });
+    expect(events.slice(before)).toEqual([]);
+
+    await connection.emitNotification('thread/tokenUsage/updated', {
+      threadId: 'thread-1', turnId: 'parent-turn-1', tokenUsage: { total: { totalTokens: 19120 }, last: { totalTokens: 19120 }, modelContextWindow: 258400 },
+    });
+    await connection.emitNotification('turn/completed', { threadId: 'thread-1', turn: { id: 'parent-turn-1', status: 'completed', error: null, items: [] } });
+    expect(events.slice(before)).toEqual([
+      { kind: 'usage', sessionId: 'session-1', contextPercent: 3 },
+      expect.objectContaining({ kind: 'turn-finished', sessionId: 'session-1', turnId: 'turn-1', outcome: 'completed' }),
+      expect.objectContaining({ kind: 'session-state', sessionId: 'session-1', state: 'idle' }),
+    ]);
+    await adapter.dispose();
+  });
+
+  it('interrupts and lets go of the fork when the ask is cancelled, and never forks for an ask already cancelled', async () => {
+    const { adapter, events, ask, sent, forkTurnStarted, fork } = await sideQuestionFixture();
+    const controller = new AbortController();
+    const cancelled = ask(controller.signal);
+    await forkTurnStarted();
+    controller.abort();
+    await expectFailure(cancelled, 'cancelled');
+    expect(sent('turn/interrupt')).toEqual([{ threadId: 'fork-1', turnId: 'fork-1-turn' }]);
+    expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }]);
+    // The interrupted turn's own end stays unseen.
+    await fork('error', { error: { message: 'Turn aborted' }, willRetry: false });
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'interrupted', error: null, items: [] } });
+    expect(events).toEqual([]);
+
+    const aborted = new AbortController();
+    aborted.abort();
+    await expectFailure(ask(aborted.signal), 'cancelled');
+    expect(sent('thread/fork')).toHaveLength(1);
+    await adapter.dispose();
+  });
+
+  it('lets go of a fork that answers only after its ask was cancelled', async () => {
+    const { adapter, replies, ask, sent } = await sideQuestionFixture();
+    let answerFork!: (value: unknown) => void;
+    replies.fork = () => new Promise((resolve) => { answerFork = resolve; });
+    const controller = new AbortController();
+    const cancelled = ask(controller.signal);
+    await vi.waitFor(() => expect(sent('thread/fork')).toHaveLength(1));
+    controller.abort();
+    await expectFailure(cancelled, 'cancelled');
+    answerFork({ thread: { id: 'late-fork' } });
+    await vi.waitFor(() => expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'late-fork' }]));
+    expect(sent('turn/start')).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('stops a fork that starts any tool and answers with what it said so far, marked synthetic', async () => {
+    const { adapter, events, ask, sent, forkTurnStarted, fork } = await sideQuestionFixture();
+    const tools = ['commandExecution', 'fileChange', 'mcpToolCall', 'webSearch', 'collabAgentToolCall'];
+    for (const [index, type] of tools.entries()) {
+      const threadId = `fork-${index + 1}`;
+      const answered = ask();
+      await forkTurnStarted(index + 1);
+      await fork('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Let me check the config.' }, threadId);
+      await fork('item/started', { item: { id: `tool-${index}`, type, tool: 'spawn_agent', status: 'inProgress', receiverThreadIds: ['child-thread'] } }, threadId);
+      await expect(answered).resolves.toEqual({ text: 'Let me check the config.', synthetic: true });
+      expect(sent('turn/interrupt').at(-1)).toEqual({ threadId, turnId: `${threadId}-turn` });
+      expect(sent('thread/unsubscribe').at(-1)).toEqual({ threadId });
+      await fork('item/completed', { item: { id: `tool-${index}`, type, status: 'interrupted' } }, threadId);
+      await fork('turn/completed', { turn: { id: `${threadId}-turn`, status: 'interrupted', items: [] } }, threadId);
+    }
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('declines whatever the fork asks for at once, without asking the person', async () => {
+    const { adapter, connection, events, ask, forkTurnStarted, fork } = await sideQuestionFixture();
+    const answered = ask();
+    await forkTurnStarted();
+    const on = { threadId: 'fork-1', turnId: 'fork-1-turn', itemId: 'item-1' };
+    await expect(connection.serverRequest('item/commandExecution/requestApproval', 'fork-command', { ...on, approvalId: 'a-1', command: 'git status' }))
+      .resolves.toEqual({ decision: 'decline' });
+    await expect(connection.serverRequest('item/fileChange/requestApproval', 'fork-file', on)).resolves.toEqual({ decision: 'decline' });
+    await expect(connection.serverRequest('item/permissions/requestApproval', 'fork-permissions', { ...on, permissions: { network: { enabled: true } } }))
+      .resolves.toEqual({ permissions: {}, scope: 'turn' });
+    await expect(connection.serverRequest('execCommandApproval', 'fork-legacy', { conversationId: 'fork-1', callId: 'call-1', command: ['git', 'push'] }))
+      .resolves.toEqual({ decision: { denied: { rejection: 'Denied by the user in EZTerminal.' } } });
+    await expect(connection.serverRequest('item/tool/requestUserInput', 'fork-input', {
+      ...on, isBlocking: true, questions: [{ id: 'scope', question: 'Which file?', isSecret: false, options: [] }],
+    })).resolves.toEqual({ answers: {} });
+    await expect(connection.serverRequest('mcpServer/elicitation/request', 'fork-mcp', {
+      threadId: 'fork-1', turnId: 'fork-1-turn', serverName: 'ezterminal_orchestration', mode: 'form',
+      _meta: { codex_approval_kind: 'mcp_tool_call' }, message: 'Run preview_workflow?', requestedSchema: { type: 'object', properties: {} },
+    })).resolves.toEqual({ action: 'decline', content: null, _meta: null });
+    await fork('turn/completed', { turn: { id: 'fork-1-turn', status: 'completed', items: [] } });
+    await expect(answered).resolves.toEqual({ text: null, synthetic: false });
+    // A request from the fork after its ask ended is declined too.
+    await expect(connection.serverRequest('item/commandExecution/requestApproval', 'fork-late', { ...on, command: 'git push' }))
+      .resolves.toEqual({ decision: 'decline' });
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('fails by code alone, never echoing the question: not live, unsupported or failed', async () => {
+    const { adapter, events, replies, defaults, ask, sent, forkTurnStarted, fork } = await sideQuestionFixture();
+    await expectFailure(adapter.askSideQuestion({ sessionId: 'session-2', providerSessionId: 'thread-1', question, history: [] }, new AbortController().signal), 'not-live');
+    await expectFailure(adapter.askSideQuestion({ sessionId: 'session-1', providerSessionId: 'thread-old', question, history: [] }, new AbortController().signal), 'not-live');
+    expect(sent('thread/fork')).toEqual([]);
+
+    replies.fork = async () => { throw new CodexJsonRpcError('thread/fork', -32601, 'Method not found: thread/fork'); };
+    await expectFailure(ask(), 'unsupported');
+    replies.fork = async () => { throw new CodexJsonRpcError('thread/fork', -32600, 'Invalid request: unknown variant `thread/fork`'); };
+    await expectFailure(ask(), 'unsupported');
+    replies.fork = async () => { throw new CodexJsonRpcError('thread/fork', -32600, `Thread busy while asking "${question}"`); };
+    await expectFailure(ask(), 'failed');
+    replies.fork = defaults.fork;
+
+    replies.forkTurn = async () => { throw new Error(`turn/start rejected "${question}"`); };
+    await expectFailure(ask(), 'failed');
+    expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }]);
+    replies.forkTurn = defaults.forkTurn;
+
+    const errored = ask();
+    await forkTurnStarted(2);
+    await fork('error', { error: { message: `The model failed on "${question}"` }, willRetry: false }, 'fork-2');
+    await expectFailure(errored, 'failed');
+    expect(sent('turn/interrupt')).toEqual([{ threadId: 'fork-2', turnId: 'fork-2-turn' }]);
+    // The failed turn's own end arrives later and stays unseen.
+    await fork('turn/completed', { turn: { id: 'fork-2-turn', status: 'failed', error: { message: question }, items: [] } }, 'fork-2');
+
+    const failedTurn = ask();
+    await forkTurnStarted(3);
+    await fork('turn/completed', { turn: { id: 'fork-3-turn', status: 'failed', error: { message: question }, items: [] } }, 'fork-3');
+    await expectFailure(failedTurn, 'failed');
+    expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }, { threadId: 'fork-2' }, { threadId: 'fork-3' }]);
+    expect(events).toEqual([]);
+    await adapter.dispose();
+  });
+
+  it('ends a pending side question as not live when its conversation stops or the adapter is disposed', async () => {
+    const { adapter, ask, sent, forkTurnStarted } = await sideQuestionFixture();
+    const pending = ask();
+    await forkTurnStarted();
+    await adapter.disposeSession('session-1', 'thread-1');
+    await expectFailure(pending, 'not-live');
+    // The fork is let go before the conversation's own thread.
+    expect(sent('turn/interrupt')).toEqual([{ threadId: 'fork-1', turnId: 'fork-1-turn' }]);
+    expect(sent('thread/unsubscribe')).toEqual([{ threadId: 'fork-1' }, { threadId: 'thread-1' }]);
+    await expectFailure(ask(), 'not-live');
+    await adapter.dispose();
+
+    const other = await sideQuestionFixture();
+    const disposed = other.ask();
+    await other.forkTurnStarted();
+    await other.adapter.dispose();
+    await expectFailure(disposed, 'not-live');
+    // The app-server stops with the adapter: nothing is sent to it.
+    expect(other.sent('thread/unsubscribe')).toEqual([]);
+  });
+
+  it('fails a pending side question when the app-server dies, without a request that would start it again', async () => {
+    const { adapter, connection, ask, sent, forkTurnStarted } = await sideQuestionFixture();
+    const pending = ask();
+    await forkTurnStarted();
+    connection.crash();
+    await expectFailure(pending, 'failed');
+    expect(sent('turn/interrupt')).toEqual([]);
+    expect(sent('thread/unsubscribe')).toEqual([]);
     await adapter.dispose();
   });
 });

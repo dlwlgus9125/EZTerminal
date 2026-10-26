@@ -1,0 +1,252 @@
+/* /btw side question: a non-modal window floating up from the message box (desktop),
+   or the same thread inside the host bottom sheet (Android). Tokens only. */
+
+/* Same column as the message box, so the window lines up with its right edge. */
+.side-question-anchor {
+  position: relative;
+  flex: none;
+  width: min(calc(100% - 2rem), var(--ui-chat-max-width));
+  height: 0;
+  margin: 0 auto;
+}
+
+.side-question {
+  position: absolute;
+  right: 0;
+  bottom: var(--ui-space-2);
+  z-index: var(--ui-z-sticky);
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  min-height: 0;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-overlay);
+  color: var(--ui-text-primary);
+  overflow: hidden;
+}
+
+.side-question__grip {
+  position: absolute;
+  z-index: 1;
+  background: transparent;
+}
+
+.side-question__grip--width {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0.375rem;
+  cursor: ew-resize;
+}
+
+.side-question__grip--height {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0.375rem;
+  cursor: ns-resize;
+}
+
+.side-question__grip:hover,
+.side-question__grip:focus-visible {
+  background: var(--ui-accent-muted);
+  outline: none;
+}
+
+.side-question__grip:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ui-focus);
+}
+
+.side-question__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-space-1);
+  padding: var(--ui-space-2) var(--ui-space-2) var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.side-question__heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-question__heading h2 {
+  margin: 0;
+  font: 600 var(--ui-font-size-sm) / var(--ui-line-height-tight) var(--ui-font-label);
+}
+
+.side-question__heading p,
+.side-question__subtitle {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.side-question__thread {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: var(--ui-space-3);
+  overflow: auto;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+}
+
+.side-question__empty {
+  margin: auto 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-sm);
+  text-align: center;
+}
+
+.side-question__exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+
+.side-question__question {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-chat-user-bubble);
+}
+
+.side-question__who {
+  display: block;
+  margin-bottom: var(--ui-space-1);
+  color: var(--ui-text-muted);
+  font: 600 var(--ui-font-size-2xs) / 1 var(--ui-font-label);
+}
+
+.side-question__question p {
+  margin: 0;
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height-relaxed);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.side-question__answer {
+  max-width: 100%;
+  font-size: var(--ui-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.side-question__pending,
+.side-question__note,
+.side-question__error p {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+.side-question__pending svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.side-question__error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.side-question__error p {
+  color: var(--ui-danger);
+}
+
+.side-question__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.side-question__composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.5rem;
+  max-height: 8rem;
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
+  font: var(--ui-font-size-sm) / var(--ui-line-height-normal) var(--ui-font-body);
+  resize: none;
+}
+
+.side-question__composer textarea:focus-visible {
+  border-color: var(--ui-focus);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--ui-focus);
+}
+
+.side-question__reason {
+  margin: 0;
+  padding: 0 var(--ui-space-3) var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+}
+
+/* Android sheet: the host sheet sizes and scrolls; the thread just flows. */
+.side-question--sheet {
+  position: static;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: var(--ui-space-2);
+}
+
+.side-question--sheet .side-question__thread {
+  padding: var(--ui-space-2) 0;
+  max-height: 55vh;
+}
+
+.side-question--sheet .side-question__composer {
+  padding: var(--ui-space-2) 0 0;
+}
+
+.side-question--sheet .side-question__composer textarea {
+  min-height: 2.75rem;
+  font-size: var(--ui-font-size-md);
+}
+
+.side-question--sheet .chat-composer__send {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.chat-composer__btw {
+  width: 2rem;
+  height: 2rem;
+}
+
+.chat-composer__btw > svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.chat-composer__btw[aria-expanded='true'] {
+  background: var(--ui-accent-muted);
+  color: var(--ui-accent);
+}
+.side-question__thread:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}

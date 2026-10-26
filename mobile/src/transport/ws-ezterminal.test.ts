@@ -288,6 +288,47 @@ describe('WsEzTerminalTransport — zero-turn capability envelopes', () => {
     expect(await malformed).toMatchObject({ ok: false, code: 'provider-operation-failed' });
     transport.disconnect();
   });
+  it('asks /btw only of a PC that says it answers, and settles on reply, cancel, timeout and disconnect', async () => {
+    const request = { requestId: 'btw-1', sessionId: 'session-1', question: 'Which file?', history: [] };
+    const older = makeCreateSocket();
+    const before = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket: older.createSocket });
+    older.sockets[0].triggerOpen(); older.sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 17 });
+    const sentBefore = older.sockets[0].sent.length;
+    expect(before.supportsSideQuestions).toBe(false);
+    expect(await before.askSideQuestion(request)).toEqual({ ok: false, code: 'unsupported' });
+    expect(older.sockets[0].sent).toHaveLength(sentBefore);
+    before.disconnect();
+
+    vi.useFakeTimers();
+    try {
+      const { createSocket, sockets } = makeCreateSocket();
+      // Liveness probes are pushed out so only the side question's own timer runs out.
+      const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, livenessIdleMs: 10_000_000, livenessCheckMs: 10_000_000 });
+      sockets[0].triggerOpen(); sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 17, capabilities: ['side-questions-v1'] });
+      expect(transport.supportsSideQuestions).toBe(true);
+      const answered = transport.askSideQuestion(request);
+      expect(sockets[0].lastSent()).toEqual({ kind: 'side-question-ask', ...request });
+      sockets[0].triggerMessage({ kind: 'side-question-reply', requestId: 'btw-1', result: { ok: true, answer: 'src/config.ts', synthetic: false } });
+      expect(await answered).toEqual({ ok: true, answer: 'src/config.ts', synthetic: false });
+      const malformed = transport.askSideQuestion({ ...request, requestId: 'btw-2' });
+      sockets[0].triggerMessage({ kind: 'side-question-reply', requestId: 'btw-2', result: { ok: true, answer: 1 } });
+      expect(await malformed).toEqual({ ok: false, code: 'failed' });
+      const cancelled = transport.askSideQuestion({ ...request, requestId: 'btw-3' });
+      transport.cancelSideQuestion('btw-3');
+      expect(sockets[0].lastSent()).toEqual({ kind: 'side-question-cancel', requestId: 'btw-3' });
+      expect(await cancelled).toEqual({ ok: false, code: 'cancelled' });
+      const slow = transport.askSideQuestion({ ...request, requestId: 'btw-4' });
+      vi.advanceTimersByTime(316_000);
+      expect(await slow).toEqual({ ok: false, code: 'timeout' });
+      expect(sockets[0].lastSent()).toEqual({ kind: 'side-question-cancel', requestId: 'btw-4' });
+      const lost = transport.askSideQuestion({ ...request, requestId: 'btw-5' });
+      sockets[0].triggerClose?.();
+      transport.disconnect();
+      expect(await lost).toEqual({ ok: false, code: 'unavailable' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('rejects a correlated catalog for another workspace and mismatched command receipts', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

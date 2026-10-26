@@ -4,6 +4,12 @@ import { ConversationResolveResultSchema, type ConversationRef, type Conversatio
   type ConversationQuery, type ConversationPage, type ConversationReadResult, type HistoryResumePreparationRequest,
   type HistoryResumePreparation, type HistoryResumeRequest, type HistoryResumeResult, type ConversationHistoryFailure } from '../../../src/shared/conversation-history';
 import { AgentCapabilityListResultSchema, AgentExtensionResultSchema, type AgentCapabilitiesClient, type AgentCapabilitiesRequest, type AgentExtensionCommand } from '../../../src/shared/agent-capabilities';
+import {
+  AgentSideQuestionResultSchema,
+  SIDE_QUESTION_HOST_TIMEOUT_MS,
+  type AgentSideQuestionRequest,
+  type AgentSideQuestionResult,
+} from '../../../src/shared/agent-side-question';
 import { RemoteOpenClawClient } from './remote-openclaw-client';
 import { mobileWorkflowDraftAccess } from '../mobile-workflow-draft-store';
 import type { WorkflowDraftResult, WorkflowDraftWrite } from '../../../src/shared/workflow-draft';
@@ -158,6 +164,7 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
+  REMOTE_CAPABILITY_SIDE_QUESTIONS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   REMOTE_PROTOCOL_VERSION_AGENT_CAPABILITIES,
@@ -444,6 +451,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingPlanningReads = new Map<string, { projectId: string; resolve: (result: PlanningReadResult) => void }>();
   private readonly pendingPlanningRuns = new Map<string, { projectId: string; commandId?: string; resolve: (result: PlanningRunResult) => void }>();
   private readonly pendingPlanningExtensions = new Map<string, { replyKind: string; resolve: (value: unknown) => void }>();
+  /** /btw asks in flight; held in memory only and settled on reply, cancel, timeout or disconnect. */
+  private readonly pendingSideQuestions = new Map<string, (result: AgentSideQuestionResult) => void>();
   private readonly legacyConversations = new LegacyConversationHistory(this);
   private readonly pendingPlanningResults = new Map<string, { query: PlanningResultQuery; resolve: (result: PlanningResultQueryResult) => void }>();
   private readonly pendingPlanningCommands = new Map<string, { command: PlanningCommand; resolve: (result: PlanningMutationResult) => void }>();
@@ -2033,6 +2042,34 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.remoteCapabilities.has(REMOTE_CAPABILITY_DESKTOP_CONTROL);
   }
 
+  /** The connected PC answers /btw side questions (`side-questions-v1`). */
+  get supportsSideQuestions(): boolean {
+    return this.remoteCapabilities.has(REMOTE_CAPABILITY_SIDE_QUESTIONS);
+  }
+
+  askSideQuestion(request: AgentSideQuestionRequest): Promise<AgentSideQuestionResult> {
+    // An older PC would drop the unknown request and this ask would never settle.
+    if (!this.supportsSideQuestions) return Promise.resolve({ ok: false, code: 'unsupported' });
+    const timedOut: AgentSideQuestionResult = { ok: false, code: 'timeout' };
+    return new Promise((resolve) => {
+      const settle = (result: AgentSideQuestionResult): void => {
+        if (result === timedOut) this.send({ kind: 'side-question-cancel', requestId: request.requestId });
+        resolve(result);
+      };
+      const started = this.tryStartTimedMapRequest({ kind: 'side-question-ask', ...request }, this.pendingSideQuestions,
+        request.requestId, settle, SIDE_QUESTION_HOST_TIMEOUT_MS + 15_000, timedOut);
+      if (!started) resolve({ ok: false, code: 'unavailable' });
+    });
+  }
+
+  cancelSideQuestion(requestId: string): void {
+    const pending = this.pendingSideQuestions.get(requestId);
+    if (!pending) return;
+    this.pendingSideQuestions.delete(requestId);
+    this.send({ kind: 'side-question-cancel', requestId });
+    pending({ ok: false, code: 'cancelled' });
+  }
+
   startDesktopControl(
     viewport?: DesktopVideoViewport,
     qualityPreference?: DesktopQualityPreference,
@@ -2766,6 +2803,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.pendingPlanningRuns.clear();
     for (const pending of this.pendingPlanningExtensions.values()) pending.resolve({ ok: false, error: 'unavailable', message: 'Connection lost. Reconcile the saved request before sending again.' });
     this.pendingPlanningExtensions.clear();
+    for (const settle of this.pendingSideQuestions.values()) settle({ ok: false, code: 'unavailable' });
+    this.pendingSideQuestions.clear();
     for (const { resolve } of this.pendingPlanningResults.values()) resolve({ ok: false, message: 'PC connection was lost.' });
     this.pendingPlanningResults.clear();
     if (this.daemonEventsRefcount > 0) {
@@ -3169,6 +3208,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
                   capability === REMOTE_CAPABILITY_QUICK_COMMANDS_READ
                   || capability === REMOTE_CAPABILITY_DESKTOP_CONTROL
                   || capability === REMOTE_CAPABILITY_PROVIDER_MODELS_READ
+                  || capability === REMOTE_CAPABILITY_SIDE_QUESTIONS
                 ),
               )
             : [],
@@ -3447,6 +3487,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         const parsed = PlanningReadResultSchema.safeParse(msg.result);
         pending.resolve(parsed.success && (!parsed.data.ok || parsed.data.snapshot.projectId === pending.projectId)
           ? parsed.data : { ok: false, error: 'invalid', message: 'The host returned an invalid planning snapshot.' });
+        break;
+      }
+      case 'side-question-reply': {
+        const settle = this.pendingSideQuestions.get(msg.requestId);
+        this.pendingSideQuestions.delete(msg.requestId);
+        if (!settle) break;
+        const parsed = AgentSideQuestionResultSchema.safeParse(msg.result);
+        settle(parsed.success ? parsed.data : { ok: false, code: 'failed' });
         break;
       }
       case 'planning-ai-reply':

@@ -102,8 +102,20 @@ async function main(): Promise<void> {
     await waitFor(`!!document.querySelector('.mobile-v2-draft-status[data-state="saved"]')`, 'live composer recovery ready');
     await waitFor(`document.querySelector(${JSON.stringify(input)}).value === ''`, 'accepted draft cleared');
     await capture('04-after-first-send');
+    // /btw on the phone: the button asks the box's text in a bottom sheet; nothing becomes a turn, Back closes it.
+    await waitForTestId('structured-agent-btw');
+    await setTestIdTextValue('structured-agent-composer-input', 'what did you just say?');
+    await tapTestId('structured-agent-btw');
+    await waitForTestId('side-question-sheet');
+    await waitFor(`document.querySelector('[data-testid="side-question-sheet"]').textContent.indexOf('Fixture side answer') >= 0`, 'side answer');
+    await capture('05-side-question');
+    snapshot = await host.evaluate(() => window.ezterminal.getDaemonSnapshot());
+    assert.equal(snapshot?.turns.length, 1);
+    runAdb(['shell', 'input', 'keyevent', 'KEYCODE_BACK']);
+    await waitForTestIdHidden('side-question-sheet', 15_000);
+    await waitForTestId('structured-agent-session');
     const chrome = await evaluateWebView(CHROME_BANDS_PROBE);
-    await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ ok: true, androidApi: runAdb(['shell', 'getprop', 'ro.build.version.sdk']).trim(), provider: 'deterministic Codex fixture', chrome, checks: ['CLI history opens directly', 'reading starts no provider', 'full process restart retains draft', 'restart sends nothing', 'explicit first send creates one session and turn'], inputMethod: 'native Android navigation taps and controlled WebView composer input' }, null, 2));
+    await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ ok: true, androidApi: runAdb(['shell', 'getprop', 'ro.build.version.sdk']).trim(), provider: 'deterministic Codex fixture', chrome, checks: ['CLI history opens directly', 'reading starts no provider', 'full process restart retains draft', 'restart sends nothing', 'explicit first send creates one session and turn', 'btw answers in a bottom sheet without a turn', 'Back closes the btw sheet'], inputMethod: 'native Android navigation taps and controlled WebView composer input' }, null, 2));
   } catch (error) {
     await capture('failure').catch(() => undefined);
     const text = await evaluateWebView<string>('document.body.innerText').catch(() => 'WebView unavailable');

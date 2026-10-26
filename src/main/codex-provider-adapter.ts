@@ -30,10 +30,16 @@ import type {
   ProviderReconciliationResult,
   ProviderSessionContext,
   ProviderSessionHandle,
+  ProviderSideQuestionAnswer,
+  ProviderSideQuestionFailure,
+  ProviderSideQuestionInput,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
+import { ProviderSideQuestionError } from './agent-provider-adapter';
+import { SIDE_QUESTION_MAX_ANSWER_CHARS, type SideQuestionExchange } from '../shared/agent-side-question';
 import {
   CodexAppServerClient,
+  CodexJsonRpcError,
   type CodexAppServerClientOptions,
   type CodexAppServerConnection,
   type CodexJsonRpcId,
@@ -61,6 +67,14 @@ const MAX_PRE_RESPONSE_ITEMS = 2_000;
 const TURN_ITEM_METHODS = new Set(['item/started', 'item/completed', 'turn/plan/updated', 'item/agentMessage/delta', 'item/reasoning/summaryTextDelta', 'item/reasoning/textDelta', 'item/plan/delta']);
 const MAX_STARTED_ITEMS = 64;
 const MAX_SUBMITTED_COMMANDS = 64;
+/** /btw: said in the fork's user text, after the cached conversation, so the prefix stays cached. */
+const SIDE_QUESTION_INSTRUCTION = 'This is a side question about the conversation so far. You have NO tools: do not run commands, '
+  + 'read files, edit anything or start sub-agents. Answer only from what is already in this conversation, in one short reply.';
+/** Items a side question's fork may produce; any other item is a tool and stops it. */
+// Talking, thinking, a plan outline and an automatic compaction are not tools; anything else stops the fork.
+const SIDE_QUESTION_ITEM_TYPES = new Set(['userMessage', 'agentMessage', 'reasoning', 'plan', 'contextCompaction']);
+/** Forks whose ask ended; their late frames (an interrupted turn's end, late usage) are still dropped. */
+const MAX_ENDED_SIDE_QUESTIONS = 64;
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_ARGV = ['app-server'] as const;
 const CODEX_ENVIRONMENT_VARIABLE_NAMES = [
@@ -166,6 +180,17 @@ interface PendingApproval {
   readonly turnId?: string;
   readonly params: JsonObject;
   readonly resolve: (response: unknown) => void;
+}
+
+/** A /btw in flight on an ephemeral fork of a session's thread; the fork's frames reach only this ask. */
+interface SideQuestion {
+  readonly sessionId: string;
+  /** Set once thread/fork answers, before the fork's turn starts. */
+  threadId?: string;
+  turnId?: string;
+  readonly frame: (method: string, params: JsonObject) => void;
+  /** Rejects the ask; `connectionGone` skips the cleanup a dead app-server cannot take (a request would respawn it). */
+  readonly end: (code: ProviderSideQuestionFailure, connectionGone?: boolean) => void;
 }
 
 export interface CodexProviderAdapterOptions {
@@ -297,6 +322,19 @@ function sameRoots(left: readonly string[], right: readonly string[]): boolean {
 
 function threadIdFromParams(params: JsonObject): string | undefined {
   return asString(params.threadId) ?? asString(params.conversationId);
+}
+
+function sideQuestionPrompt(question: string, history: readonly SideQuestionExchange[]): string {
+  const earlier = history.length
+    ? [`Earlier side questions in this thread:\n${history.map((entry) => `Q: ${entry.question}\nA: ${entry.answer}`).join('\n')}`]
+    : [];
+  return [SIDE_QUESTION_INSTRUCTION, ...earlier, `Question: ${question}`].join('\n\n');
+}
+
+/** An app-server without `thread/fork`, however its version words an unknown method. */
+function forkUnsupported(error: unknown): boolean {
+  return error instanceof CodexJsonRpcError
+    && (error.code === -32601 || /method not found|unknown method|unknown variant/iu.test(error.message));
 }
 
 function turnStatus(value: unknown): 'completed' | 'interrupted' | 'failed' {
@@ -779,6 +817,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   /** Sub-agent threads (any depth) by thread id; their notifications route to the sub-agent. */
   private readonly subagentThreads = new Map<string, SessionState>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly sideQuestions = new Set<SideQuestion>();
+  private readonly endedSideQuestionThreads = new Set<string>();
   private readonly unregister: Array<() => void> = [];
   private launchDescriptor: ProviderLaunchDescriptor | undefined;
   private lifecycleTail: Promise<void> = Promise.resolve();
@@ -1388,6 +1428,133 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.emit({ kind: 'session-state', sessionId: input.sessionId, state: 'working' });
   }
 
+  /**
+   * /btw: one tool-less turn on an ephemeral fork of the live thread (read-only, approvals never). The
+   * fork reuses the thread's cached prefix and adds nothing to its history; its frames reach only this
+   * ask (no row, usage, approval or provider error) and it is unsubscribed however the ask ends. The
+   * requests carry no signal, so a fork that answers after a cancel is still let go. No timeout here:
+   * the host bounds it through `signal`.
+   */
+  async askSideQuestion(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer> {
+    const connection = this.connection;
+    if (this.disposed || !connection || this.sessions.get(input.sessionId)?.providerSessionId !== input.providerSessionId) {
+      throw new ProviderSideQuestionError('not-live');
+    }
+    if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
+    return new Promise<ProviderSideQuestionAnswer>((resolve, reject) => {
+      let settled = false;
+      let turnDone = false;
+      let completedText = '';
+      let streamed = '';
+      const answer = (): string | null => (completedText || streamed).slice(0, SIDE_QUESTION_MAX_ANSWER_CHARS) || null;
+      const release = (): void => {
+        const threadId = question.threadId;
+        if (!threadId || this.connection !== connection) return;
+        if (question.turnId && !turnDone) void connection.request('turn/interrupt', { threadId, turnId: question.turnId }).catch(() => undefined);
+        void connection.request('thread/unsubscribe', { threadId }).catch(() => undefined);
+      };
+      const finish = (result: ProviderSideQuestionAnswer | ProviderSideQuestionFailure, connectionGone = false): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        this.sideQuestions.delete(question);
+        if (question.threadId) this.retireSideQuestionThread(question.threadId);
+        if (!connectionGone) release();
+        if (typeof result === 'string') reject(new ProviderSideQuestionError(result));
+        else resolve(result);
+      };
+      const question: SideQuestion = {
+        sessionId: input.sessionId,
+        end: finish,
+        frame: (method, params) => {
+          question.turnId ??= asString(params.turnId) ?? asString(asObject(params.turn)?.id);
+          const item = asObject(params.item);
+          switch (method) {
+            case 'item/agentMessage/delta':
+              if (typeof params.delta === 'string' && streamed.length < SIDE_QUESTION_MAX_ANSWER_CHARS) streamed += params.delta;
+              return;
+            case 'item/started': {
+              // No tools: anything but talking or thinking is stopped, and what was said so far stands.
+              const type = asString(item?.type);
+              if (type && !SIDE_QUESTION_ITEM_TYPES.has(type)) finish({ text: answer(), synthetic: true });
+              return;
+            }
+            case 'item/completed':
+              if (item?.type === 'agentMessage' && typeof item.text === 'string') completedText = item.text;
+              return;
+            case 'error':
+              if (params.willRetry !== true) finish('failed');
+              return;
+            case 'turn/completed': {
+              turnDone = true;
+              const turn = asObject(params.turn);
+              const last = [...asArray(turn?.items)].reverse().map(asObject)
+                .find((entry) => entry?.type === 'agentMessage' && typeof entry.text === 'string');
+              completedText ||= typeof last?.text === 'string' ? last.text : '';
+              const status = turnStatus(turn?.status);
+              // A turn cut short is no full answer: shown, but not carried into later side questions.
+              finish(status === 'failed' && !answer() ? 'failed' : { text: answer(), synthetic: status !== 'completed' });
+              return;
+            }
+            default:
+              return;
+          }
+        },
+      };
+      const onAbort = (): void => finish('cancelled');
+      this.sideQuestions.add(question);
+      signal.addEventListener('abort', onAbort, { once: true });
+      void (async () => {
+        let forked: JsonObject | undefined;
+        try {
+          forked = asObject(await connection.request('thread/fork', {
+            threadId: input.providerSessionId, ephemeral: true, excludeTurns: true,
+            sandbox: 'read-only', approvalPolicy: 'never', threadSource: 'ezterminal',
+          }));
+        } catch (error) {
+          finish(forkUnsupported(error) ? 'unsupported' : 'failed');
+          return;
+        }
+        const threadId = asString(asObject(forked?.thread)?.id);
+        if (!threadId) {
+          finish('failed');
+          return;
+        }
+        // Routed to this ask from here on, before its turn can stream; a fork that answers after the ask ended is let go.
+        question.threadId = threadId;
+        if (settled) {
+          this.retireSideQuestionThread(threadId);
+          release();
+          return;
+        }
+        try {
+          const started = asObject(await connection.request('turn/start', {
+            threadId,
+            clientUserMessageId: `side-question:${this.idFactory()}`,
+            input: [{ type: 'text', text: sideQuestionPrompt(input.question, input.history), text_elements: [] }],
+          }));
+          question.turnId ??= asString(asObject(started?.turn)?.id);
+          if (!question.turnId) finish('failed');
+        } catch {
+          finish('failed');
+        }
+      })();
+    });
+  }
+
+  /** The ask a fork thread streams to; `null` once that ask ended, so the fork's late frames are dropped too. */
+  private sideQuestionOn(threadId: string): SideQuestion | null | undefined {
+    for (const question of this.sideQuestions) if (question.threadId === threadId) return question;
+    return this.endedSideQuestionThreads.has(threadId) ? null : undefined;
+  }
+
+  private retireSideQuestionThread(threadId: string): void {
+    this.endedSideQuestionThreads.add(threadId);
+    if (this.endedSideQuestionThreads.size > MAX_ENDED_SIDE_QUESTIONS) {
+      this.endedSideQuestionThreads.delete(this.endedSideQuestionThreads.values().next().value as string);
+    }
+  }
+
   subscribe(listener: AgentProviderEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -1472,6 +1639,9 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
 
   async disposeSession(sessionId: string, providerSessionId: string): Promise<void> {
     const state = this.requireSession(sessionId, providerSessionId);
+    for (const question of [...this.sideQuestions]) {
+      if (question.sessionId === sessionId) question.end('not-live');
+    }
     state.deltas.dispose();
     this.clearPreResponseLifecycle(state);
     if (state.activeTurn) {
@@ -1509,6 +1679,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     const operation = this.enqueueLifecycle(async () => {
       const connection = this.connection;
       this.connection = undefined;
+      for (const question of [...this.sideQuestions]) question.end('not-live');
       for (const approval of this.pendingApprovals.values()) {
         approval.resolve(this.approvalResponse(approval, 'deny'));
       }
@@ -1645,6 +1816,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     this.unregister.push(
       connection.onNotification('*', (params, method) => this.handleNotification(method, params)),
       connection.onClose((event) => {
+        // The forks died with the app-server: nothing is left to interrupt or unsubscribe.
+        for (const question of [...this.sideQuestions]) question.end('failed', true);
         if (event.expected || this.disposed) return;
         for (const approval of this.pendingApprovals.values()) {
           approval.resolve(this.approvalResponse(approval, 'deny'));
@@ -1710,6 +1883,8 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
   private handleApproval(kind: ApprovalKind, value: unknown, context: CodexServerRequestContext): Promise<unknown> {
     const params = asObject(value);
     const threadId = params ? threadIdFromParams(params) : undefined;
+    // A side question's fork has no tools: whatever it asks for is declined at once, never shown.
+    if (params && threadId && this.sideQuestionOn(threadId) !== undefined) return Promise.resolve(this.approvalResponse({ kind, params }, 'deny'));
     // A sub-agent thread asks through its session: the approval lives there, labelled with the sub-agent.
     const subagent = threadId && !this.sessionIdByProviderId.has(threadId) ? this.subagentThreads.get(threadId) : undefined;
     const sessionId = subagent?.sessionId ?? (threadId ? this.sessionIdByProviderId.get(threadId) : undefined);
@@ -1794,7 +1969,7 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
     };
   }
 
-  private approvalResponse(pending: PendingApproval, decision: 'allow' | 'deny', response?: ApprovalResponse): unknown {
+  private approvalResponse(pending: Pick<PendingApproval, 'kind' | 'params'>, decision: 'allow' | 'deny', response?: ApprovalResponse): unknown {
     if (pending.kind === 'user-input') {
       // Answers are keyed by question text in the card and by question id for Codex.
       const answers = decision === 'allow' && response?.kind === 'answers' ? response.answers : {};
@@ -1872,6 +2047,12 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
       return;
     }
     const providerSessionId = asString(params.threadId);
+    // A side question's fork streams to its ask alone: never to rows, usage, approvals or provider errors.
+    const sideQuestion = providerSessionId ? this.sideQuestionOn(providerSessionId) : undefined;
+    if (sideQuestion !== undefined) {
+      sideQuestion?.frame(method, params);
+      return;
+    }
     const sessionId = providerSessionId ? this.sessionIdByProviderId.get(providerSessionId) : undefined;
     const state = sessionId ? this.sessions.get(sessionId) : undefined;
     const subagent = !state && providerSessionId ? this.subagentThreads.get(providerSessionId) : undefined;

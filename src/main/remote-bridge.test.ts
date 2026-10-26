@@ -4978,6 +4978,63 @@ describe('RemoteBridge - read-only Quick Commands capability', () => {
     expect(ws.sent).toContainEqual({ kind: 'provider-models-list-reply', requestId: 'pm-1', result: { ok: true, value: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', supportsReasoning: false, isDefault: true }] } });
   });
 
+  describe('side questions (/btw)', () => {
+    const ask = { kind: 'side-question-ask', requestId: 'btw-1', sessionId: 'session-1', question: 'Which file?', history: [] } as const;
+    const hanging = () => {
+      const signals: AbortSignal[] = [];
+      return { signals, source: { ask: vi.fn((_request: unknown, signal: AbortSignal) => new Promise<never>(() => { signals.push(signal); })) } };
+    };
+
+    it('answers and advertises side questions, never through a daemon command', async () => {
+      const sideQuestionSource = { ask: vi.fn(async () => ({ ok: true as const, answer: 'src/config.ts', synthetic: false })) };
+      const ws = new FakeWs();
+      const { options } = makeOptions({ sideQuestionSource });
+      await authed(ws, options);
+      expect(ws.sent.find((message) => message.kind === 'auth-ok')).toMatchObject({ capabilities: ['side-questions-v1'] });
+      ws.clientSend(ask);
+      await flush();
+      expect(sideQuestionSource.ask).toHaveBeenCalledWith({ requestId: 'btw-1', sessionId: 'session-1', question: 'Which file?', history: [] }, expect.any(AbortSignal));
+      expect(ws.sent).toContainEqual({ kind: 'side-question-reply', requestId: 'btw-1', result: { ok: true, answer: 'src/config.ts', synthetic: false } });
+    });
+
+    it('cancels without a reply, refuses duplicates and aborts everything when the socket closes', async () => {
+      const { signals, source } = hanging();
+      const ws = new FakeWs();
+      const { options } = makeOptions({ sideQuestionSource: source });
+      await authed(ws, options);
+      ws.clientSend(ask);
+      ws.clientSend(ask);
+      ws.clientSend({ ...ask, requestId: 'btw-2' });
+      await flush();
+      expect(ws.sent).toContainEqual({ kind: 'side-question-reply', requestId: 'btw-1', result: { ok: false, code: 'busy' } });
+      ws.clientSend({ kind: 'side-question-cancel', requestId: 'btw-1' });
+      await flush();
+      expect(signals.map((signal) => signal.aborted)).toEqual([true, false]);
+      expect(ws.sent.filter((message) => message.kind === 'side-question-reply')).toHaveLength(1);
+      ws.close();
+      await flush();
+      expect(signals[1]?.aborted).toBe(true);
+    });
+
+    it('drops malformed asks and says unsupported without a source', async () => {
+      const { source } = hanging();
+      const ws = new FakeWs();
+      const { options } = makeOptions({ sideQuestionSource: source });
+      await authed(ws, options);
+      ws.clientSend({ ...ask, question: '' });
+      ws.clientSend({ ...ask, history: Array(21).fill({ question: 'q', answer: 'a' }) });
+      ws.clientSend({ ...ask, requestId: 'x'.repeat(300) });
+      await flush();
+      expect(source.ask).not.toHaveBeenCalled();
+      const bare = new FakeWs();
+      await authed(bare, makeOptions().options);
+      expect(bare.sent.find((message) => message.kind === 'auth-ok')).not.toHaveProperty('capabilities');
+      bare.clientSend(ask);
+      await flush();
+      expect(bare.sent).toContainEqual({ kind: 'side-question-reply', requestId: 'btw-1', result: { ok: false, code: 'unsupported' } });
+    });
+  });
+
   it('keeps older hosts capability-free and reports unavailable if probed', async () => {
     const ws = new FakeWs();
     const { options } = makeOptions();

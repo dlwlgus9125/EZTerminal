@@ -44,8 +44,12 @@ import type {
   ProviderReconciliationResult,
   ProviderSessionContext,
   ProviderSessionHandle,
+  ProviderSideQuestionAnswer,
+  ProviderSideQuestionInput,
   ProviderSubmitInput,
 } from './agent-provider-adapter';
+import { ProviderSideQuestionError } from './agent-provider-adapter';
+import { SIDE_QUESTION_MAX_ANSWER_CHARS } from '../shared/agent-side-question';
 import {
   buildProviderProcessEnvironment,
   sameEnvironmentVariableSet,
@@ -296,6 +300,19 @@ export interface ClaudeQuerySession extends AsyncIterable<SDKMessage> {
   applyFlagSettings?(settings: { readonly effortLevel?: string | null }): Promise<void>;
   /** Merged settings; `applied` is what the next request uses (in sdk.mjs, not in sdk.d.ts). */
   getSettings?(): Promise<unknown>;
+  /**
+   * Claude Code's /btw (in sdk.mjs, not in sdk.d.ts): a `side_question` control request the CLI
+   * answers from the live thread's cache-safe context with tools denied, one model turn, no
+   * cache write and no transcript. `history` is passed through raw, in the CLI's snake_case.
+   */
+  askSideQuestion?(question: string, options?: {
+    readonly history?: readonly { readonly question: string; readonly response: string; readonly fallback_notice?: string }[];
+    readonly signal?: AbortSignal;
+  }): Promise<{
+    readonly response: string;
+    readonly synthetic?: boolean;
+    readonly refusalFallback?: { readonly originalModel?: string; readonly fallbackModel?: string };
+  } | null>;
   initializationResult(): Promise<unknown>;
   supportedModels(): Promise<ModelInfo[]>;
   supportedCommands?(): Promise<readonly { name: string; description: string }[]>;
@@ -439,6 +456,8 @@ interface SessionRecord {
   readonly transcript: DaemonTranscriptItem[];
   sequence: number;
   disposed: boolean;
+  /** Set just before a settings relaunch closes this query, so in-flight side questions can say why. */
+  endedFor?: 'relaunch';
   initialized: boolean;
   readonly authenticationReady: Promise<void>;
   resolveAuthentication(): void;
@@ -1426,6 +1445,47 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
   }
 
+  /**
+   * /btw on the live query. Deliberately records nothing: no transcript item, event or provider
+   * error (the CLI's `control_request_progress` frames are ignored by handleSystem). The CLI runs
+   * it as a background worker, so it neither waits for nor delays a running turn. No operation
+   * timeout here: the host bounds it through `signal`.
+   */
+  async askSideQuestion(input: ProviderSideQuestionInput, signal: AbortSignal): Promise<ProviderSideQuestionAnswer> {
+    let session: SessionRecord;
+    try {
+      session = this.session(input.sessionId, input.providerSessionId);
+    } catch {
+      throw new ProviderSideQuestionError('not-live');
+    }
+    const ask = session.query.askSideQuestion?.bind(session.query);
+    if (!ask) throw new ProviderSideQuestionError('unsupported');
+    const history = input.history.map((entry) => ({
+      question: entry.question,
+      response: entry.answer,
+      ...(entry.fallbackNotice ? { fallback_notice: entry.fallbackNotice } : {}),
+    }));
+    let reply: Awaited<ReturnType<NonNullable<ClaudeQuerySession['askSideQuestion']>>>;
+    try {
+      reply = await ask(input.question, { ...(history.length ? { history } : {}), signal });
+    } catch {
+      if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
+      if (session.disposed) throw new ProviderSideQuestionError(session.endedFor === 'relaunch' ? 'session-restarted' : 'not-live');
+      throw new ProviderSideQuestionError('failed');
+    }
+    if (signal.aborted) throw new ProviderSideQuestionError('cancelled');
+    if (!reply) return { text: null, synthetic: false };
+    const fallback = reply.refusalFallback;
+    const fallbackNotice = fallback
+      ? `${safeText(fallback.originalModel, 120) || 'The model'} declined; ${safeText(fallback.fallbackModel, 120) || 'another model'} answered.`
+      : undefined;
+    return {
+      text: typeof reply.response === 'string' ? reply.response.slice(0, SIDE_QUESTION_MAX_ANSWER_CHARS) : null,
+      synthetic: reply.synthetic === true,
+      ...(fallbackNotice ? { fallbackNotice } : {}),
+    };
+  }
+
   async setSettings(input: {
     readonly sessionId: string;
     readonly providerSessionId: string;
@@ -1658,6 +1718,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       permissionPreset: overrides.permissionPreset,
     };
     const providerSessionId = session.handle.providerSessionId;
+    session.endedFor = 'relaunch';
     await this.disposeSession(session.context.sessionId, providerSessionId);
     return this.startSession(context, providerSessionId);
   }
@@ -2271,6 +2332,8 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
 
   private handleSystem(session: SessionRecord, message: JsonObject): void {
     const subtype = asString(message.subtype);
+    // `control_request_progress` (a side question's started/api_retry) falls through unrecorded on
+    // purpose: /btw must leave no transcript item or event behind.
     if (subtype === 'init') {
       session.apiKeySource = asString(message.apiKeySource) ?? '';
       this.settleAuthentication(session);

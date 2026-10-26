@@ -261,6 +261,8 @@ export interface DaemonSnapshot {
   readonly providerUsage?: Readonly<Record<string, import('./agent-usage').AgentUsage>>;
   /** What waits on the person, computed by the host (src/shared/host-attention.ts); absent on older hosts. */
   readonly attention?: import('./host-attention').HostAttention;
+  /** Sessions a /btw side question can be asked in now (attached in this host run); never stored. */
+  readonly sideQuestionSessionIds?: readonly string[];
 }
 
 export const DAEMON_COMMAND_TYPES = [

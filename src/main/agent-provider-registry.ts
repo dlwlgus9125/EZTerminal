@@ -242,6 +242,11 @@ export class AgentProviderRegistry {
     return { ok: true, value: adapter };
   }
 
+  /** Whether this provider's adapter answers /btw side questions (no launch side effects). */
+  supportsSideQuestions(providerId: string): boolean {
+    return typeof this.adapters.get(providerId)?.askSideQuestion === 'function';
+  }
+
   async listModels(
     snapshot: Pick<DaemonSnapshot, 'providers'>,
     providerId: string,

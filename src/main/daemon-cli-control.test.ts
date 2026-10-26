@@ -131,6 +131,13 @@ describe('DaemonCliControl', () => {
     expect(scoped).not.toHaveProperty('attention');
   });
 
+  it('keeps live /btw availability out of a project-scoped snapshot', async () => {
+    const { control, setSnapshot } = fixture();
+    setSnapshot({ ...snapshot(), sideQuestionSessionIds: ['session-elsewhere'] });
+    const scoped = (await control.handle('/v1/daemon/snapshot', {}, source))?.body.snapshot as DaemonSnapshot;
+    expect(scoped).not.toHaveProperty('sideQuestionSessionIds');
+  });
+
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
     const { control } = fixture();
     const projects = await control.handle('/v1/daemon/projects', {}, source);

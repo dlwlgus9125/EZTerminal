@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c83cd114bc8da5e28d20e1409873978dabe81dd0c171437a6a536418211f0246",
+        "inputDigest": "sha256:318d21d5d43bf290a3f6c12844b38d679d997d90d4302486c9444d053226bd85",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
+        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:32e8684f194634ac877dfadee7f75a2129fab7f92623f5031388a3a3b87f0275",
+        "inputDigest": "sha256:8f030cf60d18bcdea9edc81cdf3e39a8c24eac193cba3e25b1ccce2ffe2e1be2",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
+        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2c813c470b0e109e6d8fbb667bf9ce50cd6693a4666c440378eed5e1e57a58ac",
+        "inputDigest": "sha256:1df3a4ef5e33d013b9e0bd84a8fa8767c84e17c62312918b4f49d2c54b5acb43",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (final small review): the OpenClaw service is disposed after its coordinator (initialization may still ask it); the cleanup accounts for the baselines the person was shown. Claims hold."
+        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
       }
     },
     {
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d2dd45ab2468e8148fea478618107e015af7e746ead00ebfd08be6ca1507728a",
+        "inputDigest": "sha256:0443db1cc05d8340f2c9fdbb3f63245c4cac33e6fe7491c21e9bee193de76bcb",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
+        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:d097e8c1cc18eb6a43e955bfed2a539b3a3723de342b77bbc4c4ab7810838dff",
+        "inputDigest": "sha256:57258c8ad18c23958187a659e76503430a10ae76a581962365e5f48fcb811bbf",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I2-7f recheck fixes): one gated dry run per cleanup list for all runs left without folders; offered baselines that stay or fail are reported; a later preview rejection is never cleared by an older success. Claims hold."
+        "reason": "Reviewed (/btw side questions): inputs gained a side-question seam, a live-session list in the snapshot, desktop IPC and bridge messages; nothing persisted. Moved blocks reanchored; two claims extended. Existing claims hold."
       }
     }
   ]

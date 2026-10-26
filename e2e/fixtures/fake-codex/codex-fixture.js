@@ -43,6 +43,8 @@ if (args.includes('--version')) {
   let nextTurn = 0;
   const threadConfigs = new Map();
   const threadCwds = new Map();
+  /** /btw forks: their turns answer at once and never touch the conversation's input record. */
+  const forkThreads = new Set();
   const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
   const respond = (frame, result) => write({ jsonrpc: '2.0', id: frame.id, result });
 
@@ -102,8 +104,30 @@ if (args.includes('--version')) {
           respond(frame, { thread: { id: threadId }, model: 'gpt-5.6-fixture' });
           break;
         }
+        case 'thread/fork': {
+          const threadId = `fixture-fork-${++nextThread}`;
+          forkThreads.add(threadId);
+          if (process.env.TMPDIR) fs.appendFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-forks.jsonl'), `${JSON.stringify(frame.params)}
+`);
+          respond(frame, { thread: { id: threadId, ephemeral: true, forkedFromId: frame.params?.threadId }, model: 'gpt-5.6-fixture' });
+          break;
+        }
         case 'turn/start': {
           const threadId = frame.params?.threadId;
+          if (forkThreads.has(threadId)) {
+            const turnId = `fixture-fork-turn-${++nextTurn}`;
+            if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-side-input.json'), JSON.stringify(frame.params?.input));
+            respond(frame, { turn: { id: turnId, status: 'inProgress', items: [] } });
+            setTimeout(() => {
+              write({ jsonrpc: '2.0', method: 'turn/started', params: { threadId, turn: { id: turnId, status: 'inProgress', items: [] } } });
+              write({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId, turnId, itemId: `${turnId}-message`, delta: 'Fixture side ' } });
+              write({ jsonrpc: '2.0', method: 'item/completed', params: { threadId, turnId, completedAtMs: Date.now(), item: { id: `${turnId}-message`, type: 'agentMessage', text: 'Fixture side answer: the reply said the fixture was ready.', phase: null } } });
+              const tokens = { totalTokens: 18800, inputTokens: 18697, cachedInputTokens: 18500, cacheWriteInputTokens: 0, outputTokens: 103, reasoningOutputTokens: 0 };
+              write({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId, turnId, tokenUsage: { total: tokens, last: tokens, modelContextWindow: 258400 } } });
+              write({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed', error: null, items: [] } } });
+            }, 10);
+            break;
+          }
           const turnSequence = ++nextTurn;
           const turnId = `fixture-turn-${turnSequence}`;
           if (process.env.TMPDIR) fs.writeFileSync(path.join(process.env.TMPDIR, 'ezterminal-e2e-codex-last-input.json'), JSON.stringify(frame.params?.input));

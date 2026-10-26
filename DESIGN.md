@@ -108,7 +108,8 @@ navigation anatomy는 UX 계약이 소유한다.
 
 Elevation은 실제 interaction layer를 설명한다. Base workspace, sticky chrome, menu,
 sheet, dialog, toast와 tooltip 순서를 공유 token으로 표현한다. Feature가 임의의 큰
-`z-index`로 새 계층을 만들지 않는다.
+`z-index`로 새 계층을 만들지 않는다. 패널 안에 떠 있는 비모달 창(곁가지 질문 창)은 sticky
+chrome 층에 두어 menu·sheet·dialog 아래에 머물고, scrim 없이 뒤 화면을 활성으로 남긴다.
 
 Shadow는 surface를 canvas에서 분리하는 데 필요한 만큼만 쓴다. Neon bloom은 elevation의
 대체물이 아니며, 모든 card와 text에 반복하지 않는다. Scrim은 뒤 화면이 비활성이라는

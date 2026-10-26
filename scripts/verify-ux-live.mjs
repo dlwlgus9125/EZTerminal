@@ -18,7 +18,7 @@
  * Output: artifacts/ux-overhaul/<stage>-live/*.png and live-report.json
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from '@playwright/test';
@@ -190,6 +190,9 @@ const ALL_SCENARIOS = [
     name: 'codex-results', provider: 'codex', preset: 'full-access', inspectResults: true, focusComposer: true,
     prompt: RESULTS_PROMPT,
   },
+  // /btw: a side question while the next turn runs; nothing of it reaches the turn, transcript or session file.
+  { name: 'claude-btw', run: (page, project, report) => runSideQuestion(page, project, report, 'claude') },
+  { name: 'codex-btw', run: (page, project, report) => runSideQuestion(page, project, report, 'codex') },
 ];
 const SCENARIOS = ALL_SCENARIOS.filter((scenario) => only.length === 0 || only.includes(scenario.name));
 const unknownScenarios = only.filter((name) => !ALL_SCENARIOS.some((scenario) => scenario.name === name));
@@ -426,6 +429,103 @@ async function runScenario(page, project, scenario, report) {
       approvalsAsExpected: handled.size === scenario.expect.approvals,
     } : {}),
     ...(subagents ? { subagents } : {}) });
+  await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
+}
+
+/** Every file below `directory` whose name contains `needle` (bounded walk). */
+function filesNamed(directory, needle, depth = 5) {
+  if (depth < 0 || !existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) return filesNamed(full, needle, depth - 1);
+    return entry.name.includes(needle) ? [full] : [];
+  });
+}
+
+async function runSideQuestion(page, project, report, providerId) {
+  const name = `${providerId}-btw`;
+  // Provider health is probed at start; give it a moment before calling it unavailable.
+  const snap = await poll(() => snapshot(page), (current) => current.providers.some((entry) => entry.id === providerId && entry.enabled && entry.health === 'ready'), 90_000, `${providerId} ready`).catch(() => snapshot(page));
+  const provider = snap.providers.find((entry) => entry.id === providerId);
+  if (!provider?.enabled || provider.health !== 'ready') {
+    report.push({ scenario: name, skipped: `${providerId} is not enabled and ready` });
+    return;
+  }
+  const sessionId = `ux-live-${name}-${Date.now()}`;
+  const created = await command(page, 'agent.create', {
+    sessionId, workspaceId: project.workspaceId, title: `UX live · ${name}`, providerId, permissionPreset: 'standard',
+    // Codex shell commands hang under this PC's unelevated workspace-write sandbox, so its first turn needs no tool.
+    initialPrompt: providerId === 'codex'
+      ? '도구는 쓰지 말고, 내가 정한 암호는 "파란 등대"라고 기억해 둬. 한 문장으로 확인만 해 줘.'
+      : 'README.md를 읽고 이 프로젝트가 무엇인지 한 문장으로 요약해 줘. 파일은 수정하지 마.',
+  });
+  if (!created?.ok) throw new Error(`${name}: agent.create failed ${JSON.stringify(created)}`);
+  const panelId = `agent-session-${SESSION_PREFIX}${sessionId}`;
+  await page.evaluate(({ id, historyId, title, projectId }) => window.__ezAddDockPanel({
+    id, component: 'agent-session', title, params: { historyId, projectId },
+  }, { kind: 'main-tab' }), { id: panelId, historyId: `${SESSION_PREFIX}${sessionId}`, title: name, projectId: project.projectId });
+  const panel = page.locator(`section[data-session-id="${sessionId}"]`);
+  const settled = (current, count) => {
+    const turns = current.turns.filter((turn) => turn.sessionId === sessionId);
+    return turns.length >= count && turns.every((turn) => ['completed', 'failed', 'interrupted'].includes(turn.state));
+  };
+  await poll(() => snapshot(page), (current) => settled(current, 1), 240_000, `${name} first turn`);
+  await poll(() => snapshot(page), (current) => current.sideQuestionSessionIds?.includes(sessionId) === true, 30_000, `${name} side question availability`);
+  const button = panel.getByTestId('structured-agent-btw');
+  await button.waitFor({ timeout: 15_000 });
+
+  // A second, longer turn; the side question goes in while it runs.
+  const input = panel.getByTestId('structured-agent-composer-input');
+  await input.click();
+  await input.fill('도구는 쓰지 말고, 1부터 60까지 한 줄에 하나씩 숫자와 그 숫자를 한국어로 읽은 말을 적어 줘.');
+  await page.keyboard.press('Enter');
+  await poll(() => snapshot(page), (current) => current.turns.filter((turn) => turn.sessionId === sessionId).length >= 2
+    && current.agents.find((entry) => entry.sessionId === sessionId)?.state === 'working', 60_000, `${name} second turn running`);
+  const question = providerId === 'codex' ? '내가 정한 암호가 뭐였지? 암호만.' : '첫 질문에서 내가 어떤 파일을 읽으라고 했지? 파일 이름만.';
+  // No Escape here: with the turn running, Esc would stop it. The suggestion list is closed once a word follows /btw.
+  await input.fill(`/btw ${question}`);
+  await page.keyboard.press('Enter');
+  const sideWindow = panel.getByTestId('side-question-window');
+  await sideWindow.waitFor({ timeout: 15_000 });
+  const exchange = sideWindow.locator('.side-question__exchange').last();
+  await poll(() => exchange.getAttribute('data-status'), (status) => status !== 'pending', 180_000, `${name} side answer`);
+  const status = await exchange.getAttribute('data-status');
+  const answerText = (await exchange.innerText()).slice(0, 400);
+  const workingAtAnswer = (await snapshot(page)).agents.find((entry) => entry.sessionId === sessionId)?.state;
+  await page.screenshot({ path: path.join(output, `${name}-window.png`) });
+  await sideWindow.getByTestId('side-question-input').press('Escape');
+  const windowClosedByEscape = await sideWindow.count() === 0;
+  const after = await poll(() => snapshot(page), (current) => settled(current, 2), 300_000, `${name} second turn`);
+  const turnStates = after.turns.filter((turn) => turn.sessionId === sessionId).map((turn) => turn.state);
+  const transcript = await page.evaluate((id) => window.ezterminal.getDaemonTranscript(id, 0, 500), sessionId);
+  const transcriptHasQuestion = JSON.stringify(transcript ?? []).includes(question);
+  const providerSessionId = after.agents.find((entry) => entry.sessionId === sessionId)?.providerSessionId ?? '';
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+  const sessionFiles = providerSessionId ? (providerId === 'claude'
+    ? filesNamed(path.join(home, '.claude', 'projects'), `${providerSessionId}.jsonl`, 1)
+    : filesNamed(path.join(home, '.codex', 'sessions'), providerSessionId, 4)) : [];
+  const sessionFileHasQuestion = sessionFiles.some((file) => readFileSync(file, 'utf8').includes(question));
+
+  // A settings relaunch under a pending side question says why it stopped (Claude relaunches for Full access).
+  let relaunch = 'not checked';
+  if (providerId === 'claude') {
+    await button.click();
+    const windowInput = sideWindow.getByTestId('side-question-input');
+    await windowInput.fill('README.md 내용을 다섯 문단으로 아주 자세히 풀어서 설명해 줘.');
+    await windowInput.press('Enter');
+    await panel.getByTestId('structured-agent-live-permission').click();
+    await page.getByRole('menuitemradio', { name: /전체 권한|Full access/u }).click();
+    const last = sideWindow.locator('.side-question__exchange').last();
+    await poll(() => last.getAttribute('data-status'), (value) => value !== 'pending', 120_000, `${name} relaunch outcome`);
+    relaunch = (await last.getAttribute('data-status')) === 'failed' ? (await last.innerText()).slice(0, 200) : 'answered before the relaunch';
+    await page.screenshot({ path: path.join(output, `${name}-relaunch.png`) });
+  }
+  report.push({ scenario: name, sessionId, status, answerText, workingAtAnswer, windowClosedByEscape, turnStates,
+    transcriptHasQuestion, sessionFiles: sessionFiles.length, sessionFileHasQuestion, relaunch });
+  if (status !== 'answered') throw new Error(`${name}: the side question was not answered: ${answerText}`);
+  if (!windowClosedByEscape) throw new Error(`${name}: Esc did not close the side question window.`);
+  if (turnStates.length !== 2 || turnStates.some((state) => state !== 'completed')) throw new Error(`${name}: turns ${turnStates.join(',')}`);
+  if (transcriptHasQuestion || sessionFileHasQuestion) throw new Error(`${name}: the side question reached the transcript or the session file.`);
   await page.evaluate((id) => window.__ezDock.getPanel(id)?.api.close(), panelId);
 }
 

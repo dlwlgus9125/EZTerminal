@@ -54,6 +54,7 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_CAPABILITY_PROVIDER_MODELS_READ,
+  REMOTE_CAPABILITY_SIDE_QUESTIONS,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_WORKFLOW,
   REMOTE_PROTOCOL_VERSION_FLOW_RUNS,
@@ -185,6 +186,7 @@ export const MAX_REMOTE_FILE_UPLOADS = 8;
 /** Agent Hub resolves several branches in parallel. Keep Git work bounded
  * without orphaning earlier request/reply promises. */
 const MAX_REMOTE_GIT_REQUESTS = 16;
+const MAX_REMOTE_SIDE_QUESTIONS = 4;
 /** A socket that hasn't authenticated within this window is terminated, so an
  * unauthenticated client can't sit holding a connection slot indefinitely
  * (which, with `MAX_REMOTE_CONNECTIONS`, would otherwise starve real clients). */
@@ -600,6 +602,8 @@ export interface RemoteBridgeOptions {
   readonly workflowNavigationSource?: import('../shared/workflow').WorkflowNavigationAccess;
   readonly workflowPreviewSource?: Pick<WorkflowAuthority, 'preview'>;
   readonly agentCapabilitiesSource?: AgentCapabilitiesClient;
+  /** /btw for phones (advertised as `side-questions-v1`); never a daemon command, nothing stored. */
+  readonly sideQuestionSource?: import('./agent-side-question-service').AgentSideQuestionHost;
   /** Read-only provider model catalogs for phones (advertised as `provider-models-read`). */
   readonly providerModelsSource?: { list(providerId: string): Promise<import('../shared/daemon-provider').DaemonProviderManagementResult<readonly import('../shared/daemon-provider').ProviderModel[]>> };
   readonly planningRunSource?: Pick<PlanningRunAuthority, 'read' | 'execute' | 'readResult'>;
@@ -736,6 +740,7 @@ export function attachConnection(
   const pendingUploadBegins = new Set<string>();
   const pendingUploadBeginOperations = new Set<Promise<void>>();
   const pendingGitRequests = new Map<string, AbortController>();
+  const pendingSideQuestions = new Map<string, AbortController>();
   const send = (msg: ServerToClientMessage): void => {
     if (ws.readyState !== WS_OPEN) return;
     try {
@@ -1107,6 +1112,8 @@ export function attachConnection(
     contain(openclaw.stopLogsSubscription);
     for (const controller of pendingGitRequests.values()) contain(() => controller.abort());
     pendingGitRequests.clear();
+    for (const controller of pendingSideQuestions.values()) contain(() => controller.abort());
+    pendingSideQuestions.clear();
   });
 
   ws.on('message', (data, isBinary) => {
@@ -1215,6 +1222,7 @@ export function attachConnection(
           const capabilities = [
             ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),
             ...(options.providerModelsSource ? [REMOTE_CAPABILITY_PROVIDER_MODELS_READ] : []),
+            ...(options.sideQuestionSource && clientIdentity ? [REMOTE_CAPABILITY_SIDE_QUESTIONS] : []),
             ...(negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
               && clientIdentity
               && options.desktopSource
@@ -1798,6 +1806,31 @@ export function attachConnection(
             ...(negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? { reducedFlowView: true as const } : {}) })
           : Promise.resolve({ ok: false, error: 'unavailable', message: 'Update the authenticated host and client to use subproject workflows.' } as const);
         void result.then(value => { if (authed) send({ kind: msg.kind === 'workflow-read' ? 'workflow-read-reply' : 'workflow-execute-reply', requestId: msg.requestId, result: negotiatedProtocol < REMOTE_PROTOCOL_VERSION_FLOW_RUNS ? legacyWorkflowResult(value) : value }); });
+        break;
+      }
+      case 'side-question-ask': {
+        // Answered from a live conversation; deliberately not a daemon command, so nothing is stored.
+        const { requestId } = msg;
+        const source = options.sideQuestionSource;
+        if (!source || !clientIdentity) { send({ kind: 'side-question-reply', requestId, result: { ok: false, code: 'unsupported' } }); break; }
+        if (pendingSideQuestions.has(requestId) || pendingSideQuestions.size >= MAX_REMOTE_SIDE_QUESTIONS) {
+          send({ kind: 'side-question-reply', requestId, result: { ok: false, code: 'busy' } });
+          break;
+        }
+        const controller = new AbortController();
+        pendingSideQuestions.set(requestId, controller);
+        void source.ask({ requestId, sessionId: msg.sessionId, question: msg.question, history: msg.history }, controller.signal)
+          .catch(() => ({ ok: false, code: 'failed' } as const))
+          .then((result) => {
+            if (pendingSideQuestions.get(requestId) !== controller) return; // cancelled or the socket closed
+            pendingSideQuestions.delete(requestId);
+            if (authed && !controller.signal.aborted) send({ kind: 'side-question-reply', requestId, result });
+          });
+        break;
+      }
+      case 'side-question-cancel': {
+        pendingSideQuestions.get(msg.requestId)?.abort();
+        pendingSideQuestions.delete(msg.requestId);
         break;
       }
       case 'provider-models-list': {

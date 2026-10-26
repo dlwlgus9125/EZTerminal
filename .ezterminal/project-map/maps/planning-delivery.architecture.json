@@ -122,17 +122,17 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 2340,
-          "endLine": 2477,
+          "startLine": 2418,
+          "endLine": 2555,
           "lineDigest": "sha256:19fa1c3ce928af5c9730d77673561307fbf74154fd3a886139dc4aa3fb427be9",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 608,
-          "endLine": 623,
-          "lineDigest": "sha256:761fe63a281b31152349963a78ce8249d55149a7043b339c01c71740b0fae45c",
+          "startLine": 628,
+          "endLine": 645,
+          "lineDigest": "sha256:e3f8c4046d50bf9cf62d6da23b4162e085ff5790daa622318fa1f61fd3d0dfb8",
           "claim": "Draft updates synchronously notify the owning form before a history action can unmount it, retaining the current provider, model, workspace, permissions and edited draft."
         },
         {
@@ -165,9 +165,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/remote-bridge.ts",
-          "startLine": 1792,
-          "endLine": 1885,
-          "lineDigest": "sha256:5eea204eb994e70590de64b0efbe75fde3f6f01597520ca00f4ad6d71ccbb00d",
+          "startLine": 1800,
+          "endLine": 1918,
+          "lineDigest": "sha256:05918942c15298153890371deea330c557062ac9c6413d34f1cdfaf410f6ac53",
           "claim": "Authenticated v14+ clients use workflow/capability handlers; v16-and-older readers get the reduced flow view and are marked for write protection; v13 keeps planning; subproject writes stay bound to the Android principal."
         }
       ]

@@ -3,6 +3,7 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 import type { ReactNode } from 'react';
 
 import type { AgentCapabilitiesClient } from '../shared/agent-capabilities';
+import type { AgentSideQuestionClient, AgentSideQuestionResult } from '../shared/agent-side-question';
 import type { DaemonApproval, DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { encodeFileChanges } from '../shared/conversation-changes';
 import {
@@ -462,3 +463,80 @@ export const QueuedRequests: Story = { ...ChangeReview, args: { ...ChangeReview.
   { turnId: 'queue-a', revision: 4, text: '모바일에서도 Enter는 줄바꿈으로 유지해 주세요.' },
   { turnId: 'queue-b', revision: 5, text: '라이트 테마의 포커스도 확인해 주세요.' },
 ], onQueueAction: fn(async () => ({ ok: true as const })) } };
+
+// ── /btw side questions ─────────────────────────────────────────────────────
+const btwConversation: DaemonTranscriptItem[] = [
+  item('btw-user', 1, 'user-message', '로그인 실패 문구를 바꾸고 테스트도 추가해 줘.'),
+  item('btw-tool', 2, 'tool-result', 'src/auth/messages.ts와 src/auth/login.test.ts를 읽었습니다.'),
+  item('btw-agent', 3, 'assistant-message', '문구는 `src/auth/messages.ts`의 상수에서 바꾸고, 테스트는 `login.test.ts`에 추가하겠습니다.'),
+];
+const btwClient = (result: AgentSideQuestionResult | 'pending'): AgentSideQuestionClient => ({
+  ask: () => (result === 'pending' ? new Promise(() => undefined) : Promise.resolve(result)),
+});
+const btwAnswer: AgentSideQuestionResult = { ok: true, synthetic: false,
+  answer: '`src/auth/messages.ts`의 **`LOGIN_FAILED`** 상수입니다. 지금 문구는 "로그인에 실패했습니다"이고, 테스트는 `login.test.ts`에 추가할 예정입니다.' };
+const askFromComposer = async (canvasElement: HTMLElement, question: string): Promise<void> => {
+  const canvas = within(canvasElement);
+  await userEvent.type(canvas.getByTestId('structured-agent-composer-input'), question);
+  await userEvent.click(canvas.getByTestId('structured-agent-btw'));
+};
+
+/** btw: a side question floats up from the message box while the conversation keeps working. */
+export const SideQuestionOpen: Story = {
+  args: { ...ComposerClaude.args, title: '로그인 오류 메시지 개선', items: btwConversation, state: 'working',
+    sideQuestion: { client: btwClient(btwAnswer), available: true } },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    await askFromComposer(canvasElement, '문구 상수 이름이 뭐였지?');
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByTestId('side-question-window')).toHaveAttribute('aria-modal', 'false');
+    await expect(await canvas.findByText('LOGIN_FAILED')).toBeVisible();
+    await expect(canvas.getByTestId('structured-agent-composer-input')).toHaveValue('');
+  },
+};
+
+export const SideQuestionPending: Story = {
+  ...SideQuestionOpen,
+  args: { ...SideQuestionOpen.args, sideQuestion: { client: btwClient('pending'), available: true } },
+  play: async ({ canvasElement }) => {
+    await askFromComposer(canvasElement, '테스트 파일 이름이 뭐였지?');
+    await expect(await within(canvasElement).findByTestId('side-question-stop')).toBeVisible();
+  },
+};
+
+/** A settings relaunch closes the provider session under a pending side question. */
+export const SideQuestionRestarted: Story = {
+  ...SideQuestionOpen,
+  args: { ...SideQuestionOpen.args, sideQuestion: { client: btwClient({ ok: false, code: 'session-restarted' }), available: true } },
+  play: async ({ canvasElement }) => {
+    await askFromComposer(canvasElement, '어느 파일을 고쳤지?');
+    const thread = await within(canvasElement).findByTestId('side-question-thread');
+    await expect(await within(thread).findByText('본 대화 설정이 바뀌어 취소됐습니다.')).toBeVisible();
+  },
+};
+
+export const NarrowPaneSideQuestion: Story = {
+  ...SideQuestionOpen,
+  render: (args) => <NarrowKorean><StructuredAgentSessionPanel {...args} /></NarrowKorean>,
+};
+
+/** Not yet sent in this app session: no btw button, and `/btw` explains instead of being sent. */
+export const SideQuestionUnavailable: Story = {
+  args: { ...SideQuestionOpen.args, state: 'idle', sideQuestion: { client: btwClient(btwAnswer), available: false } },
+  render: (args) => <WideKorean><StructuredAgentSessionPanel {...args} /></WideKorean>,
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).queryByTestId('structured-agent-btw')).toBeNull();
+  },
+};
+
+export const MobileSideQuestion: Story = {
+  args: { ...SideQuestionOpen.args, variant: 'mobile' },
+  parameters: { layout: 'fullscreen' },
+  render: (args) => <AppI18nProvider locale="ko" languages={['ko']}>
+    <div style={{ width: 'min(100vw, 390px)', height: 'min(100vh, 844px)' }}><StructuredAgentSessionPanel {...args} /></div>
+  </AppI18nProvider>,
+  play: async ({ canvasElement }) => {
+    await askFromComposer(canvasElement, '문구 상수 이름이 뭐였지?');
+    await expect(await within(canvasElement.ownerDocument.body).findByTestId('side-question-sheet')).toBeVisible();
+  },
+};

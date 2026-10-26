@@ -1766,6 +1766,41 @@ describe('MobileAgentView', () => {
     expect(testIds('structured-agent-usage')).toHaveLength(0);
   });
 
+  it('offers /btw only while connected to a PC that answers it and the conversation is live there', async () => {
+    const askSideQuestion = vi.fn(async () => ({ ok: true as const, answer: 'It was README.md.', synthetic: false }));
+    const transport = (supportsSideQuestions: boolean) => ({ sendDaemonCommand: vi.fn(), askSideQuestion, cancelSideQuestion: vi.fn(), supportsSideQuestions }) as unknown as WsEzTerminalTransport;
+    const view = (options: { live: boolean; capable: boolean; disconnected?: boolean }) => (
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshotOf(options.live ? { sideQuestionSessionIds: ['structured-session-1'] } : {}) }}
+        transport={transport(options.capable)}
+        {...noop}
+        disconnected={options.disconnected === true}
+      />
+    );
+    await render(view({ live: true, capable: true }));
+    await clickButtonText(container, 'EZTerminal');
+    await clickButtonText(container, 'Main checkout');
+    await clickButtonText(container, 'Structured mobile task');
+    expect(testIds('structured-agent-btw')).toHaveLength(1);
+    await render(view({ live: false, capable: true }));
+    expect(testIds('structured-agent-btw')).toHaveLength(0);
+    await render(view({ live: true, capable: false }));
+    expect(testIds('structured-agent-btw')).toHaveLength(0);
+    await render(view({ live: true, capable: true, disconnected: true }));
+    expect(testIds('structured-agent-btw')).toHaveLength(0);
+    await render(view({ live: true, capable: true }));
+    const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(input, 'which file?');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { (testIds('structured-agent-btw')[0] as HTMLButtonElement).click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(askSideQuestion).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'structured-session-1', question: 'which file?', history: [] }));
+    expect(document.body.querySelector('[data-testid="side-question-sheet"]')?.textContent).toContain('README.md');
+  });
+
   it('reviews a failed validation override on mobile and forwards the bounded reason', async () => {
     const request: ManagedMergeRequest = {
       requestId: 'merge-1',

@@ -127,6 +127,8 @@ export function useAgentCompletion({ value, onChange, inputRef, catalog, discove
         onChange({ ...value, text: '', selectionStart: 0, selectionEnd: 0 }); close(); command.run(rest || undefined);
         return true;
       }
+      // /btw is never a prompt, even where no surface offers it: show the commands instead.
+      if (typed?.[1] === 'btw') { setManual('commands'); setDismissed(undefined); return true; }
       const match = /^\s*\/resume(?:\s|$)/u.exec(value.text);
       if (!match) return false;
       if (onOpenHistory) { onChange({ ...value, text: value.text.slice(match[0].length), selectionStart: 0, selectionEnd: 0 }); close(); onOpenHistory(); }

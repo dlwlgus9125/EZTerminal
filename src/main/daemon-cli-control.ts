@@ -385,6 +385,8 @@ export class DaemonCliControl {
     const { agentUsage, providerUsage, ...rest } = snapshot;
     // What waits on the person spans every project and is the person's own: not for a project-scoped agent.
     delete (rest as { attention?: unknown }).attention;
+    // Live /btw availability names other projects' sessions: host UI state, not for a project-scoped agent.
+    delete (rest as { sideQuestionSessionIds?: unknown }).sideQuestionSessionIds;
     const scopedUsage = agentUsage
       ? Object.fromEntries(Object.entries(agentUsage).filter(([sessionId]) => scope.sessionIds.has(sessionId)))
       : {};

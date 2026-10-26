@@ -38,6 +38,7 @@ import { DelegateAgentDialog, type DelegateAgentRequest, type DelegateMode } fro
 import { useAppTranslation } from './i18n';
 import type { RendererRecoveryStructuredAgentCreate } from '../shared/renderer-recovery';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { createSideQuestionClient } from './side-question/side-question-client';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
 import {
   StructuredAgentHeartbeat,
@@ -307,6 +308,8 @@ export function StructuredAgentDockPanel(
     list: window.ezterminal.agentCapabilitiesList,
     manage: window.ezterminal.agentCapabilitiesManage,
   } : undefined, []);
+  // /btw: asked straight through the preload (never a daemon command), like the capability list.
+  const sideQuestionClient = useMemo(() => createSideQuestionClient(typeof window === 'undefined' ? undefined : window.ezterminal), []);
   const createRecoveryRegistry = props.createRecoveryRegistry;
   const persistCreateRecovery = props.persistCreateRecovery;
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
@@ -1422,6 +1425,9 @@ export function StructuredAgentDockPanel(
         if (sessionId) void syncTranscript(sessionId, transcriptTargetRef.current);
       }}
       supportsMessageContext={provider?.protocol === 'codex-app-server' || provider?.protocol === 'claude-agent-sdk'}
+      {...(!historyOnly && owner === 'managed' && sideQuestionClient ? { sideQuestion: {
+        client: sideQuestionClient, available: snapshot?.sideQuestionSessionIds?.includes(sessionId) === true,
+      } } : {})}
       draftState={chatRecovery.controller ? chatRecovery.view.draft : undefined}
       onDraftChange={(draft) => {
         if (chatRecovery.controller) chatRecovery.controller.updateDraft(draft);

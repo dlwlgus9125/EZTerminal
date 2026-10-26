@@ -1406,6 +1406,10 @@ export interface EzTerminalApi extends SessionSurfaceApi, WorkflowAccess, Workfl
   setClaudeProviderEnablement: (
     enablement: ClaudeProviderEnablement,
   ) => Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>>;
+  /** /btw on a live conversation; nothing is stored. Absent on hosts without side questions. */
+  askSideQuestion?: (request: import('./agent-side-question').AgentSideQuestionRequest) => Promise<import('./agent-side-question').AgentSideQuestionResult>;
+  /** Abort a pending side question of this window (fire and forget). */
+  cancelSideQuestion?: (requestId: string) => void;
 
   // ── Agent Activity (desktop + connected mobile) ─────────────────────────
   /** Level-triggered seed. Snapshots never contain prompts or transcripts; the

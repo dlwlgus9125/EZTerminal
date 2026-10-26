@@ -16,6 +16,7 @@ import { parseDaemonCommand } from '../shared/daemon-protocol';
 import { PlanningCommandSchema } from '../shared/planning';
 import { WorkflowCommandSchema, WorkflowPreviewRequestSchema } from '../shared/workflow';
 import { AgentCapabilitiesRequestSchema, AgentExtensionCommandSchema } from '../shared/agent-capabilities';
+import { AgentSideQuestionRequestSchema } from '../shared/agent-side-question';
 import { isDaemonProviderId } from '../shared/daemon-provider';
 import { PlanningRunRequestSchema } from '../shared/planning-run';
 import { PlanningAiRequestSchema } from '../shared/planning-ai';
@@ -396,6 +397,11 @@ export function isDispatchableClientMessage(value: unknown): value is Dispatchab
     case 'provider-models-list':
       return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
         && isDaemonProviderId(value.providerId);
+    case 'side-question-ask':
+      return typeof value.requestId === 'string' && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && AgentSideQuestionRequestSchema.safeParse({ requestId: value.requestId, sessionId: value.sessionId, question: value.question, history: value.history }).success;
+    case 'side-question-cancel':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH;
     case 'agent-capabilities-list':
     case 'agent-capabilities-manage':
       return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH

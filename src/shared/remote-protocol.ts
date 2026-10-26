@@ -118,10 +118,13 @@ export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as co
 export const REMOTE_CAPABILITY_DESKTOP_CONTROL = 'desktop-control-v1' as const;
 /** The host answers `provider-models-list` (read-only model catalogs; older hosts would refuse the unknown request). */
 export const REMOTE_CAPABILITY_PROVIDER_MODELS_READ = 'provider-models-read' as const;
+/** The host answers `side-question-ask` (/btw on a live conversation; older hosts would drop the request). */
+export const REMOTE_CAPABILITY_SIDE_QUESTIONS = 'side-questions-v1' as const;
 export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL
-  | typeof REMOTE_CAPABILITY_PROVIDER_MODELS_READ;
+  | typeof REMOTE_CAPABILITY_PROVIDER_MODELS_READ
+  | typeof REMOTE_CAPABILITY_SIDE_QUESTIONS;
 
 /**
  * Version markers document when capabilities entered the protocol. v12 is the
@@ -552,6 +555,15 @@ export type AgentCapabilitiesWireReply =
   | { readonly kind: 'agent-capabilities-list-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentCapabilitiesClient['list']>> }
   | { readonly kind: 'agent-capabilities-manage-reply'; readonly requestId: string; readonly result: Awaited<ReturnType<AgentCapabilitiesClient['manage']>> };
 
+/** /btw: one tool-less answer from a live conversation's context; nothing is stored on either side. */
+export type SideQuestionAskMessage = import('./agent-side-question').AgentSideQuestionRequest & { readonly kind: 'side-question-ask' };
+export interface SideQuestionCancelMessage { readonly kind: 'side-question-cancel'; readonly requestId: string }
+export interface SideQuestionReplyMessage {
+  readonly kind: 'side-question-reply';
+  readonly requestId: string;
+  readonly result: import('./agent-side-question').AgentSideQuestionResult;
+}
+
 /** A provider's model catalog, read-only (the desktop's model menus read the same). */
 export interface ProviderModelsListRequest { readonly kind: 'provider-models-list'; readonly requestId: string; readonly providerId: string }
 export interface ProviderModelsListReply {
@@ -966,6 +978,8 @@ export type ClientToServerMessage =
   | WorkflowRequest
   | AgentCapabilitiesWireRequest
   | ProviderModelsListRequest
+  | SideQuestionAskMessage
+  | SideQuestionCancelMessage
   | AuthMessage
   | ListSessionsMessage
   | ListRunsMessage
@@ -1658,6 +1672,7 @@ export type ServerToClientMessage =
   | WorkflowReply
   | AgentCapabilitiesWireReply
   | ProviderModelsListReply
+  | SideQuestionReplyMessage
   | AuthOkMessage
   | AuthFailMessage
   | SessionListMessage

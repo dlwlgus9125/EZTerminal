@@ -32,6 +32,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   LoaderCircle,
+  MessagesSquare,
   Plus,
   Sparkles,
   SquareSlash,
@@ -55,6 +56,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { insertCompletion, type AppCommand } from './agent-completion';
 import { useAgentCompletion, type CapabilityDiscoveryState, type ComposerFileSearch } from './use-agent-completion';
@@ -92,6 +94,9 @@ import type { AgentCapabilitiesClient, AgentCapabilityCatalog, AgentCapabilityIt
 import { AgentCapabilitiesPanel } from './AgentCapabilitiesPanel';
 import type { ConversationQueueAction, ConversationQueueItem } from './conversation-queue';
 import { structuredAgentEffortOptions, withCurrentModel } from './structured-agent-create';
+import { SIDE_QUESTION_PROVIDER_IDS, type AgentSideQuestionClient } from '../shared/agent-side-question';
+import { SideQuestionSurface } from './side-question/SideQuestionSurface';
+import { useSideQuestionThread } from './side-question/use-side-question-thread';
 
 export type StructuredAgentUiResult =
   | { readonly ok: true }
@@ -173,6 +178,11 @@ interface StructuredAgentCopy {
   readonly clearCommand: string;
   readonly clearAfterTurn: string;
   readonly clearUnavailable: string;
+  readonly btwCommand: string;
+  readonly btwButton: string;
+  readonly btwUnavailable: string;
+  readonly btwProviderOnly: string;
+  readonly btwAfterSend: string;
   readonly implementPlanFailed: string;
   readonly planOn: string;
   readonly planOff: string;
@@ -320,6 +330,11 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     clearCommand: 'Start over in this tab with the same settings',
     clearAfterTurn: 'You can start over after this turn. Esc stops it.',
     clearUnavailable: 'Starting over is not available here.',
+    btwCommand: 'Ask a side question about this conversation (not saved)',
+    btwButton: 'btw · side question',
+    btwUnavailable: 'Side questions are not available here.',
+    btwProviderOnly: 'This AI does not answer side questions yet.',
+    btwAfterSend: 'Side questions open once you have sent this conversation a message in this app session.',
     implementPlanFailed: 'Plan mode is off, but the request to implement the plan was not sent. It is in the message box; send it again.',
     planOn: 'Plan mode on',
     planOff: 'Plan mode off',
@@ -432,6 +447,11 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     clearCommand: '이 탭에서 같은 설정으로 새로 시작',
     clearAfterTurn: '이 작업이 끝난 뒤 새로 시작할 수 있습니다. Esc로 멈춥니다.',
     clearUnavailable: '이 화면에서는 새로 시작할 수 없습니다.',
+    btwCommand: '이 대화에 대해 곁가지 질문 (저장 안 됨)',
+    btwButton: 'btw · 곁가지 질문',
+    btwUnavailable: '이 화면에서는 곁가지 질문을 할 수 없습니다.',
+    btwProviderOnly: '이 AI는 아직 곁가지 질문을 지원하지 않습니다.',
+    btwAfterSend: '이번 실행에서 이 대화에 메시지를 한 번 보낸 뒤 곁가지 질문을 할 수 있습니다.',
     implementPlanFailed: '계획 모드는 꺼졌지만 구현 요청을 보내지 못했습니다. 입력창에 넣어 두었으니 다시 보내세요.',
     planOn: '계획 모드 켜짐',
     planOff: '계획 모드 꺼짐',
@@ -617,7 +637,9 @@ export function StructuredAgentDraftPanel({
   // A draft has no conversation to start over: `/clear` is held back with a reason, never sent.
   const draftCommands = useMemo<readonly AppCommand[]>(() => [
     { name: 'clear', description: copy.clearCommand, takesText: true, disabledReason: copy.clearUnavailable, run: () => undefined },
-  ], [copy.clearCommand, copy.clearUnavailable]);
+    // Reserved so `/btw …` in a draft never becomes the first message.
+    { name: 'btw', description: copy.btwCommand, takesText: true, disabledReason: copy.btwAfterSend, run: () => undefined },
+  ], [copy.clearCommand, copy.clearUnavailable, copy.btwCommand, copy.btwAfterSend]);
   const completion = useAgentCompletion({ value: draftValue, onChange: updateDraftInput, inputRef: draftInputRef,
     catalog: catalog?.providerId === providerId && catalog.workspaceId === workspaceId ? catalog : undefined,
     discovery, onOpenHistory, disabled: loading || submitting || deliveryRecovery, mobile: variant === 'mobile', appCommands: draftCommands });
@@ -1196,6 +1218,16 @@ export interface StructuredAgentComposerProps {
   readonly onFocusDecision?: () => boolean;
   /** `/plan`, `/model`, `/new`: conversation commands typed in the message box. */
   readonly appCommands?: readonly AppCommand[];
+  /** /btw: shown only while the conversation can take a side question. */
+  readonly sideQuestion?: {
+    readonly label: string;
+    readonly open: boolean;
+    readonly controlsId: string;
+    readonly buttonRef: RefObject<HTMLButtonElement>;
+    /** Ask the message box's text and open the window. */
+    readonly onAsk: (text: string) => void;
+    readonly onOpen: () => void;
+  };
   /** Shift+Tab in the message box switches plan mode, as the plan button does. */
   readonly plan?: {
     readonly on: boolean;
@@ -1241,6 +1273,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   statusHint,
   onFocusDecision,
   appCommands,
+  sideQuestion,
   plan,
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
@@ -1588,6 +1621,9 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
             }}
             onSelect={(event) => {
               const input = event.currentTarget;
+              // A selection read while the box still shows text the draft already replaced (a command such as
+              // /btw just cleared it) belongs to the old text: saving it would put the caret outside the draft.
+              if (input.value !== valueRef.current.text) return;
               if (valueRef.current.selectionStart !== input.selectionStart || valueRef.current.selectionEnd !== input.selectionEnd) {
                 updateDraft({ ...valueRef.current, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
               }
@@ -1615,6 +1651,29 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           </Menu>
           {toolbar && <div className="conversation-composer-toolbar chat-composer__settings">{toolbar}</div>}
           <span className="chat-composer__spacer" />
+          {sideQuestion && (
+            <button
+              ref={sideQuestion.buttonRef}
+              type="button"
+              className="chat-icon-action chat-composer__btw"
+              aria-label={sideQuestion.label}
+              title={sideQuestion.label}
+              aria-expanded={sideQuestion.open}
+              aria-controls={sideQuestion.open ? sideQuestion.controlsId : undefined}
+              onClick={() => {
+                // Plain text becomes the side question; a message with attachments or a reply stays put.
+                const text = valueRef.current.text.trim();
+                const plain = !(valueRef.current.attachments?.length) && !valueRef.current.replyTo && !text.startsWith('/');
+                if (text && plain) {
+                  sideQuestion.onAsk(text);
+                  updateDraft(valueRef.current.parkedDraft ?? { text: '', selectionStart: 0, selectionEnd: 0 });
+                } else sideQuestion.onOpen();
+              }}
+              data-testid="structured-agent-btw"
+            >
+              <MessagesSquare aria-hidden="true" />
+            </button>
+          )}
           {busy && onInterruptAndSend && hasDraft && (
             <Button
               type="button"
@@ -1795,6 +1854,11 @@ export interface StructuredAgentSessionPanelProps {
    * after `/clear` starts the new conversation's message box; it is not sent.
    */
   readonly onClearConversation?: (draftText?: string) => void;
+  /**
+   * /btw for a live conversation: the host's client, and whether its provider session is attached
+   * now (snapshot `sideQuestionSessionIds`). Absent in drafts, history and views without a host.
+   */
+  readonly sideQuestion?: { readonly client: AgentSideQuestionClient; readonly available: boolean };
   /** Hand this conversation's work, or a review of it, to a new child agent. */
   readonly onDelegate?: (mode: 'handoff' | 'review') => void;
   readonly heartbeatControl?: ReactNode;
@@ -1915,6 +1979,7 @@ export function StructuredAgentSessionPanel({
   onDelegate,
   onNewConversation,
   onClearConversation,
+  sideQuestion,
   heartbeatControl,
   heartbeatActive = false,
   recoveryControl,
@@ -2145,6 +2210,16 @@ export function StructuredAgentSessionPanel({
     return sent;
   };
   const planBlockedReason = turnCurrent && !settingsLocked ? copy.settingsAfterTurn : undefined;
+  // /btw: a side question about this conversation, answered without tools and kept in memory only.
+  const sideThread = useSideQuestionThread(sessionId, sideQuestion?.client);
+  const [sideOpen, setSideOpen] = useState(false);
+  const sideButtonRef = useRef<HTMLButtonElement>(null);
+  const sideWindowId = useId();
+  const btwReason = !sideQuestion || historyOnly || providerOwned ? copy.btwUnavailable
+    : !SIDE_QUESTION_PROVIDER_IDS.includes(providerId) ? copy.btwProviderOnly
+      : !sideQuestion.available ? copy.btwAfterSend : undefined;
+  const openSide = (): void => setSideOpen(true);
+  const askSide = (text: string): void => { sideThread.ask(text); setSideOpen(true); };
   const appCommands: readonly AppCommand[] = [
     ...(!settingsReadOnly ? [{
       name: 'plan', description: planOn ? copy.planCommandOff : copy.planCommandOn,
@@ -2161,6 +2236,9 @@ export function StructuredAgentSessionPanel({
     { name: 'clear', description: copy.clearCommand, takesText: true, run: (text?: string) => onClearConversation?.(text),
       ...(!onClearConversation ? { disabledReason: copy.clearUnavailable }
         : settingsLocked || turnCurrent ? { disabledReason: copy.clearAfterTurn } : {}) },
+    // Always reserved: `/btw …` is never a prompt. Chosen from the list (no text) it opens the window.
+    { name: 'btw', description: copy.btwCommand, takesText: true, run: (text?: string) => (text?.trim() ? askSide(text) : openSide()),
+      ...(btwReason ? { disabledReason: btwReason } : {}) },
   ];
   // The Results tab puts review comments into this draft (never sends) and can point at the decision above.
   const canInsertDraft = !historyOnly && !composerDisabled;
@@ -2597,6 +2675,19 @@ export function StructuredAgentSessionPanel({
           )}
         </footer>
       )}
+      {sideOpen && !historyOnly && !(providerOwned && parent) && (
+        <div className="side-question-anchor">
+          <SideQuestionSurface
+            variant={variant}
+            ko={chatLocale === 'ko'}
+            id={sideWindowId}
+            thread={sideThread}
+            onClose={() => setSideOpen(false)}
+            {...(btwReason ? { disabledReason: btwReason } : {})}
+            returnFocusRef={sideButtonRef}
+          />
+        </div>
+      )}
       {!historyOnly && !(providerOwned && parent) && (
         <StructuredAgentComposer
           toolbar={settingsControls}
@@ -2633,6 +2724,7 @@ export function StructuredAgentSessionPanel({
           {...(!settingsReadOnly && turnCurrent ? { statusHint: state === 'blocked' ? copy.decisionHint : copy.settingsLockedDuringTurn } : {})}
           onFocusDecision={focusDecision}
           appCommands={appCommands}
+          {...(!btwReason ? { sideQuestion: { label: copy.btwButton, open: sideOpen, controlsId: sideWindowId, buttonRef: sideButtonRef, onAsk: askSide, onOpen: openSide } } : {})}
         />
       )}
     </section>

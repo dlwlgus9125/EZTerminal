@@ -128,8 +128,24 @@ class FakeClaudeQuery implements ClaudeQuerySession {
     return this.supported;
   }
 
+  /** The SDK's /btw control request: recorded; `sideQuestionReply` decides the answer. */
+  readonly sideQuestions: Array<{ readonly question: string; readonly options: Parameters<NonNullable<ClaudeQuerySession['askSideQuestion']>>[1] }> = [];
+  sideQuestionReply: () => Promise<{ response: string; synthetic?: boolean; refusalFallback?: { originalModel?: string; fallbackModel?: string } } | null>
+    = async () => ({ response: 'It was src/config.ts.', synthetic: false });
+  private readonly pendingSideQuestions: Array<(error: Error) => void> = [];
+  askSideQuestion?: ClaudeQuerySession['askSideQuestion'] = (question, options) => {
+    this.sideQuestions.push({ question, options });
+    return new Promise((resolve, reject) => {
+      // Like sdk.mjs: close() rejects every pending control response; an abort rejects this one.
+      this.pendingSideQuestions.push(reject);
+      options?.signal?.addEventListener('abort', () => reject(new Error('Control request aborted')), { once: true });
+      this.sideQuestionReply().then(resolve, reject);
+    });
+  };
+
   close(): void {
     this.closeCount += 1;
+    for (const reject of this.pendingSideQuestions.splice(0)) reject(new Error('Query closed before response received'));
     if (this.endOnClose) this.end();
   }
 
@@ -1678,5 +1694,94 @@ describe('recorded Claude file changes', () => {
     expect(recordedClaudeChange(fragment, { filePath: 'C:/w/other.ts', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] }] })).toBe(fragment);
     expect(recordedClaudeChange(fragment, undefined)).toBe(fragment);
     expect(recordedClaudeChange(fragment, { filePath: 'C:/w/src/app.ts', structuredPatch: [{ oldStart: 'x' }] })).toBe(fragment);
+  });
+});
+
+describe('Claude side questions (/btw)', () => {
+  const never = () => new Promise<never>(() => undefined);
+  const ask = (fixture: ReturnType<typeof makeAdapter>, signal = new AbortController().signal, history: { question: string; answer: string; fallbackNotice?: string }[] = []) =>
+    fixture.adapter.askSideQuestion({ sessionId: context.sessionId, providerSessionId, question: 'Which config file was it?', history }, signal);
+
+  it('asks the live query with the snake_case history and records nothing', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    const before = fixture.events.length;
+    const signal = new AbortController().signal;
+    await expect(ask(fixture, signal, [{ question: 'q1', answer: 'a1' }, { question: 'q2', answer: 'a2', fallbackNotice: 'n2' }]))
+      .resolves.toEqual({ text: 'It was src/config.ts.', synthetic: false });
+    expect(fixture.query.sideQuestions).toEqual([{
+      question: 'Which config file was it?',
+      options: { history: [{ question: 'q1', response: 'a1' }, { question: 'q2', response: 'a2', fallback_notice: 'n2' }], signal },
+    }]);
+    expect(fixture.events).toHaveLength(before);
+    await fixture.adapter.dispose();
+  });
+
+  it('omits an empty history, maps a null reply, a synthetic reply, a fallback and caps the answer', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    fixture.query.sideQuestionReply = async () => null;
+    await expect(ask(fixture)).resolves.toEqual({ text: null, synthetic: false });
+    expect(fixture.query.sideQuestions[0]?.options).not.toHaveProperty('history');
+    fixture.query.sideQuestionReply = async () => ({ response: 'x'.repeat(25_000), synthetic: true, refusalFallback: { originalModel: 'claude-opus-5-5', fallbackModel: 'claude-sonnet-5' } });
+    const answer = await ask(fixture);
+    expect(answer.text).toHaveLength(20_000);
+    expect(answer).toMatchObject({ synthetic: true, fallbackNotice: 'claude-opus-5-5 declined; claude-sonnet-5 answered.' });
+    await fixture.adapter.dispose();
+  });
+
+  it('answers beside a running turn and ignores the CLI progress frames', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    await fixture.adapter.submit({ sessionId: context.sessionId, providerSessionId, turnId: 'turn-1', commandId: 'command-1', prompt: 'Long work' });
+    const before = fixture.events.length;
+    let release!: () => void;
+    fixture.query.sideQuestionReply = () => new Promise((resolve) => { release = () => resolve({ response: 'Yes.' }); });
+    const pending = ask(fixture);
+    fixture.query.emit({ type: 'system', subtype: 'control_request_progress', request_id: 'r1', status: 'started', uuid: 'p1', session_id: providerSessionId });
+    fixture.query.emit({ type: 'system', subtype: 'control_request_progress', request_id: 'r1', status: 'api_retry', uuid: 'p2', session_id: providerSessionId });
+    await vi.waitFor(() => expect(fixture.query.sideQuestions).toHaveLength(1));
+    release();
+    await expect(pending).resolves.toEqual({ text: 'Yes.', synthetic: false });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fixture.events.slice(before)).toEqual([]);
+    await fixture.adapter.dispose();
+  });
+
+  it('reports a cancel, a settings relaunch and a stopped session by code only', async () => {
+    const fixture = makeAdapter();
+    await start(fixture);
+    fixture.query.sideQuestionReply = never;
+    const controller = new AbortController();
+    const cancelled = ask(fixture, controller.signal);
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ code: 'cancelled' });
+
+    const restarted = ask(fixture);
+    await vi.waitFor(() => expect(fixture.query.sideQuestions).toHaveLength(2));
+    await fixture.adapter.setSettings({ sessionId: context.sessionId, providerSessionId, permissionPreset: 'full-access' });
+    await expect(restarted).rejects.toMatchObject({ code: 'session-restarted' });
+
+    fixture.query.sideQuestionReply = never;
+    const stopped = ask(fixture);
+    await vi.waitFor(() => expect(fixture.query.sideQuestions).toHaveLength(1));
+    await fixture.adapter.disposeSession(context.sessionId, providerSessionId);
+    const error = await stopped.then(() => { throw new Error('expected a rejection'); }, (caught: unknown) => caught as Error & { code: string });
+    expect(error).toMatchObject({ code: 'not-live' });
+    expect(String(error.message)).not.toContain('config');
+    await fixture.adapter.dispose();
+  });
+
+  it('refuses an unknown session and a CLI without side questions', async () => {
+    const fixture = makeAdapter();
+    await expect(ask(fixture)).rejects.toMatchObject({ code: 'not-live' });
+    await start(fixture);
+    fixture.query.askSideQuestion = undefined;
+    await expect(ask(fixture)).rejects.toMatchObject({ code: 'unsupported' });
+    fixture.query.askSideQuestion = async () => { throw new Error('Which config file was it? failed'); };
+    const failed = await ask(fixture).then(() => { throw new Error('expected a rejection'); }, (caught: unknown) => caught as Error & { code: string });
+    expect(failed).toMatchObject({ code: 'failed' });
+    expect(failed.message).not.toContain('config');
+    await fixture.adapter.dispose();
   });
 });

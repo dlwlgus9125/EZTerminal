@@ -172,6 +172,7 @@ async function harness(options: {
   const router = new DaemonCommandRouter(store, {
     handlers: runtime.handlers(),
     agentUsage: (snapshot) => runtime.agentUsage(snapshot),
+    sideQuestionSessions: (snapshot) => runtime.sideQuestionSessionIds(snapshot),
   });
   routerRef.current = router;
   await runtime.start();
@@ -4500,6 +4501,98 @@ describe('ordering a settings change before the next message', () => {
       await h.runtime.whenIdle();
       expect(order).toEqual(['settings:start', 'settings:done', 'submit:Right after']);
       expect(h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')?.state).not.toBe('delivery-uncertain');
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+});
+
+describe('side questions (/btw) on a live conversation', () => {
+  async function claudeAgent(h: Awaited<ReturnType<typeof harness>>): Promise<string> {
+    h.claude.askSideQuestion = vi.fn(async () => ({ text: 'It was src/config.ts.', synthetic: false }));
+    await h.enable(h.claude, 'claude');
+    await h.prepareWorkspace();
+    await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Hello' });
+    const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+    h.claude.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+    await h.runtime.whenIdle();
+    return h.router.getSnapshot().agents.find((agent) => agent.sessionId === 'agent-1')!.providerSessionId!;
+  }
+  const question = { sessionId: 'agent-1', question: 'Which file?', history: [{ question: 'q1', answer: 'a1' }] };
+
+  it('lists a conversation only while its provider is attached, with one event per change', async () => {
+    const h = await harness();
+    try {
+      h.claude.askSideQuestion = vi.fn();
+      await h.enable(h.claude, 'claude');
+      await h.prepareWorkspace();
+      expect(h.router.getSnapshot().sideQuestionSessionIds).toBeUndefined();
+      const listener = vi.fn();
+      h.router.onEvent(listener);
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'claude', permissionPreset: 'standard', initialPrompt: 'Hello' });
+      expect(h.router.getSnapshot().sideQuestionSessionIds).toEqual(['agent-1']);
+      const turn = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1')!;
+      h.claude.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: turn.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      listener.mockClear();
+      expect(await h.execute('agent.release', { sessionId: 'agent-1' })).toMatchObject({ ok: true });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().sideQuestionSessionIds).toBeUndefined();
+      expect(listener.mock.calls.filter(([event]) => event.kind === 'entity.upserted' && event.payload?.entityType === 'agent' && event.payload.entityId === 'agent-1')).toHaveLength(1);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('never lists a provider whose adapter has no side questions', async () => {
+    const h = await harness();
+    try {
+      await h.enable(h.codex, 'codex');
+      await h.prepareWorkspace();
+      await h.execute('agent.create', { sessionId: 'agent-1', workspaceId: 'workspace-1', title: 'Agent', providerId: 'codex', permissionPreset: 'standard', initialPrompt: 'Hello' });
+      expect(h.router.getSnapshot().agents[0]?.providerSessionId).toBeTruthy();
+      expect(h.router.getSnapshot().sideQuestionSessionIds).toBeUndefined();
+      await expect(h.runtime.askSideQuestion(question, new AbortController().signal)).rejects.toMatchObject({ code: 'not-live' });
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('asks the attached provider session and changes nothing stored', async () => {
+    const h = await harness();
+    try {
+      const providerSessionId = await claudeAgent(h);
+      const before = h.router.getSnapshot();
+      const transcript = h.router.readTranscript('agent-1').length;
+      const signal = new AbortController().signal;
+      await expect(h.runtime.askSideQuestion(question, signal)).resolves.toEqual({ text: 'It was src/config.ts.', synthetic: false });
+      expect(h.claude.askSideQuestion).toHaveBeenCalledWith({ sessionId: 'agent-1', providerSessionId, question: 'Which file?', history: [{ question: 'q1', answer: 'a1' }] }, signal);
+      await h.runtime.whenIdle();
+      const after = h.router.getSnapshot();
+      expect([after.revision, after.eventSequence, after.turns]).toEqual([before.revision, before.eventSequence, before.turns]);
+      expect(h.router.readTranscript('agent-1')).toHaveLength(transcript);
+    } finally { await h.runtime.dispose(); await h.store.close(); }
+  });
+
+  it('refuses a released or archived conversation without attaching it again', async () => {
+    const h = await harness();
+    try {
+      await claudeAgent(h);
+      await h.execute('agent.release', { sessionId: 'agent-1' });
+      await h.runtime.whenIdle();
+      vi.mocked(h.claude.resumeSession).mockClear();
+      vi.mocked(h.claude.createSession).mockClear();
+      const revision = h.router.getSnapshot().revision;
+      await expect(h.runtime.askSideQuestion(question, new AbortController().signal)).rejects.toMatchObject({ code: 'not-live' });
+      await h.runtime.whenIdle();
+      expect(h.claude.resumeSession).not.toHaveBeenCalled();
+      expect(h.claude.createSession).not.toHaveBeenCalled();
+      expect(h.claude.askSideQuestion).not.toHaveBeenCalled();
+      expect(h.router.getSnapshot().revision).toBe(revision);
+      await h.execute('agent.submit', { sessionId: 'agent-1', prompt: 'Again' });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().sideQuestionSessionIds).toEqual(['agent-1']);
+      const again = h.router.getSnapshot().turns.find((entry) => entry.sessionId === 'agent-1' && entry.state !== 'completed')!;
+      h.claude.emit({ kind: 'turn-finished', sessionId: 'agent-1', turnId: again.id, outcome: 'completed' });
+      await h.runtime.whenIdle();
+      expect(await h.execute('agent.archive', { sessionId: 'agent-1' })).toMatchObject({ ok: true });
+      await h.runtime.whenIdle();
+      expect(h.router.getSnapshot().sideQuestionSessionIds).toBeUndefined();
+      await expect(h.runtime.askSideQuestion(question, new AbortController().signal)).rejects.toMatchObject({ code: 'not-live' });
     } finally { await h.runtime.dispose(); await h.store.close(); }
   });
 });

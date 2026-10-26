@@ -88,6 +88,7 @@ import type { ChatMessageContext } from '../../src/shared/chat-message';
 import { sessionViewKey } from '../../src/renderer/session-view-state';
 import { useLiveTerminalSessions, withLiveTerminalSessions } from '../../src/renderer/use-live-terminal-sessions';
 import { useMobileToast } from './MobileToast';
+import { createSideQuestionClient } from '../../src/renderer/side-question/side-question-client';
 import type {
   DaemonRuntimeViewState,
   WsEzTerminalTransport,
@@ -399,6 +400,8 @@ export function MobileAgentView({
     list: transport.agentCapabilitiesList.bind(transport),
     manage: transport.agentCapabilitiesManage.bind(transport),
   } : undefined, [transport]);
+  // /btw over the bridge; offered only while connected to a PC that advertises side-questions-v1.
+  const sideQuestionClient = useMemo(() => createSideQuestionClient(transport), [transport]);
   const historyClient = useMemo<ConversationHistoryClient | undefined>(() => transport
     && typeof transport.listConversations === 'function' && typeof transport.readConversation === 'function'
     && typeof transport.prepareHistoryResume === 'function' && typeof transport.resumeHistory === 'function' ? {
@@ -1488,6 +1491,10 @@ export function MobileAgentView({
         supportsMessageContext={Boolean(transport && transport.negotiatedRemoteProtocolVersion >= 13
           && (selectedDaemonProvider?.protocol === 'codex-app-server' || selectedDaemonProvider?.protocol === 'claude-agent-sdk'))}
         historyOnly={archivedHistory}
+        {...(sideQuestionClient && transport?.supportsSideQuestions && !disconnected && !archivedHistory && !providerOwned ? { sideQuestion: {
+          client: sideQuestionClient,
+          available: daemonRuntimeState.snapshot?.sideQuestionSessionIds?.includes(selectedDaemonSession.id) === true,
+        } } : {})}
         workflowContext={workflowContext.scope ? <WorkflowConversationContext scope={workflowContext.scope} onRefresh={workflowContext.refreshReferences} busy={workflowContext.loading} error={workflowContext.error} onReturn={onOpenWorkflow ? () => { const scope = workflowContext.scope!; onOpenWorkflow(scope.projectId, scope.subprojectId, scope.nodeId); } : undefined} /> : workflowContext.error ? <WorkflowConversationUnavailable message={workflowContext.error} onRetry={workflowContext.retry} /> : undefined}
         {...(selectedDaemonRelation ? { owner: selectedDaemonRelation.owner } : {})}
         {...(providerOwned && selectedDaemonRelation ? {
