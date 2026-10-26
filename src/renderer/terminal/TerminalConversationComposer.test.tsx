@@ -205,9 +205,11 @@ describe('TerminalConversationComposer', () => {
     });
     const { chat } = fixture();
     let fail = true;
+    let reads = 0;
     const capabilities: CapabilityAccess = { ...rendererCapabilities,
       daemon: { ...rendererCapabilities.daemon, sendCommand: vi.fn(), observeEvents: () => () => undefined,
         getTranscript: async () => {
+          reads += 1;
           if (fail) throw new Error('host busy');
           return [{ id: 'm', sessionId: scope.sessionId, sequence: 9, kind: 'user-message', text: 'Then update the docs', turnId: 'turn-queued',
             isDelta: false, isSensitive: false, createdAt: NOW }];
@@ -225,9 +227,15 @@ describe('TerminalConversationComposer', () => {
     await show(3);
     expect(container.querySelector('[data-testid="structured-agent-stop"]')).toBeNull();
     fail = false;
-    await show(4);
+    // A fresh snapshot with the same revision (the host came back): read again.
+    await show(3);
     expect(container.querySelector('.chat-queue__item')?.textContent).toContain('Then update the docs');
     expect(container.querySelector('[data-testid="structured-agent-stop"]')).not.toBeNull();
+    // Once found, more snapshots do not read again.
+    const afterSuccess = reads;
+    await show(4);
+    await show(5);
+    expect(reads).toBe(afterSuccess);
   });
 
   it('says so when the conversation is gone', async () => {
