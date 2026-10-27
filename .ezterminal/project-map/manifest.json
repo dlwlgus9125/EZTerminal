@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3545f6ea906bc80645257418cccbd260692338ad457a59d122bf7fc11345fbfa",
+        "inputDigest": "sha256:9c8ed15dfe64894be6c3bc97dbe0e247c811b72161f0124fb7d05842e511a5a8",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4 review fixes): the phone project screen seeds a stage conversation draft through the shared phone draft storage (one revision count, one write queue) instead of the store directly. Navigation projection and authority fingerprint unchanged."
+        "reason": "Reviewed (I4 review fixes 2): the phone project screen seeds a stage conversation draft through that conversation's shared draft controller (seedPhoneConversationDraft). Navigation projection and authority fingerprint unchanged."
       }
     }
   ]

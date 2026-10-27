@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import { e2eLog } from './e2e-telemetry';
+
 /** Handoff "Interactions & Motion": a toast is a pill that self-dismisses. */
 const TOAST_MS = 2600;
 /** A toast with an action stays long enough to reach it. */
@@ -66,7 +68,11 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
           <span className="mob-toast__message">{toast.message}</span>
           {toast.action && (
             <button type="button" className="mob-toast__action" data-testid="mobile-toast-action"
-              onClick={() => { const { onSelect } = toast.action!; dismiss(); onSelect(); }}>
+              // Pressed while typing (the terminal's box keeps the keyboard up): taking focus would close the
+              // keyboard, shift the layout under the finger and lose the click. The box keeps focus instead.
+              onPointerDown={(event) => event.preventDefault()}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { const { onSelect } = toast.action!; e2eLog('toast-action:', toast.action!.label); dismiss(); onSelect(); }}>
               {toast.action.label}
             </button>
           )}

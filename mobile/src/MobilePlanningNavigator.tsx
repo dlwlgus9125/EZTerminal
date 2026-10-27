@@ -11,7 +11,7 @@ import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobilePageHeader } from './MobilePageHeader';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { mobilePlanningDraftStorage } from './mobile-planning-draft-store';
-import { phoneChatStateAccess } from './phone-conversation-access';
+import { phoneChatStateAccess, seedPhoneConversationDraft } from './phone-conversation-access';
 import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
 import { mobileWorkflowDraftAccess } from './mobile-workflow-draft-store';
 import { saveDownloadToDevice } from './download-storage';
@@ -107,17 +107,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       navigationTarget={treeTarget?.projectId === project.id ? treeTarget : navigationTarget}
       capabilityClient={capabilityClient}
       recoveryAccess={recoveryAccess}
-      onSeedConversationDraft={async (sessionId, draft) => {
-        // Through the same storage the conversation's draft controller uses (one revision count, one write queue).
-        const access = phoneChatStateAccess(transport);
-        const scope = { projectId: project.id, sessionId };
-        const current = await access.chatStateRead(scope);
-        if (!current.ok) throw new Error(current.message);
-        const saved = current.snapshot.state.draft.text;
-        if (saved && saved !== draft.text) throw new Error('A draft already exists in this conversation. It was preserved.');
-        const written = await access.chatStateWrite(scope, { expectedRevision: current.snapshot.revision, state: { ...current.snapshot.state, draft } });
-        if (!written.ok) throw new Error(written.message);
-      }}
+      onSeedConversationDraft={(sessionId, draft) => seedPhoneConversationDraft(phoneChatStateAccess(transport), { projectId: project.id, sessionId }, draft)}
       disabled={!connected} disabledReason={offlineReason}
       onBack={() => navigation.closeLayer(layerId, 'ui')}
       onNewConversation={() => onOpenChat()}

@@ -158,6 +158,8 @@ export const MOBILE_PRIMARY_DESTINATIONS = MOBILE_TAB_ROOTS;
 
 /** A launch decision that is not ready this long after the connection stays unapplied (no late jump). */
 const LAUNCH_DECISION_MS = 3_000;
+/** A saved terminal the PC does not adopt in this long is left out of the restore (the record is written again). */
+const RESTORE_ADOPT_MS = 8_000;
 
 const surfaceOf = (tab: MobileShellTab): LastSurface => tab === 'terminal' ? 'terminal' : tab === 'agents' ? 'chat' : 'feed';
 
@@ -728,6 +730,8 @@ export function MobileWorkspace({
   }, [transport]);
 
   const openOwnedTab = useCallback(async (cwd?: string): Promise<SessionSurfaceBinding> => {
+    // The person's move starts here, not when the PC answers: a pending launch decision must not override it.
+    navigationCountRef.current += 1;
     const binding = await createOwnedSurface(cwd);
     acceptSurfaceBinding(binding);
     return binding;
@@ -736,6 +740,7 @@ export function MobileWorkspace({
   const createWorkspaceTerminal = useCallback(async (
     workspaceId: string,
   ): Promise<MobileWorkspaceTerminalResult> => {
+    navigationCountRef.current += 1;
     let snapshot: Awaited<ReturnType<WsEzTerminalTransport['getDaemonSnapshot']>>;
     try {
       snapshot = await transport.getDaemonSnapshot();
@@ -769,6 +774,7 @@ export function MobileWorkspace({
 
   const pendingAdoptionsRef = useRef(new Map<string, Promise<void>>());
   const adoptAndOpenTab = useCallback((sessionId: string): Promise<void> => {
+    navigationCountRef.current += 1;
     const existing = tabsStateRef.current.tabs.find((entry) => entry.sessionId === sessionId);
     if (existing) {
       dispatch({ type: 'activate', sessionId });
@@ -871,8 +877,9 @@ export function MobileWorkspace({
     let cancelled = false;
     const connectedAt = Date.now();
     const movesAtStart = navigationCountRef.current;
+    let authority: string | null = null;
     void (async () => {
-      const authority = await mobileAgentCreateAuthorityFingerprint(await transport.getRemoteToken());
+      authority = await mobileAgentCreateAuthorityFingerprint(await transport.getRemoteToken());
       if (cancelled || restoredAuthorityRef.current === authority) return;
       const saved = readWorkspaceRestore(authority);
       if (saved) {
@@ -880,7 +887,17 @@ export function MobileWorkspace({
         for (const sessionId of saved.terminalSessionIds) {
           if (cancelled) return;
           if (tabsStateRef.current.tabs.some((entry) => entry.sessionId === sessionId)) { restoredIds.add(sessionId); continue; }
-          const result = await transport.openSessionSurface(nextMobileSurfaceId(), { kind: 'adopt', sessionId }).catch(() => null);
+          const adoption = transport.openSessionSurface(nextMobileSurfaceId(), { kind: 'adopt', sessionId }).catch(() => null);
+          let adoptTimer: ReturnType<typeof setTimeout> | undefined;
+          const result = await Promise.race([
+            adoption,
+            new Promise<'timeout'>((resolve) => { adoptTimer = setTimeout(() => resolve('timeout'), RESTORE_ADOPT_MS); }),
+          ]).finally(() => clearTimeout(adoptTimer));
+          if (result === 'timeout') {
+            // Left out; a late adoption is given back to the PC rather than kept without a tab.
+            void adoption.then((late) => { if (late?.ok) void transport.releaseSessionSurface(late.binding.bindingId).catch(() => undefined); });
+            continue;
+          }
           if (cancelled) {
             if (result?.ok) void transport.releaseSessionSurface(result.binding.bindingId).catch(() => undefined);
             return;
@@ -919,7 +936,10 @@ export function MobileWorkspace({
         }
       }
       if (!cancelled) { restoredAuthorityRef.current = authority; setRestoreAuthority(authority); }
-    })().catch(() => { /* Terminal creation remains available when optional restoration fails. */ });
+    })().catch(() => {
+      // Terminal creation remains available when optional restoration fails; the record is written again from here.
+      if (!cancelled && authority) { restoredAuthorityRef.current = authority; setRestoreAuthority(authority); }
+    });
     return () => { cancelled = true; };
   }, [connected, transport]);
 
@@ -927,19 +947,21 @@ export function MobileWorkspace({
     if (tab === 'terminal' || tab === 'agents') lastWorkTabRef.current = tab;
     const authority = restoreAuthority ?? offlineChatCache?.authorityFingerprint;
     if (!authority) return;
-    // Connected but not restored yet: the record is what the restore is about to read; leave it whole.
-    if (connected && restoreAuthority === null) return;
+    // Connected (or about to be: the transport is authenticated before this view hears of it) but not restored yet:
+    // the record is what the restore is about to read; leave it whole.
+    if ((connected || transport.isAuthed) && restoreAuthority === null) return;
     const previous = readWorkspaceRestore(authority);
-    // Until this run has restored (or the person moved), the surface left last time is kept, not the feed shown meanwhile.
+    // Until this run has restored (or the person moved), what was left last time is kept, not the feed shown meanwhile.
     const settled = restoreAuthority !== null || userNavigatedRef.current;
+    const keep = !settled && previous;
     writeWorkspaceRestore(authority, {
       terminalSessionIds: connected ? tabsState.tabs.map((entry) => entry.sessionId) : previous?.terminalSessionIds ?? [],
       activeTerminalSessionId: connected ? tabsState.activeSessionId : previous?.activeTerminalSessionId ?? null,
-      activeAgentSessionId,
-      destination: lastWorkTabRef.current,
-      lastSurface: settled || !previous ? surfaceOf(tab) : lastSurfaceOf(previous),
+      activeAgentSessionId: keep ? previous.activeAgentSessionId : activeAgentSessionId,
+      destination: keep ? previous.destination : lastWorkTabRef.current,
+      lastSurface: keep ? lastSurfaceOf(previous) : surfaceOf(tab),
     });
-  }, [restoreAuthority, offlineChatCache?.authorityFingerprint, connected, tabsState, tab, activeAgentSessionId]);
+  }, [restoreAuthority, offlineChatCache?.authorityFingerprint, connected, tabsState, tab, activeAgentSessionId, transport]);
 
   // Back from a suspend (30 s or more in the background drops the link): when something waits, the feed shows it once
   // the link is back, unless the person moved first. A short trip to another app changes nothing.
@@ -957,9 +979,13 @@ export function MobileWorkspace({
     const reconnectedAt = Date.now();
     const movesAtStart = navigationCountRef.current;
     let cancelled = false;
-    void transport.getDaemonSnapshot().catch(() => null).then((snapshot) => {
+    void transport.getDaemonSnapshot().catch(() => null).then(async (snapshot) => {
+      // A conversation being created is recovered first (it opens itself): wait for that check, within the budget.
+      while (agentCreateRecoveryStateRef.current.status === 'loading' && Date.now() - reconnectedAt <= LAUNCH_DECISION_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (cancelled) return;
+      }
       if (cancelled || navigationCountRef.current !== movesAtStart || Date.now() - reconnectedAt > LAUNCH_DECISION_MS) return;
-      // A conversation being created is recovered first; it opens itself.
       if (agentCreateRecoveryStateRef.current.recovery || agentCreateRecoveryStateRef.current.status === 'loading') return;
       if (feedBadgeCount(snapshot, launchAgentsRef.current) === 0) return;
       setSheet(null);
@@ -1108,6 +1134,7 @@ export function MobileWorkspace({
 
   /** A conversation (or, with null, the list); leaving it returns to `from`. */
   const openConversation = (sessionId: string | null, from: MobileShellTab | null): void => {
+    e2eLog('open-conversation:', `${sessionId ?? 'list'} from=${from ?? 'list'}`);
     setActiveAgentSessionId(sessionId);
     setAgentsExitTo(from);
     selectTab('agents');
@@ -1436,6 +1463,7 @@ export function MobileWorkspace({
                 type="button"
                 className="mob-term-head__session"
                 onClick={() => {
+                  navigationCountRef.current += 1;
                   sheetReturnFocusRef.current = document.activeElement instanceof HTMLElement
                     ? document.activeElement
                     : null;

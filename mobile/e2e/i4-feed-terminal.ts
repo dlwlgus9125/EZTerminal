@@ -25,6 +25,13 @@ async function waitFor(expression: string, label: string, timeoutMs = 30_000): P
   while (!await evaluateWebView(expression)) { if (Date.now() > deadline) throw new Error(`Timed out: ${label}`); await sleep(200); }
 }
 async function capture(name: string): Promise<void> { await writeFile(path.join(artifacts, `${name}.png`), runAdbBinary(['exec-out', 'screencap', '-p'])); }
+/** The element with this test id that is on top at its own centre (the terminal stays mounted under other screens). */
+const visible = (testId: string): string => `([...document.querySelectorAll('[data-testid="${testId}"]')].filter(function (node) {
+  var rect = node.getBoundingClientRect();
+  if (rect.width === 0) return false;
+  var top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  return !!top && (top === node || node.contains(top));
+})[0] || {})`;
 const visibleCount = (testId: string): string => `[...document.querySelectorAll('[data-testid="${testId}"]')].filter(function (node) { return node.getBoundingClientRect().width > 0; }).length`;
 
 async function main(): Promise<void> {
@@ -66,7 +73,7 @@ async function main(): Promise<void> {
     await tapTestId('mobile-feed-new');
     await waitForTestId('conversation-start');
     await setTestIdTextValue('structured-agent-composer-input', 'EZTERMINAL_E2E_APPROVAL run the phone tests');
-    await waitFor(`(document.querySelector('[data-testid="structured-agent-send"]') || {}).disabled === false`, 'first Send ready');
+    await waitFor(`${visible('structured-agent-send')}.disabled === false`, 'first Send ready');
     await tapTestIdOnce('structured-agent-send');
     await waitForTestIdHidden('conversation-start', 30_000);
     await waitForTestId('structured-agent-session');
@@ -111,21 +118,31 @@ async function main(): Promise<void> {
     await setTestIdTextValue('cmd-input', 'echo i4-chip-output');
     await tapTestId('btn-run');
     await waitFor(`document.querySelector('[data-testid="block-list"]').textContent.indexOf('i4-chip-output') >= 0`, 'the block output', 45_000);
+    // The AI input offers the newest FINISHED block: wait for the run to end (an external command takes seconds here).
+    await waitFor(`!!document.querySelector('[data-testid="block-list"] [data-status="done"]')`, 'the block finished', 45_000);
     await waitForTestId('terminal-mode-ai', 30_000);
-    await tapTestId('terminal-mode-ai');
+    // A native tap can land while the prompt row is still settling (the recent-command chip appears after a run):
+    // re-observe the mode and tap again rather than mistake a missed tap for the switch.
+    for (let attempt = 1; ; attempt += 1) {
+      await tapTestId('terminal-mode-ai');
+      const switched = await waitFor(`!!document.querySelector('.mobile-session-view[data-input-mode="ai"]')`, 'the AI input', 3_000).then(() => true, () => false);
+      if (switched) break;
+      if (attempt === 3) throw new Error('The AI switch did not take three taps');
+    }
     await waitFor(`!!document.querySelector('.mobile-session-view [data-testid="terminal-ai-chip"]')`, 'the output chip');
     await setTestIdTextValue('structured-agent-composer-input', 'From the phone terminal');
     await capture('04-terminal-ai');
     await waitFor(`(document.querySelector('.mobile-session-view [data-testid="structured-agent-send"]') || {}).disabled === false`, 'terminal Send ready');
     const turnsBefore = (await snapshot())?.turns.length ?? 0;
     await tapTestIdOnce('structured-agent-send');
-    await waitForTestId('mobile-toast-action', 15_000);
+    // The sent toast stays five seconds: open the conversation from it at once.
+    await tapTestId('mobile-toast-action', 15_000);
     const sent = Date.now() + 30_000;
     while (((await snapshot())?.turns.length ?? 0) <= turnsBefore) { if (Date.now() > sent) throw new Error('The terminal message was not sent'); await sleep(200); }
     checks.push('the terminal AI input sends a finished block with a message');
-    await tapTestId('mobile-toast-action');
-    await waitForTestId('structured-agent-session');
-    await waitFor(`document.querySelector('[data-testid="structured-agent-session"]').textContent.indexOf('From the phone terminal') >= 0`, 'the message in the conversation');
+    // The conversation screen (its own back button; the terminal box is a conversation composer too).
+    await waitForTestId('mobile-structured-agent-back', 15_000);
+    await waitFor(`[...document.querySelectorAll('[data-testid="structured-agent-session"]')].some(function (node) { return node.getBoundingClientRect().width > 0 && node.textContent.indexOf('From the phone terminal') >= 0; })`, 'the message in the conversation');
     await capture('05-sent-to-conversation');
     checks.push('the sent toast opens the conversation, which shows the message');
 
@@ -137,7 +154,7 @@ async function main(): Promise<void> {
     await openFeed();
     await tapTestId('mobile-feed-conversation');
     await waitForTestId('structured-agent-session');
-    await waitFor(`(document.querySelector(${JSON.stringify(input)}) || {}).value === 'Shared draft from the terminal'`, 'the shared draft');
+    await waitFor(`${visible('structured-agent-composer-input')}.value === 'Shared draft from the terminal'`, 'the shared draft (in the conversation screen)');
     checks.push('the terminal box and the conversation screen share one draft');
 
     // 7. Cold start: nothing waits and the terminal was left → the terminal.
@@ -158,7 +175,7 @@ async function main(): Promise<void> {
     await tapTestId('mobile-feed-conversation');
     await waitForTestId('structured-agent-session');
     await setTestIdTextValue('structured-agent-composer-input', 'EZTERMINAL_E2E_APPROVAL once more');
-    await waitFor(`(document.querySelector('[data-testid="structured-agent-send"]') || {}).disabled === false`, 'Send ready');
+    await waitFor(`${visible('structured-agent-send')}.disabled === false`, 'Send ready');
     await tapTestIdOnce('structured-agent-send');
     const waits = Date.now() + 30_000;
     while (!(await snapshot())?.approvals.some(approval => approval.state === 'pending')) { if (Date.now() > waits) throw new Error('The second approval never waited'); await sleep(200); }
@@ -181,7 +198,9 @@ async function main(): Promise<void> {
   } catch (error) {
     await capture('failure').catch(() => undefined);
     const text = await evaluateWebView<string>('document.body.innerText').catch(() => 'WebView unavailable');
-    await writeFile(path.join(artifacts, 'failure.txt'), `${String(error)}\n${checks.join('\n')}\n---\n${text}`);
+    const aiBox = await evaluateWebView<string>(`(document.querySelector('.mobile-session-view .mob-term-ai') || { outerHTML: 'no AI box' }).outerHTML.slice(0, 4000)`).catch(() => 'unavailable');
+    const consoleLines = (() => { try { return runAdb(['logcat', '-d', '-s', 'chromium:*', 'Capacitor/Console:*']).split('\n').slice(-80).join('\n'); } catch { return 'logcat unavailable'; } })();
+    await writeFile(path.join(artifacts, 'failure.txt'), `${String(error)}\n${checks.join('\n')}\n---\n${text}\n--- AI box\n${aiBox}\n--- console\n${consoleLines}`);
     if (desktop) await writeFile(path.join(artifacts, 'failure-snapshot.json'), JSON.stringify(await desktop.window.evaluate(() => window.ezterminal.getDaemonSnapshot()), null, 2)).catch(() => undefined);
     throw error;
   } finally { await desktop?.dispose(); closeMobileE2eResources(); await registry.disposeAll(); }

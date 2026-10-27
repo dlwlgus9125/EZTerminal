@@ -1057,6 +1057,18 @@ describe('MobileWorkspace - previous work', () => {
     expect(readWorkspaceRestore(authority)).toMatchObject({ terminalSessionIds: ['one'], activeTerminalSessionId: 'one', lastSurface: 'terminal' });
   });
 
+  it('keeps the conversation left on the first render, before the view hears the PC is connected', async () => {
+    const { transport } = makeAuthedTransport([], 'restore-host');
+    const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');
+    writeWorkspaceRestore(authority, { terminalSessionIds: [], activeTerminalSessionId: null, activeAgentSessionId: 'chat', destination: 'agents', lastSurface: 'chat' });
+    vi.spyOn(transport, 'getDaemonSnapshot').mockImplementation(() => new Promise(() => undefined));
+    await renderWorkspace(transport, undefined, {
+      schemaVersion: 1, authorityFingerprint: authority, savedAt: DAEMON_NOW, snapshot: daemonSnapshot(), transcripts: {},
+    });
+    await flushAsync();
+    expect(readWorkspaceRestore(authority)).toMatchObject({ activeAgentSessionId: 'chat', lastSurface: 'chat', destination: 'agents' });
+  });
+
   it('opens on the feed when the conversation left is gone', async () => {
     const { transport } = makeAuthedTransport([], 'restore-host');
     const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');

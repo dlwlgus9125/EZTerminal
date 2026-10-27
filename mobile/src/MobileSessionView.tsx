@@ -36,7 +36,7 @@ import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
 import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { beforeInputTextForPty } from './composer-input';
-import { installE2ETerminalOutputProbe } from './e2e-telemetry';
+import { e2eLog, installE2ETerminalOutputProbe } from './e2e-telemetry';
 import { useLongPress } from './long-press';
 import { appendToComposer, resolvePasteTarget } from './paste-routing';
 import {
@@ -51,7 +51,7 @@ import { useMobileToast } from './MobileToast';
 import { TouchInputBar } from './TouchInputBar';
 import { TerminalAiDock, TerminalTargetPicker, type TerminalAiWiring } from '../../src/renderer/terminal/TerminalAiDock';
 import type { TerminalAiHost } from '../../src/renderer/terminal/terminal-ai-host';
-import { useTerminalAiInput } from '../../src/renderer/terminal/use-terminal-ai-input';
+import { targetKeyOf, useTerminalAiInput } from '../../src/renderer/terminal/use-terminal-ai-input';
 import './terminal-instrument.css';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { glyphIcon } from '../../src/renderer/ui/Glyph';
@@ -501,6 +501,11 @@ export function MobileSessionView({
   // the choice comes back with the connection.
   const inputMode = aiHost ? chosenInputMode : 'shell';
   const aiProjectId = aiHost && inputMode === 'ai' ? terminalProjectId() : undefined;
+  // Device telemetry for the e2e scenario (no-op outside e2e builds).
+  useEffect(() => {
+    if (!aiHost) return;
+    e2eLog('terminal-ai:', `mode=${inputMode} pending=${aiPending.length} target=${aiTarget ? targetKeyOf(aiTarget) : 'none'} blocks=${blocks.length} finished=${blocks.filter((entry) => entry.controller && entry.controller.getSnapshot().status !== 'running').length}`);
+  }, [aiHost, aiPending.length, aiTarget, blocks, inputMode]);
   const startGeneration = targetGenerationRef.current;
   const viewStateRef = useRef({ command, history });
   viewStateRef.current = { command, history };

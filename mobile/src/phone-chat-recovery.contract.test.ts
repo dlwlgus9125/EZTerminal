@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatRecoveryController } from '../../src/renderer/chat-recovery';
-import { sharedChatRecovery } from '../../src/renderer/chat-recovery-registry';
+import { retainChatRecovery, sharedChatRecovery } from '../../src/renderer/chat-recovery-registry';
 import { reconcileConversationSubmit, submitConversationMessage } from '../../src/renderer/conversation-commands';
 import type { DaemonCommand, DaemonCommandReceipt, DaemonSnapshot } from '../../src/shared/daemon-protocol';
 import { mobileAgentCreateAuthorityFingerprint, type SecureStorageLike } from './mobile-agent-create-recovery-store';
 import { MobileChatStateStore } from './mobile-chat-state-store';
-import { PHONE_PRINCIPAL, phoneChatStateAccess, phoneConversationCommands } from './phone-conversation-access';
+import { PHONE_PRINCIPAL, phoneChatStateAccess, phoneConversationCommands, seedPhoneConversationDraft } from './phone-conversation-access';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 /**
@@ -206,6 +206,23 @@ describe('phone conversation draft on the shared recovery controller', () => {
     expect(reader.getSnapshot().status).toBe('conflict');
     const fingerprint = await mobileAgentCreateAuthorityFingerprint('test-pc');
     expect((await store.load({ authorityFingerprint: fingerprint, ...scope }))?.pending).toEqual(escrow);
+  });
+
+  it('seeds a flow stage draft into an open conversation box, which shows it and edits on without a conflict', async () => {
+    const { transport, store } = setup();
+    const access = phoneChatStateAccess(transport, { store });
+    const scope = { projectId: 'project', sessionId: 'seeded' };
+    const open = sharedChatRecovery(scope, access);
+    const release = retainChatRecovery(open)!;
+    await open.load();
+    await seedPhoneConversationDraft(access, scope, { text: 'Stage instructions' });
+    expect(open.getSnapshot().draft.text).toBe('Stage instructions');
+    open.updateDraft({ text: 'Stage instructions, edited' });
+    await open.flush();
+    expect(open.getSnapshot().status).toBe('ready');
+    await expect(seedPhoneConversationDraft(access, scope, { text: 'Other instructions' })).rejects.toThrow('A draft already exists');
+    expect(open.getSnapshot().draft.text).toBe('Stage instructions, edited');
+    release();
   });
 
   it('gives the conversation screen and the terminal one controller per conversation on a PC connection', () => {

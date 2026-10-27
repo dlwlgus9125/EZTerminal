@@ -230,4 +230,35 @@ describe('MobileNavigationHistory native Android Back', () => {
     await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state: states[0] })); });
     expect(back).toHaveBeenCalledTimes(2);
   });
+  it('keeps the sub-page a project opened when that project unmounts under it (I4)', async () => {
+    function Layer({ id }: { readonly id: string }): null {
+      const navigation = useMobileNavigationHistory();
+      useEffect(() => navigation.pushLayer({ id, kind: 'page', onBack: () => undefined }), [id, navigation]);
+      return null;
+    }
+    const pushed: string[] = [];
+    const states: Record<string, unknown> = {};
+    const push = window.history.pushState.bind(window.history);
+    vi.spyOn(window.history, 'pushState').mockImplementation((state, unused, url) => {
+      const id = String((state as { ezterminalNavigation?: { layerId?: string } } | null)?.ezterminalNavigation?.layerId);
+      pushed.push(id);
+      states[id] = state;
+      push(state, unused, url);
+    });
+    const go = vi.spyOn(window.history, 'go').mockImplementation(() => undefined);
+    vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    const show = async (layers: readonly string[]): Promise<void> => {
+      await act(async () => {
+        root.render(<MobileNavigationHistoryProvider>{layers.map((id) => <Layer key={id} id={id} />)}</MobileNavigationHistoryProvider>);
+        for (let index = 0; index < 5; index += 1) await Promise.resolve();
+      });
+    };
+    await show(['shell', 'project']);
+    await show(['shell', 'project', 'files']);
+    // The project screen gives way to Files: only its own layer goes.
+    await show(['shell', 'files']);
+    expect(go).toHaveBeenCalledWith(-2);
+    await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state: states.shell })); });
+    expect(pushed).toEqual(['shell', 'project', 'files', 'files']);
+  });
 });

@@ -145,10 +145,16 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
   const releaseLayer = useCallback((id: string, invokeBack: boolean): void => {
     const index = layersRef.current.findIndex((layer) => layer.id === id);
     if (index < 0) return;
-    const removed = layersRef.current.splice(index);
-    if (invokeBack) {
-      for (const layer of [...removed].reverse()) layer.onBack();
+    if (!invokeBack) {
+      // A screen that unmounts (a project giving way to the sub-page it opened) releases only its own layer;
+      // the layers above it stay. History goes back past its entry and re-pushes theirs (rebuildDeferredEntries).
+      const entriesFromIt = layersRef.current.length - index;
+      layersRef.current.splice(index, 1);
+      traverseClosedEntries(entriesFromIt);
+      return;
     }
+    const removed = layersRef.current.splice(index);
+    for (const layer of [...removed].reverse()) layer.onBack();
     traverseClosedEntries(removed.length);
   }, [traverseClosedEntries]);
 
