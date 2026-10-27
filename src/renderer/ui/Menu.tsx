@@ -87,7 +87,7 @@ export function Menu({
     }
   }, [setOpen]);
   // Android's Back closes an open menu before it leaves the screen.
-  useBackDismiss(isOpen, close);
+  useBackDismiss(isOpen, close, () => close(false));
 
   useLayoutEffect(() => {
     if (!isOpen) return;

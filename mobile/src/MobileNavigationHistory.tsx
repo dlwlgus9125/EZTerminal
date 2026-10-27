@@ -11,7 +11,7 @@ import {
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 
-import { dismissTopOverlay } from '../../src/renderer/ui/back-dismiss';
+import { dismissTopOverlay, dropAllOverlays } from '../../src/renderer/ui/back-dismiss';
 
 export type MobileNavigationLayerKind = 'page' | 'sheet';
 
@@ -146,6 +146,8 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
   const pushLayer = useCallback((layer: MobileNavigationLayer): (() => void) => {
     registrationsRef.current.add(layer.id);
     const existing = layersRef.current.find((candidate) => candidate.id === layer.id);
+    // A new page or sheet covers the menus and popovers of the screen below: they close first.
+    if (!existing) dropAllOverlays();
     if (existing) {
       const index = layersRef.current.indexOf(existing);
       layersRef.current[index] = layer;

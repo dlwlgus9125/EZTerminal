@@ -29,7 +29,7 @@ vi.mock('@capacitor/app', () => ({
   App: { addListener: nativeApp.addListener, exitApp: nativeApp.exitApp },
 }));
 
-import { Menu, MenuItem } from '../../src/renderer/ui';
+import { Menu, MenuItem, Popover } from '../../src/renderer/ui';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 
 let root: Root;
@@ -67,6 +67,43 @@ async function renderCoordinator(page?: JSX.Element): Promise<void> {
 }
 
 describe('MobileNavigationHistory native Android Back', () => {
+  it('closes an open popover like Escape, focus back on its button', async () => {
+    await renderCoordinator(
+      <Popover ariaLabel="Usage" trigger={<button type="button">Usage</button>}>
+        <button type="button">Details</button>
+      </Popover>,
+    );
+    const trigger = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'Usage')!;
+    act(() => trigger.click());
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    act(() => [...nativeApp.listeners][0]({ canGoBack: false }));
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))); });
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('closes the menus of a screen a new page covers, so Back closes the page on top', async () => {
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    const menu = (
+      <Menu label="Conversation" trigger={<button type="button">More</button>}>
+        <MenuItem onSelect={() => undefined}>Previous conversations</MenuItem>
+      </Menu>
+    );
+    await act(async () => {
+      root.render(<MobileWorkbenchCoordinator terminal={<div>{menu}</div>} onRequestRoot={vi.fn()} />);
+      await Promise.resolve();
+    });
+    act(() => Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'More')!.click());
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    await act(async () => {
+      root.render(<MobileWorkbenchCoordinator terminal={<div>{menu}</div>} page={<div>review</div>} onRequestRoot={vi.fn()} />);
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    act(() => [...nativeApp.listeners][0]({ canGoBack: false }));
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+
   it('closes an open menu first and keeps the page under it', async () => {
     const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
     await renderCoordinator(

@@ -58,8 +58,12 @@ export function Popover({
     if (open === undefined) setUncontrolledOpen(next);
     onOpenChange?.(next);
   }, [onOpenChange, open]);
-  // Android's Back closes an open popover before it leaves the screen.
-  useBackDismiss(isOpen, () => setOpen(false));
+  // Android's Back closes an open popover like Escape (focus back to its button) before it leaves the screen.
+  useBackDismiss(isOpen, () => {
+    setOpen(false);
+    const ownerWindow = (rootRef.current?.ownerDocument ?? document).defaultView ?? window;
+    ownerWindow.requestAnimationFrame(() => triggerRef.current?.focus());
+  }, () => setOpen(false));
 
   useEffect(() => {
     if (!isOpen) return;
