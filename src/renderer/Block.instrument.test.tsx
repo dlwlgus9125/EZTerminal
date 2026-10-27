@@ -37,13 +37,13 @@ afterEach(() => {
   container.remove();
 });
 
-function tableRun(variant: 'default' | 'instrument', opts: { startedAtMs?: number } = {}) {
+function tableRun(opts: { startedAtMs?: number } = {}) {
   const port = new FakePort();
   let now = START;
   const controller = new BlockController('ls src', port as unknown as MessagePort, { ...opts, clock: () => now });
   act(() => root.render(
     <AppI18nProvider locale="en" languages={['en']}>
-      <Block controller={controller} variant={variant} blockId="run-7" menu={<button type="button" data-testid="block-menu">More</button>} />
+      <Block controller={controller} blockId="run-7" menu={<button type="button" data-testid="block-menu">More</button>} />
     </AppI18nProvider>,
   ));
   act(() => {
@@ -56,28 +56,9 @@ function tableRun(variant: 'default' | 'instrument', opts: { startedAtMs?: numbe
   return controller;
 }
 
-describe('Block default markup (Android and other surfaces)', () => {
-  it('is the markup it was before the instrument variant', () => {
-    const controller = tableRun('default', { startedAtMs: START });
-    const block = container.querySelector('[data-testid="block"]')!;
-    expect(block.className).toBe('block');
-    expect(block.hasAttribute('data-block-id')).toBe(false);
-    expect(container.querySelector('[data-testid="block-time"]')).toBeNull();
-    expect(container.querySelector('[data-testid="block-menu"]')).toBeNull();
-    expect(container.querySelector('.block-meta')).toBeNull();
-    const head = container.querySelector('.block-head')!;
-    expect([...head.children].map((child) => child.className)).toEqual([
-      'block-toggle', 'block-cwd', 'prompt-sigil', 'block-command', 'block-count', 'block-status block-status--done',
-    ]);
-    expect(head.querySelector('.prompt-sigil')!.textContent).toBe('❯');
-    expect(head.querySelector('[data-testid="row-count"]')!.className).toBe('block-count');
-    controller.dispose();
-  });
-});
-
-describe('Block instrument variant (desktop terminal)', () => {
+describe('Block (the instrument block of the desktop and phone terminals)', () => {
   it('shows the start time, where it ran, the row count, how long and how it ended', () => {
-    const controller = tableRun('instrument', { startedAtMs: START });
+    const controller = tableRun({ startedAtMs: START });
     const block = container.querySelector<HTMLElement>('[data-testid="block"]')!;
     expect(block.className).toBe('block block--instrument');
     expect(block.dataset.blockId).toBe('run-7');
@@ -95,7 +76,7 @@ describe('Block instrument variant (desktop terminal)', () => {
   });
 
   it('leaves the time and duration empty for a run it did not see start', () => {
-    const controller = tableRun('instrument');
+    const controller = tableRun();
     expect(container.querySelector('[data-testid="block-time"]')!.textContent).toBe('');
     expect(container.querySelector('[data-testid="block-duration"]')).toBeNull();
     expect(container.querySelector('[data-testid="block-exit"]')!.textContent).toBe('exit 0');

@@ -241,9 +241,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:0e3b641804b04190ae9dc0f731ae1d32a5b978d03ad9b0073468ac23af5a5485",
+        "inputDigest": "sha256:6bca85d49e766c497b7f731c5e8e66feed20dae7a98615aee8aeca004a26cb9d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-5 review fixes): TerminalPane lists the extracted AI input ref in its takeover effect; the phone terminal records block end times before it retains blocks. No anchored block changed meaning."
+        "reason": "Reviewed (I5-2): Block has one markup (the instrument block) for the desktop and phone terminals; the old default variant and its prop are gone. PTY sequencing is unchanged."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:436cfd096acc507ff5ee7f3e0b2729f08cd8a6fc5b9d5b8e9e7f15a593ca0fe9",
+        "inputDigest": "sha256:5fd29048e29971353a6061966148381158c24428168cce233332c8bc2a69d498",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-1): App passes the backup and restore access to the project dialogs (a module-level pending store per project); the anchored approval and session blocks only moved."
+        "reason": "Reviewed (I5-2): the legacy agent dock panel and AgentSessionPanel are gone (a create still in recovery renders the structured draft); the anchored approval and session blocks only moved."
       }
     },
     {

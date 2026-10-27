@@ -67,9 +67,7 @@ import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import { isAppUpdateAvailable } from '../shared/app-update';
 import { AuxiliaryCloseDialog, type AuxiliaryCloseChoice } from './AuxiliaryCloseDialog';
 import { peekAgentTerminalBootstrap } from './agent-terminal-bootstrap';
-import { AgentSessionPanel } from './AgentSessionPanel';
 import {
-  isStructuredAgentDockHistoryId,
   STRUCTURED_AGENT_DRAFT_PREFIX,
   structuredAgentSessionHistoryId,
   structuredAgentSessionId,
@@ -485,65 +483,6 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
 /** This PC's unanswered backup or restore request, per project (see project-archive-pending). */
 const desktopArchivePending = projectArchivePendingStore('desktop');
 
-function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
-  const historyId = typeof props.params?.historyId === 'string'
-    ? props.params.historyId
-    : '';
-  const projectId = typeof props.params?.projectId === 'string'
-    ? props.params.projectId
-    : '';
-  const rootId = typeof props.params?.rootId === 'string'
-    ? props.params.rootId
-    : '';
-  const workspaceId = typeof props.params?.workspaceId === 'string'
-    ? props.params.workspaceId
-    : '';
-  const binding = useContext(SessionBindingContext);
-  const projectReviewNavigation = useContext(ProjectReviewNavigationContext);
-  const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
-  const presetMutation = useContext(PresetMutationContext);
-  const quickCommandShelf = useContext(QuickCommandShelfContext);
-  const paneApprovals = useContext(PaneApprovalContext);
-  const orchestrationSnapshot = useContext(AgentOrchestrationContext);
-  return (
-    <AgentSessionPanel
-      historyId={historyId}
-      onOpenReview={projectId && rootId && workspaceId && projectReviewNavigation
-        ? (reviewTurnId, changedPath) => projectReviewNavigation.openHistoryReview(
-          projectId,
-          rootId,
-          workspaceId,
-          historyId,
-          reviewTurnId,
-          changedPath,
-        )
-        : undefined}
-      renderTerminal={(resumeBootstrap, onFailure) => (
-        <TerminalPane
-          panelId={props.api.id}
-          pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
-          workerApprovals={paneApprovals?.byActivity}
-          onDecideApproval={paneApprovals?.onDecide}
-          paneInstanceToken={props.api}
-          resumeBootstrap={resumeBootstrap}
-          onAgentBootstrapFailure={onFailure}
-          // Providers without a "run in this directory" flag resolve their
-          // session store from the process cwd, so the resumed shell has to
-          // start in the project root.
-          initialCwd={resumeBootstrap.cwd}
-          mountSessionPane={binding?.mountPane}
-          terminalRuntimeOptions={terminalRuntimeOptions}
-          commandSubmissionLocked={presetMutation.locked}
-          isCommandSubmissionLocked={presetMutation.isLocked}
-          quickCommands={quickCommandShelf?.commands}
-          onManageQuickCommands={quickCommandShelf?.onManage}
-          orchestrationSnapshot={orchestrationSnapshot}
-        />
-      )}
-    />
-  );
-}
-
 function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const { preview, keep } = usePanelPreview(props.api.id);
   const tabActions = useContext(WorkspaceTabActionContext);
@@ -578,7 +517,6 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
 }
 
 function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
-  const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
   const navigation = useContext(StructuredAgentNavigationContext);
   const createRecovery = useContext(StructuredAgentCreateRecoveryContext);
   const reviewNavigation = useContext(ProjectReviewNavigationContext);
@@ -608,8 +546,8 @@ function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
       params={{ ...props.params, historyId: structuredAgentSessionHistoryId(sessionId), conversationId }}
       onOpenSession={navigation?.openSession} onOpenHistory={navigation?.openHistory} onOpenSettings={navigation?.openSettings}
       onNewConversation={navigation?.newConversation} onClearConversation={clearConversation} onEditProject={navigation?.editProject} />} />;
-  return isStructuredAgentDockHistoryId(historyId)
-    ? (
+  // A create whose delivery is not settled yet (or a host without conversation lookup): the structured draft.
+  return (
         <StructuredAgentDockPanel
           {...props}
           createRecoveryRegistry={createRecovery?.registry}
@@ -630,8 +568,7 @@ function AgentSessionDockPanelBody(props: IDockviewPanelProps): JSX.Element {
           } : undefined}
           onOpenSettings={navigation?.openSettings}
         />
-      )
-    : <LegacyAgentSessionDockPanel {...props} />;
+  );
 }
 
 function ProjectMapDockPanel(props: IDockviewPanelProps): JSX.Element {

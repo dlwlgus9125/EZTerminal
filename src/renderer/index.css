@@ -1606,7 +1606,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   color: var(--term-fg);
 }
 
-/* Dim cyan cwd path that precedes the prompt sigil on a block's command line. */
+/* Where a block ran (its folder), in the block's meta after the command. */
 .block-cwd {
   flex: 0 1 auto;
   min-width: 0;
@@ -1642,11 +1642,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   font-variant-numeric: tabular-nums;
   font-size: 0.72rem;
   color: var(--term-fg-dim);
-}
-
-.block-count::before {
-  content: '';
-  display: inline-block;
 }
 
 /* Status — a colored dot + lowercase exit-style label, never a pill. The label
@@ -1687,8 +1682,8 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
    took and how it ended; its output sits in a well with a groove on its left.
    The prompt is a dock at the foot of the pane (not a floating pill): one big
    prompt line and, under it, the line naming the terminal and its folder.
-   Scoped to the terminal pane — the history composer keeps `.cmd-row`, and
-   Android renders the default block markup from its own stylesheet. */
+   Scoped to the terminal pane — the history composer keeps `.cmd-row`; the
+   phone draws the same blocks from mobile/src/terminal-instrument.css. */
 .pane--terminal {
   --terminal-gutter: 4.375rem;
 }

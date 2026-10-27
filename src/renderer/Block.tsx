@@ -46,7 +46,6 @@ export const Block = memo(function Block({
   isTakeover = false,
   terminalRuntimeOptions,
   runtimeLifecycleTier = 'active',
-  variant = 'default',
   blockId,
   menu,
 }: {
@@ -58,14 +57,9 @@ export const Block = memo(function Block({
   /** Platform integration for renderer policy and safe external links. */
   terminalRuntimeOptions?: TerminalRuntimeOptions;
   runtimeLifecycleTier?: RuntimeLifecycleTier;
-  /**
-   * `instrument`: the desktop terminal's block (start time in a gutter, `>` sign, where it ran,
-   * how long, how it ended). `default` is the markup Android and the other surfaces render.
-   */
-  variant?: 'default' | 'instrument';
-  /** The run id, exposed as `data-block-id` on an instrument block. */
+  /** The run id, exposed as `data-block-id`. */
   blockId?: string;
-  /** Extra header actions of an instrument block (its menu), before Dismiss. */
+  /** Extra header actions of the block (its menu), before Dismiss. */
   menu?: ReactNode;
 }): JSX.Element {
   const { t } = useAppTranslation();
@@ -73,7 +67,6 @@ export const Block = memo(function Block({
   const [collapsed, setCollapsed] = useState(false);
   const isDesktopCodex = terminalRuntimeOptions?.platform === 'desktop'
     && classifyDirectAgentCommand(controller.command) === 'codex';
-  const instrument = variant === 'instrument';
 
   const {
     status,
@@ -100,31 +93,29 @@ export const Block = memo(function Block({
         : status}
     </span>
   );
-  const duration = instrument && startedAtMs !== null && endedAtMs !== null
+  const duration = startedAtMs !== null && endedAtMs !== null
     ? blockDuration(endedAtMs - startedAtMs)
     : null;
 
   return (
     <section
-      className={`${isTakeover ? 'block block--takeover' : 'block'}${instrument ? ' block--instrument' : ''}`}
+      className={`${isTakeover ? 'block block--takeover' : 'block'} block--instrument`}
       data-testid="block"
       data-status={status}
       data-runtime-tier={runtimeLifecycleTier}
-      {...(instrument && blockId ? { 'data-block-id': blockId } : {})}
+      {...(blockId ? { 'data-block-id': blockId } : {})}
     >
       <header className="block-head">
-        {instrument && (
-          <time
-            className="block-time"
-            data-testid="block-time"
-            {...(startedAtMs !== null ? {
-              dateTime: new Date(startedAtMs).toISOString(),
-              title: t('block.startedAt', { time: formatBlockClock(startedAtMs) }),
-            } : {})}
-          >
-            {startedAtMs !== null ? formatBlockClock(startedAtMs) : ''}
-          </time>
-        )}
+        <time
+          className="block-time"
+          data-testid="block-time"
+          {...(startedAtMs !== null ? {
+            dateTime: new Date(startedAtMs).toISOString(),
+            title: t('block.startedAt', { time: formatBlockClock(startedAtMs) }),
+          } : {})}
+        >
+          {startedAtMs !== null ? formatBlockClock(startedAtMs) : ''}
+        </time>
         <button
           className="block-toggle"
           onClick={() => setCollapsed((c) => !c)}
@@ -136,54 +127,38 @@ export const Block = memo(function Block({
             ? <ChevronRight aria-hidden="true" size={14} />
             : <ChevronDown aria-hidden="true" size={14} />}
         </button>
-        {!instrument && startCwd && (
-          <span className="block-cwd" title={startCwd} data-testid="block-cwd">
-            {formatCwd(startCwd)}
-          </span>
-        )}
         <span className="prompt-sigil" aria-hidden="true">
-          {instrument ? '>' : '❯'}
+          &gt;
         </span>
         <code className="block-command" data-testid="block-command">
           {controller.command}
         </code>
-        {instrument ? (
-          <span className="block-meta">
-            {startCwd && (
-              <span className="block-cwd" title={startCwd} data-testid="block-cwd">
-                {formatCwd(startCwd)}
-              </span>
-            )}
-            {shape === 'table' && (
-              <span className="block-count">
-                <span data-testid="row-count">{rowCount}</span>
-                <span className="block-count__unit">{t('block.rows')}</span>
-              </span>
-            )}
-            {duration && (
-              <span className="block-duration" data-testid="block-duration">
-                {duration.key === 'block.durationSeconds'
-                  ? t('block.durationSeconds', { value: duration.values.value })
-                  : t('block.durationMinutes', { minutes: duration.values.minutes, seconds: duration.values.seconds })}
-              </span>
-            )}
-            {status === 'done' && exitCode !== null && (
-              <span className="block-exit" data-exit={exitCode === 0 ? 'ok' : 'fail'} data-testid="block-exit">
-                {t('block.exitCode', { code: exitCode })}
-              </span>
-            )}
-            {statusLabel}
-          </span>
-        ) : (
-          <>
-            {shape === 'table' && (
-              <span className="block-count" data-testid="row-count">
-                {rowCount}
-              </span>
-            )}
-            {statusLabel}
-          </>
-        )}
+        <span className="block-meta">
+          {startCwd && (
+            <span className="block-cwd" title={startCwd} data-testid="block-cwd">
+              {formatCwd(startCwd)}
+            </span>
+          )}
+          {shape === 'table' && (
+            <span className="block-count">
+              <span data-testid="row-count">{rowCount}</span>
+              <span className="block-count__unit">{t('block.rows')}</span>
+            </span>
+          )}
+          {duration && (
+            <span className="block-duration" data-testid="block-duration">
+              {duration.key === 'block.durationSeconds'
+                ? t('block.durationSeconds', { value: duration.values.value })
+                : t('block.durationMinutes', { minutes: duration.values.minutes, seconds: duration.values.seconds })}
+            </span>
+          )}
+          {status === 'done' && exitCode !== null && (
+            <span className="block-exit" data-exit={exitCode === 0 ? 'ok' : 'fail'} data-testid="block-exit">
+              {t('block.exitCode', { code: exitCode })}
+            </span>
+          )}
+          {statusLabel}
+        </span>
         {sshConnectionId && sshConnectionState === 'ready' && (
           <button
             type="button"
@@ -219,7 +194,7 @@ export const Block = memo(function Block({
             {isDesktopCodex ? t('terminalPane.forceStop') : t('common.cancel')}
           </button>
         )}
-        {instrument && menu}
+        {menu}
         {onDismiss && (
           <button
             className="btn block-dismiss"

@@ -152,7 +152,7 @@ function LiveListPanel(props: LiveListProps & { readonly primary: boolean }): JS
             <span className="ez-shell-row__m">{providerName(item.providerId)} · {item.kind === 'question' ? text('답 기다림', 'answer needed') : text('허용 또는 거부', 'allow or deny')}</span>
           </button>
         ))}
-        <button type="button" className="ez-shell-row" data-more="true" onClick={props.onInbox} data-testid="rail-inbox">
+        <button type="button" className="ez-shell-row" data-more="true" onClick={props.onInbox} data-testid="shell-live-all-requests">
           <span /><span className="ez-shell-row__t">{text('받은 요청 모두 보기', 'All requests')}</span>
         </button>
         <h2 className="ez-shell-live__sec">

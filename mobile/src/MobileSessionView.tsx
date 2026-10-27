@@ -1283,7 +1283,6 @@ export function MobileSessionView({
         onContextMenu={longPress.onContextMenu}
       >
         <TerminalBlockEntries
-          variant="instrument"
           {...(aiHost ? { menuFor: blockMenu } : {})}
           entries={blocks}
           runtimeLifecycleTier={runtimeLifecycleTier}

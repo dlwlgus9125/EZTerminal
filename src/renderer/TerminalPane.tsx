@@ -1474,7 +1474,6 @@ export function TerminalPane({
           runtimeLifecycleTier={runtimeLifecycleTier}
           pendingLabel={t('terminalPane.starting')}
           onDismiss={handleDismiss}
-          variant="instrument"
           {...(aiHost ? { menuFor: blockMenu } : {})}
         />
       </div>

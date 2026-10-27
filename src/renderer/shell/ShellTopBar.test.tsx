@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
 
-function render(locale: 'ko' | 'en'): Pick<ShellTopBarProps, 'onAddProject' | 'onAllProjects'> {
+function render(locale: 'ko' | 'en', extra: Partial<ShellTopBarProps> = {}): Pick<ShellTopBarProps, 'onAddProject' | 'onAllProjects'> {
   const handlers = { onAddProject: vi.fn(), onAllProjects: vi.fn() };
   act(() => root.render(
     <AppI18nProvider locale={locale} languages={[locale]}>
@@ -34,6 +34,7 @@ function render(locale: 'ko' | 'en'): Pick<ShellTopBarProps, 'onAddProject' | 'o
         onHost={vi.fn()}
         onSettings={vi.fn()}
         {...handlers}
+        {...extra}
       />
     </AppI18nProvider>,
   ));
@@ -60,5 +61,15 @@ describe('ShellTopBar project buttons', () => {
     expect(byTestId('shell-add-project').getAttribute('aria-label')).toBe('Add project');
     expect(byTestId('shell-all-projects').getAttribute('aria-label')).toBe('All projects');
     expect(container.querySelector('[data-testid="rail-agents"]')).toBeNull();
+  });
+});
+
+describe('ShellTopBar settings', () => {
+  it('marks Settings with a dot when an app update is ready, without changing its name', () => {
+    render('en', { updateAvailable: true });
+    expect(container.querySelector('[data-testid="settings-update-badge"]')?.textContent).toBe('Update available');
+    expect(container.querySelector('[data-testid="btn-toggle-settings"]')?.getAttribute('aria-label')).toBe('Settings');
+    render('en');
+    expect(container.querySelector('[data-testid="settings-update-badge"]')).toBeNull();
   });
 });
