@@ -170,3 +170,7 @@
 .workflow-folder-cleanup__runs ul > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-1) var(--ui-space-2); color: var(--ui-text-secondary); font-size: var(--ui-font-size-sm); }
 .workflow-folder-cleanup__runs code { overflow-wrap: anywhere; color: var(--ui-text-primary); }
 .workflow-folder-cleanup__runs small { flex-basis: 100%; color: var(--ui-text-muted); }
+
+/* WebView 74 flex-gap fallback (the canvas's other fallbacks live in src/renderer/mobile-shared.css). */
+[data-ui-flex-gap='unsupported'] .workflow-folder-cleanup__runs ul > li { gap: 0; }
+[data-ui-flex-gap='unsupported'] .workflow-folder-cleanup__runs ul > li > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-1); }

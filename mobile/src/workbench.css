@@ -853,3 +853,43 @@
   .mobile-pc-actions { position: absolute; right: 6px; bottom: 6px; max-width: 62%; border-radius: var(--ui-radius-2xl); }
   .mobile-pc-actions button:nth-child(-n + 2) span { display: none; }
 }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css). Where mobile.css and this
+   sheet both set a gap, this sheet's value wins the cascade, so the margins use it. */
+[data-ui-flex-gap='unsupported'] .connect-screen,
+[data-ui-flex-gap='unsupported'] .connect-card,
+[data-ui-flex-gap='unsupported'] .mobile-page-header__actions,
+[data-ui-flex-gap='unsupported'] .mobile-settings-body,
+[data-ui-flex-gap='unsupported'] .mobile-settings-index,
+[data-ui-flex-gap='unsupported'] .mobile-stats-tabs,
+[data-ui-flex-gap='unsupported'] .mobile-openclaw-tabs,
+[data-ui-flex-gap='unsupported'] .mobile-file-toolbar,
+[data-ui-flex-gap='unsupported'] .mobile-file-pathbar,
+[data-ui-flex-gap='unsupported'] .mobile-file-toolbar-actions,
+[data-ui-flex-gap='unsupported'] .mobile-file-viewer-actions,
+[data-ui-flex-gap='unsupported'] .mobile-file-pathbar .btn,
+[data-ui-flex-gap='unsupported'] .mobile-file-toolbar-actions .btn,
+[data-ui-flex-gap='unsupported'] .mobile-file-viewer-actions .btn,
+[data-ui-flex-gap='unsupported'] .mobile-terminal-empty-actions,
+[data-ui-flex-gap='unsupported'] .mobile-terminal-empty-actions .btn { gap: 0; }
+[data-ui-flex-gap='unsupported'] .connect-screen > * + * { margin-top: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .connect-card > * + * { margin-top: var(--ui-space-4); }
+[data-ui-flex-gap='unsupported'] .mobile-settings-body > * + * { margin-top: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .mobile-settings-index > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-toolbar > * + * { margin-top: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mobile-page-header__actions > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-stats-tabs > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-openclaw-tabs > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-pathbar > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-toolbar-actions > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-viewer-actions > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-pathbar .btn > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-toolbar-actions .btn > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-viewer-actions .btn > * + * { margin-left: var(--ui-space-1); }
+/* One centred call to action today: a leading margin keeps a lone button centred. */
+[data-ui-flex-gap='unsupported'] .mobile-terminal-empty-actions > * + * { margin-left: var(--ui-space-2, 8px); }
+[data-ui-flex-gap='unsupported'] .mobile-terminal-empty-actions .btn > * + * { margin-left: var(--ui-space-1, 4px); }
+
+@media (min-width: 600px) {
+  [data-ui-flex-gap='unsupported'] .mobile-file-toolbar > * + * { margin-top: 0; margin-left: var(--ui-space-2); }
+}

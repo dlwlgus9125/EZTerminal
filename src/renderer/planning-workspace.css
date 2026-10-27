@@ -795,3 +795,25 @@
   max-height: 24rem;
   object-fit: contain;
 }
+
+/* WebView 74 flex-gap fallbacks for the parts the flow screen and the project dialogs keep
+   (result details, device evidence, project archive); see src/renderer/mobile-shared.css. */
+[data-ui-flex-gap='unsupported'] .planning-workspace__list-heading,
+[data-ui-flex-gap='unsupported'] .planning-workspace__history li,
+[data-ui-flex-gap='unsupported'] .planning-workspace__result,
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive,
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive-conversations li,
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive-conversations label,
+[data-ui-flex-gap='unsupported'] .planning-workspace__baseline-form,
+[data-ui-flex-gap='unsupported'] .planning-workspace__device-evidence .planning-workspace__checkbox { gap: 0; }
+[data-ui-flex-gap='unsupported'] .planning-workspace__list-heading > * + *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive-conversations label > * + * { margin-left: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive .planning-workspace__list-heading > *,
+[data-ui-flex-gap='unsupported'] .planning-workspace__structure .planning-workspace__list-heading > * { margin-left: 0; margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__history li > * + * { margin-left: var(--ui-space-4); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive-conversations li > * + * { margin-left: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__result > * + * { margin-top: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__archive > * + * { margin-top: var(--ui-space-4); }
+[data-ui-flex-gap='unsupported'] .planning-workspace__baseline-form > * { margin-right: var(--ui-space-3); margin-bottom: var(--ui-space-3); }
+/* A checkbox followed by bare text. */
+[data-ui-flex-gap='unsupported'] .planning-workspace__device-evidence .planning-workspace__checkbox > :first-child { margin-right: var(--ui-space-2); }

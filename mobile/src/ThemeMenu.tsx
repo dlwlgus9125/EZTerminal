@@ -111,7 +111,7 @@ export function ThemeMenu({
             onChange={(e) => setImportText(e.target.value)}
             data-testid="theme-menu-import-textarea"
           />
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <div className="theme-menu-import-actions">
             <button
               type="button"
               className="btn"

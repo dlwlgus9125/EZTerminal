@@ -773,6 +773,11 @@
 .mob-status-line__branch svg { width: 11px; height: 11px; flex: none; }
 
 /* Android 10's WebView 74 ignores flex gap: the terminal's header chip and status line space by margins there. */
+[data-ui-flex-gap='unsupported'] .mob-term-head__session,
+[data-ui-flex-gap='unsupported'] .mob-status-line,
+[data-ui-flex-gap='unsupported'] .mob-status-line__branch,
+[data-ui-flex-gap='unsupported'] .mob-status-line__rtt,
+[data-ui-flex-gap='unsupported'] .mob-status-line__link { gap: 0; }
 [data-ui-flex-gap='unsupported'] .mob-term-head__session > * + * { margin-left: 7px; }
 [data-ui-flex-gap='unsupported'] .mob-status-line > * + *:not(.mob-status-line__link) { margin-left: 12px; }
 [data-ui-flex-gap='unsupported'] .mob-status-line__branch > * + * { margin-left: 4px; }
@@ -1108,6 +1113,7 @@
 
 /* A toast with a follow-up takes touches; the button keeps a 44px target inside the pill. */
 .mob-toast[data-action] { pointer-events: auto; }
+[data-ui-flex-gap='unsupported'] .mob-toast { gap: 0; }
 [data-ui-flex-gap='unsupported'] .mob-toast > * + * { margin-left: 8px; }
 
 .mob-toast__action {
@@ -3010,3 +3016,123 @@
 .mob-new-session .structured-agent[data-embedded='true'] .structured-agent-draft-form { padding: 0; gap: var(--ui-space-4); }
 .mob-new-session .structured-agent-draft-form__actions .ez-ui-button,
 .mob-new-session__terminal-action .ez-ui-button { width: 100%; }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css): Android 10's WebView ignores flex
+   gap, so margins space these rows and columns there. A child pushed aside by an auto margin keeps it;
+   an icon followed by bare text carries the space itself. */
+[data-ui-flex-gap='unsupported'] .mob-new-session__content,
+[data-ui-flex-gap='unsupported'] .mob-new-session__notice,
+[data-ui-flex-gap='unsupported'] .mob-new-session__provider-recovery,
+[data-ui-flex-gap='unsupported'] .mob-new-session__recovery-actions,
+[data-ui-flex-gap='unsupported'] .mob-new-session__location,
+[data-ui-flex-gap='unsupported'] .mob-new-session__locked-location,
+[data-ui-flex-gap='unsupported'] .mob-new-session__terminal,
+[data-ui-flex-gap='unsupported'] .mob-mark,
+[data-ui-flex-gap='unsupported'] .mob-column,
+[data-ui-flex-gap='unsupported'] .mob-row,
+[data-ui-flex-gap='unsupported'] .mob-term-head,
+[data-ui-flex-gap='unsupported'] .mob-composer,
+[data-ui-flex-gap='unsupported'] .mob-keybar,
+[data-ui-flex-gap='unsupported'] .mob-snippets,
+[data-ui-flex-gap='unsupported'] .mob-sheet__new,
+[data-ui-flex-gap='unsupported'] .mob-agent-filters,
+[data-ui-flex-gap='unsupported'] .mob-agent-card--done,
+[data-ui-flex-gap='unsupported'] .mob-agent-card__head,
+[data-ui-flex-gap='unsupported'] .mob-agent-card__actions,
+[data-ui-flex-gap='unsupported'] .mob-agent-followup,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__head,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__crumbs,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__status,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__error .mob-btn-ghost,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__list,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__row > span:nth-child(2),
+[data-ui-flex-gap='unsupported'] .mob-agent-projects__head-actions,
+[data-ui-flex-gap='unsupported'] .mob-agent-history-transcript,
+[data-ui-flex-gap='unsupported'] .mob-agent-root-option li,
+[data-ui-flex-gap='unsupported'] .mob-connection-card,
+[data-ui-flex-gap='unsupported'] .mob-settings-row__title,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card__heading,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card__release,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card__heading .btn,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card > .btn,
+[data-ui-flex-gap='unsupported'] .mob-connect__brand,
+[data-ui-flex-gap='unsupported'] .mob-connect__saved,
+[data-ui-flex-gap='unsupported'] .mob-connect__divider,
+[data-ui-flex-gap='unsupported'] .mob-connect__fields,
+[data-ui-flex-gap='unsupported'] .mob-connect__label,
+[data-ui-flex-gap='unsupported'] .mob-connect__scan,
+[data-ui-flex-gap='unsupported'] .mob-connect__warning,
+[data-ui-flex-gap='unsupported'] .mob-connect__cta,
+[data-ui-flex-gap='unsupported'] .mob-pc-status,
+[data-ui-flex-gap='unsupported'] .mobile-pc-session-sheet .mobile-action-sheet-list,
+[data-ui-flex-gap='unsupported'] .mobile-pc-sheet-segment button,
+[data-ui-flex-gap='unsupported'] .mobile-pc-quality-options button,
+[data-ui-flex-gap='unsupported'] .mobile-pc-sheet-field,
+[data-ui-flex-gap='unsupported'] .mobile-pc-sheet-field > span,
+[data-ui-flex-gap='unsupported'] .mobile-pc-session-sheet .mobile-action-sheet-row-label,
+[data-ui-flex-gap='unsupported'] .mobile-pc-key-accessory,
+[data-ui-flex-gap='unsupported'] .mobile-pc-key-accessory button { gap: 0; }
+[data-ui-flex-gap='unsupported'] .mob-new-session__content > * + * { margin-top: var(--ui-space-4); }
+[data-ui-flex-gap='unsupported'] .mob-new-session__location > * + * { margin-top: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .mob-new-session__locked-location > * + *,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__list > * + *,
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__row > span:nth-child(2) > * + * { margin-top: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav > * + * { margin-top: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mob-new-session__notice > * + *,
+[data-ui-flex-gap='unsupported'] .mob-new-session__provider-recovery > * + *,
+[data-ui-flex-gap='unsupported'] .mob-new-session__terminal > * + * { margin-left: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .mob-new-session__recovery-actions > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__head > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card__heading > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card__release > * + * { margin-left: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__crumbs > * + * { margin-left: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__status > :first-child { margin-right: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mob-daemon-nav__error .mob-btn-ghost > :first-child,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card__heading .btn > :first-child,
+[data-ui-flex-gap='unsupported'] .mobile-app-update-card > .btn > :first-child { margin-right: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .mob-mark > * + * { margin-left: 2px; }
+[data-ui-flex-gap='unsupported'] .mob-mark--lg > * + * { margin-left: 3px; }
+[data-ui-flex-gap='unsupported'] .mob-column > * + * { margin-top: 8px; }
+[data-ui-flex-gap='unsupported'] .mob-home__body .mob-column > * + * { margin-top: 10px; }
+[data-ui-flex-gap='unsupported'] .mob-row > * + * { margin-left: 10px; }
+[data-ui-flex-gap='unsupported'] .mob-term-head > * + * { margin-left: 6px; }
+[data-ui-flex-gap='unsupported'] .mob-composer > * + * { margin-left: 8px; }
+[data-ui-flex-gap='unsupported'] .mob-keybar > * + *:not(.mob-key--manage) { margin-left: 5px; }
+[data-ui-flex-gap='unsupported'] .mob-snippets > * + * { margin-left: 6px; }
+[data-ui-flex-gap='unsupported'] .mob-sheet__new > :first-child { margin-right: 7px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-filters > * + * { margin-left: 6px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-card--done > * + * { margin-left: 9px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-card__head > * + *:not(.mob-agent-card__time) { margin-left: 8px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-card__actions > * { margin-right: 7px; margin-bottom: 7px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-followup > * + * { margin-left: 7px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-projects__head-actions > * + * { margin-left: 4px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-history-transcript > * + * { margin-top: 12px; }
+[data-ui-flex-gap='unsupported'] .mob-agent-root-option li > * + * { margin-left: 8px; }
+[data-ui-flex-gap='unsupported'] .mob-connection-card > * + * { margin-left: 11px; }
+[data-ui-flex-gap='unsupported'] .mob-settings-row__title > .mobile-update-dot { margin-left: 7px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__brand > * + * { margin-top: 6px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__saved > * + * { margin-left: 10px; }
+/* The divider's hairlines are its ::before and ::after around the text. */
+[data-ui-flex-gap='unsupported'] .mob-connect__divider::before { margin-right: 10px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__divider::after { margin-left: 10px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__fields > * + * { margin-top: 10px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__label > .mob-connect__input { margin-top: 5px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__scan > :first-child { margin-right: 8px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__cta > * + * { margin-left: 8px; }
+[data-ui-flex-gap='unsupported'] .mob-connect__warning > * + * { margin-left: 9px; }
+[data-ui-flex-gap='unsupported'] .mob-pc-status > :first-child,
+[data-ui-flex-gap='unsupported'] .mobile-pc-sheet-segment button > :first-child,
+[data-ui-flex-gap='unsupported'] .mobile-pc-quality-options button > :first-child { margin-right: 7px; }
+[data-ui-flex-gap='unsupported'] .mobile-pc-session-sheet .mobile-action-sheet-list > * + * { margin-top: 14px; }
+[data-ui-flex-gap='unsupported'] .mobile-pc-sheet-field > * + * { margin-left: 12px; }
+[data-ui-flex-gap='unsupported'] .mobile-pc-sheet-field > span > :first-child,
+[data-ui-flex-gap='unsupported'] .mobile-pc-session-sheet .mobile-action-sheet-row-label > :first-child { margin-right: 8px; }
+[data-ui-flex-gap='unsupported'] .mobile-pc-key-accessory > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-pc-key-accessory button > * + * { margin-left: 4px; }
+/* A sheet row's name after its icon: the row's gap (mobile.css) plus the name's own margin above. */
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-row > * + .mobile-action-sheet-row-label { margin-left: calc(var(--ui-space-3) + var(--ui-space-1)); }
+
+@media (max-width: 30rem) {
+  [data-ui-flex-gap='unsupported'] .mob-new-session__provider-recovery > * + * { margin-left: 0; margin-top: var(--ui-space-3); }
+}

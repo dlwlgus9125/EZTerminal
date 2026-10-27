@@ -2230,3 +2230,7 @@
 .chat-dock__from .chat-link-button {
   margin-left: var(--ui-space-2);
 }
+
+/* WebView 74 flex-gap fallback (see src/renderer/mobile-shared.css). */
+[data-ui-flex-gap='unsupported'] .chat-usage-item { gap: 0; }
+[data-ui-flex-gap='unsupported'] .chat-usage-item > * + * { margin-left: var(--ui-space-1); }

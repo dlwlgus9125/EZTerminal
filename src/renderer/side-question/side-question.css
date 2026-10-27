@@ -250,3 +250,22 @@
   outline: 2px solid var(--ui-focus);
   outline-offset: -2px;
 }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css). The pending line is a
+   spinner and bare text; the notes are text alone. */
+[data-ui-flex-gap='unsupported'] .side-question__header,
+[data-ui-flex-gap='unsupported'] .side-question__thread,
+[data-ui-flex-gap='unsupported'] .side-question__exchange,
+[data-ui-flex-gap='unsupported'] .side-question__pending,
+[data-ui-flex-gap='unsupported'] .side-question__note,
+[data-ui-flex-gap='unsupported'] .side-question__error p,
+[data-ui-flex-gap='unsupported'] .side-question__error,
+[data-ui-flex-gap='unsupported'] .side-question__composer { gap: 0; }
+[data-ui-flex-gap='unsupported'] .side-question__header > * + * { margin-left: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .side-question__thread > * + * { margin-top: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .side-question__exchange > * + * { margin-top: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .side-question__pending > :first-child,
+[data-ui-flex-gap='unsupported'] .side-question__note > :first-child,
+[data-ui-flex-gap='unsupported'] .side-question__error p > :first-child { margin-right: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .side-question__error > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .side-question__composer > * + * { margin-left: var(--ui-space-2); }

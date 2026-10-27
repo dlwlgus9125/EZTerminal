@@ -1124,3 +1124,25 @@
 .ez-ui-led[data-tone='amber'] { background: var(--ui-warning); box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 8px var(--ui-warning-ring); }
 .ez-ui-led[data-tone='red'] { background: var(--ui-danger); box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 6px var(--ui-danger-ring); }
 .ez-ui-led[data-tone='ok'] { background: var(--ui-success); }
+
+/* WebView 74 flex-gap fallbacks. Android 10's WebView ignores flex gap; the phone marks
+   <html data-ui-flex-gap="unsupported"> (mobile/src/webview-compat.ts) and margins stand in.
+   IconButton holds a single icon, so .ez-ui-icon-button needs none. */
+[data-ui-flex-gap='unsupported'] .ez-ui-button,
+[data-ui-flex-gap='unsupported'] .ez-ui-switch,
+[data-ui-flex-gap='unsupported'] .ez-ui-tab-list,
+[data-ui-flex-gap='unsupported'] .ez-ui-tab,
+[data-ui-flex-gap='unsupported'] .ez-ui-dialog__header,
+[data-ui-flex-gap='unsupported'] .ez-ui-dialog__footer,
+[data-ui-flex-gap='unsupported'] .ez-ui-badge,
+[data-ui-flex-gap='unsupported'] .feature-load-error__actions { gap: 0; }
+[data-ui-flex-gap='unsupported'] .ez-ui-button > * + *,
+[data-ui-flex-gap='unsupported'] .ez-ui-tab > * + *,
+[data-ui-flex-gap='unsupported'] .ez-ui-dialog__footer > * + * { margin-left: var(--ui-space-2); }
+/* The switch's checkbox is absolutely positioned over it: only the copy follows the track. */
+[data-ui-flex-gap='unsupported'] .ez-ui-switch > .ez-ui-switch__copy { margin-left: var(--ui-space-3); }
+[data-ui-flex-gap='unsupported'] .ez-ui-tab-list > * + *,
+[data-ui-flex-gap='unsupported'] .ez-ui-badge > * + * { margin-left: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .ez-ui-tabs[data-orientation='vertical'] .ez-ui-tab-list > * + * { margin-left: 0; margin-top: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .ez-ui-dialog__header > * + * { margin-left: var(--ui-space-4); }
+[data-ui-flex-gap='unsupported'] .feature-load-error__actions > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }

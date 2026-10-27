@@ -22,3 +22,13 @@
 .mobile-conversation-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .mobile-conversation-page > .conversation-start { flex: 1; min-height: 0; height: auto; }
 .mobile-conversation-page > .mobile-back-button { flex: none; padding: var(--ui-space-3); background: var(--ui-surface); color: var(--ui-text-primary); border: 0; text-align: start; }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css). */
+[data-ui-flex-gap='unsupported'] .mobile-v2__body,
+[data-ui-flex-gap='unsupported'] .mobile-v2__project-select,
+[data-ui-flex-gap='unsupported'] .mobile-v2__actions,
+[data-ui-flex-gap='unsupported'] .mobile-offline-notice summary { gap: 0; }
+[data-ui-flex-gap='unsupported'] .mobile-v2__body > * + * { margin-top: var(--ui-space-4); }
+[data-ui-flex-gap='unsupported'] .mobile-v2__project-select > * + * { margin-top: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mobile-v2__actions > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mobile-offline-notice summary > * + * { margin-left: var(--ui-space-2); }

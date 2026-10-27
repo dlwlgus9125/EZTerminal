@@ -72,3 +72,7 @@
   .conversation-history:not([data-variant='mobile']) .conversation-history__browser { min-height: 14rem; max-height: 28vh; border-inline-end: 0; border-block-end: 1px solid var(--ui-border-subtle); }
   .conversation-history:not([data-variant='mobile']) .conversation-history__preview { min-height: 20rem; }
 }
+
+/* WebView 74 flex-gap fallback (see src/renderer/mobile-shared.css). */
+[data-ui-flex-gap='unsupported'] .conversation-start__settings { gap: 0; }
+[data-ui-flex-gap='unsupported'] .conversation-start__settings > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }

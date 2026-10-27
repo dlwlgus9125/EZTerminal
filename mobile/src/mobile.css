@@ -338,6 +338,13 @@ body,
   text-align: center;
 }
 
+/* A settings section's row of choice buttons (font, effects, OpenClaw mode). */
+.mobile-settings-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .terminal-accessory-settings {
   display: flex;
   flex-direction: column;
@@ -474,6 +481,12 @@ body,
 
 .theme-menu-option--active {
   border-color: var(--ui-accent);
+}
+
+.theme-menu-import-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .theme-menu-swatch {
@@ -1553,3 +1566,88 @@ body,
   overflow-wrap: anywhere;
   max-width: 100%;
 }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css): Android 10's WebView ignores flex
+   gap, so margins space these rows and columns there. The connect screen, the settings body and the
+   stats/OpenClaw tab rows take workbench.css's gap and fall back there. */
+[data-ui-flex-gap='unsupported'] .session-switcher,
+[data-ui-flex-gap='unsupported'] .session-list,
+[data-ui-flex-gap='unsupported'] .session-list-item,
+[data-ui-flex-gap='unsupported'] .mobile-session-dead-banner,
+[data-ui-flex-gap='unsupported'] .touch-input-bar,
+[data-ui-flex-gap='unsupported'] .mobile-error-screen,
+[data-ui-flex-gap='unsupported'] .settings-scale-stepper,
+[data-ui-flex-gap='unsupported'] .mobile-settings-choices,
+[data-ui-flex-gap='unsupported'] .terminal-accessory-settings,
+[data-ui-flex-gap='unsupported'] .terminal-accessory-settings-head,
+[data-ui-flex-gap='unsupported'] .terminal-key-settings-message,
+[data-ui-flex-gap='unsupported'] .terminal-key-settings-empty,
+[data-ui-flex-gap='unsupported'] .terminal-key-settings-list,
+[data-ui-flex-gap='unsupported'] .terminal-key-visibility,
+[data-ui-flex-gap='unsupported'] .terminal-key-order-actions,
+[data-ui-flex-gap='unsupported'] .theme-menu-list,
+[data-ui-flex-gap='unsupported'] .theme-menu-option,
+[data-ui-flex-gap='unsupported'] .theme-menu-import-actions,
+[data-ui-flex-gap='unsupported'] .mobile-file-head,
+[data-ui-flex-gap='unsupported'] .mobile-file-row,
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-list,
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-row,
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-row-copy,
+[data-ui-flex-gap='unsupported'] .terminal-path-mobile-error,
+[data-ui-flex-gap='unsupported'] .mobile-upload-row,
+[data-ui-flex-gap='unsupported'] .openclaw-status-row,
+[data-ui-flex-gap='unsupported'] .openclaw-lifecycle-buttons,
+[data-ui-flex-gap='unsupported'] .mobile-openclaw-view .openclaw-control-progress,
+[data-ui-flex-gap='unsupported'] .mobile-openclaw-view .openclaw-control-issue,
+[data-ui-flex-gap='unsupported'] .openclaw-log-list,
+[data-ui-flex-gap='unsupported'] .openclaw-log-line,
+[data-ui-flex-gap='unsupported'] .openclaw-config-row,
+[data-ui-flex-gap='unsupported'] .openclaw-chat-toolbar,
+[data-ui-flex-gap='unsupported'] .mobile-reconnect-card,
+[data-ui-flex-gap='unsupported'] .mobile-lead-workers__summary,
+[data-ui-flex-gap='unsupported'] .mobile-lead-workers__count,
+[data-ui-flex-gap='unsupported'] .mobile-lead-worker-row__approval > span,
+[data-ui-flex-gap='unsupported'] .mob-managed-merge-override__actions { gap: 0; }
+[data-ui-flex-gap='unsupported'] .session-switcher > * + * { margin-top: 12px; }
+[data-ui-flex-gap='unsupported'] .session-list > * + *,
+[data-ui-flex-gap='unsupported'] .theme-menu-list > * + * { margin-top: 8px; }
+[data-ui-flex-gap='unsupported'] .mobile-error-screen > * + * { margin-top: 16px; }
+[data-ui-flex-gap='unsupported'] .terminal-accessory-settings > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-reconnect-card > * + * { margin-top: 10px; }
+[data-ui-flex-gap='unsupported'] .terminal-key-settings-list > * + *,
+[data-ui-flex-gap='unsupported'] .openclaw-config-row > * + * { margin-top: 6px; }
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-list > * + * { margin-top: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-row-copy > * + * { margin-top: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .mobile-openclaw-view .openclaw-control-progress > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-openclaw-view .openclaw-control-issue > * + * { margin-top: 4px; }
+[data-ui-flex-gap='unsupported'] .openclaw-log-list > * + * { margin-top: 2px; }
+[data-ui-flex-gap='unsupported'] .session-list-item > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-session-dead-banner > * + *,
+[data-ui-flex-gap='unsupported'] .terminal-path-mobile-error > * + *,
+[data-ui-flex-gap='unsupported'] .openclaw-status-row > * + *,
+[data-ui-flex-gap='unsupported'] .openclaw-log-line > * + *,
+[data-ui-flex-gap='unsupported'] .openclaw-chat-toolbar > * + *,
+[data-ui-flex-gap='unsupported'] .theme-menu-import-actions > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-lead-workers__summary > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-lead-worker-row__approval > span > * + *,
+[data-ui-flex-gap='unsupported'] .mob-managed-merge-override__actions > * + * { margin-left: 8px; }
+[data-ui-flex-gap='unsupported'] .touch-input-bar > * + *:not(.mob-key--manage),
+[data-ui-flex-gap='unsupported'] .mobile-file-head > * + *,
+[data-ui-flex-gap='unsupported'] .terminal-key-visibility > * + * { margin-left: 6px; }
+[data-ui-flex-gap='unsupported'] .settings-scale-stepper > * + *,
+[data-ui-flex-gap='unsupported'] .terminal-key-settings-message > * + *,
+[data-ui-flex-gap='unsupported'] .terminal-key-settings-empty > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-file-row > * + *,
+[data-ui-flex-gap='unsupported'] .mobile-upload-row > * + * { margin-left: 10px; }
+[data-ui-flex-gap='unsupported'] .terminal-accessory-settings-head > * + *,
+[data-ui-flex-gap='unsupported'] .theme-menu-option > * + * { margin-left: 12px; }
+[data-ui-flex-gap='unsupported'] .terminal-key-order-actions > * + * { margin-left: 4px; }
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-row > * + * { margin-left: var(--ui-space-3); }
+/* The summary's closing chevron is pushed to the end by an auto margin. */
+[data-ui-flex-gap='unsupported'] .mobile-lead-workers__summary > svg:last-child { margin-left: auto; }
+/* An icon followed by the bare count. */
+[data-ui-flex-gap='unsupported'] .mobile-lead-workers__count > :first-child { margin-right: 3px; }
+[data-ui-flex-gap='unsupported'] .mobile-settings-choices > *,
+[data-ui-flex-gap='unsupported'] .openclaw-lifecycle-buttons > * { margin-right: 8px; margin-bottom: 8px; }
+/* The action sheet is fixed over the whole screen wherever it renders: no row's margins move it. */
+[data-ui-flex-gap='unsupported'] .mobile-action-sheet-backdrop { margin: 0 !important; }

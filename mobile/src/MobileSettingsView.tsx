@@ -563,7 +563,7 @@ export function MobileSettingsView({
 
         {category === 'appearance' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.font')}</h2>
-          <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div className="status-metric mobile-settings-choices">
             {FONT_CATALOG.map((font) => (
               <button
                 key={font.id}
@@ -587,7 +587,7 @@ export function MobileSettingsView({
               {t('mobile.settingsView.noEffects')}
             </div>
           ) : (
-            <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="status-metric mobile-settings-choices">
               {declaredEffects.map((id) => {
                 const on = isEffectOn(effectToggles, id);
                 return (
@@ -693,7 +693,7 @@ export function MobileSettingsView({
 
         {category === 'integrations' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.openClaw')}</h2>
-          <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div className="status-metric mobile-settings-choices">
             {(['auto', 'on', 'off'] as const).map((mode) => (
               <button
                 key={mode}

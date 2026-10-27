@@ -27,3 +27,7 @@
 @media (max-width: 30rem) {
   .session-start-location { grid-template-columns: 1fr; }
 }
+
+/* WebView 74 flex-gap fallback (see src/renderer/mobile-shared.css). */
+[data-ui-flex-gap='unsupported'] .session-start-options__choices { gap: 0; }
+[data-ui-flex-gap='unsupported'] .session-start-options__choices > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }

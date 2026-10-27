@@ -10,6 +10,7 @@
 /* A run's stage chips (shell/stage-chain.css): lamp and name; a compact chip that shows only its lamp keeps it centred. */
 [data-ui-flex-gap='unsupported'] .ez-shell-stage { gap: 0; }
 [data-ui-flex-gap='unsupported'] .ez-shell-stage > .ez-ui-led { margin-right: 0.4375rem; }
+[data-ui-flex-gap='unsupported'] .ez-shell-chain[data-compact='true'] .ez-shell-stage { gap: 0; }
 [data-ui-flex-gap='unsupported'] .ez-shell-chain[data-compact='true'] .ez-shell-stage > .ez-ui-led { margin-right: 0.3125rem; }
 [data-ui-flex-gap='unsupported'] .ez-shell-chain[data-compact='true'] .ez-shell-stage:not([data-state='wait']):not([data-state='run']) > .ez-ui-led { margin-right: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-header,
@@ -83,6 +84,40 @@
 [data-ui-flex-gap='unsupported'] .planning-workspace__embedded-actions > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
 [data-ui-flex-gap='unsupported'] .planning-workspace__identity > *,
 [data-ui-flex-gap='unsupported'] .planning-workspace__subnav > * { margin-right: var(--ui-space-2); }
+/* This sheet's own rows and columns: terminal blocks, find bar, context menu, control chip,
+   SSH prompt, file preview, status metrics and the rollbar settings. */
+[data-ui-flex-gap='unsupported'] .block-head,
+[data-ui-flex-gap='unsupported'] .cmd-row,
+[data-ui-flex-gap='unsupported'] .terminal-find-bar,
+[data-ui-flex-gap='unsupported'] .terminal-context-menu,
+[data-ui-flex-gap='unsupported'] .terminal-context-menu-item,
+[data-ui-flex-gap='unsupported'] .pty-control-chip,
+[data-ui-flex-gap='unsupported'] .ssh-prompt,
+[data-ui-flex-gap='unsupported'] .ssh-prompt-actions,
+[data-ui-flex-gap='unsupported'] .file-preview-image-wrap,
+[data-ui-flex-gap='unsupported'] .file-preview-state,
+[data-ui-flex-gap='unsupported'] .status-disk-list,
+[data-ui-flex-gap='unsupported'] .status-mem-detail,
+[data-ui-flex-gap='unsupported'] .status-net-sparks,
+[data-ui-flex-gap='unsupported'] .status-packet-ack,
+[data-ui-flex-gap='unsupported'] .settings-rollbar-params,
+[data-ui-flex-gap='unsupported'] .settings-rollbar-row { gap: 0; }
+[data-ui-flex-gap='unsupported'] .block-head > * + *,
+[data-ui-flex-gap='unsupported'] .status-net-sparks > * + * { margin-left: 0.4rem; }
+[data-ui-flex-gap='unsupported'] .cmd-row > * + * { margin-left: 0.55rem; }
+[data-ui-flex-gap='unsupported'] .terminal-find-bar > * + * { margin-left: 4px; }
+[data-ui-flex-gap='unsupported'] .terminal-context-menu > * + * { margin-top: 0.15rem; }
+[data-ui-flex-gap='unsupported'] .terminal-context-menu-item > * + * { margin-left: 1.5rem; }
+[data-ui-flex-gap='unsupported'] .pty-control-chip > * + * { margin-left: 6px; }
+[data-ui-flex-gap='unsupported'] .ssh-prompt > * + *,
+[data-ui-flex-gap='unsupported'] .status-packet-ack > * + * { margin-top: 0.5rem; }
+[data-ui-flex-gap='unsupported'] .ssh-prompt-actions > * + *,
+[data-ui-flex-gap='unsupported'] .settings-rollbar-row > * + * { margin-left: 0.5rem; }
+[data-ui-flex-gap='unsupported'] .file-preview-image-wrap > * + * { margin-top: 10px; }
+[data-ui-flex-gap='unsupported'] .file-preview-state > * + * { margin-top: 8px; }
+[data-ui-flex-gap='unsupported'] .status-disk-list > * + * { margin-top: 0.4rem; }
+[data-ui-flex-gap='unsupported'] .status-mem-detail > * + * { margin-top: 0.35rem; }
+[data-ui-flex-gap='unsupported'] .settings-rollbar-params > * + * { margin-top: 0.3rem; }
 
 /*
  * Deliberate mobile/shared boundary.

@@ -27,3 +27,12 @@
   border: 1px solid var(--ui-border-strong); border-radius: var(--ui-radius-lg);
   background: var(--ui-surface-raised); box-shadow: var(--ui-shadow-raised);
 }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css). The summary is an icon, bare
+   text and a count that keeps its own inline-start margin. */
+[data-ui-flex-gap='unsupported'] .agent-capabilities > summary,
+[data-ui-flex-gap='unsupported'] .agent-capabilities__heading,
+[data-ui-flex-gap='unsupported'] .agent-capabilities__items li { gap: 0; }
+[data-ui-flex-gap='unsupported'] .agent-capabilities > summary > :first-child { margin-right: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .agent-capabilities__heading > * + * { margin-left: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .agent-capabilities__items li > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }

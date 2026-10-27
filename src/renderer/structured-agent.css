@@ -1644,3 +1644,62 @@
 .structured-agent[data-variant='mobile'] .chat-pill-pair > * + * {
   margin-left: 4px;
 }
+
+/* WebView 74 flex-gap fallbacks (see src/renderer/mobile-shared.css): margins replace the
+   flex gaps above on Android 10. The session header and its identity are grid until a
+   live variant makes them flex; those grid gaps stay (WebView 74 lays out grid gap). */
+[data-ui-flex-gap='unsupported'] .structured-agent-recovery__actions,
+[data-ui-flex-gap='unsupported'] .structured-agent__banner,
+[data-ui-flex-gap='unsupported'] .structured-agent-permission,
+[data-ui-flex-gap='unsupported'] .structured-agent-session-controls,
+[data-ui-flex-gap='unsupported'] .structured-agent-session-settings,
+[data-ui-flex-gap='unsupported'] .structured-agent-session-lifecycle,
+[data-ui-flex-gap='unsupported'] .structured-agent-transcript__state,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__reply,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__attachments,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__attachments > li,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__attachments summary,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__input-row,
+[data-ui-flex-gap='unsupported'] .structured-agent--live .structured-agent-session-header,
+[data-ui-flex-gap='unsupported'] .structured-agent--live .structured-agent-session-controls,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__parked,
+[data-ui-flex-gap='unsupported'] .conversation-queue summary,
+[data-ui-flex-gap='unsupported'] .conversation-queue__actions,
+[data-ui-flex-gap='unsupported'] .conversation-review,
+[data-ui-flex-gap='unsupported'] .conversation-review__toolbar,
+[data-ui-flex-gap='unsupported'] .conversation-review__line { gap: 0; }
+[data-ui-flex-gap='unsupported'] .structured-agent__banner > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-permission > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-session-settings > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__reply > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__attachments > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__attachments > li > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__attachments summary > * + *,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__input-row > * + *,
+[data-ui-flex-gap='unsupported'] .conversation-queue summary > * + *,
+[data-ui-flex-gap='unsupported'] .conversation-review__line > * + * { margin-left: var(--ui-space-2); }
+/* The loading and empty states are an icon and bare text. */
+[data-ui-flex-gap='unsupported'] .structured-agent-transcript__state > :first-child { margin-right: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .structured-agent-recovery__actions > *,
+[data-ui-flex-gap='unsupported'] .structured-agent-composer__parked > *,
+[data-ui-flex-gap='unsupported'] .conversation-review__toolbar > * { margin-right: var(--ui-space-2); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .structured-agent-session-lifecycle > *,
+[data-ui-flex-gap='unsupported'] .structured-agent--live .structured-agent-session-controls > *,
+[data-ui-flex-gap='unsupported'] .conversation-queue__actions > * { margin-right: var(--ui-space-1); margin-bottom: var(--ui-space-1); }
+[data-ui-flex-gap='unsupported'] .structured-agent-session-controls > *,
+[data-ui-flex-gap='unsupported'] .structured-agent--live .structured-agent-session-header > * { margin-right: var(--ui-space-4); margin-bottom: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .conversation-review > * + * { margin-top: var(--ui-space-3); }
+/* The phone's one-row header already spaces its children with margins (above). */
+[data-ui-flex-gap='unsupported'] .structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header > *,
+[data-ui-flex-gap='unsupported'] .structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-controls > * { margin-right: 0; margin-bottom: 0; }
+/* The identity is a one-column grid (its gap becomes the rows' top margins) until the phone's one-row
+   header makes it a flex row; there only the parent link, the title and the sub-agent chip show. */
+[data-ui-flex-gap='unsupported'] .structured-agent-session-header__identity { gap: 0; }
+[data-ui-flex-gap='unsupported'] .structured-agent-session-header__identity > * + * { margin-top: 0.125rem; }
+[data-ui-flex-gap='unsupported'] .structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity > * + * { margin-top: 0; }
+[data-ui-flex-gap='unsupported'] .structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity > .structured-agent-session-header__parent + h1,
+[data-ui-flex-gap='unsupported'] .structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity > h1 + .chat-chip { margin-left: 0.125rem; }
+/* On the phone the settings are a two-column grid in the header (grid gap works) and chips with
+   their own margins in the composer. */
+[data-ui-flex-gap='unsupported'] .structured-agent[data-variant='mobile'] .structured-agent-session-settings { gap: var(--ui-space-2); }
+[data-ui-flex-gap='unsupported'] .structured-agent[data-variant='mobile'] .structured-agent-session-settings > * + * { margin-left: 0; }
