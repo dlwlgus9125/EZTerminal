@@ -1120,7 +1120,8 @@ describe('MobileWorkspace - terminal AI input (I4)', () => {
   });
 
   it('keeps the terminal a plain shell on an older PC', async () => {
-    const el = await restoredTerminal(15);
+    // A 1.x PC (protocol 16) is not offered the AI input.
+    const el = await restoredTerminal(16);
     await flushAsync();
     expect(el.querySelector('[data-testid="mobile-terminal-mode"]')).toBeNull();
     expect(el.querySelector('[data-testid="cmd-input"]')).not.toBeNull();

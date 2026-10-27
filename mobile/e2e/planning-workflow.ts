@@ -319,6 +319,8 @@ async function main(): Promise<void> {
     // More than one composer can be mounted here; type into the visible one, as lib does.
     await setTestIdTextValue('structured-agent-composer-input', 'Android unsent chat draft');
     await sleep(1000);
+    // Back to the project screen the conversation was opened from (I4: its back button returns there, no tab bar).
+    await clickSelector('[data-testid="mobile-structured-agent-back"]');
     await clickLabel('.workflow-conversation-row button', ['Link to stage', '단계에 연결']);
     await evaluateWebView(`(() => { const selects = document.querySelectorAll('[role="dialog"] select'); selects[0].value = ${JSON.stringify(subproject.id)}; selects[0].dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
     await evaluateWebView(`(() => { const selects = document.querySelectorAll('[role="dialog"] select'); selects[1].value = ${JSON.stringify(subproject.graph.entryNodeId)}; selects[1].dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);

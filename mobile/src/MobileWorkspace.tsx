@@ -1092,10 +1092,11 @@ export function MobileWorkspace({
     authority: feedAuthority,
   });
   const waitingCount = feed.waiting.length;
-  // The AI input needs a PC that lists conversations and starts them from the phone (protocol 16), the
-  // phone's secure storage and a live connection; otherwise the terminal stays a shell.
+  // The AI input needs a 2.0 PC (protocol 17: the one it was built and checked against — conversation listing,
+  // starting from the phone, the shared draft), the phone's secure storage and a live connection; otherwise the
+  // terminal stays a shell. An older PC is never offered a box it may not serve.
   const terminalAiReady = Boolean(terminalAiWiring) && connected && transport.isAuthed
-    && (transport.negotiatedRemoteProtocolVersion ?? 0) >= 16;
+    && (transport.negotiatedRemoteProtocolVersion ?? 0) >= 17;
   useEffect(() => {
     terminalAiHost.set(terminalAiReady ? daemonRuntimeState.snapshot ?? null : null);
   }, [daemonRuntimeState.snapshot, terminalAiHost, terminalAiReady]);

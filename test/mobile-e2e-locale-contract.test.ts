@@ -13,7 +13,7 @@ describe('physical mobile E2E locale contract', () => {
 
     expect(library).toContain("waitForTestId('connect-screen', 45_000)");
     expect(library).toContain("tapTestId('connect-submit')");
-    expect(library).toContain("[SHELL_ROOT_TEST_ID, 'connect-error', 'connect-protocol-incompatible']");
+    expect(library).toContain("[SHELL_ROOT_TEST_ID, LEGACY_SHELL_ROOT_TEST_ID, 'connect-error', 'connect-protocol-incompatible']");
     // I4 layout A: the shell root is the coordinator; the terminal opens from the feed's header.
     expect(library).toContain("SHELL_ROOT_TEST_ID = 'mobile-shell'");
     expect(library).toContain("tapTestId('mobile-feed-terminal', timeoutMs)");

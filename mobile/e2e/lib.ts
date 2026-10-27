@@ -2220,6 +2220,8 @@ export async function connectAndAuth(token: string, options: {
 
 /** The authenticated shell (I4: the feed is its first screen; the terminal and pages sit inside it). */
 export const SHELL_ROOT_TEST_ID = 'mobile-shell';
+/** An app from before the feed (vc78 and older, the compatibility scenarios install them) has no `mobile-shell`. */
+export const LEGACY_SHELL_ROOT_TEST_ID = 'mobile-workspace';
 
 async function terminalActive(): Promise<boolean> {
   return await evaluateWebView<string | null>(
@@ -2278,10 +2280,10 @@ export async function submitConnectionOnce(): Promise<void> {
   console.log('[e2e] connecting (single attempt)...');
   await tapTestId('connect-submit');
   const outcome = await waitForAnyTestId(
-    [SHELL_ROOT_TEST_ID, 'connect-error', 'connect-protocol-incompatible'],
+    [SHELL_ROOT_TEST_ID, LEGACY_SHELL_ROOT_TEST_ID, 'connect-error', 'connect-protocol-incompatible'],
     10000,
   );
-  if (outcome !== SHELL_ROOT_TEST_ID) {
+  if (outcome !== SHELL_ROOT_TEST_ID && outcome !== LEGACY_SHELL_ROOT_TEST_ID) {
     throw new Error(`Connection failed on the only allowed attempt: ${outcome}`);
   }
   await assertColdConnectionUsedOneSocket();

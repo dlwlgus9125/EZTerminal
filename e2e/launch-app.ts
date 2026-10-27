@@ -67,6 +67,8 @@ function disableBootIntro(dir: string): void {
 export async function launchApp(
   userDataDir?: string,
   extraEnv: Record<string, string> = {},
+  /** Launch the profile exactly as given (no settings.json written first): the first-start paths, e.g. a new install's theme. */
+  options: { readonly profileAsIs?: boolean } = {},
 ): Promise<ElectronApplication> {
   const registry = currentOwnedDesktopProfileRegistry();
   const dir = userDataDir ?? registry.createTempDir('ezterm-e2e-');
@@ -74,7 +76,7 @@ export async function launchApp(
   let launchedApp: ElectronApplication | undefined;
   let appCloser: ReturnType<typeof trackElectronApplicationClose> | undefined;
   try {
-    disableBootIntro(dir);
+    if (!options.profileAsIs) disableBootIntro(dir);
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined) env[key] = value;
