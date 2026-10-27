@@ -1,9 +1,9 @@
-import { TriangleAlert } from 'lucide-react';
 import { useCallback, useMemo, useRef } from 'react';
 
 import type { TerminalPasteRisk } from '../shared/terminal-clipboard';
 import { useAppTranslation } from './i18n';
-import { Button, Dialog } from './ui';
+import { Button, Dialog, Glyph } from './ui';
+import './shell/tool-screens.css';
 
 export interface TerminalPasteWarningDialogProps {
   readonly risk: TerminalPasteRisk;
@@ -39,7 +39,8 @@ export function TerminalPasteWarningDialog({
       description={t('terminalPasteWarning.description')}
       role="alertdialog"
       size="md"
-      icon={<TriangleAlert aria-hidden="true" />}
+      icon={<Glyph name="warn" size={20} />}
+      className="ez-inst-dialog"
       tone="warning"
       initialFocusRef={cancelRef}
       closeLabel={t('terminalPasteWarning.close')}

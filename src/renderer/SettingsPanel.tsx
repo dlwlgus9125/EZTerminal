@@ -1,4 +1,3 @@
-import { Minus, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../shared/layout-schema';
@@ -18,7 +17,7 @@ import { FONT_CATALOG } from './fonts';
 import { useAppTranslation } from './i18n';
 import { SCROLLBACK_MAX, SCROLLBACK_MIN } from './scrollback';
 import type { ThemeDefinition } from './themes';
-import { Button, Field, IconButton, Input, Select, Switch, Tooltip } from './ui';
+import { Button, Field, IconButton, Input, Select, Switch, Tooltip, glyphIcon } from './ui';
 import './settings-panel.css';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
@@ -348,7 +347,7 @@ export function SettingsPanel({
         <div className="settings-scale-stepper">
           <Tooltip content={t('settings.decreaseScale')} side="bottom">
             <IconButton
-              icon={Minus}
+              icon={glyphIcon('minus')}
               onClick={() => onChangeUiScale(uiScale - 10)}
               aria-label={t('settings.decreaseScale')}
               data-testid="settings-scale-dec"
@@ -359,7 +358,7 @@ export function SettingsPanel({
           </span>
           <Tooltip content={t('settings.increaseScale')} side="bottom">
             <IconButton
-              icon={Plus}
+              icon={glyphIcon('plus')}
               onClick={() => onChangeUiScale(uiScale + 10)}
               aria-label={t('settings.increaseScale')}
               data-testid="settings-scale-inc"

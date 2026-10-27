@@ -1,4 +1,3 @@
-import { X } from 'lucide-react';
 import {
   useEffect,
   useId,
@@ -11,12 +10,15 @@ import { createPortal } from 'react-dom';
 import { useNativeOverlayRegistration } from '../native-overlay';
 import { getActiveAppDocument } from '../desktop-window-registry';
 import { IconButton } from './Button';
+import { glyphIcon } from './Glyph';
 import {
   isolateModalBackground,
   isTopModalLayer,
   registerModalLayer,
 } from './modal-isolation';
 import { classNames, getFocusableElements } from './utils';
+
+const CLOSE_ICON = glyphIcon('x');
 
 export interface DialogProps {
   readonly open: boolean;
@@ -185,7 +187,7 @@ export function Dialog({
           </div>
           {dismissible && (
             <IconButton
-              icon={X}
+              icon={CLOSE_ICON}
               aria-label={closeLabel}
               data-testid={closeButtonTestId}
               onClick={() => onOpenChange(false)}

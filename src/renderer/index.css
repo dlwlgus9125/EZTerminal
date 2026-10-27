@@ -6438,15 +6438,6 @@ button.agent-work-activity:focus-visible {
   color: color-mix(in srgb, var(--ui-accent) 72%, var(--ui-text-secondary));
 }
 
-.file-system-entry-icon[data-category='folder'] > svg {
-  fill: currentColor;
-  fill-opacity: 0.14;
-}
-
-.file-system-entry-icon[data-icon='folder-open'] > svg {
-  fill-opacity: 0.2;
-}
-
 .file-system-entry-icon[data-category='code'] {
   color: var(--ui-info);
 }

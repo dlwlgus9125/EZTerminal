@@ -1,0 +1,414 @@
+/*
+ * The 2.0 instrument look of the desktop tool screens (I5): settings, monitor, remote, OpenClaw and
+ * files in the sidebar; pairing, paste and close warnings, the Command Center and the boot screen.
+ * The same language as the board and work list (shell.css): a header row with a stencil glyph and the
+ * label face, sections as grooved plates on the floor, readouts in the terminal face, lamps for state.
+ * Desktop only (none of these components ship to the phone); tokens only.
+ */
+
+/* ── Sidebar tool screens ───────────────────────────────────────────── */
+.workbench-sidebar.ez-inst-panel {
+  background: var(--ui-floor);
+}
+
+.ez-inst-panel > .ez-ui-panel__header {
+  align-items: center;
+  min-height: 2.875rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  border-block-end: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
+.ez-inst-panel > .ez-ui-panel__header .ez-ui-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  font: 600 1.0625rem / 1.2 var(--ui-font-label);
+  letter-spacing: 0.01em;
+}
+
+.ez-inst-panel > .ez-ui-panel__header .ez-ui-panel__title > .ez-ui-glyph {
+  flex: none;
+  color: var(--ui-accent);
+}
+
+.ez-inst-panel > .ez-ui-panel__header .ez-ui-panel__description {
+  font: 0.7188rem / 1.3 var(--ui-font-terminal);
+}
+
+/* Sections are plates on the floor, each headed like a board lane. */
+.ez-inst-panel .status-section {
+  margin: 0.625rem 0.625rem 0;
+  padding: 0.625rem 0.75rem 0.75rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+}
+
+.ez-inst-panel .status-section:last-child {
+  margin-bottom: 0.75rem;
+}
+
+.ez-inst-panel .status-section-title,
+.ez-inst-panel .settings-category-content details.status-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  color: var(--ui-text-secondary);
+  font: 600 0.8125rem / 1.25 var(--ui-font-label);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* The groove after a section heading, as the board draws its lanes. */
+.ez-inst-panel .status-section-title::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--ui-border-subtle);
+}
+
+/* Readouts in the terminal face; their names stay in the label face (Korean never in the mono face). */
+.ez-inst-panel [data-testid='status-panel'] .status-metric,
+.ez-inst-panel .status-core-label,
+.ez-inst-panel .status-disk-label > span:last-child,
+.ez-inst-panel .status-scope-readout,
+.ez-inst-panel .status-proc-table td + td,
+.ez-inst-panel .status-conn-table td + td {
+  font-family: var(--ui-font-terminal);
+  font-variant-numeric: tabular-nums;
+}
+
+.ez-inst-panel .status-disk-label > span:first-child,
+.ez-inst-panel .status-proc-table th,
+.ez-inst-panel .status-conn-table th {
+  font-family: var(--ui-font-label);
+}
+
+.ez-inst-panel .status-freshness {
+  border-bottom: 0;
+  padding: 0.5rem 0.875rem 0;
+}
+
+/* Settings: categories as an instrument list beside the plates. */
+.ez-inst-panel .settings-category-nav {
+  gap: 0.125rem;
+  padding: 0.625rem 0.375rem;
+  border-inline-end: 1px solid var(--ui-border-mid);
+  background: var(--ui-canvas);
+}
+
+.ez-inst-panel .settings-category-button {
+  position: relative;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  font: 600 0.8125rem / 1.2 var(--ui-font-label);
+}
+
+.ez-inst-panel .settings-category-button[aria-current='page'] {
+  background: var(--ui-surface-selected);
+  color: var(--ui-text-primary);
+}
+
+.ez-inst-panel .settings-category-button[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: -0.375rem;
+  width: 3px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent);
+  box-shadow: var(--ui-glow-box);
+}
+
+.ez-inst-panel .settings-category-content {
+  padding-bottom: 0.75rem;
+}
+
+.ez-inst-panel .settings-field-row > span,
+.ez-inst-panel .settings-field-row label,
+.ez-inst-panel .settings-effect-intensity__heading {
+  font-family: var(--ui-font-label);
+}
+
+/* Remote: the link and every card are plates; host state is a lamp. */
+.ez-inst-panel .remote-panel {
+  padding: 0.625rem;
+}
+
+.ez-inst-panel .remote-topology,
+.ez-inst-panel .remote-card,
+.ez-inst-panel .pairing-token {
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+}
+
+.ez-inst-panel .remote-topology-stats dt,
+.ez-inst-panel .remote-card__label {
+  font-family: var(--ui-font-label);
+}
+
+.ez-inst-panel .remote-topology-stats dd,
+.ez-inst-panel .remote-topology-wire-label,
+.ez-inst-panel .remote-topology-wire-rtt,
+.ez-inst-panel .remote-endpoint code {
+  font-family: var(--ui-font-terminal);
+}
+
+.ez-inst-panel .remote-pairing-card b,
+.ez-inst-panel .remote-host-card__state {
+  font-family: var(--ui-font-label);
+}
+
+.ez-inst-panel .remote-host-card__state::before {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--ui-radius-round);
+  box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid);
+}
+
+.ez-inst-panel .remote-device,
+.ez-inst-panel .settings-ssh-forward-row {
+  border-color: var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+/* Files: the path is a mono plate; rows read like the work list. */
+.ez-inst-panel .file-breadcrumb {
+  margin: 0.625rem 0.625rem 0;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.ez-inst-panel .file-breadcrumb-segment,
+.ez-inst-panel .file-breadcrumb-full,
+.ez-inst-panel .file-entry-size {
+  font-family: var(--ui-font-terminal);
+}
+
+.ez-inst-panel .file-list {
+  margin: 0.5rem 0.625rem 0.75rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+}
+
+
+/* ── Dialogs: pairing, paste warning, risky close ───────────────────── */
+.ez-ui-dialog.ez-inst-dialog {
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-floor);
+}
+
+.ez-inst-dialog .ez-ui-dialog__header {
+  align-items: center;
+  padding: 0.75rem 0.75rem 0.75rem 0.875rem;
+  border-block-end: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
+.ez-inst-dialog .ez-ui-dialog__icon {
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  border: 0;
+  background: none;
+  color: var(--ui-accent);
+}
+
+.ez-inst-dialog[data-tone='warning'] .ez-ui-dialog__icon { color: var(--ui-warning); }
+.ez-inst-dialog[data-tone='danger'] .ez-ui-dialog__icon { color: var(--ui-danger); }
+
+.ez-inst-dialog .ez-ui-dialog__title {
+  font: 600 1.0625rem / 1.25 var(--ui-font-label);
+  letter-spacing: 0.01em;
+}
+
+.ez-inst-dialog .ez-ui-dialog__body {
+  padding: 0.875rem;
+}
+
+.ez-inst-dialog .ez-ui-dialog__footer {
+  border-block-start-color: var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
+/* The facts a warning lists sit on one plate, each behind a lamp. */
+.ez-inst-dialog .risky-close-details,
+.ez-inst-dialog .terminal-paste-warning__details {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  font-family: var(--ui-font-label);
+}
+
+.ez-inst-dialog .risky-close-details {
+  list-style: none;
+}
+
+.ez-inst-dialog .risky-close-details li {
+  display: flex;
+  align-items: center;
+}
+
+.ez-inst-dialog .risky-close-details li::before {
+  content: '';
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.625rem;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-danger);
+  box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 6px var(--ui-danger-ring);
+}
+
+.ez-inst-dialog .pairing-qr__code,
+.ez-inst-dialog .pairing-qr__validity b {
+  font-family: var(--ui-font-terminal);
+}
+
+/* ── Command Center ─────────────────────────────────────────────────── */
+.quick-open-modal.ez-inst-modal {
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-floor);
+}
+
+.ez-inst-modal .quick-open-header {
+  border-bottom: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
+.ez-inst-modal .quick-open-heading h2,
+.ez-inst-modal .quick-open-heading {
+  font-family: var(--ui-font-label);
+}
+
+.ez-inst-modal .quick-open-group h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--ui-text-secondary);
+  font: 600 0.75rem / 1.3 var(--ui-font-label);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.ez-inst-modal .quick-open-group h2::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--ui-border-subtle);
+}
+
+.ez-inst-modal .quick-open-source {
+  border-color: var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  font-family: var(--ui-font-label);
+}
+
+.ez-inst-modal .quick-open-row--selected {
+  box-shadow: inset 3px 0 0 var(--ui-accent);
+}
+
+.ez-inst-modal .quick-open-row-detail {
+  font-family: var(--ui-font-terminal);
+}
+
+/* ── Boot: the power-on self test of the instrument panel ───────────── */
+.boot-intro.ez-inst-boot .boot-intro-log {
+  inline-size: max-content;
+  min-inline-size: 22rem;
+  margin: 0;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+  font-family: var(--ui-font-terminal);
+  text-align: left;
+  list-style: none;
+}
+
+.ez-inst-boot .boot-intro-log li {
+  display: flex;
+  align-items: center;
+}
+
+.ez-inst-boot .boot-intro-log li::before {
+  content: '';
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.625rem;
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--ui-surface-inset), 0 0 0 3px var(--ui-border-mid), 0 0 8px var(--ui-accent);
+}
+
+.ez-inst-boot .boot-intro-log li::after {
+  content: 'OK';
+  margin-left: auto;
+  padding-left: 2rem;
+  color: var(--ui-accent);
+}
+
+/* The same mark as the top bar: one lit bar beside the wordmark. */
+.ez-inst-boot .boot-intro-signal i:not(:last-child) {
+  display: none;
+}
+
+.ez-inst-boot .boot-intro-signal i:last-child {
+  inline-size: 1.75rem;
+  block-size: 2.75rem;
+  box-shadow: 0 0 1rem var(--ui-accent);
+}
+
+.ez-inst-boot .boot-intro-signal {
+  block-size: auto;
+}
+
+.ez-inst-boot .boot-intro-wordmark {
+  color: var(--ui-accent);
+  font-family: var(--ui-font-display);
+}
+
+.ez-inst-boot .boot-intro-skip {
+  font-family: var(--ui-font-label);
+}
+
+/* Switches read as panel toggles: a dark slot whose knob lights when on. */
+.ez-inst-panel .ez-ui-switch__track {
+  inline-size: 2.125rem;
+  block-size: 1.125rem;
+  border-color: var(--ui-border-mid);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+}
+
+.ez-inst-panel .ez-ui-switch__thumb {
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-text-dim);
+}
+
+.ez-inst-panel .ez-ui-switch__input:checked + .ez-ui-switch__track {
+  border-color: var(--ui-accent);
+  background: var(--ui-surface-inset);
+}
+
+.ez-inst-panel .ez-ui-switch__input:checked + .ez-ui-switch__track .ez-ui-switch__thumb {
+  background: var(--ui-accent);
+  box-shadow: 0 0 8px var(--ui-accent);
+}
+
+.ez-inst-panel .ez-ui-switch__label {
+  font-family: var(--ui-font-label);
+}

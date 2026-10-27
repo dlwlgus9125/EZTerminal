@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { PAIRING_CODE_TTL_MS, buildPairingUri, type PairingCode } from '../shared/pairing';
 import { useAppTranslation } from './i18n';
-import { Button, Dialog } from './ui';
+import { Button, Dialog, Glyph } from './ui';
+import './shell/tool-screens.css';
 
 /** Quiet zone in modules, per the QR spec. Without it a scanner cannot find
  * the symbol against whatever is behind it. */
@@ -110,6 +111,8 @@ export function PairingQrDialog({
       description={t('pairing.steps')}
       size="md"
       tone="neutral"
+      icon={<Glyph name="qr" size={20} />}
+      className="ez-inst-dialog"
       closeLabel={t('common.close')}
       testId="pairing-qr-dialog"
     >

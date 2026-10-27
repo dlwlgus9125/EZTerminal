@@ -1,10 +1,10 @@
-import { Smartphone } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { EzTerminalDesktopApi, RemoteDeviceEntry } from '../../shared/ipc';
 import { observationalIntervalMs, type UiResourceProfile } from '../../shared/resource-profile';
 import { startAsyncPoll } from '../async-poller';
 import { useAppTranslation } from '../i18n';
+import { Glyph } from '../ui';
 
 /** Matches the SSH forward list's cadence — the bridge pushes no device events,
  * so the panel asks while it is on screen and stops when it is not. */
@@ -88,7 +88,7 @@ export function RemoteDeviceRoster({
         <div className="remote-devices">
           {roster.devices.map((device) => (
           <div className="remote-device" key={device.clientId} data-testid="remote-device">
-            <Smartphone aria-hidden="true" className="remote-device-icon" />
+            <Glyph name="phone" size={16} className="remote-device-icon" />
             <span className="remote-device-name">{device.clientName}</span>
             <span
               className="remote-device-state"

@@ -1,10 +1,9 @@
-import { Monitor, Power, Smartphone } from 'lucide-react';
 
 import type { RemoteDesktopHostStatus } from '../../shared/ipc';
 import { rendererCapabilities, type CapabilityAccess } from '../capability-access';
 import { useAppTranslation } from '../i18n';
 import { useElapsed, useRemoteDesktopDisconnect } from '../RemoteDesktopStatusCard';
-import { Button } from '../ui';
+import { Button, Glyph } from '../ui';
 
 export interface RemoteTopologyProps {
   readonly status: RemoteDesktopHostStatus | null;
@@ -42,7 +41,7 @@ export function RemoteTopology({
       <div className="remote-topology-row">
         <div className="remote-topology-node">
           <span className="remote-topology-glyph remote-topology-glyph--host" aria-hidden="true">
-            <Monitor />
+            <Glyph name="pc" size={22} />
           </span>
           <b>{t('remote.topologyThisPc')}</b>
           <span className="remote-topology-meta">
@@ -58,7 +57,7 @@ export function RemoteTopology({
 
         <div className="remote-topology-node" data-idle={peer ? undefined : 'true'}>
           <span className="remote-topology-glyph remote-topology-glyph--peer" aria-hidden="true">
-            <Smartphone />
+            <Glyph name="phone" size={22} />
           </span>
           <b>{peer ?? t('remote.topologyNoDevice')}</b>
           <span className="remote-topology-meta">
@@ -96,7 +95,7 @@ export function RemoteTopology({
           <Button
             size="sm"
             variant="danger"
-            leadingIcon={<Power />}
+            leadingIcon={<Glyph name="power" size={16} />}
             onClick={disconnect}
             disabled={disconnecting}
             data-testid="remote-desktop-disconnect"

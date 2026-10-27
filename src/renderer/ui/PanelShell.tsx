@@ -1,8 +1,10 @@
-import { X } from 'lucide-react';
 import { useId, type HTMLAttributes, type ReactNode } from 'react';
 
 import { IconButton } from './Button';
+import { glyphIcon } from './Glyph';
 import { classNames } from './utils';
+
+const CLOSE_ICON = glyphIcon('x');
 
 export interface PanelShellProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> {
   readonly as?: 'section' | 'aside' | 'div';
@@ -47,7 +49,7 @@ export function PanelShell({
         {(actions || onClose) && (
           <div className="ez-ui-panel__actions">
             {actions}
-            {onClose && <IconButton icon={X} aria-label={closeLabel} onClick={onClose} />}
+            {onClose && <IconButton icon={CLOSE_ICON} aria-label={closeLabel} onClick={onClose} />}
           </div>
         )}
       </header>

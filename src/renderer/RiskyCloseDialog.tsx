@@ -1,8 +1,8 @@
-import { TriangleAlert } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
 import { useAppTranslation } from './i18n';
-import { Button, Dialog } from './ui';
+import { Button, Dialog, Glyph } from './ui';
+import './shell/tool-screens.css';
 
 export interface RiskyCloseDialogProps {
   readonly title: string;
@@ -51,7 +51,8 @@ export function RiskyCloseDialog({
       description={description}
       role="alertdialog"
       size="md"
-      icon={<TriangleAlert aria-hidden="true" />}
+      icon={<Glyph name="warn" size={20} />}
+      className="ez-inst-dialog"
       tone="danger"
       // Cancel takes focus, so the destructive action is never one stray Enter
       // away, and the close affordance is the same one every dialog has.

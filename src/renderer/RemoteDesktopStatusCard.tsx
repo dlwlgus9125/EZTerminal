@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MonitorSmartphone } from 'lucide-react';
 
 import type { RemoteDesktopHostStatus } from '../shared/ipc';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
-import { Button } from './ui';
+import { Button, Glyph } from './ui';
 import './remote-panel.css';
 
 export function useElapsed(connectedAt: number | null, currentTime?: number): string {
@@ -108,7 +107,7 @@ export function RemoteDesktopStatusCard({
   return (
     <section className="remote-card remote-host-card" data-testid="remote-desktop-status-card">
       <h2 className="remote-card__label">
-        <MonitorSmartphone aria-hidden="true" />
+        <Glyph name="pc" size={16} />
         {t('remote.pcControlTitle')}
       </h2>
       {!status ? (
@@ -139,7 +138,7 @@ export function RemoteControlBanner({
   const [disconnecting, setDisconnecting] = useState(false);
   return (
     <div className="remote-control-banner" role="status" data-testid="remote-control-banner">
-      <MonitorSmartphone aria-hidden="true" size={17} />
+      <Glyph name="pc" size={17} />
       <span>{t('remote.pcControlBanner', { device: status.controllerName ?? t('common.unavailable') })}</span>
       <Button
         size="sm"

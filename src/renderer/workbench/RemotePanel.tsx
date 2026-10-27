@@ -1,4 +1,3 @@
-import { QrCode } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { EzTerminalDesktopApi } from '../../shared/ipc';
@@ -13,6 +12,7 @@ import { useAppTranslation } from '../i18n';
 import { RemoteDeviceRoster } from './RemoteDeviceRoster';
 import { RemoteTopology } from './RemoteTopology';
 import '../remote-panel.css';
+import { Glyph } from '../ui';
 
 export type RemotePanelDesktopApi = Pick<
   EzTerminalDesktopApi,
@@ -257,7 +257,7 @@ export function RemotePanel({
           }}
           data-testid="open-pairing-qr"
         >
-          <QrCode aria-hidden="true" />
+          <Glyph name="qr" size={24} />
           <b>{t('pairing.card')}</b>
           <span>{pairingAvailable ? t('pairing.cardHint') : t('pairing.unavailable')}</span>
         </button>

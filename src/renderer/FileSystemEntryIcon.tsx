@@ -1,23 +1,4 @@
-import {
-  BookOpenText,
-  Database,
-  File,
-  FileArchive,
-  FileCheck2,
-  FileCode2,
-  FileCog,
-  FileImage,
-  FileJson2,
-  FileLock2,
-  FileTerminal,
-  FileText,
-  FileType2,
-  Folder,
-  FolderOpen,
-  Package,
-  Table2,
-  type LucideIcon,
-} from 'lucide-react';
+import { Glyph, type GlyphName } from './ui';
 
 export type FileSystemEntryKind = 'file' | 'directory';
 
@@ -49,7 +30,7 @@ export type FileSystemEntryIconKey =
   | 'file';
 
 export interface FileSystemEntryVisual {
-  readonly Icon: LucideIcon;
+  readonly glyph: GlyphName;
   readonly category: FileSystemEntryCategory;
   readonly iconKey: FileSystemEntryIconKey;
 }
@@ -102,9 +83,9 @@ const CONFIG_FILENAMES = new Set([
 function visual(
   iconKey: FileSystemEntryIconKey,
   category: FileSystemEntryCategory,
-  Icon: LucideIcon,
+  glyph: GlyphName,
 ): FileSystemEntryVisual {
-  return { Icon, category, iconKey };
+  return { glyph, category, iconKey };
 }
 
 function basenameOf(name: string): string {
@@ -140,33 +121,33 @@ export function resolveFileSystemEntryVisual(
 ): FileSystemEntryVisual {
   if (kind === 'directory') {
     return expanded
-      ? visual('folder-open', 'folder', FolderOpen)
-      : visual('folder', 'folder', Folder);
+      ? visual('folder-open', 'folder', 'proj')
+      : visual('folder', 'folder', 'proj');
   }
 
   const basename = basenameOf(name);
   const extension = extensionOf(basename);
 
   if (/^(?:changelog|license|readme)(?:[._-]|$)/u.test(basename)) {
-    return visual('document', 'document', BookOpenText);
+    return visual('document', 'document', 'file');
   }
-  if (basename === 'package.json') return visual('package', 'config', Package);
+  if (basename === 'package.json') return visual('package', 'config', 'archive');
   if (LOCK_FILENAMES.has(basename) || /^bun\.lock(?:b|\.|$)/u.test(basename)) {
-    return visual('lock', 'config', FileLock2);
+    return visual('lock', 'config', 'key');
   }
-  if (isConfigFilename(basename)) return visual('config', 'config', FileCog);
-  if (isTestFilename(basename)) return visual('test', 'test', FileCheck2);
-  if (CODE_EXTENSIONS.has(extension)) return visual('code', 'code', FileCode2);
-  if (WEB_EXTENSIONS.has(extension)) return visual('web', 'code', FileType2);
-  if (TERMINAL_EXTENSIONS.has(extension)) return visual('terminal', 'code', FileTerminal);
-  if (JSON_EXTENSIONS.has(extension)) return visual('json', 'config', FileJson2);
-  if (CONFIG_EXTENSIONS.has(extension)) return visual('config', 'config', FileCog);
-  if (DOCUMENT_EXTENSIONS.has(extension)) return visual('document', 'document', FileText);
-  if (extension === 'csv' || extension === 'tsv') return visual('table', 'config', Table2);
-  if (extension === 'sql') return visual('database', 'code', Database);
-  if (IMAGE_EXTENSIONS.has(extension)) return visual('image', 'media', FileImage);
-  if (ARCHIVE_EXTENSIONS.has(extension)) return visual('archive', 'media', FileArchive);
-  return visual('file', 'generic', File);
+  if (isConfigFilename(basename)) return visual('config', 'config', 'set');
+  if (isTestFilename(basename)) return visual('test', 'test', 'check');
+  if (CODE_EXTENSIONS.has(extension)) return visual('code', 'code', 'code');
+  if (WEB_EXTENSIONS.has(extension)) return visual('web', 'code', 'code');
+  if (TERMINAL_EXTENSIONS.has(extension)) return visual('terminal', 'code', 'term');
+  if (JSON_EXTENSIONS.has(extension)) return visual('json', 'config', 'code');
+  if (CONFIG_EXTENSIONS.has(extension)) return visual('config', 'config', 'set');
+  if (DOCUMENT_EXTENSIONS.has(extension)) return visual('document', 'document', 'file');
+  if (extension === 'csv' || extension === 'tsv') return visual('table', 'config', 'list');
+  if (extension === 'sql') return visual('database', 'code', 'server');
+  if (IMAGE_EXTENSIONS.has(extension)) return visual('image', 'media', 'image');
+  if (ARCHIVE_EXTENSIONS.has(extension)) return visual('archive', 'media', 'archive');
+  return visual('file', 'generic', 'file');
 }
 
 export function FileSystemEntryIcon({
@@ -177,7 +158,6 @@ export function FileSystemEntryIcon({
   className,
 }: FileSystemEntryIconProps): JSX.Element {
   const visualState = resolveFileSystemEntryVisual(name, kind, expanded);
-  const Icon = visualState.Icon;
   return (
     <span
       className={['file-system-entry-icon', className].filter(Boolean).join(' ')}
@@ -186,7 +166,7 @@ export function FileSystemEntryIcon({
       data-entry-kind={kind}
       aria-hidden="true"
     >
-      <Icon size={size} />
+      <Glyph name={visualState.glyph} size={size} />
     </span>
   );
 }

@@ -23,6 +23,7 @@ import { useAppTranslation } from './i18n';
 import { useNativeOverlayRegistration } from './native-overlay';
 import { isolateModalBackground } from './ui/modal-isolation';
 import './quick-open.css';
+import './shell/tool-screens.css';
 
 export type QuickOpenMode = 'all' | 'commands';
 export type QuickOpenRowKind =
@@ -330,7 +331,7 @@ export function QuickOpenModal({
     <div ref={overlayRef} className="quick-open-overlay" data-testid="quick-open-overlay">
       <div
         ref={dialogRef}
-        className="quick-open-modal"
+        className="quick-open-modal ez-inst-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppTranslation } from './i18n';
 import { useNativeOverlayRegistration } from './native-overlay';
 import { useReducedMotion } from './use-reduced-motion';
+import './shell/tool-screens.css';
 
 /** Milliseconds between init lines. */
 const LINE_INTERVAL_MS = 320;
@@ -114,7 +115,7 @@ export function BootIntroOverlay({ preview = false }: { readonly preview?: boole
 
   return (
     <div
-      className="boot-intro"
+      className="boot-intro ez-inst-boot"
       data-testid="boot-intro"
       // aria-hidden with no focusable content: the workbench underneath is
       // already mounted and announced, and assistive technology should not be

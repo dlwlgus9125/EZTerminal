@@ -9,14 +9,25 @@ import {
 
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from '../../shared/ui-preferences';
 import { useAppTranslation } from '../i18n';
-import { PanelShell } from '../ui';
+import { Glyph, PanelShell, type GlyphName } from '../ui';
 import { isolateModalBackground } from '../ui/modal-isolation';
 import { getFocusableElements } from '../ui/utils';
 import { ACTIVITY_RAIL_ID } from '../shell/shell-ids';
+import '../shell/tool-screens.css';
 
 /** The Board + Desk top bar's element id (src/renderer/shell/ShellTopBar.tsx). */
 export const SHELL_TOP_BAR_ID = 'workbench-shell-top';
 import type { SidebarDestination } from './types';
+
+/** The stencil glyph each tool screen carries in its header row (the work list's tool row uses the same). */
+const DESTINATION_GLYPH: Record<SidebarDestination, GlyphName> = {
+  explorer: 'file',
+  agents: 'req',
+  monitor: 'mon',
+  remote: 'phone',
+  openclaw: 'claw',
+  settings: 'set',
+};
 
 function clampWidth(width: number, maximum = MAX_SIDEBAR_WIDTH): number {
   return Math.min(maximum, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)));
@@ -234,7 +245,7 @@ export function SidebarShell({
         // the content would change with no transition at all.
         key={destination}
         as="aside"
-        className="workbench-sidebar"
+        className="workbench-sidebar ez-inst-panel"
         data-destination={destination}
         data-project-mode={overlayBelow === 1024 || undefined}
         style={{ width: previewWidth }}
@@ -242,7 +253,7 @@ export function SidebarShell({
         aria-modal={overlay || undefined}
         aria-owns={overlay ? ACTIVITY_RAIL_ID : undefined}
         tabIndex={overlay ? -1 : undefined}
-        title={title}
+        title={<><Glyph name={DESTINATION_GLYPH[destination]} size={16} />{title}</>}
         description={description}
         onClose={dismiss}
         closeLabel={t('workbench.closePanel')}

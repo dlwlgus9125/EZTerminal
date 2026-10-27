@@ -1,4 +1,3 @@
-import { ArrowUp, CornerLeftUp } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
@@ -17,7 +16,7 @@ import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { useLatestRequestGate } from './latest-request';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
-import { Button, Dialog, IconButton, useToast, VisuallyHidden } from './ui';
+import { Button, Dialog, IconButton, useToast, VisuallyHidden, Glyph, glyphIcon } from './ui';
 import { VirtualizedRows } from './VirtualizedRows';
 
 interface BreadcrumbSegment {
@@ -500,7 +499,7 @@ export function FileExplorerPanel({
       >
         <div className="file-breadcrumb-row">
           <IconButton
-            icon={ArrowUp}
+            icon={glyphIcon('up')}
             size="sm"
             variant="secondary"
             className="file-breadcrumb-up"
@@ -606,7 +605,7 @@ export function FileExplorerPanel({
             data-testid="file-entry-parent"
           >
             <span className="file-entry-icon" aria-hidden="true">
-              <CornerLeftUp size={16} />
+              <Glyph name="up" size={16} />
             </span>
             <span className="file-entry-name">..</span>
           </button>

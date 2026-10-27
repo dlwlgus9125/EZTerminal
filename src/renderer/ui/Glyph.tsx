@@ -68,6 +68,9 @@ const PATHS = {
   copy: 'M6 2h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1.5V4.5H6zM3 6h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm1.5 2.5v7h6v-7z',
   paste: 'M7.5 2h5v1.5H16a1 1 0 0 1 1 1V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1h3.5zm-2 4v9.5h9V6h-1.5v1.5h-6V6z',
   offline: 'M10 13.5a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 0 1 0-3.5zM10 4a11 11 0 0 1 8 3.4l-1.8 1.8A8.5 8.5 0 0 0 10 6.5a8.5 8.5 0 0 0-6.2 2.7L2 7.4A11 11 0 0 1 10 4zM3.4 2.3l14.3 14.3-1.1 1.1L2.3 3.4z',
+  // Desktop tool screens (I5): file types in the explorer and the project tree.
+  code: 'M6.6 5.2L7.9 6.6 4.5 10l3.4 3.4-1.4 1.4L1.7 10zm6.8 0L18.3 10l-4.8 4.8-1.4-1.4 3.4-3.4-3.4-3.4zM11.1 3.6l1.9.5-4.1 12.3-1.9-.5z',
+  image: 'M3 3h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1.5 2.5v9h11v-9zM5.5 13.5l3-4 2 2.5 1.5-1.5 2.5 3zM12.5 6.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z',
 } as const;
 
 /** Extra shapes drawn on top of a path (the request and phone glyphs carry a signal dot). */
