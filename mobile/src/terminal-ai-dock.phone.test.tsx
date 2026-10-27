@@ -71,10 +71,11 @@ describe('the terminal AI box on the phone', () => {
       </AppI18nProvider>,
     );
     act(() => show());
-    await vi.waitFor(async () => {
+    // Every wait inside act (vi.waitFor polls outside it, where an update would warn on a slow runner).
+    for (let attempt = 0; attempt < 200 && settled.mock.calls.length === 0; attempt += 1) {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-      expect(settled).toHaveBeenCalled();
-    });
+    }
+    expect(settled).toHaveBeenCalled();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
     expect(container.querySelectorAll('[data-testid="terminal-ai-chip"]')).toHaveLength(1);
   });

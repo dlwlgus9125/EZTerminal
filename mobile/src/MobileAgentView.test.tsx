@@ -178,6 +178,15 @@ async function changeSelect(testId: string, value: string): Promise<void> {
 
 
 
+/** Waits until `check` passes with every wait inside act, so a state update that lands while waiting is wrapped
+ * (vi.waitFor polls outside act; on a slow runner an update between polls warned and failed the run). */
+async function until(check: () => void, attempts = 200): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    try { check(); return; } catch (error) { if (attempt >= attempts) throw error; }
+  }
+}
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -237,19 +246,19 @@ describe('MobileAgentView', () => {
     } as unknown as WsEzTerminalTransport;
     await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshotOf() }} transport={transport}
       chatStateStore={chatStateStore} initialSessionId="structured-session-1" {...noop} />);
-    await vi.waitFor(async () => { await flush(); expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
     const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Keep this one safe');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.draft.text).toBe('Keep this one safe'); });
+    await until(() => { expect([...records.values()][0]?.draft.text).toBe('Keep this one safe'); });
     await act(async () => { testIds('structured-agent-send')[0]!.click(); await Promise.resolve(); });
-    await vi.waitFor(async () => { await flush(); expect(sendDaemonCommand).toHaveBeenCalledTimes(1); });
+    await until(() => { expect(sendDaemonCommand).toHaveBeenCalledTimes(1); });
     const sent = sendDaemonCommand.mock.calls[0]![0];
     expect(sent).toMatchObject({ type: 'agent.submit', principal: { kind: 'android', id: 'mobile-agent-ui' }, payload: { prompt: 'Keep this one safe' } });
     // The exact envelope stays in the phone's record until delivery is confirmed.
-    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.pending).toEqual(sent); });
+    await until(() => { expect([...records.values()][0]?.pending).toEqual(sent); });
     expect([...records.values()][0]?.draft.text).toBe('Keep this one safe');
   });
 
@@ -266,16 +275,16 @@ describe('MobileAgentView', () => {
     const transport = { getRemoteToken: async () => 'test-pc', getDaemonSnapshot: async () => authority, sendDaemonCommand } as unknown as WsEzTerminalTransport;
     await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
       chatStateStore={chatStateStore} initialSessionId="structured-session-1" {...noop} />);
-    await vi.waitFor(async () => { await flush(); expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    await until(() => { expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
     const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Run the tests');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.draft.text).toBe('Run the tests'); });
+    await until(() => { expect([...records.values()][0]?.draft.text).toBe('Run the tests'); });
     await act(async () => { testIds('structured-agent-send')[0]!.click(); await Promise.resolve(); });
-    await vi.waitFor(async () => { await flush(); expect(sendDaemonCommand).toHaveBeenCalledTimes(1); });
-    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.pending).toBeUndefined(); });
+    await until(() => { expect(sendDaemonCommand).toHaveBeenCalledTimes(1); });
+    await until(() => { expect([...records.values()][0]?.pending).toBeUndefined(); });
     await act(async () => testIds('structured-agent-live-effort')[0]!.click());
     const high = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent === 'High')!;
     await act(async () => { high.click(); await Promise.resolve(); });

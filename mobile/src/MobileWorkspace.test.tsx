@@ -371,7 +371,8 @@ describe('MobileWorkspace — feed shell root (I4 layout A)', () => {
     const el = await renderWorkspace(transport);
 
     await openConversationsFromFeed(el);
-    await waitForTestId(el, 'mobile-agent-view');
+    // The conversation screen is a lazy import: its first load in a test run is slow on a busy machine.
+    await waitForTestId(el, 'mobile-agent-view', 15_000);
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
 
