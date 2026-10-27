@@ -2224,8 +2224,9 @@ export const SHELL_ROOT_TEST_ID = 'mobile-shell';
 export const LEGACY_SHELL_ROOT_TEST_ID = 'mobile-workspace';
 
 async function terminalActive(): Promise<boolean> {
+  // Runs in the phone's WebView: Android 10 (WebView 74) has no `?.` or `??`.
   return await evaluateWebView<string | null>(
-    `document.querySelector('[data-testid="mobile-shell"]')?.getAttribute('data-terminal-active') ?? null`,
+    `(function () { var shell = document.querySelector('[data-testid="mobile-shell"]'); return shell ? shell.getAttribute('data-terminal-active') : null; })()`,
   ) === 'true';
 }
 
