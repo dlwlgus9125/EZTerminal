@@ -1254,10 +1254,33 @@
   pointer-events: none;
 }
 
-.mob-toast span:last-child {
+.mob-toast span:last-child,
+.mob-toast__message {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A toast with a follow-up takes touches; the button keeps a 44px target inside the pill. */
+.mob-toast[data-action] { pointer-events: auto; }
+
+.mob-toast__action {
+  flex: none;
+  min-height: 44px;
+  margin: -10px -8px -10px 4px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--ui-accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mob-toast__action:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
 }
 
 /* ── Agents ──────────────────────────────────────────────────────────────── */

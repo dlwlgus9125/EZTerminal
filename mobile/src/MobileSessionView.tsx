@@ -465,7 +465,7 @@ export function MobileSessionView({
   // ── AI input (I4): the prompt line types a shell command or a message to a conversation —
   // that conversation's own message box with the newest block attached, as on the desktop terminal.
   const {
-    inputMode,
+    inputMode: chosenInputMode,
     aiTarget,
     aiPending,
     aiNotice,
@@ -488,6 +488,9 @@ export function MobileSessionView({
     root: () => rootRef.current,
     focusShell: () => cmdInputRef.current?.focus(),
   });
+  // Without the AI input (offline, an older PC) the prompt line is the shell's, whatever was chosen before;
+  // the choice comes back with the connection.
+  const inputMode = aiHost ? chosenInputMode : 'shell';
   const aiProjectId = aiHost && inputMode === 'ai' ? terminalProjectId() : undefined;
   const startGeneration = targetGenerationRef.current;
   const viewStateRef = useRef({ command, history });

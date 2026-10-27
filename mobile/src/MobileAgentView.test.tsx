@@ -253,6 +253,36 @@ describe('MobileAgentView', () => {
     expect([...records.values()][0]?.draft.text).toBe('Keep this one safe');
   });
 
+  it('expects the revision an accepted send returned in the next settings change (I4-3)', async () => {
+    const records = new Map<string, MobileChatRecord>();
+    const chatStateStore = {
+      load: async (scope: MobileChatRecord['scope']) => records.get(`${scope.projectId}/${scope.sessionId}`) ?? null,
+      save: async (record: MobileChatRecord) => { records.set(`${record.scope.projectId}/${record.scope.sessionId}`, record); },
+    };
+    const authority = daemonSnapshotOf({ revision: 4, capabilities: ['agent-effort-v1'] });
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: true as const, status: 'queued' as const, commandId: command.commandId, revision: 42, eventSequence: 13,
+    }));
+    const transport = { getRemoteToken: async () => 'test-pc', getDaemonSnapshot: async () => authority, sendDaemonCommand } as unknown as WsEzTerminalTransport;
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: authority }} transport={transport}
+      chatStateStore={chatStateStore} initialSessionId="structured-session-1" {...noop} />);
+    await vi.waitFor(async () => { await flush(); expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Run the tests');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.draft.text).toBe('Run the tests'); });
+    await act(async () => { testIds('structured-agent-send')[0]!.click(); await Promise.resolve(); });
+    await vi.waitFor(async () => { await flush(); expect(sendDaemonCommand).toHaveBeenCalledTimes(1); });
+    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.pending).toBeUndefined(); });
+    await act(async () => testIds('structured-agent-live-effort')[0]!.click());
+    const high = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent === 'High')!;
+    await act(async () => { high.click(); await Promise.resolve(); });
+    await flush();
+    expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'agent.set-settings', expectedRevision: 42 }));
+  });
+
   it('offers the effort switch and the PC model list only to a PC that takes them (I4)', async () => {
     const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
       ok: true as const, status: 'queued' as const, commandId: command.commandId, revision: 9, eventSequence: 13,

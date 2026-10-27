@@ -11,8 +11,18 @@ import {
 
 /** Handoff "Interactions & Motion": a toast is a pill that self-dismisses. */
 const TOAST_MS = 2600;
+/** A toast with an action stays long enough to reach it. */
+const TOAST_ACTION_MS = 5000;
 
-const MobileToastContext = createContext<(message: string) => void>(() => undefined);
+/** One follow-up a toast offers (the terminal's "sent" notice opens the conversation). */
+export interface MobileToastAction {
+  readonly label: string;
+  readonly onSelect: () => void;
+}
+
+type ShowToast = (message: string, action?: MobileToastAction) => void;
+
+const MobileToastContext = createContext<ShowToast>(() => undefined);
 
 /**
  * The authenticated shell's single transient-feedback surface. Every send
@@ -21,19 +31,24 @@ const MobileToastContext = createContext<(message: string) => void>(() => undefi
  * own banner.
  */
 export function MobileToastProvider({ children }: { readonly children: ReactNode }): JSX.Element {
-  const [toast, setToast] = useState<{ readonly id: number; readonly message: string } | null>(null);
+  const [toast, setToast] = useState<{ readonly id: number; readonly message: string; readonly action?: MobileToastAction } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextIdRef = useRef(0);
 
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback<ShowToast>((message, action) => {
     if (!message) return;
     nextIdRef.current += 1;
-    setToast({ id: nextIdRef.current, message });
+    setToast({ id: nextIdRef.current, message, ...(action ? { action } : {}) });
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
       setToast(null);
-    }, TOAST_MS);
+    }, action ? TOAST_ACTION_MS : TOAST_MS);
+  }, []);
+  const dismiss = useCallback(() => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = null;
+    setToast(null);
   }, []);
 
   useEffect(() => () => {
@@ -46,15 +61,21 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
     <MobileToastContext.Provider value={value}>
       {children}
       {toast && (
-        <div key={toast.id} className="mob-toast" role="status" aria-live="polite" data-testid="mobile-toast">
+        <div key={toast.id} className="mob-toast" role="status" aria-live="polite" data-testid="mobile-toast" data-action={toast.action ? 'true' : undefined}>
           <span className="mob-dot mob-dot--live" aria-hidden="true" />
-          <span>{toast.message}</span>
+          <span className="mob-toast__message">{toast.message}</span>
+          {toast.action && (
+            <button type="button" className="mob-toast__action" data-testid="mobile-toast-action"
+              onClick={() => { const { onSelect } = toast.action!; dismiss(); onSelect(); }}>
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </MobileToastContext.Provider>
   );
 }
 
-export function useMobileToast(): (message: string) => void {
+export function useMobileToast(): ShowToast {
   return useContext(MobileToastContext);
 }

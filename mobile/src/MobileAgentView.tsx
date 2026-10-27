@@ -1323,10 +1323,21 @@ export function MobileAgentView({
   const secureChatEnabled=Boolean(transport && typeof transport.getRemoteToken === 'function');
   const chatAccess=useMemo(() => transport && secureChatEnabled
     ? phoneChatStateAccess(transport, chatStateStore ? { store: chatStateStore } : {}) : null, [transport, secureChatEnabled, chatStateStore]);
-  const chatCommands=useMemo(() => transport ? phoneConversationCommands(transport) : null, [transport]);
+  // An accepted send moves the host revision this screen's own commands (settings, queue, stop) expect next.
+  const chatCommands=useMemo(() => {
+    if (!transport) return null;
+    const commands = phoneConversationCommands(transport);
+    return { ...commands, sendCommand: async (command: DaemonCommand) => {
+      const receipt = await commands.sendCommand(command);
+      if (receipt?.ok) daemonRevisionRef.current = Math.max(daemonRevisionRef.current, receipt.revision);
+      return receipt;
+    } };
+  }, [transport]);
   const chatRecovery=useChatRecovery(selectedDaemonSession?.projectId, chatAccess ? selectedDaemonSession?.id ?? null : null, chatAccess ?? NO_CHAT_STATE);
   const [chatSending,setChatSending]=useState(false);
-  const chatStatus:MobileChatSaveStatus=chatRecovery.view.status === 'loading' ? 'loading' : chatRecovery.view.status === 'ready' ? 'saved' : 'unavailable';
+  // "Saved" only once the latest composition is stored; while its autosave runs it is "saving".
+  const chatStatus:MobileChatSaveStatus=chatRecovery.view.status === 'loading' ? 'loading'
+    : chatRecovery.view.status === 'ready' ? (chatRecovery.view.unsaved ? 'saving' : 'saved') : 'unavailable';
   useEffect(() => {
     const created = pendingCreatedAgent;
     if (!created?.input.draftText || created.sessionId !== selectedDaemonSession?.id || seededCapabilityDrafts.current.has(created.sessionId)) return;

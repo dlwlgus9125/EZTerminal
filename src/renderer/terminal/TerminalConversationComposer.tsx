@@ -23,6 +23,7 @@ import { structuredAgentModelOptions } from '../structured-agent-create';
 import { useChatRecovery } from '../use-chat-recovery';
 import { useProviderModelCatalogs } from '../use-provider-models';
 import { useWorkflowConversationScope } from '../workflow/WorkflowConversationContext';
+import type { useConversationStartWiring } from '../conversation-start-wiring';
 
 /** Queued messages are looked for this far back, page by page, before giving up. */
 const QUEUE_PAGE = 500;
@@ -42,6 +43,8 @@ export interface TerminalConversationComposerProps {
   readonly variant?: 'desktop' | 'mobile';
   /** Who sends (the phone sends as itself; desktop by default). */
   readonly principal?: DaemonCommand['principal'];
+  /** Skills discovery and changes, already bound (the phone's transport); the renderer bridge by default. */
+  readonly capabilityClient?: ReturnType<typeof useConversationStartWiring>['capabilityClient'];
 }
 
 /**
@@ -110,17 +113,17 @@ function useQueuedMessages(
  * send from either clears both. Only the box shows; the answer is read in the tab.
  */
 export function TerminalConversationComposer({
-  sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation, variant = 'desktop', principal,
+  sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation, variant = 'desktop', principal, capabilityClient: boundCapabilityClient,
 }: TerminalConversationComposerProps): JSX.Element {
   const { t } = useAppTranslation();
   const session = snapshot?.sessions.find((candidate) => candidate.id === sessionId);
   const agent = snapshot?.agents.find((candidate) => candidate.sessionId === sessionId);
   // The same scope source as the conversation tab (the snapshot session's project), so both share one draft.
   const recovery = useChatRecovery(session?.projectId, session ? sessionId : null, chatStateAccess);
-  const capabilityClient = useMemo(() => typeof window.ezterminal?.agentCapabilitiesList === 'function' ? {
+  const capabilityClient = useMemo(() => boundCapabilityClient ?? (typeof window.ezterminal?.agentCapabilitiesList === 'function' ? {
     list: window.ezterminal.agentCapabilitiesList,
     manage: window.ezterminal.agentCapabilitiesManage,
-  } : undefined, []);
+  } : undefined), [boundCapabilityClient]);
   // A flow stage's conversation follows its stage: read only once the stage or flow is archived, like its tab.
   const workflowAccess = useMemo(() => typeof window.ezterminal?.getWorkflowSnapshot === 'function'
     ? { getWorkflowSnapshot: (id: string) => window.ezterminal.getWorkflowSnapshot(id) } : undefined, []);

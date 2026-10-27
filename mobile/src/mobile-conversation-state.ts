@@ -6,6 +6,14 @@ import type { ChatStateAccess } from '../../src/renderer/chat-recovery';
 import { mobileAgentCreateAuthorityFingerprint, type SecureStorageLike } from './mobile-agent-create-recovery-store';
 import { MobileChatStateStore, type MobileChatStateStoreLike } from './mobile-chat-state-store';
 
+/**
+ * Shared by every adapter in this app run: a reconnect builds a new transport and so a new adapter, and a
+ * controller still holding the old one must see the revision the new one wrote (its write is then refused as
+ * stale, never applied over the newer draft or escrow). Writes run one at a time across adapters.
+ */
+const legacyRevisions = new Map<string, number>();
+let tail: Promise<unknown> = Promise.resolve();
+
 /** Device-local encrypted drafts; the PC fingerprint prevents cross-host restoration. */
 const NavigationSchema = z.object({ draftId: z.string().min(1).max(160), target: z.object({ workspaceId: z.string().optional() }).optional(), entry: ConversationEntrySchema.optional() }).strict();
 export interface MobileConversationNavigation { readonly draftId: string; readonly target?: { readonly workspaceId?: string }; readonly entry?: ConversationEntry }
@@ -19,10 +27,8 @@ export function mobileConversationState(
   saveNavigation(value: MobileConversationNavigation): Promise<void>;
 } {
   // A live conversation's record (schema 1, read by older builds too) has no revision of its own:
-  // count writes here so a draft controller's next write expects the revision the last one returned.
-  const legacyRevisions = new Map<string, number>();
+  // writes are counted (module-wide, above) so a draft controller's next write expects the revision the last one returned.
   const legacyKey = (fingerprint: string, scope: ChatStateScope) => `${fingerprint}|${scope.projectId}|${scope.sessionId}`;
-  let tail: Promise<unknown> = Promise.resolve();
   const authority = () => getToken().then(mobileAgentCreateAuthorityFingerprint);
   const keyFor = (fingerprint: string, scope: ChatStateScope) => `ezterminal-conversation-v2:${fingerprint}:${[scope.kind, scope.projectId, scope.sessionId].map(value => encodeURIComponent(value ?? '')).join(':')}`;
   const read = async (scope: ChatStateScope): Promise<ChatStateResult> => {

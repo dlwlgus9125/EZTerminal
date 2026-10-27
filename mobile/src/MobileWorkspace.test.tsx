@@ -1057,7 +1057,10 @@ describe('MobileWorkspace - previous work', () => {
 
 describe('MobileWorkspace - terminal AI input (I4)', () => {
   async function restoredTerminal(protocolVersion: number): Promise<HTMLDivElement> {
-    const { transport } = makeAuthedTransport([], 'ai-host', undefined, protocolVersion);
+    return (await restoredTerminalWith(protocolVersion)).el;
+  }
+  async function restoredTerminalWith(protocolVersion: number): Promise<{ el: HTMLDivElement; socket: FakeSocket }> {
+    const { transport, socket } = makeAuthedTransport([], 'ai-host', undefined, protocolVersion);
     Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
     const authority = await mobileAgentCreateAuthorityFingerprint('ai-host');
     writeWorkspaceRestore(authority, { terminalSessionIds: ['one'], activeTerminalSessionId: 'one', activeAgentSessionId: null, destination: 'terminal' });
@@ -1068,7 +1071,7 @@ describe('MobileWorkspace - terminal AI input (I4)', () => {
     const el = await renderWorkspace(transport);
     for (let attempt = 0; attempt < 50 && open.mock.calls.length < 1; attempt += 1) await flushAsync();
     await waitForTestId(el, 'mobile-session-view');
-    return el;
+    return { el, socket };
   }
 
   it('offers Shell | AI on a PC that starts conversations from the phone', async () => {
@@ -1076,6 +1079,17 @@ describe('MobileWorkspace - terminal AI input (I4)', () => {
     await waitForTestId(el, 'mobile-terminal-mode');
     expect(el.querySelector('[data-testid="terminal-mode-ai"]')).not.toBeNull();
     expect(el.querySelector('[data-testid="cmd-input"]')).not.toBeNull();
+  });
+
+  it('gives the prompt line back to the shell when the PC goes away in AI mode', async () => {
+    const { el, socket } = await restoredTerminalWith(REMOTE_PROTOCOL_VERSION);
+    await waitForTestId(el, 'terminal-mode-ai');
+    await tap(el, 'terminal-mode-ai');
+    expect(el.querySelector('.mobile-session-view .cmd-row')?.hasAttribute('hidden')).toBe(true);
+    await act(async () => socket.triggerClose());
+    await flushAsync();
+    expect(el.querySelector('[data-testid="mobile-terminal-mode"]')).toBeNull();
+    expect(el.querySelector('.mobile-session-view .cmd-row')?.hasAttribute('hidden')).toBe(false);
   });
 
   it('keeps the terminal a plain shell on an older PC', async () => {

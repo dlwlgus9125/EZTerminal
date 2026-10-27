@@ -138,7 +138,7 @@ function ConversationTarget({ host, sessionId, pending, onPendingSettled, onSent
     <>
       <TerminalChips controller={recovery.controller} view={recovery.view} />
       <TerminalConversationComposer sessionId={sessionId} snapshot={snapshot} onSent={onSent} onNewConversation={onNewConversation} variant={variant}
-        {...(wiring ? { capabilities: wiring.capabilities, chatStateAccess: wiring.chatStateAccess, principal: wiring.principal } : {})} />
+        {...(wiring ? { capabilities: wiring.capabilities, chatStateAccess: wiring.chatStateAccess, principal: wiring.principal, capabilityClient: wiring.start.capabilityClient } : {})} />
     </>
   );
 }

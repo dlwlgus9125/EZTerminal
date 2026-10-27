@@ -12,11 +12,18 @@ export interface ChatRecoveryView extends ChatSessionState {
   readonly status: 'loading' | 'ready' | 'error' | 'conflict';
   readonly message?: string;
   readonly conflict?: ChatStateSnapshot;
+  /** The draft shown is newer than the stored one (an autosave is still to finish). */
+  readonly unsaved?: boolean;
 }
 export type ChatRecoveryResult = { readonly ok: true } | { readonly ok: false; readonly message: string; readonly deliveryUncertain?: boolean };
 const unavailable = 'Secure draft storage is unavailable. Your current draft is still in this window.';
 const conflictMessage = 'Another window changed this conversation draft. Compare both drafts before saving.';
 const equalDraft = (left: ChatComposerDraft, right: ChatComposerDraft): boolean => JSON.stringify(left) === JSON.stringify(right);
+/** The same message being written (the caret may have moved). */
+const sameComposition = (left: ChatComposerDraft, right: ChatComposerDraft): boolean => left.text === right.text
+  && JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
+  && JSON.stringify(left.skills ?? []) === JSON.stringify(right.skills ?? [])
+  && JSON.stringify(left.replyTo) === JSON.stringify(right.replyTo);
 
 /** Serializes autosave and submit escrow against the host revision without replaying commands. */
 export class ChatRecoveryController {
@@ -28,6 +35,8 @@ export class ChatRecoveryController {
   private lastSaved = '';
   private initialLoad: Promise<void> | undefined;
   private autosaveScheduled = false;
+  /** The composition as it was when this controller escrowed a message: an edit made while it is delivered stays. */
+  private sentComposition: { readonly commandId: string; readonly draft: ChatComposerDraft } | undefined;
 
   constructor(readonly scope: ChatStateScope, private readonly access: ChatStateAccess) {}
 
@@ -60,7 +69,7 @@ export class ChatRecoveryController {
       && JSON.stringify(draft.replyTo) === JSON.stringify(this.view.draft.replyTo)
       && JSON.stringify(draft.skills ?? []) === JSON.stringify(this.view.draft.skills ?? [])) return;
     this.edits += 1;
-    this.set({ ...this.view, draft });
+    this.set({ ...this.view, draft, unsaved: true });
     if (this.view.status !== 'ready' || this.autosaveScheduled) return;
     this.autosaveScheduled = true;
     void this.enqueue(async () => {
@@ -82,6 +91,7 @@ export class ChatRecoveryController {
       if (this.view.status !== 'ready') return { ok: false, message: this.view.message ?? 'Secure draft recovery is still loading.' };
       if (this.view.pendingSubmit) return { ok: false, message: 'Check the previous message delivery before sending again.', deliveryUncertain: true };
       this.set({ ...this.view, pendingSubmit: { command, mode: command.type === 'agent.submit' ? 'send' : 'interrupt', recordedAt: new Date().toISOString() } });
+      this.sentComposition = { commandId: command.commandId, draft: this.view.draft };
       const result = await this.persist();
       if (!result.ok) {
         // No command was dispatched. An ambiguous storage result must be read
@@ -99,7 +109,11 @@ export class ChatRecoveryController {
       if (this.view.status !== 'ready') return { ok: false, message: this.view.message ?? unavailable, deliveryUncertain: true };
       const { prompt, context } = pending.command.payload;
       const draft = this.view.draft;
-      const clear = accepted && draft.text.trim() === prompt
+      // Sent from here: only the exact composition sent is cleared. Settled after a restart: the stored draft
+      // is compared with the message (the composition at send time is not kept across restarts).
+      const sent = this.sentComposition?.commandId === commandId ? this.sentComposition.draft : undefined;
+      this.sentComposition = undefined;
+      const clear = accepted && (!sent || sameComposition(draft, sent)) && draft.text.trim() === prompt
         && JSON.stringify(draft.attachments ?? []) === JSON.stringify(context?.attachments ?? [])
         && JSON.stringify((draft.skills ?? []).filter((skill) => draft.text.includes(skill.invocation))) === JSON.stringify(context?.skills ?? [])
         && JSON.stringify(draft.replyTo) === JSON.stringify(context?.replyTo);
@@ -163,6 +177,7 @@ export class ChatRecoveryController {
     }
     this.revision = result.snapshot.revision;
     this.lastSaved = serialized;
+    if (this.view.unsaved && equalDraft(this.view.draft, state.draft)) this.set({ ...this.view, unsaved: false });
     return { ok: true };
   }
 

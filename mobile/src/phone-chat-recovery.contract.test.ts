@@ -143,6 +143,34 @@ describe('phone conversation draft on the shared recovery controller', () => {
     expect(stored?.pending?.type).toBe('agent.submit');
   });
 
+  it('refuses a write from a controller on an older connection once a newer one escrowed a message', async () => {
+    const { store, send, commands } = setup();
+    const connection = () => ({
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => ({ revision: 4 }) as DaemonSnapshot,
+      sendDaemonCommand: (command: DaemonCommand) => send(command),
+    }) as unknown as WsEzTerminalTransport;
+    // A reconnect builds a new transport, so a new storage object; the old screen's controller is still around.
+    const scope = { projectId: 'project', sessionId: 'reconnect' };
+    const older = new ChatRecoveryController(scope, phoneChatStateAccess(connection(), { store }));
+    await older.load();
+    const newer = new ChatRecoveryController(scope, phoneChatStateAccess(connection(), { store }));
+    await newer.load();
+    newer.updateDraft({ text: 'hello' });
+    await newer.flush();
+    send.mockResolvedValueOnce(uncertain);
+    await submitConversationMessage(commands, { sessionId: 'reconnect', recovery: newer, type: 'agent.submit', prompt: 'hello' });
+    const escrow = send.mock.calls[0]![0];
+
+    older.updateDraft({ text: 'typed on the old screen' });
+    await older.flush();
+    expect(older.getSnapshot().status).toBe('conflict');
+    const fingerprint = await mobileAgentCreateAuthorityFingerprint('test-pc');
+    const stored = await store.load({ authorityFingerprint: fingerprint, ...scope });
+    expect(stored?.pending).toEqual(escrow);
+    expect(stored?.draft.text).toBe('hello');
+  });
+
   it('gives the conversation screen and the terminal one controller per conversation on a PC connection', () => {
     const { transport } = setup();
     const access = phoneChatStateAccess(transport);

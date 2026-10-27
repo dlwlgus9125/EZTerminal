@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ChevronsUpDown, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
@@ -166,10 +166,16 @@ function TerminalAiNotices({ host, titleOf, openConversation }: {
 }): null {
   const showToast = useMobileToast();
   const { t } = useAppTranslation();
-  host.setActions({
-    openConversation,
-    notifySent: (sessionId) => showToast(t('terminalAi.sent', { title: titleOf(sessionId) })),
-  });
+  // Installed once committed (a render React throws away must not change what the terminal calls).
+  useLayoutEffect(() => {
+    host.setActions({
+      openConversation,
+      notifySent: (sessionId) => showToast(t('terminalAi.sent', { title: titleOf(sessionId) }), {
+        label: t('terminalAi.openConversation'),
+        onSelect: () => openConversation(sessionId),
+      }),
+    });
+  }, [host, openConversation, showToast, t, titleOf]);
   return null;
 }
 

@@ -74,6 +74,39 @@ describe('desktop chat recovery ordering', () => {
     expect(stored().state).toEqual({ draft: { text: '', selectionStart: 0, selectionEnd: 0 } });
   });
 
+  it('keeps an edit made while the message is delivered even when it only adds spaces, but not a caret move', async () => {
+    const draft = { text: 'Send original', replyTo: command().payload.context!.replyTo };
+    const edited = fixture({ draft });
+    await edited.controller.load();
+    await edited.controller.prepare(command());
+    edited.controller.updateDraft({ ...draft, text: 'Send original\n\n', selectionStart: 15, selectionEnd: 15 });
+    await edited.controller.complete(command().commandId, true);
+    expect(edited.stored().state.draft.text).toBe('Send original\n\n');
+
+    const moved = fixture({ draft });
+    await moved.controller.load();
+    await moved.controller.prepare(command());
+    moved.controller.updateDraft({ ...draft, selectionStart: 2, selectionEnd: 2 });
+    await moved.controller.complete(command().commandId, true);
+    expect(moved.stored().state.draft.text).toBe('');
+  });
+
+  it('says the shown draft is unsaved until its autosave is stored', async () => {
+    const { controller, access } = fixture({ draft: { text: '' } });
+    await controller.load();
+    expect(controller.getSnapshot().unsaved).toBeFalsy();
+    let release!: () => void;
+    const write = vi.mocked(access.chatStateWrite).getMockImplementation()!;
+    vi.mocked(access.chatStateWrite).mockImplementationOnce((target, request) => new Promise((resolve) => { release = () => resolve(write(target, request)); }));
+    controller.updateDraft({ text: 'typing' });
+    expect(controller.getSnapshot().unsaved).toBe(true);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(controller.getSnapshot().unsaved).toBe(true);
+    release();
+    await controller.flush();
+    expect(controller.getSnapshot().unsaved).toBe(false);
+  });
+
   it('retains a rejected message as a draft but clears its resolved pending envelope', async () => {
     const { controller, stored } = fixture({ draft: { text: 'Send original' } });
     await controller.load();

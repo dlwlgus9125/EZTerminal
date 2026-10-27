@@ -144,6 +144,29 @@ describe('TerminalConversationComposer', () => {
     expect(send.mock.calls[0]?.[0]).toMatchObject({ type: 'agent.submit', principal: { kind: 'android', id: 'mobile-agent-ui' } });
   });
 
+  it('checks selected skills through the capability client it is given (the phone\'s, already bound)', async () => {
+    const skill = { providerId: 'codex' as const, id: 'deploy', name: 'Deploy', invocation: '$deploy' };
+    const { send, chat } = fixture({ draft: { text: '$deploy the preview', skills: [skill] } });
+    const list = vi.fn(async () => ({ ok: true as const, value: { items: [{ ...skill, kind: 'skill' as const, enabled: true, actions: [] }] } }));
+    const capabilities: CapabilityAccess = { ...rendererCapabilities,
+      daemon: { ...rendererCapabilities.daemon, getSnapshot: async () => snapshot, getTranscript: async () => [], sendCommand: send, observeEvents: () => () => undefined },
+      structuredProviders: { ...rendererCapabilities.structuredProviders, listModels: async () => ({ ok: true, value: [] }) },
+    };
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <div data-testid="terminal">
+          <TerminalConversationComposer sessionId={scope.sessionId} snapshot={snapshot} capabilities={capabilities} chatStateAccess={chat}
+            capabilityClient={{ list, manage: vi.fn() } as never} />
+        </div>
+      </AppI18nProvider>,
+    ));
+    await flush();
+    act(() => sendIn('terminal').click());
+    await flush();
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'codex', workspaceId: 'workspace' }));
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it('refuses a send from the tab while the terminal\'s message is still being delivered', async () => {
     const { send, render } = fixture({ draft: { text: 'First' } });
     let acknowledge!: () => void;
