@@ -171,7 +171,7 @@ function PhoneTerminal({ sessionId, locale }: { readonly sessionId: string; read
   return (
     <Phone locale={locale}>
       <div className="phone-i4-terminal">
-        {ready && <MobileSessionView sessionId={sessionId} cwd={CWD} active connected aiHost={aiHost} />}
+        {ready && <MobileSessionView sessionId={sessionId} cwd={CWD} active connected aiHost={aiHost} clock={clock.now} />}
       </div>
     </Phone>
   );

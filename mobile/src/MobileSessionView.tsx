@@ -275,6 +275,7 @@ export function MobileSessionView({
   roundTripMs = null,
   aiHost = null,
   aiWiring,
+  clock = Date.now,
 }: {
   sessionId: string;
   /** The session's cwd as the workspace knows it — seeds the status line
@@ -313,9 +314,13 @@ export function MobileSessionView({
   aiHost?: TerminalAiHost | null;
   /** The phone's draft storage, PC access and principal for the AI input. */
   aiWiring?: TerminalAiWiring;
+  /** Block start/end times (a story drives its own; production uses the real time). */
+  clock?: () => number;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
+  const clockRef = useRef(clock);
+  clockRef.current = clock;
   const [runtimeLifecycleTier, setRuntimeLifecycleTier] = useState<RuntimeLifecycleTier>('passive');
   const runtimeLifecycleRef = useRef<RuntimeSurfaceLifecycle | null>(null);
   const viewKey = transport ? sessionViewKey(transport, `terminal:${sessionId}`) : '';
@@ -855,7 +860,7 @@ export function MobileSessionView({
     knownRunIdsRef.current.add(runId);
     pendingHandoffRunIdsRef.current.add(runId);
     // The instrument block shows when it started and how long it ran (as on the desktop terminal).
-    const startedAtMs = Date.now();
+    const startedAtMs = clockRef.current();
     rememberBlockStart(runId, startedAtMs);
     void getRunPortBroker().request({
       kind: 'run',
@@ -876,7 +881,7 @@ export function MobileSessionView({
         return;
       }
       try {
-        const controller = new BlockController(text, port, { startedAtMs });
+        const controller = new BlockController(text, port, { startedAtMs, clock: () => clockRef.current() });
         bindActiveController(controller);
         setBlocks((prev) =>
           prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
@@ -1027,7 +1032,7 @@ export function MobileSessionView({
     (info: RunStartedInfo, activate = true, live = false): void => {
       if (knownRunIdsRef.current.has(info.runId)) return; // already handled
       // A run announced as it starts is timed from now; a caught-up one keeps what this view saw, if anything.
-      if (live) rememberBlockStart(info.runId, Date.now());
+      if (live) rememberBlockStart(info.runId, clockRef.current());
       const remembered = rememberedBlockTiming(info.runId);
       // A run that finished while no view watched it: its start is known, its end is not.
       const timing = !live && !activate && remembered.startedAtMs !== undefined && remembered.endedAtMs === undefined
@@ -1060,7 +1065,7 @@ export function MobileSessionView({
           return;
         }
         try {
-          const controller = new BlockController(info.commandText, port, { mirror: true, ...timing });
+          const controller = new BlockController(info.commandText, port, { mirror: true, ...timing, clock: () => clockRef.current() });
           if (activate) bindActiveController(controller);
           setBlocks((prev) =>
             prev.map((entry) => (
