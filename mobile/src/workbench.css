@@ -372,6 +372,8 @@
   color: var(--ui-text-primary);
   font-family: var(--ui-font-heading);
   font-size: var(--ui-font-size-16);
+  font-weight: 600;
+  letter-spacing: 0.01em;
   line-height: var(--ui-line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;

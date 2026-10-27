@@ -65,4 +65,4 @@ export {
   type ToastVariant,
 } from './Toast';
 export { VisuallyHidden, type VisuallyHiddenProps } from './VisuallyHidden';
-export { Glyph, Led, type GlyphName, type LedTone } from './Glyph';
+export { GLYPH_NAMES, Glyph, Led, glyphIcon, type GlyphName, type LedTone } from './Glyph';

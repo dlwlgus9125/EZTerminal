@@ -285,3 +285,24 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.ez-story-glyphs {
+  display: grid;
+  gap: var(--ui-space-2);
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ez-story-glyph {
+  align-items: center;
+  color: var(--ui-text-primary);
+  display: inline-flex;
+  gap: var(--ui-space-2);
+}
+
+.ez-story-glyph code {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+}

@@ -26,6 +26,34 @@ const PATHS = {
   x: 'M5.4 4L10 8.6 14.6 4 16 5.4 11.4 10l4.6 4.6-1.4 1.4-4.6-4.6L5.4 16 4 14.6 8.6 10 4 5.4z',
   send: 'M9 17V7.4l-3.6 3.6L4 9.6 10 3.6l6 6-1.4 1.4L11 7.4V17z',
   wt: 'M4 2h2.5v6.2c1.4-1.3 3.4-1.7 5.3-2 1.6-.3 2.4-.7 2.6-1.7H13V2h4.5v2.5h-.6c-.3 2.9-2.4 3.6-4.7 4-2.6.4-5.6 1-5.7 4.4V18H4z',
+  // Android set (I4): the phone's screens move off lucide onto the same stencil grid.
+  plus: 'M8.75 3h2.5v5.75H17v2.5h-5.75V17h-2.5v-5.75H3v-2.5h5.75z',
+  next: 'M7.5 3.5L14 10l-6.5 6.5L6 15l5-5-5-5z',
+  up: 'M3.5 12.5L10 6l6.5 6.5L15 14l-5-5-5 5z',
+  down: 'M3.5 7.5L10 14l6.5-6.5L15 6l-5 5-5-5z',
+  check: 'M16 4.6l1.6 1.5L8 16l-5.6-5.6L4 8.9l4 4z',
+  refresh: 'M10 3A7 7 0 1 0 16.06 6.5L14.11 7.63A4.75 4.75 0 1 1 10 5.25zM10 1l3.5 3.12L10 7.25z',
+  trash: 'M7.5 2h5v1.5H17v2H3v-2h4.5zM4.5 7h11l-1 10.25a1 1 0 0 1-1 .75h-7a1 1 0 0 1-1-.75zm3 2.5v6H9v-6zm3.5 0v6h1.5v-6z',
+  warn: 'M10 2l8.5 15a.75.75 0 0 1-.65 1H2.15a.75.75 0 0 1-.65-1zM9 7.5v5h2v-5zm0 6.5v2h2v-2z',
+  stop: 'M5 4h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
+  download: 'M8.75 2h2.5v7.5l2.6-2.6 1.75 1.75L10 14.3 4.4 8.65l1.75-1.75 2.6 2.6zM2 15h16v3H2z',
+  upload: 'M10 2l5.6 5.65-1.75 1.75-2.6-2.6V14h-2.5V6.8l-2.6 2.6L4.4 7.65zM2 15h16v3H2z',
+  qr: 'M2 2h7v7H2zm2 2v3h3V4zm1 1h1v1H5zM11 2h7v7h-7zm2 2v3h3V4zm1 1h1v1h-1zM2 11h7v7H2zm2 2v3h3v-3zm1 1h1v1H5zM11 11h3v3h-3zm4 0h3v3h-3zm-4 4h3v3h-3zm4 0h3v3h-3z',
+  palette: 'M10 2a8 8 0 1 0 0 16h1a1.5 1.5 0 0 0 1.06-2.56 1.5 1.5 0 0 1 1.06-2.56H15a3 3 0 0 0 3-3C18 5.6 14.4 2 10 2zM4.75 10a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0zm1.5-4a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0zm4-.5a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0zm3.5 2.5a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0z',
+  eye: 'M10 4c4 0 7 3 8.5 6-1.5 3-4.5 6-8.5 6s-7-3-8.5-6C3 7 6 4 10 4zm0 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  eyeOff: 'M10 4c4 0 7 3 8.5 6-1.5 3-4.5 6-8.5 6s-7-3-8.5-6C3 7 6 4 10 4zm0 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3.4 2.3l14.3 14.3-1.1 1.1L2.3 3.4z',
+  link: 'M8.5 6.5h-3a3.5 3.5 0 0 0 0 7h3v-2h-3a1.5 1.5 0 0 1 0-3h3zm3 0h3a3.5 3.5 0 0 1 0 7h-3v-2h3a1.5 1.5 0 0 0 0-3h-3zM7 9h6v2H7z',
+  key: 'M6 5.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2.75a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5zM10.5 9H18v2h-1.5v2.5h-2V11h-1.25v2h-2v-2h-.75z',
+  grip: 'M7 3h2.5v2.5H7zm3.5 0H13v2.5h-2.5zM7 8.75h2.5v2.5H7zm3.5 0H13v2.5h-2.5zM7 14.5h2.5V17H7zm3.5 0H13V17h-2.5z',
+  merge: 'M3 2h4v4H3zm1.25 4h1.5v8h-1.5zM3 14h4v4H3zm2.75-6.5c0 2.2 1.8 3.5 4 3.5H13v1.5H9.75c-1.6 0-3-.6-4-1.6zM13 9.5h4v4h-4z',
+  archive: 'M2 3h16v4H2zm1 5h14v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zm4.5 2v1.75h5V10z',
+  clock: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm-1 3.5V11l4 2.5.9-1.5-2.9-1.8V5.5z',
+  more: 'M3 8.5h3v3H3zm5.5 0h3v3h-3zm5.5 0h3v3h-3z',
+  enter: 'M15 3h2.5v8a1.5 1.5 0 0 1-1.5 1.5H7.4l2.6 2.6-1.75 1.75-5.6-5.6 5.6-5.6L10 7.4 7.4 10H15z',
+  list: 'M2 3.5h2.5V6H2zm4 0h12V6H6zM2 8.75h2.5v2.5H2zm4 0h12v2.5H6zM2 14h2.5v2.5H2zm4 0h12v2.5H6z',
+  grid: 'M2 2h7v7H2zm9 0h7v7h-7zM2 11h7v7H2zm9 0h7v7h-7z',
+  home: 'M10 2l8 7h-2.5v8a1 1 0 0 1-1 1H12v-5H8v5H5.5a1 1 0 0 1-1-1V9H2z',
+  pc: 'M2 3h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-6v2h3v2H5v-2h3v-2H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v7h14V5z',
 } as const;
 
 /** Extra shapes drawn on top of a path (the request and phone glyphs carry a signal dot). */
@@ -44,6 +72,32 @@ export function Glyph({ name, size = 18, className }: { readonly name: GlyphName
       {dot && <circle cx={dot[0]} cy={dot[1]} r={dot[2]} />}
     </svg>
   );
+}
+
+/** Every glyph name, in declaration order (the gallery story and tests walk it). */
+export const GLYPH_NAMES = Object.keys(PATHS) as readonly GlyphName[];
+
+/** Icon-component props: the glyph is always decorative, so `aria-hidden` is accepted and implied. */
+export interface GlyphIconProps {
+  readonly className?: string;
+  readonly 'aria-hidden'?: boolean | 'true' | 'false';
+}
+
+const glyphIcons = new Map<GlyphName, (props: GlyphIconProps) => JSX.Element>();
+
+/**
+ * A glyph shaped like an icon component, for primitives that take an icon component
+ * (`IconButton icon={glyphIcon('back')}`). One stable component per name.
+ */
+export function glyphIcon(name: GlyphName): (props: GlyphIconProps) => JSX.Element {
+  let icon = glyphIcons.get(name);
+  if (!icon) {
+    icon = function GlyphIcon(props: GlyphIconProps) {
+      return <Glyph name={name} className={props.className} />;
+    };
+    glyphIcons.set(name, icon);
+  }
+  return icon;
 }
 
 export type LedTone = 'on' | 'amber' | 'red' | 'ok' | 'idle';

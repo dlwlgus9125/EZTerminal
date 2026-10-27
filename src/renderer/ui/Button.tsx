@@ -2,6 +2,7 @@ import { ChevronDown, LoaderCircle, type LucideIcon } from 'lucide-react';
 import {
   forwardRef,
   type ButtonHTMLAttributes,
+  type ComponentType,
   type MouseEvent,
   type ReactNode,
 } from 'react';
@@ -68,7 +69,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'children'> {
   readonly 'aria-label': string;
-  readonly icon: LucideIcon;
+  /** A lucide icon or a stencil glyph (`glyphIcon(name)`); always rendered decorative. */
+  readonly icon: LucideIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
   readonly variant?: ButtonVariant;
   readonly size?: ButtonSize;
   readonly loading?: boolean;

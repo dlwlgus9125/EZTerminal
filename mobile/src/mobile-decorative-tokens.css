@@ -13,12 +13,12 @@
   --mob-accent-line: rgba(var(--ui-accent-rgb), 0.28);
   --mob-accent-edge: rgba(var(--ui-accent-rgb), 0.14);
   --mob-accent-glow: rgba(var(--ui-accent-rgb), 0.3);
-  --mob-warn-tint: rgba(232, 180, 95, 0.08);
-  --mob-warn-line: rgba(232, 180, 95, 0.36);
-  --mob-danger-tint: rgba(255, 93, 108, 0.08);
-  --mob-danger-line: rgba(255, 93, 108, 0.42);
-  --mob-success-tint: rgba(47, 224, 139, 0.06);
-  --mob-success-line: rgba(47, 224, 139, 0.35);
+  --mob-warn-tint: rgba(var(--ui-warning-rgb), 0.08);
+  --mob-warn-line: rgba(var(--ui-warning-rgb), 0.36);
+  --mob-danger-tint: rgba(var(--ui-danger-rgb), 0.08);
+  --mob-danger-line: rgba(var(--ui-danger-rgb), 0.42);
+  --mob-success-tint: rgba(var(--ui-success-rgb), 0.06);
+  --mob-success-line: rgba(var(--ui-success-rgb), 0.35);
   --mob-scrim: rgba(2, 4, 3, 0.6);
   --mob-chrome: rgba(6, 12, 8, 0.94);
   --mob-glass: rgba(4, 8, 6, 0.78);
@@ -35,11 +35,13 @@
   --ui-warning-muted: rgba(var(--ui-warning-rgb), 0.14);
   --ui-danger-muted: rgba(var(--ui-danger-rgb), 0.14);
 
-  --mob-font-display: 'VT323', var(--ui-font-heading);
-  --mob-radius-card: 11px;
-  --mob-radius-card-lg: 14px;
-  --mob-radius-control: 9px;
-  --mob-radius-pill: 99px;
+  /* 2.0 instrument language (I4): the wordmark uses the desktop display face, labels and
+     headings the label face, and radii the machined desktop scale. */
+  --mob-font-display: var(--ui-font-display);
+  --mob-radius-card: var(--ui-radius-xl);
+  --mob-radius-card-lg: var(--ui-radius-2xl);
+  --mob-radius-control: var(--ui-radius-md);
+  --mob-radius-pill: var(--ui-radius-pill);
   --mob-column: 520px;
   --mob-rail: 72px;
   --mob-tabbar: 54px;
