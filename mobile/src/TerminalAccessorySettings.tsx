@@ -1,4 +1,3 @@
-import { ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
@@ -13,6 +12,13 @@ import {
   useTerminalAccessoryLayout,
   type TerminalAccessoryMessageCode,
 } from './terminal-accessory-layout';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const ChevronDown = glyphIcon('down');
+const ChevronUp = glyphIcon('up');
+const GripVertical = glyphIcon('grip');
+
 
 const MESSAGE_KEY = {
   unavailable: 'mobile.terminalKeys.messageUnavailable',

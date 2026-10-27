@@ -10,21 +10,10 @@ import { describe, expect, it } from 'vitest';
  * stay here. Shared desktop components under `src/renderer` are out of scope.
  */
 const LUCIDE_ALLOWED = new Set([
+  // Unused screens I5 deletes (no product code renders them).
   'MobileAgentFolderPicker.tsx',
   'MobileAgentProjects.tsx',
-  'MobileAgentView.tsx',
-  'MobileAppUpdateCard.tsx',
-  'MobileDaemonNavigator.tsx',
   'MobileHomeView.tsx',
-  'MobileLeadWorkersStrip.tsx',
-  'MobileNewSessionDraft.tsx',
-  'MobileRemoteDesktopView.tsx',
-  'MobileSessionSheet.tsx',
-  'MobileSessionView.tsx',
-  'MobileWorkspace.tsx',
-  'TerminalAccessorySettings.tsx',
-  'ThemeMenu.tsx',
-  'TouchInputBar.tsx',
 ]);
 
 const root = resolve(process.cwd(), 'mobile/src');
@@ -48,5 +37,23 @@ describe('Android glyph ratchet', () => {
 
   it('drops a file from the list once it stops importing lucide', () => {
     expect([...LUCIDE_ALLOWED].filter((file) => !importing.includes(file))).toEqual([]);
+  });
+});
+
+describe('Android radius ratchet', () => {
+  function css(dir: string): string[] {
+    return readdirSync(dir).flatMap((name) => {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) return css(path);
+      return name.endsWith('.css') ? [path] : [];
+    });
+  }
+
+  it('rounds phone corners only through the radius roles (a circle or a square corner aside)', () => {
+    const literal = css(root).flatMap((path) => [...readFileSync(path, 'utf8').matchAll(/border-radius:\s*([^;}]+)/g)]
+      .map((match) => match[1]!.trim())
+      .filter((value) => !value.includes('var(') && /\d+(?:\.\d+)?(?:px|rem|em)/.test(value))
+      .map((value) => `${relative(root, path).replace(/\\/g, '/')}: ${value}`));
+    expect(literal).toEqual([]);
   });
 });

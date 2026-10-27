@@ -1,19 +1,3 @@
-import {
-  Archive,
-  Bot,
-  ChevronLeft,
-  ChevronRight,
-  FileDiff,
-  Folder,
-  GitBranch,
-  Globe,
-  Play,
-  Plus,
-  RefreshCw,
-  Server,
-  SquareTerminal,
-  type LucideIcon,
-} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { formatCwd } from '../../src/renderer/format-cwd';
@@ -33,6 +17,24 @@ import {
   isStructuredDaemonAgentSession,
 } from '../../src/shared/daemon-session-visibility';
 import type { DaemonRuntimeViewState } from './transport/ws-ezterminal';
+import { glyphIcon, type GlyphIconProps } from '../../src/renderer/ui/Glyph';
+import type { ComponentType } from 'react';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const Archive = glyphIcon('archive');
+const Bot = glyphIcon('new');
+const ChevronLeft = glyphIcon('back');
+const ChevronRight = glyphIcon('next');
+const FileDiff = glyphIcon('diff');
+const Folder = glyphIcon('proj');
+const GitBranch = glyphIcon('wt');
+const Globe = glyphIcon('globe');
+const Play = glyphIcon('play');
+const Plus = glyphIcon('plus');
+const RefreshCw = glyphIcon('refresh');
+const Server = glyphIcon('server');
+const SquareTerminal = glyphIcon('term');
+
 
 interface NavigatorCopy {
   readonly title: string;
@@ -122,7 +124,7 @@ const COPY: Readonly<Record<'en' | 'ko', NavigatorCopy>> = {
   },
 };
 
-const SESSION_ICON: Readonly<Record<SessionKind, LucideIcon>> = {
+const SESSION_ICON: Readonly<Record<SessionKind, ComponentType<GlyphIconProps>>> = {
   agent: Bot,
   terminal: SquareTerminal,
   diff: FileDiff,

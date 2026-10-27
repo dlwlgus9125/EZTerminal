@@ -714,7 +714,7 @@
   gap: 6px;
   flex: 0 0 auto;
   border: 1px solid var(--ui-border-strong);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   color: inherit;
   background: var(--ui-surface-hover);
 }
@@ -833,7 +833,7 @@
   min-height: 44px;
   padding: 8px 12px;
   border: 2px solid var(--ui-focus);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   color: var(--ui-text-primary);
   background: var(--ui-surface-raised);
 }
@@ -850,6 +850,6 @@
 
 @media (orientation: landscape) and (max-height: 520px) {
   .mobile-pc-toolbar { min-height: 48px; padding-block: 2px; }
-  .mobile-pc-actions { position: absolute; right: 6px; bottom: 6px; max-width: 62%; border-radius: 10px; }
+  .mobile-pc-actions { position: absolute; right: 6px; bottom: 6px; max-width: 62%; border-radius: var(--ui-radius-2xl); }
   .mobile-pc-actions button:nth-child(-n + 2) span { display: none; }
 }

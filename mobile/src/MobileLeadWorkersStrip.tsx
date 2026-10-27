@@ -1,4 +1,3 @@
-import { Archive, ChevronUp, CircleStop, GitMerge, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -17,6 +16,16 @@ import {
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const Archive = glyphIcon('archive');
+const ChevronUp = glyphIcon('up');
+const CircleStop = glyphIcon('stop');
+const GitMerge = glyphIcon('merge');
+const LoaderCircle = glyphIcon('refresh');
+const TriangleAlert = glyphIcon('warn');
+
 
 function visibleRun(snapshot: AgentOrchestrationSnapshot, leadSessionId: string): CollaborationRun | null {
   const runs = snapshot.runs

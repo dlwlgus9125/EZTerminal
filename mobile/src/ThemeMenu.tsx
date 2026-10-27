@@ -1,4 +1,3 @@
-import { Check } from 'lucide-react';
 import { useCallback, useRef, useState, type RefObject } from 'react';
 
 import type { ThemeName } from '../../src/shared/layout-schema';
@@ -6,6 +5,11 @@ import { listThemes, THEMES } from '../../src/renderer/themes';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 import { importCustomTheme } from './theme';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const Check = glyphIcon('check');
+
 
 // ThemeMenu — a bottom-sheet theme picker (mobile-only; the desktop cycles
 // themes with a single toolbar button instead, see App.tsx's `cycleTheme`).

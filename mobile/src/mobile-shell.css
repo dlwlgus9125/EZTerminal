@@ -664,7 +664,7 @@
   height: 46px;
   flex: none;
   border: 1px solid var(--mob-accent-line);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-surface-inset);
   color: var(--ui-accent);
   place-items: center;
@@ -694,7 +694,7 @@
 .mob-badge {
   padding: 1px 6px;
   border: 1px solid var(--mob-success-line);
-  border-radius: 4px;
+  border-radius: var(--ui-radius-sm);
   background: var(--mob-success-tint);
   color: var(--ui-success);
   font-family: var(--ui-font-terminal);
@@ -764,7 +764,7 @@
   width: 32px;
   height: 32px;
   flex: none;
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: var(--mob-accent-tint);
   color: var(--ui-accent);
   place-items: center;
@@ -877,7 +877,7 @@
   gap: 7px;
   padding: 0 10px;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.2);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-surface-inset);
   color: var(--ui-text-primary);
   cursor: pointer;
@@ -978,7 +978,7 @@
   box-sizing: border-box;
   padding: 0 12px;
   border: 1px solid var(--mob-hairline);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-surface-inset);
   color: var(--ui-text-primary);
   font-family: var(--ui-font-terminal);
@@ -998,7 +998,7 @@
   height: 44px;
   flex: none;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-accent);
   color: var(--ui-on-accent);
   box-shadow: 0 0 14px var(--mob-accent-glow);
@@ -1160,7 +1160,7 @@
   padding-top: 20px;
   border: 0;
   border-top: 1px solid var(--mob-accent-line);
-  border-radius: 16px 16px 0 0;
+  border-radius: var(--ui-radius-2xl) var(--ui-radius-2xl) 0 0;
   background: var(--ui-surface-inset);
   box-shadow: var(--ui-shadow-overlay);
   animation: mob-up 0.28s ease;
@@ -1173,7 +1173,7 @@
   left: 50%;
   width: 38px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--ui-radius-sm);
   background: var(--mob-hairline);
   transform: translateX(-50%);
 }
@@ -1193,7 +1193,7 @@
   justify-content: center;
   gap: 7px;
   border: 1px dashed var(--mob-accent-line);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: none;
   color: var(--ui-accent);
   font-family: var(--ui-font-body);
@@ -1335,7 +1335,7 @@
   width: 28px;
   height: 28px;
   flex: none;
-  border-radius: 7px;
+  border-radius: var(--ui-radius-lg);
   background: var(--mob-accent-tint);
   color: var(--ui-accent);
   place-items: center;
@@ -1380,7 +1380,7 @@
   padding: 7px 9px;
   max-block-size: 7rem;
   overflow-y: auto;
-  border-radius: 7px;
+  border-radius: var(--ui-radius-lg);
   background: var(--ui-surface-inset);
   color: var(--ui-text-primary);
   font-family: var(--ui-font-terminal);
@@ -1409,7 +1409,7 @@
 .mob-scanner__video {
   inline-size: 100%;
   block-size: 58vh;
-  border-radius: 12px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-canvas);
   object-fit: cover;
 }
@@ -1430,7 +1430,7 @@
   justify-content: center;
   gap: 8px;
   border: 1px solid var(--mob-accent-line);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--mob-accent-tint);
   color: var(--ui-accent);
   font: 700 0.813rem var(--ui-font-body);
@@ -1452,7 +1452,7 @@
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-xl);
   background: var(--ui-surface-inset);
   color: var(--ui-text-secondary);
   font-family: var(--ui-font-terminal);
@@ -1499,14 +1499,14 @@
 .mob-agent-card__progress {
   height: 4px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: var(--ui-radius-sm);
   background: var(--mob-hairline);
 }
 
 .mob-agent-card__progress span {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--ui-radius-sm);
   background: var(--ui-accent);
   box-shadow: 0 0 8px var(--mob-accent-glow);
   animation: mob-bar 3.2s ease infinite;
@@ -1530,7 +1530,7 @@
   box-sizing: border-box;
   padding: 0 10px;
   border: 1px solid var(--mob-hairline);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: var(--ui-surface-inset);
   color: var(--ui-text-primary);
   font-family: var(--ui-font-body);
@@ -1542,7 +1542,7 @@
   flex: none;
   padding: 0 14px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: var(--ui-warning);
   color: var(--ui-text-inverse);
   font-family: var(--ui-font-body);
@@ -1556,7 +1556,7 @@
   flex: none;
   padding: 0 12px;
   border: 1px solid var(--mob-hairline);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: none;
   color: var(--ui-text-secondary);
   font-family: var(--ui-font-body);
@@ -1570,7 +1570,7 @@
   flex: none;
   padding: 0 12px;
   border: 1px solid var(--mob-danger-line);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: none;
   color: var(--ui-danger);
   font-family: var(--ui-font-body);
@@ -2040,7 +2040,7 @@
   padding: 1px 5px;
   color: var(--agent-provider-color, var(--ui-text-secondary));
   border: 1px solid currentColor;
-  border-radius: 3px;
+  border-radius: var(--ui-radius-sm);
   background: rgba(var(--agent-provider-rgb, var(--ui-accent-rgb)), 0.1);
   font-size: 0.625rem;
   font-weight: 700;
@@ -2094,7 +2094,7 @@
 .mob-agent-history-message {
   padding: 10px 12px;
   border: 1px solid var(--ui-border-subtle);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: var(--ui-surface-raised);
 }
 
@@ -2151,7 +2151,7 @@
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--mob-hairline);
-  border-radius: 6px;
+  border-radius: var(--ui-radius-lg);
   background: var(--ui-surface-inset);
 }
 
@@ -2421,7 +2421,7 @@
   gap: 11px;
   padding: 12px;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
-  border-radius: 12px;
+  border-radius: var(--ui-radius-2xl);
   background: linear-gradient(180deg, var(--mob-success-tint), var(--ui-surface));
 }
 
@@ -2431,7 +2431,7 @@
   height: 38px;
   flex: none;
   border: 1px solid var(--mob-success-line);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-surface-inset);
   color: var(--ui-success);
   place-items: center;
@@ -2470,7 +2470,7 @@
   gap: 12px;
   padding: 12px;
   border: 1px solid var(--mob-hairline);
-  border-radius: 12px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-surface);
   color: var(--ui-text-primary);
   font: inherit;
@@ -2637,7 +2637,7 @@
   margin-top: 20px;
   padding: 12px;
   border: 1px solid var(--mob-success-line);
-  border-radius: 12px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--mob-success-tint);
 }
 
@@ -2677,7 +2677,7 @@
   flex: none;
   padding: 0 13px;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.5);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: none;
   color: var(--ui-success);
   font-family: var(--ui-font-body);
@@ -2827,7 +2827,7 @@
   gap: 8px;
   margin-top: 14px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--ui-radius-2xl);
   background: var(--ui-accent);
   color: var(--ui-on-accent);
   font-family: var(--ui-font-body);
@@ -3136,7 +3136,7 @@
   height: 44px;
   padding: 0;
   border: 1px solid var(--mob-accent-line);
-  border-radius: 13px 0 0 13px;
+  border-radius: var(--ui-radius-2xl) 0 0 var(--ui-radius-2xl);
   background: var(--mob-chrome);
   box-shadow: var(--ui-shadow-overlay);
   color: var(--ui-text-primary);
@@ -3149,7 +3149,7 @@
 .mobile-pc-session-handle--right { right: max(0px, env(safe-area-inset-right)); }
 .mobile-pc-session-handle--left {
   left: max(0px, env(safe-area-inset-left));
-  border-radius: 0 13px 13px 0;
+  border-radius: 0 var(--ui-radius-2xl) var(--ui-radius-2xl) 0;
 }
 
 .mobile-pc-session-handle:active { cursor: grabbing; }
@@ -3167,7 +3167,7 @@
 }
 
 .mobile-pc-session-handle[data-phase='reconnecting'] .mobile-pc-session-handle__state {
-  border-radius: 2px;
+  border-radius: var(--ui-radius-sm);
   background: var(--ui-warning);
   animation: mob-pulse 1.1s ease-in-out infinite;
 }
@@ -3356,7 +3356,7 @@
   gap: 4px;
   padding: 0 9px;
   border: 1px solid var(--mob-hairline);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-xl);
   background: var(--ui-surface-hover);
   color: var(--ui-text-primary);
   font-family: var(--ui-font-terminal);

@@ -1,4 +1,3 @@
-import { Bot, Check, History, Plus } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { WorkflowConversationContext, WorkflowConversationUnavailable, useWorkflowConversationScope } from '../../src/renderer/workflow/WorkflowConversationContext';
 
@@ -112,6 +111,14 @@ import {
   type MobileAgentCreateRecoveryController,
   type UncertainAgentCreate,
 } from './mobile-agent-create-recovery-store';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const Bot = glyphIcon('new');
+const Check = glyphIcon('check');
+const History = glyphIcon('clock');
+const Plus = glyphIcon('plus');
+
 
 export type { UncertainAgentCreate } from './mobile-agent-create-recovery-store';
 

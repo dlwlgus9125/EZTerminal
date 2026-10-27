@@ -1,5 +1,4 @@
 import { Browser } from '@capacitor/browser';
-import { CornerDownLeft, FolderGit2, GitBranch, History, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 
 import { formatCwd } from '../../src/renderer/format-cwd';
@@ -55,6 +54,16 @@ import type { TerminalAiHost } from '../../src/renderer/terminal/terminal-ai-hos
 import { useTerminalAiInput } from '../../src/renderer/terminal/use-terminal-ai-input';
 import './terminal-instrument.css';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const CornerDownLeft = glyphIcon('enter');
+const FolderGit2 = glyphIcon('wt');
+const GitBranch = glyphIcon('wt');
+const History = glyphIcon('clock');
+const Square = glyphIcon('stop');
+const X = glyphIcon('x');
+
 
 /** Handoff §3: a single scrollable row of recent commands, not a history page. */
 const SNIPPET_LIMIT = 5;
@@ -1372,7 +1381,7 @@ export function MobileSessionView({
             }
             data-testid="terminal-close-tab"
           >
-            <X aria-hidden="true" width={11} height={11} />
+            <X aria-hidden="true" size={11} />
             {t('sessionNavigation.closeView')}
           </button>
         )}

@@ -1,5 +1,4 @@
-﻿import { SlidersHorizontal } from "lucide-react";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+﻿import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import type { BlockController } from "../../src/renderer/block-controller";
 import { useAppTranslation } from "../../src/renderer/i18n";
@@ -11,6 +10,11 @@ import {
   useTerminalAccessoryLayout,
 } from "./terminal-accessory-layout";
 import { createTerminalKeyRepeatController } from "./terminal-key-repeat";
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const SlidersHorizontal = glyphIcon('set');
+
 
 const noopSubscribe = (): (() => void) => () => undefined;
 const nullSnapshot = (): null => null;

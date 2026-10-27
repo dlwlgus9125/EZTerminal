@@ -1,4 +1,3 @@
-import { Plus, SquareTerminal } from 'lucide-react';
 import type { RefObject } from 'react';
 
 import type { SessionInfo } from '../../src/shared/ipc';
@@ -6,6 +5,12 @@ import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 import type { HomeSessionRow } from './MobileHomeView';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const Plus = glyphIcon('plus');
+const SquareTerminal = glyphIcon('term');
+
 
 /**
  * The terminal header's session picker (handoff §3). Replaces the always-on

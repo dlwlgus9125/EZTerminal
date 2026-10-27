@@ -1,4 +1,3 @@
-import { RefreshCw, SquareTerminal, Trash2 } from 'lucide-react';
 import type { AgentCapabilitiesClient } from '../../src/shared/agent-capabilities';
 import type { AgentLaunchBootstrap } from '../../src/shared/agent-history';
 import { TerminalLaunchPanel, SessionStartOptions, type SessionLaunchAccess } from '../../src/renderer/SessionStartOptions';
@@ -16,6 +15,13 @@ import { Button, Dialog, Field, Select } from '../../src/renderer/ui';
 import { MobilePageHeader } from './MobilePageHeader';
 import type { MobileAgentCreateRecoveryStatus } from './mobile-agent-create-recovery-store';
 import type { DaemonRuntimeViewState } from './transport/ws-ezterminal';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const RefreshCw = glyphIcon('refresh');
+const SquareTerminal = glyphIcon('term');
+const Trash2 = glyphIcon('trash');
+
 
 export type MobileNewSessionKind = 'agent' | 'terminal';
 

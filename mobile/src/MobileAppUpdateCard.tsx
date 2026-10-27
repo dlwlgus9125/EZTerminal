@@ -1,4 +1,3 @@
-import { Download, RefreshCw } from 'lucide-react';
 
 import {
   isAppUpdateAvailable,
@@ -6,6 +5,12 @@ import {
 } from '../../src/shared/app-update';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type { MobileAppUpdateController } from './use-mobile-app-update';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const Download = glyphIcon('download');
+const RefreshCw = glyphIcon('refresh');
+
 
 const UPDATE_ERROR_KEY = {
   NETWORK: 'settings.update.errors.network',

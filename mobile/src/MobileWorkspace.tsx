@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ChevronsUpDown, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
@@ -81,6 +80,10 @@ import {
   useProfileFeaturePreload,
   type PreloadableFeature,
 } from '../../src/renderer/feature-loader';
+// Stencil glyphs (I4-11) under the names this screen used.
+const ChevronsUpDown = glyphIcon('down');
+const Plus = glyphIcon('plus');
+
 
 const MOBILE_FEATURE_LOADERS = Object.freeze({
   agents: createFeatureModuleLoader(

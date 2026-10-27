@@ -56,6 +56,18 @@ const PATHS = {
   grid: 'M2 2h7v7H2zm9 0h7v7h-7zM2 11h7v7H2zm9 0h7v7h-7z',
   home: 'M10 2l8 7h-2.5v8a1 1 0 0 1-1 1H12v-5H8v5H5.5a1 1 0 0 1-1-1V9H2z',
   pc: 'M2 3h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-6v2h3v2H5v-2h3v-2H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v7h14V5z',
+  // Android set, second pass (I4-11): the agent list, PC Control and the terminal's own controls.
+  play: 'M5.5 3l11 7-11 7z',
+  globe: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm-1.4 2.2A6 6 0 0 0 4.1 9h2.95c.15-1.9.7-3.55 1.55-4.8zm2.8 0c.85 1.25 1.4 2.9 1.55 4.8h2.95a6 6 0 0 0-4.5-4.8zM9.05 9h1.9c-.15-1.55-.5-2.75-.95-3.55-.45.8-.8 2-.95 3.55zM4.1 11a6 6 0 0 0 4.5 4.8c-.85-1.25-1.4-2.9-1.55-4.8zm4.95 0c.15 1.55.5 2.75.95 3.55.45-.8.8-2 .95-3.55zm3.9 0c-.15 1.9-.7 3.55-1.55 4.8a6 6 0 0 0 4.5-4.8z',
+  server: 'M3 2h14a1 1 0 0 1 1 1v5H2V3a1 1 0 0 1 1-1zm1.5 2.5V6H7V4.5zM2 10h16v5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zm2.5 2.5V14H7v-1.5z',
+  keyboard: 'M2 5h16a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1.5 2.5V9H5V7.5zm3 0V9H8V7.5zm3 0V9H11V7.5zm3 0V9H14V7.5zm3 0V9H17V7.5zM5 11v1.5h10V11z',
+  pointer: 'M4 2l12.5 7.5-5.25 1.5 3.25 5.5-2.2 1.25-3.2-5.5L5.4 16.5z',
+  touchpad: 'M3 3h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1.5 2v7h11V5zm0 8.5V15h5v-1.5zm6 0V15h5v-1.5z',
+  expand: 'M2 2h6v2.5H4.5V8H2zm10 0h6v6h-2.5V4.5H12zM2 12h2.5v3.5H8V18H2zm13.5 0H18v6h-6v-2.5h3.5z',
+  power: 'M8.75 2h2.5v8h-2.5zM5.4 4.3L7 6.2a5 5 0 1 0 6 0l1.6-1.9a7.5 7.5 0 1 1-9.2 0z',
+  copy: 'M6 2h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1.5V4.5H6zM3 6h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm1.5 2.5v7h6v-7z',
+  paste: 'M7.5 2h5v1.5H16a1 1 0 0 1 1 1V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1h3.5zm-2 4v9.5h9V6h-1.5v1.5h-6V6z',
+  offline: 'M10 13.5a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 0 1 0-3.5zM10 4a11 11 0 0 1 8 3.4l-1.8 1.8A8.5 8.5 0 0 0 10 6.5a8.5 8.5 0 0 0-6.2 2.7L2 7.4A11 11 0 0 1 10 4zM3.4 2.3l14.3 14.3-1.1 1.1L2.3 3.4z',
 } as const;
 
 /** Extra shapes drawn on top of a path (the request and phone glyphs carry a signal dot). */
@@ -83,6 +95,8 @@ export const GLYPH_NAMES = Object.keys(PATHS) as readonly GlyphName[];
 export interface GlyphIconProps {
   readonly className?: string;
   readonly 'aria-hidden'?: boolean | 'true' | 'false';
+  /** Pixel size (the glyph's 20px grid scales); 18 by default. */
+  readonly size?: number;
 }
 
 const glyphIcons = new Map<GlyphName, (props: GlyphIconProps) => JSX.Element>();
@@ -95,7 +109,7 @@ export function glyphIcon(name: GlyphName): (props: GlyphIconProps) => JSX.Eleme
   let icon = glyphIcons.get(name);
   if (!icon) {
     icon = function GlyphIcon(props: GlyphIconProps) {
-      return <Glyph name={name} className={props.className} />;
+      return <Glyph name={name} className={props.className} {...(props.size !== undefined ? { size: props.size } : {})} />;
     };
     glyphIcons.set(name, icon);
   }

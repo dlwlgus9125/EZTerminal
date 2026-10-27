@@ -9,21 +9,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Clipboard } from '@capacitor/clipboard';
-import {
-  ArrowLeft,
-  ClipboardCopy,
-  ClipboardPaste,
-  Keyboard,
-  Maximize2,
-  Monitor,
-  MoreHorizontal,
-  MousePointer2,
-  Power,
-  RefreshCw,
-  Settings2,
-  Touchpad,
-  WifiOff,
-} from 'lucide-react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
 import {
@@ -58,6 +43,23 @@ import {
   type RemoteViewState,
 } from './remote-desktop-view-state';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { glyphIcon } from '../../src/renderer/ui/Glyph';
+
+// Stencil glyphs (I4-11) under the names this screen used.
+const ArrowLeft = glyphIcon('back');
+const ClipboardCopy = glyphIcon('copy');
+const ClipboardPaste = glyphIcon('paste');
+const Keyboard = glyphIcon('keyboard');
+const Maximize2 = glyphIcon('expand');
+const Monitor = glyphIcon('pc');
+const MoreHorizontal = glyphIcon('more');
+const MousePointer2 = glyphIcon('pointer');
+const Power = glyphIcon('power');
+const RefreshCw = glyphIcon('refresh');
+const Settings2 = glyphIcon('set');
+const Touchpad = glyphIcon('touchpad');
+const WifiOff = glyphIcon('offline');
+
 
 type InputMode = 'trackpad' | 'direct';
 type HandleEdge = 'left' | 'right';
