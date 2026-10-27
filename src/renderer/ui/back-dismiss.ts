@@ -2,23 +2,36 @@ import { useLayoutEffect, useRef } from 'react';
 
 /**
  * Overlays a system Back closes before anything else (Android's Back button): an open menu or
- * popover registers here while it is open, and the phone's Back handler asks the newest one to
- * close instead of leaving the screen. Desktop never asks, so this is inert there.
+ * popover registers here while it is open, and the phone's Back handler asks the newest one it can
+ * see to close instead of leaving the screen. Desktop never asks, so this is inert there.
+ *
+ * "Covered" = inside a subtree the phone has isolated under a page or sheet (inert / aria-hidden).
  */
-const open: { readonly dismiss: () => void; readonly drop: () => void }[] = [];
+interface OpenOverlay {
+  readonly dismiss: () => void;
+  readonly drop: () => void;
+  readonly element: () => Element | null;
+}
+
+const open: OpenOverlay[] = [];
+
+function covered(entry: OpenOverlay): boolean {
+  return entry.element()?.closest('[inert], [aria-hidden="true"]') != null;
+}
 
 /**
  * `dismiss` closes as Escape does (focus back to the trigger); `drop` closes without moving focus,
- * for when something else opens over the overlay and takes the focus.
+ * for when a page or sheet opens over the overlay and takes the focus. `element` is the overlay's
+ * own root, to tell whether a page or sheet now covers it.
  */
-export function useBackDismiss(active: boolean, dismiss: () => void, drop: () => void = dismiss): void {
-  const latest = useRef({ dismiss, drop });
+export function useBackDismiss(active: boolean, dismiss: () => void, drop: () => void = dismiss, element: () => Element | null = () => null): void {
+  const latest = useRef({ dismiss, drop, element });
   useLayoutEffect(() => {
-    latest.current = { dismiss, drop };
+    latest.current = { dismiss, drop, element };
   });
   useLayoutEffect(() => {
     if (!active) return undefined;
-    const entry = { dismiss: () => latest.current.dismiss(), drop: () => latest.current.drop() };
+    const entry: OpenOverlay = { dismiss: () => latest.current.dismiss(), drop: () => latest.current.drop(), element: () => latest.current.element() };
     open.push(entry);
     return () => {
       const index = open.lastIndexOf(entry);
@@ -28,17 +41,21 @@ export function useBackDismiss(active: boolean, dismiss: () => void, drop: () =>
 }
 
 /**
- * A page or sheet opens over the screen: the menus and popovers still open on the screen below close
- * (without moving focus), so the next Back closes what is on top, not something hidden under it.
+ * A page or sheet opened over the screen: once it has isolated what it covers, the menus and
+ * popovers left open under it close (without moving focus), so the next Back closes what is on
+ * top. A menu inside the new page or sheet itself is not covered and stays.
  */
-export function dropAllOverlays(): void {
-  for (const entry of [...open].reverse()) entry.drop();
+export function dropCoveredOverlays(): void {
+  for (const entry of [...open].reverse()) if (covered(entry)) entry.drop();
 }
 
-/** Closes the newest open overlay; false when none is open (Back then goes on as usual). */
+/** Closes the newest overlay not covered by a page or sheet; false when there is none (Back goes on as usual). */
 export function dismissTopOverlay(): boolean {
-  const top = open[open.length - 1];
-  if (!top) return false;
-  top.dismiss();
-  return true;
+  for (let index = open.length - 1; index >= 0; index -= 1) {
+    const entry = open[index]!;
+    if (covered(entry)) continue;
+    entry.dismiss();
+    return true;
+  }
+  return false;
 }

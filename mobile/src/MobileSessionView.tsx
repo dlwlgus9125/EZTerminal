@@ -7,7 +7,7 @@ import { formatCwd } from '../../src/renderer/format-cwd';
 import { BlockController, type BlockStatus } from '../../src/renderer/block-controller';
 import { retainTerminalBlocks, takeRetainedTerminalBlocks } from '../../src/renderer/retained-terminal-blocks';
 import { TerminalBlockEntries } from '../../src/renderer/TerminalBlockEntries';
-import { rememberBlockStart, rememberedBlockTiming } from '../../src/renderer/terminal/block-timing';
+import { rememberBlockEnd, rememberBlockStart, rememberedBlockTiming } from '../../src/renderer/terminal/block-timing';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
@@ -768,6 +768,10 @@ export function MobileSessionView({
     const knownRunIds = knownRunIdsRef.current;
     return () => {
       activeUnsub.current?.();
+      // Blocks reopened later keep how long their run took (as on the desktop terminal).
+      for (const entry of blocksRef.current) {
+        if (entry.controller) rememberBlockEnd(entry.id, entry.controller.getSnapshot().endedAtMs);
+      }
       if (transport) retainTerminalBlocks(transport, sessionId, blocksRef.current);
       else for (const entry of blocksRef.current) entry.controller?.dispose();
       pendingRunIds.clear();

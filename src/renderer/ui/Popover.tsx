@@ -63,7 +63,7 @@ export function Popover({
     setOpen(false);
     const ownerWindow = (rootRef.current?.ownerDocument ?? document).defaultView ?? window;
     ownerWindow.requestAnimationFrame(() => triggerRef.current?.focus());
-  }, () => setOpen(false));
+  }, () => setOpen(false), () => rootRef.current);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -67,6 +67,22 @@ async function renderCoordinator(page?: JSX.Element): Promise<void> {
 }
 
 describe('MobileNavigationHistory native Android Back', () => {
+  it('leaves open a menu that the newly opened page holds itself', async () => {
+    await renderCoordinator();
+    await act(async () => {
+      root.render(
+        <MobileWorkbenchCoordinator
+          terminal={<div>terminal</div>}
+          page={<Menu label="Sheet menu" defaultOpen trigger={<button type="button">Sheet menu</button>}><MenuItem onSelect={() => undefined}>Inside</MenuItem></Menu>}
+          onRequestRoot={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))); });
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
   it('closes an open popover like Escape, focus back on its button', async () => {
     await renderCoordinator(
       <Popover ariaLabel="Usage" trigger={<button type="button">Usage</button>}>
@@ -99,6 +115,7 @@ describe('MobileNavigationHistory native Android Back', () => {
       root.render(<MobileWorkbenchCoordinator terminal={<div>{menu}</div>} page={<div>review</div>} onRequestRoot={vi.fn()} />);
       await Promise.resolve();
     });
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))); });
     expect(document.querySelector('[role="menu"]')).toBeNull();
     act(() => [...nativeApp.listeners][0]({ canGoBack: false }));
     expect(back).toHaveBeenCalledTimes(1);

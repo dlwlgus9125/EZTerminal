@@ -598,7 +598,7 @@ export function TerminalPane({
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [activeTakeover]);
+  }, [activeTakeover, inputModeRef]);
 
   // Unmount closes only the view. Release renderer resources without destroying
   // host execution/replay stores, including completed output blocks.
