@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
-import { expect, fn, within } from 'storybook/test';
+import { expect, fn, waitFor, within } from 'storybook/test';
 
 import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { PlanningIntegrationRecord, PlanningResultRecord } from '../../shared/planning-result';
@@ -104,7 +104,8 @@ export const IntegrationResult: Story = {
   render: () => <Results selection={{ kind: 'integration', projectId: 'project-story', subprojectId: 'login', runId: 'run-story' }} />,
   play: async ({ canvasElement }) => {
     const body = within(canvasElement.ownerDocument.body);
-    await expect(await body.findByText(/Validation failed after merging/u)).toBeVisible();
+    const target = await body.findByText(/Validation failed after merging/u);
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
@@ -112,7 +113,9 @@ export const IntegrationResult: Story = {
 export const RetryIndependentReview: Story = {
   render: () => <Results selection={{ kind: 'attempt', projectId: 'project-story', subprojectId: 'login', attemptId: 'attempt-2' }} onRetryReview={fn()} />,
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement.ownerDocument.body).findByTestId('planning-result-retry-review')).toBeVisible();
+    const target = await within(canvasElement.ownerDocument.body).findByTestId('planning-result-retry-review');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
@@ -120,14 +123,18 @@ export const RetryIndependentReview: Story = {
 export const ProjectBackupEntry: Story = {
   render: () => <Backup open="editor" />,
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement.ownerDocument.body).findByTestId('agent-project-backup')).toBeVisible();
+    const target = await within(canvasElement.ownerDocument.body).findByTestId('agent-project-backup');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
 export const ProjectBackupDialog: Story = {
   render: () => <Backup open="archive" />,
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement.ownerDocument.body).findByTestId('project-archive-dialog')).toBeVisible();
+    const target = await within(canvasElement.ownerDocument.body).findByTestId('project-archive-dialog');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 

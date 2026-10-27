@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, within } from 'storybook/test';
+import { expect, waitFor, within } from 'storybook/test';
 import {
   DockviewReact,
   type DockviewReadyEvent,
@@ -217,7 +217,9 @@ type Story = StoryObj<typeof meta>;
 export const SettingsReference: Story = {
   render: () => <LocaleFrame><ToolFrame destination="settings" sidebar={<SettingsFixture />} /></LocaleFrame>,
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement).findByTestId('settings-panel')).toBeVisible();
+    const target = await within(canvasElement).findByTestId('settings-panel');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
@@ -230,7 +232,9 @@ export const MonitorReference: Story = {
     return <LocaleFrame><Monitor /></LocaleFrame>;
   },
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement).findByTestId('status-section-cpu')).toBeVisible();
+    const target = await within(canvasElement).findByTestId('status-section-cpu');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
@@ -241,7 +245,9 @@ export const RemoteReference: Story = {
 export const PairingQrReference: Story = {
   render: () => <LocaleFrame><RemoteScreen pairing="qr" /></LocaleFrame>,
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement.ownerDocument.body).findByTestId('pairing-qr-symbol')).toBeVisible();
+    const target = await within(canvasElement.ownerDocument.body).findByTestId('pairing-qr-symbol');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
@@ -284,7 +290,9 @@ export const FilesReference: Story = {
     return <LocaleFrame><Files /></LocaleFrame>;
   },
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement).findByTestId('file-list')).toBeVisible();
+    const target = await within(canvasElement).findByTestId('file-list');
+    // Dialogs and the sidebar fade in: wait until the element is shown.
+    await waitFor(() => expect(target).toBeVisible(), { timeout: 5_000 });
   },
 };
 
