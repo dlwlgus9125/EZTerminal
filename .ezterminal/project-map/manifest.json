@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b01c72abb92c755903731f663f220f6ee8a4872496951c6c32a7550a6816b885",
+        "inputDigest": "sha256:3b5cc0f164aaae859b84de9f40423ebfe39eb74f744994dc8910ed8d05bb6007",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-2 Android chat): optional compactHeader/headerLeading give the phone one header row with the desktop overflow menu; desktop markup unchanged. Moved block reanchored; claim unchanged and still holds."
+        "reason": "Reviewed (I4-2 review fixes): the phone's compact menu names the working folder; the review sheet returns focus to the host's header button. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {

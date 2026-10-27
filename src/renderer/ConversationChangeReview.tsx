@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { FileDiff, X } from 'lucide-react';
 import type { DaemonTranscriptItem } from '../shared/daemon-protocol';
 import { conversationFileChanges, reviewLines } from '../shared/conversation-changes';
@@ -8,7 +8,7 @@ import { readSessionViewState, saveSessionViewState } from './session-view-state
 import { ConversationReviewOverlayContext } from './conversation-review-overlay';
 
 interface ReviewState { open: boolean; scope: 'latest' | 'all'; selected?: string; reviewed: string[]; range?: [number, number] }
-export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange, openRequest = 0, hideTrigger = false }: {
+export function ConversationChangeReview({ sessionId, items, wide, mobile, ownerDocument, onQuote, onOpenProjectFiles, onAsideChange, openRequest = 0, hideTrigger = false, returnFocusRef }: {
   sessionId: string; items: readonly DaemonTranscriptItem[]; wide: boolean; mobile: boolean; ownerDocument?: Document; onQuote?: (text: string) => void; onOpenProjectFiles?: () => void;
   /** Reports whether the review is docked beside the transcript, so the panel can reserve room without :has(). */
   onAsideChange?: (open: boolean) => void;
@@ -16,6 +16,8 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   openRequest?: number;
   /** The host shows its own trigger (e.g. a header button) and opens the review with openRequest. */
   hideTrigger?: boolean;
+  /** With hideTrigger: where focus returns when the phone's review sheet closes (the host's trigger). */
+  returnFocusRef?: RefObject<HTMLButtonElement>;
 }): JSX.Element {
   const { i18n } = useAppTranslation(); const ko = i18n.language.startsWith('ko');
   const HostOverlay = useContext(ConversationReviewOverlayContext);
@@ -63,7 +65,7 @@ export function ConversationChangeReview({ sessionId, items, wide, mobile, owner
   </div>;
   return <>
     {!hideTrigger && <Button ref={triggerRef} className="conversation-review__trigger" variant="ghost" size="sm" leadingIcon={<FileDiff />} aria-expanded={state.open} onClick={() => update({ open: !state.open })}>{title}{changes.length ? ` · ${changes.length}` : ''}</Button>}
-    {mobile && HostOverlay ? state.open && <HostOverlay title={title} onClose={() => update({ open: false })} returnFocusRef={triggerRef}>{content}</HostOverlay>
+    {mobile && HostOverlay ? state.open && <HostOverlay title={title} onClose={() => update({ open: false })} returnFocusRef={hideTrigger && returnFocusRef ? returnFocusRef : triggerRef}>{content}</HostOverlay>
       : wide && state.open ? <aside className="conversation-review__aside" aria-label={title}>{content}</aside> : <Dialog open={state.open} onOpenChange={open => update({ open })} title={title} ownerDocument={ownerDocument} variant={mobile ? 'sheet' : 'dialog'} size="lg" closeLabel={ko ? '닫기' : 'Close'}>{content}</Dialog>}
   </>;
 }

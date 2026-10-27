@@ -863,6 +863,8 @@ describe('message-based chat skins', () => {
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
     expect(document.querySelector('[role="menu"] [data-testid="structured-agent-detach"]')).not.toBeNull();
     expect(document.querySelector('[role="menu"] [data-testid="structured-agent-skin-cli"]')).not.toBeNull();
+    // The folder line the row leaves out is named at the top of the menu.
+    expect(document.querySelector('[role="menu"] [data-testid="structured-agent-menu-folder"]')?.textContent).toBe('Working folder: Main · Local');
     // No dock pane on a phone: no tab section in the menu.
     expect(document.querySelector('[role="menu"] [data-testid="structured-agent-tab-close"]')).toBeNull();
   });

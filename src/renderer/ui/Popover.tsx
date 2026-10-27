@@ -12,6 +12,7 @@ import {
 } from 'react';
 
 import { useNativeOverlayRegistration } from '../native-overlay';
+import { useBackDismiss } from './back-dismiss';
 import { classNames, getFocusableElements, isDomNode, mergeRefs } from './utils';
 
 interface PopoverTriggerProps extends HTMLAttributes<HTMLElement> {
@@ -57,6 +58,8 @@ export function Popover({
     if (open === undefined) setUncontrolledOpen(next);
     onOpenChange?.(next);
   }, [onOpenChange, open]);
+  // Android's Back closes an open popover before it leaves the screen.
+  useBackDismiss(isOpen, () => setOpen(false));
 
   useEffect(() => {
     if (!isOpen) return;

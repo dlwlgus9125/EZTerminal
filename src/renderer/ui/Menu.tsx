@@ -22,6 +22,7 @@ import {
 } from 'react';
 
 import { useNativeOverlayRegistration } from '../native-overlay';
+import { useBackDismiss } from './back-dismiss';
 import { classNames, isDomNode, mergeRefs } from './utils';
 
 interface MenuTriggerProps extends HTMLAttributes<HTMLElement> {
@@ -85,6 +86,8 @@ export function Menu({
       });
     }
   }, [setOpen]);
+  // Android's Back closes an open menu before it leaves the screen.
+  useBackDismiss(isOpen, close);
 
   useLayoutEffect(() => {
     if (!isOpen) return;

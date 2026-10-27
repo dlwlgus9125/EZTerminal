@@ -517,6 +517,28 @@
   inset-block: auto calc(100% + var(--ui-space-1));
 }
 
+/* Android WebView 74 (Chrome 74) has no logical inset: place menus and popovers physically there,
+   or a bottom-end menu opens rightward off the edge. */
+@supports not (inset-inline-end: 0) {
+  .ez-ui-popover__content,
+  .ez-ui-menu__content {
+    top: calc(100% + var(--ui-space-1));
+    left: 0;
+  }
+
+  .ez-ui-popover[data-placement$='end'] .ez-ui-popover__content,
+  .ez-ui-menu[data-placement$='end'] .ez-ui-menu__content {
+    right: 0;
+    left: auto;
+  }
+
+  .ez-ui-popover[data-placement^='top'] .ez-ui-popover__content,
+  .ez-ui-menu[data-placement^='top'] .ez-ui-menu__content {
+    top: auto;
+    bottom: calc(100% + var(--ui-space-1));
+  }
+}
+
 .ez-ui-menu__content {
   display: grid;
   min-inline-size: 11rem;

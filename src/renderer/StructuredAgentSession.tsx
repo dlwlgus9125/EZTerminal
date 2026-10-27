@@ -2029,6 +2029,8 @@ export function StructuredAgentSessionPanel({
   const copy = useStructuredAgentCopy();
   const full = presentation === 'full';
   const compactRow = variant === 'mobile' && compactHeader;
+  // The header's changed-files button opens the review; its sheet gives focus back to it.
+  const reviewButtonRef = useRef<HTMLButtonElement>(null);
   const paneActions = usePaneActions();
   // This header carries the tab's actions, so a group of one may hide its tab strip while it is shown.
   // A message box shown elsewhere (in a terminal tab) has no header and never hides that tab's strip.
@@ -2599,7 +2601,7 @@ export function StructuredAgentSessionPanel({
                 {resultsCopy.results}{changeCount > 0 ? ` ${String(changeCount)}` : ''}
               </Button>
             ) : changeCount > 0 && (
-              <Button type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
+              <Button ref={reviewButtonRef} type="button" variant="ghost" size="sm" leadingIcon={<FileDiff />} onClick={() => setReviewRequest((request) => request + 1)} data-testid="structured-agent-review-changes">
                 {copy.changedFiles(changeCount)}
               </Button>
             )}
@@ -2621,6 +2623,13 @@ export function StructuredAgentSessionPanel({
                 </button>
               )}
             >
+              {/* The phone's one-row header has no folder line: the menu names where the conversation works. */}
+              {compactRow && (
+                <MenuLabel className="structured-agent-menu-folder" title={workspace.path} data-testid="structured-agent-menu-folder">
+                  {i18n.language.startsWith('ko') ? '작업 폴더' : 'Working folder'}: {workspace.label} · {workspace.kind === 'worktree' ? 'Worktree' : 'Local'}
+                </MenuLabel>
+              )}
+              {compactRow && <MenuSeparator />}
               {onOpenHistory && <MenuItem icon={History} onSelect={onOpenHistory}>{copy.previousConversations}</MenuItem>}
               {menuItems.map((entry) => (
                 <MenuItem key={entry.label} {...(entry.icon ? { icon: entry.icon } : {})} disabled={entry.disabled} onSelect={entry.onSelect}>{entry.label}</MenuItem>
@@ -2687,6 +2696,7 @@ export function StructuredAgentSessionPanel({
         onAsideChange={setReviewAside}
         openRequest={reviewRequest}
         hideTrigger={variant !== 'mobile' || compactRow}
+        returnFocusRef={reviewButtonRef}
         onOpenProjectFiles={onOpenProjectFiles}
         onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />}
       {full && workflowContext}

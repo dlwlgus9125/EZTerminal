@@ -122,9 +122,9 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 2482,
-          "endLine": 2623,
-          "lineDigest": "sha256:823ade36a3774fb9ff6b75d738dcace1008b7700d647224b1cd0114a857e51be",
+          "startLine": 2484,
+          "endLine": 2625,
+          "lineDigest": "sha256:94ef2daa071f3c4c13ed7b9267fa95bef6396c32f61d81dc02b80acacdf5be27",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },
         {
@@ -139,8 +139,8 @@
           "rootAlias": "app",
           "relativePath": "src/renderer/ConversationChangeReview.tsx",
           "startLine": 1,
-          "endLine": 69,
-          "lineDigest": "sha256:cd5e84c621303872cf509d3d96a3dd996ac184c5d57834e1c55384d0f68109da",
+          "endLine": 71,
+          "lineDigest": "sha256:0ffbe420a0d3a0d14b3da2242118001ab1c7529b5714ad3efd95b413021bed77",
           "claim": "Both skins review only completed non-sensitive records from the selected session. Quotes enter the existing draft without submission; fragment records do not invent file line numbers."
         }
       ]

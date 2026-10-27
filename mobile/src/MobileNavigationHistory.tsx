@@ -11,6 +11,8 @@ import {
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 
+import { dismissTopOverlay } from '../../src/renderer/ui/back-dismiss';
+
 export type MobileNavigationLayerKind = 'page' | 'sheet';
 
 export interface MobileNavigationLayer {
@@ -232,6 +234,8 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
           // A programmatic history traversal is already reconciling a UI
           // close. Consuming another Back here could skip the terminal page.
           if (pendingTraversalRef.current || replacementRef.current) return;
+          // An open menu or popover closes first; the screen under it stays.
+          if (dismissTopOverlay()) return;
           const layers = layersRef.current;
           const top = layers[layers.length - 1];
           if (!top) {

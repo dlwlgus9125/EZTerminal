@@ -1324,7 +1324,10 @@ export function MobileAgentView({
   const workflowContext = useWorkflowConversationScope(workflowAccess, selectedDaemonSession?.projectId, selectedDaemonSessionId);
 
   const openHistory = (): void => {
-    historyInvokerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Chosen from the header's ⋯ menu: the item goes away with the menu, so focus returns to the menu's button.
+    const menuTrigger = active?.closest('.ez-ui-menu')?.querySelector<HTMLElement>('[aria-haspopup="menu"]') ?? null;
+    historyInvokerRef.current = menuTrigger ?? active;
     setHistoryPreviewBack(undefined); setHistoryTarget(undefined); setHistoryOpen(true);
   };
   const openCliHistory = (entry: ConversationEntry): void => {

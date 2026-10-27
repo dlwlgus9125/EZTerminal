@@ -270,7 +270,10 @@ describe('MobileAgentView', () => {
     expect(listConversations).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1' }));
     await act(async () => (testIds('mobile-conversation-history')[0].querySelector('.mobile-action-sheet-cancel') as HTMLButtonElement).click());
     await flush();
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))); });
     expect(testIds('mobile-conversation-history')).toHaveLength(0);
+    // Chosen from the ⋯ menu, which closed with the choice: focus goes back to the menu's button.
+    expect(document.activeElement).toBe(testIds('structured-agent-menu')[0]);
     expect(testIds('structured-agent-composer-input')[0]).toBe(input);
     expect(input.value).toBe('Keep my unsent draft');
     expect(sendDaemonCommand).not.toHaveBeenCalled();

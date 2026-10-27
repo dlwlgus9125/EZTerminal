@@ -29,6 +29,7 @@ vi.mock('@capacitor/app', () => ({
   App: { addListener: nativeApp.addListener, exitApp: nativeApp.exitApp },
 }));
 
+import { Menu, MenuItem } from '../../src/renderer/ui';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 
 let root: Root;
@@ -66,6 +67,24 @@ async function renderCoordinator(page?: JSX.Element): Promise<void> {
 }
 
 describe('MobileNavigationHistory native Android Back', () => {
+  it('closes an open menu first and keeps the page under it', async () => {
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    await renderCoordinator(
+      <Menu label="Conversation" trigger={<button type="button">More</button>}>
+        <MenuItem onSelect={() => undefined}>Previous conversations</MenuItem>
+      </Menu>,
+    );
+    const trigger = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'More')!;
+    act(() => trigger.click());
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    act(() => [...nativeApp.listeners][0]({ canGoBack: false }));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(back).not.toHaveBeenCalled();
+    // The next Back leaves the page as usual.
+    act(() => [...nativeApp.listeners][0]({ canGoBack: false }));
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+
   it('traverses the owned page entry instead of exiting the Activity', async () => {
     const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
     await renderCoordinator(<div>sessions</div>);
