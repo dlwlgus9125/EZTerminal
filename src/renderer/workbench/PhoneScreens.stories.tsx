@@ -23,15 +23,15 @@ import '../structured-agent.css';
 import '../../../mobile/src/mobile.css';
 import '../../../mobile/src/workbench.css';
 import '../../../mobile/src/mobile-shell.css';
-import './phone-i4-mockup.css';
+import './phone-screens.css';
 
 /**
- * I4 Android mockup review (plan i4-wobbly-truffle, I4-6): the phone's screens built from the real phone
- * components at 412×915, to choose the tab layout (A: no tab bar, as the approved prototype b180f95;
- * B: feed · projects · terminal · more) and to see the screens the prototype did not draw.
+ * The phone's 2.0 screens (I4, layout A chosen 2026-10-27: no tab bar, as the approved prototype b180f95), built from
+ * the real phone components in a 412×915 frame. FeedReference, ChatReference and TerminalReference are the approved
+ * 2.0 references phone-feed, phone-chat and phone-terminal (docs/ux/reference/2.0/manifest.json).
  */
 const meta = {
-  title: 'Production/Phone/I4 mockup',
+  title: 'Production/Phone/Phone screens',
   parameters: { layout: 'centered', a11y: { test: 'error' } },
 
 } satisfies Meta;
@@ -47,6 +47,11 @@ const attention: HostAttention = {
 };
 
 const terminalAgents: readonly AgentActivity[] = [];
+
+/** The reference stories follow the Storybook locale (the approved-surface checker opens them in both). */
+function storyLocale(globals: Record<string, unknown>): 'ko' | 'en' {
+  return globals.locale === 'en' ? 'en' : 'ko';
+}
 
 function Phone({ children, locale = 'ko' }: { readonly children: ReactNode; readonly locale?: 'ko' | 'en' }): JSX.Element {
   return (
@@ -115,7 +120,7 @@ function Feed({ initialScope = null, headerActions, locale, projectScreens = fal
 }
 
 /** A: no tab bar. The feed is the only first screen; terminal, PC control and ⋯ sit in its header. */
-export const FeedA: Story = { render: () => <Feed headerActions={<HeaderIconsA />} projectScreens /> };
+export const FeedReference: Story = { render: (_args, context) => <Feed headerActions={<HeaderIconsA />} projectScreens locale={storyLocale(context.globals)} /> };
 
 /** A: the header ▾ — the scope of flows and conversations, and the way to the project screens. */
 export const FeedAScopeMenu: Story = {
@@ -141,7 +146,7 @@ export const FeedOneProject: Story = { render: () => <Feed initialScope="p-ez" h
 export const FeedEnglish: Story = { render: () => <Feed headerActions={<HeaderIconsA />} locale="en" /> };
 
 /** The phone terminal on the stories' fake host: blocks in the instrument look, Shell | AI over the prompt line. */
-function PhoneTerminal({ sessionId }: { readonly sessionId: string }): JSX.Element {
+function PhoneTerminal({ sessionId, locale }: { readonly sessionId: string; readonly locale?: 'ko' | 'en' }): JSX.Element {
   const clock = useMemo(scriptedClock, []);
   const [ready, setReady] = useState(false);
   const aiHost = useMemo(() => {
@@ -164,7 +169,7 @@ function PhoneTerminal({ sessionId }: { readonly sessionId: string }): JSX.Eleme
     };
   }, [clock]);
   return (
-    <Phone>
+    <Phone locale={locale}>
       <div className="phone-i4-terminal">
         {ready && <MobileSessionView sessionId={sessionId} cwd={CWD} active connected aiHost={aiHost} />}
       </div>
@@ -191,8 +196,8 @@ export const TerminalShell: Story = {
 };
 
 /** AI: the last conversation's own message box, the newest block attached as a chip. */
-export const TerminalAi: Story = {
-  render: () => <PhoneTerminal sessionId="phone-terminal-ai" />,
+export const TerminalReference: Story = {
+  render: (_args, context) => <PhoneTerminal sessionId="phone-terminal-ai" locale={storyLocale(context.globals)} />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await runCommand(canvas, 'git status --short', 1);
@@ -209,12 +214,12 @@ function chatItem(id: string, sequence: number, kind: DaemonTranscriptItem['kind
 }
 
 /** The conversation on the phone: one header row, the approval as thumb buttons, sub-agent chips, two rows of chips. */
-export const Chat: Story = {
-  render: () => {
+export const ChatReference: Story = {
+  render: (_args, context) => {
     const snapshot = shellSnapshot();
     const approval = snapshot.approvals.find((candidate) => candidate.id === 'a-command')!;
     return (
-      <Phone>
+      <Phone locale={storyLocale(context.globals)}>
         <MobileStructuredAgentSession
           sessionId="s-notify"
           title="Android 승인 알림이 두 번 뜨는 문제"

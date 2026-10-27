@@ -20,7 +20,7 @@ export const DESKTOP_DESTINATION_STORIES = {
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 /** I4 layout A: the feed is the root; the terminal, a project and the conversations open from it. */
 export const MOBILE_PRIMARY_STORIES = {
-  feed: { storyId: 'production-phone-i4-mockup--feed-a', readySelector: '[data-testid="mobile-feed"]' },
+  feed: { storyId: 'production-phone-phone-screens--feed-reference', readySelector: '[data-testid="mobile-feed"]' },
   terminal: { storyId: 'compositions-mobile-workbench-shell--terminal-english', readySelector: '[data-testid="mobile-workspace"]' },
   home: { storyId: 'workbench-mobile-v2--projects', readySelector: '[data-testid="mobile-projects-navigator"]' },
   agents: { storyId: 'workbench-mobile-v2--conversations', readySelector: '[data-testid="mobile-daemon-navigator"]' },

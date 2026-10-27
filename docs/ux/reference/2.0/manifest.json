@@ -109,6 +109,69 @@
         "decidedAt": "2026-10-27"
       },
       "replaces": []
+    },
+    {
+      "id": "phone-feed",
+      "title": "Phone feed (first screen): what waits across every project with the command approval on its card, the chosen project's flows and conversations, and the ask bar",
+      "story": {
+        "file": "src/renderer/workbench/PhoneScreens.stories.tsx",
+        "export": "FeedReference"
+      },
+      "visual": {
+        "storyId": "production-phone-phone-screens--feed-reference",
+        "snapshot": "reference-2-0-phone-feed-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/phone-feed.png",
+        "sha256": "cca61e929229d241c5a3599212632c5ff34c4f134089db8d278999cefd2937ce"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i4-android",
+        "decidedAt": "2026-10-27"
+      },
+      "replaces": []
+    },
+    {
+      "id": "phone-chat",
+      "title": "Phone conversation: one header row, thumb-sized approval buttons, sub-agent chips and two rows of composer chips (model and effort in one)",
+      "story": {
+        "file": "src/renderer/workbench/PhoneScreens.stories.tsx",
+        "export": "ChatReference"
+      },
+      "visual": {
+        "storyId": "production-phone-phone-screens--chat-reference",
+        "snapshot": "reference-2-0-phone-chat-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/phone-chat.png",
+        "sha256": "de92d1dcdf17abd49132f035d28d5cf0552c419994a55b99ab06bfbe97fda3ad"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i4-android",
+        "decidedAt": "2026-10-27"
+      },
+      "replaces": []
+    },
+    {
+      "id": "phone-terminal",
+      "title": "Phone terminal in its AI input: instrument blocks, Shell | AI over the prompt line, the last finished block as a chip, the conversation's own message box",
+      "story": {
+        "file": "src/renderer/workbench/PhoneScreens.stories.tsx",
+        "export": "TerminalReference"
+      },
+      "visual": {
+        "storyId": "production-phone-phone-screens--terminal-reference",
+        "snapshot": "reference-2-0-phone-terminal-matrix-ko.png"
+      },
+      "capture": {
+        "file": "docs/ux/reference/2.0/captures/phone-terminal.png",
+        "sha256": "cfa5437dd1c5e8ee2498c88335ecdcb75ae7b815d1d245ae9b5db5e1ec3ac546"
+      },
+      "approval": {
+        "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i4-android",
+        "decidedAt": "2026-10-27"
+      },
+      "replaces": []
     }
   ]
 }

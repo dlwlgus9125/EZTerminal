@@ -36,6 +36,30 @@ const designReferenceCases = [
     theme: "matrix",
     viewports: [{ width: 1440, height: 900 }, { width: 1024, height: 720 }],
   },
+  {
+    storyId: "production-phone-phone-screens--feed-reference",
+    screenshot: "reference-2-0-phone-feed-matrix-ko.png",
+    readySelector: "[data-testid='mobile-feed']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
+  {
+    storyId: "production-phone-phone-screens--chat-reference",
+    screenshot: "reference-2-0-phone-chat-matrix-ko.png",
+    readySelector: "[data-testid='structured-agent-composer-input']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
+  {
+    storyId: "production-phone-phone-screens--terminal-reference",
+    screenshot: "reference-2-0-phone-terminal-matrix-ko.png",
+    readySelector: "[data-testid='terminal-ai-chip']",
+    locale: "ko",
+    theme: "matrix",
+    viewports: [{ width: 412, height: 915 }, { width: 360, height: 800 }],
+  },
 ] as const;
 
 for (const item of designReferenceCases) {

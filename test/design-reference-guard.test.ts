@@ -119,7 +119,7 @@ describe('2.0 design reference manifest', () => {
     const { manifest, legacyManifest } = readReference();
     const result = validateDesignReferenceManifest(manifest, legacyManifest);
     expect(result.legacy).toHaveLength(14);
-    expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual(['shell-board', 'shell-work-mode', 'flow-run-view', 'desk-terminal']);
+    expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual(['shell-board', 'shell-work-mode', 'flow-run-view', 'desk-terminal', 'phone-feed', 'phone-chat', 'phone-terminal']);
     expect(result.retired).toEqual([]);
   });
 

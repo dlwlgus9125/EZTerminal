@@ -174,6 +174,18 @@ I3 데스크톱 터미널(계기판 블록·프롬프트 도크)의 AI 입력 �
 | I4-k | 아이콘 lucide는 I5에서 지울 미사용 3개 파일(`MobileHomeView`·`MobileAgentProjects`·`MobileAgentFolderPicker`)만 남김. 폰 모서리는 반경 역할만(래칫 테스트) | 전 화면 계기판 모양 | 진행 지시 (2026-10-27) |
 | I4-l | 새 설치 판단: 데스크톱 = 프로필에 settings·layout·presets·데몬 DB 중 하나라도 있으면 기존(테마 없으면 Dark 기록), 폰 = EZTerminal 저장 키가 하나라도 있으면 기존. 첫 실행에 항상 기록하고 출처(`default`/`user`)를 함께 남김 | 두 번째 실행이 방금 생긴 파일을 보고 Dark로 뒤집히지 않게 | 진행 지시 (2026-10-27) |
 
+### 2.0 승인 화면 — I4 Android
+
+I4 폰 화면 세 개. 기준 story는 실제 폰 컴포넌트를 412×915 틀에 그린 `Production/Phone/Phone screens`(합성 스냅숏·메모리 초안)이고,
+실기기 캡처는 Android API 35 에뮬레이터(1080×2280)에서 I4 기기 시나리오(`mobile/e2e/i4-feed-terminal.ts`, 가짜 Codex·격리 데스크톱)가
+찍은 Matrix 화면이다. 1.0 폰 화면은 대체하지 않는다(은퇴는 I5).
+
+| 화면 id | 화면 | story | 실기기 캡처 | 답 |
+|---|---|---|---|---|
+| `phone-feed` | 피드(첫 화면): 나를 기다리는 것(카드에서 허용·거부), ▾ 범위의 흐름·대화, 묻기 막대, 머리줄 터미널·PC·⋯ | `Production/Phone/Phone screens` · `FeedReference` | `docs/ux/reference/2.0/captures/phone-feed.png` | 승인 근거 (2026-10-27): 시안 검토에서 "A. 탭 없음 (실물 그대로)", 피드 범위 "기다리는 것은 전체, 나머지는 ▾", 열 때 "기다리는 게 있으면 피드"; 계획 승인 후 확인 없이 진행 |
+| `phone-chat` | 대화: 한 줄 머리줄, 엄지 승인 버튼, 서브에이전트 칩, 두 줄 입력창 칩(모델·노력 한 칩) | `Production/Phone/Phone screens` · `ChatReference` | `docs/ux/reference/2.0/captures/phone-chat.png` | 승인 근거 (2026-10-27): 확정 요청 "대화 화면은 실물 그대로 + 폰에 노력 선택"; 계획 승인 후 확인 없이 진행 |
+| `phone-terminal` | 터미널 AI 입력: 계기판 블록, 셸·AI 전환, 마지막 끝난 블록 칩, 보낼 대화의 입력창 | `Production/Phone/Phone screens` · `TerminalReference` | `docs/ux/reference/2.0/captures/phone-terminal.png` | 승인 근거 (2026-10-27): 폰 터미널 "모양 + AI 입력도"(I3 규칙), 계기판 모양 "전 화면 전부"; 계획 승인 후 확인 없이 진행 |
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약

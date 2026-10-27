@@ -4,6 +4,7 @@
   display: flex;
   flex-direction: column;
   width: 412px;
+  max-width: 100%;
   height: 915px;
   overflow: hidden;
   border: 1px solid var(--ui-border-mid);
