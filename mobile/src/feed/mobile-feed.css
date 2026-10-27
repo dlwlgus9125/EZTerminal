@@ -1,0 +1,252 @@
+/* The phone's feed (I4), ported from the approved prototype (b180f95 board-desk-phone.css) onto the
+   production tokens. Android WebView 74: margins instead of flex gap, no color-mix(), no :has(),
+   no `inset`; fonts named on the elements that need them (`:where()` is dropped). */
+
+.mob-feed {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ui-floor);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-body);
+}
+
+.mob-feed__top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: 3.375rem;
+  padding: 0 0.75rem 0 0.5rem;
+  border-bottom: 1px solid var(--ui-border-mid);
+  background: var(--ui-floor);
+}
+
+.mob-feed__scope {
+  display: flex;
+  flex: 0 2 auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0 0.375rem;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: none;
+  color: var(--ui-text-primary);
+  font: 600 1.1875rem / 1 var(--ui-font-label);
+  cursor: pointer;
+}
+
+.mob-feed__scope > .ez-ui-glyph:first-child { margin-right: 0.5rem; color: var(--ui-accent); }
+.mob-feed__scope-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mob-feed__caret { margin-left: 0.375rem; color: var(--ui-text-muted); }
+
+.mob-feed__host {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0.5rem;
+  margin-left: auto;
+  padding-left: 0.5rem;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font: 0.78125rem / 1 var(--ui-font-label);
+  white-space: nowrap;
+}
+
+/* On a narrow phone the host's words give way first; its lamp stays. */
+.mob-feed__host > .ez-ui-led { flex: none; margin-right: 0.4375rem; }
+.mob-feed__host > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mob-feed__top > .mob-feed__host + * { margin-left: 0.5rem; }
+
+.mob-feed__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0.75rem 0.75rem;
+}
+
+.mob-feed__h {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0.75rem 0.25rem 0.5rem;
+  color: var(--ui-text-muted);
+  font: 600 0.8125rem / 1.2 var(--ui-font-label);
+}
+
+.mob-feed__h > .ez-ui-glyph { margin-right: 0.5rem; }
+.mob-feed__n { margin-left: auto; font-weight: 400; }
+
+.mob-feed__none {
+  margin: 0 0.25rem 0.625rem;
+  color: var(--ui-text-muted);
+  font-size: 0.8125rem;
+}
+
+.mob-feed__card {
+  display: block;
+  width: 100%;
+  margin: 0 0 0.625rem;
+  padding: 0.8125rem 0.875rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--ui-surface);
+  color: inherit;
+  font-family: var(--ui-font-body);
+  text-align: left;
+}
+
+button.mob-feed__card { cursor: pointer; }
+button.mob-feed__card:focus-visible,
+.mob-feed__scope:focus-visible,
+.mob-feed__ask:focus-visible,
+.mob-feed__more:focus-visible,
+.mob-feed__link:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.mob-feed__card--need,
+.mob-feed__card[data-need] {
+  border-color: var(--ui-warning-border);
+  background: var(--ui-warning-muted);
+}
+
+.mob-feed__k {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--ui-text-muted);
+  font: 0.78125rem / 1.2 var(--ui-font-label);
+}
+
+.mob-feed__k > .ez-ui-glyph,
+.mob-feed__k > .ez-ui-led { flex: none; margin-right: 0.5rem; }
+.mob-feed__k--amber { color: var(--ui-warning); }
+.mob-feed__k-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mob-feed__project {
+  flex: none;
+  max-width: 40%;
+  margin-left: auto;
+  padding-left: 0.5rem;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-feed__t {
+  display: block;
+  margin: 0.375rem 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-body);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.mob-feed__link { width: 100%; min-height: 2.75rem; cursor: pointer; }
+
+.mob-feed__m {
+  display: block;
+  color: var(--ui-text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.mob-feed__cmd {
+  max-height: 7.5em;
+  margin: 0 0 0.625rem;
+  padding: 0.5rem 0.5625rem;
+  overflow: auto;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font: 0.78125rem / 1.45 var(--ui-font-terminal);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Allow on the left, deny on the right, half and half: a thumb answers from the feed. */
+.mob-feed__pair { display: flex; }
+
+.mob-feed__pair > .mob-feed__decide {
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 2.75rem;
+  font-size: 0.90625rem;
+}
+
+.mob-feed__pair > .mob-feed__decide + .mob-feed__decide { margin-left: 0.5rem; }
+
+.mob-feed__decide[data-tone='amber'] {
+  border-color: var(--ui-warning);
+  background: var(--ui-warning);
+  color: var(--ui-text-inverse);
+  font-weight: 700;
+}
+
+.mob-feed__error {
+  margin: 0.5rem 0 0;
+  color: var(--ui-danger);
+  font-size: 0.75rem;
+}
+
+.mob-feed__chain {
+  display: block;
+  margin-top: 0.25rem;
+  overflow: hidden;
+}
+
+.mob-feed__more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0 0.875rem;
+  border: 1px dashed var(--ui-border-mid);
+  border-radius: var(--ui-radius-2xl);
+  background: none;
+  color: var(--ui-text-secondary);
+  font: 0.8125rem / 1 var(--ui-font-label);
+  cursor: pointer;
+}
+
+.mob-feed__start {
+  flex: none;
+  padding: 0.5625rem 0.625rem calc(0.5625rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
+/* The ask bar opens the full new-conversation screen (every setting of a new conversation lives there). */
+.mob-feed__ask {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-2xl);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-body);
+  font-size: 0.90625rem;
+  text-align: left;
+  cursor: text;
+}
+
+.mob-feed__ask-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mob-feed__ask-usage { flex: none; margin-left: 0.625rem; font: 0.75rem / 1 var(--ui-font-label); white-space: nowrap; }
+.mob-feed__ask-usage b { color: var(--ui-text-secondary); font-weight: 600; }

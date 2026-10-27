@@ -7,6 +7,11 @@
 /* The conversation state: its lamp and word (structured-agent.css). */
 [data-ui-flex-gap='unsupported'] .structured-agent-state { gap: 0; }
 [data-ui-flex-gap='unsupported'] .structured-agent-state > span:first-child { margin-right: var(--ui-space-2); }
+/* A run's stage chips (shell/stage-chain.css): lamp and name; a compact chip that shows only its lamp keeps it centred. */
+[data-ui-flex-gap='unsupported'] .ez-shell-stage { gap: 0; }
+[data-ui-flex-gap='unsupported'] .ez-shell-stage > .ez-ui-led { margin-right: 0.4375rem; }
+[data-ui-flex-gap='unsupported'] .ez-shell-chain[data-compact='true'] .ez-shell-stage > .ez-ui-led { margin-right: 0.3125rem; }
+[data-ui-flex-gap='unsupported'] .ez-shell-chain[data-compact='true'] .ez-shell-stage:not([data-state='wait']):not([data-state='run']) > .ez-ui-led { margin-right: 0; }
 [data-ui-flex-gap='unsupported'] .workflow-header,
 [data-ui-flex-gap='unsupported'] .workflow-header__actions,
 [data-ui-flex-gap='unsupported'] .workflow-toolbar,

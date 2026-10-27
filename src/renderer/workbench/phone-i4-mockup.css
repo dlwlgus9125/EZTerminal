@@ -1,0 +1,21 @@
+/* I4 mockup frame: one phone at 412×915 (the approved prototype's size). Story-only. */
+.phone-i4-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 412px;
+  height: 915px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-mid);
+  background: var(--ui-floor);
+}
+
+.phone-i4-icons {
+  display: flex;
+  flex: none;
+  margin-left: 0.5rem;
+}
+
+.phone-i4-icons > * + * {
+  margin-left: 0.375rem;
+}

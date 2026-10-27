@@ -1,6 +1,7 @@
 import { Led } from '../ui';
 import type { LiveFlow, StageLamp } from './shell-model';
 import { useShellText } from './shell-text';
+import './stage-chain.css';
 
 const TONE: Record<StageLamp, 'on' | 'amber' | 'red' | 'ok' | 'idle'> = { done: 'on', run: 'on', wait: 'amber', fail: 'red', idle: 'idle' };
 

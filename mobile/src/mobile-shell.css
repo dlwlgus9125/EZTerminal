@@ -699,6 +699,11 @@
   height: 20px;
 }
 
+.mob-icon-btn--plate {
+  border: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
 .mob-icon-btn--accent {
   border: 1px solid var(--mob-accent-line);
   color: var(--ui-accent);
