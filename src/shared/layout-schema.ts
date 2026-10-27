@@ -280,8 +280,12 @@ export const SettingsSchema = z.object({
   schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
   startup: StartupPrefSchema,
   // Optional + schemaVersion stays 1: settings.json files written before E1
-  // still parse with theme absent; new installations default to 'dark'.
+  // still parse with theme absent. Since 2.0 (I4) the first start writes it:
+  // 'matrix' for a new profile, 'dark' for a profile from before (its look).
   theme: ThemeNameSchema.optional(),
+  // Who wrote `theme`: the first start's default or the person's own choice.
+  // An older build strips it when it rewrites the file; the theme stays.
+  themeSource: z.enum(['default', 'user']).optional(),
   // UI scale (v0.2.0 D1) — integer percent, absent defaults to 100 in layout-store.
   uiScale: z.number().int().min(80).max(150).optional(),
   // Scrollback buffer size in lines (WT-parity M5) — absent defaults to 5000 in layout-store.

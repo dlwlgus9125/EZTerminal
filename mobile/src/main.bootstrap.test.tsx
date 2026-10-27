@@ -20,6 +20,7 @@ vi.mock('./theme', () => ({
     bootstrap.calls.push('loadFont');
     return 'persisted-font';
   }),
+  ensureThemeDefault: vi.fn(() => bootstrap.calls.push('ensureThemeDefault')),
   loadTheme: vi.fn(() => {
     bootstrap.calls.push('loadTheme');
     return 'persisted-theme';
@@ -49,6 +50,7 @@ describe('mobile bootstrap ordering', () => {
       'loadCustomThemes',
       'loadFont',
       'setUserFontId',
+      'ensureThemeDefault',
       'loadTheme',
       'applyTheme',
     ]);

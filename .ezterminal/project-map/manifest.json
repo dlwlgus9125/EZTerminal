@@ -205,9 +205,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9a96c08be3a8828ac71ea9de86464d66ed4d04c22ee4e5a6afedd6fcba84686e",
+        "inputDigest": "sha256:a26f5c9a88e8e6d939d12dfe76c359130ab1c7eafe5c2f2263bafeee0a1b4c55",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4-10 theme default): startup reads whether the profile ran before, then writes the starting theme once (Matrix new, Dark existing) with its source; setTheme marks the choice as the user's. Anchors only moved; no anchored behaviour changed."
       }
     },
     {
@@ -369,9 +369,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2e3d4693fa61cae4f0427118389fee79995c8c53c1a3ce9a2495290da8c32427",
+        "inputDigest": "sha256:f65f482288bb998adcff48840c714ca9e2a425d3ca39d5ad7842d3e6bee3078d",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4-10 theme default): startup reads whether the profile ran before, then writes the starting theme once (Matrix new, Dark existing) with its source; setTheme marks the choice as the user's. Anchors only moved; no anchored behaviour changed."
       }
     },
     {
@@ -501,9 +501,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9b85a6367b64d8cb8e82e8006ad5f918f85d23d05a3d38122b460e8cc1e02b0d",
+        "inputDigest": "sha256:4f4ad917e95e8ec5f25d5d38a1712e84a4c75382508fc01e00d3acd4cb0c411c",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4-10 theme default): startup reads whether the profile ran before, then writes the starting theme once (Matrix new, Dark existing) with its source; setTheme marks the choice as the user's. Anchors only moved; no anchored behaviour changed."
       }
     },
     {

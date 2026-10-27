@@ -194,7 +194,7 @@ import {
 } from './daemon-project-sync';
 import { createRemoteProviderModels, installDaemonProviderIpc } from './daemon-provider-ipc';
 import { DaemonRuntime } from './daemon-runtime';
-import { DaemonStore } from './daemon-store';
+import { DaemonStore, resolveDaemonDatabasePath } from './daemon-store';
 import type { DesktopRuntime } from './desktop-runtime';
 import { DesktopWindowManager } from './desktop-window-manager';
 import { LogFile, pruneCrashDumps } from './diagnostics';
@@ -206,7 +206,7 @@ import { GitStatusService } from './git-status-service';
 import { GracefulShutdownCoordinator } from './graceful-shutdown';
 import { InterpreterBroker, type BrokerInterpreter, type RemotePort } from './interpreter-broker';
 import { KnownHostsStore } from './known-hosts-store';
-import { LayoutStore } from './layout-store';
+import { LayoutStore, isExistingProfile } from './layout-store';
 import { LocalMutationIngress, raceLocalOperationWithAbort } from './local-mutation-ingress';
 import { ManagedMergeService } from './managed-merge-service';
 import { resolveNativeHostPath } from './native-host-path';
@@ -837,6 +837,12 @@ app.on('ready', async () => {
   // sanitizes/validates everything (Codex gate B5). init() is awaited by every
   // handler via `storeReady` so stale .tmp cleanup always precedes first use.
   // Capture legacy JSON sources before their owners can clear stale sidecars.
+  // Read before this run creates any profile file: a profile that ran before keeps Dark when it never saved a
+  // theme, a new one starts in Matrix (I4).
+  const existingProfile = (() => {
+    try { return isExistingProfile(app.getPath('userData'), [resolveDaemonDatabasePath(app.getPath('userData'))]); }
+    catch { return isExistingProfile(app.getPath('userData')); }
+  })();
   const daemonStore = new DaemonStore(app.getPath('userData'));
   const daemonStoreReady = daemonStore.init();
   let daemonAvailability: DaemonAuthorityAvailability | undefined;
@@ -848,6 +854,7 @@ app.on('ready', async () => {
   const layoutStore = new LayoutStore(path.join(app.getPath('userData')));
   const storeReady = daemonRecoveryBarrier
     .then(() => layoutStore.init())
+    .then(() => layoutStore.ensureThemeDefault(existingProfile))
     .catch((err) => {
       console.error('[main] layout store init failed:', err);
     });

@@ -10,6 +10,7 @@ import {
   MOBILE_EFFECT_DEFAULTS,
   MOBILE_ROLLBAR_DEFAULTS,
   applyTheme,
+  ensureThemeDefault,
   loadEffectParams,
   loadTheme,
   saveEffectParams,
@@ -22,8 +23,38 @@ describe('theme', () => {
     delete document.documentElement.dataset.theme;
   });
 
-  it('defaults to dark when nothing is persisted', () => {
+  it('reads as Matrix when nothing is persisted (the new-install theme)', () => {
+    expect(loadTheme()).toBe('matrix');
+  });
+
+  it('starts a new install in Matrix and records that the default wrote it, on the first start only', () => {
+    ensureThemeDefault();
+    expect(localStorage.getItem('ezterminal-mobile-theme')).toBe('matrix');
+    expect(localStorage.getItem('ezterminal-mobile-theme-source')).toBe('default');
+    // The second start finds the keys the first one left and must not read the install as old.
+    localStorage.setItem('ezterminal-workspace-v1:host', '{}');
+    ensureThemeDefault();
+    expect(loadTheme()).toBe('matrix');
+  });
+
+  it('keeps Dark for an install from before that never saved a theme', () => {
+    localStorage.setItem('ezterminal-mobile-ui-scale', '1');
+    ensureThemeDefault();
     expect(loadTheme()).toBe('dark');
+    expect(localStorage.getItem('ezterminal-mobile-theme-source')).toBe('default');
+  });
+
+  it("never replaces a theme already saved, and marks a chosen one as the person's", () => {
+    for (const theme of ['light', 'matrix', 'dark'] as const) {
+      localStorage.clear();
+      localStorage.setItem('ezterminal-mobile-theme', theme);
+      localStorage.setItem('ezterminal-mobile-ui-scale', '1');
+      ensureThemeDefault();
+      expect(loadTheme()).toBe(theme);
+      expect(localStorage.getItem('ezterminal-mobile-theme-source')).toBeNull();
+    }
+    saveTheme('light');
+    expect(localStorage.getItem('ezterminal-mobile-theme-source')).toBe('user');
   });
 
   it('loads a persisted theme', () => {
@@ -31,9 +62,9 @@ describe('theme', () => {
     expect(loadTheme()).toBe('light');
   });
 
-  it('rejects a garbage value, defaulting to dark', () => {
+  it('rejects a garbage value, reading the new-install theme', () => {
     localStorage.setItem('ezterminal-mobile-theme', 'not-a-theme');
-    expect(loadTheme()).toBe('dark');
+    expect(loadTheme()).toBe('matrix');
   });
 
   it('round-trips save/load', () => {

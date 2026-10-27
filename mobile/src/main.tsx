@@ -9,7 +9,7 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { MobileUiPreferencesProvider } from './MobileUiPreferencesProvider';
-import { applyTheme, loadCustomThemes, loadFont, loadTheme } from './theme';
+import { applyTheme, ensureThemeDefault, loadCustomThemes, loadFont, loadTheme } from './theme';
 import { loadUiScale } from './ui-scale';
 import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { applyUiScale } from '../../src/renderer/ui-scale';
@@ -29,7 +29,9 @@ loadCustomThemes();
 setUserFontId(loadFont());
 
 // Mobile picks its own theme independent of the desktop bridge (M4 scope,
-// localStorage-only — see theme.ts's module doc).
+// localStorage-only — see theme.ts's module doc). A first start writes its
+// starting theme (Matrix new, Dark for an install from before) first.
+ensureThemeDefault();
 applyTheme(loadTheme());
 
 // Same independence for UI scale (D1) — mobile's own localStorage key, shared

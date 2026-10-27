@@ -35,6 +35,9 @@ import {
   type TerminalRendererPreference,
   type ThemeName,
 } from '../shared/layout-schema';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 import { JsonFile } from './json-file';
 import {
   DEFAULT_UI_PREFERENCES,
@@ -66,6 +69,19 @@ const validateSettings = (raw: unknown): SettingsFile | null => {
 };
 const emptyPresets = (): PresetsFile => ({ schemaVersion: LAYOUT_SCHEMA_VERSION, presets: {} });
 const emptySettings = (): SettingsFile => ({ schemaVersion: LAYOUT_SCHEMA_VERSION, startup: { mode: 'last' } });
+
+/**
+ * Whether EZTerminal ran in this profile before: its settings, layout or presets file, or another file it keeps
+ * there (the agent host's database). Read before this run creates any of them.
+ */
+export function isExistingProfile(dir: string, otherFiles: readonly string[] = []): boolean {
+  return [LAYOUT_FILE, PRESETS_FILE, SETTINGS_FILE].some((name) => existsSync(path.join(dir, name)))
+    || otherFiles.some((file) => existsSync(file));
+}
+
+/** A new profile starts in Matrix (2.0); a profile from before keeps the Dark it has been showing. */
+export const NEW_PROFILE_THEME: ThemeName = 'matrix';
+export const EXISTING_PROFILE_THEME: ThemeName = 'dark';
 
 export class LayoutStore {
   private readonly layoutFile: JsonFile;
@@ -220,11 +236,24 @@ export class LayoutStore {
   }
 
   async getTheme(): Promise<ThemeName> {
-    return (await this.loadSettingsFile()).theme ?? 'dark';
+    return (await this.loadSettingsFile()).theme ?? NEW_PROFILE_THEME;
   }
 
+  /** The person's own choice (Settings > Appearance); marks the theme as theirs. */
   async setTheme(theme: ThemeName): Promise<void> {
-    await this.updateSettings((current) => ({ ...current, theme }), 'theme');
+    await this.updateSettings((current) => ({ ...current, theme, themeSource: 'user' }), 'theme');
+  }
+
+  /**
+   * Writes the starting theme once, at startup and before any window reads it: Matrix for a new profile, Dark for a
+   * profile that ran before without saving a theme (it showed Dark, so an update keeps its look). A saved theme —
+   * chosen or defaulted — is never touched. `existingProfile` is read before this run creates any file.
+   */
+  async ensureThemeDefault(existingProfile: boolean): Promise<void> {
+    if ((await this.loadSettingsFile()).theme !== undefined) return;
+    await this.updateSettings((current) => (current.theme !== undefined ? current : {
+      ...current, theme: existingProfile ? EXISTING_PROFILE_THEME : NEW_PROFILE_THEME, themeSource: 'default',
+    }), 'theme default');
   }
 
   async getUiScale(): Promise<number> {

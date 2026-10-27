@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { LayoutStore } from './layout-store';
+import { LayoutStore, isExistingProfile } from './layout-store';
 import { CONVERSATION_LAYOUT_SCHEMA_VERSION } from '../shared/layout-schema';
 
 function makeDir(): string {
@@ -251,12 +251,52 @@ describe('LayoutStore — presets & startup (A-M2)', () => {
 });
 
 describe('LayoutStore — theme (E1)', () => {
-  it('defaults to dark and round-trips a theme choice', async () => {
-    const store = new LayoutStore(makeDir());
+  it('reads as Matrix when no theme is saved and round-trips a theme choice as the person’s', async () => {
+    const dir = makeDir();
+    const store = new LayoutStore(dir);
     await store.init();
-    expect(await store.getTheme()).toBe('dark');
+    expect(await store.getTheme()).toBe('matrix');
     await store.setTheme('light');
     expect(await store.getTheme()).toBe('light');
+    expect(JSON.parse(readFileSync(path.join(dir, 'settings.json'), 'utf8'))).toMatchObject({ theme: 'light', themeSource: 'user' });
+  });
+
+  it('starts a new profile in Matrix and keeps Dark for a profile from before, marking the default (I4)', async () => {
+    const fresh = makeDir();
+    expect(isExistingProfile(fresh)).toBe(false);
+    const created = new LayoutStore(fresh);
+    await created.init();
+    await created.ensureThemeDefault(isExistingProfile(fresh));
+    expect(await created.getTheme()).toBe('matrix');
+    expect(JSON.parse(readFileSync(path.join(fresh, 'settings.json'), 'utf8'))).toMatchObject({ theme: 'matrix', themeSource: 'default' });
+    // The next start finds the file the first one wrote: the theme saved then stays.
+    await created.ensureThemeDefault(isExistingProfile(fresh));
+    expect(await created.getTheme()).toBe('matrix');
+
+    const old = makeDir();
+    writeFileSync(path.join(old, 'layout.json'), '{}', 'utf8');
+    expect(isExistingProfile(old)).toBe(true);
+    const upgraded = new LayoutStore(old);
+    await upgraded.init();
+    await upgraded.ensureThemeDefault(isExistingProfile(old));
+    expect(await upgraded.getTheme()).toBe('dark');
+
+    const database = makeDir();
+    writeFileSync(path.join(database, 'daemon.sqlite'), '', 'utf8');
+    expect(isExistingProfile(database, [path.join(database, 'daemon.sqlite')])).toBe(true);
+  });
+
+  it('never replaces a saved theme, chosen or not', async () => {
+    for (const theme of ['light', 'matrix', 'dark'] as const) {
+      const dir = makeDir();
+      writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ schemaVersion: 1, startup: { mode: 'last' }, theme }), 'utf8');
+      const store = new LayoutStore(dir);
+      await store.init();
+      await store.ensureThemeDefault(true);
+      await store.ensureThemeDefault(false);
+      expect(await store.getTheme()).toBe(theme);
+      expect(JSON.parse(readFileSync(path.join(dir, 'settings.json'), 'utf8')).themeSource).toBeUndefined();
+    }
   });
 
   it('setTheme preserves a previously-set startup pref (shared settings.json)', async () => {

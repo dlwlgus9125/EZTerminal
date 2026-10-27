@@ -27,6 +27,11 @@ import { e2eLog } from './e2e-telemetry';
 // all under their own `ezterminal-mobile-*` localStorage keys.
 
 const THEME_KEY = 'ezterminal-mobile-theme';
+/** Who wrote the theme: `default` (the first start picked it) or `user` (chosen in the app). */
+const THEME_SOURCE_KEY = 'ezterminal-mobile-theme-source';
+/** A new install starts in Matrix (2.0); an install from before keeps the Dark it has been showing. */
+const NEW_INSTALL_THEME: ThemeName = 'matrix';
+const EXISTING_INSTALL_THEME: ThemeName = 'dark';
 const CUSTOM_THEMES_KEY = 'ezterminal-mobile-custom-themes';
 const FONT_KEY = 'ezterminal-mobile-font';
 const EFFECTS_KEY = 'ezterminal-mobile-effects';
@@ -41,20 +46,41 @@ function isThemeName(value: string): value is ThemeName {
   return listThemes().some((t) => t.id === value);
 }
 
-/** Reads the persisted choice, defaulting to 'dark' for anything absent,
- * unrecognized, or on a storage error (private browsing / quota). */
-export function loadTheme(): ThemeName {
+/**
+ * Writes the starting theme once, before the first `loadTheme()`: Matrix on a new install; Dark when this app ran
+ * before without a theme saved (it showed Dark then, so its look does not change on update). Always written on the
+ * first start — otherwise the next start would find the keys this run leaves behind and read the install as old.
+ * A theme already saved (picked or defaulted) is never touched.
+ */
+export function ensureThemeDefault(): void {
   try {
-    const raw = localStorage.getItem(THEME_KEY);
-    return raw !== null && isThemeName(raw) ? raw : 'dark';
+    if (localStorage.getItem(THEME_KEY) !== null) return;
+    let existing = false;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      if (localStorage.key(index)?.startsWith('ezterminal')) { existing = true; break; }
+    }
+    localStorage.setItem(THEME_KEY, existing ? EXISTING_INSTALL_THEME : NEW_INSTALL_THEME);
+    localStorage.setItem(THEME_SOURCE_KEY, 'default');
   } catch {
-    return 'dark';
+    // Storage unavailable: loadTheme() falls back to the new-install theme for this run.
   }
 }
 
+/** Reads the persisted choice; anything absent, unrecognized, or a storage error reads as the new-install theme. */
+export function loadTheme(): ThemeName {
+  try {
+    const raw = localStorage.getItem(THEME_KEY);
+    return raw !== null && isThemeName(raw) ? raw : NEW_INSTALL_THEME;
+  } catch {
+    return NEW_INSTALL_THEME;
+  }
+}
+
+/** The person's own choice (the theme menu); marks the theme as theirs. */
 export function saveTheme(name: ThemeName): void {
   try {
     localStorage.setItem(THEME_KEY, name);
+    localStorage.setItem(THEME_SOURCE_KEY, 'user');
   } catch {
     // best-effort — a private-browsing/quota failure only costs persistence next time
   }
