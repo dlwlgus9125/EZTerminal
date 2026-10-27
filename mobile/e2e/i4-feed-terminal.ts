@@ -136,6 +136,16 @@ async function main(): Promise<void> {
     const turnsBefore = (await snapshot())?.turns.length ?? 0;
     await tapTestIdOnce('structured-agent-send');
     // The sent toast stays five seconds: open the conversation from it at once.
+    await waitForTestId('mobile-toast-action', 15_000);
+    const toastProbe = await evaluateWebView<string>(`(function () {
+      var node = document.querySelector('[data-testid="mobile-toast-action"]');
+      var rect = node.getBoundingClientRect();
+      var top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return JSON.stringify({ rect: [rect.left, rect.top, rect.width, rect.height], viewport: [window.innerWidth, window.innerHeight],
+        top: top ? (top.getAttribute('data-testid') || top.className || top.tagName) : null });
+    })()`);
+    console.log(`[i4-feed-terminal] toast: ${toastProbe}`);
+    await capture('05a-toast');
     await tapTestId('mobile-toast-action', 15_000);
     const sent = Date.now() + 30_000;
     while (((await snapshot())?.turns.length ?? 0) <= turnsBefore) { if (Date.now() > sent) throw new Error('The terminal message was not sent'); await sleep(200); }

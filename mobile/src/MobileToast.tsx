@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import { e2eLog } from './e2e-telemetry';
 
@@ -62,7 +63,7 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
   return (
     <MobileToastContext.Provider value={value}>
       {children}
-      {toast && (
+      {toast && createPortal(
         <div key={toast.id} className="mob-toast" role="status" aria-live="polite" data-testid="mobile-toast" data-action={toast.action ? 'true' : undefined}>
           <span className="mob-dot mob-dot--live" aria-hidden="true" />
           <span className="mob-toast__message">{toast.message}</span>
@@ -76,7 +77,10 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
               {toast.action.label}
             </button>
           )}
-        </div>
+        </div>,
+        // On the page itself: inside the shell a fixed toast is placed against a frame the keyboard does not
+        // shrink, so it would sit under the keyboard exactly when a message was just typed and sent.
+        document.body,
       )}
     </MobileToastContext.Provider>
   );

@@ -24,14 +24,14 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.useRealTimers(); });
 
-const toast = (): HTMLElement | null => container.querySelector('[data-testid="mobile-toast"]');
+const toast = (): HTMLElement | null => document.querySelector('[data-testid="mobile-toast"]');
 
 describe('MobileToast', () => {
   it('shows a plain message that takes no touches and goes away by itself', () => {
     act(() => show('Sent'));
     expect(toast()?.textContent).toContain('Sent');
     expect(toast()?.hasAttribute('data-action')).toBe(false);
-    expect(container.querySelector('[data-testid="mobile-toast-action"]')).toBeNull();
+    expect(document.querySelector('[data-testid="mobile-toast-action"]')).toBeNull();
     act(() => { vi.advanceTimersByTime(2600); });
     expect(toast()).toBeNull();
   });
@@ -41,7 +41,7 @@ describe('MobileToast', () => {
     act(() => show('Sent to “Fix the login”', action));
     expect(toast()?.getAttribute('data-action')).toBe('true');
     act(() => { vi.advanceTimersByTime(2600); });
-    const button = container.querySelector<HTMLButtonElement>('[data-testid="mobile-toast-action"]');
+    const button = document.querySelector<HTMLButtonElement>('[data-testid="mobile-toast-action"]');
     expect(button?.textContent).toBe('Open conversation');
     act(() => button!.click());
     expect(action.onSelect).toHaveBeenCalledOnce();

@@ -1234,7 +1234,9 @@
 .mob-toast {
   position: fixed;
   z-index: var(--ui-z-toast);
-  bottom: calc(var(--mob-tabbar) + 28px + env(safe-area-inset-bottom));
+  /* Root tokens only: the toast renders on the page itself, outside the shell where the --mob-* tokens live
+     (an undefined token made this offset invalid and dropped the toast below the screen). */
+  bottom: calc(5.5rem + env(safe-area-inset-bottom));
   left: 50%;
   display: flex;
   max-width: 86%;
@@ -1242,7 +1244,7 @@
   gap: 8px;
   padding: 10px 16px;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.35);
-  border-radius: var(--mob-radius-pill);
+  border-radius: var(--ui-radius-pill);
   background: var(--ui-surface);
   color: var(--ui-text-primary);
   font-family: var(--ui-font-body);
@@ -1264,6 +1266,7 @@
 
 /* A toast with a follow-up takes touches; the button keeps a 44px target inside the pill. */
 .mob-toast[data-action] { pointer-events: auto; }
+[data-ui-flex-gap='unsupported'] .mob-toast > * + * { margin-left: 8px; }
 
 .mob-toast__action {
   flex: none;
