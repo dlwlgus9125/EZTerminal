@@ -68,7 +68,13 @@ export function mobileConversationState(
       tail = write.catch(() => undefined);
       return write;
     },
-    chatStateRead: read, chatStateWrite: (scope, request) => {
+    // Reads wait for queued writes, so a read never pairs an older record with a newer revision count.
+    chatStateRead: (scope) => {
+      const queued = tail.then(() => read(scope));
+      tail = queued.catch(() => undefined);
+      return queued;
+    },
+    chatStateWrite: (scope, request) => {
     const write = tail.then(async (): Promise<ChatStateResult> => {
       const current = await read(scope); if (!current.ok) return current;
       if (current.snapshot.revision !== request.expectedRevision) return { ok: false, error: 'stale', message: 'This draft changed. Read stored state before retrying.' };

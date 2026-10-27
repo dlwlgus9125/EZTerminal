@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, useEffect, useId, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +31,7 @@ vi.mock('@capacitor/app', () => ({
 
 import { Menu, MenuItem, Popover } from '../../src/renderer/ui';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
+import { MobileNavigationHistoryProvider, useMobileNavigationHistory } from './MobileNavigationHistory';
 
 let root: Root;
 let host: HTMLDivElement;
@@ -168,5 +169,65 @@ describe('MobileNavigationHistory native Android Back', () => {
 
     expect(back).toHaveBeenCalledTimes(1);
     expect(nativeApp.exitApp).not.toHaveBeenCalled();
+  });
+  it("registers the shell's stop below a project opened from the feed, so closing the project keeps it (I4)", async () => {
+    function ProjectLayer(): JSX.Element {
+      const navigation = useMobileNavigationHistory();
+      const id = useId();
+      useEffect(() => navigation.pushLayer({ id: `project-${id}`, kind: 'page', onBack: () => undefined }), [id, navigation]);
+      return <div>project</div>;
+    }
+    const entries: string[] = [];
+    const push = window.history.pushState.bind(window.history);
+    vi.spyOn(window.history, 'pushState').mockImplementation((state, unused, url) => {
+      entries.push(String((state as { ezterminalNavigation?: { layerId?: string } } | null)?.ezterminalNavigation?.layerId));
+      push(state, unused, url);
+    });
+    // One commit opens both: the feed's project screen (the shell's stop) and the project inside it.
+    await act(async () => {
+      root.render(
+        <MobileWorkbenchCoordinator terminal={<div>terminal</div>} page={<ProjectLayer />} terminalActive={false}
+          destinationActive={false} tabRootActive onRequestTabRoot={vi.fn()} />,
+      );
+      await Promise.resolve();
+    });
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatch(/^mobile-tab-/);
+    expect(entries[1]).toMatch(/^project-/);
+  });
+  it('also consumes the entry of a layer released while a close was being traversed (I4)', async () => {
+    function Layer({ id, onBack }: { readonly id: string; readonly onBack: () => void }): null {
+      const navigation = useMobileNavigationHistory();
+      useEffect(() => navigation.pushLayer({ id, kind: 'page', onBack }), [id, navigation, onBack]);
+      return null;
+    }
+    function Close(): JSX.Element {
+      const navigation = useMobileNavigationHistory();
+      return <button type="button" data-testid="close" onClick={() => navigation.closeLayer('detail', 'ui')}>close</button>;
+    }
+    // A conversation opened from the feed: the shell's stop and the conversation's own; leaving the
+    // conversation also returns the shell to the feed, which releases its stop in the same moment.
+    function Harness(): JSX.Element {
+      const [open, setOpen] = useState(true);
+      const leave = (): void => setOpen(false);
+      return <>{open && <Layer id="shell" onBack={leave} />}{open && <Layer id="detail" onBack={leave} />}<Close /></>;
+    }
+    const states: unknown[] = [];
+    const push = window.history.pushState.bind(window.history);
+    vi.spyOn(window.history, 'pushState').mockImplementation((state, unused, url) => { states.push(state); push(state, unused, url); });
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    vi.spyOn(window.history, 'go').mockImplementation(() => undefined);
+    await act(async () => {
+      root.render(<MobileNavigationHistoryProvider><Harness /></MobileNavigationHistoryProvider>);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="close"]')!.click();
+      for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    });
+    expect(back).toHaveBeenCalledTimes(1);
+    // The browser lands on the shell's entry, whose layer is gone: it is consumed as well.
+    await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state: states[0] })); });
+    expect(back).toHaveBeenCalledTimes(2);
   });
 });

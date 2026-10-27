@@ -94,6 +94,8 @@ async function submitNow(access: ConversationCommandAccess, input: {
   readonly onAccepted?: (commandId: string) => void;
 }): Promise<StructuredAgentUiResult> {
   const { sessionId, recovery, type, prompt, context } = input;
+  // The composition being sent, as it is now: an edit made while the snapshot is read must stay in the box.
+  const composition = recovery.getSnapshot().draft;
   const authority = await access.latestSnapshot();
   if (!authority) return { ok: false, message: UNAVAILABLE };
   const commandId = opaqueId('command');
@@ -116,7 +118,7 @@ async function submitNow(access: ConversationCommandAccess, input: {
         type,
         payload: { sessionId, prompt, ...(context ? { context } : {}) },
       });
-  const prepared = await recovery.prepare(command);
+  const prepared = await recovery.prepare(command, composition);
   if (!prepared.ok) return prepared;
   const receipt = await access.sendCommand(command);
   if (!receipt || (!receipt.ok && receipt.error.code === 'delivery-uncertain')) {

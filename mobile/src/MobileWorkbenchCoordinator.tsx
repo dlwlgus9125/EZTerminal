@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 
 import {
   MobileNavigationHistoryProvider,
@@ -101,8 +101,11 @@ function MobileWorkbenchLayers({
   }, [resolvedTerminalActive]);
 
   // Declaration order IS Back order: the tab-root stop must be pushed before
-  // the sub-page stop so Back unwinds sub-page -> tab root -> delegate.
-  useEffect(() => {
+  // the sub-page stop so Back unwinds sub-page -> tab root -> delegate. Layout
+  // effects, so both register before any screen's own layers (passive effects):
+  // a project opened from the feed must sit above the shell's stop, or closing
+  // it would release the stop the terminal opened from it still needs.
+  useLayoutEffect(() => {
     if (!tabRootActive) return;
     return navigation.pushLayer({
       id: tabLayerId,
@@ -111,7 +114,7 @@ function MobileWorkbenchLayers({
     });
   }, [navigation, tabLayerId, tabRootActive]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!resolvedDestinationActive) return;
     return navigation.pushLayer({
       id: pageLayerId,

@@ -11,7 +11,7 @@ import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobilePageHeader } from './MobilePageHeader';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { mobilePlanningDraftStorage } from './mobile-planning-draft-store';
-import { MobileChatStateStore } from './mobile-chat-state-store';
+import { phoneChatStateAccess } from './phone-conversation-access';
 import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
 import { mobileWorkflowDraftAccess } from './mobile-workflow-draft-store';
 import { saveDownloadToDevice } from './download-storage';
@@ -108,11 +108,15 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       capabilityClient={capabilityClient}
       recoveryAccess={recoveryAccess}
       onSeedConversationDraft={async (sessionId, draft) => {
-        const store = new MobileChatStateStore();
-        const scope = { projectId: project.id, sessionId, authorityFingerprint: await mobileAgentCreateAuthorityFingerprint(await transport.getRemoteToken()) };
-        const saved = await store.load(scope);
-        if (saved?.draft.text && saved.draft.text !== draft.text) throw new Error('A draft already exists in this conversation. It was preserved.');
-        await store.save({ schemaVersion: 1, scope, ...saved, draft });
+        // Through the same storage the conversation's draft controller uses (one revision count, one write queue).
+        const access = phoneChatStateAccess(transport);
+        const scope = { projectId: project.id, sessionId };
+        const current = await access.chatStateRead(scope);
+        if (!current.ok) throw new Error(current.message);
+        const saved = current.snapshot.state.draft.text;
+        if (saved && saved !== draft.text) throw new Error('A draft already exists in this conversation. It was preserved.');
+        const written = await access.chatStateWrite(scope, { expectedRevision: current.snapshot.revision, state: { ...current.snapshot.state, draft } });
+        if (!written.ok) throw new Error(written.message);
       }}
       disabled={!connected} disabledReason={offlineReason}
       onBack={() => navigation.closeLayer(layerId, 'ui')}

@@ -84,7 +84,9 @@ export function useFeedData({ transport, daemon, liveDaemon, terminalAgents, con
   useEffect(() => setWorkflows(new Map()), [authority]);
   const flowsAvailable = connected && transport.negotiatedRemoteProtocolVersion >= REMOTE_PROTOCOL_VERSION_WORKFLOW;
 
-  const waiting = useMemo(() => feedWaiting(liveDaemon, terminalAgents, workflows), [liveDaemon, terminalAgents, workflows]);
+  // Offline, nothing waits: a cached approval (a conversation's or a terminal agent's) cannot be answered.
+  const liveAgents = useMemo(() => (connected ? terminalAgents : []), [connected, terminalAgents]);
+  const waiting = useMemo(() => feedWaiting(liveDaemon, liveAgents, workflows), [liveAgents, liveDaemon, workflows]);
   const conversations = useMemo(() => feedConversations(daemon, scope, {
     stageSessions: stageSessionIds(workflows.values()),
     waitingSessions: new Set(waiting.flatMap((item) => item.sessionId ? [item.sessionId] : [])),
@@ -94,8 +96,8 @@ export function useFeedData({ transport, daemon, liveDaemon, terminalAgents, con
   const usage = useMemo(() => askBarUsage(daemon, conversations.items)?.usage ?? null, [conversations.items, daemon]);
 
   // Which projects to read depends on the snapshot alone (not on what the reads return), so reading cannot loop.
-  const readProjects = useMemo(() => flowReadProjects(scope, projects, feedWaiting(liveDaemon, terminalAgents),
-    feedConversations(daemon, scope, { limit: FEED_CONVERSATION_LIMIT }).items).join('\n'), [daemon, liveDaemon, projects, scope, terminalAgents]);
+  const readProjects = useMemo(() => flowReadProjects(scope, projects, feedWaiting(liveDaemon, liveAgents),
+    feedConversations(daemon, scope, { limit: FEED_CONVERSATION_LIMIT }).items).join('\n'), [daemon, liveAgents, liveDaemon, projects, scope]);
   // A new flow approval is read at once (its card names the flow).
   const flowApprovals = (liveDaemon?.attention?.items ?? []).filter((item) => item.kind === 'flow-approval').map((item) => item.id).join('\n');
 

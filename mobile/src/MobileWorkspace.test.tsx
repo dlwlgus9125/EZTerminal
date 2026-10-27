@@ -1042,6 +1042,21 @@ describe('MobileWorkspace - previous work', () => {
     expect(el.querySelector('[data-testid="menu-btn"]')?.textContent).toContain('/one');
   });
 
+  it('keeps the whole restore record while this run is still restoring it', async () => {
+    const { transport } = makeAuthedTransport([], 'restore-host');
+    Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
+    const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');
+    writeWorkspaceRestore(authority, { terminalSessionIds: ['one'], activeTerminalSessionId: 'one', activeAgentSessionId: null, destination: 'terminal', lastSurface: 'terminal' });
+    // The adoption never answers: the restore is still running.
+    const open = vi.spyOn(transport, 'openSessionSurface').mockImplementation(() => new Promise(() => undefined));
+    await renderWorkspace(transport, undefined, {
+      schemaVersion: 1, authorityFingerprint: authority, savedAt: DAEMON_NOW, snapshot: daemonSnapshot(), transcripts: {},
+    });
+    for (let attempt = 0; attempt < 50 && open.mock.calls.length < 1; attempt += 1) await flushAsync();
+    await flushAsync();
+    expect(readWorkspaceRestore(authority)).toMatchObject({ terminalSessionIds: ['one'], activeTerminalSessionId: 'one', lastSurface: 'terminal' });
+  });
+
   it('opens on the feed when the conversation left is gone', async () => {
     const { transport } = makeAuthedTransport([], 'restore-host');
     const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');

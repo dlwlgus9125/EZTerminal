@@ -437,6 +437,7 @@ export function MobileWorkspace({
               ? MOBILE_FEATURE_LOADERS.pcControl
               : MOBILE_FEATURE_LOADERS.sessions;
     preloadOnIntent(loader);
+    navigationCountRef.current += 1;
     subPageReturnTargetRef.current = returnTarget;
     // The opener gets focus back; a menu item is gone by then, so its menu's trigger (returnTarget) does.
     subPageReturnElementRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
@@ -446,6 +447,7 @@ export function MobileWorkspace({
   }, []);
 
   const closeSubPage = useCallback(() => {
+    navigationCountRef.current += 1;
     restoreTabFocusRef.current = true;
     setSubPage(null);
   }, []);
@@ -705,6 +707,7 @@ export function MobileWorkspace({
 
   const revealTerminal = useCallback(() => {
     userNavigatedRef.current = true;
+    navigationCountRef.current += 1;
     setSheet(null);
     setSubPage(null);
     setTab('terminal');
@@ -892,9 +895,15 @@ export function MobileWorkspace({
           new Promise<null>((resolve) => { budget = setTimeout(() => resolve(null), Math.max(0, LAUNCH_DECISION_MS - (Date.now() - connectedAt))); }),
         ]).finally(() => clearTimeout(budget));
         if (cancelled) return;
+        // A conversation being created is recovered first (it opens itself): wait for that check, within the budget.
+        while (agentCreateRecoveryStateRef.current.status === 'loading' && Date.now() - connectedAt <= LAUNCH_DECISION_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          if (cancelled) return;
+        }
         const agentId = snapshot?.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)
           ? saved.activeAgentSessionId : null;
-        if (!userNavigatedRef.current && !agentCreateRecoveryStateRef.current.recovery) {
+        if (!userNavigatedRef.current && !agentCreateRecoveryStateRef.current.recovery
+          && agentCreateRecoveryStateRef.current.status !== 'loading') {
           setActiveAgentSessionId(agentId);
           // What waits first, then the terminal or conversation left; a decision ready too late is not applied.
           const next = launchSurface({
@@ -918,6 +927,8 @@ export function MobileWorkspace({
     if (tab === 'terminal' || tab === 'agents') lastWorkTabRef.current = tab;
     const authority = restoreAuthority ?? offlineChatCache?.authorityFingerprint;
     if (!authority) return;
+    // Connected but not restored yet: the record is what the restore is about to read; leave it whole.
+    if (connected && restoreAuthority === null) return;
     const previous = readWorkspaceRestore(authority);
     // Until this run has restored (or the person moved), the surface left last time is kept, not the feed shown meanwhile.
     const settled = restoreAuthority !== null || userNavigatedRef.current;
@@ -948,6 +959,8 @@ export function MobileWorkspace({
     let cancelled = false;
     void transport.getDaemonSnapshot().catch(() => null).then((snapshot) => {
       if (cancelled || navigationCountRef.current !== movesAtStart || Date.now() - reconnectedAt > LAUNCH_DECISION_MS) return;
+      // A conversation being created is recovered first; it opens itself.
+      if (agentCreateRecoveryStateRef.current.recovery || agentCreateRecoveryStateRef.current.status === 'loading') return;
       if (feedBadgeCount(snapshot, launchAgentsRef.current) === 0) return;
       setSheet(null);
       setSubPage(null);
@@ -1049,7 +1062,7 @@ export function MobileWorkspace({
     liveDaemon,
     terminalAgents: userFacingAgentSnapshot.items,
     connected: connected && transport.isAuthed,
-    active: tab === 'feed' && subPage === null && appActive,
+    active: tab === 'feed' && subPage === null && appActive && pageVisible,
     authority: feedAuthority,
   });
   const waitingCount = feed.waiting.length;
@@ -1369,7 +1382,7 @@ export function MobileWorkspace({
         destinationActive={subPage !== null}
         tabRootActive={tab !== 'feed'}
         onRequestRoot={closeSubPage}
-        onRequestTabRoot={() => setTab('feed')}
+        onRequestTabRoot={() => { navigationCountRef.current += 1; setTab('feed'); }}
         page={<>
           <div hidden={subPage !== null || tab !== 'home'} className="mobile-workflow-persistent">
             <MobilePlanningNavigator state={daemonRuntimeState} transport={transport} connected={connected}

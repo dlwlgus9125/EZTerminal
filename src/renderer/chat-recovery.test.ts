@@ -107,6 +107,31 @@ describe('desktop chat recovery ordering', () => {
     expect(controller.getSnapshot().unsaved).toBe(false);
   });
 
+  it('reads as unsaved while a chosen draft is written after a conflict, and saved once an edit is undone', async () => {
+    const { controller, access, stored } = fixture({ draft: { text: 'Stored' } });
+    await controller.load();
+    controller.updateDraft({ text: 'Local' });
+    // Another window writes first: this draft's autosave conflicts.
+    vi.mocked(access.chatStateWrite).mockResolvedValueOnce({ ok: false, error: 'stale', revision: 9, message: 'conflict' });
+    await controller.flush();
+    expect(controller.getSnapshot().status).toBe('conflict');
+    let release!: () => void;
+    const write = vi.mocked(access.chatStateWrite).getMockImplementation()!;
+    vi.mocked(access.chatStateWrite).mockImplementationOnce((target, request) => new Promise((resolve) => { release = () => resolve(write(target, request)); }));
+    const resolving = controller.resolveConflict('local');
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(controller.getSnapshot()).toMatchObject({ status: 'ready', unsaved: true });
+    release();
+    await resolving;
+    expect(controller.getSnapshot().unsaved).toBe(false);
+    expect(stored().state.draft.text).toBe('Local');
+
+    controller.updateDraft({ text: 'Local!' });
+    controller.updateDraft({ text: 'Local' });
+    await controller.flush();
+    expect(controller.getSnapshot().unsaved).toBe(false);
+  });
+
   it('retains a rejected message as a draft but clears its resolved pending envelope', async () => {
     const { controller, stored } = fixture({ draft: { text: 'Send original' } });
     await controller.load();

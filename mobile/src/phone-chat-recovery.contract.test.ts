@@ -171,6 +171,43 @@ describe('phone conversation draft on the shared recovery controller', () => {
     expect(stored?.draft.text).toBe('hello');
   });
 
+  it('never pairs a slow read of an older record with a newer revision', async () => {
+    const { store, send, commands } = setup();
+    let release!: () => void;
+    let hold = false;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    // A read that captures the record, then answers late (the keystore is slow).
+    const slow = { load: async (scope: Parameters<typeof store.load>[0]) => { const record = await store.load(scope); if (hold) await gate; return record; },
+      save: (record: Parameters<typeof store.save>[0]) => store.save(record) };
+    const connection = () => ({
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => ({ revision: 4 }) as DaemonSnapshot,
+      sendDaemonCommand: (command: DaemonCommand) => send(command),
+    }) as unknown as WsEzTerminalTransport;
+    const scope = { projectId: 'project', sessionId: 'slow-read' };
+    const writer = new ChatRecoveryController(scope, phoneChatStateAccess(connection(), { store }));
+    await writer.load();
+    writer.updateDraft({ text: 'hello' });
+    await writer.flush();
+    hold = true;
+    const reader = new ChatRecoveryController(scope, phoneChatStateAccess(connection(), { store: slow }));
+    const reading = reader.load();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    send.mockResolvedValueOnce(uncertain);
+    const sending = submitConversationMessage(commands, { sessionId: 'slow-read', recovery: writer, type: 'agent.submit', prompt: 'hello' });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    hold = false;
+    release();
+    await reading;
+    await sending;
+    const escrow = send.mock.calls[0]![0];
+    reader.updateDraft({ text: 'typed on the slow screen' });
+    await reader.flush();
+    expect(reader.getSnapshot().status).toBe('conflict');
+    const fingerprint = await mobileAgentCreateAuthorityFingerprint('test-pc');
+    expect((await store.load({ authorityFingerprint: fingerprint, ...scope }))?.pending).toEqual(escrow);
+  });
+
   it('gives the conversation screen and the terminal one controller per conversation on a PC connection', () => {
     const { transport } = setup();
     const access = phoneChatStateAccess(transport);

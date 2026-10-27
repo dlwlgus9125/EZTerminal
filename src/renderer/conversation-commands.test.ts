@@ -61,6 +61,25 @@ describe('submitConversationMessage', () => {
     view();
   });
 
+  it('keeps an edit made while the snapshot is read before the message is escrowed', async () => {
+    const chat = storage({ draft: { text: 'message' } });
+    const recovery = sharedChatRecovery(scope, chat.access);
+    const view = retainChatRecovery(recovery)!;
+    await recovery.load();
+    const daemon = host();
+    let openSnapshot!: () => void;
+    daemon.delaySnapshot(new Promise((resolve) => { openSnapshot = resolve; }));
+    const sending = submitConversationMessage(daemon.access, { sessionId: scope.sessionId, recovery, type: 'agent.submit', prompt: 'message' });
+    await flush();
+    recovery.updateDraft({ text: 'message\n\n' });
+    openSnapshot();
+    await flush();
+    daemon.releases.shift()!();
+    await expect(sending).resolves.toEqual({ ok: true });
+    expect(recovery.getSnapshot().draft.text).toBe('message\n\n');
+    view();
+  });
+
   it('never sends through a draft that was forgotten and reopened elsewhere meanwhile', async () => {
     const chat = storage({ draft: { text: 'hello' } });
     const stale = sharedChatRecovery(scope, chat.access);

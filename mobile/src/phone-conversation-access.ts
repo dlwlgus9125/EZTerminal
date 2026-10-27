@@ -10,7 +10,7 @@ export const PHONE_PRINCIPAL = { kind: 'android', id: 'mobile-agent-ui' } as con
 
 type PhoneChatStateAccess = ReturnType<typeof mobileConversationState>;
 
-const accesses = new WeakMap<WsEzTerminalTransport, PhoneChatStateAccess>();
+const accesses = new WeakMap<object, PhoneChatStateAccess>();
 
 /**
  * The phone's encrypted draft storage for one PC connection. One object per transport: draft
@@ -19,7 +19,7 @@ const accesses = new WeakMap<WsEzTerminalTransport, PhoneChatStateAccess>();
  * pending send). Tests pass their own stores; those get a fresh object.
  */
 export function phoneChatStateAccess(
-  transport: WsEzTerminalTransport,
+  transport: Pick<WsEzTerminalTransport, 'getRemoteToken'>,
   options: { readonly secure?: SecureStorageLike; readonly store?: MobileChatStateStoreLike } = {},
 ): PhoneChatStateAccess {
   if (options.secure || options.store) return mobileConversationState(() => transport.getRemoteToken(), options.secure, options.store);

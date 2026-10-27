@@ -53,7 +53,7 @@ export class ChatRecoveryController {
       this.revision = result.snapshot.revision;
       this.lastSaved = JSON.stringify(result.snapshot.state);
       const draft = !hasEarlyDraft && this.edits === initialEdits ? result.snapshot.state.draft : this.view.draft;
-      this.set({ ...result.snapshot.state, draft, status: 'ready' });
+      this.set({ ...result.snapshot.state, draft, status: 'ready', unsaved: !equalDraft(draft, result.snapshot.state.draft) });
       if (hasEarlyDraft || this.edits !== initialEdits) await this.persist();
     });
     return this.initialLoad;
@@ -86,12 +86,13 @@ export class ChatRecoveryController {
     });
   }
 
-  prepare(command: ChatPendingCommand): Promise<ChatRecoveryResult> {
+  /** `composition` = the draft when the send began (default: as it is now); only it is cleared on delivery. */
+  prepare(command: ChatPendingCommand, composition?: ChatComposerDraft): Promise<ChatRecoveryResult> {
     return this.enqueue(async () => {
       if (this.view.status !== 'ready') return { ok: false, message: this.view.message ?? 'Secure draft recovery is still loading.' };
       if (this.view.pendingSubmit) return { ok: false, message: 'Check the previous message delivery before sending again.', deliveryUncertain: true };
       this.set({ ...this.view, pendingSubmit: { command, mode: command.type === 'agent.submit' ? 'send' : 'interrupt', recordedAt: new Date().toISOString() } });
-      this.sentComposition = { commandId: command.commandId, draft: this.view.draft };
+      this.sentComposition = { commandId: command.commandId, draft: composition ?? this.view.draft };
       const result = await this.persist();
       if (!result.ok) {
         // No command was dispatched. An ambiguous storage result must be read
@@ -117,7 +118,7 @@ export class ChatRecoveryController {
         && JSON.stringify(draft.attachments ?? []) === JSON.stringify(context?.attachments ?? [])
         && JSON.stringify((draft.skills ?? []).filter((skill) => draft.text.includes(skill.invocation))) === JSON.stringify(context?.skills ?? [])
         && JSON.stringify(draft.replyTo) === JSON.stringify(context?.replyTo);
-      this.set({ status: 'ready', draft: clear ? { text: '', selectionStart: 0, selectionEnd: 0 } : draft });
+      this.set({ status: 'ready', draft: clear ? { text: '', selectionStart: 0, selectionEnd: 0 } : draft, unsaved: true });
       const result = await this.persist();
       if (!result.ok) {
         this.set({ ...this.view, pendingSubmit: pending });
@@ -148,7 +149,7 @@ export class ChatRecoveryController {
     this.lastSaved = JSON.stringify(snapshot.state);
     // Always retain the current host's pending envelope; a draft choice is
     // never permission to replace or resend another window's submission.
-    this.set({ ...snapshot.state, draft, status: 'ready' });
+    this.set({ ...snapshot.state, draft, status: 'ready', unsaved: !equalDraft(draft, snapshot.state.draft) });
     return this.persist();
   });
 
@@ -160,7 +161,11 @@ export class ChatRecoveryController {
     if (this.view.history) Object.assign(state, { history: this.view.history });
     if (this.view.importedDraftSessionIds) Object.assign(state, { importedDraftSessionIds: this.view.importedDraftSessionIds });
     const serialized = JSON.stringify(state);
-    if (serialized === this.lastSaved) return { ok: true };
+    if (serialized === this.lastSaved) {
+      // Nothing to write: what is shown is what is stored (an edit undone before its autosave ran).
+      if (this.view.unsaved) this.set({ ...this.view, unsaved: false });
+      return { ok: true };
+    }
     let result: ChatStateResult;
     try { result = ChatStateResultSchema.parse(await this.access.chatStateWrite(this.scope, { expectedRevision: this.revision, state })); }
     catch { result = { ok: false, error: 'unavailable', message: unavailable }; }

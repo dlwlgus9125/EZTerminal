@@ -110,6 +110,15 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
       : -1;
 
     if (marker?.owner === owner && targetIndex < 0) {
+      // The entry of a layer released while this traversal was pending (a conversation opened from the feed
+      // closes its own layer and the shell's at once): consume it too, or it stays an invisible Back stop.
+      pendingTraversalRef.current = true;
+      try {
+        window.history.back();
+        return;
+      } catch {
+        pendingTraversalRef.current = false;
+      }
       try {
         window.history.replaceState(withoutNavigationMarkers(state), '');
       } catch {

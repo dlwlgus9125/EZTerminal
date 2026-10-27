@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b579479085d4c274eaac7ceea26f0cd8c13e54ae27bba8252d4380826f81abb9",
+        "inputDigest": "sha256:3545f6ea906bc80645257418cccbd260692338ad457a59d122bf7fc11345fbfa",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-7 feed shell): the phone project screen takes an optional back target and exit-to-feed, and its navigation target may carry a run id. The authority fingerprint and shared navigation projection are unchanged."
+        "reason": "Reviewed (I4 review fixes): the phone project screen seeds a stage conversation draft through the shared phone draft storage (one revision count, one write queue) instead of the store directly. Navigation projection and authority fingerprint unchanged."
       }
     }
   ]

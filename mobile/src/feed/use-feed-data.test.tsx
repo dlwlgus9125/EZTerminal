@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentActivity } from '../../../src/shared/agent';
 import type { DaemonSnapshot } from '../../../src/shared/daemon-protocol';
 import type { WorkflowSnapshot } from '../../../src/shared/workflow';
 import { shellSnapshot, shellWorkflow } from '../../../src/renderer/shell/shell-fixtures';
@@ -93,5 +94,16 @@ describe('useFeedData', () => {
     pc.getWorkflowSnapshot.mockRejectedValue(new Error('offline'));
     await act(async () => { await vi.advanceTimersByTimeAsync(FEED_FLOW_READ_MS.all); });
     expect(latest.flows.length).toBe(flows);
+  });
+  it('offers nothing to answer while disconnected, a blocked terminal agent included', () => {
+    const blocked = {
+      id: 'activity-1', sessionId: 'pty-1', provider: 'claude', providerLabel: 'Claude', cwd: 'C:/Working', state: 'blocked', status: 'blocked',
+      stateSeq: 3, live: true, interactiveReady: true, stateSource: 'hook', createdAt: 1, updatedAt: 2,
+      approval: { approvalId: 'gate-1', toolName: 'Bash', command: 'rm -rf dist', risk: 'danger', pending: true, requestedAt: 1, expiresAt: Number.MAX_SAFE_INTEGER },
+    } as unknown as AgentActivity;
+    render(base({ active: false, liveDaemon: null, terminalAgents: [blocked], connected: true }));
+    expect(latest.waiting.map((item) => item.kind)).toEqual(['terminal-agent']);
+    render(base({ active: false, liveDaemon: null, terminalAgents: [blocked], connected: false }));
+    expect(latest.waiting).toEqual([]);
   });
 });
