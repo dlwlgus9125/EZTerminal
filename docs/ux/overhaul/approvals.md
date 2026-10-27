@@ -186,6 +186,9 @@ I4 폰 화면 세 개. 기준 story는 실제 폰 컴포넌트를 412×915 틀�
 | `phone-chat` | 대화: 한 줄 머리줄, 엄지 승인 버튼, 서브에이전트 칩, 두 줄 입력창 칩(모델·노력 한 칩) | `Production/Phone/Phone screens` · `ChatReference` | `docs/ux/reference/2.0/captures/phone-chat.png` | 승인 근거 (2026-10-27): 확정 요청 "대화 화면은 실물 그대로 + 폰에 노력 선택"; 계획 승인 후 확인 없이 진행 |
 | `phone-terminal` | 터미널 AI 입력: 계기판 블록, 셸·AI 전환, 마지막 끝난 블록 칩, 보낼 대화의 입력창 | `Production/Phone/Phone screens` · `TerminalReference` | `docs/ux/reference/2.0/captures/phone-terminal.png` | 승인 근거 (2026-10-27): 폰 터미널 "모양 + AI 입력도"(I3 규칙), 계기판 모양 "전 화면 전부"; 계획 승인 후 확인 없이 진행 |
 
+`phone-chat`·`phone-terminal` 캡처는 같은 날 다시 찍었다: 처음 캡처의 대화 입력창에서 긴 모델 이름 때문에 모델·노력 한 칩이 두 줄로
+갈라져 있었다(393dp 폰에서 칩 사이로 줄이 바뀜). 폰 입력창이 두 칩을 한 덩어리로 줄 바꾸게 고친 빌드(API 35)에서 같은 시나리오로 다시 찍었다.
+
 ## 관문 ① 구조·흐름 (사용자 답 대기)
 
 검토 자료: 로컬 검토 시트 `artifacts/ux2/g1/review/index.html`, Storybook `Shell 2.0/Gate 1 skeleton`, 계약

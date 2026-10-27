@@ -144,7 +144,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/phone-chat.png",
-        "sha256": "de92d1dcdf17abd49132f035d28d5cf0552c419994a55b99ab06bfbe97fda3ad"
+        "sha256": "a0d6ff269c14c96aed17c47cbe371abc91d73c2b41cea8c1299061c345d28a5e"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i4-android",
@@ -165,7 +165,7 @@
       },
       "capture": {
         "file": "docs/ux/reference/2.0/captures/phone-terminal.png",
-        "sha256": "cfa5437dd1c5e8ee2498c88335ecdcb75ae7b815d1d245ae9b5db5e1ec3ac546"
+        "sha256": "da53bdddd61f74cbc0691782499efc7f89990bd1aae6b967f01da81e8e0d479a"
       },
       "approval": {
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i4-android",
