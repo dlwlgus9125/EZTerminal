@@ -937,6 +937,13 @@
 }
 
 .mob-status-line__branch svg { width: 11px; height: 11px; flex: none; }
+
+/* Android 10's WebView 74 ignores flex gap: the terminal's header chip and status line space by margins there. */
+[data-ui-flex-gap='unsupported'] .mob-term-head__session > * + * { margin-left: 7px; }
+[data-ui-flex-gap='unsupported'] .mob-status-line > * + *:not(.mob-status-line__link) { margin-left: 12px; }
+[data-ui-flex-gap='unsupported'] .mob-status-line__branch > * + *,
+[data-ui-flex-gap='unsupported'] .mob-status-line__rtt > * + *,
+[data-ui-flex-gap='unsupported'] .mob-status-line__link > * + * { margin-left: 4px; }
 .mob-status-line__exit { color: var(--ui-success); }
 .mob-status-line__exit--error { color: var(--ui-danger); }
 
