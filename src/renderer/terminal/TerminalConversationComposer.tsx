@@ -40,6 +40,8 @@ export interface TerminalConversationComposerProps {
   readonly onNewConversation?: () => void;
   /** The phone's terminal shows the box in the phone's own layout (send button, no Enter-to-send). */
   readonly variant?: 'desktop' | 'mobile';
+  /** Who sends (the phone sends as itself; desktop by default). */
+  readonly principal?: DaemonCommand['principal'];
 }
 
 /**
@@ -108,7 +110,7 @@ function useQueuedMessages(
  * send from either clears both. Only the box shows; the answer is read in the tab.
  */
 export function TerminalConversationComposer({
-  sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation, variant = 'desktop',
+  sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation, variant = 'desktop', principal,
 }: TerminalConversationComposerProps): JSX.Element {
   const { t } = useAppTranslation();
   const session = snapshot?.sessions.find((candidate) => candidate.id === sessionId);
@@ -152,6 +154,7 @@ export function TerminalConversationComposer({
   const access: ConversationCommandAccess = {
     latestSnapshot: () => capabilities.daemon.getSnapshot(),
     sendCommand: (command: DaemonCommand) => Promise.resolve().then(() => capabilities.daemon.sendCommand(command)).catch(() => null),
+    ...(principal ? { principal } : {}),
   };
   const relation = snapshot?.agentRelations.find((candidate) => candidate.childSessionId === sessionId && candidate.detachedAt === undefined);
   const owner = relation?.owner ?? 'managed';

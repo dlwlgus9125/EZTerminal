@@ -86,6 +86,7 @@ import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
 import type { MobileChatSaveStatus } from './use-mobile-chat-draft';
 import { phoneChatStateAccess, phoneConversationCommands } from './phone-conversation-access';
 import { useChatRecovery } from '../../src/renderer/use-chat-recovery';
+import { noteConversationViewed } from '../../src/renderer/conversation-views';
 import type { ChatStateAccess } from '../../src/renderer/chat-recovery';
 import { ChatRecoveryNotice } from '../../src/renderer/ChatRecoveryNotice';
 import { reconcileConversationSubmit, submitConversationMessage } from '../../src/renderer/conversation-commands';
@@ -1350,6 +1351,8 @@ export function MobileAgentView({
     } finally { setChatSending(false); }
   };
 
+  // The conversation last looked at on this phone: the terminal's AI input sends there by default.
+  useEffect(() => { if (selectedDaemonSessionId) noteConversationViewed(selectedDaemonSessionId); }, [selectedDaemonSessionId]);
   const workflowAccess = useMemo(() => transport && typeof transport.getWorkflowSnapshot === 'function' ? { getWorkflowSnapshot: transport.getWorkflowSnapshot.bind(transport), executeWorkflowCommand: transport.executeWorkflowCommand.bind(transport) } : undefined, [transport]);
   const workflowContext = useWorkflowConversationScope(workflowAccess, selectedDaemonSession?.projectId, selectedDaemonSessionId);
 

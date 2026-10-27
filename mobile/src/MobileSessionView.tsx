@@ -50,7 +50,7 @@ import { MobileLeadWorkersStrip } from './MobileLeadWorkersStrip';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { useMobileToast } from './MobileToast';
 import { TouchInputBar } from './TouchInputBar';
-import { TerminalAiDock, TerminalTargetPicker } from '../../src/renderer/terminal/TerminalAiDock';
+import { TerminalAiDock, TerminalTargetPicker, type TerminalAiWiring } from '../../src/renderer/terminal/TerminalAiDock';
 import type { TerminalAiHost } from '../../src/renderer/terminal/terminal-ai-host';
 import { useTerminalAiInput } from '../../src/renderer/terminal/use-terminal-ai-input';
 import './terminal-instrument.css';
@@ -265,6 +265,7 @@ export function MobileSessionView({
   onReadGitStatus,
   roundTripMs = null,
   aiHost = null,
+  aiWiring,
 }: {
   sessionId: string;
   /** The session's cwd as the workspace knows it — seeds the status line
@@ -301,6 +302,8 @@ export function MobileSessionView({
   roundTripMs?: number | null;
   /** The app's conversations, for the AI input (Shell | AI). Absent: shell only. */
   aiHost?: TerminalAiHost | null;
+  /** The phone's draft storage, PC access and principal for the AI input. */
+  aiWiring?: TerminalAiWiring;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
@@ -1397,6 +1400,7 @@ export function MobileSessionView({
         <div className="term-dock__ai mob-term-ai" hidden={inputMode !== 'ai'}>
           <TerminalAiDock
             variant="mobile"
+            {...(aiWiring ? { wiring: aiWiring } : {})}
             host={aiHost}
             target={aiTarget}
             pending={aiPending}

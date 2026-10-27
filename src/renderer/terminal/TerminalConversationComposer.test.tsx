@@ -123,6 +123,27 @@ describe('TerminalConversationComposer', () => {
     expect(stored().state.pendingSubmit).toBeUndefined();
   });
 
+  it('sends as the given principal when the phone passes its own (I4)', async () => {
+    const { send, chat } = fixture({ draft: { text: 'From the phone' } });
+    const capabilities: CapabilityAccess = { ...rendererCapabilities,
+      daemon: { ...rendererCapabilities.daemon, getSnapshot: async () => snapshot, getTranscript: async () => [], sendCommand: send, observeEvents: () => () => undefined },
+      structuredProviders: { ...rendererCapabilities.structuredProviders, listModels: async () => ({ ok: true, value: [] }) },
+    };
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <div data-testid="terminal">
+          <TerminalConversationComposer sessionId={scope.sessionId} snapshot={snapshot} capabilities={capabilities} chatStateAccess={chat}
+            principal={{ kind: 'android', id: 'mobile-agent-ui' }} variant="mobile" />
+        </div>
+      </AppI18nProvider>,
+    ));
+    await flush();
+    act(() => sendIn('terminal').click());
+    await flush();
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ type: 'agent.submit', principal: { kind: 'android', id: 'mobile-agent-ui' } });
+  });
+
   it('refuses a send from the tab while the terminal\'s message is still being delivered', async () => {
     const { send, render } = fixture({ draft: { text: 'First' } });
     let acknowledge!: () => void;

@@ -30,7 +30,11 @@ import { MobilePageHeader } from './MobilePageHeader';
 import { MobileSessionSheet } from './MobileSessionSheet';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileTabBar, type MobileShellTab } from './MobileTabBar';
-import { MobileToastProvider } from './MobileToast';
+import { MobileToastProvider, useMobileToast } from './MobileToast';
+import { createCapabilityAccess } from '../../src/renderer/capability-access';
+import { createTerminalAiHost } from '../../src/renderer/terminal/terminal-ai-host';
+import type { TerminalAiWiring } from '../../src/renderer/terminal/TerminalAiDock';
+import { PHONE_PRINCIPAL, phoneChatStateAccess } from './phone-conversation-access';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
 import { decideTabSwipe } from './tab-swipe';
@@ -151,6 +155,21 @@ type MobileSheet = (typeof MOBILE_SHEETS)[number];
 // output probe active); the one thing it breaks is xterm's internal
 // measurement of a now-zero-size container, which is why activating a tab
 // dispatches a `resize` event on the next animation frame.
+/** The terminal AI input's "sent" notice and its way to a conversation, inside the toast provider. */
+function TerminalAiNotices({ host, titleOf, openConversation }: {
+  readonly host: ReturnType<typeof createTerminalAiHost>;
+  readonly titleOf: (sessionId: string) => string;
+  readonly openConversation: (sessionId: string) => void;
+}): null {
+  const showToast = useMobileToast();
+  const { t } = useAppTranslation();
+  host.setActions({
+    openConversation,
+    notifySent: (sessionId) => showToast(t('terminalAi.sent', { title: titleOf(sessionId) })),
+  });
+  return null;
+}
+
 export function MobileWorkspace({
   transport,
   appActive = true,
@@ -188,6 +207,21 @@ export function MobileWorkspace({
   const userNavigatedRef = useRef(false);
   const lastWorkTabRef = useRef<'terminal' | 'agents'>('terminal');
   const [activeAgentSessionId, setActiveAgentSessionId] = useState<string | null>(null);
+  // The terminal's AI input (I4): the app's conversations as a small store the terminal reads, and the
+  // phone's own draft storage, PC access and principal for the box it shows.
+  const terminalAiHostRef = useRef<ReturnType<typeof createTerminalAiHost> | null>(null);
+  terminalAiHostRef.current ??= createTerminalAiHost({ openConversation: () => undefined, notifySent: () => undefined });
+  const terminalAiHost = terminalAiHostRef.current;
+  const terminalAiWiring = useMemo<TerminalAiWiring | undefined>(() => (typeof transport.getRemoteToken === 'function' ? {
+    chatStateAccess: phoneChatStateAccess(transport),
+    capabilities: createCapabilityAccess({ readCore: () => transport, readDesktop: () => undefined }),
+    principal: PHONE_PRINCIPAL,
+    start: {
+      access: { history: transport, getSnapshot: () => transport.getDaemonSnapshot(), sendCommand: (command) => transport.sendDaemonCommand(command), principal: PHONE_PRINCIPAL },
+      storage: phoneChatStateAccess(transport),
+      capabilityClient: { list: transport.agentCapabilitiesList.bind(transport), manage: transport.agentCapabilitiesManage.bind(transport) },
+    },
+  } : undefined), [transport]);
   const [newConversationRequest, setNewConversationRequest] = useState(0);
   const [conversationHistoryRequest, setConversationHistoryRequest] = useState<{ readonly conversationId?: string; readonly projectId?: string; readonly key: string }>();
   const conversationHistoryReturnTab = useRef<'home' | 'tasks'>('home');
@@ -908,6 +942,13 @@ export function MobileWorkspace({
   // desktop's; an older host (or a copy kept on this device) leaves the terminal agents' count.
   // (While the snapshot is read again after an event it is kept, so the count stays.)
   const hostAttention = connected && transport.isAuthed ? daemonRuntimeState.snapshot?.attention : undefined;
+  // The AI input needs a PC that lists conversations and starts them from the phone (protocol 16), the
+  // phone's secure storage and a live connection; otherwise the terminal stays a shell.
+  const terminalAiReady = Boolean(terminalAiWiring) && connected && transport.isAuthed
+    && (transport.negotiatedRemoteProtocolVersion ?? 0) >= 16;
+  useEffect(() => {
+    terminalAiHost.set(terminalAiReady ? daemonRuntimeState.snapshot ?? null : null);
+  }, [daemonRuntimeState.snapshot, terminalAiHost, terminalAiReady]);
   const agentAttention = hostAttention ? hostAttention.items.length : countAgentAttention(userFacingAgentSnapshot);
 
   // Swipe-between-tabs used to live on the tab strip the session sheet
@@ -1114,6 +1155,11 @@ export function MobileWorkspace({
 
   return (
     <MobileToastProvider>
+      <TerminalAiNotices
+        host={terminalAiHost}
+        titleOf={(sessionId) => daemonRuntimeState.snapshot?.sessions.find((session) => session.id === sessionId)?.title ?? ''}
+        openConversation={(sessionId) => { setActiveAgentSessionId(sessionId); selectTab('agents'); }}
+      />
       <MobileWorkbenchCoordinator
         terminalActive={tab === 'terminal' && subPage === null}
         destinationActive={subPage !== null}
@@ -1258,6 +1304,8 @@ export function MobileWorkspace({
                   onCwdChange={handleCwdChange}
                   onReadGitStatus={(directory) => transport.getGitStatus(directory)}
                   roundTripMs={roundTripMs}
+                  aiHost={terminalAiReady ? terminalAiHost : null}
+                  {...(terminalAiWiring ? { aiWiring: terminalAiWiring } : {})}
                   onCloseTab={() => closeTab(entry.sessionId)}
                 />
               </div>

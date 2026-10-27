@@ -977,6 +977,37 @@ describe('MobileWorkspace - previous work', () => {
   });
 });
 
+describe('MobileWorkspace - terminal AI input (I4)', () => {
+  async function restoredTerminal(protocolVersion: number): Promise<HTMLDivElement> {
+    const { transport } = makeAuthedTransport([], 'ai-host', undefined, protocolVersion);
+    Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
+    const authority = await mobileAgentCreateAuthorityFingerprint('ai-host');
+    writeWorkspaceRestore(authority, { terminalSessionIds: ['one'], activeTerminalSessionId: 'one', activeAgentSessionId: null, destination: 'terminal' });
+    const open = vi.spyOn(transport, 'openSessionSurface').mockImplementation(async (surfaceId, intent) => {
+      if (intent.kind !== 'adopt') throw new Error('unexpected');
+      return { ok: true, binding: { surfaceId, bindingId: `binding-${intent.sessionId}`, session: { sessionId: intent.sessionId, cwd: '/one' }, role: 'adopted' } };
+    });
+    const el = await renderWorkspace(transport);
+    for (let attempt = 0; attempt < 50 && open.mock.calls.length < 1; attempt += 1) await flushAsync();
+    await waitForTestId(el, 'mobile-session-view');
+    return el;
+  }
+
+  it('offers Shell | AI on a PC that starts conversations from the phone', async () => {
+    const el = await restoredTerminal(REMOTE_PROTOCOL_VERSION);
+    await waitForTestId(el, 'mobile-terminal-mode');
+    expect(el.querySelector('[data-testid="terminal-mode-ai"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="cmd-input"]')).not.toBeNull();
+  });
+
+  it('keeps the terminal a plain shell on an older PC', async () => {
+    const el = await restoredTerminal(15);
+    await flushAsync();
+    expect(el.querySelector('[data-testid="mobile-terminal-mode"]')).toBeNull();
+    expect(el.querySelector('[data-testid="cmd-input"]')).not.toBeNull();
+  });
+});
+
 describe('MobileWorkspace - worktree open', () => {
   it('creates and selects a normal terminal tab rooted at the validated path', async () => {
     const { transport, socket } = makeAuthedTransport();
