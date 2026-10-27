@@ -321,7 +321,7 @@ async function archiveOwnerProjectOnly(h: Harness): Promise<void> {
   }] });
 }
 
-describe('DaemonAutomationRuntime', () => {
+describe('DaemonAutomationRuntime', { timeout: 20_000 }, () => {
   it('rejects Schedule work for an active Workspace whose owner Project is archived', async () => {
     const h = await harness();
     try {

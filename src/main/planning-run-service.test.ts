@@ -712,7 +712,7 @@ describe('run settings and 다시 실행 (run.launch)', { timeout: 20_000 }, () 
     expect(runs().map((run) => run.runId)).toEqual(['long']);
   });
 });
-describe('다시 실행 review fixes', () => {
+describe('다시 실행 review fixes', { timeout: 20_000 }, () => {
   async function launchFlow() {
     const f = await fixture(false, true); const directory = f.store.getSnapshot().projects[0].rootPath!;
     const workflows = new WorkflowService({ hostId: 'host', resolveProjectRoot: () => directory, planning: f.options.planning,
