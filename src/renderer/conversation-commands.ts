@@ -24,6 +24,8 @@ export interface ConversationCommandAccess {
   readonly latestSnapshot: () => Promise<DaemonSnapshot | null>;
   /** Null when the host did not answer. */
   readonly sendCommand: (command: DaemonCommand) => Promise<DaemonCommandReceipt | null>;
+  /** Who sends: the desktop renderer by default; the phone sends as itself (its stored escrow requires it). */
+  readonly principal?: DaemonCommand['principal'];
 }
 
 const PRINCIPAL = { kind: 'desktop', id: 'renderer-agent-ui' } as const;
@@ -101,7 +103,7 @@ async function submitNow(access: ConversationCommandAccess, input: {
         idempotencyKey: commandId,
         expectedRevision: authority.revision,
         issuedAt: new Date().toISOString(),
-        principal: PRINCIPAL,
+        principal: access.principal ?? PRINCIPAL,
         type,
         payload: { sessionId, prompt, ...(context ? { context } : {}) },
       })
@@ -110,7 +112,7 @@ async function submitNow(access: ConversationCommandAccess, input: {
         idempotencyKey: commandId,
         expectedRevision: authority.revision,
         issuedAt: new Date().toISOString(),
-        principal: PRINCIPAL,
+        principal: access.principal ?? PRINCIPAL,
         type,
         payload: { sessionId, prompt, ...(context ? { context } : {}) },
       });
@@ -159,7 +161,7 @@ export async function changeConversationSettings(access: ConversationCommandAcce
     idempotencyKey: commandId,
     expectedRevision: authority.revision,
     issuedAt: new Date().toISOString(),
-    principal: PRINCIPAL,
+    principal: access.principal ?? PRINCIPAL,
     type: 'agent.set-settings',
     payload: {
       sessionId,
@@ -183,7 +185,7 @@ export async function queueConversationTurn(
   if (!authority) return { ok: false, message: UNAVAILABLE };
   const commandId = opaqueId('command');
   const receipt = await access.sendCommand(createDaemonCommand({ commandId, idempotencyKey: commandId,
-    expectedRevision: authority.revision, issuedAt: new Date().toISOString(), principal: PRINCIPAL,
+    expectedRevision: authority.revision, issuedAt: new Date().toISOString(), principal: access.principal ?? PRINCIPAL,
     type: 'agent.queue', payload: { sessionId, turnId: item.turnId, turnRevision: item.revision, action } }));
   return receipt ? resultOf(receipt) : { ok: false, message: 'Queue result unknown. Refresh before trying again.' };
 }
@@ -216,7 +218,7 @@ export async function runConversationLifecycle(
     idempotencyKey: commandId,
     expectedRevision: authority.revision,
     issuedAt: new Date().toISOString(),
-    principal: PRINCIPAL,
+    principal: access.principal ?? PRINCIPAL,
     type,
     payload: { sessionId },
   }));

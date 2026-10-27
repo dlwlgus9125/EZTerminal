@@ -26,6 +26,7 @@ import {
   type MobileAgentCreateRecoveryController,
 } from './mobile-agent-create-recovery-store';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import type { MobileChatRecord } from './mobile-chat-state-store';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -219,6 +220,38 @@ describe('MobileAgentView', () => {
     onSendFollowup: async () => ({ ok: true }) as const,
     agentCreateRecovery: readyRecoveryController(),
   };
+
+  it('sends from the phone through the shared draft escrow and keeps an uncertain message (I4-3)', async () => {
+    const records = new Map<string, MobileChatRecord>();
+    const chatStateStore = {
+      load: async (scope: MobileChatRecord['scope']) => records.get(`${scope.projectId}/${scope.sessionId}`) ?? null,
+      save: async (record: MobileChatRecord) => { records.set(`${record.scope.projectId}/${record.scope.sessionId}`, record); },
+    };
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: false as const, status: 'delivery-uncertain' as const, commandId: command.commandId, error: { code: 'delivery-uncertain', message: 'lost' },
+    }));
+    const transport = {
+      getRemoteToken: async () => 'test-pc',
+      getDaemonSnapshot: async () => daemonSnapshotOf(),
+      sendDaemonCommand,
+    } as unknown as WsEzTerminalTransport;
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshotOf() }} transport={transport}
+      chatStateStore={chatStateStore} initialSessionId="structured-session-1" {...noop} />);
+    await vi.waitFor(async () => { await flush(); expect(container.querySelector('.mobile-v2-draft-status[data-state="saved"]')).not.toBeNull(); });
+    const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Keep this one safe');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.draft.text).toBe('Keep this one safe'); });
+    await act(async () => { testIds('structured-agent-send')[0]!.click(); await Promise.resolve(); });
+    await vi.waitFor(async () => { await flush(); expect(sendDaemonCommand).toHaveBeenCalledTimes(1); });
+    const sent = sendDaemonCommand.mock.calls[0]![0];
+    expect(sent).toMatchObject({ type: 'agent.submit', principal: { kind: 'android', id: 'mobile-agent-ui' }, payload: { prompt: 'Keep this one safe' } });
+    // The exact envelope stays in the phone's record until delivery is confirmed.
+    await vi.waitFor(async () => { await flush(); expect([...records.values()][0]?.pending).toEqual(sent); });
+    expect([...records.values()][0]?.draft.text).toBe('Keep this one safe');
+  });
 
   it('offers the effort switch and the PC model list only to a PC that takes them (I4)', async () => {
     const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({

@@ -4,16 +4,24 @@ import { ConversationEntrySchema, type ConversationEntry } from '../../src/share
 import { ChatStateSnapshotSchema, type ChatStateScope, type ChatStateResult, type ChatPendingCommand } from '../../src/shared/chat-state';
 import type { ChatStateAccess } from '../../src/renderer/chat-recovery';
 import { mobileAgentCreateAuthorityFingerprint, type SecureStorageLike } from './mobile-agent-create-recovery-store';
-import { MobileChatStateStore } from './mobile-chat-state-store';
+import { MobileChatStateStore, type MobileChatStateStoreLike } from './mobile-chat-state-store';
 
 /** Device-local encrypted drafts; the PC fingerprint prevents cross-host restoration. */
 const NavigationSchema = z.object({ draftId: z.string().min(1).max(160), target: z.object({ workspaceId: z.string().optional() }).optional(), entry: ConversationEntrySchema.optional() }).strict();
 export interface MobileConversationNavigation { readonly draftId: string; readonly target?: { readonly workspaceId?: string }; readonly entry?: ConversationEntry }
-export function mobileConversationState(getToken: () => Promise<string>, secure: SecureStorageLike = SecureStoragePlugin): ChatStateAccess & {
+export function mobileConversationState(
+  getToken: () => Promise<string>,
+  secure: SecureStorageLike = SecureStoragePlugin,
+  /** A live conversation's draft record (tests pass their own). */
+  legacy: MobileChatStateStoreLike = new MobileChatStateStore(secure),
+): ChatStateAccess & {
   loadNavigation(): Promise<{ scope: string; value: MobileConversationNavigation | null }>;
   saveNavigation(value: MobileConversationNavigation): Promise<void>;
 } {
-  const legacy = new MobileChatStateStore(secure);
+  // A live conversation's record (schema 1, read by older builds too) has no revision of its own:
+  // count writes here so a draft controller's next write expects the revision the last one returned.
+  const legacyRevisions = new Map<string, number>();
+  const legacyKey = (fingerprint: string, scope: ChatStateScope) => `${fingerprint}|${scope.projectId}|${scope.sessionId}`;
   let tail: Promise<unknown> = Promise.resolve();
   const authority = () => getToken().then(mobileAgentCreateAuthorityFingerprint);
   const keyFor = (fingerprint: string, scope: ChatStateScope) => `ezterminal-conversation-v2:${fingerprint}:${[scope.kind, scope.projectId, scope.sessionId].map(value => encodeURIComponent(value ?? '')).join(':')}`;
@@ -21,8 +29,8 @@ export function mobileConversationState(getToken: () => Promise<string>, secure:
     try {
       const fingerprint = await authority();
       if (!scope.kind) {
-        const saved = await legacy.load({ authorityFingerprint: fingerprint, ...scope });
-        return { ok: true, snapshot: { version: 1, scope, revision: 0, state: { draft: saved?.draft ?? { text: '' }, ...(saved?.pending ? {
+        const saved = await legacy.load({ authorityFingerprint: fingerprint, projectId: scope.projectId, sessionId: scope.sessionId });
+        return { ok: true, snapshot: { version: 1, scope, revision: legacyRevisions.get(legacyKey(fingerprint, scope)) ?? 0, state: { draft: saved?.draft ?? { text: '' }, ...(saved?.pending ? {
           pendingSubmit: { command: saved.pending as ChatPendingCommand, mode: saved.pending.type === 'agent.submit' ? 'send' as const : 'interrupt' as const, recordedAt: saved.pending.issuedAt },
         } : {}) }, updatedAt: null } };
       }
@@ -61,7 +69,10 @@ export function mobileConversationState(getToken: () => Promise<string>, secure:
       try {
         const fingerprint = await authority();
         const snapshot = ChatStateSnapshotSchema.parse({ ...current.snapshot, revision: request.expectedRevision + 1, state: request.state, updatedAt: new Date().toISOString() });
-        if (!scope.kind) await legacy.save({ schemaVersion: 1, scope: { authorityFingerprint: fingerprint, ...scope }, draft: request.state.draft, ...(request.state.pendingSubmit ? { pending: request.state.pendingSubmit.command } : {}) });
+        if (!scope.kind) {
+          await legacy.save({ schemaVersion: 1, scope: { authorityFingerprint: fingerprint, projectId: scope.projectId, sessionId: scope.sessionId }, draft: request.state.draft, ...(request.state.pendingSubmit ? { pending: request.state.pendingSubmit.command } : {}) });
+          legacyRevisions.set(legacyKey(fingerprint, scope), snapshot.revision);
+        }
         else {
           const value = JSON.stringify(snapshot);
           if (new TextEncoder().encode(value).length > 4 * 1024 * 1024) throw new Error('Draft exceeds the secure storage limit.');

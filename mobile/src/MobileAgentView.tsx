@@ -83,7 +83,13 @@ import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { MobilePageHeader } from './MobilePageHeader';
 import { MobileAgentHistorySheet } from './MobileAgentHistorySheet';
 import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
-import { useMobileChatDraft } from './use-mobile-chat-draft';
+import type { MobileChatSaveStatus } from './use-mobile-chat-draft';
+import { phoneChatStateAccess, phoneConversationCommands } from './phone-conversation-access';
+import { useChatRecovery } from '../../src/renderer/use-chat-recovery';
+import type { ChatStateAccess } from '../../src/renderer/chat-recovery';
+import { ChatRecoveryNotice } from '../../src/renderer/ChatRecoveryNotice';
+import { reconcileConversationSubmit, submitConversationMessage } from '../../src/renderer/conversation-commands';
+import type { ChatComposerDraft } from '../../src/renderer/chat-view-state';
 import { MobileOfflineChatCacheStore } from './mobile-offline-chat-cache';
 import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-recovery-store';
 import type { MobileChatStateStoreLike } from './mobile-chat-state-store';
@@ -130,6 +136,12 @@ const DAEMON_ARCHIVABLE_STATES = new Set<ManagedAgentState>([
 const INITIAL_DAEMON_RUNTIME_STATE: DaemonRuntimeViewState = {
   status: 'loading',
   snapshot: null,
+};
+
+/** No secure storage (no PC connection yet): the draft hook needs a storage object anyway; it is never read. */
+const NO_CHAT_STATE: ChatStateAccess = {
+  chatStateRead: async () => ({ ok: false, error: 'unavailable', message: 'No secure draft storage.' }),
+  chatStateWrite: async () => ({ ok: false, error: 'unavailable', message: 'No secure draft storage.' }),
 };
 
 /** Without a transport there is nothing to ask; the catalog hook needs a stable access anyway. */
@@ -429,7 +441,8 @@ export function MobileAgentView({
     history: historyClient, getSnapshot: () => transport.getDaemonSnapshot(), sendCommand: command => transport.sendDaemonCommand(command),
     principal: { kind: 'android', id: 'mobile-agent-ui' },
   } : undefined, [transport, historyClient]);
-  const conversationStorage = useMemo(() => mobileConversationState(() => transport!.getRemoteToken()), [transport]);
+  // The same storage object as the conversation screen and the terminal's AI input: one draft controller per box.
+  const conversationStorage = useMemo(() => (transport ? phoneChatStateAccess(transport) : mobileConversationState(() => transport!.getRemoteToken())), [transport]);
   const [conversationViewScope, setConversationViewScope] = useState<string>();
   const [selectedConversationId, setSelectedConversationId] = useState<string>();
   const conversationNavigationReady = useRef(false);
@@ -1300,24 +1313,41 @@ export function MobileAgentView({
     });
   }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
 
-  const chatDraft=useMobileChatDraft({transport,projectId:selectedDaemonSession?.projectId,sessionId:selectedDaemonSession?.id,store:chatStateStore});
+  // The conversation's draft and pending send: one controller per conversation on this PC connection,
+  // shared with the terminal's AI input and the start box (I4), in the phone's encrypted storage.
   const secureChatEnabled=Boolean(transport && typeof transport.getRemoteToken === 'function');
+  const chatAccess=useMemo(() => transport && secureChatEnabled
+    ? phoneChatStateAccess(transport, chatStateStore ? { store: chatStateStore } : {}) : null, [transport, secureChatEnabled, chatStateStore]);
+  const chatCommands=useMemo(() => transport ? phoneConversationCommands(transport) : null, [transport]);
+  const chatRecovery=useChatRecovery(selectedDaemonSession?.projectId, chatAccess ? selectedDaemonSession?.id ?? null : null, chatAccess ?? NO_CHAT_STATE);
+  const [chatSending,setChatSending]=useState(false);
+  const chatStatus:MobileChatSaveStatus=chatRecovery.view.status === 'loading' ? 'loading' : chatRecovery.view.status === 'ready' ? 'saved' : 'unavailable';
   useEffect(() => {
     const created = pendingCreatedAgent;
     if (!created?.input.draftText || created.sessionId !== selectedDaemonSession?.id || seededCapabilityDrafts.current.has(created.sessionId)) return;
-    if (secureChatEnabled && chatDraft.status !== 'saved') return;
+    if (secureChatEnabled && chatRecovery.view.status !== 'ready') return;
     if (secureChatEnabled) {
-      if (!chatDraft.draftState?.text) chatDraft.onDraftChange({ text: created.input.draftText, ...(created.input.draftSkills?.length ? { skills: created.input.draftSkills } : {}) });
+      if (!chatRecovery.view.draft.text) chatRecovery.controller?.updateDraft({ text: created.input.draftText, ...(created.input.draftSkills?.length ? { skills: created.input.draftSkills } : {}) });
     }
     seededCapabilityDrafts.current.add(created.sessionId);
-  }, [pendingCreatedAgent, selectedDaemonSession?.id, secureChatEnabled, chatDraft]);
-  const sendChatCommand=async (command:DaemonCommand):Promise<StructuredAgentUiResult> => {
-    if (!secureChatEnabled) return dispatchDaemonCommand(command);
-    const receipt=await chatDraft.send(command);
-    if (!receipt) return {ok:false,message:language === 'ko' ? '전송 결과를 확인할 수 없습니다. 초안을 보존했습니다. 연결과 기기 저장 상태를 확인하세요.' : 'Delivery is unconfirmed. Your draft was retained. Check the connection and secure storage.',deliveryUncertain:true};
-    if (!receipt.ok) return {ok:false,message:receipt.error.message,deliveryUncertain:receipt.status === 'delivery-uncertain'};
-    daemonRevisionRef.current=receipt.revision;
-    return {ok:true};
+  }, [pendingCreatedAgent, selectedDaemonSession?.id, secureChatEnabled, chatRecovery.controller, chatRecovery.view]);
+  /** Send through the draft's escrow (never twice, never on reconnect); without secure storage, send directly. */
+  const sendChat=async (
+    sessionId:string,
+    type:'agent.submit' | 'agent.interrupt-and-submit',
+    prompt:string,
+    context:ChatMessageContext | undefined,
+    direct:() => Promise<StructuredAgentUiResult>,
+  ):Promise<StructuredAgentUiResult> => {
+    if (!secureChatEnabled || !chatCommands) return direct();
+    setChatSending(true);
+    try {
+      const result=await submitConversationMessage(chatCommands, { sessionId, recovery: chatRecovery.controller, type, prompt, ...(context ? { context } : {}) });
+      if (!result.ok && result.deliveryUncertain) {
+        return { ...result, message: language === 'ko' ? '전송 결과를 확인할 수 없습니다. 초안을 보존했습니다. 연결과 기기 저장 상태를 확인하세요.' : 'Delivery is unconfirmed. Your draft was retained. Check the connection and secure storage.' };
+      }
+      return result;
+    } finally { setChatSending(false); }
   };
 
   const workflowAccess = useMemo(() => transport && typeof transport.getWorkflowSnapshot === 'function' ? { getWorkflowSnapshot: transport.getWorkflowSnapshot.bind(transport), executeWorkflowCommand: transport.executeWorkflowCommand.bind(transport) } : undefined, [transport]);
@@ -1491,20 +1521,21 @@ export function MobileAgentView({
         planProposals={daemonRuntimeState.snapshot?.capabilities?.includes('plan-proposal-v1') === true}
         transcriptLoading={loadedTranscriptSessionId === selectedDaemonSession.id && transcriptLoading}
         transcriptError={visibleTranscriptError}
-        disabled={disconnected || !transport || (secureChatEnabled && (chatDraft.status === 'loading' || chatDraft.status === 'unavailable'))}
-        allowDraftWhenDisabled={disconnected && (!secureChatEnabled || (chatDraft.status !== 'loading' && chatDraft.status !== 'unavailable'))}
-        draftStorageStatus={secureChatEnabled ? chatDraft.status : undefined}
+        disabled={disconnected || !transport || (secureChatEnabled && (chatStatus === 'loading' || chatStatus === 'unavailable'))}
+        allowDraftWhenDisabled={disconnected && (!secureChatEnabled || (chatStatus !== 'loading' && chatStatus !== 'unavailable'))}
+        draftStorageStatus={secureChatEnabled ? chatStatus : undefined}
         offlineRead={disconnected}
-        onRetryDraftStorage={chatDraft.retryStorage}
+        onRetryDraftStorage={() => { void chatRecovery.controller?.checkStored(); }}
+        {...(secureChatEnabled && chatRecovery.view.status === 'conflict' ? { recoveryControl: <ChatRecoveryNotice controller={chatRecovery.controller} view={chatRecovery.view} /> } : {})}
         {...(secureChatEnabled ? {
-          draftState:chatDraft.draftState,
-          onDraftChange:chatDraft.onDraftChange,
-          sendDisabled:disconnected || workflowContext.loading || chatDraft.status === 'loading' || chatDraft.status === 'unavailable' || chatDraft.sending,
+          draftState:chatRecovery.view.draft,
+          onDraftChange:(draft:ChatComposerDraft) => chatRecovery.controller?.updateDraft(draft),
+          sendDisabled:disconnected || workflowContext.loading || chatStatus === 'loading' || chatStatus === 'unavailable' || chatSending,
           sendDisabledReason:disconnected
             ? (language === 'ko' ? '오프라인 · 초안을 작성할 수 있습니다. 재연결 후 직접 전송하세요.' : 'Offline · You can write a draft. Send it explicitly after reconnecting.')
-            : chatDraft.status === 'unavailable' ? (language === 'ko' ? '기기 보안 저장소를 사용할 수 없습니다. 초안 저장 상태를 확인하세요.' : 'Secure draft storage is unavailable. Check device storage.') : undefined,
-          deliveryUncertain:Boolean(chatDraft.pending),
-          onReconcileDelivery:() => chatDraft.pending ? sendChatCommand(chatDraft.pending) : Promise.resolve({ok:true as const}),
+            : chatStatus === 'unavailable' ? (language === 'ko' ? '기기 보안 저장소를 사용할 수 없습니다. 초안 저장 상태를 확인하세요.' : 'Secure draft storage is unavailable. Check device storage.') : undefined,
+          deliveryUncertain:Boolean(chatRecovery.view.pendingSubmit),
+          onReconcileDelivery:() => chatCommands ? reconcileConversationSubmit(chatCommands, { recovery: chatRecovery.controller }) : Promise.resolve({ok:true as const}),
         } : {sendDisabled:disconnected || workflowContext.loading})}
         supportsMessageContext={Boolean(transport && transport.negotiatedRemoteProtocolVersion >= 13
           && (selectedDaemonProvider?.protocol === 'codex-app-server' || selectedDaemonProvider?.protocol === 'claude-agent-sdk'))}
@@ -1540,16 +1571,16 @@ export function MobileAgentView({
             void transport.getDaemonSnapshot();
           }
         }}
-        onSend={(prompt,context?:ChatMessageContext) => sendChatCommand(createDaemonCommand({
+        onSend={(prompt,context?:ChatMessageContext) => sendChat(selectedDaemonSession.id, 'agent.submit', prompt, context, () => dispatchDaemonCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.submit',
           payload: { sessionId: selectedDaemonSession.id, prompt, ...(context ? {context} : {}) },
-        }))}
-        onInterruptAndSend={(prompt,context?:ChatMessageContext) => sendChatCommand(createDaemonCommand({
+        })))}
+        onInterruptAndSend={(prompt,context?:ChatMessageContext) => sendChat(selectedDaemonSession.id, 'agent.interrupt-and-submit', prompt, context, () => dispatchDaemonCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.interrupt-and-submit',
           payload: { sessionId: selectedDaemonSession.id, prompt, ...(context ? {context} : {}) },
-        }))}
+        })))}
         onChangeSettings={(settings: {
           readonly model?: string;
           readonly permissionPreset?: PermissionPreset;
