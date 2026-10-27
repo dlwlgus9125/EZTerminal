@@ -38,6 +38,8 @@ export interface TerminalConversationComposerProps {
   readonly onSent?: (sessionId: string) => void;
   /** `/new`: send to a new conversation instead. */
   readonly onNewConversation?: () => void;
+  /** The phone's terminal shows the box in the phone's own layout (send button, no Enter-to-send). */
+  readonly variant?: 'desktop' | 'mobile';
 }
 
 /**
@@ -106,7 +108,7 @@ function useQueuedMessages(
  * send from either clears both. Only the box shows; the answer is read in the tab.
  */
 export function TerminalConversationComposer({
-  sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation,
+  sessionId, snapshot, capabilities = rendererCapabilities, chatStateAccess, onSent, onNewConversation, variant = 'desktop',
 }: TerminalConversationComposerProps): JSX.Element {
   const { t } = useAppTranslation();
   const session = snapshot?.sessions.find((candidate) => candidate.id === sessionId);
@@ -164,6 +166,7 @@ export function TerminalConversationComposer({
   return (
     <StructuredAgentSessionPanel
       presentation="composer"
+      variant={variant}
       capabilityClient={capabilityClient}
       sessionId={sessionId}
       title={session.title}

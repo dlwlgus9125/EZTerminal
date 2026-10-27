@@ -241,9 +241,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1dc5b38cb141f5ca99ea2f30a7f6385b08fc459467b823c0fc44e17aac66defd",
+        "inputDigest": "sha256:735942eef9b081450a5b3d7139ca5a904a3c811733bfd9ebcbf9c88e2a413ebd",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4-5 phone terminal): the AI input state moved unchanged from TerminalPane into the shared useTerminalAiInput hook, which the phone terminal now uses too. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b8196b6fb31af60258585e6451cda1380a686777e15e6e3d7b6e45811c13c874",
+        "inputDigest": "sha256:ee7ca3c3fe620e85c148e7a857bc2f670cd268c78f5ddd0875c4a69dad803a48",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal, final review fixes): completion quoting, desktop principal on terminal:complete, Esc and click close completion, chips keep their target. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4-5 phone terminal): the AI input state moved unchanged from TerminalPane into the shared useTerminalAiInput hook, which the phone terminal now uses too. Moved blocks reanchored; claims unchanged and still hold."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:ba59122191eb2e74abeba954e6c56a8e11a9be64cca0e165837c09e900cd6578",
+        "inputDigest": "sha256:7a3700cf3fa2383b50d1f20319f329207a5f46cd234721c9a4a0638047b51c65",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (/btw review fixes): drafts never store /btw text, a refused ask keeps the box text, Codex fork timeout/app-server exit/late frames handled. Moved blocks reanchored; one changed block keeps its claim. Existing claims hold."
+        "reason": "Reviewed (I4-5 phone terminal): the AI input state moved unchanged from TerminalPane into the shared useTerminalAiInput hook, which the phone terminal now uses too. Moved blocks reanchored; claims unchanged and still hold."
       }
     }
   ]

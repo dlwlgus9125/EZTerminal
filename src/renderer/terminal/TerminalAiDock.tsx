@@ -39,6 +39,8 @@ export interface TerminalAiDockProps {
   readonly onStarted: (sessionId: string) => void;
   /** `/new` in the box: send to a new conversation instead. */
   readonly onNewConversation: () => void;
+  /** The phone's terminal lays the box out as the phone does. */
+  readonly variant?: 'desktop' | 'mobile';
 }
 
 /** Put pending excerpts into a ready draft once; report what fit. */
@@ -101,7 +103,8 @@ function TerminalChips({ controller, view }: { readonly controller: ChatRecovery
   );
 }
 
-function ConversationTarget({ host, sessionId, pending, onPendingSettled, onSent, onNewConversation }: {
+function ConversationTarget({ host, sessionId, pending, onPendingSettled, onSent, onNewConversation, variant }: {
+  readonly variant: 'desktop' | 'mobile';
   readonly host: TerminalAiHost;
   readonly sessionId: string;
   readonly pending: readonly PendingTerminalAttachment[];
@@ -117,12 +120,13 @@ function ConversationTarget({ host, sessionId, pending, onPendingSettled, onSent
   return (
     <>
       <TerminalChips controller={recovery.controller} view={recovery.view} />
-      <TerminalConversationComposer sessionId={sessionId} snapshot={snapshot} onSent={onSent} onNewConversation={onNewConversation} />
+      <TerminalConversationComposer sessionId={sessionId} snapshot={snapshot} onSent={onSent} onNewConversation={onNewConversation} variant={variant} />
     </>
   );
 }
 
-function NewConversationTarget({ host, projectId, pending, onPendingSettled, onStarted }: {
+function NewConversationTarget({ host, projectId, pending, onPendingSettled, onStarted, variant }: {
+  readonly variant: 'desktop' | 'mobile';
   readonly host: TerminalAiHost;
   readonly projectId?: string;
   readonly pending: readonly PendingTerminalAttachment[];
@@ -141,6 +145,7 @@ function NewConversationTarget({ host, projectId, pending, onPendingSettled, onS
       <ConversationStartPanel
         identity={identity}
         presentation="composer"
+        variant={variant}
         {...(projectId ? { projectId } : {})}
         snapshot={snapshot}
         access={wiring.access}
@@ -158,15 +163,15 @@ function NewConversationTarget({ host, projectId, pending, onPendingSettled, onS
  * conversation's start box), with the terminal output attached to its draft as
  * chips the person can read and remove before sending.
  */
-export function TerminalAiDock({ host, target, pending, onPendingSettled, onSent, onStarted, onNewConversation }: TerminalAiDockProps): JSX.Element {
+export function TerminalAiDock({ host, target, pending, onPendingSettled, onSent, onStarted, onNewConversation, variant = 'desktop' }: TerminalAiDockProps): JSX.Element {
   return (
     <div className="terminal-ai" data-testid="terminal-ai" data-target={target.kind}>
       {target.kind === 'conversation' ? (
-        <ConversationTarget key={target.sessionId} host={host} sessionId={target.sessionId} pending={pending}
+        <ConversationTarget key={target.sessionId} variant={variant} host={host} sessionId={target.sessionId} pending={pending}
           onPendingSettled={onPendingSettled} onSent={onSent} onNewConversation={onNewConversation} />
       ) : (
         // The project the target was resolved in, so the start box keeps its draft while the dock is hidden.
-        <NewConversationTarget key={target.projectId ?? 'none'} host={host} {...(target.projectId ? { projectId: target.projectId } : {})}
+        <NewConversationTarget key={target.projectId ?? 'none'} variant={variant} host={host} {...(target.projectId ? { projectId: target.projectId } : {})}
           pending={pending} onPendingSettled={onPendingSettled} onStarted={onStarted} />
       )}
     </div>

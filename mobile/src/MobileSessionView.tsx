@@ -7,6 +7,7 @@ import { formatCwd } from '../../src/renderer/format-cwd';
 import { BlockController, type BlockStatus } from '../../src/renderer/block-controller';
 import { retainTerminalBlocks, takeRetainedTerminalBlocks } from '../../src/renderer/retained-terminal-blocks';
 import { TerminalBlockEntries } from '../../src/renderer/TerminalBlockEntries';
+import { rememberBlockStart, rememberedBlockTiming } from '../../src/renderer/terminal/block-timing';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
@@ -49,6 +50,10 @@ import { MobileLeadWorkersStrip } from './MobileLeadWorkersStrip';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { useMobileToast } from './MobileToast';
 import { TouchInputBar } from './TouchInputBar';
+import { TerminalAiDock, TerminalTargetPicker } from '../../src/renderer/terminal/TerminalAiDock';
+import type { TerminalAiHost } from '../../src/renderer/terminal/terminal-ai-host';
+import { useTerminalAiInput } from '../../src/renderer/terminal/use-terminal-ai-input';
+import './terminal-instrument.css';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 /** Handoff §3: a single scrollable row of recent commands, not a history page. */
@@ -259,6 +264,7 @@ export function MobileSessionView({
   onCloseTab,
   onReadGitStatus,
   roundTripMs = null,
+  aiHost = null,
 }: {
   sessionId: string;
   /** The session's cwd as the workspace knows it — seeds the status line
@@ -293,6 +299,8 @@ export function MobileSessionView({
   /** Measured link latency for the status line, or null before the first
    * probe answers. */
   roundTripMs?: number | null;
+  /** The app's conversations, for the AI input (Shell | AI). Absent: shell only. */
+  aiHost?: TerminalAiHost | null;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
@@ -445,6 +453,40 @@ export function MobileSessionView({
   }, [t, terminalPathAction]);
 
   const blockListRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const cmdInputRef = useRef<HTMLInputElement>(null);
+  const blocksForAiRef = useRef(blocks);
+  blocksForAiRef.current = blocks;
+  const liveCwdRef = useRef(liveCwd);
+  liveCwdRef.current = liveCwd;
+  // ── AI input (I4): the prompt line types a shell command or a message to a conversation —
+  // that conversation's own message box with the newest block attached, as on the desktop terminal.
+  const {
+    inputMode,
+    aiTarget,
+    aiPending,
+    aiNotice,
+    terminalProjectId,
+    targetGenerationRef,
+    enterAiInput,
+    leaveAiInput,
+    pickAiTarget,
+    settleAttachments,
+    announceSent,
+    startedFromBox,
+    blockMenu,
+  } = useTerminalAiInput({
+    host: aiHost,
+    viewKey: `mobile:${sessionId}`,
+    sessionId,
+    // The phone tab has no project of its own: the daemon's terminal session and the folder say where it is.
+    projectInputs: () => ({ paneSessionId: sessionId, cwd: liveCwdRef.current || null }),
+    blocks: () => blocksForAiRef.current,
+    root: () => rootRef.current,
+    focusShell: () => cmdInputRef.current?.focus(),
+  });
+  const aiProjectId = aiHost && inputMode === 'ai' ? terminalProjectId() : undefined;
+  const startGeneration = targetGenerationRef.current;
   const viewStateRef = useRef({ command, history });
   viewStateRef.current = { command, history };
   const restoreScrollRef = useRef(savedView?.scrollTop);
@@ -788,6 +830,9 @@ export function MobileSessionView({
 
     knownRunIdsRef.current.add(runId);
     pendingHandoffRunIdsRef.current.add(runId);
+    // The instrument block shows when it started and how long it ran (as on the desktop terminal).
+    const startedAtMs = Date.now();
+    rememberBlockStart(runId, startedAtMs);
     void getRunPortBroker().request({
       kind: 'run',
       runId,
@@ -807,7 +852,7 @@ export function MobileSessionView({
         return;
       }
       try {
-        const controller = new BlockController(text, port);
+        const controller = new BlockController(text, port, { startedAtMs });
         bindActiveController(controller);
         setBlocks((prev) =>
           prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
@@ -955,8 +1000,15 @@ export function MobileSessionView({
   // synchronously before transport I/O, so self-echo and concurrent catch-up
   // cannot create duplicate attach requests before React commits the block.
   const attachToRun = useCallback(
-    (info: RunStartedInfo, activate = true): void => {
+    (info: RunStartedInfo, activate = true, live = false): void => {
       if (knownRunIdsRef.current.has(info.runId)) return; // already handled
+      // A run announced as it starts is timed from now; a caught-up one keeps what this view saw, if anything.
+      if (live) rememberBlockStart(info.runId, Date.now());
+      const remembered = rememberedBlockTiming(info.runId);
+      // A run that finished while no view watched it: its start is known, its end is not.
+      const timing = !live && !activate && remembered.startedAtMs !== undefined && remembered.endedAtMs === undefined
+        ? { ...remembered, recordEnd: false }
+        : remembered;
       const handoffController = new AbortController();
       const handoffSignal = handoffController.signal;
       handoffAbortByRunRef.current.set(info.runId, handoffController);
@@ -984,7 +1036,7 @@ export function MobileSessionView({
           return;
         }
         try {
-          const controller = new BlockController(info.commandText, port, { mirror: true });
+          const controller = new BlockController(info.commandText, port, { mirror: true, ...timing });
           if (activate) bindActiveController(controller);
           setBlocks((prev) =>
             prev.map((entry) => (
@@ -1024,7 +1076,7 @@ export function MobileSessionView({
   useEffect(() => {
     const unsub = window.ezterminal.onRunStarted((info: RunStartedInfo) => {
       if (info.sessionId !== sessionId) return; // not my session
-      attachToRun(info);
+      attachToRun(info, true, true);
     });
     return unsub;
   }, [sessionId, attachToRun]);
@@ -1143,7 +1195,9 @@ export function MobileSessionView({
 
   return (
     <div
+      ref={rootRef}
       data-session-id={sessionId}
+      data-input-mode={aiHost ? inputMode : undefined}
       data-runtime-tier={runtimeLifecycleTier}
       className={
         [
@@ -1200,6 +1254,8 @@ export function MobileSessionView({
         onContextMenu={longPress.onContextMenu}
       >
         <TerminalBlockEntries
+          variant="instrument"
+          {...(aiHost ? { menuFor: blockMenu } : {})}
           entries={blocks}
           runtimeLifecycleTier={runtimeLifecycleTier}
           activeTakeoverController={activeTakeover ? activeController.current : null}
@@ -1312,8 +1368,46 @@ export function MobileSessionView({
         )}
       </div>
 
-      <div className="cmd-row mob-composer">
+      {aiHost && (
+        <div className="mob-term-mode" data-testid="mobile-terminal-mode">
+          <div className="term-mode" role="group" aria-label={t('terminalAi.modeGroup')}>
+            <button type="button" className="term-mode__option" aria-pressed={inputMode === 'shell'}
+              onClick={() => { if (inputMode !== 'shell') leaveAiInput(); }} data-testid="terminal-mode-shell">
+              {t('terminalAi.modeShell')}
+            </button>
+            <button type="button" className="term-mode__option" aria-pressed={inputMode === 'ai'}
+              onClick={() => { if (inputMode !== 'ai') enterAiInput(); }} data-testid="terminal-mode-ai">
+              {t('terminalAi.modeAi')}
+            </button>
+          </div>
+          {inputMode === 'ai' && aiTarget && (
+            <TerminalTargetPicker host={aiHost} target={aiTarget} {...(aiProjectId ? { projectId: aiProjectId } : {})} onPick={pickAiTarget} />
+          )}
+        </div>
+      )}
+      {aiNotice && inputMode === 'ai' && (
+        <p className="term-dock__notice" role="status" data-testid="terminal-ai-notice">{aiNotice}</p>
+      )}
+      {/* Mounted once opened and kept while hidden: switching back and forth keeps the box and its draft. */}
+      {aiHost && aiTarget && (
+        <div className="term-dock__ai mob-term-ai" hidden={inputMode !== 'ai'}>
+          <TerminalAiDock
+            variant="mobile"
+            host={aiHost}
+            target={aiTarget}
+            pending={aiPending}
+            onPendingSettled={settleAttachments}
+            onSent={announceSent}
+            // A start box that finishes after the person chose elsewhere only reports the send.
+            onStarted={(startedSessionId) => startedFromBox(startGeneration, startedSessionId)}
+            onNewConversation={() => pickAiTarget('new')}
+          />
+        </div>
+      )}
+
+      <div className="cmd-row mob-composer" hidden={inputMode === 'ai'}>
         <input
+          ref={cmdInputRef}
           className="cmd-input"
           value={command}
           // Disabled while a run is active UNLESS it's a plain PTY (M4,
@@ -1445,7 +1539,7 @@ export function MobileSessionView({
         )}
       </div>
 
-      {snippets.length > 0 && (
+      {snippets.length > 0 && inputMode === 'shell' && (
         <div className="mob-snippets" data-testid="terminal-snippets">
           <span className="mob-snippets__icon" aria-hidden="true"><History /></span>
           {snippets.map((snippet, index) => (
@@ -1467,7 +1561,7 @@ export function MobileSessionView({
         </div>
       )}
 
-      <TouchInputBar
+      {inputMode === 'shell' && <TouchInputBar
         controller={activeControllerForTouch}
         connected={connected}
         ctrlLatched={ctrlLatched}
@@ -1476,7 +1570,7 @@ export function MobileSessionView({
           setCtrlLatched(next);
           showToast(next ? t('mobile.terminalKeys.ctrlLatched') : t('mobile.terminalKeys.ctrlReleased'));
         }}
-      />
+      />}
     </div>
   );
 }

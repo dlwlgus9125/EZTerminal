@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import type {
   AgentApproval,
@@ -7,8 +7,8 @@ import type {
 } from '../shared/agent';
 import { BlockController } from './block-controller';
 import { retainTerminalBlocks, takeRetainedTerminalBlocks } from './retained-terminal-blocks';
-import { TerminalBlockEntries, type TerminalBlockEntry } from './TerminalBlockEntries';
-import { Button, Menu, MenuItem } from './ui';
+import { TerminalBlockEntries } from './TerminalBlockEntries';
+import { Button } from './ui';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import {
@@ -69,12 +69,9 @@ import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 import type { AgentOrchestrationSnapshot } from '../shared/agent-orchestration';
 import { LeadWorkersStrip } from './LeadWorkersStrip';
 import { rememberBlockEnd, rememberBlockStart, rememberedBlockTiming } from './terminal/block-timing';
-import { excerptFromController, terminalOutputAttachment } from './terminal/block-excerpt';
-import { TerminalAiDock, TerminalTargetPicker, type PendingTerminalAttachment } from './terminal/TerminalAiDock';
-import { useTerminalAiHost } from './terminal/terminal-ai-host';
-import { pickedConversationGone, resolveTerminalProjectId, resolveTerminalTarget, type TerminalTarget } from './terminal/terminal-target';
-import { readConversationViews } from './conversation-views';
-import { readSessionViewState, saveSessionViewState } from './session-view-state';
+import { TerminalAiDock, TerminalTargetPicker } from './terminal/TerminalAiDock';
+import { useTerminalAiHost } from './terminal/terminal-ai-host';
+import { useTerminalAiInput } from './terminal/use-terminal-ai-input';
 import {
   applyCompletion,
   chooseCandidate,
@@ -103,14 +100,6 @@ interface PaneContextMenuSource {
   readonly draftSelectionEnd: number;
   /** The block the menu was opened on, if any. */
   readonly blockId?: string;
-}
-
-type TerminalInputMode = 'shell' | 'ai';
-
-/** Which draft an AI target writes to, as a key for the excerpts waiting to go there. */
-function targetKeyOf(target: TerminalTarget | null): string {
-  if (target === null) return '';
-  return target.kind === 'conversation' ? `conversation:${target.sessionId}` : `new:${target.projectId ?? ''}`;
 }
 
 interface PaneContextMenuState {
@@ -360,181 +349,38 @@ export function TerminalPane({
   // The prompt line types either a shell command or a message to a conversation: that
   // conversation's own message box, sharing its draft. Blocks attach as quoted chips.
   const aiHost = useTerminalAiHost();
-  const modeKey = `terminal-input-mode:${panelId}`;
-  const pickKey = `terminal-ai-target:${panelId}`;
-  const [inputMode, setInputMode] = useState<TerminalInputMode>('shell');
-  const inputModeRef = useRef(inputMode);
-  inputModeRef.current = inputMode;
-  // Resolved when the AI input opens and kept while it stays open; a person's pick sticks to this terminal.
-  const [aiTarget, setAiTarget] = useState<TerminalTarget | null>(null);
-  const aiTargetKeyRef = useRef('');
-  // Bumped whenever the person chooses where to send: the conversation a start box created only
-  // becomes the destination if nothing was chosen since that box sent.
-  const targetGenerationRef = useRef(0);
-  const pickedRef = useRef<string | undefined>(readSessionViewState<string>(pickKey));
-  // A conversation this terminal just started: kept as the pick until the snapshot lists it.
-  const awaitingListingRef = useRef<string | null>(null);
-  // Excerpts not yet in a draft, with the target they were attached for (they wait for it).
-  const [pendingAttachments, setPendingAttachments] = useState<readonly (PendingTerminalAttachment & { readonly targetKey: string })[]>([]);
-  // Blocks already put in a draft (or refused), per terminal session: the automatic attach never
-  // offers them again, also after the pane is reopened.
-  const offeredRunsRef = useRef(new Set<string>());
-  const offeredKey = sessionId ? `terminal-ai-offered:${sessionId}` : null;
-  useEffect(() => {
-    offeredRunsRef.current = new Set(offeredKey ? readSessionViewState<string[]>(offeredKey) ?? [] : []);
-  }, [offeredKey]);
-  const [aiNotice, setAiNotice] = useState<string | null>(null);
   const currentCwdRef = useRef(currentCwd);
   currentCwdRef.current = currentCwd;
-
-  const terminalProjectId = useCallback((): string | undefined => resolveTerminalProjectId({
-    ...(projectTarget?.projectId ? { tabProjectId: projectTarget.projectId } : {}),
-    // Before the session binds, what the pane was opened with already says where it is.
-    paneSessionId: sessionIdRef.current ?? adoptSessionId ?? null,
-    cwd: currentCwdRef.current ?? initialCwd ?? null,
-  }, aiHost?.getSnapshot() ?? null), [adoptSessionId, aiHost, initialCwd, projectTarget?.projectId]);
-
-  /** The target now, or null while there is no snapshot to find "the last conversation" in. */
-  const computeAiTarget = useCallback((): TerminalTarget | null => {
-    const snapshot = aiHost?.getSnapshot() ?? null;
-    const projectId = terminalProjectId();
-    const picked = pickedRef.current;
-    // A new conversation starts in the terminal's project, which takes a snapshot to know.
-    if (picked === 'new') return !snapshot ? null : projectId ? { kind: 'new', projectId } : { kind: 'new' };
-    if (picked && awaitingListingRef.current === picked && snapshot?.sessions.some((session) => session.id === picked)) {
-      awaitingListingRef.current = null;
-    }
-    const awaiting = picked !== undefined && awaitingListingRef.current === picked;
-    if (picked && pickedConversationGone(snapshot, picked, awaiting)) {
-      pickedRef.current = undefined;
-      saveSessionViewState<string | undefined>(pickKey, undefined);
-    }
-    if (!pickedRef.current && !snapshot) return null;
-    return resolveTerminalTarget({
-      snapshot,
-      views: readConversationViews(),
-      ...(projectId ? { projectId } : {}),
-      ...(pickedRef.current ? { pickedSessionId: pickedRef.current, pickAwaitingListing: awaiting } : {}),
-    });
-  }, [aiHost, pickKey, terminalProjectId]);
-
-  const setTarget = useCallback((target: TerminalTarget | null): void => {
-    const key = targetKeyOf(target);
-    aiTargetKeyRef.current = key;
-    setAiTarget(target);
-    // Excerpts attached before the target was known go to it; the others stay with their own target.
-    if (target === null) return;
-    const unresolved = targetKeyOf(null);
-    setPendingAttachments((current) => (current.some((item) => item.targetKey === unresolved)
-      ? current.map((item) => (item.targetKey === unresolved ? { ...item, targetKey: key } : item))
-      : current));
-  }, []);
-
-  const focusAiInput = useCallback((): void => {
-    requestAnimationFrame(() => paneRef.current
-      ?.querySelector<HTMLTextAreaElement>('.terminal-ai [data-testid="structured-agent-composer-input"]')?.focus());
-  }, []);
-  const focusShellInput = useCallback((): void => {
-    requestAnimationFrame(() => cmdInputRef.current?.focus());
-  }, []);
-
-  /** `automatic`: the newest-block attach on entering the AI input, which leaves a block already waiting for its target alone. */
-  const queueBlockAttachment = useCallback((entry: TerminalBlockEntry, automatic = false): void => {
-    const controller = entry.controller;
-    if (!controller) return;
-    const attachment = terminalOutputAttachment(entry.id, controller.command, excerptFromController(controller), t('terminalAi.chipLabel'));
-    const targetKey = aiTargetKeyRef.current;
-    setPendingAttachments((current) => (automatic && current.some((item) => item.runId === entry.id)
-      ? current
-      : [...current.filter((item) => item.runId !== entry.id), { runId: entry.id, attachment, targetKey }]));
-  }, [t]);
-
-  /** Open the AI input; attach the given block, or else the newest finished one if it was not offered yet. */
-  const enterAiInput = useCallback((block?: TerminalBlockEntry): void => {
-    if (!aiHost) return;
-    setTarget(computeAiTarget());
-    if (block) {
-      queueBlockAttachment(block);
-    } else {
-      const latest = [...blocksRef.current].reverse()
-        .find((entry) => entry.controller && entry.controller.getSnapshot().status !== 'running');
-      if (latest && !offeredRunsRef.current.has(latest.id)) queueBlockAttachment(latest, true);
-    }
-    setAiNotice(null);
-    setInputMode('ai');
-    saveSessionViewState<TerminalInputMode>(modeKey, 'ai');
-    focusAiInput();
-  }, [aiHost, computeAiTarget, focusAiInput, modeKey, queueBlockAttachment, setTarget]);
-
-  const leaveAiInput = useCallback((): void => {
-    setInputMode('shell');
-    saveSessionViewState<TerminalInputMode>(modeKey, 'shell');
-    focusShellInput();
-  }, [focusShellInput, modeKey]);
-
-  /** A block's "AI에게 보내기": into the open AI input's draft, or open it with that block. */
-  const sendBlockToAi = useCallback((block: TerminalBlockEntry): void => {
-    if (inputModeRef.current === 'ai') {
-      queueBlockAttachment(block);
-      focusAiInput();
-      return;
-    }
-    enterAiInput(block);
-  }, [enterAiInput, focusAiInput, queueBlockAttachment]);
-
-  const pickAiTarget = useCallback((choice: string): void => {
-    targetGenerationRef.current += 1;
-    pickedRef.current = choice;
-    saveSessionViewState<string>(pickKey, choice);
-    setTarget(computeAiTarget());
-    focusAiInput();
-  }, [computeAiTarget, focusAiInput, pickKey, setTarget]);
-
-  const settleAttachments = useCallback((applied: readonly string[], refused: readonly string[]): void => {
-    for (const runId of [...applied, ...refused]) offeredRunsRef.current.add(runId);
-    if (offeredKey) saveSessionViewState<string[]>(offeredKey, [...offeredRunsRef.current].slice(-200));
-    setPendingAttachments((current) => current.filter((item) => !applied.includes(item.runId) && !refused.includes(item.runId)));
-    if (refused.length > 0) setAiNotice(t('terminalAi.attachmentsFull'));
-  }, [offeredKey, t]);
-
-  const announceSent = useCallback((sentSessionId: string): void => {
-    aiHost?.notifySent(sentSessionId, paneRef.current?.ownerDocument ?? document);
-  }, [aiHost]);
-
-  // No snapshot yet when the AI input opened: resolve once the app has one.
-  useEffect(() => {
-    if (!aiHost || inputMode !== 'ai' || aiTarget !== null) return undefined;
-    const resolve = (): void => {
-      const target = computeAiTarget();
-      if (target) setTarget(target);
-    };
-    resolve();
-    return aiHost.subscribe(resolve);
-  }, [aiHost, aiTarget, computeAiTarget, inputMode, setTarget]);
-
-  // A pane reopened in AI mode (tab moved, window changed) comes back to it once its session is bound.
-  const modeRestoredRef = useRef(false);
-  useEffect(() => {
-    if (!aiHost || !sessionId || modeRestoredRef.current) return;
-    modeRestoredRef.current = true;
-    if (readSessionViewState<TerminalInputMode>(modeKey) !== 'ai') return;
-    setTarget(computeAiTarget());
-    setInputMode('ai');
-  }, [aiHost, computeAiTarget, modeKey, sessionId, setTarget]);
-
-  const blockMenu = useCallback((entry: TerminalBlockEntry & { readonly controller: BlockController }) => (
-    <Menu
-      label={t('terminalAi.blockMenu')}
-      placement="bottom-end"
-      trigger={(
-        <button type="button" className="btn block-menu" aria-label={t('terminalAi.blockMenu')} data-testid="block-menu">
-          <span aria-hidden="true">⋯</span>
-        </button>
-      )}
-    >
-      <MenuItem onSelect={() => sendBlockToAi(entry)} data-testid="block-send-to-ai">{t('terminalAi.sendBlock')}</MenuItem>
-    </Menu>
-  ), [sendBlockToAi, t]);
+  const {
+    inputMode,
+    inputModeRef,
+    aiTarget,
+    aiPending,
+    aiNotice,
+    terminalProjectId,
+    targetGenerationRef,
+    enterAiInput,
+    leaveAiInput,
+    sendBlockToAi,
+    pickAiTarget,
+    settleAttachments,
+    announceSent,
+    startedFromBox,
+    blockMenu,
+  } = useTerminalAiInput({
+    host: aiHost,
+    viewKey: panelId,
+    sessionId,
+    projectInputs: () => ({
+      ...(projectTarget?.projectId ? { tabProjectId: projectTarget.projectId } : {}),
+      // Before the session binds, what the pane was opened with already says where it is.
+      paneSessionId: sessionIdRef.current ?? adoptSessionId ?? null,
+      cwd: currentCwdRef.current ?? initialCwd ?? null,
+    }),
+    blocks: () => blocksRef.current,
+    root: () => paneRef.current,
+    focusShell: () => cmdInputRef.current?.focus(),
+  });
 
   // M4 attach-on-bind: latest `attachToRun` (defined below, after
   // `bindActiveController`) in a ref so the committed-session catch-up effect
@@ -1522,7 +1368,6 @@ export function TerminalPane({
 
   // Once per render (the pane renders on every keystroke).
   const aiProjectId = aiHost && inputMode === 'ai' ? terminalProjectId() : undefined;
-  const aiPending = useMemo(() => pendingAttachments.filter((item) => item.targetKey === targetKeyOf(aiTarget)), [pendingAttachments, aiTarget]);
   const startGeneration = targetGenerationRef.current;
 
   return (
@@ -1960,14 +1805,8 @@ export function TerminalPane({
               pending={aiPending}
               onPendingSettled={settleAttachments}
               onSent={announceSent}
-              onStarted={(startedSessionId) => {
-                // A start box that finishes after the person chose elsewhere only reports the send.
-                if (startGeneration === targetGenerationRef.current) {
-                  awaitingListingRef.current = startedSessionId;
-                  pickAiTarget(startedSessionId);
-                }
-                announceSent(startedSessionId);
-              }}
+              // A start box that finishes after the person chose elsewhere only reports the send.
+              onStarted={(startedSessionId) => startedFromBox(startGeneration, startedSessionId)}
               onNewConversation={() => pickAiTarget('new')}
             />
           </div>
