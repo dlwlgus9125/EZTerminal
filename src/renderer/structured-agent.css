@@ -1630,3 +1630,17 @@
   padding: 0 0.625rem;
   font-size: var(--ui-font-size-13);
 }
+/* The model · effort chip wraps as one piece and shortens its words to stay beside the plan switch
+   (4rem keeps that switch's place). No overflow clip: the pills' menus open from here. */
+.structured-agent[data-variant='mobile'] .chat-pill-pair {
+  display: inline-flex;
+  min-width: 0;
+  max-width: calc(100% - 4rem);
+}
+.structured-agent[data-variant='mobile'] .chat-pill-pair > *,
+.structured-agent[data-variant='mobile'] .chat-pill-pair .chat-pill {
+  min-width: 0;
+}
+.structured-agent[data-variant='mobile'] .chat-pill-pair > * + * {
+  margin-left: 4px;
+}

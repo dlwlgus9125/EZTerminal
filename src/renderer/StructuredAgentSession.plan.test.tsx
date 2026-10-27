@@ -149,6 +149,20 @@ describe('plan mode is a switch, not a permission', () => {
     await flush();
     expect(onChangeSettings).toHaveBeenCalledWith({ reasoningEffort: 'high' });
   });
+
+  it('keeps the model · effort chip in one piece on a phone, and leaves the desktop row as it was', () => {
+    const pair = () => container.querySelector('.chat-pill-pair');
+    const pillOf = (id: string) => container.querySelector(`[data-testid="structured-agent-live-${id}"]`);
+    render(panel({ variant: 'mobile', effortSupported: true }));
+    expect(pair()?.contains(pillOf('model'))).toBe(true);
+    expect(pair()?.contains(pillOf('effort'))).toBe(true);
+    expect(pair()?.contains(pillOf('permission'))).toBe(false);
+    render(panel({ variant: 'mobile' }));
+    expect(pair()).toBeNull();
+    render(panel({ effortSupported: true }));
+    expect(pair()).toBeNull();
+    expect(pillOf('effort')).not.toBeNull();
+  });
 });
 
 const planApproval: DaemonApproval = {

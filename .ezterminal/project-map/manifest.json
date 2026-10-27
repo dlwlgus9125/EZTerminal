@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:3b5cc0f164aaae859b84de9f40423ebfe39eb74f744994dc8910ed8d05bb6007",
+        "inputDigest": "sha256:1ed5eb70c3a6fc43544b5093efdbf057efbb30b4d13dc3ae7a3cbfef540ca8fe",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-2 review fixes): the phone's compact menu names the working folder; the review sheet returns focus to the host's header button. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4 device fix): on a phone the conversation composer wraps the model and effort pills in one span so the joined chip never splits across rows; desktop markup is unchanged. The anchored block only moved."
       }
     },
     {

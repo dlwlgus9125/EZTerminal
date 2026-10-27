@@ -122,8 +122,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/StructuredAgentSession.tsx",
-          "startLine": 2484,
-          "endLine": 2625,
+          "startLine": 2489,
+          "endLine": 2630,
           "lineDigest": "sha256:94ef2daa071f3c4c13ed7b9267fa95bef6396c32f61d81dc02b80acacdf5be27",
           "claim": "One Session surface keeps its Session ID and transcript while skin selection changes presentation; the history control opens a separate picker."
         },

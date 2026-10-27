@@ -2392,6 +2392,12 @@ export function StructuredAgentSessionPanel({
     }
   };
 
+  // The model and effort pills join into one chip. On a phone's narrow composer they wrap as one piece:
+  // as two flex items the row could break between them and split the chip.
+  const pairModelAndEffort = (model: JSX.Element, effort: JSX.Element | false): JSX.Element => (
+    variant === 'mobile' && effort ? <span className="chat-pill-pair">{model}{effort}</span> : <>{model}{effort}</>
+  );
+
   const settingsControls = (
 <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
             {settingsReadOnly ? (
@@ -2422,7 +2428,7 @@ export function StructuredAgentSessionPanel({
                   <NotebookPen aria-hidden="true" />
                   <span className="chat-pill__value">{permissionText.plan}</span>
                 </button>
-                <SettingPill
+                {pairModelAndEffort(<SettingPill
                   label={copy.modelOf(providerName)}
                   icon={Cpu}
                   prefix={providerName}
@@ -2441,8 +2447,7 @@ export function StructuredAgentSessionPanel({
                   {...(turnCurrent && !settingsLocked ? { hint: copy.settingsAfterTurn } : {})}
                   onChange={(next) => void updateSettings({ model: next })}
                   testId="structured-agent-live-model"
-                />
-                {effortSupported && (
+                />, effortSupported && (
                   <SettingPill
                     label={i18n.language.startsWith('ko') ? '추론 강도' : 'Reasoning effort'}
                     icon={Gauge}
@@ -2453,7 +2458,7 @@ export function StructuredAgentSessionPanel({
                     onChange={(next) => void updateSettings({ reasoningEffort: next })}
                     testId="structured-agent-live-effort"
                   />
-                )}
+                ))}
                 <SettingPill
                   label={copy.permission}
                   icon={accessLevel === 'full-access' ? ShieldAlert : ShieldCheck}
