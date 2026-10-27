@@ -1101,19 +1101,6 @@ const mobileCases = [
     surface: "terminal",
   },
   {
-    name: "412x915 portrait Korean Matrix remote hub",
-    viewport: { width: 412, height: 915 },
-    storyId: "compositions-mobile-workbench-shell--hub-korean",
-    screenshot: "mobile-412x915-shell-matrix-ko.png",
-    options: {
-      theme: "matrix",
-      locale: "ko",
-      density: "comfortable",
-      motion: "reduced",
-    },
-    surface: "hub",
-  },
-  {
     name: "600x960 compact Korean auxiliary settings page",
     viewport: { width: 600, height: 960 },
     storyId: "compositions-mobile-workbench-shell--settings-page-korean",
@@ -1125,19 +1112,6 @@ const mobileCases = [
       motion: "reduced",
     },
     surface: "destination",
-  },
-  {
-    name: "915x412 landscape English remote hub",
-    viewport: { width: 915, height: 412 },
-    storyId: "compositions-mobile-workbench-shell--hub-english",
-    screenshot: "mobile-915x412-shell-matrix-en.png",
-    options: {
-      theme: "matrix",
-      locale: "en",
-      density: "adaptive",
-      motion: "default",
-    },
-    surface: "hub",
   },
   {
     name: "360x800 first manual connection",
@@ -1177,12 +1151,7 @@ test.describe("mobile-width Storybook visual contracts", () => {
             "aria-hidden",
             "true",
           );
-          if (visualCase.surface === "hub") {
-            await expect(page.getByTestId("mobile-home-view")).toBeVisible();
-            await expect(page.getByTestId("home-pc-control")).toBeVisible();
-          } else {
-            await expect(page.getByTestId("mobile-settings-view")).toBeVisible();
-          }
+          await expect(page.getByTestId("mobile-settings-view")).toBeVisible();
         }
       }
 
@@ -1274,13 +1243,6 @@ const activeMobileSurfaceCases = [
     screenshot: "mobile-active-agent-history-light-en.png",
     readySelector: ".mob-agent-error[role='alert']",
     options: { theme: "light", locale: "en", density: "adaptive", motion: "reduced" },
-  },
-  {
-    name: "agent folder picker",
-    storyId: "compositions-mobile-active-surfaces--agent-folder-picker",
-    screenshot: "mobile-active-agent-folder-matrix-en.png",
-    readySelector: "[data-testid='mobile-agent-folder-picker'] .mob-row",
-    options: { theme: "matrix", locale: "en", density: "adaptive", motion: "reduced" },
   },
 ] as const;
 

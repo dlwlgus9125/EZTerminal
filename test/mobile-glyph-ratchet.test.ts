@@ -4,17 +4,11 @@ import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * I4 moves the Android app off lucide onto the stencil glyphs (`src/renderer/ui/Glyph.tsx`).
- * This list only shrinks: a phone file not on it may not import lucide, and a file on it that no
- * longer imports lucide must be removed. At the end of I4 only the unused screens that I5 deletes
- * stay here. Shared desktop components under `src/renderer` are out of scope.
+ * The Android app draws only the stencil glyphs (`src/renderer/ui/Glyph.tsx`): no phone file may
+ * import lucide (I4 moved the screens, I5 deleted the last unused ones). The repo-wide ban that also
+ * covers shared components is test/no-lucide.test.ts.
  */
-const LUCIDE_ALLOWED = new Set([
-  // Unused screens I5 deletes (no product code renders them).
-  'MobileAgentFolderPicker.tsx',
-  'MobileAgentProjects.tsx',
-  'MobileHomeView.tsx',
-]);
+const LUCIDE_ALLOWED = new Set<string>();
 
 const root = resolve(process.cwd(), 'mobile/src');
 

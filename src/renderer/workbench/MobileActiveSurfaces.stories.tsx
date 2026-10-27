@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { useLayoutEffect, type ReactNode } from 'react';
 
-import { MobileAgentFolderPicker } from '../../../mobile/src/MobileAgentFolderPicker';
 import { MobileAgentHistorySheet } from '../../../mobile/src/MobileAgentHistorySheet';
 import { MobileAgentView } from '../../../mobile/src/MobileAgentView';
 import { MobileDaemonNavigator } from '../../../mobile/src/MobileDaemonNavigator';
@@ -62,8 +61,7 @@ type ActiveMobileSurface =
   | 'sessions-sheet'
   | 'theme-sheet'
   | 'pairing-scanner-unavailable'
-  | 'agent-history-error'
-  | 'agent-folder-picker';
+  | 'agent-history-error';
 
 interface MobileActiveSurfaceProps {
   readonly locale: 'en' | 'ko';
@@ -792,16 +790,6 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
         </StoryApiBoundary>
       );
       break;
-    case 'agent-folder-picker':
-      content = (
-        <MobileAgentFolderPicker
-          transport={STORY_TRANSPORT}
-          excludedRoots={['D:/Projects']}
-          onClose={close}
-          onSelect={close}
-        />
-      );
-      break;
   }
 
   return <SurfaceFrame locale={locale}>{content}</SurfaceFrame>;
@@ -1010,7 +998,6 @@ export const SessionsSheet: Story = { args: { surface: 'sessions-sheet' } };
 export const ThemeSheet: Story = { args: { surface: 'theme-sheet' } };
 export const PairingScannerUnavailable: Story = { args: { surface: 'pairing-scanner-unavailable' } };
 export const AgentHistoryError: Story = { args: { surface: 'agent-history-error' } };
-export const AgentFolderPicker: Story = { args: { surface: 'agent-folder-picker' } };
 
 export const NewSessionCliModel: Story = {
   args: { surface: 'new-session-cli', locale: 'ko' },

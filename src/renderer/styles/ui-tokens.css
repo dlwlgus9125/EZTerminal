@@ -4,8 +4,8 @@
    cannot reach them anyway. Latin subsets only; Hangul falls back to the
    system UI font. Barlow Semi Condensed is the label face (headings, plate
    labels, switches); Share Tech Mono is the display face (wordmark, prompt
-   sigil); VT323 is a Matrix accent; JetBrains Mono / Fira Code are
-   terminal-font picker entries (fonts.ts FONT_CATALOG). */
+   sigil); JetBrains Mono / Fira Code are terminal-font picker entries
+   (fonts.ts FONT_CATALOG). */
 @font-face {
   font-family: 'Barlow Semi Condensed';
   font-style: normal;
@@ -33,13 +33,6 @@
   font-weight: 400;
   font-display: swap;
   src: url('../fonts/share-tech-mono-latin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'VT323';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('../fonts/vt323-latin.woff2') format('woff2');
 }
 @font-face {
   font-family: 'JetBrains Mono';

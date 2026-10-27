@@ -1,9 +1,7 @@
 import { ChevronLeft, ChevronsUpDown, Play, Plus } from 'lucide-react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
-import type { AgentActivitySnapshot } from '../../shared/agent';
 import { ConnectScreen } from '../../../mobile/src/ConnectScreen';
-import { MobileHomeView } from '../../../mobile/src/MobileHomeView';
 import { MobileSettingsView } from '../../../mobile/src/MobileSettingsView';
 import { MobileWorkbenchCoordinator } from '../../../mobile/src/MobileWorkbenchCoordinator';
 import { AppI18nProvider } from '../i18n';
@@ -13,7 +11,7 @@ import '../../../mobile/src/mobile-shell.css';
 import './mobile-shell-story.css';
 
 type Locale = 'en' | 'ko';
-type StoryPage = 'connect' | 'hub' | 'terminal' | 'settings';
+type StoryPage = 'connect' | 'terminal' | 'settings';
 
 interface MobileShellStoryProps {
   readonly locale: Locale;
@@ -89,71 +87,6 @@ function MobileTerminal({ locale }: { readonly locale: Locale }): JSX.Element {
   );
 }
 
-const STORY_AGENTS: AgentActivitySnapshot = {
-  revision: 1,
-  items: [
-    {
-      id: 'agent-1',
-      sessionId: 'session-1',
-      provider: 'claude',
-      cwd: 'C:/Workspace/ezterminal',
-      state: 'blocked',
-      status: 'blocked',
-      stateSeq: 2,
-      live: true,
-      interactiveReady: true,
-      stateSource: 'provider-hook',
-      createdAt: 0,
-      updatedAt: 0,
-    },
-    {
-      id: 'agent-2',
-      sessionId: 'session-2',
-      provider: 'codex',
-      cwd: 'C:/Workspace/docs',
-      state: 'working',
-      status: 'working',
-      stateSeq: 2,
-      live: true,
-      interactiveReady: true,
-      stateSource: 'provider-hook',
-      createdAt: 0,
-      updatedAt: 0,
-    },
-  ],
-};
-
-const STORY_SESSIONS = [
-  { session: { sessionId: 'session-1', cwd: 'C:/Workspace/ezterminal' }, open: true },
-  { session: { sessionId: 'session-2', cwd: 'C:/Workspace/docs' }, open: false },
-  { session: { sessionId: 'session-3', cwd: 'C:/Workspace/scratch' }, open: false },
-];
-
-/** One session executing something, so the story shows both row states. */
-const STORY_ACTIVE_RUNS = new Map([['session-1', 'pnpm vitest run']]);
-
-function HomeFixture(): JSX.Element {
-  return (
-    <MobileHomeView
-      connected
-      connectionUrl="ws://100.64.0.10:7420"
-      desktopControlSupported
-      sessions={STORY_SESSIONS}
-      activeSessionId="session-1"
-      agentSnapshot={STORY_AGENTS}
-      activeRuns={STORY_ACTIVE_RUNS}
-      agentAttention={1}
-      openclawVisible
-      openclawState="running"
-      onOpenPcControl={() => undefined}
-      onOpenSession={() => undefined}
-      onOpenTerminal={() => undefined}
-      onOpenAgents={() => undefined}
-      onOpenClaw={() => undefined}
-    />
-  );
-}
-
 function SettingsFixture(): JSX.Element {
   return (
     <MobileSettingsView
@@ -182,9 +115,8 @@ function MobileShellStory({ locale, page }: MobileShellStoryProps): JSX.Element 
     );
   }
 
-  const hubActive = page === 'hub';
   const terminalActive = page === 'terminal';
-  const currentPage = hubActive ? <HomeFixture /> : page === 'settings' ? <SettingsFixture /> : undefined;
+  const currentPage = page === 'settings' ? <SettingsFixture /> : undefined;
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <MobileWorkbenchCoordinator
@@ -209,19 +141,12 @@ const meta = {
   },
   args: {
     locale: 'en',
-    page: 'hub',
+    page: 'terminal',
   },
 } satisfies Meta<typeof MobileShellStory>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-export const HubEnglish: Story = {};
-
-export const HubKorean: Story = {
-  args: { locale: 'ko' },
-  globals: { locale: 'ko' },
-};
 
 export const ConnectEnglish: Story = {
   args: { page: 'connect' },

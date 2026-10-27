@@ -44,7 +44,6 @@ export const MOBILE_AUXILIARY_STORIES = {
   theme: { storyId: 'compositions-mobile-active-surfaces--theme-sheet', readySelector: '[data-testid="theme-menu"]' },
   scanner: { storyId: 'compositions-mobile-active-surfaces--pairing-scanner-unavailable', readySelector: '[data-testid="pairing-scanner"]' },
   'agent-history': { storyId: 'compositions-mobile-active-surfaces--agent-history-error', readySelector: '[data-testid="mobile-agent-history"]' },
-  'agent-folder-picker': { storyId: 'compositions-mobile-active-surfaces--agent-folder-picker', readySelector: '[data-testid="mobile-agent-folder-picker"]' },
   dialog: { storyId: 'primitives-dialogs-and-panels--dialog-open', readySelector: '[role="dialog"]' },
   toast: { storyId: 'primitives-feedback--toast-variants', readySelector: '[role="status"]' },
   offline: { storyId: 'compositions-mobile-active-surfaces--agents-offline', readySelector: '[data-testid="mobile-agent-view"]' },
