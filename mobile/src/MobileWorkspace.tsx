@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Home, ChevronsUpDown, Plus } from 'lucide-react';
+import { ChevronsUpDown, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
@@ -15,7 +15,6 @@ import {
   orchestrationWorkerActivityIds,
   type AgentOrchestrationSnapshot,
 } from '../../src/shared/agent-orchestration';
-import { countAgentAttention } from '../../src/shared/agent-attention';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { formatEndpointHost } from './mobile-endpoint';
@@ -25,18 +24,24 @@ import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { e2eLog } from './e2e-telemetry';
 import type { HomeSessionRow } from './MobileHomeView';
 import { MobilePlanningNavigator } from './MobilePlanningNavigator';
-import { MobileMoreSheet } from './MobileMoreSheet';
 import { MobilePageHeader } from './MobilePageHeader';
 import { MobileSessionSheet } from './MobileSessionSheet';
 import { MobileSessionView } from './MobileSessionView';
-import { MobileTabBar, type MobileShellTab } from './MobileTabBar';
 import { MobileToastProvider, useMobileToast } from './MobileToast';
 import { createCapabilityAccess } from '../../src/renderer/capability-access';
 import { createTerminalAiHost } from '../../src/renderer/terminal/terminal-ai-host';
 import type { TerminalAiWiring } from '../../src/renderer/terminal/TerminalAiDock';
 import { PHONE_PRINCIPAL, phoneChatStateAccess } from './phone-conversation-access';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
-import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
+import { Glyph, Menu, MenuItem, glyphIcon } from '../../src/renderer/ui';
+import { useShellText } from '../../src/renderer/shell/shell-text';
+import { MobileFeedView } from './feed/MobileFeedView';
+import { decideFeedItem } from './feed/feed-actions';
+import { feedBadgeCount, type FeedWaitingItem } from './feed/feed-model';
+import { useFeedData } from './feed/use-feed-data';
+import { lastSurfaceOf, launchSurface, type LastSurface } from './launch-surface';
+import { MOBILE_BACKGROUND_SUSPEND_MS } from './mobile-app-lifecycle';
+import { OPENCLAW_STATE_LABEL_KEY, loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
 import { decideTabSwipe } from './tab-swipe';
 import { ThemeMenu } from './ThemeMenu';
 import {
@@ -137,24 +142,22 @@ const UNAVAILABLE_APP_UPDATE_CONTROLLER: MobileAppUpdateController = {
 export const MOBILE_SUB_PAGES = ['files', 'stats', 'openclaw', 'settings', 'pc-control', 'sessions'] as const;
 type MobileSubPage = (typeof MOBILE_SUB_PAGES)[number];
 
-export const MOBILE_SHEETS = ['more', 'sessions'] as const;
+export const MOBILE_SHEETS = ['sessions'] as const;
 type MobileSheet = (typeof MOBILE_SHEETS)[number];
 
-// MobileWorkspace — the authed shell. The commercial pass replaces the old
-// "hub -> full-screen destination" tree with a five-item bottom bar (a 72dp
-// left rail from 600dp up): Home | Terminal | PC | Agents | More. PC Control
-// is an explicit start action rather than a destination, and More is a sheet.
-//
-// KEEP-ALIVE (unchanged contract): every open tab's MobileSessionView stays
-// MOUNTED for as long as its tab exists. Switching shell tabs only renders an
-// opaque page layer OVER the terminal layer (MobileWorkbenchCoordinator) and
-// switching terminal tabs only toggles `display: none` on the wrapper div —
-// neither ever unmounts. A fresh mount would tear down that tab's
-// BlockController(s)/FakeMessagePort and lose the running PTY stream's UI
-// state. `display: none` keeps React state alive (and the compile-time E2E
-// output probe active); the one thing it breaks is xterm's internal
-// measurement of a now-zero-size container, which is why activating a tab
-// dispatches a `resize` event on the next animation frame.
+/**
+ * The shell's roots (I4, layout A: no tab bar). The feed is the root and the first screen; the terminal, a project
+ * and a conversation are opened from it (its header, ▾ and cards), and Back returns to it.
+ */
+export const MOBILE_TAB_ROOTS = ['feed', 'terminal', 'home', 'agents'] as const;
+export type MobileShellTab = (typeof MOBILE_TAB_ROOTS)[number];
+export const MOBILE_PRIMARY_DESTINATIONS = MOBILE_TAB_ROOTS;
+
+/** A launch decision that is not ready this long after the connection stays unapplied (no late jump). */
+const LAUNCH_DECISION_MS = 3_000;
+
+const surfaceOf = (tab: MobileShellTab): LastSurface => tab === 'terminal' ? 'terminal' : tab === 'agents' ? 'chat' : 'feed';
+
 /** The terminal AI input's "sent" notice and its way to a conversation, inside the toast provider. */
 function TerminalAiNotices({ host, titleOf, openConversation }: {
   readonly host: ReturnType<typeof createTerminalAiHost>;
@@ -169,6 +172,20 @@ function TerminalAiNotices({ host, titleOf, openConversation }: {
   });
   return null;
 }
+
+// MobileWorkspace — the authed shell. I4 (layout A) has no tab bar: the feed is the root, its header opens the
+// terminal, PC Control and a ⋯ menu (history, sessions, files, monitor, OpenClaw, theme, settings).
+//
+// KEEP-ALIVE (unchanged contract): every open tab's MobileSessionView stays
+// MOUNTED for as long as its tab exists. Switching shell tabs only renders an
+// opaque page layer OVER the terminal layer (MobileWorkbenchCoordinator) and
+// switching terminal tabs only toggles `display: none` on the wrapper div —
+// neither ever unmounts. A fresh mount would tear down that tab's
+// BlockController(s)/FakeMessagePort and lose the running PTY stream's UI
+// state. `display: none` keeps React state alive (and the compile-time E2E
+// output probe active); the one thing it breaks is xterm's internal
+// measurement of a now-zero-size container, which is why activating a tab
+// dispatches a `resize` event on the next animation frame.
 
 export function MobileWorkspace({
   transport,
@@ -193,15 +210,24 @@ export function MobileWorkspace({
   readonly offlineChatCache?: MobileOfflineChatCache | null;
 }): JSX.Element {
   const { t } = useAppTranslation();
+  const { text } = useShellText();
   const { preferences: uiPreferences } = useMobileUiPreferences();
   const pageVisible = usePageVisible();
   useProfileFeaturePreload(MOBILE_PRELOAD_LOADERS, uiPreferences.resourceProfile, true);
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
   const tabsStateRef = useRef(tabsState);
   tabsStateRef.current = tabsState;
-  const [tab, setTab] = useState<MobileShellTab>('terminal');
+  const [tab, setTab] = useState<MobileShellTab>('feed');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [workflowNavigationTarget, setWorkflowNavigationTarget] = useState<{ subprojectId: string; nodeId?: string; key: string }>();
+  const [workflowNavigationTarget, setWorkflowNavigationTarget] = useState<{ subprojectId: string; nodeId?: string; runId?: string; key: string }>();
+  // A project opened straight from the feed (▾, a flow card) goes back to the feed, not to the project list.
+  const [projectDirect, setProjectDirect] = useState(false);
+  // Where leaving a conversation opened from somewhere else goes (null: back to the conversation list).
+  const [agentsExitTo, setAgentsExitTo] = useState<MobileShellTab | null>(null);
+  // Counts the person's own moves, so a launch decision that arrives late never overrides one.
+  const navigationCountRef = useRef(0);
+  // The terminal agents the launch rule counts as waiting (set where they are filtered, below).
+  const launchAgentsRef = useRef<AgentActivitySnapshot['items']>([]);
   const [restoreAuthority, setRestoreAuthority] = useState<string | null>(null);
   const restoredAuthorityRef = useRef<string | null>(null);
   const userNavigatedRef = useRef(false);
@@ -224,7 +250,7 @@ export function MobileWorkspace({
   } : undefined), [transport]);
   const [newConversationRequest, setNewConversationRequest] = useState(0);
   const [conversationHistoryRequest, setConversationHistoryRequest] = useState<{ readonly conversationId?: string; readonly projectId?: string; readonly key: string }>();
-  const conversationHistoryReturnTab = useRef<'home' | 'tasks'>('home');
+  const conversationHistoryReturnTab = useRef<'home' | 'feed'>('feed');
   const [terminalOpenError, setTerminalOpenError] = useState(false);
   const terminalOpeningRef = useRef(false);
   const [subPage, setSubPage] = useState<MobileSubPage | null>(null);
@@ -264,7 +290,8 @@ export function MobileWorkspace({
   >(new Map());
   const themeReturnFocusRef = useRef<HTMLElement | null>(null);
   const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
-  const subPageReturnTargetRef = useRef('shell-tab-home');
+  const subPageReturnTargetRef = useRef('mobile-feed-more');
+  const subPageReturnElementRef = useRef<HTMLElement | null>(null);
   const restoreTabFocusRef = useRef(false);
   const cwdMapRef = useRef(new Map<string, string>());
 
@@ -302,6 +329,7 @@ export function MobileWorkspace({
         preloadOnIntent(MOBILE_FEATURE_LOADERS.agents);
         setSheet(null);
         setSubPage(null);
+        setAgentsExitTo('feed');
         setTab('agents');
       }
       return true;
@@ -401,6 +429,9 @@ export function MobileWorkspace({
               : MOBILE_FEATURE_LOADERS.sessions;
     preloadOnIntent(loader);
     subPageReturnTargetRef.current = returnTarget;
+    // The opener gets focus back; a menu item is gone by then, so its menu's trigger (returnTarget) does.
+    subPageReturnElementRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement : null;
     setSheet(null);
     setSubPage(next);
   }, []);
@@ -412,6 +443,7 @@ export function MobileWorkspace({
 
   const selectTab = useCallback((next: MobileShellTab) => {
     userNavigatedRef.current = true;
+    navigationCountRef.current += 1;
     if (next === 'agents') preloadOnIntent(MOBILE_FEATURE_LOADERS.agents);
     setSheet(null);
     setSubPage(null);
@@ -422,14 +454,17 @@ export function MobileWorkspace({
     if (subPage !== null || !restoreTabFocusRef.current) return;
     restoreTabFocusRef.current = false;
     const frame = requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-testid="${subPageReturnTargetRef.current}"]`)?.focus();
+      const opener = subPageReturnElementRef.current;
+      subPageReturnElementRef.current = null;
+      if (opener?.isConnected && !opener.closest('[inert]')) opener.focus();
+      else document.querySelector<HTMLElement>(`[data-testid="${subPageReturnTargetRef.current}"]`)?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [subPage]);
 
   useEffect(() => {
     const openTerminalKeySettings = (): void => {
-      openSubPage('settings', 'shell-tab-more');
+      openSubPage('settings', 'mobile-feed-more');
     };
     window.addEventListener(OPEN_TERMINAL_KEY_SETTINGS_EVENT, openTerminalKeySettings);
     return () => window.removeEventListener(OPEN_TERMINAL_KEY_SETTINGS_EVENT, openTerminalKeySettings);
@@ -561,8 +596,10 @@ export function MobileWorkspace({
       : { status: 'recovering', snapshot: offlineChatCache.snapshot });
     if (userNavigatedRef.current) return;
     const saved = readWorkspaceRestore(offlineChatCache.authorityFingerprint);
-    if (saved?.activeAgentSessionId && offlineChatCache.snapshot.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)) {
+    if (saved?.activeAgentSessionId && lastSurfaceOf(saved) === 'chat'
+      && offlineChatCache.snapshot.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)) {
       setActiveAgentSessionId(saved.activeAgentSessionId);
+      setAgentsExitTo('feed');
       setTab('agents');
     }
   }, [offlineChatCache, transport]);
@@ -820,29 +857,47 @@ export function MobileWorkspace({
   useEffect(() => {
     if (!connected || !transport.isAuthed) return;
     let cancelled = false;
+    const connectedAt = Date.now();
+    const movesAtStart = navigationCountRef.current;
     void (async () => {
       const authority = await mobileAgentCreateAuthorityFingerprint(await transport.getRemoteToken());
       if (cancelled || restoredAuthorityRef.current === authority) return;
       const saved = readWorkspaceRestore(authority);
       if (saved) {
+        const restoredIds = new Set<string>();
         for (const sessionId of saved.terminalSessionIds) {
           if (cancelled) return;
-          if (tabsStateRef.current.tabs.some((entry) => entry.sessionId === sessionId)) continue;
+          if (tabsStateRef.current.tabs.some((entry) => entry.sessionId === sessionId)) { restoredIds.add(sessionId); continue; }
           const result = await transport.openSessionSurface(nextMobileSurfaceId(), { kind: 'adopt', sessionId }).catch(() => null);
           if (cancelled) {
             if (result?.ok) void transport.releaseSessionSurface(result.binding.bindingId).catch(() => undefined);
             return;
           }
-          if (result?.ok) dispatch({ type: 'open', binding: result.binding });
+          if (result?.ok) { restoredIds.add(sessionId); dispatch({ type: 'open', binding: result.binding }); }
         }
         if (!userNavigatedRef.current && saved.activeTerminalSessionId) dispatch({ type: 'activate', sessionId: saved.activeTerminalSessionId });
-        const snapshot = saved.activeAgentSessionId ? await transport.getDaemonSnapshot().catch(() => null) : null;
+        // The PC answers at once; one that does not within the launch budget leaves the app on the feed.
+        let budget: ReturnType<typeof setTimeout> | undefined;
+        const snapshot = await Promise.race([
+          transport.getDaemonSnapshot().catch(() => null),
+          new Promise<null>((resolve) => { budget = setTimeout(() => resolve(null), Math.max(0, LAUNCH_DECISION_MS - (Date.now() - connectedAt))); }),
+        ]).finally(() => clearTimeout(budget));
         if (cancelled) return;
         const agentId = snapshot?.agents.some((agent) => agent.sessionId === saved.activeAgentSessionId)
           ? saved.activeAgentSessionId : null;
         if (!userNavigatedRef.current && !agentCreateRecoveryStateRef.current.recovery) {
           setActiveAgentSessionId(agentId);
-          setTab(saved.destination === 'agents' && agentId ? 'agents' : 'terminal');
+          // What waits first, then the terminal or conversation left; a decision ready too late is not applied.
+          const next = launchSurface({
+            waiting: feedBadgeCount(snapshot, launchAgentsRef.current),
+            last: lastSurfaceOf(saved),
+            terminalRestored: saved.activeTerminalSessionId ? restoredIds.has(saved.activeTerminalSessionId) : restoredIds.size > 0,
+            conversationExists: agentId !== null,
+          });
+          if (navigationCountRef.current === movesAtStart && Date.now() - connectedAt <= LAUNCH_DECISION_MS) {
+            if (next === 'agents') setAgentsExitTo('feed');
+            setTab(next);
+          }
         }
       }
       if (!cancelled) { restoredAuthorityRef.current = authority; setRestoreAuthority(authority); }
@@ -854,14 +909,43 @@ export function MobileWorkspace({
     if (tab === 'terminal' || tab === 'agents') lastWorkTabRef.current = tab;
     const authority = restoreAuthority ?? offlineChatCache?.authorityFingerprint;
     if (!authority) return;
-    const previous = connected ? null : readWorkspaceRestore(authority);
+    const previous = readWorkspaceRestore(authority);
+    // Until this run has restored (or the person moved), the surface left last time is kept, not the feed shown meanwhile.
+    const settled = restoreAuthority !== null || userNavigatedRef.current;
     writeWorkspaceRestore(authority, {
       terminalSessionIds: connected ? tabsState.tabs.map((entry) => entry.sessionId) : previous?.terminalSessionIds ?? [],
       activeTerminalSessionId: connected ? tabsState.activeSessionId : previous?.activeTerminalSessionId ?? null,
       activeAgentSessionId,
       destination: lastWorkTabRef.current,
+      lastSurface: settled || !previous ? surfaceOf(tab) : lastSurfaceOf(previous),
     });
   }, [restoreAuthority, offlineChatCache?.authorityFingerprint, connected, tabsState, tab, activeAgentSessionId]);
+
+  // Back from a suspend (30 s or more in the background drops the link): when something waits, the feed shows it once
+  // the link is back, unless the person moved first. A short trip to another app changes nothing.
+  const backgroundSinceRef = useRef<number | null>(null);
+  const resumedFromSuspendRef = useRef(false);
+  useEffect(() => {
+    if (!appActive) { backgroundSinceRef.current ??= Date.now(); return; }
+    const since = backgroundSinceRef.current;
+    backgroundSinceRef.current = null;
+    if (since !== null && Date.now() - since >= MOBILE_BACKGROUND_SUSPEND_MS) resumedFromSuspendRef.current = true;
+  }, [appActive]);
+  useEffect(() => {
+    if (!connected || !transport.isAuthed || !resumedFromSuspendRef.current) return;
+    resumedFromSuspendRef.current = false;
+    const reconnectedAt = Date.now();
+    const movesAtStart = navigationCountRef.current;
+    let cancelled = false;
+    void transport.getDaemonSnapshot().catch(() => null).then((snapshot) => {
+      if (cancelled || navigationCountRef.current !== movesAtStart || Date.now() - reconnectedAt > LAUNCH_DECISION_MS) return;
+      if (feedBadgeCount(snapshot, launchAgentsRef.current) === 0) return;
+      setSheet(null);
+      setSubPage(null);
+      setTab('feed');
+    });
+    return () => { cancelled = true; };
+  }, [authGeneration, connected, transport]);
 
   // File-explorer drawer's "open terminal here" (M4): a fresh tab whose
   // session starts in `dirPath` — mirrors `quickNewTab`, cwd threaded through.
@@ -938,10 +1022,28 @@ export function MobileWorkspace({
     ...agentSnapshot,
     items: agentSnapshot.items.filter((item) => !orchestrationWorkerIds.has(item.id)),
   }), [agentSnapshot, orchestrationWorkerIds]);
-  // The host's count when it sends one (conversation and flow approvals, blocked terminal agents), the same as the
-  // desktop's; an older host (or a copy kept on this device) leaves the terminal agents' count.
-  // (While the snapshot is read again after an event it is kept, so the count stays.)
-  const hostAttention = connected && transport.isAuthed ? daemonRuntimeState.snapshot?.attention : undefined;
+  // What waits is read from the connected PC only (a cached approval cannot be answered); the badge counts the feed's
+  // cards, the same rule as the desktop board's (an older PC: conversation approvals and blocked terminal agents).
+  const liveDaemon = connected && transport.isAuthed ? daemonRuntimeState.snapshot : null;
+  launchAgentsRef.current = userFacingAgentSnapshot.items;
+  const [feedAuthority, setFeedAuthority] = useState<string | null>(offlineChatCache?.authorityFingerprint ?? null);
+  useEffect(() => {
+    if (!connected || !transport.isAuthed) return;
+    let alive = true;
+    void transport.getRemoteToken().then(mobileAgentCreateAuthorityFingerprint)
+      .then((authority) => { if (alive) setFeedAuthority(authority); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [connected, transport]);
+  const feed = useFeedData({
+    transport,
+    daemon: daemonRuntimeState.snapshot,
+    liveDaemon,
+    terminalAgents: userFacingAgentSnapshot.items,
+    connected: connected && transport.isAuthed,
+    active: tab === 'feed' && subPage === null && appActive,
+    authority: feedAuthority,
+  });
+  const waitingCount = feed.waiting.length;
   // The AI input needs a PC that lists conversations and starts them from the phone (protocol 16), the
   // phone's secure storage and a live connection; otherwise the terminal stays a shell.
   const terminalAiReady = Boolean(terminalAiWiring) && connected && transport.isAuthed
@@ -949,7 +1051,6 @@ export function MobileWorkspace({
   useEffect(() => {
     terminalAiHost.set(terminalAiReady ? daemonRuntimeState.snapshot ?? null : null);
   }, [daemonRuntimeState.snapshot, terminalAiHost, terminalAiReady]);
-  const agentAttention = hostAttention ? hostAttention.items.length : countAgentAttention(userFacingAgentSnapshot);
 
   // Swipe-between-tabs used to live on the tab strip the session sheet
   // replaced. Keeping it on the terminal header preserves the gesture (and
@@ -981,6 +1082,81 @@ export function MobileWorkspace({
     <div className="status-loading mobile-auxiliary-page-loading" role="status" data-testid="mobile-auxiliary-page-loading">
       {t('common.loading')}
     </div>
+  );
+
+  /** A conversation (or, with null, the list); leaving it returns to `from`. */
+  const openConversation = (sessionId: string | null, from: MobileShellTab | null): void => {
+    setActiveAgentSessionId(sessionId);
+    setAgentsExitTo(from);
+    selectTab('agents');
+  };
+  const openNewConversation = (projectId: string | null): void => {
+    setSelectedProjectId(projectId);
+    setActiveAgentSessionId(null);
+    setNewConversationRequest(Date.now());
+    setAgentsExitTo('feed');
+    selectTab('agents');
+  };
+  /** A project's screen (or, with null, the project list), at a flow and its stage or run when given. */
+  const openProjectScreen = (projectId: string | null, target?: { subprojectId: string; nodeId?: string; runId?: string }): void => {
+    setSelectedProjectId(projectId);
+    setProjectDirect(projectId !== null);
+    setWorkflowNavigationTarget(target ? { ...target, key: crypto.randomUUID() } : undefined);
+    selectTab('home');
+  };
+  const openFeedWaiting = (item: FeedWaitingItem): void => {
+    if (item.kind === 'flow-approval' && item.projectId && item.flow) {
+      openProjectScreen(item.projectId, item.flow);
+      return;
+    }
+    if (item.kind === 'terminal-agent') {
+      const activity = agentSnapshot.items.find((entry) => entry.id === item.activityId);
+      if (activity) void transport.markAgentSeen(activity.id, activity.stateSeq);
+      if (activity?.sessionId) void adoptAndOpenTab(activity.sessionId).catch(() => setTerminalOpenError(true));
+      return;
+    }
+    if (item.sessionId) openConversation(item.sessionId, 'feed');
+  };
+  const openFeedHistory = (): void => {
+    conversationHistoryReturnTab.current = 'feed';
+    setConversationHistoryRequest({ key: crypto.randomUUID() });
+    openConversation(null, null);
+  };
+  const feedMoreTrigger = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-testid="mobile-feed-more"]');
+  const hostLabel = [formatEndpointHost(connectionUrl), connected && roundTripMs !== null ? `${Math.round(roundTripMs)}ms` : null]
+    .filter(Boolean).join(' · ') || text('PC', 'PC');
+  const feedHeaderActions = (
+    <span className="mob-feed__actions">
+      <button type="button" className="mob-icon-btn mob-icon-btn--plate" onClick={() => selectTab('terminal')}
+        aria-label={t('mobile.terminal')} data-testid="mobile-feed-terminal"><Glyph name="term" size={20} /></button>
+      <button type="button" className="mob-icon-btn mob-icon-btn--plate" onClick={() => openSubPage('pc-control', 'mobile-feed-pc')}
+        aria-label={t('mobile.tabs.pc')} data-testid="mobile-feed-pc"><Glyph name="pc" size={20} /></button>
+      <Menu
+        label={t('mobile.tabs.more')}
+        placement="bottom-end"
+        trigger={(
+          <button type="button" className="mob-icon-btn mob-icon-btn--plate mob-feed__more-btn" data-testid="mobile-feed-more"
+            aria-label={updateAvailable ? `${t('mobile.tabs.more')}. ${t('settings.update.badge')}` : t('mobile.tabs.more')}>
+            <Glyph name="more" size={20} />
+            {updateAvailable && <span className="mob-feed__update-dot" aria-hidden="true" />}
+          </button>
+        )}
+      >
+        <MenuItem icon={glyphIcon('clock')} onSelect={openFeedHistory} data-testid="more-history">{text('이전 대화 · CLI 기록', 'Past conversations · CLI history')}</MenuItem>
+        <MenuItem icon={glyphIcon('list')} onSelect={() => openSubPage('sessions', 'mobile-feed-more')} data-testid="more-sessions">{t('mobile.sessions')}</MenuItem>
+        <MenuItem icon={glyphIcon('file')} onSelect={() => openSubPage('files', 'mobile-feed-more')} data-testid="more-files">{t('mobile.files')}</MenuItem>
+        <MenuItem icon={glyphIcon('mon')} onSelect={() => openSubPage('stats', 'mobile-feed-more')} data-testid="more-stats">{t('mobile.moreActions.stats')}</MenuItem>
+        {effectiveOpenClawVisible && (
+          <MenuItem icon={glyphIcon('claw')} onSelect={() => openSubPage('openclaw', 'mobile-feed-more')} data-testid="more-openclaw">
+            OpenClaw · <span data-testid="more-openclaw-state">{openclawState ? t(OPENCLAW_STATE_LABEL_KEY[openclawState.state]) : t('mobile.moreActions.checking')}</span>
+          </MenuItem>
+        )}
+        <MenuItem icon={glyphIcon('palette')} onSelect={() => { themeReturnFocusRef.current = feedMoreTrigger(); setThemeMenuOpen(true); }} data-testid="more-theme">{t('mobile.moreActions.theme')}</MenuItem>
+        <MenuItem icon={glyphIcon('set')} onSelect={() => openSubPage('settings', 'mobile-feed-more')} data-testid="more-settings">
+          {updateAvailable ? `${t('common.settings')} · ${t('settings.update.badge')}` : t('common.settings')}
+        </MenuItem>
+      </Menu>
+    </span>
   );
 
   let page: JSX.Element | undefined;
@@ -1102,7 +1278,7 @@ export function MobileWorkspace({
           daemonRuntimeState,
           structuredTranscripts: offlineChatCache?.transcripts,
           disconnected: !connected,
-          onBack: () => selectTab('terminal'),
+          onBack: () => selectTab('feed'),
           onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),
           onDecideApproval: (activityId, approvalId, decision) =>
             transport.decideAgentApproval(activityId, approvalId, decision),
@@ -1122,11 +1298,10 @@ export function MobileWorkspace({
           historyRequest: conversationHistoryRequest,
           onHistoryRequestConsumed: () => setConversationHistoryRequest(undefined),
           onHistoryRequestClosed: () => selectTab(conversationHistoryReturnTab.current),
+          ...(agentsExitTo ? { onDetailExit: () => selectTab(agentsExitTo) } : {}),
           projectId: selectedProjectId,
           onOpenWorkflow: (projectId: string, subprojectId: string, nodeId?: string) => {
-            setSelectedProjectId(projectId);
-            setWorkflowNavigationTarget({ subprojectId, nodeId, key: crypto.randomUUID() });
-            selectTab('home');
+            openProjectScreen(projectId, { subprojectId, ...(nodeId ? { nodeId } : {}) });
           },
           onProjectFilterChange: setSelectedProjectId,
           flatConversations: true,
@@ -1146,67 +1321,76 @@ export function MobileWorkspace({
         errorMessage={t('common.featureLoadFailed')}
         retryLabel={t('common.retry')}
         closeLabel={t('common.close')}
-        onClose={() => selectTab('terminal')}
+        onClose={() => selectTab('feed')}
+      />
+    );
+  } else if (tab === 'feed') {
+    page = (
+      <MobileFeedView
+        projects={feed.projects}
+        scope={feed.scope}
+        onScopeChange={feed.setScope}
+        host={{ tone: connected && transport.isAuthed ? 'on' : 'idle', label: hostLabel }}
+        headerActions={feedHeaderActions}
+        waiting={feed.waiting}
+        flows={feed.flows}
+        flowsAvailable={feed.flowsAvailable}
+        conversations={feed.conversations}
+        usage={feed.usage}
+        onDecide={(item, decision) => decideFeedItem(transport, item, decision)}
+        onOpenWaiting={openFeedWaiting}
+        onOpenConversation={(sessionId) => openConversation(sessionId, 'feed')}
+        onOpenFlow={(flow) => openProjectScreen(flow.projectId, { subprojectId: flow.subprojectId })}
+        onSeeAllConversations={() => { setSelectedProjectId(feed.scope); openConversation(null, null); }}
+        onNewConversation={() => openNewConversation(feed.scope)}
+        onOpenProjectScreen={(projectId) => openProjectScreen(projectId)}
       />
     );
   }
-
-  const immersive = subPage === 'pc-control';
 
   return (
     <MobileToastProvider>
       <TerminalAiNotices
         host={terminalAiHost}
         titleOf={(sessionId) => daemonRuntimeState.snapshot?.sessions.find((session) => session.id === sessionId)?.title ?? ''}
-        openConversation={(sessionId) => { setActiveAgentSessionId(sessionId); selectTab('agents'); }}
+        openConversation={(sessionId) => openConversation(sessionId, 'terminal')}
       />
       <MobileWorkbenchCoordinator
         terminalActive={tab === 'terminal' && subPage === null}
         destinationActive={subPage !== null}
-        tabRootActive={tab !== 'terminal'}
+        tabRootActive={tab !== 'feed'}
         onRequestRoot={closeSubPage}
-        onRequestTabRoot={() => setTab('terminal')}
+        onRequestTabRoot={() => setTab('feed')}
         page={<>
-          <div hidden={subPage !== null || tab !== 'home' && tab !== 'tasks'} className="mobile-workflow-persistent">
+          <div hidden={subPage !== null || tab !== 'home'} className="mobile-workflow-persistent">
             <MobilePlanningNavigator state={daemonRuntimeState} transport={transport} connected={connected}
-              active={subPage === null && (tab === 'home' || tab === 'tasks')}
+              active={subPage === null && tab === 'home'}
               navigationTarget={workflowNavigationTarget}
-              mode={tab === 'tasks' ? 'tasks' : 'projects'} projectId={selectedProjectId}
-              onSelectProject={setSelectedProjectId}
-              onOpenChat={sessionId => { setActiveAgentSessionId(sessionId ?? null); if (!sessionId) setNewConversationRequest(Date.now()); selectTab('agents'); }}
+              mode="projects" projectId={selectedProjectId}
+              onSelectProject={(projectId) => { setSelectedProjectId(projectId); setProjectDirect(false); }}
+              onBack={() => selectTab('feed')}
+              {...(projectDirect ? { onProjectExit: () => selectTab('feed') } : {})}
+              onOpenChat={sessionId => {
+                if (!sessionId) setNewConversationRequest(Date.now());
+                openConversation(sessionId ?? null, 'home');
+              }}
               onOpenConversationHistory={entry => {
-                conversationHistoryReturnTab.current = tab === 'tasks' ? 'tasks' : 'home';
+                conversationHistoryReturnTab.current = 'home';
                 setConversationHistoryRequest({ conversationId: entry.conversationId, projectId: entry.projectId, key: crypto.randomUUID() });
-                selectTab('agents');
+                openConversation(null, null);
               }}
               onOpenHistory={projectId => {
-                conversationHistoryReturnTab.current = tab === 'tasks' ? 'tasks' : 'home';
+                conversationHistoryReturnTab.current = 'home';
                 setConversationHistoryRequest({ projectId, key: crypto.randomUUID() });
-                selectTab('agents');
+                openConversation(null, null);
               }}
-              onOpenFiles={() => openSubPage('files', 'shell-tab-home')}
+              onOpenFiles={() => openSubPage('files', 'mobile-feed-more')}
               onOpenTerminal={workspaceId => { if (workspaceId) return createWorkspaceTerminal(workspaceId); selectTab('terminal'); }}
-              onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-home')}
+              onOpenPcControl={() => openSubPage('pc-control', 'mobile-feed-pc')}
             />
           </div>
           {page}
         </>}
-        navigation={immersive ? undefined : (
-          <MobileTabBar
-            tab={tab}
-            agentAttention={agentAttention}
-            updateAvailable={updateAvailable}
-            onSelectTab={selectTab}
-            onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-pc')}
-            onOpenMore={() => {
-              sheetReturnFocusRef.current = document.activeElement instanceof HTMLElement
-                ? document.activeElement
-                : null;
-              setSheet('more');
-            }}
-            onOpenSettings={() => openSubPage('settings', 'shell-rail-settings')}
-          />
-        )}
         terminal={(
           <div className="mobile-workspace" data-testid="mobile-workspace">
             <header
@@ -1216,12 +1400,15 @@ export function MobileWorkspace({
             >
               <button
                 type="button"
-                className="mob-icon-btn"
-                onClick={() => selectTab('home')}
-                aria-label={t('agentHub.projects.title')}
+                className="mob-icon-btn mob-term-head__feed"
+                onClick={() => selectTab('feed')}
+                aria-label={waitingCount > 0
+                  ? text(`피드 · 기다리는 것 ${waitingCount}`, `Feed · ${waitingCount} waiting`)
+                  : text('피드', 'Feed')}
                 data-testid="workspace-hub-btn"
               >
-                <Home aria-hidden="true" />
+                <Glyph name="back" size={20} />
+                {waitingCount > 0 && <span className="mob-term-head__badge" data-testid="mobile-waiting-badge" aria-hidden="true">{waitingCount}</span>}
               </button>
               <button
                 type="button"
@@ -1314,27 +1501,6 @@ export function MobileWorkspace({
         )}
         overlays={(
           <>
-            {sheet === 'more' && (
-              <MobileMoreSheet
-                currentTheme={currentTheme}
-                openclawVisible={effectiveOpenClawVisible}
-                openclawState={openclawState?.state}
-                updateAvailable={updateAvailable}
-                returnFocusRef={sheetReturnFocusRef}
-                onClose={() => setSheet(null)}
-                onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-more')}
-                onOpenSessions={() => openSubPage('sessions', 'shell-tab-more')}
-                onOpenFiles={() => openSubPage('files', 'shell-tab-more')}
-                onOpenStats={() => openSubPage('stats', 'shell-tab-more')}
-                onOpenClaw={() => openSubPage('openclaw', 'shell-tab-more')}
-                onOpenTheme={(trigger) => {
-                  themeReturnFocusRef.current = trigger;
-                  setSheet(null);
-                  setThemeMenuOpen(true);
-                }}
-                onOpenSettings={() => openSubPage('settings', 'shell-tab-more')}
-              />
-            )}
             {sheet === 'sessions' && (
               <MobileSessionSheet
                 sessions={sessionRows}

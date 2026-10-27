@@ -3,8 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { MOBILE_PRIMARY_DESTINATIONS } from '../mobile/src/MobileTabBar';
-import { MOBILE_SHEETS, MOBILE_SUB_PAGES } from '../mobile/src/MobileWorkspace';
+import { MOBILE_PRIMARY_DESTINATIONS, MOBILE_SHEETS, MOBILE_SUB_PAGES } from '../mobile/src/MobileWorkspace';
 import {
   DESKTOP_DESTINATION_STORIES,
   MOBILE_AUXILIARY_STORIES,
@@ -20,6 +19,7 @@ const storySources = [
   'src/renderer/workbench/MobileShell.stories.tsx',
   'src/renderer/workbench/MobileActiveSurfaces.stories.tsx',
   'src/renderer/workbench/MobileV2.stories.tsx',
+  'src/renderer/workbench/PhoneI4Mockup.stories.tsx',
   'src/renderer/ui/Overlays.stories.tsx',
   'src/renderer/ui/Feedback.stories.tsx',
 ].map((path) => readFileSync(resolve(process.cwd(), path), 'utf8')).join('\n');

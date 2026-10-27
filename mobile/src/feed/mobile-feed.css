@@ -61,6 +61,20 @@
 .mob-feed__host > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mob-feed__top > .mob-feed__host + * { margin-left: 0.5rem; }
 
+/* Layout A (I4): the header's own buttons — terminal, PC Control, ⋯. */
+.mob-feed__actions { display: flex; flex: none; }
+.mob-feed__actions > * + * { margin-left: 0.375rem; }
+.mob-feed__more-btn { position: relative; }
+.mob-feed__update-dot {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--mob-radius-pill);
+  background: var(--ui-accent);
+}
+
 .mob-feed__body {
   flex: 1 1 auto;
   min-height: 0;

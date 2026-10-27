@@ -34,11 +34,15 @@ export interface MobilePlanningNavigatorProps {
   readonly onOpenFiles: () => void;
   readonly onOpenPcControl: () => void;
   readonly active?: boolean;
-  readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly key: string };
+  readonly navigationTarget?: { readonly subprojectId: string; readonly nodeId?: string; readonly runId?: string; readonly key: string };
+  /** The project list's back button; the terminal by default. */
+  readonly onBack?: () => void;
+  /** Leaving a project opened directly (from the feed) goes here instead of the project list. */
+  readonly onProjectExit?: () => void;
 }
 
 /** One project list, then the same project workspace used on Windows. */
-export function MobilePlanningNavigator({ state, transport, connected, mode, projectId, onSelectProject, onOpenChat, onOpenConversationHistory, onOpenHistory, onOpenTerminal, onOpenFiles, onOpenPcControl, active = true, navigationTarget }: MobilePlanningNavigatorProps): JSX.Element {
+export function MobilePlanningNavigator({ state, transport, connected, mode, projectId, onSelectProject, onOpenChat, onOpenConversationHistory, onOpenHistory, onOpenTerminal, onOpenFiles, onOpenPcControl, active = true, navigationTarget, onBack, onProjectExit }: MobilePlanningNavigatorProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const ko = (i18n.resolvedLanguage ?? i18n.language).startsWith('ko');
   const projects = state.snapshot?.projects.filter(project => project.archivedAt === undefined) ?? [];
@@ -48,6 +52,8 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
   const [terminalError, setTerminalError] = useState(false);
   const [authorityScope, setAuthorityScope] = useState<string | null>(null);
   const [treeTarget, setTreeTarget] = useState<{ projectId: string; subprojectId: string; nodeId?: string; key: string }>();
+  const projectExitRef = useRef(onProjectExit);
+  projectExitRef.current = onProjectExit;
   const projectListBody = useRef<HTMLDivElement>(null);
   const scrollRestore = useRef<{ key: string; target: number | null }>({ key: '', target: null });
   useEffect(() => {
@@ -85,7 +91,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
   const hasProject = Boolean(project);
   useEffect(() => {
     if (!hasProject || !active) return;
-    return navigation.pushLayer({ id: layerId, kind: 'page', onBack: () => onSelectProject(null) });
+    return navigation.pushLayer({ id: layerId, kind: 'page', onBack: () => (projectExitRef.current ? projectExitRef.current() : onSelectProject(null)) });
   }, [hasProject, active, layerId, navigation, onSelectProject]);
   const workspace = state.snapshot?.workspaces.find(entry => entry.projectId === projectId && entry.archivedAt === undefined && entry.kind === 'local');
   const offlineReason = ko ? '오프라인 · 마지막으로 받은 내용을 표시합니다. PC에 다시 연결해야 기획을 저장할 수 있습니다.' : 'Offline · Showing the last received state. Reconnect to the PC to save planning changes.';
@@ -141,7 +147,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
     />
   </main>;
   return <main className="mob-page mobile-v2" data-testid={`mobile-${mode}-navigator`}>
-    <MobilePageHeader title={mode === 'tasks' ? (ko ? '작업' : 'Tasks') : t('agentHub.projects.title')} backLabel={t('common.back')} onBack={() => onOpenTerminal()}
+    <MobilePageHeader title={mode === 'tasks' ? (ko ? '작업' : 'Tasks') : t('agentHub.projects.title')} backLabel={t('common.back')} onBack={onBack ?? (() => { void onOpenTerminal(); })}
       actions={<button type="button" className="mob-icon-btn" aria-label={t('common.retry')} disabled={!connected} onClick={() => { void transport.getDaemonSnapshot(); }}><Glyph name="refresh" /></button>} />
     <div className="mob-page__body mobile-v2__body" ref={projectListBody}
       onWheel={() => { scrollRestore.current.target = null; }} onTouchMove={() => { scrollRestore.current.target = null; }}

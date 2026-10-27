@@ -4,6 +4,8 @@ export interface MobileWorkspaceRestore {
   readonly activeTerminalSessionId: string | null;
   readonly activeAgentSessionId: string | null;
   readonly destination: 'terminal' | 'agents';
+  /** Where the phone was last (I4). Optional: a record from before the feed has none, and that build ignores it. */
+  readonly lastSurface?: 'feed' | 'terminal' | 'chat';
 }
 
 const key = (authority: string): string => `ezterminal-workspace-v1:${authority}`;
@@ -17,7 +19,9 @@ export function readWorkspaceRestore(authority: string): MobileWorkspaceRestore 
       || !(saved.activeTerminalSessionId === null || validId(saved.activeTerminalSessionId))
       || !(saved.activeAgentSessionId === null || validId(saved.activeAgentSessionId))
       || !['terminal', 'agents'].includes(saved.destination)) return null;
-    return saved as MobileWorkspaceRestore;
+    const { lastSurface, ...rest } = saved as MobileWorkspaceRestore;
+    // An unknown surface (a later build's) is dropped, not the whole record.
+    return lastSurface === 'feed' || lastSurface === 'terminal' || lastSurface === 'chat' ? { ...rest, lastSurface } : rest;
   } catch { return null; }
 }
 

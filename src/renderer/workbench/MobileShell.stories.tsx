@@ -5,7 +5,6 @@ import type { AgentActivitySnapshot } from '../../shared/agent';
 import { ConnectScreen } from '../../../mobile/src/ConnectScreen';
 import { MobileHomeView } from '../../../mobile/src/MobileHomeView';
 import { MobileSettingsView } from '../../../mobile/src/MobileSettingsView';
-import { MobileTabBar } from '../../../mobile/src/MobileTabBar';
 import { MobileWorkbenchCoordinator } from '../../../mobile/src/MobileWorkbenchCoordinator';
 import { AppI18nProvider } from '../i18n';
 import { Button, Field, Input, Status } from '../ui';
@@ -191,16 +190,6 @@ function MobileShellStory({ locale, page }: MobileShellStoryProps): JSX.Element 
       <MobileWorkbenchCoordinator
         terminal={<MobileTerminal locale={locale} />}
         page={currentPage}
-        navigation={(
-          <MobileTabBar
-            tab={terminalActive ? 'terminal' : 'home'}
-            agentAttention={1}
-            onSelectTab={() => undefined}
-            onOpenPcControl={() => undefined}
-            onOpenMore={() => undefined}
-            onOpenSettings={() => undefined}
-          />
-        )}
         terminalActive={terminalActive}
         destinationActive={page === 'settings'}
         tabRootActive={terminalActive}

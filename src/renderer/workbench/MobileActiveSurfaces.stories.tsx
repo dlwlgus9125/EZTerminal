@@ -8,7 +8,6 @@ import { MobileAgentView } from '../../../mobile/src/MobileAgentView';
 import { MobileDaemonNavigator } from '../../../mobile/src/MobileDaemonNavigator';
 import { MobileNewSessionDraft } from '../../../mobile/src/MobileNewSessionDraft';
 import { MobileFileView } from '../../../mobile/src/MobileFileView';
-import { MobileMoreSheet } from '../../../mobile/src/MobileMoreSheet';
 import { MobileNavigationHistoryProvider } from '../../../mobile/src/MobileNavigationHistory';
 import { MobileOpenClawView } from '../../../mobile/src/MobileOpenClawView';
 import { MobileRemoteDesktopView } from '../../../mobile/src/MobileRemoteDesktopView';
@@ -60,7 +59,6 @@ type ActiveMobileSurface =
   | 'pc-control-keyboard'
   | 'pc-control-reconnecting'
   | 'pc-control-unavailable'
-  | 'more-sheet'
   | 'sessions-sheet'
   | 'theme-sheet'
   | 'pairing-scanner-unavailable'
@@ -766,22 +764,6 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
         />
       );
       break;
-    case 'more-sheet':
-      content = (
-        <MobileMoreSheet
-          currentTheme="matrix"
-          openclawVisible
-          openclawState="running"
-          onClose={close}
-          onOpenSessions={close}
-          onOpenFiles={close}
-          onOpenStats={close}
-          onOpenClaw={close}
-          onOpenTheme={close}
-          onOpenSettings={close}
-        />
-      );
-      break;
     case 'sessions-sheet':
       content = (
         <MobileSessionSheet
@@ -1024,7 +1006,6 @@ export const PcControlUnavailable: Story = {
     await waitFor(() => expect(canvas.getByTestId('mobile-pc-state')).toHaveAttribute('data-phase', 'error'));
   },
 };
-export const MoreSheet: Story = { args: { surface: 'more-sheet' } };
 export const SessionsSheet: Story = { args: { surface: 'sessions-sheet' } };
 export const ThemeSheet: Story = { args: { surface: 'theme-sheet' } };
 export const PairingScannerUnavailable: Story = { args: { surface: 'pairing-scanner-unavailable' } };

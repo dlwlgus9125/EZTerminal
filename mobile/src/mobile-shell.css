@@ -350,9 +350,8 @@
 }
 
 /* ── Shell chrome ────────────────────────────────────────────────────────
- * The navigation is absolutely positioned inside the coordinator's padding
- * box, so the padding reserves exactly the space it occupies and both the
- * terminal layer (flow) and the page shell (inset: 0) shrink to match. */
+ * No tab bar since I4 (layout A): the feed is the root and its header opens
+ * everything else, so the terminal layer and the page shell take the screen. */
 
 .mobile-workbench-coordinator {
   box-sizing: border-box;
@@ -362,100 +361,6 @@
   background-size: 24px 24px;
 }
 
-.mobile-workbench-coordinator[data-nav='true'] {
-  padding-bottom: calc(var(--mob-tabbar) + env(safe-area-inset-bottom));
-}
-
-/* The page shell is absolutely positioned, and padding on the containing
-   block does NOT inset an absolutely positioned child — its own offsets have
-   to be pulled in past the navigation explicitly. (The terminal layer is in
-   normal flow, so the coordinator's padding is enough for it.) */
-.mobile-workbench-coordinator[data-nav='true'] .mobile-page-shell {
-  bottom: calc(var(--mob-tabbar) + env(safe-area-inset-bottom));
-}
-
-.mobile-shell-nav {
-  position: absolute;
-  z-index: var(--ui-z-drawer);
-  right: 0;
-  bottom: 0;
-  left: 0;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  box-sizing: border-box;
-  padding: 5px 4px calc(1px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--mob-accent-edge);
-  background: var(--mob-chrome);
-}
-
-/* A modal owns the screen and Back action; isolated tabs must not cover its controls. */
-.mobile-shell-nav[inert], .mobile-shell-nav[aria-hidden='true'] { visibility: hidden; }
-
-/* Rail-only affordances. The compound selector is deliberate: `.mobile-shell-tab`
-   below also sets `display`, and a single-class rule would lose the cascade. */
-.mobile-shell-nav__brand,
-.mobile-shell-nav__spacer,
-.mobile-shell-tab.mobile-shell-nav__rail-only {
-  display: none;
-}
-
-.mobile-shell-tab {
-  position: relative;
-  display: flex;
-  min-height: var(--mob-tabbar);
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ui-text-muted);
-  font-family: var(--ui-font-body);
-  font-size: 0.594rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.mobile-shell-tab[aria-current='page'] {
-  color: var(--ui-accent);
-  font-weight: 700;
-}
-
-.mobile-shell-tab svg {
-  width: 20px;
-  height: 20px;
-}
-
-.mobile-shell-tab__indicator {
-  position: absolute;
-  top: -6px;
-  right: 24%;
-  left: 24%;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--ui-accent);
-  box-shadow: 0 0 8px var(--mob-accent-glow);
-}
-
-.mobile-shell-tab__badge {
-  position: absolute;
-  top: 3px;
-  right: 26%;
-  display: grid;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 3px;
-  border-radius: var(--mob-radius-pill);
-  background: var(--ui-warning);
-  color: var(--ui-text-inverse);
-  font-family: var(--ui-font-terminal);
-  font-size: 0.594rem;
-  font-weight: 700;
-  place-items: center;
-}
-
-.mobile-shell-tab__update-dot,
 .mobile-update-dot {
   display: inline-block;
   width: 10px;
@@ -465,91 +370,6 @@
   border-radius: var(--mob-radius-pill);
   background: var(--ui-warning);
   box-shadow: 0 0 8px var(--mob-warn-line);
-}
-
-.mobile-shell-tab__update-dot {
-  position: absolute;
-  top: 4px;
-  right: 24%;
-}
-
-.mobile-shell-tab:focus-visible {
-  outline: 2px solid var(--ui-focus);
-  outline-offset: -2px;
-}
-
-/* Unfolded / tablet (handoff 2b): the same five items, same order, as a
-   72px left rail. Content stays a single centred column — a second column is
-   explicitly out of scope. */
-@media (min-width: 600px) {
-  .mobile-workbench-coordinator[data-nav='true'] {
-    padding-bottom: 0;
-    padding-left: var(--mob-rail);
-  }
-
-  .mobile-workbench-coordinator[data-nav='true'] .mobile-page-shell {
-    bottom: 0;
-    left: var(--mob-rail);
-  }
-
-  .mobile-shell-nav {
-    top: 0;
-    right: auto;
-    width: var(--mob-rail);
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto repeat(5, auto) 1fr auto;
-    justify-items: center;
-    gap: 4px;
-    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
-    border-top: 0;
-    border-right: 1px solid var(--mob-accent-edge);
-  }
-
-  .mobile-shell-nav__brand {
-    display: flex;
-    margin-bottom: 8px;
-  }
-
-  .mobile-shell-nav__spacer {
-    display: block;
-  }
-
-  .mobile-shell-tab.mobile-shell-nav__rail-only {
-    display: grid;
-  }
-
-  .mobile-shell-tab {
-    width: 50px;
-    min-height: 50px;
-    height: 50px;
-    gap: 2px;
-    border-radius: 12px;
-    font-size: 0.531rem;
-  }
-
-  .mobile-shell-tab[aria-current='page'] {
-    background: var(--mob-accent-soft);
-  }
-
-  .mobile-shell-tab svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .mobile-shell-tab__indicator {
-    display: none;
-  }
-
-  .mobile-shell-tab__badge {
-    top: 4px;
-    right: 7px;
-    min-width: 14px;
-    height: 14px;
-  }
-
-  .mobile-shell-nav__rail-only .mobile-shell-tab__label {
-    display: none;
-  }
 }
 
 /* ── Signal mark (code-native, per spec 3.1 — never a raster asset) ─────── */
@@ -697,6 +517,25 @@
 .mob-icon-btn svg {
   width: 20px;
   height: 20px;
+}
+
+/* The terminal header's way back to the feed carries what waits (I4, layout A has no tab bar). */
+.mob-term-head__feed { position: relative; }
+.mob-term-head__badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: var(--mob-radius-pill);
+  background: var(--ui-warning);
+  color: var(--ui-text-inverse);
+  font-family: var(--ui-font-label);
+  font-size: 0.625rem;
+  font-weight: 700;
+  place-items: center;
 }
 
 .mob-icon-btn--plate {

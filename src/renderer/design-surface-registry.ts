@@ -1,8 +1,7 @@
 /**
  * Traceability from production navigation destinations to deterministic
  * Storybook evidence. This is not a second IA definition: tests compare these
- * keys with the runtime registries exported by ActivityRail, MobileTabBar and
- * MobileWorkspace. A new destination therefore needs evidence in the same
+ * keys with the runtime registries exported by ActivityRail and MobileWorkspace. A new destination therefore needs evidence in the same
  * change that makes it reachable.
  */
 
@@ -19,12 +18,12 @@ export const DESKTOP_DESTINATION_STORIES = {
   openclaw: { storyId: 'compositions-desktop-handoff--openclaw-console', readySelector: '[data-testid="openclaw-panel"]' },
   settings: { storyId: 'compositions-desktop-handoff--settings', readySelector: '[data-testid="settings-panel"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
+/** I4 layout A: the feed is the root; the terminal, a project and the conversations open from it. */
 export const MOBILE_PRIMARY_STORIES = {
-  home: { storyId: 'workbench-mobile-v2--projects', readySelector: '[data-testid="mobile-projects-navigator"]' },
+  feed: { storyId: 'production-phone-i4-mockup--feed-a', readySelector: '[data-testid="mobile-feed"]' },
   terminal: { storyId: 'compositions-mobile-workbench-shell--terminal-english', readySelector: '[data-testid="mobile-workspace"]' },
-  tasks: { storyId: 'workbench-mobile-v2--tasks', readySelector: '[data-testid="mobile-tasks-navigator"]' },
+  home: { storyId: 'workbench-mobile-v2--projects', readySelector: '[data-testid="mobile-projects-navigator"]' },
   agents: { storyId: 'workbench-mobile-v2--conversations', readySelector: '[data-testid="mobile-daemon-navigator"]' },
-  more: { storyId: 'compositions-mobile-active-surfaces--more-sheet', readySelector: '[data-testid="mobile-more-sheet"]' },
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 
 export const MOBILE_SUB_PAGE_STORIES = {
@@ -37,7 +36,6 @@ export const MOBILE_SUB_PAGE_STORIES = {
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 
 export const MOBILE_SHEET_STORIES = {
-  more: MOBILE_PRIMARY_STORIES.more,
   sessions: MOBILE_SUB_PAGE_STORIES.sessions,
 } as const satisfies Readonly<Record<string, DesignSurfaceEvidence>>;
 

@@ -1773,7 +1773,7 @@ mobile root가 한 번만 소유한다.
 - [`src/shared/resource-profile.ts`](../../src/shared/resource-profile.ts)
 - [`mobile/src/MobileWorkbenchCoordinator.tsx`](../../mobile/src/MobileWorkbenchCoordinator.tsx)
 - [`mobile/src/MobileSettingsView.tsx`](../../mobile/src/MobileSettingsView.tsx)
-- [`mobile/src/MobileTabBar.tsx`](../../mobile/src/MobileTabBar.tsx)
+- [`mobile/src/feed/MobileFeedView.tsx`](../../mobile/src/feed/MobileFeedView.tsx)
 - [`mobile/src/mobile-shell.css`](../../mobile/src/mobile-shell.css)
 
 ## 검증

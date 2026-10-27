@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:7a3700cf3fa2383b50d1f20319f329207a5f46cd234721c9a4a0638047b51c65",
+        "inputDigest": "sha256:b579479085d4c274eaac7ceea26f0cd8c13e54ae27bba8252d4380826f81abb9",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-5 phone terminal): the AI input state moved unchanged from TerminalPane into the shared useTerminalAiInput hook, which the phone terminal now uses too. Moved blocks reanchored; claims unchanged and still hold."
+        "reason": "Reviewed (I4-7 feed shell): the phone project screen takes an optional back target and exit-to-feed, and its navigation target may carry a run id. The authority fingerprint and shared navigation projection are unchanged."
       }
     }
   ]

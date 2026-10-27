@@ -342,6 +342,7 @@ export function MobileAgentView({
   historyRequest,
   onHistoryRequestConsumed,
   onHistoryRequestClosed,
+  onDetailExit,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
@@ -380,6 +381,8 @@ export function MobileAgentView({
   readonly historyRequest?: { readonly conversationId?: string; readonly projectId?: string; readonly key: string };
   readonly onHistoryRequestConsumed?: () => void;
   readonly onHistoryRequestClosed?: () => void;
+  /** Leaving a conversation (or the new-conversation screen) goes here instead of the list: it was opened from the feed or the terminal. */
+  readonly onDetailExit?: () => void;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [historySnapshot, setHistorySnapshot] = useState<{ readonly transport: WsEzTerminalTransport; readonly snapshot: DaemonSnapshot }>();
@@ -1207,12 +1210,13 @@ export function MobileAgentView({
   }, [uncertainAgentCreate]);
 
   const closeDetailState = useCallback((): void => {
+    if (onDetailExit) { onDetailExit(); return; }
     setConversationEntry(undefined);
     setHistoryOpen(false);
     setNewSessionTarget(null);
     setSelectedDaemonSessionId(null);
     queueMicrotask(() => newSessionButtonRef.current?.focus());
-  }, []);
+  }, [onDetailExit]);
   const detailOpen = newSessionTarget !== null || selectedDaemonSessionId !== null || !!conversationEntry;
   useEffect(() => {
     if (!detailOpen) return undefined;
@@ -1394,7 +1398,7 @@ export function MobileAgentView({
 
   if ((conversationEntry || newSessionTarget && !uncertainAgentCreate && (!agentCreateRecovery || agentCreateRecovery.status === 'ready')) && conversationAccess) {
     return <><div className="mobile-conversation-page">
-      <button type="button" className="mobile-back-button" onClick={closeDetailFromUi}>{language === 'ko' ? '목록으로' : 'Back to conversations'}</button>
+      <button type="button" className="mobile-back-button" onClick={closeDetailFromUi}>{onDetailExit ? (language === 'ko' ? '뒤로' : 'Back') : language === 'ko' ? '목록으로' : 'Back to conversations'}</button>
       <ConversationStartPanel key={conversationEntry?.conversationId ?? draftIdentity.current} identity={conversationEntry?.conversationId ?? draftIdentity.current}
         entry={conversationEntry} projectId={projectId ?? undefined} workspaceId={newSessionTarget?.workspaceId}
         viewStateScope={conversationViewScope ?? (transport ? sessionViewKey(transport, 'conversation') : 'offline')}

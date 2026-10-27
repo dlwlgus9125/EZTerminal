@@ -1224,13 +1224,6 @@ const activeMobileSurfaceCases = [
     options: { theme: "dark", locale: "en", density: "adaptive", motion: "reduced" },
   },
   {
-    name: "more actions sheet",
-    storyId: "compositions-mobile-active-surfaces--more-sheet",
-    screenshot: "mobile-active-more-sheet-matrix-en.png",
-    readySelector: "[data-testid='mobile-more-sheet']",
-    options: { theme: "matrix", locale: "en", density: "comfortable", motion: "reduced" },
-  },
-  {
     name: "sessions sheet",
     storyId: "compositions-mobile-active-surfaces--sessions-sheet",
     screenshot: "mobile-active-sessions-sheet-light-en.png",

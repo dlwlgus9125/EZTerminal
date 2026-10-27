@@ -18,6 +18,19 @@ import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './transpo
 import type { DaemonSnapshot } from '../../src/shared/daemon-protocol';
 import { REMOTE_PROTOCOL_VERSION } from '../../src/shared/remote-protocol';
 import type { MobileOfflineChatCache } from './mobile-offline-chat-cache';
+import type { HostAttention } from '../../src/shared/host-attention';
+import { shellSnapshot } from '../../src/renderer/shell/shell-fixtures';
+
+/** The desktop shell fixture's waiting items (src/renderer/shell/shell-fixtures.ts), as its host would send them. */
+const SHELL_ATTENTION: HostAttention = {
+  version: 1, digest: 'd',
+  items: [
+    { id: 'approval-1', kind: 'approval', projectId: 'p-ez', title: 'Android 승인 알림이 두 번 뜨는 문제', since: '2026-10-24T09:28:00.000Z', sessionId: 's-notify', approvalId: 'a-command' },
+    { id: 'question-1', kind: 'question', projectId: 'p-ez', title: '결과 탭 PDF 저장 버튼', since: '2026-10-24T09:24:00.000Z', sessionId: 's-pdf', approvalId: 'a-question' },
+    { id: 'flow-1', kind: 'flow-approval', projectId: 'p-kestrel', title: '승인', since: '2026-10-24T09:25:00.000Z', subprojectId: 'login', nodeId: 'login:approval', runId: 'run-4', activationId: 'act-1' },
+    { id: 'agent-1', kind: 'terminal-agent', projectId: 'p-garnet', title: 'Claude', since: '2026-10-24T09:20:00.000Z', activityId: 'activity-1' },
+  ],
+};
 
 // Silences React's "not configured to support act()" warning for this file's
 // synchronous createRoot().render() calls below.
@@ -220,10 +233,23 @@ async function waitForTestIdToDisappear(
   throw new Error(`timed out waiting for ${selector} to disappear`);
 }
 
-/** The More sheet renders in the overlay host, outside `container`'s page
- * shell but inside the same React tree — query the document for it. */
-async function openMoreSheet(el: HTMLElement): Promise<void> {
-  await tap(el, 'shell-tab-more');
+/** Layout A (I4): no tab bar — the feed's header holds the terminal, PC Control and the ⋯ menu (what More held). */
+async function openFeedMore(el: HTMLElement): Promise<void> {
+  await tap(el, 'mobile-feed-more');
+}
+
+async function openTerminalFromFeed(el: HTMLElement): Promise<void> {
+  await tap(el, 'mobile-feed-terminal');
+}
+
+/** ▾ → 프로젝트 목록 열기 (every project chosen) or 프로젝트 화면 열기 (one). */
+async function openProjectsFromFeed(el: HTMLElement): Promise<void> {
+  await tap(el, 'mobile-feed-scope');
+  await tap(el, 'mobile-feed-open-project');
+}
+
+async function openConversationsFromFeed(el: HTMLElement): Promise<void> {
+  await tap(el, 'mobile-feed-all-conversations');
 }
 
 beforeEach(() => {
@@ -239,39 +265,39 @@ afterEach(async () => {
   Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
 });
 
-describe('MobileWorkspace — tab-bar shell root', () => {
-  it('lands on Terminal with every existing top-level capability reachable', async () => {
+describe('MobileWorkspace — feed shell root (I4 layout A)', () => {
+  it('lands on the feed with every top-level capability reachable from its header', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
 
-    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
-    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
-    for (const testId of [
-      'shell-tab-home',
-      'shell-tab-terminal',
-      'shell-tab-tasks',
-      'shell-tab-agents',
-      'shell-tab-more',
-      'shell-rail-settings',
-    ]) {
+    expect(el.querySelector('[data-testid="mobile-feed"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-shell-nav"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
+    for (const testId of ['mobile-feed-scope', 'mobile-feed-host', 'mobile-feed-terminal', 'mobile-feed-pc', 'mobile-feed-more', 'mobile-feed-new']) {
       expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
     }
 
-    await openMoreSheet(el);
-    for (const testId of ['more-pc-control', 'more-sessions', 'more-files', 'more-stats', 'more-theme', 'more-settings']) {
+    await openFeedMore(el);
+    for (const testId of ['more-history', 'more-sessions', 'more-files', 'more-stats', 'more-theme', 'more-settings']) {
       expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
     }
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
+    expect(socket.sentKinds()).not.toContain('desktop-control-start');
+  });
 
-    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
+  it('opens PC Control from the feed header without starting it', async () => {
+    const { transport, socket } = makeAuthedTransport(['desktop-control-v1']);
+    const el = await renderWorkspace(transport);
+    await tap(el, 'mobile-feed-pc');
+    expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
   });
 
   it('keeps PC Control idle on arrival even when the host advertises support', async () => {
     const { transport, socket } = makeAuthedTransport(['desktop-control-v1']);
     const el = await renderWorkspace(transport);
-    await tap(el, 'shell-tab-home');
+    await openProjectsFromFeed(el);
 
     expect(el.querySelector<HTMLButtonElement>('[data-testid="mobile-project-pc-control"]')?.disabled).toBe(false);
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
@@ -321,15 +347,14 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(el.textContent).toContain('/new');
   });
 
-  it('opens the preserved terminal with a compact semantic header and returns Projects', async () => {
+  it('opens the preserved terminal with a compact semantic header and returns to the feed', async () => {
     const { transport } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
-    await tap(el, 'shell-tab-terminal');
+    await openTerminalFromFeed(el);
 
-    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
     for (const [testId, label] of [
-      ['workspace-hub-btn', 'Projects'],
+      ['workspace-hub-btn', 'Feed'],
       ['tab-add-btn', 'New tab'],
       ['menu-btn', 'Sessions'],
     ] as const) {
@@ -337,22 +362,44 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     }
 
     await tap(el, 'workspace-hub-btn');
-    expect(el.querySelector('[data-testid="mobile-projects-navigator"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-feed"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
   });
 
-  it('routes to the Agents tab and back to Terminal without unmounting the terminal', async () => {
+  it('opens the conversation list from the feed and returns to it without unmounting the terminal', async () => {
     const { transport } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
 
-    await tap(el, 'shell-tab-agents');
+    await openConversationsFromFeed(el);
     await waitForTestId(el, 'mobile-agent-view');
-    expect(el.querySelector('[data-testid="mobile-agent-view"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
 
     await tap(el, 'mobile-agent-close');
-    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
-    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
+    expect(el.querySelector('[data-testid="mobile-feed"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')).toBeTruthy();
+  });
+
+  it('leaves a conversation opened from the feed straight back to the feed, not to the list', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const project = { id: 'p', name: 'Project', source: 'native', revision: 1, createdAt: DAEMON_NOW, updatedAt: DAEMON_NOW } as const;
+    const authority = daemonSnapshot({
+      projects: [project],
+      workspaces: [{ id: 'w', projectId: 'p', name: 'Main', rootPath: '/project', kind: 'local', revision: 1, createdAt: DAEMON_NOW, updatedAt: DAEMON_NOW }],
+      sessions: [{ id: 'chat', projectId: 'p', workspaceId: 'w', title: 'Fix the login', kind: 'agent', source: 'structured', state: 'idle', revision: 1, createdAt: DAEMON_NOW, updatedAt: DAEMON_NOW }],
+      agents: [{ sessionId: 'chat', providerId: 'codex', model: 'model', permissionPreset: 'standard', state: 'idle', queuedTurnCount: 0, orchestrationEnabled: true, revision: 1, createdAt: DAEMON_NOW, updatedAt: DAEMON_NOW }],
+    });
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
+    const el = await renderWorkspace(transport);
+    await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
+    const card = await waitForTestId(el, 'mobile-feed-conversation');
+    expect(card.getAttribute('data-session')).toBe('chat');
+    await act(async () => card.click());
+    await waitForTestId(el, 'mobile-structured-agent-session');
+
+    await tap(el, 'mobile-structured-agent-back');
+    await waitForTestId(el, 'mobile-feed');
+    expect(el.querySelector('[data-testid="mobile-agent-view"]')).toBeNull();
   });
 
   it('replaces a stale agent snapshot with the authoritative seed after desktop restart', async () => {
@@ -371,7 +418,6 @@ describe('MobileWorkspace — tab-bar shell root', () => {
       });
       sockets[0].triggerMessage({ kind: 'auth-ok' });
       const el = await renderWorkspace(transport);
-      await tap(el, 'shell-tab-home');
 
       await act(async () => {
         sockets[0].triggerMessage({
@@ -395,7 +441,9 @@ describe('MobileWorkspace — tab-bar shell root', () => {
           },
         });
       });
-      expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')?.textContent).toBe('1');
+      // An older PC without the host's count: the blocked terminal agent waits (the terminal header carries it).
+      expect(el.querySelector('[data-testid="mobile-waiting-badge"]')?.textContent).toBe('1');
+      expect(el.querySelector('#mob-feed-waiting')?.textContent).toContain('1');
 
       await act(async () => {
         sockets[0].triggerClose();
@@ -407,7 +455,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
         });
       });
 
-      expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')).toBeNull();
+      expect(el.querySelector('[data-testid="mobile-waiting-badge"]')).toBeNull();
       await act(async () => transport.disconnect());
     } finally {
       vi.useRealTimers();
@@ -417,17 +465,17 @@ describe('MobileWorkspace — tab-bar shell root', () => {
   it('opens the session sheet from the terminal header', async () => {
     const { transport } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
-    await tap(el, 'shell-tab-terminal');
+    await openTerminalFromFeed(el);
     await tap(el, 'menu-btn');
     expect(el.querySelector('[data-testid="mobile-session-sheet"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="session-sheet-create"]')).toBeTruthy();
   });
 
-  it('mode "on" shows OpenClaw in the More sheet regardless of availability', async () => {
+  it('mode "on" shows OpenClaw in the ⋯ menu regardless of availability', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
-    await openMoreSheet(el);
+    await openFeedMore(el);
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
   });
 
@@ -436,14 +484,14 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
     await act(async () => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
-    await openMoreSheet(el);
+    await openFeedMore(el);
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
   });
 
   it('mode "auto" follows the availability push', async () => {
     const { transport, socket } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
-    await openMoreSheet(el);
+    await openFeedMore(el);
     expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
 
     await act(async () => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
@@ -457,7 +505,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
-    await openMoreSheet(el);
+    await openFeedMore(el);
     const state = (): string | null => (
       el.querySelector('[data-testid="more-openclaw-state"]')?.textContent ?? null
     );
@@ -468,15 +516,13 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(state()).toBe('Stopped');
   });
 
-  it('opens the running gateway from More and retains the lazy page', async () => {
+  it('opens the running gateway from the ⋯ menu and retains the lazy page', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
     const el = await renderWorkspace(transport);
-    await tap(el, 'shell-tab-home');
-    expect(el.querySelector('[data-testid="home-openclaw"]')).toBeNull();
 
     await act(async () => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
-    await openMoreSheet(el);
+    await openFeedMore(el);
     await tap(el, 'more-openclaw');
     expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
     await waitForTestId(el, 'mobile-openclaw-view');
@@ -555,24 +601,22 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     expect(store.load).not.toHaveBeenCalledWith(pairingFingerprint);
   });
 
-  it('badges what the host says waits on the person', async () => {
+  it('shows what the host says waits on the person on the feed and counts it on the terminal header', async () => {
     const { transport, socket } = makeAuthedTransport();
-    const items = [
-      { id: 'approval-1', kind: 'approval' as const, projectId: 'project-1', title: 'Fix login', since: '2026-10-25T01:00:00.000Z' },
-      { id: 'flow-1', kind: 'flow-approval' as const, projectId: 'project-1', title: 'Go-ahead', since: '2026-10-25T02:00:00.000Z' },
-    ];
-    const authority = daemonSnapshot({ attention: { version: 1, digest: 'digest-1', items } });
+    // The shell's own fixture: a command approval and a question in conversations, a flow approval, a blocked terminal agent.
+    const authority = { ...shellSnapshot(), attention: SHELL_ATTENTION };
     vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(authority);
     const el = await renderWorkspace(transport);
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
-    expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')?.textContent).toBe('2');
+    expect(el.querySelectorAll('[data-testid="mobile-feed-waiting"]')).toHaveLength(SHELL_ATTENTION.items.length);
+    expect(el.querySelector('[data-testid="mobile-waiting-badge"]')?.textContent).toBe(String(SHELL_ATTENTION.items.length));
     // An event makes the phone read the snapshot again; the count stays meanwhile.
     await act(async () => socket.triggerMessage({ kind: 'daemon-event', event: {
       protocolVersion: authority.protocolVersion, eventId: 'event-1', sequence: authority.eventSequence + 1, revision: authority.revision + 1,
       occurredAt: '2026-10-25T03:00:00.000Z', kind: 'entity.upserted', payload: { entityType: 'attention', entityId: 'host' },
     } }));
-    expect(el.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')?.textContent).toBe('2');
+    expect(el.querySelector('[data-testid="mobile-waiting-badge"]')?.textContent).toBe(String(SHELL_ATTENTION.items.length));
   });
 
   it('rechecks a transient secure-storage failure from the inline retry action', async () => {
@@ -605,7 +649,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     const el = await renderWorkspace(transport, store);
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
-    await tap(el, 'shell-tab-agents');
+    await openConversationsFromFeed(el);
     await waitForTestId(el, 'mobile-agent-new-session');
     await tap(el, 'mobile-agent-new-session');
     await waitForTestId(el, 'mobile-new-session-recovery-retry');
@@ -639,7 +683,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
     const el = await renderWorkspace(transport, store);
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
     await flushAsync();
-    await tap(el, 'shell-tab-agents');
+    await openConversationsFromFeed(el);
     await waitForTestId(el, 'mobile-agent-new-session');
     await tap(el, 'mobile-agent-new-session');
     await waitForTestId(el, 'mobile-new-session-recovery-discard');
@@ -718,7 +762,7 @@ describe('MobileWorkspace - durable Agent create recovery', () => {
 
     let el = await renderWorkspace(transport, new MobileAgentCreateRecoveryStore(secure));
     await act(async () => socket.triggerMessage({ kind: 'daemon-snapshot', snapshot: authority }));
-    await tap(el, 'shell-tab-agents');
+    await openConversationsFromFeed(el);
     await waitForTestId(el, 'mobile-agent-new-session');
     await tap(el, 'mobile-agent-new-session');
     await waitForTestId(el, 'mobile-new-session-draft');
@@ -821,7 +865,7 @@ describe('MobileWorkspace - daemon Workspace terminal creation', () => {
         snapshot: daemonSnapshot({ projects: [project], workspaces: [staleWorkspace] }),
       });
     });
-    await tap(el, 'shell-tab-home');
+    await openProjectsFromFeed(el);
     await tap(el, 'mobile-planning-project');
     await waitForTestId(el, 'workflow-workspace');
     await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Quick tasks and existing work')!.click());
@@ -909,7 +953,7 @@ describe('MobileWorkspace - previous work', () => {
     const el = await renderWorkspace(transport, undefined, {
       schemaVersion: 1, authorityFingerprint: authority, savedAt: DAEMON_NOW, snapshot, transcripts: {},
     });
-    await tap(el, 'shell-tab-home');
+    await openProjectsFromFeed(el);
     await tap(el, 'mobile-planning-project');
     await waitForTestId(el, 'workflow-workspace');
     await act(async () => [...el.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Quick tasks and existing work')!.click());
@@ -964,6 +1008,7 @@ describe('MobileWorkspace - previous work', () => {
       if (intent.kind !== 'adopt' || intent.sessionId === 'gone') throw new Error('gone');
       return { ok: true, binding: { surfaceId, bindingId: `binding-${intent.sessionId}`, session: { sessionId: intent.sessionId, cwd: `/${intent.sessionId}` }, role: 'adopted' } };
     });
+    vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(daemonSnapshot());
     const el = await renderWorkspace(transport);
     // The restore reads the authority first (WebCrypto): flush until the adoptions ran rather than a fixed number of ticks
     // (a slow runner needs more), each flush inside act.
@@ -971,9 +1016,42 @@ describe('MobileWorkspace - previous work', () => {
     expect(open.mock.calls.map((call) => call[1])).toEqual([
       { kind: 'adopt', sessionId: 'one' }, { kind: 'adopt', sessionId: 'gone' }, { kind: 'adopt', sessionId: 'two' },
     ]);
+    // Nothing waits and the terminal left last is back: the app opens on it (I4 launch rule).
+    for (let attempt = 0; attempt < 50 && el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert'); attempt += 1) await flushAsync();
     expect(el.querySelector('[data-testid="menu-btn"]')?.textContent).toContain('/one');
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
-    expect(readWorkspaceRestore(authority)).toMatchObject({ terminalSessionIds: ['one', 'two'], activeTerminalSessionId: 'one' });
+    expect(readWorkspaceRestore(authority)).toMatchObject({ terminalSessionIds: ['one', 'two'], activeTerminalSessionId: 'one', lastSurface: 'terminal' });
+  });
+
+  it('opens on the feed instead of the terminal left when something waits', async () => {
+    const { transport } = makeAuthedTransport([], 'restore-host');
+    Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
+    const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');
+    writeWorkspaceRestore(authority, { terminalSessionIds: ['one'], activeTerminalSessionId: 'one', activeAgentSessionId: null, destination: 'terminal', lastSurface: 'terminal' });
+    const open = vi.spyOn(transport, 'openSessionSurface').mockImplementation(async (surfaceId, intent) => {
+      if (intent.kind !== 'adopt') throw new Error('unexpected');
+      return { ok: true, binding: { surfaceId, bindingId: `binding-${intent.sessionId}`, session: { sessionId: intent.sessionId, cwd: '/one' }, role: 'adopted' } };
+    });
+    const snapshot = vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue({ ...shellSnapshot(), attention: SHELL_ATTENTION });
+    const el = await renderWorkspace(transport);
+    for (let attempt = 0; attempt < 50 && (open.mock.calls.length < 1 || snapshot.mock.calls.length < 1); attempt += 1) await flushAsync();
+    await flushAsync();
+    expect(el.querySelector('[data-testid="mobile-feed"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
+    // The terminal is still there behind the feed.
+    expect(el.querySelector('[data-testid="menu-btn"]')?.textContent).toContain('/one');
+  });
+
+  it('opens on the feed when the conversation left is gone', async () => {
+    const { transport } = makeAuthedTransport([], 'restore-host');
+    const authority = await mobileAgentCreateAuthorityFingerprint('restore-host');
+    writeWorkspaceRestore(authority, { terminalSessionIds: [], activeTerminalSessionId: null, activeAgentSessionId: 'deleted-chat', destination: 'agents', lastSurface: 'chat' });
+    const snapshot = vi.spyOn(transport, 'getDaemonSnapshot').mockResolvedValue(daemonSnapshot());
+    const el = await renderWorkspace(transport);
+    for (let attempt = 0; attempt < 50 && snapshot.mock.calls.length < 1; attempt += 1) await flushAsync();
+    await flushAsync();
+    expect(el.querySelector('[data-testid="mobile-feed"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-agent-view"]')).toBeNull();
   });
 });
 
@@ -1086,7 +1164,7 @@ describe('MobileWorkspace - worktree open', () => {
     Object.defineProperty(window, 'innerWidth', { value: 360, configurable: true });
     await act(async () => window.dispatchEvent(new Event('resize')));
     await tap(el, 'workspace-hub-btn');
-    await openMoreSheet(el);
+    await openFeedMore(el);
     expect(el.querySelector('[data-testid="more-sessions"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="more-files"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="more-stats"]')).toBeTruthy();

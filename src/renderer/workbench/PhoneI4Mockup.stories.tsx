@@ -17,7 +17,7 @@ import { AppI18nProvider } from '../i18n';
 import { shellSnapshot, shellWorkflow } from '../shell/shell-fixtures';
 import { createTerminalAiHost } from '../terminal/terminal-ai-host';
 import { CWD, START, scriptedClock, snapshotWithProvider, storyHost } from '../terminal/terminal-story-host';
-import { Glyph, Menu, MenuItem, glyphIcon, type GlyphName } from '../ui';
+import { Glyph, Menu, MenuItem, glyphIcon } from '../ui';
 import '../mobile-shared.css';
 import '../structured-agent.css';
 import '../../../mobile/src/mobile.css';
@@ -201,37 +201,6 @@ export const TerminalAi: Story = {
     await waitFor(() => expect(canvas.getByTestId('terminal-ai-chip')).toBeInTheDocument());
     await expect(canvas.getByTestId('terminal-ai-target')).toHaveTextContent('설정 화면 글꼴 미리보기');
   },
-};
-
-/** B: the same feed over a four-item tab bar (피드 · 프로젝트 · 터미널 · 더보기); the header keeps only the PC lamp. */
-function TabBarB({ current }: { readonly current: 'feed' | 'projects' | 'terminal' }): JSX.Element {
-  const items: readonly { readonly id: string; readonly glyph: GlyphName; readonly label: string; readonly badge?: number }[] = [
-    { id: 'feed', glyph: 'req', label: '피드', badge: 3 },
-    { id: 'projects', glyph: 'proj', label: '프로젝트' },
-    { id: 'terminal', glyph: 'term', label: '터미널' },
-    { id: 'more', glyph: 'grid', label: '더보기' },
-  ];
-  return (
-    <nav className="mobile-shell-nav phone-i4-nav4" aria-label="탭">
-      {items.map((item) => (
-        <button key={item.id} type="button" className="mobile-shell-tab" aria-current={item.id === current ? 'page' : undefined}>
-          {item.id === current && <span className="mobile-shell-tab__indicator" aria-hidden="true" />}
-          {item.badge !== undefined && <span className="mobile-shell-tab__badge">{item.badge}</span>}
-          <Glyph name={item.glyph} size={20} />
-          <span className="mobile-shell-tab__label">{item.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-export const FeedB: Story = {
-  render: () => (
-    <div className="phone-i4-with-tabs">
-      <Feed />
-      <TabBarB current="feed" />
-    </div>
-  ),
 };
 
 const NOW = '2026-10-24T09:28:00.000Z';

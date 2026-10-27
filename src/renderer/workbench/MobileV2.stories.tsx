@@ -2,7 +2,8 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
 import { MobileDaemonNavigator } from '../../../mobile/src/MobileDaemonNavigator';
 import { MobilePlanningNavigator } from '../../../mobile/src/MobilePlanningNavigator';
-import { MobileTabBar, type MobileShellTab } from '../../../mobile/src/MobileTabBar';
+/** The roots this story switches between (the shell itself has no tab bar since I4). */
+type MobileShellTab = 'home' | 'tasks' | 'agents' | 'terminal';
 import { MobileWorkbenchCoordinator } from '../../../mobile/src/MobileWorkbenchCoordinator';
 import type { WsEzTerminalTransport } from '../../../mobile/src/transport/ws-ezterminal';
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
@@ -45,7 +46,6 @@ function MobileV2Story({ initial = 'home', locale = 'ko', offline = false }: { i
     <MobileWorkbenchCoordinator terminal={<div aria-label="Terminal story fixture" />} terminalActive={tab === 'terminal'} destinationActive={false} tabRootActive={tab !== 'terminal'} onRequestTabRoot={() => setTab('terminal')}
       page={tab === 'agents' ? <main className="mob-page"><MobileDaemonNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} flatConversations projectFilter={projectId} onProjectFilterChange={setProjectId} onRetry={() => undefined} onSelectSession={() => undefined} /></main>
         : tab !== 'terminal' ? <MobilePlanningNavigator state={{ status: offline ? 'recovering' : 'ready', snapshot }} connected={!offline} transport={transport} mode={tab === 'tasks' ? 'tasks' : 'projects'} projectId={projectId} onSelectProject={setProjectId} onOpenChat={() => setTab('agents')} onOpenFiles={() => undefined} onOpenPcControl={() => undefined} onOpenTerminal={() => setTab('terminal')} /> : undefined}
-      navigation={<MobileTabBar tab={tab} agentAttention={0} onSelectTab={setTab} onOpenMore={() => undefined} onOpenSettings={() => undefined} />}
     />
   </div></AppI18nProvider>;
 }
