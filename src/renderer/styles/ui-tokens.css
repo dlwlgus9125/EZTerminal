@@ -74,6 +74,7 @@
 :root {
   /* Semantic colour fallbacks: the product default (Dark). Theme runtime may
      override these per theme; built-in [data-theme] blocks below declare all. */
+  /* ui-palette:root:start — generated from themes.ts */
   --ui-canvas: #1b1a18;
   --ui-surface: #22211f;
   --ui-surface-raised: #2b2a27;
@@ -85,21 +86,22 @@
   --ui-border-subtle: #363430;
   --ui-border-strong: #78756d;
   --ui-accent: #7aa7ff;
-  --ui-accent-rgb: 122, 167, 255;
   --ui-on-accent: #0a1730;
   --ui-focus: #9dbdff;
   --ui-info: #7aa7ff;
-  --ui-info-rgb: 122, 167, 255;
   --ui-success: #62c08f;
-  --ui-success-rgb: 98, 192, 143;
   --ui-warning: #e2ae58;
-  --ui-warning-rgb: 226, 174, 88;
   --ui-danger: #f47a74;
+  --ui-accent-rgb: 122, 167, 255;
+  --ui-info-rgb: 122, 167, 255;
+  --ui-success-rgb: 98, 192, 143;
+  --ui-warning-rgb: 226, 174, 88;
   --ui-danger-rgb: 244, 122, 116;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
   --ui-agent-codex-rgb: 72, 215, 200;
   --ui-agent-claude-rgb: 229, 138, 107;
+  /* ui-palette:root:end */
 
   /* Remote video is the only deliberately fixed-colour plane. Product chrome
      still uses the active theme; these roles keep controls legible over media
@@ -239,7 +241,13 @@
   --ui-ease-emphasized: cubic-bezier(0.2, 0, 0, 1.2);
 }
 
+/* Built-in theme palettes: the semantic roles, the chrome roles that exist only
+   in CSS, their RGB channels and the chat code syntax colours. These regions, the
+   :root fallbacks above and the derived region below are generated from THEMES in
+   src/renderer/themes.ts, which CSS can't import; rewrite them with
+   UPDATE_DERIVED_UI_TOKENS=1 pnpm vitest run src/renderer/styles/ui-tokens.test.ts */
 [data-theme='dark'] {
+  /* ui-palette:dark:start — generated from themes.ts */
   --ui-canvas: #1b1a18;
   --ui-surface: #22211f;
   --ui-surface-raised: #2b2a27;
@@ -250,31 +258,36 @@
   --ui-text-inverse: #1b1a18;
   --ui-border-subtle: #363430;
   --ui-border-strong: #78756d;
-  --ui-text-dim: #9e9b92;
-  --ui-border-mid: #2e2c29;
-  /* Carries modal and pane boundaries, so it holds 3:1 against the surfaces it
-     separates even though no automated gate covers this role. */
-  --ui-border-focus-soft: #78756d;
   --ui-accent: #7aa7ff;
-  --ui-accent-rgb: 122, 167, 255;
   --ui-on-accent: #0a1730;
   --ui-focus: #9dbdff;
   --ui-info: #7aa7ff;
-  --ui-info-rgb: 122, 167, 255;
   --ui-success: #62c08f;
-  --ui-success-rgb: 98, 192, 143;
   --ui-warning: #e2ae58;
-  --ui-warning-rgb: 226, 174, 88;
   --ui-danger: #f47a74;
+  --ui-accent-rgb: 122, 167, 255;
+  --ui-info-rgb: 122, 167, 255;
+  --ui-success-rgb: 98, 192, 143;
+  --ui-warning-rgb: 226, 174, 88;
   --ui-danger-rgb: 244, 122, 116;
+  --ui-text-dim: #9e9b92;
+  --ui-border-mid: #2e2c29;
+  --ui-border-focus-soft: #78756d;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
+  --ui-glow-color: transparent;
   --ui-agent-codex-rgb: 72, 215, 200;
   --ui-agent-claude-rgb: 229, 138, 107;
-  --ui-glow-color: transparent;
+  --ui-code-token-keyword: #c4a7f5;
+  --ui-code-token-function: #7aa7ff;
+  --ui-code-token-string: #9fd08a;
+  --ui-code-token-string-expression: #9fd08a;
+  --ui-code-token-constant: #e9b872;
+  /* ui-palette:dark:end */
 }
 
 [data-theme='light'] {
+  /* ui-palette:light:start — generated from themes.ts */
   --ui-canvas: #faf9f6;
   --ui-surface: #ffffff;
   --ui-surface-raised: #ffffff;
@@ -285,32 +298,36 @@
   --ui-text-inverse: #ffffff;
   --ui-border-subtle: #e4e1da;
   --ui-border-strong: #7d7a72;
-  /* Dark enough to clear 4.5:1 against the inset surface, which is the darkest
-     background this role sits on in the light theme. */
-  --ui-text-dim: #6b6861;
-  --ui-border-mid: #ece9e3;
-  --ui-border-focus-soft: #8c897f;
   --ui-accent: #2f5fd0;
-  --ui-accent-rgb: 47, 95, 208;
   --ui-on-accent: #ffffff;
   --ui-focus: #2f5fd0;
   --ui-info: #2f5fd0;
-  --ui-info-rgb: 47, 95, 208;
   --ui-success: #1a7a4f;
-  --ui-success-rgb: 26, 122, 79;
   --ui-warning: #8a5a00;
-  --ui-warning-rgb: 138, 90, 0;
   --ui-danger: #b42d38;
+  --ui-accent-rgb: 47, 95, 208;
+  --ui-info-rgb: 47, 95, 208;
+  --ui-success-rgb: 26, 122, 79;
+  --ui-warning-rgb: 138, 90, 0;
   --ui-danger-rgb: 180, 45, 56;
+  --ui-text-dim: #6b6861;
+  --ui-border-mid: #ece9e3;
+  --ui-border-focus-soft: #8c897f;
   --ui-agent-codex: #006b64;
   --ui-agent-claude: #9a3f28;
+  --ui-glow-color: transparent;
   --ui-agent-codex-rgb: 0, 107, 100;
   --ui-agent-claude-rgb: 154, 63, 40;
-  /* A phosphor bloom on a white canvas only muddies edges. */
-  --ui-glow-color: transparent;
+  --ui-code-token-keyword: #7a3eb1;
+  --ui-code-token-function: #2f5fd0;
+  --ui-code-token-string: #1a7a4f;
+  --ui-code-token-string-expression: #1a7a4f;
+  --ui-code-token-constant: #8a5a00;
+  /* ui-palette:light:end */
 }
 
 [data-theme='high-contrast'] {
+  /* ui-palette:high-contrast:start — generated from themes.ts */
   --ui-canvas: #000000;
   --ui-surface: #000000;
   --ui-surface-raised: #000000;
@@ -318,38 +335,39 @@
   --ui-text-primary: #ffffff;
   --ui-text-secondary: #ffffff;
   --ui-text-muted: #d0d0d0;
-  /* Declared rather than left to the :root aliases. A custom property's
-     computed value is the substituted one, so a nested [data-theme] scope — the
-     token gallery renders all four themes that way — would otherwise inherit
-     whatever the root theme resolved them to, and Matrix green would leak into
-     the High Contrast card. */
-  --ui-text-dim: #d0d0d0;
-  --ui-border-mid: #808080;
-  --ui-border-focus-soft: #ffffff;
   --ui-text-inverse: #000000;
   --ui-border-subtle: #808080;
   --ui-border-strong: #ffffff;
   --ui-accent: #00ff66;
-  --ui-accent-rgb: 0, 255, 102;
   --ui-on-accent: #000000;
   --ui-focus: #00e5ff;
   --ui-info: #66b2ff;
-  --ui-info-rgb: 102, 178, 255;
   --ui-success: #00ff66;
-  --ui-success-rgb: 0, 255, 102;
   --ui-warning: #ffcc00;
-  --ui-warning-rgb: 255, 204, 0;
   --ui-danger: #ff5c5c;
+  --ui-accent-rgb: 0, 255, 102;
+  --ui-info-rgb: 102, 178, 255;
+  --ui-success-rgb: 0, 255, 102;
+  --ui-warning-rgb: 255, 204, 0;
   --ui-danger-rgb: 255, 92, 92;
+  --ui-text-dim: #d0d0d0;
+  --ui-border-mid: #808080;
+  --ui-border-focus-soft: #ffffff;
   --ui-agent-codex: #00ffff;
   --ui-agent-claude: #ff9b7a;
+  --ui-glow-color: transparent;
   --ui-agent-codex-rgb: 0, 255, 255;
   --ui-agent-claude-rgb: 255, 155, 122;
-  /* High Contrast removes decorative blur and low-contrast overlays. */
-  --ui-glow-color: transparent;
+  --ui-code-token-keyword: #66b2ff;
+  --ui-code-token-function: #ff99ff;
+  --ui-code-token-string: #00ff66;
+  --ui-code-token-string-expression: #00ff66;
+  --ui-code-token-constant: #ffcc00;
+  /* ui-palette:high-contrast:end */
 }
 
 [data-theme='matrix'] {
+  /* ui-palette:matrix:start — generated from themes.ts */
   --ui-canvas: #070d0a;
   --ui-surface: #0c1511;
   --ui-surface-raised: #111d17;
@@ -359,65 +377,34 @@
   --ui-text-muted: #88a897;
   --ui-text-inverse: #04120b;
   --ui-border-subtle: #18261f;
-  /* borderStrong carries the 3:1 non-text contrast gate in theme-contrast.ts;
-     the decorative groove lives on --ui-border-mid. */
   --ui-border-strong: #4b6e5b;
-  --ui-agent-codex: #48d7c8;
-  --ui-agent-claude: #e58a6b;
-  --ui-text-dim: #88a897;
-  --ui-floor: #040806;
-  --ui-border-mid: #26392f;
-  --ui-border-focus-soft: #4b7a62;
   --ui-accent: #3ae894;
-  --ui-accent-rgb: 58, 232, 148;
   --ui-on-accent: #001c0d;
   --ui-focus: #8affba;
   --ui-info: #6fd6e8;
-  --ui-info-rgb: 111, 214, 232;
   --ui-success: #8fe3b4;
-  --ui-success-rgb: 143, 227, 180;
   --ui-warning: #f3c45b;
-  --ui-warning-rgb: 243, 196, 91;
   --ui-danger: #ff7a6a;
+  --ui-accent-rgb: 58, 232, 148;
+  --ui-info-rgb: 111, 214, 232;
+  --ui-success-rgb: 143, 227, 180;
+  --ui-warning-rgb: 243, 196, 91;
   --ui-danger-rgb: 255, 122, 106;
+  --ui-text-dim: #88a897;
+  --ui-border-mid: #26392f;
+  --ui-border-focus-soft: #4b7a62;
+  --ui-floor: #040806;
+  --ui-agent-codex: #48d7c8;
+  --ui-agent-claude: #e58a6b;
+  --ui-glow-color: var(--ui-accent);
   --ui-agent-codex-rgb: 72, 215, 200;
   --ui-agent-claude-rgb: 229, 138, 107;
-  --ui-glow-color: var(--ui-accent);
-}
-
-/* Chat code syntax per built-in theme. Unset themes (custom ones) fall back to
-   the semantic roles in chat/markdown/highlighter.ts; these keep keyword,
-   function and string apart where those roles share a hue. */
-[data-theme='dark'] {
-  --ui-code-token-keyword: #c4a7f5;
-  --ui-code-token-function: #7aa7ff;
-  --ui-code-token-string: #9fd08a;
-  --ui-code-token-string-expression: #9fd08a;
-  --ui-code-token-constant: #e9b872;
-}
-
-[data-theme='light'] {
-  --ui-code-token-keyword: #7a3eb1;
-  --ui-code-token-function: #2f5fd0;
-  --ui-code-token-string: #1a7a4f;
-  --ui-code-token-string-expression: #1a7a4f;
-  --ui-code-token-constant: #8a5a00;
-}
-
-[data-theme='high-contrast'] {
-  --ui-code-token-keyword: #66b2ff;
-  --ui-code-token-function: #ff99ff;
-  --ui-code-token-string: #00ff66;
-  --ui-code-token-string-expression: #00ff66;
-  --ui-code-token-constant: #ffcc00;
-}
-
-[data-theme='matrix'] {
   --ui-code-token-keyword: #6fd6e8;
   --ui-code-token-function: #3ae894;
   --ui-code-token-string: #b6f5d0;
   --ui-code-token-string-expression: #b6f5d0;
   --ui-code-token-constant: #f3c45b;
+  /* ui-palette:matrix:end */
 }
 
 /* derived-ui-tokens:start — generated from themes.ts; rewrite with

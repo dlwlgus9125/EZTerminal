@@ -4,11 +4,13 @@ import type { UiThemeColors } from '../shared/theme-schema';
 import { resolveAccessibleTheme } from './theme-contrast';
 
 // Built-in themes (E1) — single source of truth for the renderer. Chrome colors
-// are applied by setting `data-theme` on <html> and letting index.css's
-// `[data-theme='...']` blocks override the --term-* vars declared here (CSS
-// can't import this file, so the blocks mirror `cssVars` by hand). xterm has no
-// concept of CSS variables, so PtyBlock reads `xterm`/`fontFamily`/`fontSize`
-// straight from this object instead.
+// are applied by setting `data-theme` on <html> and letting the CSS foundations'
+// `[data-theme='...']` blocks (and their :root dark defaults) carry each theme's
+// `palette`. CSS can't import this file, so styles/palette-css.ts generates those
+// blocks' marked regions; ui-tokens.test.ts fails while one drifts and rewrites
+// them all under UPDATE_DERIVED_UI_TOKENS=1. xterm has no concept of CSS
+// variables, so PtyBlock reads `xterm`/`fontFamily`/`fontSize` straight from this
+// object instead.
 //
 // theme-effects-font M0: `THEMES` now coexists with a runtime registry of
 // externally-supplied theme mods (see `registerTheme`/`listThemes` below).
@@ -34,8 +36,9 @@ export interface ThemeDefinition {
   readonly id: string;
   /** Display name (theme picker / Settings dropdown). */
   readonly name: string;
-  /** --term-* CSS variable overrides mirrored in index.css's [data-theme] block.
-   * Empty for 'dark': its values ARE the :root defaults (no override needed). */
+  /** --term-* CSS variable overrides. A built-in's are its `palette.term`, which
+   * the CSS foundations carry; a custom theme's are injected at runtime.
+   * Empty for 'dark': its palette IS the :root defaults (no override needed). */
   readonly cssVars: Readonly<Record<string, string>>;
   /** Semantic application chrome. Optional only for directly registered
    * legacy definitions; resolution deterministically seeds it from terminal
@@ -50,6 +53,45 @@ export interface ThemeDefinition {
   /** Theme-picker swatch pair; independent of `cssVars`/`xterm` because a
    * picker wants ONE representative bg/accent, not the full palette. */
   readonly swatch?: { readonly bg: string; readonly accent: string };
+  /** Built-ins only: every value the CSS foundations declare for the theme
+   * beyond `ui`. Custom themes get their equivalents from theme-runtime.ts. */
+  readonly palette?: BuiltinPalette;
+}
+
+/** The values styles/palette-css.ts writes into index.css, mobile-shared.css and
+ * styles/ui-tokens.css for a built-in theme, alongside its `ui` roles. */
+export interface BuiltinPalette {
+  /** The sixteen --term-* roles. Dark's are the :root defaults; the other
+   * built-ins use the same object as their `cssVars`. */
+  readonly term: Readonly<Record<string, string>>;
+  /** Chrome roles that exist only in CSS (--ui-<kebab-case key>). Built-ins
+   * declare them rather than leaving them to the :root aliases: a custom
+   * property computes to its substituted value, so a nested [data-theme] scope
+   * (the token gallery renders all four themes that way) would otherwise
+   * inherit whatever the root theme resolved them to. */
+  readonly chrome: {
+    readonly textDim: string;
+    /** Decorative groove; also the base the derived warning/danger borders mix into. */
+    readonly borderMid: string;
+    /** Draws modal and pane boundaries, so it holds 3:1 against the surfaces it separates. */
+    readonly borderFocusSoft: string;
+    /** The floor under the board and the dock; left to the canvas when absent. */
+    readonly floor?: string;
+    readonly agentCodex: string;
+    readonly agentClaude: string;
+    /** Phosphor glow; `transparent` opts the theme out of the bloom. */
+    readonly glowColor: string;
+  };
+  /** Chat code syntax (--ui-code-token-<kebab-case key>). Custom themes fall back
+   * to the semantic roles in chat/markdown/highlighter.ts; these keep keyword,
+   * function and string apart where those roles share a hue. */
+  readonly codeTokens: {
+    readonly keyword: string;
+    readonly function: string;
+    readonly string: string;
+    readonly stringExpression: string;
+    readonly constant: string;
+  };
 }
 
 export interface ThemeAdjustment {
@@ -70,6 +112,87 @@ export interface ResolvedTheme {
 
 /** Cycle order for the theme button (E1) — also the theme picker's row order (M2). */
 export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
+
+// Each built-in's sixteen --term-* roles (`palette.term`).
+const DARK_TERM = {
+  // Console surfaces, near-black with subtly layered depth.
+  '--term-bg': '#1b1a18', // the console background
+  '--term-bg-raised': '#22211f', // command line / input strip
+  '--term-bg-inset': '#161513', // table body, deepest plane
+  '--term-bg-hover': 'rgba(255, 255, 255, 0.04)',
+  // Hairline separators — block chrome stays thin, never card-like.
+  '--term-border': '#363430',
+  '--term-border-faint': '#2b2a27',
+  // Foreground ramp.
+  '--term-fg': '#cccccc', // default text
+  '--term-fg-bright': '#f2f2f2', // command text, emphasis
+  '--term-fg-dim': '#8c8c8c', // metadata, counts
+  '--term-fg-faint': '#565656', // chrome glyphs, loading
+  // Classic terminal accents.
+  '--term-green': '#29d398', // success / done / prompt
+  '--term-red': '#f0556a', // error
+  '--term-amber': '#e5b567', // cancelled / warn
+  '--term-cyan': '#56b6c2', // table headers, paths
+  '--term-blue': '#4d9fff', // running / focus
+  '--term-selection': 'rgba(122, 167, 255, 0.28)',
+};
+
+const LIGHT_TERM = {
+  '--term-bg': '#faf9f6',
+  '--term-bg-raised': '#ffffff',
+  '--term-bg-inset': '#f2f0eb',
+  '--term-bg-hover': 'rgba(0, 0, 0, 0.05)',
+  '--term-border': '#e4e1da',
+  '--term-border-faint': '#eeebe5',
+  '--term-fg': '#1c1c1c',
+  '--term-fg-bright': '#000000',
+  '--term-fg-dim': '#5f5f5f',
+  '--term-fg-faint': '#8f8f8f',
+  '--term-green': '#0e8a4b',
+  '--term-red': '#c62839',
+  '--term-amber': '#9a6a00',
+  '--term-cyan': '#0f7c8c',
+  '--term-blue': '#1857c4',
+  '--term-selection': 'rgba(47, 95, 208, 0.18)',
+};
+
+const HIGH_CONTRAST_TERM = {
+  '--term-bg': '#000000',
+  '--term-bg-raised': '#000000',
+  '--term-bg-inset': '#000000',
+  '--term-bg-hover': 'rgba(255, 255, 255, 0.15)',
+  '--term-border': '#ffffff',
+  '--term-border-faint': '#808080',
+  '--term-fg': '#ffffff',
+  '--term-fg-bright': '#ffffff',
+  '--term-fg-dim': '#d0d0d0',
+  '--term-fg-faint': '#a0a0a0',
+  '--term-green': '#00ff66',
+  '--term-red': '#ff3b3b',
+  '--term-amber': '#ffcc00',
+  '--term-cyan': '#00e5ff',
+  '--term-blue': '#66b2ff',
+  '--term-selection': 'rgba(0, 255, 102, 0.35)',
+};
+
+const MATRIX_TERM = {
+  '--term-bg': '#040806',
+  '--term-bg-raised': '#0c1511',
+  '--term-bg-inset': '#020504',
+  '--term-bg-hover': 'rgba(58, 232, 148, 0.08)',
+  '--term-border': '#26392f',
+  '--term-border-faint': '#18261f',
+  '--term-fg': '#c4f2d8',
+  '--term-fg-bright': '#e8faf0',
+  '--term-fg-dim': '#8fb7a1',
+  '--term-fg-faint': '#88a897',
+  '--term-green': '#3ae894',
+  '--term-red': '#ff7a6a',
+  '--term-amber': '#f3c45b',
+  '--term-cyan': '#6fd6e8',
+  '--term-blue': '#66a8ff',
+  '--term-selection': 'rgba(58, 232, 148, 0.28)',
+};
 
 export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
   dark: {
@@ -105,28 +228,29 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
     swatch: { bg: '#1b1a18', accent: '#7aa7ff' },
+    palette: {
+      term: DARK_TERM,
+      chrome: {
+        textDim: '#9e9b92',
+        borderMid: '#2e2c29',
+        borderFocusSoft: '#78756d',
+        agentCodex: '#48d7c8',
+        agentClaude: '#e58a6b',
+        glowColor: 'transparent',
+      },
+      codeTokens: {
+        keyword: '#c4a7f5',
+        function: '#7aa7ff',
+        string: '#9fd08a',
+        stringExpression: '#9fd08a',
+        constant: '#e9b872',
+      },
+    },
   },
   light: {
     id: 'light',
     name: 'Light',
-    cssVars: {
-      '--term-bg': '#faf9f6',
-      '--term-bg-raised': '#ffffff',
-      '--term-bg-inset': '#f2f0eb',
-      '--term-bg-hover': 'rgba(0, 0, 0, 0.05)',
-      '--term-border': '#e4e1da',
-      '--term-border-faint': '#eeebe5',
-      '--term-fg': '#1c1c1c',
-      '--term-fg-bright': '#000000',
-      '--term-fg-dim': '#5f5f5f',
-      '--term-fg-faint': '#8f8f8f',
-      '--term-green': '#0e8a4b',
-      '--term-red': '#c62839',
-      '--term-amber': '#9a6a00',
-      '--term-cyan': '#0f7c8c',
-      '--term-blue': '#1857c4',
-      '--term-selection': 'rgba(47, 95, 208, 0.18)',
-    },
+    cssVars: LIGHT_TERM,
     ui: {
       canvas: '#faf9f6',
       surface: '#ffffff',
@@ -157,28 +281,32 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
     swatch: { bg: '#faf9f6', accent: '#2f5fd0' },
+    palette: {
+      term: LIGHT_TERM,
+      chrome: {
+        // Dark enough to clear 4.5:1 against the inset surface, the darkest
+        // background this role sits on in the light theme.
+        textDim: '#6b6861',
+        borderMid: '#ece9e3',
+        borderFocusSoft: '#8c897f',
+        agentCodex: '#006b64',
+        agentClaude: '#9a3f28',
+        // A phosphor bloom on a white canvas only muddies edges.
+        glowColor: 'transparent',
+      },
+      codeTokens: {
+        keyword: '#7a3eb1',
+        function: '#2f5fd0',
+        string: '#1a7a4f',
+        stringExpression: '#1a7a4f',
+        constant: '#8a5a00',
+      },
+    },
   },
   'high-contrast': {
     id: 'high-contrast',
     name: 'High Contrast',
-    cssVars: {
-      '--term-bg': '#000000',
-      '--term-bg-raised': '#000000',
-      '--term-bg-inset': '#000000',
-      '--term-bg-hover': 'rgba(255, 255, 255, 0.15)',
-      '--term-border': '#ffffff',
-      '--term-border-faint': '#808080',
-      '--term-fg': '#ffffff',
-      '--term-fg-bright': '#ffffff',
-      '--term-fg-dim': '#d0d0d0',
-      '--term-fg-faint': '#a0a0a0',
-      '--term-green': '#00ff66',
-      '--term-red': '#ff3b3b',
-      '--term-amber': '#ffcc00',
-      '--term-cyan': '#00e5ff',
-      '--term-blue': '#66b2ff',
-      '--term-selection': 'rgba(0, 255, 102, 0.35)',
-    },
+    cssVars: HIGH_CONTRAST_TERM,
     ui: {
       canvas: '#000000',
       surface: '#000000',
@@ -207,9 +335,27 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
     swatch: { bg: '#000000', accent: '#00ff66' },
+    palette: {
+      term: HIGH_CONTRAST_TERM,
+      chrome: {
+        textDim: '#d0d0d0',
+        borderMid: '#808080',
+        borderFocusSoft: '#ffffff',
+        agentCodex: '#00ffff',
+        agentClaude: '#ff9b7a',
+        // High Contrast removes decorative blur and low-contrast overlays.
+        glowColor: 'transparent',
+      },
+      codeTokens: {
+        keyword: '#66b2ff',
+        function: '#ff99ff',
+        string: '#00ff66',
+        stringExpression: '#00ff66',
+        constant: '#ffcc00',
+      },
+    },
   },
-  // Matrix (E1+) — near-black bg with a green phosphor foreground ramp. Mirror
-  // these cssVars in index.css's [data-theme='matrix'] block by hand. The xterm
+  // Matrix (E1+) — near-black bg with a green phosphor foreground ramp. The xterm
   // ITheme sets ONLY background/foreground/cursor/selection — the 16 ANSI colors
   // are intentionally left at xterm's defaults so an agent TUI (Claude Code /
   // Codex) keeps its own colour coding; the green "glow" over xterm is a CSS
@@ -217,24 +363,7 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
   matrix: {
     id: 'matrix',
     name: 'Matrix',
-    cssVars: {
-      '--term-bg': '#040806',
-      '--term-bg-raised': '#0c1511',
-      '--term-bg-inset': '#020504',
-      '--term-bg-hover': 'rgba(58, 232, 148, 0.08)',
-      '--term-border': '#26392f',
-      '--term-border-faint': '#18261f',
-      '--term-fg': '#c4f2d8',
-      '--term-fg-bright': '#e8faf0',
-      '--term-fg-dim': '#8fb7a1',
-      '--term-fg-faint': '#88a897',
-      '--term-green': '#3ae894',
-      '--term-red': '#ff7a6a',
-      '--term-amber': '#f3c45b',
-      '--term-cyan': '#6fd6e8',
-      '--term-blue': '#66a8ff',
-      '--term-selection': 'rgba(58, 232, 148, 0.28)',
-    },
+    cssVars: MATRIX_TERM,
     ui: {
       canvas: '#070d0a',
       surface: '#0c1511',
@@ -245,6 +374,8 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
       textMuted: '#88a897',
       textInverse: '#04120b',
       borderSubtle: '#18261f',
+      // Carries the 3:1 non-text contrast gate in theme-contrast.ts; the
+      // decorative groove lives on palette.chrome.borderMid.
       borderStrong: '#4b6e5b',
       accent: '#3ae894',
       onAccent: '#001c0d',
@@ -274,6 +405,25 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
       'static-noise',
     ],
     swatch: { bg: '#070d0a', accent: '#3ae894' },
+    palette: {
+      term: MATRIX_TERM,
+      chrome: {
+        textDim: '#88a897',
+        borderMid: '#26392f',
+        borderFocusSoft: '#4b7a62',
+        floor: '#040806',
+        agentCodex: '#48d7c8',
+        agentClaude: '#e58a6b',
+        glowColor: 'var(--ui-accent)',
+      },
+      codeTokens: {
+        keyword: '#6fd6e8',
+        function: '#3ae894',
+        string: '#b6f5d0',
+        stringExpression: '#b6f5d0',
+        constant: '#f3c45b',
+      },
+    },
   },
 };
 

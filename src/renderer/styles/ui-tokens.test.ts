@@ -3,11 +3,22 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { calculateContrastRatio, deriveUiTokens } from '../theme-contrast';
+import { calculateContrastRatio } from '../theme-contrast';
 import { THEMES } from '../themes';
+import { currentRegion, expectedRegion, PALETTE_REGIONS, rewriteRegion } from './palette-css';
 
-const tokensPath = resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css');
-let css = readFileSync(tokensPath, 'utf8');
+const PALETTE_FILES = [...new Set(PALETTE_REGIONS.map((region) => region.file))];
+
+if (process.env.UPDATE_DERIVED_UI_TOKENS === '1') {
+  for (const file of PALETTE_FILES) {
+    const path = resolve(process.cwd(), file);
+    const source = readFileSync(path, 'utf8');
+    const updated = PALETTE_REGIONS.filter((region) => region.file === file).reduce(rewriteRegion, source);
+    if (updated !== source) writeFileSync(path, updated);
+  }
+}
+
+const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css'), 'utf8');
 const desktopFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/index.css'), 'utf8');
 const mobileFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/mobile-shared.css'), 'utf8');
 
@@ -62,47 +73,18 @@ function mediaBlocks(source: string, condition: string): string[] {
   return blocks;
 }
 
-const DERIVED_START = '/* derived-ui-tokens:start';
-const DERIVED_END = '/* derived-ui-tokens:end */';
-const GLOWING_THEMES = new Set(['matrix']);
-
-/** The generated region: :root (product default) plus every built-in theme. */
-function expectedDerivedRegion(source: string): string {
-  const block = (selector: string, theme: keyof typeof THEMES): string => {
-    const borderMid = scopedDeclarationFrom(source, `[data-theme='${theme}']`, '--ui-border-mid');
-    const tokens = deriveUiTokens(THEMES[theme].ui!, { glow: GLOWING_THEMES.has(theme), borderMid });
-    return `${selector} {\n${Object.entries(tokens).map(([name, value]) => `  ${name}: ${value};`).join('\n')}\n}`;
-  };
-  return [
-    block(':root', 'dark'),
-    ...(['dark', 'light', 'high-contrast', 'matrix'] as const).map((theme) => block(`[data-theme='${theme}']`, theme)),
-  ].join('\n');
-}
-
-function derivedRegion(source: string): string {
-  const start = source.indexOf(DERIVED_START);
-  const startEnd = source.indexOf('*/', start) + 2;
-  const end = source.indexOf(DERIVED_END);
-  // A Windows checkout (core.autocrlf) stores the sheet with CRLF; the generated region is LF.
-  return source.slice(startEnd, end).replace(/\r\n/gu, '\n').trim();
-}
-
-if (process.env.UPDATE_DERIVED_UI_TOKENS === '1') {
-  const start = css.indexOf(DERIVED_START);
-  const startEnd = css.indexOf('*/', start) + 2;
-  const end = css.indexOf(DERIVED_END);
-  css = `${css.slice(0, startEnd)}\n${expectedDerivedRegion(css)}\n${css.slice(end)}`;
-  writeFileSync(tokensPath, css);
-}
-
 function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 describe('UI token contract', () => {
-  it('precomputes derived roles for every built-in theme from the runtime registry', () => {
-    expect(css).toContain(DERIVED_START);
-    expect(derivedRegion(css)).toBe(expectedDerivedRegion(css));
+  it('generates the built-in palettes and their derived roles from the runtime registry', () => {
+    for (const file of PALETTE_FILES) {
+      const source = readFileSync(resolve(process.cwd(), file), 'utf8');
+      for (const region of PALETTE_REGIONS.filter((candidate) => candidate.file === file)) {
+        expect(currentRegion(source, region), `${file} ${region.name}`).toBe(expectedRegion(source, region));
+      }
+    }
   });
 
   it('ships no color-mix() or :has() to the Android WebView 74 floor in shared foundations', () => {

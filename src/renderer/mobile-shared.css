@@ -112,30 +112,25 @@
   --term-font:
     "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
 
-  /* Console surfaces, near-black with subtly layered depth. */
-  --term-bg: #1b1a18; /* the console background */
-  --term-bg-raised: #22211f; /* command line / input strip */
-  --term-bg-inset: #161513; /* table body, deepest plane */
+  /* The dark palette is the default; its roles are described in themes.ts. */
+  /* term-palette:dark:start — generated from themes.ts */
+  --term-bg: #1b1a18;
+  --term-bg-raised: #22211f;
+  --term-bg-inset: #161513;
   --term-bg-hover: rgba(255, 255, 255, 0.04);
-
-  /* Hairline separators — block chrome stays thin, never card-like. */
   --term-border: #363430;
   --term-border-faint: #2b2a27;
-
-  /* Foreground ramp. */
-  --term-fg: #cccccc; /* default text */
-  --term-fg-bright: #f2f2f2; /* command text, emphasis */
-  --term-fg-dim: #8c8c8c; /* metadata, counts */
-  --term-fg-faint: #565656; /* chrome glyphs, loading */
-
-  /* Classic terminal accents. */
-  --term-green: #29d398; /* success / done / prompt */
-  --term-red: #f0556a; /* error */
-  --term-amber: #e5b567; /* cancelled / warn */
-  --term-cyan: #56b6c2; /* table headers, paths */
-  --term-blue: #4d9fff; /* running / focus */
-
+  --term-fg: #cccccc;
+  --term-fg-bright: #f2f2f2;
+  --term-fg-dim: #8c8c8c;
+  --term-fg-faint: #565656;
+  --term-green: #29d398;
+  --term-red: #f0556a;
+  --term-amber: #e5b567;
+  --term-cyan: #56b6c2;
+  --term-blue: #4d9fff;
   --term-selection: rgba(122, 167, 255, 0.28);
+  /* term-palette:dark:end */
 
   font-family: var(--term-font);
   /* Keep rem-based product tokens on the canonical 16px scale. The persisted
@@ -148,10 +143,13 @@
 }
 
 /* Built-in themes (E1) — applied via data-theme on <html>; :root above stays the
-   'dark' default (no churn). Values mirror src/renderer/themes.ts THEMES —
-   CSS can't import that file, so keep the two in sync by hand. */
+   'dark' default (no churn). The term-palette regions (here and in :root) are
+   generated from THEMES in src/renderer/themes.ts, which CSS can't import;
+   rewrite them with
+   UPDATE_DERIVED_UI_TOKENS=1 pnpm vitest run src/renderer/styles/ui-tokens.test.ts */
 [data-theme="light"] {
   color-scheme: light;
+  /* term-palette:light:start — generated from themes.ts */
   --term-bg: #faf9f6;
   --term-bg-raised: #ffffff;
   --term-bg-inset: #f2f0eb;
@@ -168,9 +166,11 @@
   --term-cyan: #0f7c8c;
   --term-blue: #1857c4;
   --term-selection: rgba(47, 95, 208, 0.18);
+  /* term-palette:light:end */
 }
 
 [data-theme="high-contrast"] {
+  /* term-palette:high-contrast:start — generated from themes.ts */
   --term-bg: #000000;
   --term-bg-raised: #000000;
   --term-bg-inset: #000000;
@@ -187,9 +187,10 @@
   --term-cyan: #00e5ff;
   --term-blue: #66b2ff;
   --term-selection: rgba(0, 255, 102, 0.35);
+  /* term-palette:high-contrast:end */
 }
 
-/* == PALETTE == mirrors THEMES.matrix.cssVars in themes.ts (keep the two in sync).
+/* == PALETTE == generated from THEMES.matrix in themes.ts, like the blocks above.
    Matrix supplies the terminal/display face without changing the semantic type
    scale used by product chrome. */
 [data-theme="matrix"] {
@@ -197,26 +198,24 @@
   --term-font:
     "Share Tech Mono", "Cascadia Code", Consolas, "Courier New", monospace;
 
+  /* term-palette:matrix:start — generated from themes.ts */
   --term-bg: #040806;
   --term-bg-raised: #0c1511;
   --term-bg-inset: #020504;
   --term-bg-hover: rgba(58, 232, 148, 0.08);
-
   --term-border: #26392f;
   --term-border-faint: #18261f;
-
   --term-fg: #c4f2d8;
   --term-fg-bright: #e8faf0;
   --term-fg-dim: #8fb7a1;
   --term-fg-faint: #88a897;
-
   --term-green: #3ae894;
   --term-red: #ff7a6a;
   --term-amber: #f3c45b;
   --term-cyan: #6fd6e8;
   --term-blue: #66a8ff;
-
   --term-selection: rgba(58, 232, 148, 0.28);
+  /* term-palette:matrix:end */
 }
 
 /* == CRT GLOW (phosphor-glow effect) == a phosphor bloom on accents; a faint
