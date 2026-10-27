@@ -10,7 +10,7 @@ import {
   waitingKindText,
   type ShellText,
 } from '../../../src/renderer/shell/shell-text';
-import { Button, Glyph, Led, Menu, MenuLabel, MenuRadioItem, type LedTone } from '../../../src/renderer/ui';
+import { Button, Glyph, Led, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, type LedTone } from '../../../src/renderer/ui';
 import type { FeedConversation, FeedFlow, FeedProject, FeedScope, FeedWaitingItem } from './feed-model';
 import './mobile-feed.css';
 
@@ -36,6 +36,8 @@ export interface MobileFeedViewProps {
   readonly onOpenFlow: (flow: FeedFlow) => void;
   readonly onSeeAllConversations: () => void;
   readonly onNewConversation: () => void;
+  /** Where the project screens (flows, tasks, files, worktrees) open from the ▾ menu, when the layout has no tab for them. */
+  readonly onOpenProjectScreen?: (projectId: string | null) => void;
 }
 
 const GLYPH: Record<FeedWaitingItem['kind'], 'ok' | 'q' | 'flow' | 'term'> = {
@@ -149,6 +151,12 @@ export function MobileFeedView(props: MobileFeedViewProps): JSX.Element {
           {props.projects.map((project) => (
             <MenuRadioItem key={project.id} checked={props.scope === project.id} onSelect={() => props.onScopeChange(project.id)} data-testid="mobile-feed-scope-project">{project.name}</MenuRadioItem>
           ))}
+          {props.onOpenProjectScreen && <MenuSeparator />}
+          {props.onOpenProjectScreen && (
+            <MenuItem onSelect={() => props.onOpenProjectScreen?.(props.scope)} data-testid="mobile-feed-open-project">
+              {allProjects ? text('프로젝트 목록 열기', 'Open the projects') : text('프로젝트 화면 열기', 'Open the project')}
+            </MenuItem>
+          )}
         </Menu>
         <span className="mob-feed__host" data-testid="mobile-feed-host"><Led tone={props.host.tone} /><span>{props.host.label}</span></span>
         {props.headerActions}

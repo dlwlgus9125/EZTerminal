@@ -28,6 +28,8 @@ const PATHS = {
   wt: 'M4 2h2.5v6.2c1.4-1.3 3.4-1.7 5.3-2 1.6-.3 2.4-.7 2.6-1.7H13V2h4.5v2.5h-.6c-.3 2.9-2.4 3.6-4.7 4-2.6.4-5.6 1-5.7 4.4V18H4z',
   // Android set (I4): the phone's screens move off lucide onto the same stencil grid.
   plus: 'M8.75 3h2.5v5.75H17v2.5h-5.75V17h-2.5v-5.75H3v-2.5h5.75z',
+  minus: 'M3 8.75h14v2.5H3z',
+  info: 'M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm-1.25 7v5.5h2.5V9zm0-3.5V8h2.5V5.5z',
   next: 'M7.5 3.5L14 10l-6.5 6.5L6 15l5-5-5-5z',
   up: 'M3.5 12.5L10 6l6.5 6.5L15 14l-5-5-5 5z',
   down: 'M3.5 7.5L10 14l6.5-6.5L15 6l-5 5-5-5z',

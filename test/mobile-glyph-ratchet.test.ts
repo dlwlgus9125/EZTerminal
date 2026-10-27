@@ -10,22 +10,17 @@ import { describe, expect, it } from 'vitest';
  * stay here. Shared desktop components under `src/renderer` are out of scope.
  */
 const LUCIDE_ALLOWED = new Set([
-  'ConnectScreen.tsx',
   'MobileAgentFolderPicker.tsx',
   'MobileAgentProjects.tsx',
   'MobileAgentView.tsx',
   'MobileAppUpdateCard.tsx',
   'MobileDaemonNavigator.tsx',
-  'MobileFileView.tsx',
   'MobileHomeView.tsx',
   'MobileLeadWorkersStrip.tsx',
-  'MobileMoreSheet.tsx',
   'MobileNewSessionDraft.tsx',
-  'MobilePlanningNavigator.tsx',
   'MobileRemoteDesktopView.tsx',
   'MobileSessionSheet.tsx',
   'MobileSessionView.tsx',
-  'MobileSettingsView.tsx',
   'MobileTabBar.tsx',
   'MobileWorkspace.tsx',
   'TerminalAccessorySettings.tsx',

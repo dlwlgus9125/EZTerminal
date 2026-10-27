@@ -1,4 +1,4 @@
-import { Monitor, Activity, ChevronRight, Files, List, Palette, Settings, Wrench } from 'lucide-react';
+import { Glyph } from '../../src/renderer/ui';
 import { flushSync } from 'react-dom';
 import type { RefObject } from 'react';
 
@@ -68,23 +68,23 @@ export function MobileMoreSheet({
       testId="mobile-more-sheet"
     >
       {onOpenPcControl && <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenPcControl)} data-testid="more-pc-control">
-        <Monitor aria-hidden="true" /><span className="mobile-action-sheet-row-label">{t('mobile.tabs.pc')}</span>
+        <Glyph name="pc" /><span className="mobile-action-sheet-row-label">{t('mobile.tabs.pc')}</span>
       </button>}
       <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenSessions)} data-testid="more-sessions">
-        <List aria-hidden="true" />
+        <Glyph name="list" />
         <span className="mobile-action-sheet-row-label">{t('mobile.sessions')}</span>
       </button>
       <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenFiles)} data-testid="more-files">
-        <Files aria-hidden="true" />
+        <Glyph name="file" />
         <span className="mobile-action-sheet-row-label">{t('mobile.files')}</span>
       </button>
       <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenStats)} data-testid="more-stats">
-        <Activity aria-hidden="true" />
+        <Glyph name="mon" />
         <span className="mobile-action-sheet-row-label">{t('mobile.moreActions.stats')}</span>
       </button>
       {openclawVisible && (
         <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenClaw)} data-testid="more-openclaw">
-          <Wrench aria-hidden="true" />
+          <Glyph name="claw" />
           <span className="mobile-action-sheet-row-label">OpenClaw</span>
           <span className="mob-sheet__state" data-testid="more-openclaw-state">
             {openclawState === 'running' && <span className="mob-dot mob-dot--live" aria-hidden="true" />}
@@ -98,7 +98,7 @@ export function MobileMoreSheet({
         onClick={(event) => { const trigger = event.currentTarget; replaceWith(() => onOpenTheme(trigger))(); }}
         data-testid="more-theme"
       >
-        <Palette aria-hidden="true" />
+        <Glyph name="palette" />
         <span className="mobile-action-sheet-row-label">{t('mobile.moreActions.theme')}</span>
         <span className="mob-sheet__value">{currentTheme}</span>
       </button>
@@ -111,10 +111,10 @@ export function MobileMoreSheet({
           : undefined}
         data-testid="more-settings"
       >
-        <Settings aria-hidden="true" />
+        <Glyph name="set" />
         <span className="mobile-action-sheet-row-label">{t('common.settings')}</span>
         {updateAvailable && <span className="mobile-update-dot" aria-hidden="true" />}
-        <ChevronRight aria-hidden="true" />
+        <Glyph name="next" />
       </button>
     </MobileActionSheet>
   );

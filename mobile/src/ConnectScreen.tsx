@@ -1,4 +1,4 @@
-import { Eye, EyeOff, KeyRound, Link2, QrCode, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Glyph } from '../../src/renderer/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
@@ -101,7 +101,7 @@ export function ConnectScreen({
 
         {saved && (
           <div className="mob-connect__saved" data-testid="connect-saved-summary">
-            <ShieldCheck aria-hidden="true" />
+            <Glyph name="ok" />
             <span className="mob-connect__saved-copy">
               <span className="mob-connect__saved-host">{formatEndpointHost(saved.url)}</span>
               {/* Host and address are the same field: the desktop only ever
@@ -137,7 +137,7 @@ export function ConnectScreen({
           onClick={() => setScanning(true)}
           data-testid="connect-scan-qr"
         >
-          <QrCode aria-hidden="true" />
+          <Glyph name="qr" />
           {t('pairing.scan')}
         </button>
 
@@ -145,7 +145,7 @@ export function ConnectScreen({
           <label className="mob-connect__label">
             {t('mobile.connect.serverUrl')}
             <span className="mob-connect__input">
-              <Server aria-hidden="true" />
+              <Glyph name="pc" />
               <input
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
@@ -161,7 +161,7 @@ export function ConnectScreen({
           <label className="mob-connect__label">
             {t('mobile.connect.token')}
             <span className="mob-connect__input mob-connect__input--token">
-              <KeyRound aria-hidden="true" />
+              <Glyph name="key" />
               <input
                 type={revealToken ? 'text' : 'password'}
                 value={token}
@@ -177,7 +177,7 @@ export function ConnectScreen({
                 aria-label={t('mobile.connect.revealToken')}
                 onClick={() => setRevealToken((current) => !current)}
               >
-                {revealToken ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                {revealToken ? <Glyph name="eyeOff" /> : <Glyph name="eye" />}
               </button>
             </span>
           </label>
@@ -193,7 +193,7 @@ export function ConnectScreen({
           role="note"
           data-testid="connect-ws-warning"
         >
-          <ShieldAlert aria-hidden="true" />
+          <Glyph name="warn" />
           <span>
             {secureWs
               ? t('mobile.connect.trustedNetworkNote')
@@ -239,7 +239,7 @@ export function ConnectScreen({
             </>
           ) : (
             <>
-              <Link2 aria-hidden="true" />
+              <Glyph name="link" />
               <span>{t('mobile.connect.establishLink')}</span>
             </>
           )}

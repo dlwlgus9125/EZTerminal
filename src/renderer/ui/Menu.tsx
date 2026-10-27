@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type ComponentType,
   type HTMLAttributes,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -193,7 +194,8 @@ export function Menu({
 }
 
 export interface MenuItemProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
-  readonly icon?: LucideIcon;
+  /** A lucide icon or a stencil glyph (`glyphIcon(name)`). */
+  readonly icon?: LucideIcon | ComponentType<{ readonly className?: string; readonly 'aria-hidden'?: boolean | 'true' | 'false' }>;
   readonly destructive?: boolean;
   readonly onSelect: () => void;
 }

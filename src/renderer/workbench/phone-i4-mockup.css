@@ -19,3 +19,33 @@
 .phone-i4-icons > * + * {
   margin-left: 0.375rem;
 }
+
+.phone-i4-terminal {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--term-bg);
+}
+
+.phone-i4-terminal > .mobile-session-view {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* B: the feed above a four-item bar. */
+.phone-i4-with-tabs {
+  position: relative;
+}
+
+.phone-i4-with-tabs > .phone-i4-frame {
+  padding-bottom: var(--mob-tabbar);
+}
+
+.phone-i4-nav4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.phone-i4-with-tabs .phone-i4-nav4 {
+  width: 412px;
+}

@@ -1,4 +1,4 @@
-import { ChevronRight, Folder, Monitor, RefreshCw, SquareTerminal } from 'lucide-react';
+import { Glyph } from '../../src/renderer/ui';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { PlanningWorkspacePanel } from '../../src/renderer/PlanningWorkspacePanel';
@@ -142,13 +142,13 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
   </main>;
   return <main className="mob-page mobile-v2" data-testid={`mobile-${mode}-navigator`}>
     <MobilePageHeader title={mode === 'tasks' ? (ko ? '작업' : 'Tasks') : t('agentHub.projects.title')} backLabel={t('common.back')} onBack={() => onOpenTerminal()}
-      actions={<button type="button" className="mob-icon-btn" aria-label={t('common.retry')} disabled={!connected} onClick={() => { void transport.getDaemonSnapshot(); }}><RefreshCw aria-hidden="true" /></button>} />
+      actions={<button type="button" className="mob-icon-btn" aria-label={t('common.retry')} disabled={!connected} onClick={() => { void transport.getDaemonSnapshot(); }}><Glyph name="refresh" /></button>} />
     <div className="mob-page__body mobile-v2__body" ref={projectListBody}
       onWheel={() => { scrollRestore.current.target = null; }} onTouchMove={() => { scrollRestore.current.target = null; }}
       onScroll={event => { if (authorityScope && scrollRestore.current.target === null) try { window.localStorage.setItem(`ezterminal:mobile-project-list-scroll:${authorityScope}`, String(event.currentTarget.scrollTop)); } catch { /* Navigation is usable without persistence. */ } }}>
       {!connected && <p className="mobile-v2__notice" role="status">{offlineReason}</p>}
       {terminalError && <p role="alert">{ko ? '프로젝트의 터미널을 열지 못했습니다. 다시 시도하세요.' : 'Could not open the project terminal. Try again.'}</p>}
-      <div className="mobile-v2__actions"><button type="button" className="mob-btn-ghost" data-testid="mobile-project-pc-control" onClick={onOpenPcControl}><Monitor aria-hidden="true" />{t('mobile.tabs.pc')}</button><button type="button" className="mob-btn-ghost" onClick={() => onOpenTerminal()}><SquareTerminal aria-hidden="true" />{t('mobile.terminal')}</button></div>
+      <div className="mobile-v2__actions"><button type="button" className="mob-btn-ghost" data-testid="mobile-project-pc-control" onClick={onOpenPcControl}><Glyph name="pc" />{t('mobile.tabs.pc')}</button><button type="button" className="mob-btn-ghost" onClick={() => onOpenTerminal()}><Glyph name="term" />{t('mobile.terminal')}</button></div>
       {authorityScope ? <ProjectConversationTree nodes={conversationNavigation.nodes} persistenceScope={`mobile:${authorityScope}`} mobile offline={!connected} loading={state.status === 'loading'}
         renderProjectActions={targetProjectId => <>
           <button type="button" className="mob-btn-ghost" disabled={!connected} aria-label={`${ko ? '새 대화' : 'New conversation'}: ${projects.find(item => item.id === targetProjectId)?.name ?? ''}`}
@@ -173,7 +173,7 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
             setTreeTarget({ projectId: target.projectId, subprojectId: target.subprojectId, nodeId: target.kind === 'stage' ? target.nodeId : undefined, key: crypto.randomUUID() });
             onSelectProject(target.projectId);
           }
-        }} /> : <ul className="mob-daemon-nav__list">{projects.map(entry => <li key={entry.id}><button type="button" className="mob-daemon-nav__row" data-testid="mobile-planning-project" onClick={() => onSelectProject(entry.id)}><Folder aria-hidden="true" /><span><strong>{entry.name}</strong><small>{entry.rootPath}</small></span><ChevronRight aria-hidden="true" /></button></li>)}</ul>}
+        }} /> : <ul className="mob-daemon-nav__list">{projects.map(entry => <li key={entry.id}><button type="button" className="mob-daemon-nav__row" data-testid="mobile-planning-project" onClick={() => onSelectProject(entry.id)}><Glyph name="proj" /><span><strong>{entry.name}</strong><small>{entry.rootPath}</small></span><Glyph name="next" /></button></li>)}</ul>}
       {projects.length === 0 && <p role="status">{state.status === 'loading' ? t('common.loading') : ko ? '프로젝트가 없습니다. PC에서 프로젝트를 추가하세요.' : 'No projects yet. Add a project on your PC.'}</p>}
     </div>
   </main>;

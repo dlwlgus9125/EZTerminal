@@ -1,16 +1,4 @@
-﻿import {
-  Check,
-  ChevronRight,
-  Info,
-  Keyboard,
-  Minus,
-  Palette,
-  Plus,
-  Server,
-  SlidersHorizontal,
-  Wrench,
-  type LucideIcon,
-} from 'lucide-react';
+import { Glyph, type GlyphName } from '../../src/renderer/ui';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
@@ -108,7 +96,7 @@ function SettingsCategoryButton({
   updateLabel,
   onClick,
 }: {
-  readonly icon: LucideIcon;
+  readonly icon: GlyphName;
   readonly title: string;
   /** Handoff §6: every row states its CURRENT value, so the index answers
    * "what is this set to?" without opening the category. */
@@ -131,7 +119,7 @@ function SettingsCategoryButton({
       aria-label={updateAvailable ? `${title}. ${updateLabel ?? ''}`.trim() : undefined}
       data-testid={testId}
     >
-      <span className="mob-settings-row__icon" aria-hidden="true"><Icon /></span>
+      <span className="mob-settings-row__icon" aria-hidden="true"><Glyph name={Icon} size={20} /></span>
       <span>
         <span className="mob-settings-row__title">
           {title}
@@ -144,7 +132,7 @@ function SettingsCategoryButton({
           )}
         </span>
       </span>
-      <ChevronRight aria-hidden="true" />
+      <Glyph name="next" size={16} className="mob-settings-row__chev" />
     </button>
   );
 }
@@ -384,7 +372,7 @@ export function MobileSettingsView({
         {category === null && (
           <div className="mob-column mobile-settings-index" aria-label={t('mobile.settingsView.categories.indexLabel')}>
             <div className="mob-connection-card" data-testid="settings-connection-card">
-              <span className="mob-connection-card__icon" aria-hidden="true"><Server /></span>
+              <span className="mob-connection-card__icon" aria-hidden="true"><Glyph name="pc" size={20} /></span>
               <span className="mob-connection-card__copy">
                 <span className="mob-connection-card__host">
                   {connectionUrl ? formatEndpointHost(connectionUrl) : t('state.connected')}
@@ -406,35 +394,35 @@ export function MobileSettingsView({
             </div>
 
             <SettingsCategoryButton
-              icon={SlidersHorizontal}
+              icon="set"
               title={t('mobile.settingsView.categories.general')}
               preview={generalPreview}
               testId="settings-category-general"
               onClick={() => openCategory('general', 'settings-category-general')}
             />
             <SettingsCategoryButton
-              icon={Palette}
+              icon="palette"
               title={t('mobile.settingsView.categories.appearance')}
               preview={appearancePreview}
               testId="settings-category-appearance"
               onClick={() => openCategory('appearance', 'settings-category-appearance')}
             />
             <SettingsCategoryButton
-              icon={Keyboard}
+              icon="term"
               title={t('mobile.settingsView.categories.terminalInput')}
               preview={terminalInputPreview}
               testId="settings-category-terminal-input"
               onClick={() => openCategory('terminal-input', 'settings-category-terminal-input')}
             />
             <SettingsCategoryButton
-              icon={Wrench}
+              icon="link"
               title={t('mobile.settingsView.categories.integrations')}
               preview={integrationsPreview}
               testId="settings-category-integrations"
               onClick={() => openCategory('integrations', 'settings-category-integrations')}
             />
             <SettingsCategoryButton
-              icon={Info}
+              icon="info"
               title={t('mobile.settingsView.categories.connectionAbout')}
               preview=""
               previewSuffix={`v${MOBILE_BUILD_INFO.appVersion} (${MOBILE_BUILD_INFO.buildSha})`}
@@ -532,7 +520,7 @@ export function MobileSettingsView({
               aria-label={t('mobile.settingsView.decreaseScale')}
               data-testid="settings-scale-dec"
             >
-              <Minus aria-hidden="true" size={18} />
+              <Glyph name="minus" size={18} />
             </button>
             <span className="settings-scale-value" data-testid="settings-scale-value">
               {uiScale}%
@@ -544,7 +532,7 @@ export function MobileSettingsView({
               aria-label={t('mobile.settingsView.increaseScale')}
               data-testid="settings-scale-inc"
             >
-              <Plus aria-hidden="true" size={18} />
+              <Glyph name="plus" size={18} />
             </button>
             <button
               type="button"
@@ -585,7 +573,7 @@ export function MobileSettingsView({
                 onClick={() => selectFont(font.id)}
                 data-testid={`settings-font-${font.id}`}
               >
-                {fontId === font.id && <Check aria-hidden="true" size={16} />}
+                {fontId === font.id && <Glyph name="check" size={16} />}
                 {font.label}
               </button>
             ))}
@@ -611,7 +599,7 @@ export function MobileSettingsView({
                     onClick={() => toggleEffect(id)}
                     data-testid={`settings-effect-${id}`}
                   >
-                    {on && <Check aria-hidden="true" size={16} />}
+                    {on && <Glyph name="check" size={16} />}
                     {t(EFFECT_LABEL_KEY[id])}
                   </button>
                 );
@@ -715,7 +703,7 @@ export function MobileSettingsView({
                 onClick={() => onOpenClawModeChange(mode)}
                 data-testid={`settings-openclaw-mode-${mode}`}
               >
-                {openclawMode === mode && <Check aria-hidden="true" size={16} />}
+                {openclawMode === mode && <Glyph name="check" size={16} />}
                 {t(OPENCLAW_MODE_LABEL_KEY[mode])}
               </button>
             ))}

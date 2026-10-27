@@ -5,7 +5,7 @@
 .mobile-v2__actions button, .mobile-v2 .mob-icon-btn, .mobile-v2 .mob-daemon-nav__row { min-height: 48px; min-width: 48px; }
 .mobile-v2 .mobile-page-header button, .mobile-v2 .mob-daemon-nav__head button, .mobile-v2-draft-status button, .mob-structured-agent__navigation button { min-height: 48px; min-width: 48px; }
 .mobile-v2 .planning-workspace[data-mobile] button, .mobile-v2 .planning-workspace[data-mobile] input, .mobile-v2 .planning-workspace[data-mobile] select { min-height: 48px; }
-.mobile-v2__actions svg { width: 18px; height: 18px; }
+.mobile-v2__actions svg { width: 18px; height: 18px; margin-right: var(--ui-space-2); }
 .mobile-v2__project p, .mobile-v2__body li { overflow-wrap: anywhere; }
 .mobile-v2__summary { display: grid; grid-template-columns: 1fr auto; gap: var(--ui-space-2); }
 .mobile-v2__notice { color: var(--ui-text-secondary); border-left: 2px solid var(--ui-warning); padding-left: var(--ui-space-3); }

@@ -2119,6 +2119,21 @@
   height: 16px;
 }
 
+/* A sheet row reads icon · name · value: the name follows its icon at the left and takes the room
+   (it used to be pushed to the right by the row's space-between). */
+.mobile-action-sheet-row > .mobile-action-sheet-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: var(--ui-space-1);
+  text-align: left;
+}
+
+/* Close is the sheet's own action, not a row of it: centred, as before. */
+.mobile-action-sheet-row.mobile-action-sheet-cancel > .mobile-action-sheet-row-label {
+  margin-left: 0;
+  text-align: center;
+}
+
 .mob-agent-history-list {
   padding: 6px;
   border-top: 1px solid var(--mob-hairline);

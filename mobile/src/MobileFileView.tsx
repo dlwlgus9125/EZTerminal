@@ -1,5 +1,5 @@
+import { Glyph } from '../../src/renderer/ui';
 import { Browser } from '@capacitor/browser';
-import { ArrowUp, File as FileIcon, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
@@ -554,7 +554,7 @@ export function MobileFileView({
             aria-label={t('mobile.filesView.up')}
             data-testid="mobile-file-up"
           >
-            <ArrowUp aria-hidden="true" size={18} />
+            <Glyph name="up" size={18} />
           </button>
           <input
             className="mobile-file-path-input"
@@ -573,7 +573,7 @@ export function MobileFileView({
             aria-label={t('mobile.filesView.refresh')}
             data-testid="mobile-file-refresh"
           >
-            <RefreshCw aria-hidden="true" size={18} />
+            <Glyph name="refresh" size={18} />
           </button>
         </div>
         <div className="mobile-file-toolbar-actions">
@@ -584,7 +584,7 @@ export function MobileFileView({
             aria-label={t('mobile.filesView.newFolder')}
             data-testid="mobile-file-new-folder-btn"
           >
-            <FolderPlus aria-hidden="true" size={18} />
+            <Glyph name="plus" size={18} />
             <span>{t('mobile.filesView.newFolder')}</span>
           </button>
           <button
@@ -595,7 +595,7 @@ export function MobileFileView({
             aria-label={t('mobile.filesView.upload')}
             data-testid="mobile-file-upload-btn"
           >
-            <Upload aria-hidden="true" size={18} />
+            <Glyph name="upload" size={18} />
             <span>{t('mobile.filesView.upload')}</span>
           </button>
           <input
@@ -726,7 +726,7 @@ export function MobileFileView({
               }}
             >
               <span className="mobile-file-icon" aria-hidden="true">
-                {row.entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
+                {row.entry.kind === 'dir' ? <Glyph name="proj" size={16} /> : <Glyph name="file" size={16} />}
               </span>
               <span className="mobile-file-name">{row.entry.name}</span>
               {row.entry.kind === 'file' && <span className="mobile-file-size">{formatSize(row.entry.size)}</span>}
