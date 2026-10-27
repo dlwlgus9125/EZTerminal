@@ -812,16 +812,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   background: transparent;
 }
 
-/* SidebarShell owns the destination heading and close action. Keep the agent
-   count as useful context, but remove nested drawer chrome and duplicate
-   headings from feature bodies mounted inside the shared shell. */
-.workbench-sidebar .agent-hub-title,
-.workbench-sidebar .agent-hub-head {
-  min-height: auto;
-  padding: var(--ui-space-2) var(--ui-space-3);
-  border-color: var(--ui-border-subtle);
-}
-
 .app-update-card {
   display: grid;
   gap: var(--ui-space-3);

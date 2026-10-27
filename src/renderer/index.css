@@ -2369,33 +2369,12 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   text-align: center;
 }
 
-.agent-hub-head {
-  min-height: 48px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-bottom: 1px solid var(--term-border);
-}
-
-.agent-hub-title {
-  margin: 0;
-  color: var(--term-fg-bright);
-  font-size: 14px;
-  line-height: 1.2;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-:lang(ko) .agent-hub-title,
 :lang(ko) .status-section-title {
   font-family: var(--ui-font-body);
   letter-spacing: normal;
   text-transform: none;
 }
 
-.agent-hub-summary,
 .agent-age {
   color: var(--term-fg-faint);
   font-size: 11px;
@@ -2757,16 +2736,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 }
 
 /* Inset like the hub body above it; the rule still spans the full width. */
-.agent-hub-footer {
-  flex: none;
-  margin-top: var(--ui-space-2);
-  padding: var(--ui-space-2) var(--ui-space-3) 0;
-  border-top: 1px solid var(--ui-border-subtle);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ui-space-2);
-}
-
 .agent-hub-footer__safe-mode {
   flex-basis: 100%;
   margin: 0;
@@ -2774,12 +2743,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   font-size: var(--ui-font-size-xs);
 }
 
-.agent-projects {
-  min-height: 0;
-}
-
-.agent-projects-heading,
-.agent-project-row,
 .agent-session-header,
 .agent-session-composer,
 .agent-resume-root-actions {
@@ -2787,53 +2750,10 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   align-items: center;
 }
 
-.agent-projects-heading {
-  justify-content: space-between;
-}
-
-.agent-project-search {
-  margin-block: var(--ui-space-2) var(--ui-space-3);
-}
-
-.agent-project-search__control {
-  position: relative;
-  display: block;
-}
-
-.agent-project-search__control > svg {
-  position: absolute;
-  z-index: 1;
-  inset-block-start: 50%;
-  inset-inline-start: 10px;
-  inline-size: 15px;
-  block-size: 15px;
-  color: var(--ui-text-muted);
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.agent-project-search__control .ez-ui-input {
-  inline-size: 100%;
-  padding-inline-start: 32px;
-}
-
-.agent-project-list,
-.agent-history-list {
+.agent-project-list {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.agent-project {
-  margin-block-end: var(--ui-space-2);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-}
-
-.agent-project-row {
-  gap: 0.25rem;
-  padding-inline-end: var(--ui-space-1);
 }
 
 .project-map-story {
@@ -2843,47 +2763,12 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   background: var(--ui-canvas);
 }
 
-.agent-project-coordination {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 3px 8px;
-  padding: 0 var(--ui-space-2) var(--ui-space-2);
-  border-top: 1px solid var(--ui-border-subtle);
-}
-
-.agent-project-coordination p {
-  grid-column: 1 / -1;
-  margin: var(--ui-space-2) 0 0;
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-12);
-  line-height: 1.45;
-}
-
-.agent-project-coordination span {
-  min-inline-size: 0;
-  color: var(--ui-text-muted);
-  font-size: var(--ui-font-size-2xs);
-  overflow-wrap: anywhere;
-}
-
 .agent-project-coordination-start {
   margin: 0 var(--ui-space-2) var(--ui-space-2);
 }
 
-.agent-history-row strong,
-.agent-history-row p {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-project-note,
-.agent-history-row small {
+.agent-project-note {
   color: var(--ui-text-muted);
-}
-
-.agent-project-count {
-  font-variant-numeric: tabular-nums;
 }
 
 .agent-project-pin.is-active {
@@ -2895,29 +2780,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   color: var(--text-muted);
   border: 0;
   background: transparent;
-}
-
-.agent-history-list {
-  padding: 0 0 0.45rem 1.35rem;
-  border-top: 1px solid var(--ui-border-subtle);
-}
-
-.agent-history-row {
-  display: grid;
-  width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 0.25rem 0.45rem;
-  padding: 0.45rem;
-  color: inherit;
-  text-align: left;
-  border: 0;
-  border-inline-start: 3px solid var(--agent-provider-color, var(--ui-border-subtle));
-  border-radius: 0.35rem;
-  background: transparent;
-}
-
-.agent-history-row:hover {
-  background: var(--ui-surface-hover);
 }
 
 .agent-provider-badge {
@@ -2932,26 +2794,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   text-transform: uppercase;
 }
 
-.agent-history-row p {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: var(--ui-text-muted);
-}
-
-.agent-history-more {
-  inline-size: 100%;
-  padding: 0.45rem;
-  border: 0;
-  color: var(--ui-text-secondary);
-  background: transparent;
-  font: inherit;
-}
-
-.agent-history-more:hover:not(:disabled) {
-  color: var(--ui-accent);
-  background: var(--ui-surface-hover);
-}
-
 .agent-project-error {
   display: flex;
   align-items: center;
@@ -2962,82 +2804,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   font-size: var(--ui-font-size-12);
 }
 
-.agent-projects-more {
-  inline-size: 100%;
-}
-
-.agent-launch-picker {
-  display: grid;
-  gap: var(--ui-space-3);
-}
-
-.agent-launch-picker .ez-ui-field {
-  gap: var(--ui-space-2);
-}
-
-.agent-launch-workspace {
-  display: grid;
-  gap: var(--ui-space-2);
-  margin: 0;
-  padding: var(--ui-space-3);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-}
-
-.agent-launch-workspace legend {
-  padding-inline: var(--ui-space-1);
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-12);
-  font-weight: 700;
-}
-
-.agent-launch-workspace > label {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ui-space-2);
-  cursor: pointer;
-}
-
-.agent-launch-workspace > label span {
-  display: grid;
-  gap: 2px;
-}
-
-.agent-launch-workspace > label small {
-  color: var(--ui-text-muted);
-  line-height: 1.4;
-}
-
-.agent-launch-directory {
-  display: grid;
-  gap: var(--ui-space-1);
-  min-inline-size: 0;
-  margin: 0;
-  color: var(--ui-text-secondary);
-  font-size: var(--ui-font-size-12);
-}
-
-.agent-launch-directory code {
-  overflow: hidden;
-  padding: var(--ui-space-2);
-  color: var(--ui-text-primary);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface-inset);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-launch-warning {
-  margin: 0;
-  padding: var(--ui-space-2);
-  color: var(--ui-warning);
-  border-inline-start: 3px solid currentColor;
-  background: var(--ui-warning-muted);
-  font-size: var(--ui-font-size-12);
-}
-
-.agent-history-row[data-provider='codex'],
 .agent-history-tab[data-provider='codex'],
 .project-session-tab[data-provider='codex'],
 .agent-history-terminal[data-provider='codex'],
@@ -3045,7 +2811,6 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   --agent-provider-color: var(--ui-agent-codex);
 }
 
-.agent-history-row[data-provider='claude'],
 .agent-history-tab[data-provider='claude'],
 .project-session-tab[data-provider='claude'],
 .agent-history-terminal[data-provider='claude'],
@@ -3526,62 +3291,9 @@ button.agent-work-activity:focus-visible {
   resize: vertical;
 }
 
-.agent-progress {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.agent-progress-track {
-  flex: 1 1 auto;
-  block-size: 3px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface-inset));
-}
-
-/* Indeterminate on purpose. The activity snapshot reports no completion ratio,
-   so the bar says "still working" rather than claiming a percentage. */
-.agent-progress-sweep {
-  display: block;
-  inline-size: 38%;
-  block-size: 100%;
-  border-radius: 2px;
-  background: var(--ui-accent);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent) 60%, transparent);
-  animation: agent-progress-sweep 1.9s var(--ui-ease-standard) infinite;
-}
-
-@keyframes agent-progress-sweep {
-  from {
-    transform: translateX(-100%);
-  }
-
-  to {
-    transform: translateX(365%);
-  }
-}
-
-.agent-elapsed {
-  flex: 0 0 auto;
-  color: var(--ui-text-muted);
-  font-family: var(--ui-font-terminal);
-  font-size: var(--ui-font-size-2xs);
-  font-variant-numeric: tabular-nums;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .agent-row[data-status='blocked'] .agent-status-dot,
-  .agent-progress-sweep {
+  .agent-row[data-status='blocked'] .agent-status-dot {
     animation: none;
-  }
-
-  /* Without the sweep the track would read as an empty bar, so the fill stays
-     put and still says "running". */
-  .agent-progress-sweep {
-    inline-size: 100%;
-    opacity: 0.55;
   }
 }
 
@@ -3920,36 +3632,12 @@ button.agent-work-activity:focus-visible {
   color: var(--ui-info);
 }
 
-.agent-history-item {
-  position: relative;
-}
-
-.agent-history-review {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: 4px;
-  color: var(--ui-text-muted);
-  background: var(--ui-surface-raised);
-}
-
-.agent-empty,
-.agent-offline {
+.agent-empty {
   margin: 12px;
   padding: 12px;
   border: 1px solid var(--term-border-faint);
   color: var(--term-fg-faint);
   line-height: 1.5;
-}
-
-.agent-offline {
-  color: var(--term-amber);
-  border-color: var(--term-amber);
 }
 
 .agent-live-region {
@@ -5671,99 +5359,6 @@ button.agent-work-activity:focus-visible {
   min-block-size: 0;
   block-size: 100%;
   overflow: hidden;
-}
-
-.agent-project-open {
-  display: flex;
-  min-inline-size: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ui-space-2);
-  padding: 0.55rem 0.25rem;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  text-align: start;
-}
-
-.agent-project-open:hover,
-.agent-project-open:focus-visible {
-  color: var(--ui-text-primary);
-  background: var(--ui-surface-hover);
-}
-
-.agent-project-open > span:first-child {
-  display: grid;
-  min-inline-size: 0;
-  flex: 1;
-}
-
-.agent-project-open strong,
-.agent-project-open small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-project-open strong {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-1);
-}
-
-.agent-project-open strong > svg {
-  inline-size: 12px;
-  block-size: 12px;
-  flex: none;
-  color: var(--ui-accent);
-}
-
-.agent-project-open small {
-  color: var(--ui-text-muted);
-}
-
-.agent-project-history {
-  min-inline-size: 0;
-}
-
-.agent-project-history__header {
-  position: sticky;
-  z-index: 1;
-  inset-block-start: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--ui-space-2);
-  margin-block-end: var(--ui-space-3);
-  padding-block: var(--ui-space-1) var(--ui-space-2);
-  border-block-end: 1px solid var(--ui-border-subtle);
-  background: var(--ui-surface);
-}
-
-.agent-project-history__header > div {
-  display: grid;
-  min-inline-size: 0;
-}
-
-.agent-project-history__header h2 {
-  margin: 0;
-  font-size: var(--ui-font-size-14);
-}
-
-.agent-project-history__header small {
-  overflow: hidden;
-  color: var(--ui-text-muted);
-  font-family: var(--ui-font-terminal);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-project-history__list.agent-history-list {
-  display: grid;
-  gap: var(--ui-space-1);
-  padding: 0;
-  border-block-start: 0;
 }
 
 .agent-hub--project,

@@ -308,8 +308,6 @@ function AgentHubFixture(): JSX.Element {
         omissions: [],
       })}
       onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS}
-      onLaunchAgent={() => undefined}
-      onOpenAgentSettings={() => undefined}
     />
   );
 }
@@ -505,8 +503,6 @@ function AgentCoordinationFixture(): JSX.Element {
       })}
       onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS}
       onDecideManagedMerge={async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! })}
-      onLaunchAgent={() => undefined}
-      onOpenAgentSettings={() => undefined}
     />
   );
 }

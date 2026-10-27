@@ -1122,26 +1122,6 @@ body {
 .file-preview-state--error {
   color: var(--term-red);
 }
-.agent-hub-head {
-  min-height: 48px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-bottom: 1px solid var(--term-border);
-}
-
-.agent-hub-title {
-  margin: 0;
-  color: var(--term-fg-bright);
-  font-size: 14px;
-  line-height: 1.2;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.agent-hub-summary,
 .agent-age {
   color: var(--term-fg-faint);
   font-size: 11px;
@@ -1281,18 +1261,12 @@ body {
   font-size: 11px;
 }
 
-.agent-empty,
-.agent-offline {
+.agent-empty {
   margin: 12px;
   padding: 12px;
   border: 1px solid var(--term-border-faint);
   color: var(--term-fg-faint);
   line-height: 1.5;
-}
-
-.agent-offline {
-  color: var(--term-amber);
-  border-color: var(--term-amber);
 }
 
 .agent-live-region {

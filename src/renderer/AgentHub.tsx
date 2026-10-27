@@ -1,20 +1,7 @@
 import {
-  ArrowLeft,
   Check,
-  FolderPlus,
-  FolderOpen,
-  GitBranch,
   GitCompareArrows,
   GitMerge,
-  History,
-  MessageSquarePlus,
-  MoreHorizontal,
-  Pin,
-  Plus,
-  Search,
-  Settings,
-  Terminal,
-  Trash2,
   X,
 } from 'lucide-react';
 import { AppChatInbox } from './AppChatInbox';
@@ -37,7 +24,6 @@ import {
   type AgentCoordinationSnapshot,
   type ManagedMergeDecisionInput,
   type ManagedMergeRequest,
-  isSafeLocalBranch,
 } from '../shared/agent-coordination';
 import {
   EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
@@ -47,8 +33,6 @@ import {
 import type {
   AgentHistorySessionSummary,
   AgentLaunchBootstrap,
-  AgentLaunchTarget,
-  AgentProjectLauncherSummary,
   AgentProjectSummary,
 } from '../shared/agent-history';
 import type { DaemonAuthorityAvailability } from '../shared/daemon-authority';
@@ -70,46 +54,20 @@ import { ProjectWorkspacePanel, type ProjectExplorerState } from './ProjectWorks
 import type { ProjectCodeLocation } from './project-code-navigation';
 import type { ProjectEditorDocument } from './project-editor-model';
 import { AgentFollowupComposer } from './AgentFollowupComposer';
-import { AgentApprovalCountdown, AgentElapsed, AgentRelativeAge } from './AgentTime';
-import {
-  DaemonAgentSessions,
-  type DaemonAgentSessionListAccess,
-} from './DaemonAgentSessions';
-import { DeferredSearchInput } from './DeferredSearchInput';
-import { rendererCapabilities } from './capability-access';
+import { AgentApprovalCountdown, AgentRelativeAge } from './AgentTime';
+import { rendererCapabilities, type DaemonAccess } from './capability-access';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
-import { useLatestRequestGate } from './latest-request';
-import { ProjectConversationNavigator } from './ProjectConversationNavigator';
-import {
-  findAgentProject,
-  ProjectDeleteDialog,
-  ProjectEditorDialog,
-  type ProjectEditorMode,
-  type ProjectRegistryAccess,
-} from './ProjectDialogs';
-import { NewWorktreeDialog } from './WorktreeDialogs';
-import type { ProjectConversationNavigationAccess } from './use-project-conversation-navigation';
+import { findAgentProject } from './ProjectDialogs';
 import {
   Button,
   Dialog,
   Field,
-  IconButton,
-  Input,
-  Menu,
-  MenuItem,
-  Select,
 } from './ui';
 
 /** Used when no Git reader is supplied; every row then shows its directory. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
-const projectNavigationAccess: ProjectConversationNavigationAccess = {
-  listConversations: query => window.ezterminal.listConversations?.(query) ?? Promise.resolve({ ok: false, reason: 'unsupported', message: 'Update the host to view combined conversation history.' }),
-  getWorkflowNavigation: projectId => window.ezterminal.getWorkflowNavigation?.(projectId) ?? Promise.resolve({ ok: false, error: 'unsupported', message: 'Update the host to view subprojects.' }),
-};
 
-const ADD_PROJECT: ProjectEditorMode = { kind: 'add' };
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
-const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
 
 const STATUS_LABEL_KEY = {
   starting: 'agentHub.status.starting',
@@ -146,23 +104,15 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
 export interface AgentHubProps {
   /**
    * `inbox`: what asks for the person. `files`: the active project's files and workspaces only
-   * (the desktop shell; projects are managed in dialogs there). `all` / `projects`: the project
-   * list too, as the legacy hub and its stories show it.
+   * (projects are managed in the shell's dialogs).
    */
-  readonly view?: 'all' | 'projects' | 'inbox' | 'files';
+  readonly view?: 'inbox' | 'files';
   /** App conversations that need the person: shown at the top of the inbox. */
   readonly appChatInbox?: {
     readonly entries: readonly AppChatInboxEntry[];
     readonly onOpen: (entry: AppChatInboxEntry) => void;
     readonly onMarkSeen: (entry: AppChatInboxEntry) => void;
   };
-  /** Opens the project planning surface without adding a nested sidebar. */
-  readonly onOpenPlanningProject?: (project: AgentProjectSummary) => void;
-  readonly onOpenWorkflowProject?: (project: AgentProjectSummary, subprojectId: string, nodeId?: string) => void;
-  readonly onOpenConversationHistory?: (entry: ConversationEntry) => void;
-  readonly onOpenHistory?: (projectId?: string) => void;
-  readonly activeConversationSessionId?: string;
-  readonly activeConversationId?: string;
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
   readonly orchestrationSnapshot?: AgentOrchestrationSnapshot;
@@ -182,15 +132,6 @@ export interface AgentHubProps {
   readonly onLoadManagedMergeDiff?: (requestId: string, revision: number) => Promise<GitDiffResult>;
   /** Resolves each activity's branch. Absent leaves the working directory. */
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
-  /** Opens a singleton read-only history tab without disturbing live terminals. */
-  readonly onOpenHistorySession?: (
-    session: AgentHistorySessionSummary,
-    project: AgentProjectSummary,
-  ) => void;
-  readonly onOpenHistoryReview?: (
-    session: AgentHistorySessionSummary,
-    project: AgentProjectSummary,
-  ) => void;
   /** Opens the Project drill-in's reusable read-only editor tab. */
   readonly onOpenProjectDocument?: (
     document: ProjectEditorDocument,
@@ -201,46 +142,57 @@ export interface AgentHubProps {
     readonly rootId: string;
     readonly workspaceId: string;
   }) => void;
-  /** Controlled project drill-in identity. Omit to retain local behavior. */
+  /** The project whose files the drill-in shows. */
   readonly activeProjectId?: string | null;
   readonly onActiveProjectIdChange?: (projectId: string | null) => void;
   /** Controlled explorer state, suitable for restoration across sidebar remounts. */
   readonly projectWorkspaceState?: ProjectExplorerState;
   readonly onProjectWorkspaceStateChange?: (state: ProjectExplorerState) => void;
-  readonly onProjectDrillChange?: (open: boolean) => void;
-  /** Opens a fresh terminal using a main-prepared project or directory launch. */
-  readonly onLaunchAgent?: (
-    bootstrap: AgentLaunchBootstrap,
-    projectSession?: ProjectSessionPanelMetadata,
-  ) => void;
   /** Opens a normal structured Agent draft tab. No daemon session exists yet. */
   readonly onOpenStructuredAgentDraft?: (
     project?: AgentProjectSummary,
     target?: ProjectSessionTarget,
     locationLabel?: string,
   ) => void;
-  /** Reuses or opens a normal structured Agent tab from the daemon projection. */
+  /** Injectable seam for deterministic component stories and tests. */
+  readonly daemonAgentSessionAccess?: Pick<DaemonAccess, 'getAvailability'>;
+  readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
+  /** The project's settings open in the shell's project dialog. */
+  readonly onEditProject?: (project: AgentProjectSummary) => void;
+  readonly onDecideManagedMerge?: (
+    input: ManagedMergeDecisionInput,
+  ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+  /** Fixed clock for deterministic product handoff/reference rendering. */
+  readonly currentTime?: number;
+  // App still passes the props below; nothing here reads them since the project list,
+  // the launch picker and the footer went.
+  readonly onOpenPlanningProject?: (project: AgentProjectSummary) => void;
+  readonly onOpenWorkflowProject?: (project: AgentProjectSummary, subprojectId: string, nodeId?: string) => void;
+  readonly onOpenConversationHistory?: (entry: ConversationEntry) => void;
+  readonly onOpenHistory?: (projectId?: string) => void;
+  readonly activeConversationSessionId?: string;
+  readonly activeConversationId?: string;
+  readonly onOpenHistorySession?: (
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ) => void;
+  readonly onOpenHistoryReview?: (
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ) => void;
+  readonly onLaunchAgent?: (
+    bootstrap: AgentLaunchBootstrap,
+    projectSession?: ProjectSessionPanelMetadata,
+  ) => void;
   readonly onOpenStructuredAgentSession?: (input: {
     readonly sessionId: string;
     readonly title?: string;
     readonly providerLabel?: string;
   }) => void;
-  /** Injectable seam for deterministic component stories and tests. */
-  readonly daemonAgentSessionAccess?: DaemonAgentSessionListAccess;
-  readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
   readonly onCreateWorkspaceTerminal?: (workspaceId: string) => void;
   readonly onCreateWorkspaceSession?: (projectId: string, workspaceId: string) => void;
   readonly onOpenAgentSettings?: () => void;
-  /** The project's settings open in the shell's project dialog instead of the hub's own. */
-  readonly onEditProject?: (project: AgentProjectSummary) => void;
-  readonly onDecideManagedMerge?: (
-    input: ManagedMergeDecisionInput,
-  ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
   readonly onClose?: () => void;
-  readonly mobile?: boolean;
-  readonly disconnected?: boolean;
-  /** Fixed clock for deterministic product handoff/reference rendering. */
-  readonly currentTime?: number;
 }
 
 type DiffView =
@@ -254,14 +206,8 @@ type DiffView =
   | { readonly state: 'error'; readonly message: string };
 
 export function AgentHub({
-  view = 'all',
+  view = 'inbox',
   appChatInbox,
-  onOpenPlanningProject,
-  onOpenWorkflowProject,
-  onOpenConversationHistory,
-  onOpenHistory,
-  activeConversationSessionId,
-  activeConversationId,
   snapshot,
   coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
   orchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
@@ -272,28 +218,17 @@ export function AgentHub({
   onOpenProjectReview,
   onLoadManagedMergeDiff,
   onReadGitStatus,
-  onOpenHistorySession,
-  onOpenHistoryReview,
   onOpenProjectDocument,
   onOpenProjectMap,
   activeProjectId,
   onActiveProjectIdChange,
   projectWorkspaceState,
   onProjectWorkspaceStateChange,
-  onProjectDrillChange,
-  onLaunchAgent,
   onOpenStructuredAgentDraft,
-  onOpenStructuredAgentSession,
   daemonAgentSessionAccess,
   onOpenProjectTerminal,
-  onCreateWorkspaceTerminal,
-  onCreateWorkspaceSession,
-  onOpenAgentSettings,
   onEditProject,
   onDecideManagedMerge,
-  onClose,
-  mobile = false,
-  disconnected = false,
   currentTime,
 }: AgentHubProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
@@ -303,52 +238,14 @@ export function AgentHub({
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diffView, setDiffView] = useState<DiffView | null>(null);
   const [projects, setProjects] = useState<readonly AgentProjectSummary[]>([]);
-  const [projectCursor, setProjectCursor] = useState<string | null>(null);
-  const [projectQuery, setProjectQuery] = useState('');
-  const [debouncedProjectQuery, setDebouncedProjectQuery] = useState('');
-  const [projectSessions, setProjectSessions] = useState<
-    Readonly<Record<string, readonly AgentHistorySessionSummary[]>>
-  >({});
-  const [projectSessionCursors, setProjectSessionCursors] = useState<
-    Readonly<Record<string, string | null>>
-  >({});
-  const [loadingSessionProjects, setLoadingSessionProjects] = useState<ReadonlySet<string>>(new Set());
-  const [historyProject, setHistoryProject] = useState<AgentProjectSummary | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(true);
-  const [projectsLoadingMore, setProjectsLoadingMore] = useState(false);
-  const [projectsError, setProjectsError] = useState(false);
-  const [projectSessionErrors, setProjectSessionErrors] = useState<ReadonlySet<string>>(new Set());
-  const [projectActionError, setProjectActionError] = useState<string | null>(null);
-  const [launchers, setLaunchers] = useState<readonly AgentProjectLauncherSummary[]>([]);
-  const [launchersLoading, setLaunchersLoading] = useState(false);
-  const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
-  const [launchSessionType, setLaunchSessionType] = useState<'agent' | 'terminal'>('agent');
-  const [launchProjectSession, setLaunchProjectSession] = useState<ProjectSessionPanelMetadata | null>(null);
-  const [launchLocationLabel, setLaunchLocationLabel] = useState('');
-  const [launchTarget, setLaunchTarget] = useState<AgentLaunchTarget | null>(null);
-  const [launchTargetProject, setLaunchTargetProject] = useState<AgentProjectSummary | null>(null);
-  const [launchProjectOptions, setLaunchProjectOptions] = useState<readonly AgentProjectSummary[]>([]);
-  const [launchProjectQuery, setLaunchProjectQuery] = useState('');
-  const [launchProjectsLoading, setLaunchProjectsLoading] = useState(false);
-  const [selectedLauncherId, setSelectedLauncherId] = useState('');
-  const [launching, setLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [launchWorkspaceMode, setLaunchWorkspaceMode] = useState<'current' | 'managed'>('current');
-  const [launchWorktreeBranch, setLaunchWorktreeBranch] = useState('');
-  const [projectEditor, setProjectEditor] = useState<ProjectEditorMode | null>(null);
-  const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
   // The files view's project when the loaded list page does not hold it.
   const [drillLookup, setDrillLookup] = useState<{ readonly projectId: string; readonly project: AgentProjectSummary | null } | null>(null);
-  const [worktreeProject, setWorktreeProject] = useState<AgentProjectSummary | null>(null);
-  const workspaceWorktrees = window.ezterminal?.workspaceWorktrees;
-  const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const daemonAccess = daemonAgentSessionAccess ?? rendererCapabilities.daemon;
-  const daemonSafeMode = daemonAvailability?.state === 'legacy-only-safe-mode';
-  const showProjectConversationTree = Boolean(onOpenWorkflowProject || onOpenConversationHistory) && !daemonSafeMode;
 
   useEffect(() => {
     let cancelled = false;
@@ -363,14 +260,7 @@ export function AgentHub({
     return () => { cancelled = true; };
   }, [daemonAccess]);
 
-  useEffect(() => {
-    if (daemonSafeMode && launchPickerOpen && launchProjectSession && onOpenProjectTerminal) {
-      setLaunchSessionType('terminal');
-      setLaunchError(null);
-    }
-  }, [daemonSafeMode, launchPickerOpen, launchProjectSession, onOpenProjectTerminal]);
   const diffRequestGeneration = useRef(0);
-  const projectRequestGate = useLatestRequestGate();
   const allCoordinatedActivities = useMemo(() => {
     const enriched = new Map(coordinationSnapshot.activities.map((item) => [item.id, item]));
     return snapshot.items.map((item) => enriched.get(item.id) ?? item);
@@ -383,10 +273,6 @@ export function AgentHub({
     () => allCoordinatedActivities.filter((item) => !workerActivityIds.has(item.id)),
     [allCoordinatedActivities, workerActivityIds],
   );
-  const coordinationProjects = useMemo(
-    () => new Map(coordinationSnapshot.projects.map((project) => [project.projectId, project])),
-    [coordinationSnapshot.projects],
-  );
   const pendingMergeRequests = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
     ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
   )), [coordinationSnapshot.mergeRequests]);
@@ -397,76 +283,33 @@ export function AgentHub({
   const listedDrillProject = activeProjectId
     ? projects.find((project) => project.projectId === activeProjectId) ?? null
     : null;
-  const drillProject = activeProjectId === undefined
-    ? localDrillProject
-    : activeProjectId
-      ? listedDrillProject ?? (drillLookup?.projectId === activeProjectId ? drillLookup.project : null)
-      : null;
-  const projectDrillOpen = activeProjectId === undefined
-    ? drillProject !== null
-    : activeProjectId !== null;
-  const selectDrillProject = useCallback((project: AgentProjectSummary | null): void => {
-    if (activeProjectId === undefined) setLocalDrillProject(project);
-    onActiveProjectIdChange?.(project?.projectId ?? null);
-  }, [activeProjectId, onActiveProjectIdChange]);
-
-  useEffect(() => {
-    onProjectDrillChange?.(projectDrillOpen);
-    if (activeProjectId !== undefined) return undefined;
-    return () => onProjectDrillChange?.(false);
-  }, [activeProjectId, onProjectDrillChange, projectDrillOpen]);
+  const drillProject = activeProjectId
+    ? listedDrillProject ?? (drillLookup?.projectId === activeProjectId ? drillLookup.project : null)
+    : null;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
-  const timeFormatter = useMemo(
-    () => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
-    [locale],
-  );
 
-  const refreshProjects = useCallback(async (
-    force = false,
-    cursor?: string,
-    append = false,
-  ): Promise<void> => {
-    const generation = projectRequestGate.begin();
-    if (append) setProjectsLoadingMore(true);
-    else setProjectsLoading(true);
-    setProjectsError(false);
+  // The first page of projects, where the files view's project usually is.
+  useEffect(() => {
     const read = window.ezterminal?.listAgentProjects;
     if (!read) {
-      setProjects([]);
       setProjectsLoading(false);
-      setProjectsLoadingMore(false);
-      return;
+      return undefined;
     }
-    const result = await read(
-      force,
-      cursor,
-      40,
-      debouncedProjectQuery.trim() || undefined,
-    ).catch(() => null);
-    if (!projectRequestGate.isCurrent(generation)) return;
-    setProjectsLoading(false);
-    setProjectsLoadingMore(false);
-    if (!result) {
-      setProjectsError(true);
-      return;
-    }
-    setProjects((previous) => append ? [...previous, ...result.items] : result.items);
-    setProjectCursor(result.nextCursor);
-  }, [debouncedProjectQuery, projectRequestGate]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedProjectQuery(projectQuery), 200);
-    return () => clearTimeout(timer);
-  }, [projectQuery]);
-
-  useEffect(() => {
-    void refreshProjects(false);
-  }, [refreshProjects]);
+    let alive = true;
+    void read(false, undefined, 40)
+      .catch(() => null)
+      .then((result) => {
+        if (!alive) return;
+        setProjectsLoading(false);
+        if (result) setProjects(result.items);
+      });
+    return () => { alive = false; };
+  }, []);
 
   // The files view of a project past the loaded page reads it on its own.
   useEffect(() => {
@@ -480,290 +323,9 @@ export function AgentHub({
     return () => { alive = false; };
   }, [activeProjectId, listedDrillProject, projectsLoading, drillLookup]);
 
-  const loadInitialProjectSessions = useCallback(async (projectId: string): Promise<void> => {
-    const read = window.ezterminal?.listAgentHistorySessions;
-    if (!read) return;
-    setLoadingSessionProjects((previous) => new Set(previous).add(projectId));
-    setProjectSessionErrors((previous) => {
-      const next = new Set(previous);
-      next.delete(projectId);
-      return next;
-    });
-    const result = await read(projectId, undefined, 20).catch(() => null);
-    setLoadingSessionProjects((previous) => {
-      const next = new Set(previous);
-      next.delete(projectId);
-      return next;
-    });
-    if (!result) {
-      setProjectSessionErrors((previous) => new Set(previous).add(projectId));
-      return;
-    }
-    setProjectSessions((previous) => ({ ...previous, [projectId]: result.items }));
-    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
-  }, []);
-
-  const openProjectHistory = useCallback((project: AgentProjectSummary): void => {
-    setHistoryProject(project);
-    if (projectSessions[project.projectId] || loadingSessionProjects.has(project.projectId)) return;
-    void loadInitialProjectSessions(project.projectId);
-  }, [loadInitialProjectSessions, loadingSessionProjects, projectSessions]);
-
-  const loadMoreSessions = useCallback(async (projectId: string): Promise<void> => {
-    const cursor = projectSessionCursors[projectId];
-    if (!cursor || loadingSessionProjects.has(projectId)) return;
-    const read = window.ezterminal?.listAgentHistorySessions;
-    if (!read) return;
-    setLoadingSessionProjects((previous) => new Set(previous).add(projectId));
-    const result = await read(projectId, cursor, 20).catch(() => null);
-    setLoadingSessionProjects((previous) => {
-      const next = new Set(previous);
-      next.delete(projectId);
-      return next;
-    });
-    if (!result) {
-      setProjectSessionErrors((previous) => new Set(previous).add(projectId));
-      return;
-    }
-    setProjectSessions((previous) => ({
-      ...previous,
-      [projectId]: [...(previous[projectId] ?? []), ...result.items],
-    }));
-    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
-  }, [loadingSessionProjects, projectSessionCursors]);
-
-  const saveProject = useCallback(async (
-    project: AgentProjectSummary,
-    patch: Partial<Pick<AgentProjectSummary, 'name' | 'pinned' | 'primaryRoot' | 'additionalRoots'>>,
-  ): Promise<void> => {
-    const result = await window.ezterminal.saveAgentProject({
-      projectId: project.projectId,
-      name: patch.name ?? project.name,
-      primaryRoot: patch.primaryRoot ?? project.primaryRoot,
-      additionalRoots: patch.additionalRoots ?? project.additionalRoots,
-      pinned: patch.pinned ?? project.pinned,
-    });
-    if (result.ok) {
-      setProjectSessions({});
-      void refreshProjects(true);
-    } else {
-      setProjectActionError(t('agentHub.projects.saveFailed'));
-    }
-  }, [refreshProjects, t]);
-
-  const openProjectEditor = useCallback((project: AgentProjectSummary): void => {
-    if (onEditProject) onEditProject(project);
-    else setProjectEditor({ kind: 'edit', project });
-  }, [onEditProject]);
-
-  const projectRegistryAccess = useMemo<ProjectRegistryAccess>(() => {
-    const desktop = window.ezterminalDesktop;
-    return {
-      listAgentProjects: (force, cursor, limit, query) => window.ezterminal.listAgentProjects(force, cursor, limit, query),
-      saveAgentProject: (input) => window.ezterminal.saveAgentProject(input),
-      removeAgentProject: (projectId) => window.ezterminal.removeAgentProject(projectId),
-      ...(desktop ? { selectFolders: (multiple?: boolean) => desktop.selectAgentProjectFolders(multiple) } : {}),
-    };
-  }, []);
-
-  const loadLaunchers = useCallback(async (): Promise<void> => {
-    if (launchersLoading || launchers.length > 0) return;
-    setLaunchersLoading(true);
-    const result = await window.ezterminal.listAgentProjectLaunchers().catch(() => []);
-    setLaunchers(result);
-    setLaunchersLoading(false);
-  }, [launchers, launchersLoading]);
-
-  useEffect(() => {
-    if (!launchPickerOpen) return undefined;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      setLaunchProjectsLoading(true);
-      void window.ezterminal
-        .listAgentProjects(false, undefined, 100, launchProjectQuery.trim() || undefined)
-        .then((result) => {
-          if (cancelled) return;
-          setLaunchProjectOptions(
-            launchTargetProject
-              && !result.items.some((project) => project.projectId === launchTargetProject.projectId)
-              ? [launchTargetProject, ...result.items]
-              : result.items,
-          );
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setLaunchProjectOptions(launchTargetProject ? [launchTargetProject] : []);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setLaunchProjectsLoading(false);
-        });
-    }, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [launchPickerOpen, launchProjectQuery, launchTargetProject]);
-
-  const openLaunchPicker = useCallback((
-    project?: AgentProjectSummary,
-    projectTarget?: ProjectSessionTarget,
-    locationLabel?: string,
-  ): void => {
-    const target = project
-      ? { kind: 'project' as const, ...(projectTarget ?? { projectId: project.projectId }) }
-      : null;
-    setLaunchTarget(target);
-    setLaunchTargetProject(project ?? null);
-    setLaunchProjectSession(project && target
-      ? {
-          projectId: target.projectId,
-          ...(target.rootId && target.workspaceId
-            ? { rootId: target.rootId, workspaceId: target.workspaceId }
-            : {}),
-          projectName: project.name,
-          titleMode: 'generated',
-        }
-      : null);
-    setLaunchLocationLabel(locationLabel ?? project?.primaryRoot ?? '');
-    setLaunchSessionType('agent');
-    setLaunchProjectOptions(project ? [project] : projects);
-    setLaunchProjectQuery('');
-    setSelectedLauncherId('');
-    setLaunchWorkspaceMode('current');
-    setLaunchWorktreeBranch(`ez/agent-${Date.now().toString(36)}`);
-    setLaunchError(null);
-    setLaunchPickerOpen(true);
-    void loadLaunchers();
-  }, [loadLaunchers, projects]);
-
-  const chooseLaunchDirectory = useCallback(async (): Promise<void> => {
-    const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(false);
-    const directory = selection?.paths[0];
-    if (!selection || selection.canceled || !directory) return;
-    setLaunchTarget({ kind: 'directory', directory });
-    setLaunchTargetProject(null);
-    setLaunchError(null);
-  }, []);
-
-  const launchAgent = useCallback(async (): Promise<void> => {
-    if (launchSessionType === 'terminal' && launchProjectSession) {
-      if (!onOpenProjectTerminal || launching) return;
-      onOpenProjectTerminal(launchProjectSession);
-      setLaunchPickerOpen(false);
-      return;
-    }
-    if (!onLaunchAgent || !launchTarget || !selectedLauncherId || launching) return;
-    setLaunching(true);
-    setLaunchError(null);
-    let effectiveTarget = launchTarget;
-    let effectiveProjectSession = launchProjectSession;
-    let createdWorktreePath: string | null = null;
-    if (
-      launchWorkspaceMode === 'managed'
-      && launchTarget.kind === 'project'
-      && !launchTarget.rootId
-      && launchTargetProject
-    ) {
-      if (!isSafeLocalBranch(launchWorktreeBranch.trim())) {
-        setLaunching(false);
-        setLaunchError(t('agentHub.projects.worktreeInvalidBranch'));
-        return;
-      }
-      const base = coordinationProjects.get(launchTargetProject.projectId)?.defaultTargetBranch;
-      const created = await window.ezterminal.executeWorktree({
-        action: 'create',
-        cwd: launchTargetProject.primaryRoot,
-        branch: launchWorktreeBranch.trim(),
-        ...(base ? { base } : {}),
-      }).catch(() => null);
-      if (!created?.ok || !created.opened) {
-        setLaunching(false);
-        setLaunchError(created && !created.ok
-          ? `${t('agentHub.projects.worktreeCreateFailed')} ${created.message}`
-          : t('agentHub.projects.worktreeCreateFailed'));
-        return;
-      }
-      createdWorktreePath = created.opened.path;
-      const descriptor = await window.ezterminalDesktop
-        ?.describeProjectWorkspace(launchTargetProject.projectId)
-        .catch(() => null);
-      const workspace = descriptor?.ok
-        ? descriptor.project.workspaces?.find((item) => item.workspaceId === created.opened?.worktreeId)
-        : undefined;
-      if (!workspace) {
-        setLaunching(false);
-        setLaunchError(t('agentHub.projects.worktreePreserved', { path: created.opened.path }));
-        return;
-      }
-      effectiveTarget = {
-        kind: 'project',
-        projectId: launchTargetProject.projectId,
-        rootId: workspace.rootId,
-        workspaceId: workspace.workspaceId,
-      };
-      effectiveProjectSession = {
-        projectId: launchTargetProject.projectId,
-        rootId: workspace.rootId,
-        workspaceId: workspace.workspaceId,
-        projectName: launchTargetProject.name,
-        titleMode: 'generated',
-      };
-    }
-    const preparation = await window.ezterminal
-      .prepareAgentLaunch(effectiveTarget, selectedLauncherId)
-      .catch(() => ({ ok: false, reason: 'unavailable' } as const));
-    setLaunching(false);
-    if (!preparation.ok) {
-      setLaunchError(createdWorktreePath
-        ? t('agentHub.projects.worktreePreserved', { path: createdWorktreePath })
-        : t('agentHub.projects.launchFailed'));
-      return;
-    }
-    onLaunchAgent({
-      kind: 'new-chat',
-      target: preparation.target,
-      launcherId: preparation.launcherId,
-      provider: preparation.provider,
-      name: preparation.name,
-      cwd: preparation.cwd,
-      revision: preparation.revision,
-    }, effectiveProjectSession ?? undefined);
-    setLaunchPickerOpen(false);
-  }, [
-    launchProjectSession,
-    launchSessionType,
-    launchTarget,
-    launchTargetProject,
-    launchWorkspaceMode,
-    launchWorktreeBranch,
-    launching,
-    coordinationProjects,
-    onLaunchAgent,
-    onOpenProjectTerminal,
-    selectedLauncherId,
-    t,
-  ]);
-
-  const selectedLauncher = launchers.find(
-    (launcher) => launcher.launcherId === selectedLauncherId,
-  );
-  const ignoredAdditionalRoots = launchTargetProject
-    && selectedLauncher
-    && !selectedLauncher.supportsAdditionalRoots
-    ? launchTargetProject.additionalRoots.length
-    : 0;
-
-  const groups = useMemo(() => {
-    const attention: AgentActivity[] = [];
-    const active: AgentActivity[] = [];
-    const recent: AgentActivity[] = [];
-    for (const item of coordinatedActivities) {
-      if (ATTENTION.has(item.status)) attention.push(item);
-      else if (ACTIVE.has(item.status)) active.push(item);
-      else recent.push(item);
-    }
-    attention.sort((a, b) => {
+  const attention = useMemo(() => coordinatedActivities
+    .filter((item) => ATTENTION.has(item.status))
+    .sort((a, b) => {
       const aApproval = a.approval;
       const bApproval = b.approval;
       if (aApproval && !bApproval) return -1;
@@ -775,17 +337,9 @@ export function AgentHub({
       }
       const rank = (status: AgentStatus): number => status === 'blocked' ? 0 : status === 'error' ? 1 : 2;
       return rank(a.status) - rank(b.status) || sortRecent(a, b);
-    });
-    active.sort(sortRecent);
-    recent.sort(sortRecent);
-    return { attention, active, recent };
-  }, [coordinatedActivities]);
+    }), [coordinatedActivities]);
 
-  // A running agent shows a ticking mm:ss, so the clock has to move every
-  // second while one exists. With nothing running the coarse relative ages only
-  // need the original slow tick. Neither is announced: elapsed time is on the
-  // accessibility exclusion list for live regions.
-  // A pending approval also needs the fast tick for its display countdown.
+  // A pending approval needs the fast tick for its display countdown.
   // The host's `pending` bit, rather than this renderer's wall clock, is the
   // authority for whether the decision buttons remain actionable.
   const decide = useCallback(
@@ -914,42 +468,17 @@ export function AgentHub({
     setOverrideReason('');
   }, [mergeBusy, onDecideManagedMerge]);
 
-  const renderGroup = (
-    group: 'attention' | 'active' | 'recent',
-    title: string,
-    items: readonly AgentActivity[],
-  ): JSX.Element | null => {
-    if (items.length === 0) return null;
+  const renderAttention = (): JSX.Element | null => {
+    if (attention.length === 0) return null;
     return (
-      <section className="agent-group" data-testid={`agent-group-${group}`}>
+      <section className="agent-group" data-testid="agent-group-attention">
         {/* The count belongs in the heading: a queue you are meant to work
             through should say how deep it is before you read the first card. */}
-        <h2 className={`status-section-title agent-group-title agent-group-title--${group}`}>
-          {`${title} · ${numberFormatter.format(items.length)}`}
+        <h2 className="status-section-title agent-group-title agent-group-title--attention">
+          {`${t('agentHub.groups.attention')} · ${numberFormatter.format(attention.length)}`}
         </h2>
-        {group === 'recent' && items.every((item) => !item.live) ? (
-          // Ended work is a log. A live idle/unknown Agent remains a full card
-          // so it can still be focused and, when ready, prompted.
-          <ol className="agent-timeline">
-            {items.map((item) => (
-              <li className="agent-timeline-row" key={item.id}>
-                <time
-                  className="agent-timeline-time"
-                  dateTime={new Date(item.updatedAt).toISOString()}
-                >
-                  {timeFormatter.format(new Date(item.updatedAt))}
-                </time>
-                <span className="agent-timeline-provider">{PROVIDER_LABEL[item.provider]}</span>
-                <span className="agent-timeline-cwd" title={item.cwd}>{formatCwd(item.cwd)}</span>
-                <span className={`agent-status agent-status--${item.status}`}>
-                  {t(STATUS_LABEL_KEY[item.status])}
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : (
         <div className="agent-list">
-          {items.map((item) => (
+          {attention.map((item) => (
             <article className="agent-row" data-status={item.status} key={item.id} data-testid="agent-row">
               {/* Identity and age on one line, the working directory on its own
                   as machine text, then the action. Reading order matches the
@@ -989,7 +518,7 @@ export function AgentHub({
                         variant="primary"
                         size="sm"
                         leadingIcon={<Check aria-hidden="true" />}
-                        disabled={disconnected || !onDecideApproval}
+                        disabled={!onDecideApproval}
                         loading={decidingId === item.id}
                         onClick={() => void decide(item, 'allow')}
                         data-testid="agent-approve"
@@ -1000,7 +529,7 @@ export function AgentHub({
                         variant="danger"
                         size="sm"
                         leadingIcon={<X aria-hidden="true" />}
-                        disabled={disconnected || decidingId !== null || !onDecideApproval}
+                        disabled={decidingId !== null || !onDecideApproval}
                         onClick={() => void decide(item, 'deny')}
                         data-testid="agent-deny"
                       >
@@ -1031,22 +560,12 @@ export function AgentHub({
                   {item.status === 'blocked' ? t('agentHub.review') : t('agentHub.focus')}
                 </button>
               </div>
-              {group === 'active' && (
-                <div className="agent-progress">
-                  <span className="agent-progress-track" aria-hidden="true">
-                    <span className="agent-progress-sweep" />
-                  </span>
-                  <span className="agent-elapsed">
-                    <AgentElapsed startedAt={item.createdAt} currentTime={currentTime} />
-                  </span>
-                </div>
-              )}
-              {(item.status === 'done' || item.status === 'idle') && item.live && (
+              {item.status === 'done' && item.live && (
                 <AgentFollowupComposer
                   activityId={item.id}
                   providerLabel={PROVIDER_LABEL[item.provider]}
                   variant="desktop"
-                  disconnected={disconnected}
+                  disconnected={false}
                   sending={sendingId === item.id}
                   anotherSending={sendingId !== null && sendingId !== item.id}
                   onSend={send}
@@ -1058,153 +577,22 @@ export function AgentHub({
             </article>
           ))}
         </div>
-        )}
-      </section>
-    );
-  };
-
-  const renderProjectHistory = (project: AgentProjectSummary): JSX.Element => {
-    const sessions = projectSessions[project.projectId];
-    const sessionsLoading = loadingSessionProjects.has(project.projectId);
-    const sessionsFailed = projectSessionErrors.has(project.projectId);
-    const nextCursor = projectSessionCursors[project.projectId];
-    return (
-      <section
-        className="agent-project-history"
-        data-testid="agent-project-history"
-        aria-labelledby="agent-project-history-title"
-      >
-        <header className="agent-project-history__header">
-          <IconButton
-            icon={ArrowLeft}
-            aria-label={t('common.back')}
-            onClick={() => setHistoryProject(null)}
-            data-testid="agent-project-history-back"
-          />
-          <div>
-            <h2 id="agent-project-history-title">{t('agentHub.projects.sessionHistory')}</h2>
-            <small title={project.primaryRoot}>{project.name}</small>
-          </div>
-        </header>
-        <ol
-          className="agent-history-list agent-project-history__list"
-          aria-busy={sessionsLoading || undefined}
-        >
-          {!sessions && sessionsLoading && (
-            <li className="agent-project-note">
-              {t('agentHub.projects.sessionsLoading')}
-            </li>
-          )}
-          {sessionsFailed && (
-            <li className="agent-project-error">
-              <span>{t('agentHub.projects.sessionsFailed')}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setProjectSessions((previous) => {
-                    const next = { ...previous };
-                    delete next[project.projectId];
-                    return next;
-                  });
-                  void loadInitialProjectSessions(project.projectId);
-                }}
-              >
-                {t('common.retry')}
-              </Button>
-            </li>
-          )}
-          {!sessionsFailed && sessions?.length === 0 && (
-            <li className="agent-project-note">
-              {t('agentHub.projects.sessionsEmpty')}
-            </li>
-          )}
-          {sessions?.map((session) => (
-            <li key={session.historyId} className="agent-history-item">
-              <button
-                type="button"
-                className="agent-history-row"
-                data-provider={session.provider}
-                title={session.title}
-                onClick={() => onOpenHistorySession?.(session, project)}
-              >
-                <span className="agent-provider-badge">
-                  {PROVIDER_LABEL[session.provider]}
-                </span>
-                <strong>{session.title}</strong>
-                <small>
-                  <AgentRelativeAge updatedAt={session.updatedAt} formatter={relativeTime} currentTime={currentTime} />
-                </small>
-                {session.preview && <p>{session.preview}</p>}
-              </button>
-              {onOpenHistoryReview && (
-                <button
-                  type="button"
-                  className="agent-history-review"
-                  aria-label={`Review changes from ${session.title}`}
-                  title={t('agentHub.viewDiff')}
-                  onClick={() => onOpenHistoryReview(session, project)}
-                >
-                  <GitCompareArrows aria-hidden="true" size={15} />
-                </button>
-              )}
-            </li>
-          ))}
-          {nextCursor && (
-            <li>
-              <button
-                type="button"
-                className="agent-history-more"
-                disabled={sessionsLoading}
-                onClick={() => void loadMoreSessions(project.projectId)}
-              >
-                {sessionsLoading
-                  ? t('agentHub.projects.sessionsLoading')
-                  : t('agentHub.projects.moreSessions')}
-              </button>
-            </li>
-          )}
-        </ol>
       </section>
     );
   };
 
   return (
     <div
-      className={mobile
-        ? 'mobile-agent-hub'
-        : `status-drawer agent-hub${drillProject ? ' agent-hub--project' : ''}`}
+      className={`status-drawer agent-hub${drillProject ? ' agent-hub--project' : ''}`}
       data-testid="agent-hub"
       aria-label={t('agentHub.activity')}
     >
-      {/* On desktop the sidebar shell already draws the title and the close
-          control, so a second header here would stack two of each. Mobile has
-          no such shell and still needs its own. */}
-      {mobile && (
-        <header className="agent-hub-head">
-          {onClose && (
-            <IconButton
-              icon={ArrowLeft}
-              aria-label={t('agentHub.closeHub')}
-              onClick={onClose}
-              data-testid="mobile-agent-close"
-            />
-          )}
-          <div>
-            <h1 className="agent-hub-title">{t('rail.agents')}</h1>
-            <span className="agent-hub-summary">
-              {t('agentHub.tracked', { value: numberFormatter.format(coordinatedActivities.length) })}
-            </span>
-          </div>
-        </header>
-      )}
-      {disconnected && <div className="agent-offline" role="status">{t('agentHub.reconnecting')}</div>}
       <div className="agent-live-region" aria-live="polite" aria-atomic="true">
-        {groups.attention.length === 1
+        {attention.length === 1
           ? t('agentHub.oneNeedsAttention')
-          : groups.attention.length > 1
+          : attention.length > 1
             ? t('agentHub.manyNeedAttention', {
-              value: numberFormatter.format(groups.attention.length),
+              value: numberFormatter.format(attention.length),
             })
             : ''}
       </div>
@@ -1212,25 +600,21 @@ export function AgentHub({
         {daemonAvailability?.state === 'legacy-only-safe-mode' && (
           <DaemonSafeModeNotice
             availability={daemonAvailability}
-            showRecoveryPath={!mobile}
+            showRecoveryPath
             compact
           />
         )}
-        {historyProject ? renderProjectHistory(historyProject) : drillProject && onOpenProjectDocument ? (
+        {drillProject && onOpenProjectDocument ? (
           <ProjectWorkspacePanel
             project={drillProject}
-            {...(view === 'files' ? {} : { onBack: () => selectDrillProject(null) })}
+            {...(view === 'files' ? {} : { onBack: () => onActiveProjectIdChange?.(null) })}
             onOpenDocument={onOpenProjectDocument}
             onOpenProjectMap={onOpenProjectMap}
-            onNewSession={(target, locationLabel) => {
-              if (onOpenProjectTerminal) {
-                onOpenProjectTerminal({ ...target, projectName: drillProject.name, titleMode: 'generated' });
-              } else {
-                openLaunchPicker(drillProject, target, locationLabel);
-              }
+            onNewSession={(target) => {
+              onOpenProjectTerminal?.({ ...target, projectName: drillProject.name, titleMode: 'generated' });
             }}
             onNewAgent={onOpenStructuredAgentDraft ? (target, locationLabel) => onOpenStructuredAgentDraft(drillProject, target, locationLabel) : undefined}
-            onManage={() => openProjectEditor(drillProject)}
+            onManage={() => onEditProject?.(drillProject)}
             explorerState={projectWorkspaceState}
             onExplorerStateChange={onProjectWorkspaceStateChange}
           />
@@ -1242,10 +626,10 @@ export function AgentHub({
           </p>
         ) : (
           <>
-          {view !== 'projects' && appChatInbox && (
+          {appChatInbox && (
             <AppChatInbox items={appChatInbox.entries} onOpen={appChatInbox.onOpen} onMarkSeen={appChatInbox.onMarkSeen} />
           )}
-          {view !== 'projects' && pendingMergeRequests.length > 0 && (
+          {pendingMergeRequests.length > 0 && (
             <section className="agent-group agent-managed-merges" data-testid="managed-merge-requests">
               <h2 className="status-section-title agent-group-title agent-group-title--attention">
                 {t('agentHub.managedMerge.queue', {
@@ -1309,7 +693,7 @@ export function AgentHub({
                             <Button
                               variant="primary"
                               size="sm"
-                              disabled={mergeBusy || disconnected}
+                              disabled={mergeBusy}
                               onClick={() => void decideMerge(request, 'approve')}
                               data-testid="managed-merge-approve"
                             >
@@ -1318,7 +702,7 @@ export function AgentHub({
                             <Button
                               variant="danger"
                               size="sm"
-                              disabled={mergeBusy || disconnected}
+                              disabled={mergeBusy}
                               onClick={() => void decideMerge(request, 'deny')}
                               data-testid="managed-merge-deny"
                             >
@@ -1331,7 +715,7 @@ export function AgentHub({
                             <Button
                               variant="danger"
                               size="sm"
-                              disabled={mergeBusy || disconnected}
+                              disabled={mergeBusy}
                               onClick={() => void decideMerge(request, 'deny')}
                             >
                               {t('agentHub.deny')}
@@ -1339,7 +723,7 @@ export function AgentHub({
                             <Button
                               variant="danger"
                               size="sm"
-                              disabled={mergeBusy || disconnected}
+                              disabled={mergeBusy}
                               onClick={() => {
                                 setOverrideRequest(request);
                                 setOverrideReason('');
@@ -1359,254 +743,11 @@ export function AgentHub({
               {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
             </section>
           )}
-          {view !== 'projects' && renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
-          {view === 'inbox' && pendingMergeRequests.length === 0 && groups.attention.length === 0 && !appChatInbox?.entries.length && <p className="agent-empty">{i18n.language.startsWith('ko') ? '확인이 필요한 요청이 없습니다.' : 'No requests need your attention.'}</p>}
-          {view !== 'inbox' && <section className="agent-group agent-projects" data-testid="agent-projects">
-            <div className="agent-projects-heading">
-              <h2 className="status-section-title agent-group-title">
-                {t('agentHub.projects.title')}
-              </h2>
-              {onOpenHistory && <Button size="sm" variant="ghost" leadingIcon={<History aria-hidden="true" />} onClick={() => onOpenHistory()}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
-              {window.ezterminalDesktop && (
-                <IconButton
-                  icon={FolderPlus}
-                  aria-label={t('agentHub.projects.add')}
-                  onClick={() => setProjectEditor({ kind: 'add' })}
-                  data-testid="agent-add-project"
-                />
-              )}
-            </div>
-            {!showProjectConversationTree && <Field
-              className="agent-project-search"
-              label={t('agentHub.projects.searchLabel')}
-              labelHidden
-            >
-              <span className="agent-project-search__control">
-                <Search aria-hidden="true" />
-                <DeferredSearchInput
-                  variant="ui"
-                  value={projectQuery}
-                  placeholder={t('agentHub.projects.searchPlaceholder')}
-                  onQueryChange={setProjectQuery}
-                  testId="agent-project-search"
-                />
-              </span>
-            </Field>}
-            {projectActionError && (
-              <p className="agent-project-error" role="alert">{projectActionError}</p>
-            )}
-            {projectsLoading && (
-              <p className="agent-project-note">{t('agentHub.projects.loading')}</p>
-            )}
-            {projectsError && (
-              <div className="agent-project-error" role="alert">
-                <span>{t('agentHub.projects.loadFailed')}</span>
-                <Button variant="ghost" size="sm" onClick={() => void refreshProjects(true)}>
-                  {t('common.retry')}
-                </Button>
-              </div>
-            )}
-            {!showProjectConversationTree && !projectsLoading && !projectsError && projects.length === 0 && (
-              <p className="agent-project-note">
-                {debouncedProjectQuery.trim()
-                  ? t('agentHub.projects.noMatches')
-                  : t('agentHub.projects.empty')}
-              </p>
-            )}
-            {showProjectConversationTree ? <ProjectConversationNavigator
-              projects={projects} access={projectNavigationAccess} daemonAccess={daemonAccess} disconnected={disconnected} selectedSessionId={activeConversationSessionId} selectedConversationId={activeConversationId}
-              onOpenProject={project => onOpenPlanningProject?.(project)} onOpenWorkflow={onOpenWorkflowProject}
-              onOpenSession={onOpenStructuredAgentSession ?? (() => undefined)} onOpenTerminal={onFocusSession}
-              onOpenHistory={onOpenConversationHistory}
-              {...(onOpenStructuredAgentDraft ? { onNewConversationInWorkspace: (projectId: string, workspaceId: string) => {
-                const project = projects.find(item => item.projectId === projectId);
-                if (project) onOpenStructuredAgentDraft(project, { projectId, workspaceId });
-              } } : {})}
-              {...(onOpenProjectReview || onLoadDiff ? { onReviewDirectory: (directory: string) => void openDiff(directory) } : {})}
-              renderProjectActions={projectId => {
-                const project = projects.find(item => item.projectId === projectId);
-                if (!project) return null;
-                return <>
-                  {onOpenStructuredAgentDraft && <IconButton icon={MessageSquarePlus} aria-label={`${t('agentHub.projects.newChat')}: ${project.name}`} onClick={() => onOpenStructuredAgentDraft(project)} />}
-                  {onOpenProjectTerminal && <IconButton icon={Terminal} aria-label={`${t('header.newTerminal')}: ${project.name}`} onClick={() => onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' })} />}
-                  <Menu label={t('agentHub.projects.manage', { name: project.name })} placement="bottom-end" trigger={<IconButton icon={MoreHorizontal} aria-label={t('agentHub.projects.manage', { name: project.name })} />}>
-                    {onOpenHistory && <MenuItem icon={History} onSelect={() => onOpenHistory(project.projectId)}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</MenuItem>}
-                    <MenuItem icon={History} onSelect={() => openProjectHistory(project)}>{i18n.language.startsWith('ko') ? 'CLI 기록' : 'CLI history'}</MenuItem>
-                    {onOpenPlanningProject && <MenuItem icon={Plus} onSelect={() => onOpenPlanningProject(project)}>{i18n.language.startsWith('ko') ? '소프로젝트 만들기·관리' : 'Create and manage subprojects'}</MenuItem>}
-                    {workspaceWorktrees && onOpenStructuredAgentDraft && !disconnected && <MenuItem icon={GitBranch} onSelect={() => setWorktreeProject(project)}>{i18n.language.startsWith('ko') ? '새 워크트리…' : 'New worktree…'}</MenuItem>}
-                    {onOpenProjectTerminal && <MenuItem icon={MessageSquarePlus} onSelect={() => onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' })}>{t('header.newTerminal')}</MenuItem>}
-                    {onOpenProjectDocument && <MenuItem icon={FolderOpen} onSelect={() => selectDrillProject(project)}>{i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files'}</MenuItem>}
-                    <MenuItem icon={Pin} onSelect={() => void saveProject(project, { pinned: !project.pinned })}>{project.pinned ? t('agentHub.projects.unpin') : t('agentHub.projects.pin')}</MenuItem>
-                    {window.ezterminalDesktop && <MenuItem icon={Settings} onSelect={() => openProjectEditor(project)}>{t('agentHub.projects.edit')}</MenuItem>}
-                    <MenuItem icon={Trash2} destructive onSelect={() => { setProjectActionError(null); setProjectToDelete(project); }}>{t('agentHub.projects.delete')}</MenuItem>
-                  </Menu>
-                </>;
-              }}
-            /> : <DaemonAgentSessions
-              access={daemonAccess}
-              onOpenSession={onOpenStructuredAgentSession ?? (() => undefined)}
-              onOpenTerminal={onOpenStructuredAgentSession ? onFocusSession : undefined}
-              onNewTerminal={onCreateWorkspaceTerminal}
-              onNewSession={onCreateWorkspaceSession}
-              activities={coordinatedActivities}
-              query={debouncedProjectQuery}
-              projectHeaders={projects.map((project) => {
-                const coordination = coordinationProjects.get(project.projectId);
-                const activeParticipants = coordination?.participants.length ?? 0;
-                return { id: project.projectId, content: (
-                  <div className="agent-project">
-                    <div className="agent-project-row">
-                      <button
-                        type="button"
-                        className="agent-project-open"
-                        onClick={() => {
-                          if (onOpenPlanningProject) onOpenPlanningProject(project);
-                          else if (onOpenProjectDocument) selectDrillProject(project);
-                        }}
-                        data-testid={`agent-project-open-${project.projectId}`}
-                      >
-                        <span>
-                          <strong>
-                            {project.pinned && <Pin aria-hidden="true" />}
-                            {project.name}
-                          </strong>
-                          <small title={[project.primaryRoot, ...project.additionalRoots].join('\n')}>
-                            {formatCwd(project.primaryRoot)}
-                            {project.additionalRoots.length > 0
-                              ? ` · +${numberFormatter.format(project.additionalRoots.length)}`
-                              : ''}
-                          </small>
-                        </span>
-                        {project.sessionCount > 0 && (
-                          <span className="agent-project-count">
-                            {numberFormatter.format(project.sessionCount)}
-                          </span>
-                        )}
-                      </button>
-                      {(onOpenStructuredAgentDraft || onLaunchAgent || onOpenProjectTerminal) && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          leadingIcon={<MessageSquarePlus aria-hidden="true" />}
-                          onClick={() => {
-                            if (onOpenProjectTerminal) onOpenProjectTerminal({ projectId: project.projectId, projectName: project.name, titleMode: 'generated' });
-                            else openLaunchPicker(project);
-                          }}
-                          data-testid={`agent-project-new-chat-${project.projectId}`}
-                        >
-                          {t('header.newTerminal')}
-                        </Button>
-                      )}
-                      <Menu
-                        label={t('agentHub.projects.manage', { name: project.name })}
-                        placement="bottom-end"
-                        trigger={(
-                          <IconButton
-                            icon={MoreHorizontal}
-                            aria-label={t('agentHub.projects.manage', { name: project.name })}
-                          />
-                        )}
-                      >
-                        {onOpenStructuredAgentDraft && <MenuItem icon={MessageSquarePlus} onSelect={() => onOpenStructuredAgentDraft(project)}>{t('agentHub.newAgentRun')}</MenuItem>}
-                        {onOpenProjectDocument && <MenuItem icon={FolderOpen} onSelect={() => selectDrillProject(project)}>{i18n.language.startsWith('ko') ? '프로젝트 파일' : 'Project files'}</MenuItem>}
-                        <MenuItem
-                          icon={History}
-                          onSelect={() => openProjectHistory(project)}
-                        >
-                          {t('agentHub.projects.sessionHistory')}
-                        </MenuItem>
-                        <MenuItem
-                          icon={Pin}
-                          onSelect={() => void saveProject(project, { pinned: !project.pinned })}
-                        >
-                          {project.pinned
-                            ? t('agentHub.projects.unpin')
-                            : t('agentHub.projects.pin')}
-                        </MenuItem>
-                        {window.ezterminalDesktop && (
-                          <MenuItem icon={Settings} onSelect={() => openProjectEditor(project)}>
-                            {t('agentHub.projects.edit')}
-                          </MenuItem>
-                        )}
-                        <MenuItem
-                          icon={Trash2}
-                          destructive
-                          onSelect={() => {
-                            setProjectActionError(null);
-                            setProjectToDelete(project);
-                          }}
-                        >
-                          {t('agentHub.projects.delete')}
-                        </MenuItem>
-                      </Menu>
-                    </div>
-                    {coordination ? (
-                      <div className="agent-project-coordination" data-testid="agent-project-coordination">
-                        <p>{coordination.goal}</p>
-                        <span>
-                          {t('agentHub.collaboration.projectRollup', {
-                            participants: numberFormatter.format(activeParticipants),
-                            merges: numberFormatter.format(coordination.pendingMergeCount),
-                            branch: coordination.defaultTargetBranch,
-                          })}
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                ) };
-              })}
-            />}
-            {projectCursor && (
-              <Button
-                className="agent-projects-more"
-                variant="ghost"
-                size="sm"
-                disabled={projectsLoadingMore}
-                onClick={() => void refreshProjects(false, projectCursor, true)}
-              >
-                {projectsLoadingMore
-                  ? t('agentHub.projects.loading')
-                  : t('agentHub.projects.loadMore')}
-              </Button>
-            )}
-          </section>}
-          {!onOpenStructuredAgentSession && coordinatedActivities.length === 0 && (
-            <div className="agent-empty">{t('agentHub.empty')}</div>
-          )}
-          {!onOpenStructuredAgentSession && renderGroup('active', t('agentHub.groups.active'), groups.active)}
-          {!onOpenStructuredAgentSession && renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
+          {renderAttention()}
+          {pendingMergeRequests.length === 0 && attention.length === 0 && !appChatInbox?.entries.length && <p className="agent-empty">{i18n.language.startsWith('ko') ? '확인이 필요한 요청이 없습니다.' : 'No requests need your attention.'}</p>}
           </>
         )}
       </div>
-      {view !== 'inbox' && view !== 'files' && !drillProject && !historyProject && (onOpenStructuredAgentDraft || onLaunchAgent || onOpenAgentSettings) && (
-        <footer className="agent-hub-footer">
-          {(onOpenStructuredAgentDraft || onLaunchAgent) && (
-            <Button
-              variant="primary"
-              size="sm"
-              leadingIcon={<Plus aria-hidden="true" />}
-              onClick={() => {
-                if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft();
-                else openLaunchPicker();
-              }}
-              data-testid="agent-new-run"
-            >
-              {onOpenStructuredAgentDraft ? (i18n.language.startsWith('ko') ? '새 대화' : 'New conversation') : t('agentHub.newAgentRun')}
-            </Button>
-          )}
-          {onOpenAgentSettings && (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<Settings aria-hidden="true" />}
-              onClick={onOpenAgentSettings}
-              data-testid="agent-open-settings"
-            >
-              {t('agentHub.openAgentSettings')}
-            </Button>
-          )}
-        </footer>
-      )}
       <Dialog
         open={overrideRequest !== null}
         onOpenChange={(open) => {
@@ -1647,263 +788,6 @@ export function AgentHub({
         </Field>
         {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
       </Dialog>
-      <Dialog
-        open={launchPickerOpen}
-        onOpenChange={(open) => {
-          if (launching) return;
-          setLaunchPickerOpen(open);
-          if (!open) setLaunchError(null);
-        }}
-        title={launchProjectSession
-          ? t('agentHub.projects.sessionTitle')
-          : t('agentHub.projects.launchTitle')}
-        description={launchProjectSession
-          ? t('agentHub.projects.sessionDescription')
-          : t('agentHub.projects.launchDescription')}
-        closeLabel={t('common.cancel')}
-        testId="agent-launch-picker"
-        footer={(
-          <>
-            <Button
-              variant="ghost"
-              onClick={() => setLaunchPickerOpen(false)}
-              disabled={launching}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => void launchAgent()}
-              disabled={launching
-                || !launchTarget
-                || (daemonSafeMode && launchSessionType === 'agent')
-                || (launchSessionType === 'agent' && (!onLaunchAgent || !selectedLauncherId))
-                || (launchSessionType === 'agent'
-                  && launchWorkspaceMode === 'managed'
-                  && launchTarget?.kind === 'project'
-                  && !launchTarget.rootId
-                  && !isSafeLocalBranch(launchWorktreeBranch.trim()))
-                || (launchSessionType === 'terminal' && !onOpenProjectTerminal)}
-              data-testid="agent-launch-submit"
-            >
-              {launching
-                ? t('agentHub.projects.launching')
-                : launchSessionType === 'terminal'
-                  ? t('agentHub.projects.openTerminal')
-                  : t('agentHub.projects.launch')}
-            </Button>
-          </>
-        )}
-      >
-        <div className="agent-launch-picker">
-          {launchProjectSession && (
-            <Field label={t('agentHub.projects.sessionType')} required>
-              <Select
-                value={launchSessionType}
-                onChange={(event) => {
-                  setLaunchSessionType(event.currentTarget.value as 'agent' | 'terminal');
-                  setLaunchError(null);
-                }}
-                data-testid="agent-launch-session-type"
-              >
-                <option value="agent" disabled={daemonSafeMode}>
-                  {t('agentHub.projects.sessionTypeAgent')}
-                </option>
-                <option value="terminal">{t('agentHub.projects.sessionTypeTerminal')}</option>
-              </Select>
-            </Field>
-          )}
-          {launchSessionType === 'agent' && (
-            <Field label={t('agentHub.projects.agent')} required>
-            <Select
-              value={selectedLauncherId}
-              onChange={(event) => {
-                setSelectedLauncherId(event.currentTarget.value);
-                setLaunchError(null);
-              }}
-              disabled={launchersLoading}
-              data-testid="agent-launch-agent"
-            >
-              <option value="">
-                {launchersLoading
-                  ? t('agentHub.projects.loadingAgents')
-                  : t('agentHub.projects.selectAgent')}
-              </option>
-              {launchers.map((launcher) => (
-                <option key={launcher.launcherId} value={launcher.launcherId}>
-                  {launcher.name} · {PROVIDER_LABEL[launcher.provider]}
-                </option>
-              ))}
-            </Select>
-            </Field>
-          )}
-          {launchSessionType === 'agent' && !launchersLoading && launchers.length === 0 && (
-            <p className="agent-project-note">{t('agentHub.projects.noAgents')}</p>
-          )}
-          {launchProjectSession ? (
-            <Field label={t('agentHub.projects.location')} required>
-              <p className="agent-launch-directory" title={launchLocationLabel}>
-                <strong>{launchProjectSession.projectName}</strong>
-                <code>{formatCwd(launchLocationLabel)}</code>
-              </p>
-            </Field>
-          ) : (
-            <>
-          <Field label={t('agentHub.projects.location')} required>
-            <DeferredSearchInput
-              variant="ui"
-              value={launchProjectQuery}
-              placeholder={t('agentHub.projects.locationSearch')}
-              onQueryChange={setLaunchProjectQuery}
-            />
-            <Select
-              value={launchTarget?.kind === 'project'
-                ? launchTarget.projectId
-                : launchTarget?.kind === 'directory'
-                  ? '__directory__'
-                  : ''}
-              onChange={(event) => {
-                if (event.currentTarget.value === '__directory__') return;
-                const project = launchProjectOptions.find(
-                  (candidate) => candidate.projectId === event.currentTarget.value,
-                );
-                setLaunchTarget(
-                  project ? { kind: 'project', projectId: project.projectId } : null,
-                );
-                setLaunchTargetProject(project ?? null);
-                setLaunchError(null);
-              }}
-              disabled={launchProjectsLoading}
-              data-testid="agent-launch-project"
-            >
-              <option value="">
-                {launchProjectsLoading
-                  ? t('agentHub.projects.loading')
-                  : t('agentHub.projects.selectProject')}
-              </option>
-              {launchTarget?.kind === 'directory' && (
-                <option value="__directory__">
-                  {t('agentHub.projects.selectedFolder')} · {formatCwd(launchTarget.directory)}
-                </option>
-              )}
-              {launchProjectOptions.map((project) => (
-                <option key={project.projectId} value={project.projectId}>
-                  {project.name} · {formatCwd(project.primaryRoot)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          {window.ezterminalDesktop && (
-            <Button
-              variant="secondary"
-              size="sm"
-              leadingIcon={<FolderPlus aria-hidden="true" />}
-              onClick={() => void chooseLaunchDirectory()}
-              data-testid="agent-launch-folder"
-            >
-              {t('agentHub.projects.chooseFolder')}
-            </Button>
-          )}
-          {launchTarget?.kind === 'directory' && (
-            <p className="agent-launch-directory" title={launchTarget.directory}>
-              <strong>{t('agentHub.projects.selectedFolder')}</strong>
-              <code>{launchTarget.directory}</code>
-            </p>
-          )}
-            </>
-          )}
-          {launchSessionType === 'agent'
-            && launchTarget?.kind === 'project'
-            && !launchTarget.rootId
-            && launchTargetProject && (
-            <fieldset className="agent-launch-workspace">
-              <legend>{t('agentHub.projects.workspaceMode')}</legend>
-              <label>
-                <input
-                  type="radio"
-                  name="agent-launch-workspace"
-                  value="current"
-                  checked={launchWorkspaceMode === 'current'}
-                  onChange={() => setLaunchWorkspaceMode('current')}
-                />
-                <span>
-                  <strong>{t('agentHub.projects.workspaceCurrent')}</strong>
-                  <small>{t('agentHub.projects.workspaceCurrentHint')}</small>
-                </span>
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="agent-launch-workspace"
-                  value="managed"
-                  checked={launchWorkspaceMode === 'managed'}
-                  onChange={() => setLaunchWorkspaceMode('managed')}
-                />
-                <span>
-                  <strong>{t('agentHub.projects.workspaceManaged')}</strong>
-                  <small>{t('agentHub.projects.workspaceManagedHint')}</small>
-                </span>
-              </label>
-              {launchWorkspaceMode === 'managed' && (
-                <Field label={t('agentHub.projects.worktreeBranch')} required>
-                  <Input
-                    value={launchWorktreeBranch}
-                    maxLength={200}
-                    aria-invalid={!isSafeLocalBranch(launchWorktreeBranch.trim()) || undefined}
-                    onChange={(event) => setLaunchWorktreeBranch(event.currentTarget.value)}
-                    data-testid="agent-launch-worktree-branch"
-                  />
-                </Field>
-              )}
-            </fieldset>
-          )}
-          {launchSessionType === 'agent' && ignoredAdditionalRoots > 0 && (
-            <p className="agent-launch-warning" role="status">
-              {t('agentHub.projects.genericRootsIgnored', {
-                value: numberFormatter.format(ignoredAdditionalRoots),
-              })}
-            </p>
-          )}
-          {launchError && (
-            <p className="agent-project-error" role="alert">{launchError}</p>
-          )}
-        </div>
-      </Dialog>
-      <ProjectEditorDialog
-        open={projectEditor !== null}
-        mode={projectEditor ?? ADD_PROJECT}
-        access={projectRegistryAccess}
-        onClose={() => setProjectEditor(null)}
-        onSaved={() => {
-          setProjectEditor(null);
-          setProjectSessions({});
-          void refreshProjects(true);
-        }}
-      />
-      {workspaceWorktrees && onOpenStructuredAgentDraft && worktreeProject && (
-        <NewWorktreeDialog
-          open
-          onOpenChange={(open) => { if (!open) setWorktreeProject(null); }}
-          projectName={worktreeProject.name}
-          onCreate={async (branch) => {
-            const project = worktreeProject;
-            const created = await workspaceWorktrees.create(project.projectId, branch);
-            if (created.ok) onOpenStructuredAgentDraft(project, { projectId: project.projectId, workspaceId: created.value.workspaceId });
-            return created;
-          }}
-        />
-      )}
-      <ProjectDeleteDialog
-        project={projectToDelete}
-        access={projectRegistryAccess}
-        onClose={() => setProjectToDelete(null)}
-        onDeleted={(projectId) => {
-          setProjectToDelete(null);
-          if (historyProject?.projectId === projectId) setHistoryProject(null);
-          setProjectSessions({});
-          void refreshProjects(true);
-        }}
-      />
       <Dialog
         open={diffView !== null}
         onOpenChange={(next) => {

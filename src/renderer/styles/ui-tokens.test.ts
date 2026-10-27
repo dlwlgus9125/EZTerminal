@@ -100,7 +100,6 @@ describe('UI token contract', () => {
     // property in the same block is what it renders instead. Modern engines take the later line.
     const files = [
       'src/renderer/mobile-shared.css',
-      'src/renderer/daemon-agent-sessions.css',
       'src/renderer/daemon-safe-mode-notice.css',
       ...readdirSync(resolve(process.cwd(), 'mobile/src'))
         .filter((name) => name.endsWith('.css'))
