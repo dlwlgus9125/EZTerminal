@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +39,16 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextIdRef = useRef(0);
 
+  // One container on the page from the start: a dialog opened later isolates it (inert) like the rest of the page,
+  // so a toast that arrives while a modal is open cannot be used over it.
+  const [host] = useState<HTMLDivElement | null>(() => (typeof document === 'undefined' ? null : document.createElement('div')));
+  useLayoutEffect(() => {
+    if (!host) return;
+    host.className = 'mob-toast-host';
+    document.body.appendChild(host);
+    return () => host.remove();
+  }, [host]);
+
   const showToast = useCallback<ShowToast>((message, action) => {
     if (!message) return;
     nextIdRef.current += 1;
@@ -63,7 +74,7 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
   return (
     <MobileToastContext.Provider value={value}>
       {children}
-      {toast && createPortal(
+      {toast && host && createPortal(
         <div key={toast.id} className="mob-toast" role="status" aria-live="polite" data-testid="mobile-toast" data-action={toast.action ? 'true' : undefined}>
           <span className="mob-dot mob-dot--live" aria-hidden="true" />
           <span className="mob-toast__message">{toast.message}</span>
@@ -80,7 +91,7 @@ export function MobileToastProvider({ children }: { readonly children: ReactNode
         </div>,
         // On the page itself: inside the shell a fixed toast is placed against a frame the keyboard does not
         // shrink, so it would sit under the keyboard exactly when a message was just typed and sent.
-        document.body,
+        host,
       )}
     </MobileToastContext.Provider>
   );

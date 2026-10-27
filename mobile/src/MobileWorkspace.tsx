@@ -851,6 +851,8 @@ export function MobileWorkspace({
   const startAgentBootstrap = useCallback(async (
     bootstrap: AgentTerminalBootstrap,
   ): Promise<void> => {
+    // The person's move starts here (a CLI launched or resumed), before the PC answers.
+    navigationCountRef.current += 1;
     // Providers without a "run in this directory" flag resolve their session
     // store from the process cwd, so the resumed shell starts in the root.
     const binding = await createOwnedSurface(bootstrap.cwd);

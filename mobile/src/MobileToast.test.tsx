@@ -36,6 +36,13 @@ describe('MobileToast', () => {
     expect(toast()).toBeNull();
   });
 
+  it('renders into one page-level container that exists before any dialog opens (so a modal isolates it too)', () => {
+    const host = document.querySelector('.mob-toast-host');
+    expect(host?.parentElement).toBe(document.body);
+    act(() => show('Sent'));
+    expect(host?.contains(toast())).toBe(true);
+  });
+
   it('offers one follow-up that runs once and closes the toast, and stays long enough to reach', () => {
     const action: MobileToastAction = { label: 'Open conversation', onSelect: vi.fn() };
     act(() => show('Sent to “Fix the login”', action));

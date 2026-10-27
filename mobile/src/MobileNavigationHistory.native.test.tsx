@@ -261,4 +261,43 @@ describe('MobileNavigationHistory native Android Back', () => {
     await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state: states.shell })); });
     expect(pushed).toEqual(['shell', 'project', 'files', 'files']);
   });
+  it('rewinds and rebuilds when a lower layer goes while an earlier close is still traversing (I4)', async () => {
+    function Layer({ id }: { readonly id: string }): null {
+      const navigation = useMobileNavigationHistory();
+      useEffect(() => navigation.pushLayer({ id, kind: 'page', onBack: () => undefined }), [id, navigation]);
+      return null;
+    }
+    const pushed: string[] = [];
+    const states: Record<string, unknown> = {};
+    const push = window.history.pushState.bind(window.history);
+    vi.spyOn(window.history, 'pushState').mockImplementation((state, unused, url) => {
+      const id = String((state as { ezterminalNavigation?: { layerId?: string } } | null)?.ezterminalNavigation?.layerId);
+      pushed.push(id);
+      states[id] = state;
+      push(state, unused, url);
+    });
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    vi.spyOn(window.history, 'go').mockImplementation(() => undefined);
+    const show = async (layers: readonly string[]): Promise<void> => {
+      await act(async () => {
+        root.render(<MobileNavigationHistoryProvider>{layers.map((id) => <Layer key={id} id={id} />)}</MobileNavigationHistoryProvider>);
+        for (let index = 0; index < 5; index += 1) await Promise.resolve();
+      });
+    };
+    const pop = async (state: unknown): Promise<void> => {
+      await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state })); });
+    };
+    await show(['tab', 'project', 'files', 'sheet']);
+    await show(['tab', 'project', 'files']);
+    expect(back).toHaveBeenCalledTimes(1);
+    // Before the browser answers, the project under Files goes too.
+    await show(['tab', 'files']);
+    pushed.length = 0;
+    await pop(states.files);
+    await pop(states.project);
+    await pop(states.tab);
+    expect(back).toHaveBeenCalledTimes(4);
+    await pop({});
+    expect(pushed).toEqual(['tab', 'files']);
+  });
 });

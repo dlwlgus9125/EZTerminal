@@ -73,6 +73,8 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
   const layersRef = useRef<MobileNavigationLayer[]>([]);
   const registrationsRef = useRef(new Set<string>());
   const pendingTraversalRef = useRef(false);
+  /** A layer was released while a traversal was still pending: the entries no longer match; rewind them all. */
+  const resyncRef = useRef(false);
   const replacementRef = useRef<{ fromId: string; timer: ReturnType<typeof setTimeout> } | null>(null);
   const mountedRef = useRef(true);
 
@@ -105,6 +107,21 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
   const rebuildDeferredEntries = useCallback((state: unknown): void => {
     const layers = layersRef.current;
     const marker = markerFromState(state);
+    if (resyncRef.current) {
+      // Go back past every entry of this shell, then push the layers that remain, in order.
+      if (marker?.owner === owner) {
+        pendingTraversalRef.current = true;
+        try {
+          window.history.back();
+          return;
+        } catch {
+          pendingTraversalRef.current = false;
+        }
+      }
+      resyncRef.current = false;
+      for (const layer of layers) pushHistoryEntry(layer);
+      return;
+    }
     const targetIndex = marker?.owner === owner
       ? layers.findIndex((layer) => layer.id === marker.layerId)
       : -1;
@@ -130,7 +147,11 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
   }, [owner, pushHistoryEntry]);
 
   const traverseClosedEntries = useCallback((count: number): void => {
-    if (count < 1 || pendingTraversalRef.current) return;
+    if (count < 1) return;
+    if (pendingTraversalRef.current) {
+      resyncRef.current = true;
+      return;
+    }
     const marker = markerFromState(window.history.state);
     if (marker?.owner !== owner) return;
     pendingTraversalRef.current = true;
