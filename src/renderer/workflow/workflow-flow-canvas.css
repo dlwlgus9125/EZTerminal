@@ -31,6 +31,13 @@
 .workflow-canvas .react-flow__minimap { border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); overflow: hidden; }
 /* A small overview: the canvas is often a dock pane, and the map must not cover the stages. */
 .workflow-canvas .react-flow__minimap svg { width: 10rem; height: 6.5rem; }
+/* Fits keep the stages above the map (workflowFitPadding). On a canvas under 44rem the map's corner (about
+   11rem with its margin) would take more than a quarter of the width, so it gives way: a 1024px window with
+   the stage panel open is under that, a 1440px one is over it. rem, so it follows the UI scale like the map. */
+.workflow-canvas[data-renderer='react-flow'] { container: workflow-canvas / inline-size; }
+@container workflow-canvas (max-width: 44rem) {
+  .workflow-canvas .react-flow__minimap { display: none; }
+}
 .workflow-canvas .react-flow__minimap .workflow-mini { fill: var(--ui-border-strong); stroke: var(--ui-text-muted); }
 .workflow-canvas .react-flow__minimap .workflow-mini--working, .workflow-canvas .react-flow__minimap .workflow-mini--reviewing { fill: var(--ui-accent-muted); stroke: var(--ui-accent); }
 .workflow-canvas .react-flow__minimap .workflow-mini--awaiting-approval { fill: var(--ui-warning-muted); stroke: var(--ui-warning); }

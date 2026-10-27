@@ -1,5 +1,5 @@
 import {
-  Background, BackgroundVariant, EdgeLabelRenderer, Handle, MiniMap, Panel, Position, ReactFlow, useNodesInitialized, useReactFlow, useUpdateNodeInternals,
+  Background, BackgroundVariant, EdgeLabelRenderer, Handle, MiniMap, Panel, Position, ReactFlow, useNodesInitialized, useReactFlow, useStore, useUpdateNodeInternals,
   type Connection, type Edge, type EdgeChange, type EdgeProps, type Node, type NodeChange, type NodeProps, type OnBeforeDelete, type XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
@@ -8,7 +8,7 @@ import { LayoutGrid, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { workflowOutcomePorts, type WorkflowEdge, type WorkflowNode } from '../../shared/workflow-graph';
 import { IconButton } from '../ui';
-import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, type WorkflowEdgeRunView, type WorkflowNodeRunView } from './workflow-canvas-model';
 import type { WorkflowCanvasRendererProps } from './workflow-canvas-types';
 import { WORKFLOW_CARD_UNITS, useWorkflowScale } from './use-workflow-scale';
 import { WorkflowNodeCard, workflowRunStatusPresentation } from './WorkflowNodeCard';
@@ -44,25 +44,36 @@ function WorkflowEdgeView({ sourceX, sourceY, targetX, targetY, data, selected }
 const nodeTypes = { stage: StageNodeView };
 const edgeTypes = { workflow: WorkflowEdgeView };
 
+/** Fits the flow above the minimap corner while the map shows (a narrow canvas hides it; see the CSS). */
+function useWorkflowFit(): (options?: { maxZoom?: number }) => void {
+  const flow = useReactFlow();
+  const root = useStore(state => state.domNode);
+  return useCallback((options = {}) => {
+    const map = root?.querySelector('.react-flow__minimap')?.getBoundingClientRect();
+    const mapReserve = root && map && map.height > 0 ? root.getBoundingClientRect().bottom - map.top : 0;
+    void flow.fitView({ ...options, padding: workflowFitPadding(mapReserve) });
+  }, [flow, root]);
+}
 function CanvasControls({ text, onTidy }: { text: WorkflowCopy; onTidy?: () => void }): JSX.Element {
   const flow = useReactFlow();
+  const fit = useWorkflowFit();
   return <Panel position="top-right" className="workflow-canvas__controls" aria-label={text('캔버스 보기', 'Canvas view')}>
     <IconButton icon={ZoomIn} aria-label={text('확대', 'Zoom in')} onClick={() => void flow.zoomIn()} />
     <IconButton icon={ZoomOut} aria-label={text('축소', 'Zoom out')} onClick={() => void flow.zoomOut()} />
-    <IconButton icon={Maximize} aria-label={text('전체 보기', 'Fit view')} onClick={() => void flow.fitView({ padding: 0.12 })} />
+    <IconButton icon={Maximize} aria-label={text('전체 보기', 'Fit view')} onClick={() => fit()} />
     {onTidy && <IconButton icon={LayoutGrid} aria-label={text('자동 정렬', 'Tidy layout')} onClick={onTidy} />}
   </Panel>;
 }
 /** Fit once, the first time the canvas is visible with measured cards; later fits are the user's. */
 function FitOnFirstShow({ active, skip }: { active: boolean; skip: boolean }): null {
-  const flow = useReactFlow();
+  const fit = useWorkflowFit();
   const initialized = useNodesInitialized();
   const done = useRef(skip);
   useEffect(() => {
     if (done.current || !active || !initialized) return;
     done.current = true;
-    void flow.fitView({ padding: 0.12, maxZoom: 1 });
-  }, [active, flow, initialized]);
+    fit({ maxZoom: 1 });
+  }, [active, fit, initialized]);
   return null;
 }
 /** Centres a stage on request (approval chip, summary list) without changing the zoom. */

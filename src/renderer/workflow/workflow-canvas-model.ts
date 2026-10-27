@@ -134,6 +134,21 @@ export function workflowEdgePath(source: WorkflowPoint, target: WorkflowPoint, d
   return { d, labelX: midX, labelY: low, backward };
 }
 
+/** Margin around a fitted flow on each side, as a share of the canvas (React Flow's numeric padding). */
+export const WORKFLOW_FIT_MARGIN = 0.12;
+/** Room left between the lowest stage and the minimap after a fit, in screen pixels. */
+export const WORKFLOW_MINIMAP_GAP = 12;
+export type WorkflowFitPadding = number | { readonly top: number; readonly right: number; readonly left: number; readonly bottom: `${number}px` };
+/**
+ * Padding for every canvas fit (the Fit button and the first show). `mapReserve` is how far the minimap
+ * reaches up from the canvas bottom in screen pixels, 0 while a narrow canvas hides it: the stages fit
+ * above the map instead of under it. Flows run left to right, so a bottom reserve rarely costs zoom.
+ */
+export function workflowFitPadding(mapReserve: number): WorkflowFitPadding {
+  if (!(mapReserve > 0)) return WORKFLOW_FIT_MARGIN;
+  return { top: WORKFLOW_FIT_MARGIN, right: WORKFLOW_FIT_MARGIN, left: WORKFLOW_FIT_MARGIN, bottom: `${Math.ceil(mapReserve) + WORKFLOW_MINIMAP_GAP}px` };
+}
+
 export interface WorkflowNodeSize { readonly width: number; readonly height: number }
 export { layoutWorkflowGraph } from '../../shared/workflow-graph';
 

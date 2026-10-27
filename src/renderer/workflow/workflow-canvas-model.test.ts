@@ -1,7 +1,8 @@
+import { getViewportForBounds } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRun, ExecutionTask } from '../../shared/planning-execution';
 import { createWorkflowGraph, type WorkflowActivation, type WorkflowGraph } from '../../shared/workflow-graph';
-import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowLayoutOnlyChange, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath } from './workflow-canvas-model';
+import { canConnectWorkflow, connectWorkflowEdge, reconnectWorkflowEdge, workflowLayoutOnlyChange, defaultWorkflowRun, workflowLayoutOverlaps, workflowRunControls, layoutWorkflowGraph, pageFromSection, projectRunOverlay, resolveCanvasView, sameWorkflowGraph, sectionFromPage, workflowBackwardDepths, workflowEdgeBadge, workflowEdgePath, workflowFitPadding, WORKFLOW_FIT_MARGIN, WORKFLOW_MINIMAP_GAP } from './workflow-canvas-model';
 
 const graph: WorkflowGraph = createWorkflowGraph('feature', 'f');
 const id = (key: string) => `f:${key}`;
@@ -99,6 +100,22 @@ describe('workflowEdgePath', () => {
     const path = workflowEdgePath({ x: 900, y: 60 }, { x: 300, y: 50 });
     expect(path.backward).toBe(true);
     expect(path.labelY).toBeGreaterThan(60 + 60);
+  });
+});
+
+describe('workflowFitPadding', () => {
+  // The minimap's corner at 100%: 6.5rem map + 2px border + React Flow's 15px panel margin.
+  const reserve = 104 + 2 + 15;
+  it('keeps the plain margin while the map is hidden', () => {
+    expect(workflowFitPadding(0)).toBe(WORKFLOW_FIT_MARGIN);
+  });
+  it('fits the stages above the map, with room, in the React Flow it is passed to', () => {
+    // A 1024px window's canvas (about 640x400) with a wide flow and with a small one fitted at maxZoom 1.
+    for (const bounds of [{ x: 0, y: 0, width: 1624, height: 136 }, { x: 0, y: 0, width: 600, height: 300 }]) {
+      const { y, zoom } = getViewportForBounds(bounds, 640, 400, 0.3, 1, workflowFitPadding(reserve));
+      expect(y + (bounds.y + bounds.height) * zoom).toBeLessThanOrEqual(400 - reserve - WORKFLOW_MINIMAP_GAP);
+      expect(y).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 
