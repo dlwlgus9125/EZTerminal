@@ -169,7 +169,9 @@ export function tokenize(source: string): Token[] {
       const long = source[i + 1] === '-';
       const dashCount = long ? 2 : 1;
       let j = i + dashCount;
-      if (!(j < n && isWordStart(source[j]))) {
+      // A short flag may also be a number (`git log -3`, `ls -1`, `head -20`).
+      const numericShort = !long && j < n && isDigit(source[j]);
+      if (!(j < n && (isWordStart(source[j]) || numericShort))) {
         // A lone `-` at a boundary is a bare word (e.g. `cd -`), not a flag.
         if (!long && (j >= n || isSpace(source[j]) || source[j] === '|')) {
           tokens.push({ type: 'word', text: '-', start, end: i + 1 });

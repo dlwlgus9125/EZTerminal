@@ -18,6 +18,13 @@ describe('parser — happy path', () => {
     expect(p.commands[0].args).toHaveLength(0);
   });
 
+  it('reads a dash followed by digits as a short flag (git log -3)', () => {
+    const cmd = pipeline('git log -3 src/').commands[0];
+    expect(cmd.args[1]).toMatchObject({ kind: 'flag', name: '3', short: true });
+    expect(cmd.args[2]).toMatchObject({ kind: 'positional' });
+    expect(() => parse('ls -%')).toThrow(ParseError);
+  });
+
   it('parses gen-rows with a number positional', () => {
     const cmd = pipeline('gen-rows 5').commands[0];
     expect(cmd.name).toBe('gen-rows');

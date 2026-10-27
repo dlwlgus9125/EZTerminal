@@ -37,6 +37,13 @@ describe('commandToArgv', () => {
     expect(commandToArgv(commandOf('git status'), ctx())).toEqual(['status']);
   });
 
+  it('passes a numeric short flag through (git log -3, ls -1, head -20 "file")', () => {
+    expect(commandToArgv(commandOf('git log -3'), ctx())).toEqual(['log', '-3']);
+    expect(commandToArgv(commandOf('ls -1'), ctx())).toEqual(['-1']);
+    expect(commandToArgv(commandOf('head -20 "notes.txt"'), ctx())).toEqual(['-20', 'notes.txt']);
+    expect(commandToArgv(commandOf('git log -n3 --oneline'), ctx())).toEqual(['log', '-n3', '--oneline']);
+  });
+
   it('reconstructs a short flag with a quoted string value (node -e "…")', () => {
     expect(commandToArgv(commandOf('node -e "setInterval(() => {}, 100)"'), ctx())).toEqual([
       '-e',
