@@ -36,7 +36,8 @@ const transport = {
   planningAiRequest: async () => ({ ok: false as const, error: 'unavailable' as const, message: 'Story fixture: no AI requests are sent.' }),
   uploadFile: async () => { throw new Error('Story fixture: uploads are unavailable.'); },
   downloadFile: async () => { throw new Error('Story fixture: downloads are unavailable.'); },
-} as Pick<WsEzTerminalTransport, 'getDaemonSnapshot' | 'getPlanningSnapshot' | 'executePlanningCommand' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'executePlanningAsset' | 'uploadFile' | 'downloadFile' | 'planningAiRequest'>;
+  readPlanningResult: async () => ({ ok: false as const, message: 'Story fixture: no results are stored.' }),
+} as Pick<WsEzTerminalTransport, 'getDaemonSnapshot' | 'getPlanningSnapshot' | 'executePlanningCommand' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'executePlanningAsset' | 'uploadFile' | 'downloadFile' | 'planningAiRequest' | 'readPlanningResult'>;
 
 function MobileV2Story({ initial = 'home', locale = 'ko', offline = false }: { initial?: MobileShellTab; locale?: 'ko' | 'en'; offline?: boolean }): JSX.Element {
   const [tab, setTab] = useState<MobileShellTab>('terminal');

@@ -5,7 +5,8 @@ import { PLANNING_AUTO_APPROVAL_PRINCIPAL, blockingRunOf, type ExecutionRun } fr
 import type { WorkflowRepeat, WorkflowRepeatStatus, WorkflowSubproject } from '../../shared/workflow';
 import { flowRunNumber } from '../../shared/workflow-run-view';
 import type { StructuredAgentProviderOption } from '../StructuredAgentSession';
-import { Badge, Button, Select } from '../ui';
+import { Badge, Button, Led, Select, type LedTone } from '../ui';
+import type { RunIntegrationView } from './use-run-integration';
 import type { WorkflowRunCommandInput } from './WorkflowCanvasHeader';
 import { workflowRunControls } from './workflow-canvas-model';
 import { workflowStateLabel, workflowWeekdayLabel, type WorkflowCopy } from './workflow-copy';
@@ -44,6 +45,18 @@ export interface WorkflowRunBarProps {
   readonly onJumpToNode: (nodeId: string) => void;
   readonly onOpenConversation?: (sessionId: string) => void;
   readonly onOpenResults?: (runId: string) => void;
+  /** The shown run's integration after it was allowed (its lamp; 결과 opens the record). */
+  readonly integration?: RunIntegrationView | null;
+}
+
+function integrationLamp(view: RunIntegrationView, text: WorkflowCopy): { readonly tone: LedTone; readonly label: string } {
+  switch (view.status) {
+    case 'passed': return { tone: 'ok', label: text('통합 검증 통과', 'Integration passed') };
+    case 'failed': return { tone: 'red', label: text('통합 검증 실패', 'Integration failed') };
+    case 'validating': return { tone: 'on', label: text('통합 검증 중', 'Validating integration') };
+    case 'awaiting-evidence': return { tone: 'amber', label: text('실기기 증빙 대기', 'Waiting for device evidence') };
+    default: return { tone: 'idle', label: view.loading ? text('통합 기록 확인 중', 'Checking the integration record') : text('통합 완료 미확인', 'Integration not confirmed') };
+  }
 }
 
 /**
@@ -89,6 +102,10 @@ export function WorkflowRunBar(props: WorkflowRunBarProps): JSX.Element {
       {controls.canCancel && <Button size="sm" leadingIcon={<Square />} disabled={commandsDisabled} onClick={() => command({ type: 'run.cancel', payload: { runId: run.runId } })}>{text('실행 취소', 'Cancel execution')}</Button>}
       {controls.canIntegrate && <Button size="sm" variant="primary" disabled={commandsDisabled} onClick={() => command({ type: 'run.integrate', payload: { runId: run.runId } })}>{text('검토된 결과 통합 허용', 'Allow integration of reviewed results')}</Button>}
       {run.integrationAuthorized && <Badge variant="success">{run.integrationAuthorized.by === PLANNING_AUTO_APPROVAL_PRINCIPAL ? text('통합 허용됨 · 자동 승인', 'Integration allowed · auto-approve') : text('통합 허용됨', 'Integration allowed')}</Badge>}
+      {run.integrationAuthorized && props.integration && (() => {
+        const lamp = integrationLamp(props.integration, text);
+        return <span className="workflow-run-bar__integration" role="status" data-testid="workflow-run-integration" data-status={props.integration.status ?? 'none'}><Led tone={lamp.tone} />{lamp.label}</span>;
+      })()}
       {runs.length > 1 && <Select aria-label={text('실행 번호', 'Run number')} value={run.runId} onChange={(event) => props.onPickRun(event.target.value)}>
         {ordered.map((entry) => <option key={entry.runId} value={entry.runId}>{`#${flowRunNumber(runs, entry)} · ${workflowStateLabel(entry.state, text)}${entry.startedAt ? '' : text(' · 시작 안 함', ' · not started')} · ${new Date(entry.createdAt).toLocaleString()}`}</option>)}
       </Select>}

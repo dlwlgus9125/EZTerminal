@@ -59,13 +59,15 @@ export type ProjectEditorMode =
  * Adds a project (its folders are chosen here, the name follows the first one until it is typed)
  * or edits one: its name and folders, the first being the primary.
  */
-export function ProjectEditorDialog({ open, mode, access, onClose, onSaved }: {
+export function ProjectEditorDialog({ open, mode, access, onClose, onSaved, onOpenArchive }: {
   readonly open: boolean;
   readonly mode: ProjectEditorMode;
   readonly access: ProjectRegistryAccess;
   readonly onClose: () => void;
   /** `previousProjectId`: the edited project's id before saving (a new primary folder changes it). */
   readonly onSaved: (project: AgentProjectSummary, previousProjectId?: string) => void;
+  /** The project's backup and restore (editing only, where the host offers it). */
+  readonly onOpenArchive?: () => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const editing = mode.kind === 'edit' ? mode.project : null;
@@ -127,6 +129,11 @@ export function ProjectEditorDialog({ open, mode, access, onClose, onSaved }: {
       testId="agent-project-editor"
       footer={(
         <>
+          {editing && onOpenArchive && (
+            <Button variant="ghost" onClick={onOpenArchive} disabled={saving} data-testid="agent-project-backup" className="agent-project-editor__backup">
+              {t('agentHub.projects.backupRestore')}
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
           </Button>

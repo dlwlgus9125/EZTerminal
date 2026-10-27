@@ -11,10 +11,11 @@ import type {
   PlanningValidationRecord,
 } from "../shared/planning-result";
 import { useAppTranslation } from "./i18n";
-import { Badge, Button, Dialog, EmptyState, LoadingState } from "./ui";
+import { Badge, Button, Dialog, EmptyState, Glyph, LoadingState } from "./ui";
 import { ChatMarkdown } from "./chat/markdown/ChatMarkdown";
 import { DiffView } from "./chat/parts/DiffView";
 import "./chat/chat.css";
+import "./planning-workspace.css";
 
 export type PlanningResultReader = (
   query: PlanningResultQuery,
@@ -23,6 +24,14 @@ export type PlanningResultSelection = Extract<
   PlanningResultQuery,
   { kind: "attempt" | "integration" }
 >;
+
+/**
+ * A flow's results are read in that flow's scope: without its subproject the host looks in the project's
+ * own planning records and finds nothing (diff, log and capture of a flow attempt failed that way).
+ */
+function scopeOf(selection: PlanningResultSelection): { subprojectId?: string } {
+  return selection.subprojectId ? { subprojectId: selection.subprojectId } : {};
+}
 
 function useResultCopy(): (korean: string, english: string) => string {
   const { i18n } = useAppTranslation();
@@ -152,6 +161,7 @@ export function PlanningResultDetails({
   executionRuns,
   onRecordDeviceEvidence,
   retryDisabled,
+  actionError,
   disabled,
 }: {
   selection: PlanningResultSelection | null;
@@ -162,6 +172,8 @@ export function PlanningResultDetails({
   executionRuns?: readonly ExecutionRun[];
   onRecordDeviceEvidence?: (input: PlanningDeviceEvidenceInput) => Promise<boolean>;
   retryDisabled?: boolean;
+  /** Why an action taken from the dialog (a retried review) did not go through. */
+  actionError?: string | null;
   disabled: boolean;
 }): JSX.Element {
   const text = useResultCopy();
@@ -231,6 +243,7 @@ export function PlanningResultDetails({
     void read({
       kind: "diff",
       projectId: selection.projectId,
+      ...scopeOf(selection),
       attemptId: selection.attemptId,
     })
       .then((result) => {
@@ -258,7 +271,7 @@ export function PlanningResultDetails({
     let current = true;
     if (!log || !selection || disabled) return;
     const reference = log.reference;
-    void read({ kind: "log", projectId: selection.projectId, reference })
+    void read({ kind: "log", projectId: selection.projectId, ...scopeOf(selection), reference })
       .then((result) => {
         if (!current) return;
         if (result.ok && result.kind === "log")
@@ -282,19 +295,19 @@ export function PlanningResultDetails({
       current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [log?.reference, selection?.projectId, read, disabled]);
+  }, [log?.reference, selection?.projectId, selection?.subprojectId, read, disabled]);
   useEffect(() => {
     let current = true;
     if (!capture || !selection || disabled) return;
     const reference = capture.reference;
-    void read({kind: 'capture', projectId: selection.projectId, reference}).then(result => {
+    void read({kind: 'capture', projectId: selection.projectId, ...scopeOf(selection), reference}).then(result => {
       if (!current) return;
       if (result.ok && result.kind === 'capture') setCapture({ reference, mimeType: result.mimeType, dataBase64: result.dataBase64 });
       else setCapture({ reference, error: result.ok ? text('캡처 응답 형식이 맞지 않습니다.', 'Unexpected capture response.') : result.message });
     }).catch((reason: unknown) => { if (current) setCapture({ reference, error: String(reason) }); });
     return () => { current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capture?.reference, selection?.projectId, read, disabled]);
+  }, [capture?.reference, selection?.projectId, selection?.subprojectId, read, disabled]);
   const deviceEvidenceTarget = (entry: PlanningValidationRecord): PlanningDeviceEvidenceTarget | null => {
     if (!record || entry.status !== 'not-run' || !onRecordDeviceEvidence) return null;
     const run = executionRuns?.find(candidate => candidate.runId === record.runId);
@@ -379,6 +392,8 @@ export function PlanningResultDetails({
           ? text("작업 결과와 검증 근거", "Task result and evidence")
           : text("통합 결과", "Integration result")
       }
+      icon={<Glyph name={selection?.kind === "attempt" ? "diff" : "merge"} size={20} />}
+      className="ez-inst-dialog"
       footer={<Button onClick={onClose}>{text("닫기", "Close")}</Button>}
     >
       <div className="planning-workspace__result">
@@ -390,6 +405,7 @@ export function PlanningResultDetails({
           {text("저장 결과 다시 확인", "Refresh saved result")}
         </Button>
         {error && <p role="alert">{error}</p>}
+        {actionError && <p role="alert" data-testid="planning-result-action-error">{actionError}</p>}
         {loading ? (
           <LoadingState
             label={text("저장 결과 확인 중", "Reading saved result")}
@@ -424,7 +440,7 @@ export function PlanningResultDetails({
               </dd>
             </dl>
             {attempt.error && <p role="alert">{attempt.error}</p>}
-          {attempt.error && !attempt.review && onRetryReview && <Button size="sm" disabled={disabled || retryDisabled} onClick={() => onRetryReview(attempt)}>{text("독립 검토 다시 요청", "Retry independent review")}</Button>}
+          {attempt.error && !attempt.review && onRetryReview && <Button size="sm" disabled={disabled || retryDisabled} onClick={() => onRetryReview(attempt)} data-testid="planning-result-retry-review">{text("독립 검토 다시 요청", "Retry independent review")}</Button>}
             <h3>{text("변경 파일", "Changed files")}</h3>
             {attempt.changedPaths.length ? (
               <ul>

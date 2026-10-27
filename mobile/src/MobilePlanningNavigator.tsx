@@ -16,13 +16,14 @@ import { mobileAgentCreateAuthorityFingerprint } from './mobile-agent-create-rec
 import { mobileWorkflowDraftAccess } from './mobile-workflow-draft-store';
 import { saveDownloadToDevice } from './download-storage';
 import { mobileProjectArchiveAccess } from './mobile-project-archive';
+import { projectArchivePendingStore } from '../../src/renderer/project-archive-pending';
 import type { MobileWorkspaceTerminalResult } from './workspace-terminal';
 import type { DaemonRuntimeViewState, WsEzTerminalTransport } from './transport/ws-ezterminal';
 import './mobile-v2.css';
 
 export interface MobilePlanningNavigatorProps {
   readonly state: DaemonRuntimeViewState;
-  readonly transport: Pick<WsEzTerminalTransport, 'getPlanningSnapshot' | 'executePlanningCommand' | 'getDaemonSnapshot' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'executePlanningAsset' | 'uploadFile' | 'downloadFile' | 'planningAiRequest'> & Partial<Pick<WsEzTerminalTransport, 'getWorkflowSnapshot' | 'executeWorkflowCommand' | 'sendDaemonCommand' | 'agentCapabilitiesList' | 'agentCapabilitiesManage' | 'workflowPreview' | 'listConversations' | 'getWorkflowNavigation'>>;
+  readonly transport: Pick<WsEzTerminalTransport, 'getPlanningSnapshot' | 'executePlanningCommand' | 'getDaemonSnapshot' | 'getRemoteToken' | 'getPlanningExecutionSnapshot' | 'executePlanningRun' | 'listDaemonProviderModels' | 'executeProjectArchive' | 'executePlanningAsset' | 'uploadFile' | 'downloadFile' | 'planningAiRequest' | 'readPlanningResult'> & Partial<Pick<WsEzTerminalTransport, 'getWorkflowSnapshot' | 'executeWorkflowCommand' | 'sendDaemonCommand' | 'agentCapabilitiesList' | 'agentCapabilitiesManage' | 'workflowPreview' | 'listConversations' | 'getWorkflowNavigation'>>;
   readonly connected: boolean;
   readonly mode: 'projects' | 'tasks';
   readonly projectId: string | null;
@@ -88,6 +89,10 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
   const capabilityClient = useMemo(() => transport.agentCapabilitiesList && transport.agentCapabilitiesManage ? { list: transport.agentCapabilitiesList.bind(transport), manage: transport.agentCapabilitiesManage.bind(transport) } : undefined, [transport]);
   const recoveryAccess = useMemo(() => mobileWorkflowDraftAccess(() => transport.getRemoteToken()), [transport]);
   const archiveAccess = useMemo(() => mobileProjectArchiveAccess(transport), [transport]);
+  // The project screen's backup dialog keeps an unanswered request per PC (the authority fingerprint).
+  const archive = useMemo(() => authorityScope ? { access: archiveAccess, pending: projectArchivePendingStore(`phone:${authorityScope}`) } : undefined, [archiveAccess, authorityScope]);
+  const executionAccess = useMemo(() => ({ getPlanningExecutionSnapshot: (id: string, subprojectId?: string) => transport.getPlanningExecutionSnapshot(id, subprojectId), executePlanningRun: (command: Parameters<WsEzTerminalTransport['executePlanningRun']>[0]) => transport.executePlanningRun(command) }), [transport]);
+  const readPlanningResult = useMemo(() => (query: Parameters<WsEzTerminalTransport['readPlanningResult']>[0]) => transport.readPlanningResult(query), [transport]);
   const hasProject = Boolean(project);
   useEffect(() => {
     if (!hasProject || !active) return;
@@ -107,6 +112,9 @@ export function MobilePlanningNavigator({ state, transport, connected, mode, pro
       navigationTarget={treeTarget?.projectId === project.id ? treeTarget : navigationTarget}
       capabilityClient={capabilityClient}
       recoveryAccess={recoveryAccess}
+      readPlanningResult={readPlanningResult}
+      executionAccess={executionAccess}
+      {...(archive ? { archive } : {})}
       onSeedConversationDraft={(sessionId, draft) => seedPhoneConversationDraft(phoneChatStateAccess(transport), { projectId: project.id, sessionId }, draft)}
       disabled={!connected} disabledReason={offlineReason}
       onBack={() => navigation.closeLayer(layerId, 'ui')}

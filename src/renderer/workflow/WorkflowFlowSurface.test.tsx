@@ -86,6 +86,23 @@ describe('WorkflowFlowSurface', () => {
 });
 
 describe('deviceTimezone', () => {
+  it('lights the integration lamp once integration was allowed, reading the record in the flow scope', async () => {
+    const { run } = workflowCanvasFixture('retry-running', 'en');
+    const allowed = { ...run!, integrationAuthorized: { by: 'desktop-user', at: '2026-10-27T00:00:00.000Z' } };
+    const read = vi.fn(async () => ({ ok: true as const, kind: 'integration' as const, integration: { status: 'failed' } as never }));
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ runs: [allowed], readPlanningResult: read, projectId: 'project-x' })} />));
+    expect(read).toHaveBeenCalledWith({ kind: 'integration', projectId: 'project-x', subprojectId: 'login', runId: allowed.runId });
+    const lamp = container.querySelector('[data-testid="workflow-run-integration"]');
+    expect(lamp?.getAttribute('data-status')).toBe('failed');
+    expect(lamp?.textContent).toBe('Integration failed');
+    expect(lamp?.querySelector('.ez-ui-led')?.getAttribute('data-tone')).toBe('red');
+    // Not allowed yet: nothing to read, no lamp.
+    read.mockClear();
+    await act(async () => root.render(<WorkflowFlowSurface {...props({ readPlanningResult: read, projectId: 'project-x' })} />));
+    expect(read).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="workflow-run-integration"]')).toBeNull();
+  });
+
   it('names a device set to a bare offset by an IANA zone the host accepts', () => {
     const reported = (timeZone: string) => {
       vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((() => ({ resolvedOptions: () => ({ timeZone }) })) as never);

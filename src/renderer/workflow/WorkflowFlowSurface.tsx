@@ -13,6 +13,8 @@ import { WorkflowCanvasHeader, type WorkflowRunCommandInput } from './WorkflowCa
 import type { WorkflowStageLink } from './WorkflowNodeSections';
 import { WorkflowEdgeInspector } from './WorkflowNodeSettings';
 import { WorkflowRunBar } from './WorkflowRunBar';
+import { useRunIntegration } from './use-run-integration';
+import type { PlanningResultReader } from '../PlanningResultDetails';
 import { WorkflowStagePanel } from './WorkflowStagePanel';
 import { workflowRunStatusPresentation } from './WorkflowNodeCard';
 import { WorkflowOutline } from './WorkflowOutline';
@@ -74,6 +76,9 @@ export interface WorkflowFlowSurfaceProps {
   readonly onOpenConversation?: (sessionId: string) => void;
   readonly onOpenResults?: (runId: string) => void;
   readonly onOpenAttemptResult?: (runId: string, attemptId: string) => void;
+  /** Reads the host's result records (the run bar's integration lamp); with the project they belong to. */
+  readonly readPlanningResult?: PlanningResultReader;
+  readonly projectId?: string;
   /** Desktop injects the React Flow canvas (often lazy); without it (Android, tests) the static graph draws. */
   readonly canvasRenderer?: ComponentType<WorkflowCanvasRendererProps>;
   /** Resets a failed lazy canvas so "다시 불러오기" loads it again (the loader keeps a rejected import otherwise). */
@@ -154,6 +159,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
     return reaches ? stageEditScope(going, nodeId) : 'next-run';
   };
 
+  const integration = useRunIntegration(props.readPlanningResult, props.projectId, props.subproject.id, view.run);
   // One polite announcement per real change (run state, approvals), not per 4 s poll.
   const summary = view.run ? `${workflowStateLabel(view.run.state, text)}${awaiting.length ? ` · ${text(`승인 대기 ${awaiting.map(item => item.title).join(', ')}`, `awaiting approval: ${awaiting.map(item => item.title).join(', ')}`)}` : ''}` : '';
   const announced = useRef(summary);
@@ -206,7 +212,7 @@ export function WorkflowFlowSurface(props: WorkflowFlowSurfaceProps): JSX.Elemen
       hasLocalDraft={!!props.draftGraph} issueCount={props.issues.length} awaiting={awaiting} onLaunch={props.onLaunch} onRunCommand={props.onRunCommand}
       onPickRun={props.onPickRun} onSaveReviewer={props.onSaveReviewer} onAutoApprove={props.onAutoApprove} onJumpToNode={id => jumpTo(id, 'run')}
       repeatStatus={props.repeatStatus} onSaveRepeat={props.onSaveRepeat} onOpenAutomationSettings={props.onOpenAutomationSettings}
-      onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} />
+      onOpenConversation={props.onOpenConversation} onOpenResults={props.onOpenResults} integration={integration} />
     <WorkflowCanvasHeader text={text} mode={view.mode} revision={props.revision} hasLocalDraft={!!props.draftGraph} diverged={view.diverged} run={view.run}
       editLocked={props.editLocked || view.mode === 'run-view'} commandsDisabled={props.commandsDisabled} structure={props.structure} onStructureChange={props.onStructureChange}
       overlapping={workflowLayoutOverlaps(view.graph, card)} layout={props.layout} onLayoutChange={props.onLayoutChange} onRunView={props.onRunViewChange}

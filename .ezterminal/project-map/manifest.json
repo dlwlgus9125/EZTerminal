@@ -585,9 +585,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:b31fdcf4c19d4124da37b3d88f5094d14811a952fed1bde9f1bcddf332f2e61b",
+        "inputDigest": "sha256:436cfd096acc507ff5ee7f3e0b2729f08cd8a6fc5b9d5b8e9e7f15a593ca0fe9",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4-5 review fixes): TerminalPane lists the extracted AI input ref in its takeover effect; the phone terminal records block end times before it retains blocks. No anchored block changed meaning."
+        "reason": "Reviewed (I5-1): App passes the backup and restore access to the project dialogs (a module-level pending store per project); the anchored approval and session blocks only moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:2e4d30603fc633a785e6a8a78dbcea58105b58b66ad7f14e041317c063f48ea0",
+        "inputDigest": "sha256:8c71397beebcd3190984bd9c4dc50427cd7eabcdb9613c15384efbf35b4a9487",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I5-0 prep): the flow screen and dock host import the listed-conversation type and the daemon projection event filter from their new modules; the board Files button gains a test id. No anchored behaviour changed."
+        "reason": "Reviewed (I5-1): the phone flow screen also gets the result reader, the execution access for 독립 검토 다시 요청 and backup per PC. The navigation projection and authority fingerprint are unchanged; anchors moved."
       }
     }
   ]

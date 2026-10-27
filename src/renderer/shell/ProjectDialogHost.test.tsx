@@ -37,9 +37,9 @@ function Harness(handlers: Handlers): JSX.Element {
     </AppI18nProvider>
   );
 }
-function render(): Handlers {
+function render(extra: Partial<Handlers> = {}): Handlers {
   const handlers: Handlers = {
-    onSaved: vi.fn(), onDeleted: vi.fn(), onChanged: vi.fn(), onOpenBoard: vi.fn(), onCliHistory: vi.fn(), onWorktreeCreated: vi.fn(),
+    onSaved: vi.fn(), onDeleted: vi.fn(), onChanged: vi.fn(), onOpenBoard: vi.fn(), onCliHistory: vi.fn(), onWorktreeCreated: vi.fn(), ...extra,
   };
   act(() => root.render(<Harness {...handlers} />));
   return handlers;
@@ -57,6 +57,29 @@ function chooseFromMenu(label: string): void {
 }
 
 describe('ProjectDialogHost', () => {
+  it('opens backup and restore from the project settings and goes back to them; an unanswered request shows again', async () => {
+    const pending = { read: vi.fn(() => ({ type: 'export' as const, projectId: 'p-kitchen', commandId: 'export-1' })), write: vi.fn(async () => undefined) };
+    const executeProjectArchive = vi.fn(async () => ({ ok: false as const, error: 'unavailable' as const, message: 'offline' }));
+    render({ archive: { access: { executeProjectArchive }, pending } });
+    act(() => openDialog({ kind: 'edit', project: kitchen }));
+    await flush();
+    act(() => byTestId('agent-project-backup').click());
+    await flush();
+    expect(dialogs()).toBe(1);
+    expect(byTestId('project-archive-dialog').textContent).toContain('Kitchen');
+    expect(pending.read).toHaveBeenCalledWith('p-kitchen');
+    pressEscape();
+    await flush();
+    expect(byTestId('agent-project-editor').textContent).toContain('Edit project');
+  });
+
+  it('offers no backup entry where the host has no archive', async () => {
+    render();
+    act(() => openDialog({ kind: 'edit', project: kitchen }));
+    await flush();
+    expect(document.querySelector('[data-testid="agent-project-backup"]')).toBeNull();
+  });
+
   it('opens an edit from the list over it one layer at a time, and goes back to the list', async () => {
     render();
     const invoker = byTestId<HTMLButtonElement>('invoker');

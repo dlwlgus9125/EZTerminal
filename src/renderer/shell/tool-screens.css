@@ -412,3 +412,29 @@
 .ez-inst-panel .ez-ui-switch__label {
   font-family: var(--ui-font-label);
 }
+
+/* Run and attempt results: the state reads as a chip, the facts as one plate of readouts. */
+.ez-inst-dialog .planning-workspace__result > .ez-ui-badge {
+  align-self: flex-start;
+}
+
+.ez-inst-dialog .planning-workspace__result-meta {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+
+.ez-inst-dialog .planning-workspace__result-meta dt {
+  color: var(--ui-text-muted);
+  font: 600 0.75rem / 1.3 var(--ui-font-label);
+}
+
+.ez-inst-dialog .planning-workspace__result-meta dd {
+  overflow-wrap: anywhere;
+}
+
+.ez-inst-dialog .planning-workspace__result h3 {
+  color: var(--ui-text-secondary);
+  font: 600 0.8125rem / 1.25 var(--ui-font-label);
+}

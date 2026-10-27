@@ -58,6 +58,29 @@ describe('saved planning results', () => {
     expect(read).toHaveBeenCalledWith({kind: 'log', projectId: saved.projectId, reference: 'log-test'});
     expect(document.body.textContent).toContain('Required tests passed\nexit 0');
   });
+  it('reads a flow attempt\'s diff and logs in that flow\'s subproject scope (the host finds nothing outside it)', async () => {
+    const read = vi.fn<PlanningResultReader>(async (query) => {
+      if (query.kind === 'attempt') return {ok: true, kind: 'attempt', result: saved};
+      if (query.kind === 'diff') return query.subprojectId === 'flow-1' ? {ok: true, kind: 'diff', text: '+ flow change'} : {ok: false, message: 'This result belongs to another planning scope.'};
+      if (query.kind === 'log') return query.subprojectId === 'flow-1' ? {ok: true, kind: 'log', text: 'flow log'} : {ok: false, message: 'This evidence is not referenced by the selected planning scope.'};
+      return {ok: false, message: 'Unexpected request'};
+    });
+    await act(async () => root.render(<PlanningResultDetails selection={{kind: 'attempt', projectId: saved.projectId, subprojectId: 'flow-1', attemptId: saved.attemptId}} read={read} onClose={() => undefined} disabled={false} />));
+    await click('View frozen result diff');
+    expect(read).toHaveBeenCalledWith({kind: 'diff', projectId: saved.projectId, subprojectId: 'flow-1', attemptId: saved.attemptId});
+    expect(document.body.textContent).toContain('+ flow change');
+    await click('Validation log 1');
+    expect(read).toHaveBeenCalledWith({kind: 'log', projectId: saved.projectId, subprojectId: 'flow-1', reference: 'log-test'});
+    expect(document.body.textContent).toContain('flow log');
+  });
+  it('retries a failed independent review from the dialog and shows why a retry was refused', async () => {
+    const onRetryReview = vi.fn();
+    const read = vi.fn<PlanningResultReader>(async () => ({ok: true, kind: 'attempt', result: {...saved, error: 'Reviewer did not answer.'}}));
+    await act(async () => root.render(<PlanningResultDetails selection={{kind: 'attempt', projectId: saved.projectId, subprojectId: 'flow-1', attemptId: saved.attemptId}} read={read} onClose={() => undefined} disabled={false} onRetryReview={onRetryReview} actionError="Independent review is still being processed." />));
+    await click('Retry independent review');
+    expect(onRetryReview).toHaveBeenCalledWith(expect.objectContaining({attemptId: saved.attemptId}));
+    expect(document.querySelector('[data-testid="planning-result-action-error"]')?.textContent).toBe('Independent review is still being processed.');
+  });
   it('does not infer integration success from the existence of a reviewed run', async () => {
     const read = vi.fn<PlanningResultReader>(async () => ({ok: true, kind: 'integration', integration: null}));
     await act(async () => root.render(<PlanningIntegrationStatus projectId="project-test" runId="reviewed-run" revision={5} read={read} onOpen={() => undefined} disabled={false} />));

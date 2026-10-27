@@ -24,6 +24,7 @@ import {
   type PlanningWorkspaceSection,
 } from "./PlanningWorkspacePanel";
 import type { PlanningConversation } from "./workflow/workflow-conversations";
+import type { WorkflowExecutionAccess } from "./workflow/workflow-execution-access";
 
 export interface PlanningNavigation {
   readonly openHistory?: (projectId?: string) => void;
@@ -81,6 +82,11 @@ const executionAccess: PlanningExecutionAccess = {
   getDaemonSnapshot: () => window.ezterminal.getDaemonSnapshot(),
   listDaemonProviderModels: (providerId) =>
     window.ezterminal.listDaemonProviderModels(providerId),
+};
+/** The flow screen's execution access: retry a failed independent review in the flow's own scope. */
+const workflowExecutionAccess: WorkflowExecutionAccess = {
+  getPlanningExecutionSnapshot: (projectId, subprojectId) => window.ezterminal.getPlanningExecutionSnapshot(projectId, subprojectId),
+  executePlanningRun: (command) => window.ezterminal.executePlanningRun(command),
 };
 const assetApi: PlanningAssetApi = {
   executePlanningAsset: (request) =>
@@ -218,6 +224,7 @@ export function PlanningWorkspaceDockPanel(
       canvasRenderer={FlowCanvas}
       onReloadCanvas={() => { workflowCanvasLoader.reset(); setCanvasGeneration((current) => current + 1); }}
       readPlanningResult={executionAccess.readPlanningResult}
+      executionAccess={workflowExecutionAccess}
       daemonAccess={workflowDaemonAccess}
       capabilityClient={workflowCapabilityClient}
       recoveryAccess={workflowRecoveryAccess}

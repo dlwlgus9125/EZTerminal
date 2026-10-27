@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useMemo, useState, type ComponentType } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import type { ExecutionRun } from '../../shared/planning-execution';
+import type { PlanningIntegrationRecord } from '../../shared/planning-result';
 import type { WorkflowRepeat, WorkflowRepeatStatus } from '../../shared/workflow';
 import { validateWorkflowGraph, type WorkflowGraph, type WorkflowNode } from '../../shared/workflow-graph';
 import { AppI18nProvider } from '../i18n';
@@ -47,6 +48,8 @@ interface FlowStoryProps {
   readonly autoApprove?: boolean;
   /** 반복 on a host that runs it (workflow-repeat-v1): the saved setting and what the host says about it. */
   readonly repeat?: { readonly value: WorkflowRepeat; readonly status?: WorkflowRepeatStatus };
+  /** The host's integration record of an integrated run (the run bar's lamp). */
+  readonly integration?: 'passed' | 'failed' | 'validating';
 }
 
 /** The efforts each fixture model offers (the stage panel lists only these). */
@@ -54,6 +57,14 @@ const STORY_CATALOGS: Readonly<Record<string, readonly ProviderModel[]>> = {
   codex: [{ id: 'gpt-6-astra', displayName: 'GPT-6-Astra', isDefault: true, supportsReasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'] }],
   claude: [{ id: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', isDefault: true, supportsReasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
 };
+
+/** An integration record as the host keeps it (story values). */
+function storyIntegration(status: 'passed' | 'failed' | 'validating'): PlanningIntegrationRecord {
+  return { version: 1, projectId: 'project-story', runId: 'run-story', inputFingerprint: 'c'.repeat(64), status, inputArtifacts: [{ artifactId: 'login:implement', revision: 2 }],
+    workspacePath: '<WORKSPACE>/.ezterminal/integration/run-story', candidateCommit: 'd'.repeat(40), ...(status === 'passed' ? { successfulCommit: 'd'.repeat(40) } : {}),
+    validations: [{ validationId: 'pnpm test', status: status === 'failed' ? 'failed' : status === 'passed' ? 'passed' : 'not-run', exitCode: status === 'failed' ? 1 : 0, logRefs: [], summary: status === 'failed' ? '2 tests failed in login.spec.ts' : 'All tests passed' }],
+    ...(status === 'failed' ? { error: 'Validation failed after merging the reviewed results.' } : {}) };
+}
 
 const COLUMN = 248 + 96;
 function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
@@ -63,7 +74,7 @@ function draftOf(graph: WorkflowGraph, draft: Draft): WorkflowGraph | null {
 }
 function Failing(): JSX.Element { throw new Error('The canvas chunk failed to load (story).'); }
 
-function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false, structure: initialStructure = false, autoApprove = false, repeat }: FlowStoryProps): JSX.Element {
+function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived = false, empty = false, select, section: initialSection = 'settings', draft = 'none', runView: initialRunView = false, mobile = false, layout: initialLayout, renderer = 'react-flow', camera, locale = 'ko', panelCollapsed = false, structure: initialStructure = false, autoApprove = false, repeat, integration }: FlowStoryProps): JSX.Element {
   const text = useWorkflowCopy();
   const fixture = useMemo(() => {
     if (twoRuns) { const value = workflowCanvasRuns(locale); return { graph: value.graph, runs: value.runs, archivedNodes: [] as WorkflowNode[] }; }
@@ -96,7 +107,8 @@ function FlowStory({ scenario, legacyLayout = false, twoRuns = false, archived =
     structure={structure} onStructureChange={setStructure} onLaunch={fn()} onSaveReviewer={fn()} onAutoApprove={fn()}
     stageLinks={nodeId => nodeId === 'login:implement' || nodeId === 'login:design' ? [{ sessionId: 'chat-impl', title: locale === 'ko' ? '로그인 오류 처리 방향 논의' : 'Discuss login error handling', graphRevision: 3 }] : []}
     canStartStageChat onStartStageChat={fn()} onOpenConversation={fn()} onOpenResults={fn()} onOpenAttemptResult={fn()}
-    canvasRenderer={Renderer} onReloadCanvas={() => setReloaded(true)} initialViewport={viewport} panelOpen={panelOpen} onPanelOpenChange={setPanelOpen} />;
+    canvasRenderer={Renderer} onReloadCanvas={() => setReloaded(true)} initialViewport={viewport} panelOpen={panelOpen} onPanelOpenChange={setPanelOpen}
+    {...(integration ? { projectId: 'project-story', readPlanningResult: async () => ({ ok: true as const, kind: 'integration' as const, integration: storyIntegration(integration) }) } : {})} />;
 }
 function Frame(props: FlowStoryProps): JSX.Element {
   const locale = props.locale ?? 'ko';
@@ -152,6 +164,9 @@ export const RetryRoundTwo: Story = { args: { scenario: 'retry-running', select:
 export const IndependentReview: Story = { args: { scenario: 'reviewing', select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 0, zoom: 0.72 } } };
 export const RetryLimitReached: Story = { args: { scenario: 'retry-exhausted', select: { kind: 'node', key: 'condition' }, section: 'run', camera: { column: 1, zoom: 0.6 } } };
 export const CompletedAwaitingIntegration: Story = { args: { scenario: 'completed', camera: { column: 2, zoom: 0.6 } } };
+/** I5: the run bar's integration lamp (the record the old planning panel showed), 결과 opens it. */
+export const IntegrationPassed: Story = { args: { scenario: 'integrated-auto', integration: 'passed', camera: { column: 2, zoom: 0.6 } } };
+export const IntegrationFailed: Story = { args: { scenario: 'integrated-auto', integration: 'failed', camera: { column: 2, zoom: 0.6 } } };
 export const IntegratedByAutoApprove: Story = { args: { scenario: 'integrated-auto', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 export const CancellationPending: Story = { args: { scenario: 'cancel-pending', select: { kind: 'node', key: 'approval' }, section: 'run', camera: { column: 3, zoom: 0.72 } } };
 export const Cancelled: Story = { args: { scenario: 'cancelled', select: { kind: 'node', key: 'implement' }, section: 'run', camera: { column: 0, zoom: 0.6 } } };

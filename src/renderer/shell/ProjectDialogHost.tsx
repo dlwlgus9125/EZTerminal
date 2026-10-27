@@ -4,10 +4,12 @@ import type { AgentProjectSummary } from '../../shared/agent-history';
 import type { DaemonSnapshot } from '../../shared/daemon-protocol';
 import type { GitDiffResult } from '../../shared/git-status';
 import type { WorkspaceWorktreeAccess } from '../../shared/workspace-worktree';
+import { ProjectArchiveDialog, type ProjectArchiveDialogAccess } from '../ProjectArchiveDialog';
 import { ProjectDeleteDialog, ProjectEditorDialog, type ProjectRegistryAccess } from '../ProjectDialogs';
 import type { useLiveTerminalSessions } from '../use-live-terminal-sessions';
 import { NewWorktreeDialog } from '../WorktreeDialogs';
 import { AllProjectsDialog } from './AllProjectsDialog';
+import './tool-screens.css';
 import { WorktreeDiffDialog, WorktreeMergeStep, WorktreesDialog, type ProjectWorktree } from './WorktreesDialog';
 
 /** A project as the worktree dialogs need it. */
@@ -28,7 +30,9 @@ export type ProjectDialogState =
   | { readonly kind: 'worktrees'; readonly project: ProjectRef }
   | { readonly kind: 'worktree-new'; readonly project: ProjectRef; readonly returnTo?: 'worktrees' }
   | { readonly kind: 'merge'; readonly project: ProjectRef; readonly worktree: ProjectWorktree }
-  | { readonly kind: 'diff'; readonly project: ProjectRef; readonly worktree: ProjectWorktree };
+  | { readonly kind: 'diff'; readonly project: ProjectRef; readonly worktree: ProjectWorktree }
+  /** Backup, restore and history cleanup; `editing` is the project dialog it was opened from (closing goes back to it). */
+  | { readonly kind: 'archive'; readonly project: ProjectRef; readonly editing?: AgentProjectSummary };
 
 export interface ProjectDialogHostProps {
   readonly state: ProjectDialogState | null;
@@ -53,6 +57,8 @@ export interface ProjectDialogHostProps {
   readonly onCliHistory: (project: AgentProjectSummary) => void;
   /** A new worktree is ready: a conversation starts there. */
   readonly onWorktreeCreated: (project: ProjectRef, workspaceId: string) => void;
+  /** Backup and restore (where the host offers it): the requests, the unanswered one kept on this device, and where a restored project opens. */
+  readonly archive?: ProjectArchiveDialogAccess & { readonly onOpenProject?: (projectId: string) => void };
 }
 
 const ADD = { kind: 'add' } as const;
@@ -191,6 +197,19 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
         />
       );
     }
+    case 'archive': {
+      const { archive } = props;
+      if (!archive) return null;
+      const editing = state.editing;
+      return (
+        <ProjectArchiveDialog
+          project={state.project}
+          archive={archive}
+          onClose={() => (editing ? onStateChange({ kind: 'edit', project: editing }) : close())}
+          onOpenProject={archive.onOpenProject ? (projectId) => { close(); archive.onOpenProject!(projectId); } : undefined}
+        />
+      );
+    }
     case 'add':
     case 'edit':
       return (
@@ -198,6 +217,7 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
           open
           mode={state.kind === 'add' ? ADD : { kind: 'edit', project: state.project }}
           access={access}
+          {...(state.kind === 'edit' && props.archive ? { onOpenArchive: () => onStateChange({ kind: 'archive', project: { projectId: state.project.projectId, name: state.project.name }, editing: state.project }) } : {})}
           onClose={() => back(false)}
           onSaved={(project, previousProjectId) => {
             props.onSaved(project, state.kind, previousProjectId);
@@ -209,3 +229,4 @@ export function ProjectDialogHost(props: ProjectDialogHostProps): JSX.Element | 
       );
   }
 }
+

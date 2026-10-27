@@ -17,6 +17,7 @@ import {
   LoadingState,
   Select,
 } from "./ui";
+import "./planning-workspace.css";
 
 export interface ProjectArchiveAccess {
   executeProjectArchive(

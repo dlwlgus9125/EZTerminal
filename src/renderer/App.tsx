@@ -5,6 +5,7 @@ import { noteConversationViewed } from './conversation-views';
 import { useDesktopAppearance } from './useDesktopAppearance';
 import { useTerminalPreferences } from './useTerminalPreferences';
 import { useProjectDocumentNavigation } from './useProjectDocumentNavigation';
+import { projectArchivePendingStore } from './project-archive-pending';
 import { useCommandCenterCatalog, type AppQuickOpenRow } from './useCommandCenterCatalog';
 import { serializeWorkbench, WorkbenchViewsController } from './workbench-views';
 import { WorkbenchViewsBar } from './workbench/WorkbenchViewsBar';
@@ -480,6 +481,9 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     />
   );
 }
+
+/** This PC's unanswered backup or restore request, per project (see project-archive-pending). */
+const desktopArchivePending = projectArchivePendingStore('desktop');
 
 function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string'
@@ -3640,6 +3644,11 @@ export function App(): JSX.Element {
         onChanged={() => setProjectsRevision((value) => value + 1)}
         onOpenBoard={(project) => deskShell.showProject(project)}
         onCliHistory={(project) => setConversationHistory({ projectId: project.projectId, source: 'native' })}
+        archive={{
+          access: window.ezterminal,
+          pending: desktopArchivePending,
+          onOpenProject: (projectId: string) => { setProjectsRevision((value) => value + 1); shellNavigation.showBoard(projectId); },
+        }}
       />
       {quickOpenMode && (
         <QuickOpenModal
