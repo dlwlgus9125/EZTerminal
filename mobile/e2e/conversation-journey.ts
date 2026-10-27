@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OwnedDesktopProfileRegistry } from '../../e2e/owned-desktop-profile.ts';
 import { APP_ID, closeMobileE2eResources, closeWebViewDevtools, connectAndAuth, evaluateWebView, launchDesktop,
-  runAdb, runAdbBinary, setTestIdTextValue, sleep, tapTestId, tapTestIdOnce, waitForTestId, waitForTestIdHidden } from './lib.ts';
+  openConversationList, SHELL_ROOT_TEST_ID, runAdb, runAdbBinary, setTestIdTextValue, sleep, tapTestId, tapTestIdOnce, waitForTestId, waitForTestIdHidden } from './lib.ts';
 import { CHROME_BANDS_PROBE } from './chrome-probe.ts';
 
 const artifacts = path.resolve(process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR ?? 'artifacts/conversation-ux/android');
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     }, probe.value);
     assert.ok(enabled.ok, JSON.stringify(enabled));
     await connectAndAuth(desktop.token);
-    await tapTestId('shell-tab-agents');
+    await openConversationList();
     await tapTestId('mobile-project-history');
     await waitForTestId('conversation-history-picker');
     await waitFor(`Array.from(document.querySelectorAll('.conversation-history__list button')).some(node => node.textContent.includes('Android previous CLI conversation'))`, 'native history row');
@@ -81,8 +81,8 @@ async function main(): Promise<void> {
     runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
     await waitForTestId('connect-screen', 45_000);
     await click('[data-testid="connect-saved-go"]');
-    await waitForTestId('mobile-workspace', 45_000);
-    await tapTestId('shell-tab-agents');
+    await waitForTestId(SHELL_ROOT_TEST_ID, 45_000);
+    await openConversationList();
     await waitForTestId('conversation-start');
     await waitFor(`document.querySelector(${JSON.stringify(input)}).value === 'Draft restored after Android force stop'`, 'restored draft');
     assert.equal((await host.evaluate(() => window.ezterminal.getDaemonSnapshot()))?.agents.length, 0);

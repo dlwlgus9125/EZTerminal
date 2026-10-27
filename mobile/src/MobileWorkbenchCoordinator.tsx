@@ -123,6 +123,7 @@ function MobileWorkbenchLayers({
   return (
     <div
       className="mobile-workbench-coordinator"
+      data-testid="mobile-shell"
       data-page-active={pageActive ? 'true' : 'false'}
       data-destination-active={resolvedDestinationActive ? 'true' : 'false'}
       data-terminal-active={resolvedTerminalActive ? 'true' : 'false'}

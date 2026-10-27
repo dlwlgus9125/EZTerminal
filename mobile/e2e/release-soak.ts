@@ -52,6 +52,7 @@ import {
   waitForTestIdHidden,
   type WebViewMemorySnapshot,
   type AndroidAppMemorySnapshot,
+  SHELL_ROOT_TEST_ID,
 } from './lib.ts';
 
 const SESSION_COUNT = 8;
@@ -489,7 +490,7 @@ async function main(): Promise<void> {
       const reconnect = await waitForNewReconnect(reconnectGenerations);
       reconnectGenerations.add(reconnect.generation);
       await waitForTestIdHidden('mobile-reconnect-scrim', RECOVERY_TIMEOUT_MS);
-      await waitForTestId('mobile-workspace', RECOVERY_TIMEOUT_MS);
+      await waitForTestId(SHELL_ROOT_TEST_ID, RECOVERY_TIMEOUT_MS);
       const resume = await waitForResume(reconnect.generation);
       await sleep(MARKER_SETTLE_MS);
 

@@ -8,6 +8,7 @@ import {
   connectAndAuth,
   getWebViewHistorySnapshot,
   launchDesktop,
+  openFeed,
   openShellDestination,
   runAdb,
   sleep,
@@ -41,7 +42,7 @@ async function androidBackToHub(closedView: string): Promise<void> {
   runAdb(['shell', 'input', 'keyevent', '4']);
   await sleep(500);
   await waitForTestIdHidden(closedView);
-  await waitForTestId('mobile-home-view');
+  await waitForTestId('mobile-feed');
 }
 
 async function main(): Promise<void> {
@@ -54,10 +55,9 @@ async function main(): Promise<void> {
   try {
     await connectAndAuth(token);
 
-    // The product starts at Terminal. This scenario exercises returning to
-    // the Home invoker, so establish that root before opening destinations.
-    await tapTestId('shell-tab-home');
-    await waitForTestId('mobile-home-view');
+    // The product's root is the feed (I4 layout A). This scenario exercises
+    // returning to it, so establish that root before opening destinations.
+    await openFeed();
 
     // Keep the OpenClaw destination visible even when the fixture machine has
     // no CLI. The page must then render its typed unavailable guidance.
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     await tapTestId('mobile-settings-close');
     await waitForTestId('settings-category-integrations');
     await tapTestId('mobile-settings-close');
-    await waitForTestId('mobile-home-view');
+    await waitForTestId('mobile-feed');
     await sleep(600);
     console.log('[apk-stabilization] post-settings history:', JSON.stringify(await getWebViewHistorySnapshot()));
 

@@ -18,6 +18,8 @@ import { OwnedDesktopProfileRegistry } from '../../e2e/owned-desktop-profile.ts'
 import {
   APK_PATH, APP_ID, closeMobileE2eResources, closeWebViewDevtools, connectAndAuth, ensureRemoteBridgeTransport,
   evaluateWebView, launchDesktop, runAdb, runAdbBinary, setTestIdTextValue, sleep, waitForTestId,
+  openProjectList,
+  SHELL_ROOT_TEST_ID,
 } from './lib.ts';
 
 const arg = (name: string) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -55,7 +57,10 @@ async function openListItem(selector: string, label: string): Promise<void> {
   await evaluateWebView(`(() => { ${find}.click(); return true; })()`);
 }
 async function openProject(name: string): Promise<void> {
-  await clickSelector('[data-testid="shell-tab-home"]');
+  // The older app (vc77) has the Projects tab; this app opens the list from the feed's ▾ (I4 layout A).
+  const olderApp = await evaluateWebView<boolean>(`!!document.querySelector('[data-testid="shell-tab-home"]')`);
+  if (olderApp) await clickSelector('[data-testid="shell-tab-home"]');
+  else await openProjectList();
   await waitForTestId('mobile-projects-navigator');
   await openListItem('[data-testid="mobile-planning-project"]', name);
   await waitForTestId('workflow-workspace');
@@ -149,7 +154,7 @@ async function main(): Promise<void> {
     await waitForTestId('connect-screen', 45_000);
     // The saved connection survived the update: connect with it (as after a force-stop).
     await clickSelector('[data-testid="connect-submit"]');
-    await waitForTestId('mobile-workspace', 30_000);
+    await waitForTestId(SHELL_ROOT_TEST_ID, 30_000);
     await openProject('Compat on this PC');
     // The device draft is read first (it restores the older app's last view); navigate after it settles.
     await waitForCondition('the device draft check settles', `!document.body.innerText.includes('Checking drafts saved on this device')`, 30_000);

@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { OwnedDesktopProfileRegistry } from '../../e2e/owned-desktop-profile.ts';
-import { closeMobileE2eResources, connectAndAuth, evaluateWebView, launchDesktop, runAdb, runAdbBinary, sleep, tapTestId, waitForTestId } from './lib.ts';
+import { closeMobileE2eResources, connectAndAuth, evaluateWebView, launchDesktop, openProjectList, runAdb, runAdbBinary, sleep, waitForTestId } from './lib.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 const artifacts = path.resolve(process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR ?? 'artifacts/subagents/android');
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     const host = desktop.window;
     await connectAndAuth(desktop.token);
     // The project tree: children are reached through their parent, never listed beside it.
-    await tapTestId('shell-tab-home');
+    await openProjectList();
     const tree = `document.querySelector('[data-testid="project-conversation-tree"]').innerText`;
     await clickSelector('button[aria-label="Expand: Structured child fixture"]');
     await waitFor(`${tree}.indexOf('Lead Agent') >= 0`, 'parent row');

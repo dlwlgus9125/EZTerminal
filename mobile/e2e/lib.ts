@@ -2218,8 +2218,58 @@ export async function connectAndAuth(token: string, options: {
   await submitConnectionOnce();
 }
 
-/** The authenticated shell's root tab. */
-export const SHELL_ROOT_TEST_ID = 'mobile-workspace';
+/** The authenticated shell (I4: the feed is its first screen; the terminal and pages sit inside it). */
+export const SHELL_ROOT_TEST_ID = 'mobile-shell';
+
+async function terminalActive(): Promise<boolean> {
+  return await evaluateWebView<string | null>(
+    `document.querySelector('[data-testid="mobile-shell"]')?.getAttribute('data-terminal-active') ?? null`,
+  ) === 'true';
+}
+
+/**
+ * Returns to the feed (I4 layout A: the root). From the terminal its header's back button; from a page or a
+ * conversation Android Back, which unwinds to the feed. Each step re-observes the screen.
+ */
+export async function openFeed(timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  await waitForTestId(SHELL_ROOT_TEST_ID, timeoutMs);
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const state = await waitForAnyTestId(['mobile-feed', 'workspace-hub-btn', 'connect-screen'], Math.max(500, Math.min(3_000, deadline - Date.now())))
+      .catch(() => null);
+    if (state === 'mobile-feed') return;
+    if (state === 'connect-screen') throw new Error('The phone is on the connect screen, not the workspace.');
+    if (state === 'workspace-hub-btn' && await terminalActive()) await tapTestId('workspace-hub-btn', Math.max(500, deadline - Date.now()));
+    else runAdb(['shell', 'input', 'keyevent', '4']);
+    await sleep(400);
+    if (Date.now() > deadline) break;
+  }
+  await waitForTestId('mobile-feed', Math.max(500, deadline - Date.now()));
+}
+
+/** Opens the terminal from the feed's header (or stays on it when the app opened there). */
+export async function openTerminalRoot(timeoutMs = 30_000): Promise<void> {
+  await waitForTestId(SHELL_ROOT_TEST_ID, timeoutMs);
+  if (await terminalActive()) return;
+  await openFeed(timeoutMs);
+  await tapTestId('mobile-feed-terminal', timeoutMs);
+  await waitForTestIdAttribute(SHELL_ROOT_TEST_ID, 'data-terminal-active', 'true', timeoutMs);
+}
+
+/** The conversation list (the feed's 모두 보기). */
+export async function openConversationList(timeoutMs = 30_000): Promise<void> {
+  await openFeed(timeoutMs);
+  await tapTestId('mobile-feed-all-conversations', timeoutMs);
+  // The list, or the draft the screen restores (a new conversation being written, a conversation left open).
+  await waitForAnyTestId(['mobile-agent-view', 'conversation-start', 'mobile-structured-agent-session'], timeoutMs);
+}
+
+/** The project list (▾ → 프로젝트 목록 열기, with every project chosen) or the chosen project's screen. */
+export async function openProjectList(timeoutMs = 30_000): Promise<void> {
+  await openFeed(timeoutMs);
+  await tapTestId('mobile-feed-scope', timeoutMs);
+  await tapTestId('mobile-feed-open-project', timeoutMs);
+}
 
 /** Submit a prepared ConnectScreen exactly once and require its first product
  * result to be the authenticated workspace. Sharing this helper prevents individual RC
@@ -2237,12 +2287,10 @@ export async function submitConnectionOnce(): Promise<void> {
   await assertColdConnectionUsedOneSocket();
 }
 
-/** Enters the Terminal tab, creates a session through the
+/** Opens the terminal, creates a session through the
  * locale-independent header action, and waits for command input. */
 export async function createTerminalSession(): Promise<void> {
-  await waitForTestId(SHELL_ROOT_TEST_ID, 30_000);
-  await tapTestId('shell-tab-terminal');
-  await waitForTestId('workspace-hub-btn', 30_000);
+  await openTerminalRoot(30_000);
   await tapTestId('tab-add-btn');
   await waitForTestId('mobile-session-view', 30_000);
 }
@@ -2263,10 +2311,10 @@ export async function activateTerminalTab(index: number, timeoutMs = 15_000): Pr
 }
 
 /** Opens a full-screen destination with real Android taps. `actionTestId` is
- * either a tab-bar item (`shell-tab-*`) or a More-sheet row (`more-*`), in
- * which case the sheet is opened first. A caller may begin on any tab; every
- * retry re-observes that state so a missed native tap cannot be mistaken for
- * completed navigation. */
+ * a row of the feed's ⋯ menu (`more-*`, I4 layout A) or another feed header
+ * button; the menu is opened first. A caller may begin anywhere; every retry
+ * returns to the feed and re-observes, so a missed native tap cannot be
+ * mistaken for completed navigation. */
 export async function openShellDestination(
   actionTestId: string,
   destinationTestId: string,
@@ -2280,10 +2328,10 @@ export async function openShellDestination(
   for (let attempt = 1; attempt <= 3 && Date.now() < deadline; attempt += 1) {
     let state: string;
     try {
-      state = await waitForAnyTestId(
-        [destinationTestId, actionTestId, 'shell-tab-more', SHELL_ROOT_TEST_ID, 'workspace-hub-btn'],
-        Math.min(3_000, remaining()),
-      );
+      state = await waitForAnyTestId([destinationTestId, actionTestId], Math.min(1_500, remaining())).catch(async () => {
+        await openFeed(remaining());
+        return 'mobile-feed';
+      });
     } catch (error) {
       lastError = error;
       continue;
@@ -2292,7 +2340,7 @@ export async function openShellDestination(
 
     if (viaMoreSheet && state !== actionTestId) {
       try {
-        await tapTestId('shell-tab-more', remaining());
+        await tapTestId('mobile-feed-more', remaining());
         state = await waitForAnyTestId(
           [destinationTestId, actionTestId],
           Math.min(5_000, remaining()),

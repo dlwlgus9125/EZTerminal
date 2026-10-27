@@ -17,6 +17,8 @@ import {
   APK_PATH, APP_ID, MAIN_ENTRY, closeMobileE2eResources, connectAndAuth,
   evaluateWebView, launchDesktop, restartApp, runAdb, runAdbBinary, setTestIdTextValue, sleep,
   waitForTestId, waitForTestIdHidden,
+  openProjectList,
+  SHELL_ROOT_TEST_ID,
 } from './lib.ts';
 
 const artifactDir = process.env.EZTERMINAL_MOBILE_E2E_ARTIFACT_DIR
@@ -91,7 +93,8 @@ async function fillSelector(selector: string, value: string): Promise<void> {
 }
 
 async function openProject(name: string, advanced = true): Promise<void> {
-  await clickSelector('[data-testid="shell-tab-home"]');
+  // I4 layout A: the feed's ▾ opens the project list (every project chosen).
+  await openProjectList();
   await waitForTestId('mobile-projects-navigator');
   await waitForCondition('registered project row', `(() => {
     return [...document.querySelectorAll('[data-testid="mobile-planning-project"]')]
@@ -223,7 +226,7 @@ async function main(): Promise<void> {
     await clickSelector('[data-testid="connect-submit"]');
     // This is an intentionally offline reconnect: the encrypted project cache
     // must restore browsing before the remote bridge returns.
-    await waitForTestId('mobile-workspace', 30_000);
+    await waitForTestId(SHELL_ROOT_TEST_ID, 30_000);
     await openProject(name);
     await openPlanningDocument();
     await waitForCondition('force-stop restored offline draft', `(() => { const node = document.querySelector(${JSON.stringify(bodySelector)}); return !!node && node.value === ${JSON.stringify(recoveredBody)}; })()`);
@@ -316,7 +319,6 @@ async function main(): Promise<void> {
     // More than one composer can be mounted here; type into the visible one, as lib does.
     await setTestIdTextValue('structured-agent-composer-input', 'Android unsent chat draft');
     await sleep(1000);
-    await clickSelector('[data-testid="shell-tab-home"]');
     await clickLabel('.workflow-conversation-row button', ['Link to stage', '단계에 연결']);
     await evaluateWebView(`(() => { const selects = document.querySelectorAll('[role="dialog"] select'); selects[0].value = ${JSON.stringify(subproject.id)}; selects[0].dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
     await evaluateWebView(`(() => { const selects = document.querySelectorAll('[role="dialog"] select'); selects[1].value = ${JSON.stringify(subproject.graph.entryNodeId)}; selects[1].dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
@@ -421,11 +423,11 @@ async function main(): Promise<void> {
     await clickSelector('[data-testid="workflow-run-again"]');
     await waitHost('run #1 waits for its approval', async () => (await flowRuns())[0]?.workflowRuntime?.activations.some(entry => entry.nodeId === 'gate' && entry.state === 'awaiting-approval') === true);
     await waitForCondition('run #1 on the phone', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
-    // The host counts the waiting stage (I2-5): the phone's tab badge shows it, and it clears once approved.
-    await waitForCondition('the phone badges the waiting approval', `Number((document.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge') || {}).textContent || 0) >= 1`, 30_000);
+    // The host counts the waiting stage (I2-5): the phone counts it (the terminal header's way back to the feed), and it clears once approved.
+    await waitForCondition('the phone badges the waiting approval', `Number((document.querySelector('[data-testid="mobile-waiting-badge"]') || {}).textContent || 0) >= 1`, 30_000);
     await writeFile(path.join(artifactDir, 'i2-attention-badge.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     await approveGate();
-    await waitForCondition('the badge clears after the approval', `!document.querySelector('[data-testid="shell-tab-agents"] .mobile-shell-tab__badge')`, 30_000);
+    await waitForCondition('the badge clears after the approval', `!document.querySelector('[data-testid="mobile-waiting-badge"]')`, 30_000);
     await waitHost('run #1 sends its AI stage', async () => !!(await flowRuns())[0]?.attempts[0]?.sessionId);
     const firstSession = (await flowRuns())[0]!.attempts[0]!.sessionId;
     await openListItem('.workflow-outline button', 'Build');
@@ -433,8 +435,8 @@ async function main(): Promise<void> {
     await waitForCondition('the stage conversation of run #1', `(document.querySelector('[data-testid="structured-agent-session"]') || { getAttribute: () => null }).getAttribute('data-session-id') === ${JSON.stringify(firstSession)}`, 30_000);
     await writeFile(path.join(artifactDir, 'i2-stage-conversation.png'), runAdbBinary(['exec-out', 'screencap', '-p']));
     await waitHost('run #1 completes', async () => (await flowRuns())[0]?.state === 'completed', 180_000);
-    // The Projects tab keeps the flow that was open.
-    await clickSelector('[data-testid="shell-tab-home"]');
+    // Leaving the stage conversation returns to the project screen, which kept the flow that was open.
+    await clickSelector('[data-testid="mobile-structured-agent-back"]');
     await waitForTestId('workflow-run-bar', 30_000);
     await waitForCondition('run #1 shown as done', `/(Run|실행) #1/.test((document.querySelector('[data-testid="workflow-run-phase"]') || {}).textContent || '')`, 30_000);
     await clickSelector('[data-testid="workflow-run-again"]');

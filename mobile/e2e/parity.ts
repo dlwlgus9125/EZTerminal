@@ -494,7 +494,7 @@ async function main(): Promise<void> {
     // If the app falls back to ConnectScreen, still allow exactly one product
     // connection submission for this geometry transition.
     const ensureWorkspace = async (): Promise<void> => {
-      const states = ['mobile-home-view', 'workspace-hub-btn', 'connect-submit'] as const;
+      const states = ['mobile-feed', 'workspace-hub-btn', 'connect-submit'] as const;
       const deadline = Date.now() + 60_000;
       const remaining = (): number => Math.max(250, deadline - Date.now());
       let submitted = false;
@@ -584,7 +584,7 @@ async function main(): Promise<void> {
     runAdb(['shell', 'settings', 'put', 'system', 'user_rotation', '1']);
     await sleep(1500);
     await ensureWorkspace();
-    await waitForAnyTestId(['mobile-home-view', 'workspace-hub-btn']); // hub navigation remains reachable post-rotation
+    await waitForAnyTestId(['mobile-feed', 'workspace-hub-btn']); // the feed (or the terminal's way back to it) remains reachable post-rotation
     runAdb(['shell', 'settings', 'put', 'system', 'user_rotation', '0']);
     await sleep(1000);
     console.log('[parity] step OK: rotation smoke');

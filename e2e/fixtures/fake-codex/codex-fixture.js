@@ -47,6 +47,8 @@ if (args.includes('--version')) {
   const forkThreads = new Set();
   const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
   const respond = (frame, result) => write({ jsonrpc: '2.0', id: frame.id, result });
+  /** Requests this fixture sent the client (an approval), answered by id. */
+  const serverRequests = new Map();
 
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => {
@@ -59,6 +61,12 @@ if (args.includes('--version')) {
       if (!line) continue;
       const frame = JSON.parse(line);
       if (frame.id === undefined) continue;
+      if (frame.method === undefined && serverRequests.has(frame.id)) {
+        const resolve = serverRequests.get(frame.id);
+        serverRequests.delete(frame.id);
+        resolve(frame.result);
+        continue;
+      }
       switch (frame.method) {
         case 'initialize':
           respond(frame, {
@@ -245,6 +253,17 @@ if (args.includes('--version')) {
                   inspections: (quoted.task?.validations ?? []).filter(validation => validation.method === 'inspection')
                     .map(validation => ({ validationId: validation.validationId, status: 'passed', summary: 'Inspected by the fixture reviewer.' })) })}`;
               }
+            }
+            // A command that waits on the person (I4 phone feed): the turn asks for approval and answers with the decision.
+            if (inputText.includes('EZTERMINAL_E2E_APPROVAL')) {
+              const requestId = `fixture-approval-${turnSequence}`;
+              const answer = new Promise((resolve) => serverRequests.set(requestId, resolve));
+              write({ jsonrpc: '2.0', id: requestId, method: 'item/commandExecution/requestApproval', params: {
+                threadId, turnId, itemId: `fixture-command-${turnSequence}`, command: 'pnpm --dir mobile test', cwd: threadCwds.get(threadId) ?? null,
+                reason: 'Run the phone tests',
+              } });
+              const decision = (await answer)?.decision;
+              responseText = `Approval answered: ${typeof decision === 'string' ? decision : JSON.stringify(decision)}`;
             }
             // Chat profiler: stream a fixed-length reply in timed deltas, ending with a sentinel.
             // The reviewer answers instantly, in the same burst as its turn/start response: the

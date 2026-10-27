@@ -78,6 +78,7 @@ import {
   waitForTestId,
   waitForTestIdAttribute,
   waitForTestIdHidden,
+  evaluateWebView,
 } from './lib.ts';
 
 const CUSTOM_THEME_ID = 'e2e-neon';
@@ -118,6 +119,14 @@ async function main(): Promise<void> {
 
   try {
     await connectAndAuth(token);
+    // connectAndAuth installs fresh (`pm clear`): a new install starts in Matrix (I4-10) and records the default.
+    const firstTheme = await evaluateWebView<{ theme: string | null; source: string | null }>(
+      `({ theme: document.documentElement.dataset.theme || null, source: localStorage.getItem('ezterminal-mobile-theme-source') })`,
+    );
+    if (firstTheme.theme !== 'matrix' || firstTheme.source !== 'default') {
+      throw new Error(`a new install must start in Matrix with the default recorded, got ${JSON.stringify(firstTheme)}`);
+    }
+    console.log('[theme-e2e] step OK: a new install starts in Matrix');
     await createTerminalSession();
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[theme-e2e] step OK: connected with a fresh tab');
