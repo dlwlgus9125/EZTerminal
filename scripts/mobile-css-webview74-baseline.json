@@ -1,0 +1,958 @@
+[
+  {
+    "selector": ".agent-capabilities>summary",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".agent-capabilities__heading",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".agent-capabilities__items li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".block-head",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".chat-usage-item",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".cmd-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".connect-card",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".connect-screen",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".conversation-queue summary",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".conversation-queue__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".conversation-review",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".conversation-review__line",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".conversation-review__toolbar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".conversation-start__settings",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-shell-chain[data-compact=true] .ez-shell-stage",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-badge",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-button",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-dialog__footer",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-dialog__header",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-icon-button",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-switch",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-tab",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ez-ui-tab-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".feature-load-error__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".file-preview-image-wrap",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".file-preview-state",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-card--done",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-card__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-card__head",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-filters",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-followup",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-history-transcript",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-projects__head-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-projects__head-actions .mob-btn-ghost",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-agent-root-option li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-column",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-composer",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__brand",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__cta",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__divider",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__fields",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__label",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__saved",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__scan",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connect__warning",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-connection-card",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav__crumbs",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav__error .mob-btn-ghost",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav__head",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav__list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav__row>span:nth-child(2)",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-daemon-nav__status",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-keybar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-managed-merge-override__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-mark",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__content",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__location",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__locked-location",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__notice",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__provider-recovery",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__recovery-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-new-session__terminal",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-pc-status",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-settings-row__title",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-sheet__new",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-snippets",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-status-line",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-status-line__branch",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-status-line__link",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-status-line__rtt",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-term-head",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-term-head__session",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mob-toast",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-action-sheet-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-action-sheet-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-action-sheet-row-copy",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-app-update-card>.btn",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-app-update-card__heading",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-app-update-card__heading .btn",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-app-update-card__release",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-error-screen",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-head",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-pathbar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-pathbar .btn",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-toolbar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-toolbar-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-toolbar-actions .btn",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-viewer-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-file-viewer-actions .btn",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-lead-worker-row__approval>span",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-lead-workers__count",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-lead-workers__summary",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-offline-notice summary",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-openclaw-tabs",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-openclaw-view .openclaw-control-issue",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-openclaw-view .openclaw-control-progress",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-page-header__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-connection-details dl div",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-key-accessory",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-key-accessory button",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-quality-options button",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-session-sheet .mobile-action-sheet-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-session-sheet .mobile-action-sheet-row-label",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-sheet-field",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-sheet-field>span",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-pc-sheet-segment button",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-reconnect-card",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-session-dead-banner",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-settings-body",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-settings-index",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-stats-tabs",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-terminal-empty-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-terminal-empty-actions .btn",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-upload-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-v2__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-v2__body",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".mobile-v2__project-select",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".openclaw-chat-toolbar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".openclaw-config-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".openclaw-lifecycle-buttons",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".openclaw-log-line",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".openclaw-log-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".openclaw-status-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai>header",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai__changes",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai__changes article>div",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai__pending",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai__proposal",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai__reference",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-ai__status",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__archive",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__archive-conversations label",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__archive-conversations li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__baseline-form",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__card",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__checks label",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__connection",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__connection-form",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__conversation",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__device-evidence .planning-workspace__checkbox",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__editor",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__editor-heading",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__history li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__item",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__item-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__list-heading",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__navigation",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__preparation",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__quick-task",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__result",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__structure-canvas",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__structure-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__structure-node",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__text-field",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".planning-workspace__validation",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".pty-control-chip",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__add",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__check",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__preview-toolbar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__primary",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__properties",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__settings-content",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__state",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__structure",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__toolbar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__transition",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-designer__tree button",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-preview [role=tablist]",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-preview__asset",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-preview__dialog",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".scene-preview__input",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".session-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".session-list-item",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".session-start-options__choices",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".session-switcher",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".settings-rollbar-params",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".settings-rollbar-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".settings-scale-stepper",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__composer",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__error",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__error p",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__exchange",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__header",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__note",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__pending",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".side-question__thread",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ssh-prompt",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".ssh-prompt-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".status-disk-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".status-mem-detail",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".status-net-sparks",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".status-packet-ack",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent--live .structured-agent-session-controls",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent--live .structured-agent-session-header",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-composer__attachments",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-composer__attachments summary",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-composer__attachments>li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-composer__input-row",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-composer__parked",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-composer__reply",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-permission",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-permission span",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-recovery__actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-session-controls",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-session-header",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-session-header__identity",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-session-lifecycle",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-session-settings",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent-transcript__state",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent[data-compact=true] .structured-agent-session-header",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".structured-agent__banner",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-accessory-settings",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-accessory-settings-head",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-context-menu",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-context-menu-item",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-find-bar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-key-order-actions",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-key-settings-empty",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-key-settings-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-key-settings-message",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-key-visibility",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".terminal-path-mobile-error",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".theme-menu-list",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".theme-menu-option",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".touch-input-bar",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".workflow-folder-cleanup__runs ul>li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".workflow-folder-cleanup__runs>li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".workflow-item>span",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".workflow-node-list .workflow-item",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": ".workflow-node-run__attempts li",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": "@media (max-width:43.75rem) { .structured-agent-session-header }",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": "inline style in mobile/src/MobileSettingsView.tsx (3)",
+    "reason": "pending fallback (I5)"
+  },
+  {
+    "selector": "inline style in mobile/src/ThemeMenu.tsx (1)",
+    "reason": "pending fallback (I5)"
+  }
+]

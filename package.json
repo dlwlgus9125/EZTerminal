@@ -137,6 +137,7 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "jsdom": "25.0.1",
     "png2icons": "^2.0.1",
+    "postcss": "8.5.23",
     "storybook": "10.6.3",
     "typescript": "^5.5.4",
     "vite": "^6.4.4",

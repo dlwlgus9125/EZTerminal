@@ -10,7 +10,7 @@
     "build:e2e": "tsc --noEmit && vite build --mode e2e && pnpm verify:webview74",
     "build:release": "pnpm build && pnpm verify:production",
     "verify:production": "node ../scripts/verify-no-e2e-markers.mjs dist",
-    "verify:webview74": "node ../scripts/verify-mobile-webview74.mjs dist",
+    "verify:webview74": "node ../scripts/verify-mobile-webview74.mjs dist && node ../scripts/verify-mobile-css-webview74.mjs dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --no-ignore --config ../.eslintrc.json --ext .ts,.tsx \"src/**/*.{ts,tsx}\"",
     "test": "vitest run",
