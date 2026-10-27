@@ -251,7 +251,7 @@ export const Chat: Story = {
           title="Android 승인 알림이 두 번 뜨는 문제"
           providerId="claude"
           providerLabel="Claude"
-          workspace={{ id: 'p-ez-main', label: 'main', kind: 'local', path: 'C:\Working\EZTerminal' }}
+          workspace={{ id: 'p-ez-main', label: 'main', kind: 'local', path: CWD }}
           model="claude-opus-5-5"
           modelOptions={[{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-sonnet-5', label: 'Sonnet 5' }]}
           effortSupported
