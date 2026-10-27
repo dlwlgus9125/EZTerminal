@@ -80,13 +80,8 @@ export interface PlanningWorkspaceAccess {
     command: PlanningCommand,
   ): Promise<PlanningMutationResult>;
 }
-export interface PlanningConversation {
-  readonly id: string;
-  readonly title: string;
-  readonly status?: string;
-  readonly providerLabel?: string;
-  readonly workspaceLabel?: string;
-}
+export type { PlanningConversation } from "./workflow/workflow-conversations";
+import type { PlanningConversation } from "./workflow/workflow-conversations";
 export interface PlanningWorkspacePanelProps {
   readonly projectId: string;
   readonly projectName: string;

@@ -51,6 +51,13 @@ function readReference() {
   };
 }
 
+/** A copy of the 2.0 manifest whose approved list a test replaces: every 1.0 surface starts as legacy again. */
+function withEveryHandoffSurfaceLegacy(manifest: { legacy: { surfaces: string[] } }, legacyManifest: { surfaces: { id: string }[] }) {
+  const next = structuredClone(manifest);
+  next.legacy.surfaces = legacyManifest.surfaces.map((surface) => surface.id);
+  return next;
+}
+
 const SHA = 'a'.repeat(64);
 
 function approved(overrides: Record<string, unknown> = {}) {
@@ -115,12 +122,12 @@ function approvedEvidence(overrides: Record<string, unknown> = {}) {
 }
 
 describe('2.0 design reference manifest', () => {
-  it('accepts the checked-in manifest: the I1 shell, the I2 flow and the I3 terminal are approved and every 1.0 handoff surface is still guarded as legacy', () => {
+  it('accepts the checked-in manifest: the 2.0 shell retires the 1.0 workbench surfaces, the other 1.0 handoff surfaces are still guarded as legacy', () => {
     const { manifest, legacyManifest } = readReference();
     const result = validateDesignReferenceManifest(manifest, legacyManifest);
-    expect(result.legacy).toHaveLength(14);
+    expect(result.legacy).toHaveLength(12);
     expect(result.approved.map((entry: { id: string }) => entry.id)).toEqual(['shell-board', 'shell-work-mode', 'flow-run-view', 'desk-terminal', 'phone-feed', 'phone-chat', 'phone-terminal']);
-    expect(result.retired).toEqual([]);
+    expect(result.retired).toEqual(['workbench-agent-hub', 'english-workbench']);
   });
 
   it('rejects a 1.0 surface that silently drops out of the guard', () => {
@@ -132,7 +139,7 @@ describe('2.0 design reference manifest', () => {
 
   it('lets an approved surface retire the legacy surfaces it replaces, once', () => {
     const { manifest, legacyManifest } = readReference();
-    const next = structuredClone(manifest);
+    const next = withEveryHandoffSurfaceLegacy(manifest, legacyManifest);
     next.legacy.surfaces = next.legacy.surfaces.filter((id: string) => id !== 'workbench-agent-hub');
     next.approved = [approved()];
     next.approvedChecker = CHECKER_PIN;
@@ -144,7 +151,7 @@ describe('2.0 design reference manifest', () => {
 
   it('rejects an approved surface without a recorded user decision, pinned capture or pinned checker', () => {
     const { manifest, legacyManifest } = readReference();
-    const next = structuredClone(manifest);
+    const next = withEveryHandoffSurfaceLegacy(manifest, legacyManifest);
     next.approvedChecker = CHECKER_PIN;
     next.approved = [approved({ approval: { decidedAt: '2026-11-01' }, replaces: [] })];
     expect(() => validateDesignReferenceManifest(next, legacyManifest)).toThrow('approval.record');
@@ -256,6 +263,16 @@ describe('2.0 design reference manifest', () => {
     };
     expect(() => validateDesktopHandoffContract(withoutMonitor)).toThrow('Monitor');
     expect(() => validateDesktopHandoffContract({ ...withoutMonitor, retiredSurfaceIds: ['monitor'] })).not.toThrow();
+  });
+
+  it('needs no handoff story, case or Electron spec once every 1.0 surface is retired, but still checks the archive', () => {
+    const fixture = readFixture();
+    const everySurface = fixture.manifest.surfaces.map((surface: { id: string }) => surface.id);
+    const retiredEverything = { ...fixture, storySource: '', e2eSource: '', visualSource: 'export {};', retiredSurfaceIds: everySurface };
+    expect(validateDesktopHandoffContract(retiredEverything)).toEqual({ canonicalSnapshots: [] });
+    const brokenArchive = structuredClone(fixture.manifest);
+    brokenArchive.surfaces = brokenArchive.surfaces.slice(1);
+    expect(() => validateDesktopHandoffContract({ ...retiredEverything, manifest: brokenArchive })).toThrow();
   });
 });
 

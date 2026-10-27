@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { daemonWorkspaceId } from '../src/main/daemon-project-sync';
 import { launchApp } from './launch-app';
-import { manageProject, openProjectBoard, openProjectItems } from './project-navigation';
+import { manageProject, openProjectBoard, openProjectFiles } from './project-navigation';
 import { readXtermBuffer } from './xterm-buffer';
 import { createRegisteredE2eTempDir, expect, test, type Locator, type Page } from './test';
 
@@ -158,12 +158,7 @@ async function paneAtCwd(panes: Locator, cwd: string): Promise<Locator> {
 
 async function openRegisteredProject(window: Page, projectId: string): Promise<void> {
   const panel = window.getByTestId('project-workspace-panel');
-  if (!await panel.isVisible()) {
-    // The project's flow tab (from its board), then its files.
-    const workspace = await openProjectItems(window, projectId);
-    await workspace.getByRole('button', { name: 'Quick tasks and existing work', exact: true }).click();
-    await window.getByTestId('planning-workspace').getByRole('button', { name: 'Files', exact: true }).click();
-  }
+  if (!await panel.isVisible()) await openProjectFiles(window, projectId);
   await expect(panel).toBeVisible();
   await expect(window.locator('.project-path-tree')).toBeVisible({ timeout: 15_000 });
 }

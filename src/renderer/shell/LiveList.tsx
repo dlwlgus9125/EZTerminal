@@ -5,7 +5,7 @@ import { isolateModalBackground } from '../ui/modal-isolation';
 import { SHELL_TOP_BAR_ID } from '../workbench/SidebarShell';
 
 import { Glyph, Led, type GlyphName } from '../ui';
-import { ACTIVITY_RAIL_ID } from '../workbench/ActivityRail';
+import { ACTIVITY_RAIL_ID } from './shell-ids';
 import { flattenConversations, type LiveConversation, type LiveFlow, type WaitingItem, type otherProjects } from './shell-model';
 import { StageChain } from './StageChain';
 import { conversationStateText, flowPhaseText, providerName, useShellText, waitingKindText } from './shell-text';

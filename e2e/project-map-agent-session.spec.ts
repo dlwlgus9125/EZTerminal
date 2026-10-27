@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
-import { openProjectItems } from './project-navigation';
+import { openProjectFiles } from './project-navigation';
 import { createRegisteredE2eTempDir, expect, test } from './test';
 import { readXtermAllBuffer } from './xterm-buffer';
 
@@ -64,10 +64,7 @@ test('Project Map create opens a fresh Agent tab and binds the job to that sessi
   });
   expect(project).not.toBeNull();
 
-  const workspace = await openProjectItems(window, project!.projectId);
-  await workspace.getByRole('button', { name: 'Quick tasks and existing work', exact: true }).click();
-  await window.getByTestId('planning-workspace').getByRole('button', { name: 'Files', exact: true }).click();
-  await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
+  await openProjectFiles(window, project!.projectId);
   await window.getByTestId('project-workspace-open-map').click();
   await expect(window.getByTestId('project-map-create')).toBeVisible({ timeout: 15_000 });
   await window.getByTestId('project-map-create').click();

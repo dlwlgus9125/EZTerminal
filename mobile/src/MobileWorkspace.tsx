@@ -21,7 +21,7 @@ import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { e2eLog } from './e2e-telemetry';
-import type { HomeSessionRow } from './MobileHomeView';
+import type { HomeSessionRow } from './mobile-session-rows';
 import { MobilePlanningNavigator } from './MobilePlanningNavigator';
 import { MobilePageHeader } from './MobilePageHeader';
 import { MobileSessionSheet } from './MobileSessionSheet';

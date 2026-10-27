@@ -82,7 +82,7 @@ import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { MobilePageHeader } from './MobilePageHeader';
 import { MobileAgentHistorySheet } from './MobileAgentHistorySheet';
 import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
-import type { MobileChatSaveStatus } from './use-mobile-chat-draft';
+import type { MobileChatSaveStatus } from './mobile-chat-save-status';
 import { phoneChatStateAccess, phoneConversationCommands } from './phone-conversation-access';
 import { useChatRecovery } from '../../src/renderer/use-chat-recovery';
 import { noteConversationViewed } from '../../src/renderer/conversation-views';

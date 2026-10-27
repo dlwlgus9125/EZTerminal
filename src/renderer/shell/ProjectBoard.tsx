@@ -129,7 +129,7 @@ export function ProjectBoard(props: ProjectBoardProps): JSX.Element {
             <h1>{props.project.name}</h1>
             {props.project.path && <span className="ez-shell-phead__path" title={props.project.path}>{props.project.path}{props.changes?.branch ? ` · ${props.changes.branch}` : ''}</span>}
             <span className="ez-shell-phead__right">
-              <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onFiles}><Glyph name="file" size={16} />{text('파일', 'Files')}</button>
+              <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onFiles} data-testid="shell-board-files"><Glyph name="file" size={16} />{text('파일', 'Files')}</button>
               {props.onWorktree && <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onWorktree}><Glyph name="wt" size={16} />{text('워크트리', 'Worktree')}</button>}
               <button type="button" className="ez-shell-btn" data-tone="flat" onClick={props.onProjectSettings}><Glyph name="set" size={16} />{text('프로젝트 설정', 'Project settings')}</button>
             </span>

@@ -4,7 +4,7 @@ import type { SessionInfo } from '../../src/shared/ipc';
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
-import type { HomeSessionRow } from './MobileHomeView';
+import type { HomeSessionRow } from './mobile-session-rows';
 import { glyphIcon } from '../../src/renderer/ui/Glyph';
 
 // Stencil glyphs (I4-11) under the names this screen used.

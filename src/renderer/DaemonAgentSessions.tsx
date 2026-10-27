@@ -19,6 +19,7 @@ import {
   rendererCapabilities,
   type DaemonAccess,
 } from './capability-access';
+import { daemonEventAffectsAgentSessionProjection } from './daemon-session-events';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
 import { DaemonSafeModeNotice } from './DaemonSafeModeNotice';
@@ -88,22 +89,7 @@ const STATE_RANK: Readonly<Record<DaemonAgent['state'], number>> = {
   archived: 9,
 };
 
-const PROJECTION_ENTITY_TYPES = new Set([
-  'project',
-  'workspace',
-  'session',
-  'agent',
-  'relation',
-  'provider',
-]);
-
-/** Events whose payload can change the Project → Workspace → Session list. */
-export function daemonEventAffectsAgentSessionProjection(event: DaemonEvent): boolean {
-  if (event.kind === 'entity.upserted') {
-    return PROJECTION_ENTITY_TYPES.has(event.payload.entityType);
-  }
-  return event.kind === 'entity.archived' || event.kind === 'runtime.recovery';
-}
+export { daemonEventAffectsAgentSessionProjection };
 
 function timestamp(value: string): number {
   const parsed = Date.parse(value);

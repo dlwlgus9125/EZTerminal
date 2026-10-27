@@ -6,7 +6,6 @@
     "manifest": "docs/ux/reference/desktop-handoff/manifest.json",
     "surfaces": [
       "boot",
-      "workbench-agent-hub",
       "command-center",
       "monitor",
       "remote",
@@ -17,7 +16,6 @@
       "paste-warning",
       "risky-close",
       "settings",
-      "english-workbench",
       "explorer-breadcrumb"
     ]
   },
@@ -45,7 +43,7 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i1-셸",
         "decidedAt": "2026-10-24"
       },
-      "replaces": []
+      "replaces": ["workbench-agent-hub"]
     },
     {
       "id": "shell-work-mode",
@@ -66,7 +64,7 @@
         "record": "docs/ux/overhaul/approvals.md#20-승인-화면-i1-셸",
         "decidedAt": "2026-10-24"
       },
-      "replaces": []
+      "replaces": ["english-workbench"]
     },
     {
       "id": "flow-run-view",

@@ -877,6 +877,8 @@ export function validateDesktopHandoffContract({
   // A 1.0 surface replaced by an approved 2.0 surface retires its story and visual case.
   const retired = new Set(retiredSurfaceIds);
   const active = { ...manifest, surfaces: manifest.surfaces.filter((surface) => !retired.has(surface.id)) };
+  // Once every 1.0 surface is retired, the handoff stories and cases are no longer a reference.
+  if (active.surfaces.length === 0) return { canonicalSnapshots: [] };
   validateStories(active, storySource);
   const visualFile = parseTsx(visualSource, 'storybook.visual.spec.ts');
   const retiredStoryIds = new Set(manifest.surfaces.filter((surface) => retired.has(surface.id)).map((surface) => surface.storyId));

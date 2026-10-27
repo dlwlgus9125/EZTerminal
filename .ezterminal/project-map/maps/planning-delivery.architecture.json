@@ -95,16 +95,16 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
-          "startLine": 1231,
-          "endLine": 1247,
+          "startLine": 1226,
+          "endLine": 1242,
           "lineDigest": "sha256:d066361a5a960e39b184d5a77779313788bdc1730ccb9e7182db8851351b58d8",
           "claim": "The planning view selects AI proposal review or typed structure/flow editing with explicit patch callbacks."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/PlanningWorkspacePanel.tsx",
-          "startLine": 1529,
-          "endLine": 1570,
+          "startLine": 1524,
+          "endLine": 1565,
           "lineDigest": "sha256:fff0ba977cf7cf21c2733420e9db679b11cd1d816f9e77636e20cd21949fbc97",
           "claim": "The scene editor receives controlled entity drafts, write/readonly gates, assets, AI access, and typed operations from the planning workspace."
         }

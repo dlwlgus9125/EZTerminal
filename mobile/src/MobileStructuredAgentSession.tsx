@@ -6,7 +6,7 @@ import {
   type StructuredAgentSessionPanelProps,
 } from '../../src/renderer/StructuredAgentSession';
 import { useAppTranslation } from '../../src/renderer/i18n';
-import type { MobileChatSaveStatus } from './use-mobile-chat-draft';
+import type { MobileChatSaveStatus } from './mobile-chat-save-status';
 import './mobile-v2.css';
 
 export interface MobileStructuredAgentSessionProps

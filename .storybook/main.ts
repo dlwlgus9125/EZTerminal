@@ -34,6 +34,8 @@ const config: StorybookConfig = {
           '**/.native-build/**',
           '**/native/**/target/**',
           '**/release-assets/**',
+          // Agent worktrees checked out inside the repo: their installs and builds are not this tree.
+          '**/.claude/worktrees/**',
         ],
       },
     };

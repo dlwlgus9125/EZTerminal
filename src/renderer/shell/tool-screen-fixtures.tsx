@@ -1,0 +1,669 @@
+// Fixtures for the desktop tool screens: shared by the 1.0 handoff stories and the 2.0 tool screen references.
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
+
+import type { ClaudeProviderEnablement, ProviderInspection } from '../../shared/daemon-provider';
+import type {
+  DaemonProvider,
+  DaemonSchedule,
+  DaemonSnapshot,
+  DaemonWorkspace,
+} from '../../shared/daemon-protocol';
+import type { RemoteDesktopHostStatus, SystemStatsSnapshot } from '../../shared/ipc';
+import { PAIRING_CODE_TTL_MS } from '../../shared/pairing';
+import { DEFAULT_TERMINAL_PASTE_PREFERENCES } from '../../shared/terminal-clipboard';
+import { DEFAULT_UI_PREFERENCES } from '../../shared/ui-preferences';
+import { BootIntroOverlay } from '../BootIntroOverlay';
+import { type CapabilityAccess, rendererCapabilities } from '../capability-access';
+import { buildCommandCenterActionRows } from '../command-center-actions';
+import { DEFAULT_INTERFERENCE_PARAMS, DEFAULT_ROLLBAR_PARAMS } from '../effect-params';
+import { useAppTranslation } from '../i18n';
+import { PairingQrDialog } from '../PairingQrDialog';
+import type { QuickOpenRow } from '../QuickOpenModal';
+import { RiskyCloseDialog } from '../RiskyCloseDialog';
+import { SettingsPanel } from '../SettingsPanel';
+import { TerminalPasteWarningDialog } from '../TerminalPasteWarningDialog';
+import { listThemes } from '../themes';
+import type { RemotePanelDesktopApi } from '../workbench/RemotePanel';
+
+export type Locale = 'en' | 'ko';
+
+export const NOW = 1_785_200_000_000;
+export const READ_STORY_TIME = (): number => NOW;
+export const REMOTE_STATUS: RemoteDesktopHostStatus = {
+  state: 'active',
+  service: 'ready',
+  controllerName: 'Pixel 9 Pro',
+  connectedAt: NOW - 152_000,
+  localAddress: '100.86.12.4',
+  peerAddress: '100.91.8.22',
+  framesPerSecond: 58,
+  roundTripTimeMs: 24,
+  bitrateKbps: 8_400,
+  qualityTier: 'balanced',
+  errorCode: null,
+};
+
+export const STATS: SystemStatsSnapshot = {
+  at: NOW,
+  cpu: { loadPct: 37, cores: [22, 48, 31, 45, 19, 53, 27, 42] },
+  mem: { usedBytes: 18_790_000_000, totalBytes: 34_360_000_000 },
+  memDetail: {
+    availableBytes: 15_570_000_000,
+    cachedBytes: 6_430_000_000,
+    swapUsedBytes: 1_100_000_000,
+    swapTotalBytes: 8_590_000_000,
+  },
+  net: { iface: 'Tailscale', rxSec: 1_420_000, txSec: 740_000 },
+  disks: [{ mount: 'C:', usedBytes: 402_000_000_000, sizeBytes: 1_000_000_000_000 }],
+  procs: [
+    { pid: 12140, name: 'node.exe', cpuPct: 12.4, memBytes: 728_000_000 },
+    { pid: 8840, name: 'pwsh.exe', cpuPct: 7.8, memBytes: 196_000_000 },
+  ],
+  conns: [
+    { proto: 'TCP', local: '100.86.12.4:45891', peer: '100.91.8.22:8765', state: 'ESTABLISHED', process: 'EZTerminal' },
+  ],
+};
+
+export function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
+  const preferences = { ...DEFAULT_UI_PREFERENCES, locale };
+  return {
+    ...rendererCapabilities,
+    snapshot: () => ({ core: 'available', desktop: 'available' }),
+    runtimeVersions: () => ({
+      app: '1.0.30',
+      protocol: 3,
+      buildSha: 'handoff',
+      electron: '38',
+      chrome: '140',
+      node: '22',
+    }),
+    agentIntegrations: {
+      load: async () => ({
+        integrations: [
+          { provider: 'claude', configPath: '.claude/settings.json', enabled: true, drift: false, needsTrust: false, blockers: [] },
+          { provider: 'codex', configPath: '.codex/config.toml', enabled: false, drift: false, needsTrust: false, blockers: ['Decision hook unavailable'] },
+        ],
+        settings: {
+          schemaVersion: 2,
+          approvalGate: true,
+          notifications: { waiting: true, blocked: true, error: true },
+          genericProfiles: [],
+        },
+      }),
+      setEnabled: async () => null,
+      saveSettings: async (settings) => settings,
+    },
+    openClaw: {
+      ...rendererCapabilities.openClaw,
+      observeDrawer: (observer) => {
+        observer.onStatus({ state: 'running', version: '2026.7.4', port: 18_789 });
+        observer.onLog({ time: new Date(NOW - 2_000).toISOString(), level: 'info', message: 'gateway ready on ws://127.0.0.1:18789' });
+        observer.onLog({ time: new Date(NOW - 1_000).toISOString(), level: 'info', message: 'channel telegram connected' });
+        return () => undefined;
+      },
+      observeChat: (observer) => {
+        observer.onStatus({ state: 'running', version: '2026.7.4', port: 18_789 });
+        observer.onViewState({ hasError: false, loading: true });
+        return () => undefined;
+      },
+      observeVisibility: (onVisibility) => {
+        onVisibility({ mode: 'auto', visible: true });
+        return () => undefined;
+      },
+      getStatus: async () => ({ state: 'running', version: '2026.7.4', port: 18_789 }),
+      runLifecycle: async () => ({ ok: true }),
+      runAutostart: async () => ({ ok: true }),
+      listSessions: async () => [
+        {
+          key: 'telegram:release',
+          sessionId: 'oc-1',
+          status: 'working',
+          model: 'claude-sonnet-4',
+          updatedAt: NOW,
+          hasActiveRun: true,
+          lastChannel: 'telegram',
+          totalTokens: 18_420,
+        },
+      ],
+      getConfig: async () => ({ 'agents.defaults.model': 'claude-sonnet-4', 'gateway.port': '18789' }),
+      setConfig: async () => ({ ok: true, restartRequired: true }),
+      getMode: async () => 'auto',
+      setMode: async () => true,
+      setChatSurface: () => true,
+      openChat: () => true,
+      reloadChat: () => true,
+      openChatExternal: async () => true,
+    },
+    remoteDesktop: {
+      observe: (onStatus) => {
+        onStatus(REMOTE_STATUS);
+        return () => undefined;
+      },
+      disconnect: async () => true,
+    },
+    remoteRuntime: {
+      observe: (observer) => {
+        observer.onStatus({ desiredEnabled: true, state: 'running', port: 8_765, errorCode: null, error: null });
+        observer.onSecurity({ state: 'ready', error: null });
+        return () => undefined;
+      },
+      setEnabled: async (enabled) => ({
+        desiredEnabled: enabled,
+        state: enabled ? 'running' : 'off',
+        port: 8_765,
+        errorCode: null,
+        error: null,
+      }),
+      retry: async () => ({ desiredEnabled: true, state: 'running', port: 8_765, errorCode: null, error: null }),
+    },
+    remotePairing: {
+      observe: (observer) => {
+        observer.onConnectionInfo({ urls: ['ws://100.86.12.4:8765'], port: 8_765 });
+        observer.onSecurity({ state: 'ready', error: null });
+        observer.onToken('not-rendered');
+        observer.onRuntime({ desiredEnabled: true, state: 'running', port: 8_765, errorCode: null, error: null });
+        return () => undefined;
+      },
+      rotateToken: async () => 'not-rendered',
+    },
+    systemStatus: {
+      observe: (observer) => {
+        observer.onSeed([{ ...STATS, at: NOW - 2_000 }, { ...STATS, at: NOW - 1_000 }, STATS]);
+        return () => undefined;
+      },
+      capturePackets: () => () => undefined,
+    },
+    sshForwards: {
+      list: async () => [],
+      stop: async () => ({ ok: true, forwards: [] }),
+    },
+    uiPreferences: {
+      load: async () => preferences,
+      save: async (patch) => ({ ...preferences, ...patch }),
+      refreshNativeMenuLocale: async () => true,
+    },
+    files: {
+      list: async () => ({
+        ok: true,
+        path: 'C:\\Working\\EZTerminal',
+        parent: 'C:\\Working',
+        entries: [
+          { name: 'src', kind: 'dir', isSymlink: false, size: 0, mtimeMs: NOW },
+          { name: 'App.tsx', kind: 'file', isSymlink: false, size: 98_240, mtimeMs: NOW },
+          { name: 'App.spec.tsx', kind: 'file', isSymlink: false, size: 22_840, mtimeMs: NOW },
+          { name: 'package.json', kind: 'file', isSymlink: false, size: 4_820, mtimeMs: NOW },
+          { name: 'README.md', kind: 'file', isSymlink: false, size: 6_410, mtimeMs: NOW },
+          { name: 'terminal-preview.svg', kind: 'file', isSymlink: false, size: 12_400, mtimeMs: NOW },
+          { name: 'NOTICE', kind: 'file', isSymlink: false, size: 980, mtimeMs: NOW },
+        ],
+      }),
+      listRoots: async () => ['C:\\'],
+      preview: async (path) => ({
+        ok: true,
+        kind: 'text',
+        name: path.split(/[\\/]/u).at(-1) ?? 'file',
+        mime: 'text/plain',
+        content: 'deterministic handoff preview',
+        truncated: false,
+        fileSize: 29,
+      }),
+      createFolder: async () => ({ ok: true }),
+      rename: async () => ({ ok: true }),
+      trash: async () => ({ ok: true }),
+      openInApp: async () => undefined,
+      reveal: async () => undefined,
+      pathForDrop: () => null,
+      openExternalHttpUrl: async () => true,
+      gitStatus: async () => ({
+        availability: 'ready',
+        tracked: true,
+        branch: 'feat/handoff-completion',
+        truncated: false,
+        changes: [
+          { path: 'App.tsx', kind: 'modified', added: 18, removed: 6 },
+          { path: 'App.spec.tsx', kind: 'untracked' },
+        ],
+      }),
+    },
+  };
+}
+
+export const EN_CAPABILITIES = storyCapabilities('en');
+export const KO_CAPABILITIES = storyCapabilities('ko');
+
+export type ProviderSettingsScenario = 'missing' | 'review' | 'claude-approval' | 'ready' | 'error';
+export type ScheduleSettingsScenario = 'empty' | 'empty-ready' | 'ready' | 'runtime-required' | 'error';
+
+function providerStoryInspection(
+  providerId: 'codex' | 'claude',
+  available: boolean,
+): ProviderInspection {
+  return {
+    reviewDigest: `${providerId}-${available ? 'available' : 'unavailable'}-handoff-digest`,
+    probe: {
+      providerId,
+      displayName: providerId === 'codex' ? 'Codex' : 'Claude Agent',
+      protocol: providerId === 'codex' ? 'codex-app-server' : 'claude-agent-sdk',
+      available,
+      executablePath: available
+        ? `C:\\Users\\operator\\AppData\\Local\\Programs\\${providerId}\\${providerId}.exe`
+        : 'unavailable',
+      executableVersion: available ? (providerId === 'codex' ? '0.45.0' : '1.0.112') : 'unavailable',
+      argv: providerId === 'codex'
+        ? ['app-server']
+        : ['--output-format', 'stream-json', '--input-format', 'stream-json'],
+      environmentVariableNames: providerId === 'codex'
+        ? ['PATH', 'CODEX_HOME']
+        : ['PATH', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK'],
+      capabilities: ['create', 'resume', 'interrupt', 'model-change', 'approvals'],
+      reviewNotices: providerId === 'claude' ? [{
+        id: 'anthropic-commercial-terms',
+        level: 'required',
+        title: 'Anthropic commercial terms',
+        message: 'Review and accept the applicable terms and commercial-use requirements.',
+        url: 'https://www.anthropic.com/legal/commercial-terms',
+      }, {
+        id: 'anthropic-third-party-claude-ai',
+        level: 'required',
+        title: 'Third-party claude.ai access',
+        message: 'Prior Anthropic approval is required for a third-party product to use claude.ai login or subscription rate limits.',
+        url: 'https://code.claude.com/docs/en/agent-sdk/overview',
+      }] : [],
+      ...(!available ? {
+        unavailableReason: providerId === 'claude'
+          ? 'CLAUDE_PROVIDER_DISABLED: Claude Agent is disabled until its requirements are accepted.'
+          : 'CODEX_EXECUTABLE_NOT_FOUND: Install Codex and check again.',
+      } : {}),
+    },
+  };
+}
+
+function providerStoryRecord(
+  inspection: ProviderInspection,
+  health: DaemonProvider['health'] = 'ready',
+): DaemonProvider {
+  const probe = inspection.probe;
+  return {
+    id: probe.providerId,
+    displayName: probe.displayName,
+    protocol: probe.protocol,
+    executablePath: probe.executablePath,
+    executableVersion: probe.executableVersion,
+    argv: probe.argv,
+    environmentVariableNames: probe.environmentVariableNames,
+    capabilities: probe.capabilities,
+    enabled: true,
+    health,
+    ...(health === 'error' ? { healthDetail: 'The provider process exited during its health check.' } : {}),
+    revision: 2,
+    createdAt: new Date(NOW - 60_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  };
+}
+
+export function providerSettingsCapabilities(
+  scenario: ProviderSettingsScenario,
+  scheduleScenario: ScheduleSettingsScenario = 'empty',
+): CapabilityAccess {
+  const codex = providerStoryInspection('codex', scenario !== 'missing');
+  const claudeAvailable = scenario === 'ready' || scenario === 'error';
+  const claude = providerStoryInspection('claude', claudeAvailable);
+  const providers: readonly DaemonProvider[] = scenario === 'ready'
+    ? [providerStoryRecord(codex), providerStoryRecord(claude)]
+    : scenario === 'error'
+      ? [providerStoryRecord(codex, 'error')]
+      : scenario === 'claude-approval'
+        ? [providerStoryRecord(codex)]
+        : [];
+  const scheduleWorkspaces: readonly DaemonWorkspace[] = scheduleScenario === 'empty' ? [] : [{
+    id: 'project-alpha.root-main.workspace-main',
+    projectId: 'project-alpha',
+    name: 'Alpha / main',
+    kind: 'local',
+    rootPath: 'C:\\Work\\alpha',
+    sourceWorkspaceId: 'workspace-main',
+    revision: 4,
+    createdAt: new Date(NOW - 86_400_000).toISOString(),
+    updatedAt: new Date(NOW - 60_000).toISOString(),
+  }];
+  const scheduleRecords: readonly DaemonSchedule[] = scheduleScenario === 'ready' ? [{
+    id: 'weekday-review',
+    name: 'Weekday review',
+    workspaceId: scheduleWorkspaces[0]!.id,
+    providerId: 'codex',
+    model: 'gpt-5.6-codex',
+    permissionPreset: 'standard',
+    prompt: 'Review the current worktree and summarize actionable risks.',
+    cron: '0 9 * * 1-5',
+    timezone: 'Asia/Seoul',
+    enabled: true,
+    maxRuns: 20,
+    runCount: 6,
+    nextRunAt: new Date(NOW + 3_600_000).toISOString(),
+    revision: 7,
+    createdAt: new Date(NOW - 604_800_000).toISOString(),
+    updatedAt: new Date(NOW - 3_600_000).toISOString(),
+  }, {
+    id: 'release-notes',
+    name: 'Release notes draft',
+    workspaceId: scheduleWorkspaces[0]!.id,
+    providerId: 'claude',
+    permissionPreset: 'plan',
+    prompt: 'Draft release notes from the current project changes.',
+    cron: '30 16 * * 5',
+    timezone: 'America/Los_Angeles',
+    enabled: false,
+    runCount: 2,
+    revision: 5,
+    createdAt: new Date(NOW - 345_600_000).toISOString(),
+    updatedAt: new Date(NOW - 7_200_000).toISOString(),
+  }] : scheduleScenario === 'runtime-required' ? [{
+    id: 'disabled-audit',
+    name: 'Nightly dependency audit',
+    workspaceId: scheduleWorkspaces[0]!.id,
+    providerId: 'codex',
+    permissionPreset: 'plan',
+    prompt: 'Audit dependency changes without modifying files.',
+    cron: '0 2 * * *',
+    timezone: 'UTC',
+    enabled: false,
+    runCount: 0,
+    revision: 2,
+    createdAt: new Date(NOW - 86_400_000).toISOString(),
+    updatedAt: new Date(NOW - 86_400_000).toISOString(),
+  }] : [];
+  const keepRunning = scheduleScenario === 'runtime-required' ? false : true;
+  const startAtLogin = scheduleScenario === 'ready' || scheduleScenario === 'empty-ready';
+  const daemonSnapshot: DaemonSnapshot = {
+    protocolVersion: 12,
+    revision: 18,
+    eventSequence: 42,
+    generatedAt: new Date(NOW).toISOString(),
+    runtime: {
+      keepRunning,
+      startAtLogin,
+      orchestrationToolsEnabled: scenario === 'ready',
+      browserEnabled: false,
+    },
+    projects: [],
+    workspaces: scheduleWorkspaces,
+    sessions: [],
+    agents: [],
+    agentRelations: [],
+    turns: [],
+    transcriptHeads: [],
+    approvals: [],
+    providers,
+    schedules: scheduleRecords,
+    heartbeats: [],
+  };
+  const claudeEnablement: ClaudeProviderEnablement = scenario === 'ready' || scenario === 'error'
+    ? {
+        enabled: true,
+        termsAccepted: true,
+        commercialUseApproved: true,
+        authenticationPath: 'api-key-environment',
+        anthropicThirdPartyApproval: false,
+      }
+    : {
+        enabled: false,
+        termsAccepted: scenario === 'claude-approval',
+        commercialUseApproved: scenario === 'claude-approval',
+        authenticationPath: scenario === 'claude-approval'
+          ? 'existing-claude-ai-login'
+          : 'existing-cli-environment',
+        anthropicThirdPartyApproval: false,
+      };
+  return {
+    ...EN_CAPABILITIES,
+    structuredProviders: {
+      inspect: async (providerId) => {
+        if (scenario === 'error' && providerId === 'claude') {
+          return { ok: false, code: 'provider-operation-failed', message: 'Claude Agent inspection timed out.' };
+        }
+        return { ok: true, value: providerId === 'codex' ? codex : claude };
+      },
+      listModels: async () => ({ ok: true, value: [] }),
+      getClaudeEnablement: async () => ({ ok: true, value: claudeEnablement }),
+      setClaudeEnablement: async (value) => ({ ok: true, value }),
+    },
+    daemon: {
+      getAvailability: async () => ({
+        state: 'ready', supportedSchemaVersion: 3, currentSchemaVersion: 3,
+      }),
+      getSnapshot: async () => {
+        if (scheduleScenario === 'error') throw new Error('Static schedule service failure');
+        return daemonSnapshot;
+      },
+      getTranscript: async () => [],
+      sendCommand: async (command) => ({
+        ok: false,
+        status: 'rejected',
+        commandId: command.commandId,
+        revision: daemonSnapshot.revision,
+        error: { code: 'invalid-state', message: 'Static Storybook fixture', retryable: false },
+      }),
+      observeEvents: () => () => undefined,
+      getLifecycleSettings: async () => ({ keepRunning, startAtLogin }),
+      setLifecycleSettings: async () => ({ keepRunning, startAtLogin }),
+    },
+  };
+}
+export const HANDOFF_AGENT_SESSION_ACCESS = providerSettingsCapabilities('ready').daemon;
+
+export const REMOTE_DESKTOP_API: RemotePanelDesktopApi = {
+  getPairingCode: async () => ({ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }),
+  issuePairingCode: async () => ({ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }),
+  listRemoteDevices: async () => [{
+    clientId: 'pixel-9-pro',
+    clientName: 'Pixel 9 Pro',
+    platform: 'android',
+    connected: true,
+    lastSeenAt: NOW,
+  }],
+  onPairingCodeChanged: () => () => undefined,
+  onPairingRedeemed: () => () => undefined,
+};
+
+export function SettingsFixture({
+  capabilities,
+  requestedCategory = 'appearance',
+}: {
+  readonly capabilities?: CapabilityAccess;
+  readonly requestedCategory?: 'appearance' | 'agents';
+}): JSX.Element {
+  const globalTheme = (
+    ['matrix', 'dark', 'light', 'high-contrast'] as const
+  ).find((candidate) => candidate === document.documentElement.dataset.theme) ?? 'matrix';
+  const locale: Locale = document.documentElement.lang === 'ko' ? 'ko' : 'en';
+  const resolvedCapabilities = capabilities ?? (locale === 'ko' ? KO_CAPABILITIES : EN_CAPABILITIES);
+  const [theme, setTheme] = useState<'matrix' | 'dark' | 'light' | 'high-contrast'>(globalTheme);
+  const [boot, setBoot] = useState(true);
+  const [toggles, setToggles] = useState<Record<string, boolean>>({
+    scanlines: true,
+    'phosphor-glow': true,
+    'crt-rollbar': true,
+  });
+  const availableThemes = listThemes();
+  const activeThemeEffects = availableThemes.find((candidate) => candidate.id === theme)?.effects ?? [];
+  const uiScale = Number(document.documentElement.dataset.uiScale) === 150 ? 150 : 100;
+
+  useEffect(() => setTheme(globalTheme), [globalTheme]);
+
+  return (
+    <SettingsPanel
+      requestedCategory={requestedCategory}
+      uiScale={uiScale}
+      onChangeUiScale={() => undefined}
+      scrollback={10_000}
+      onChangeScrollback={() => undefined}
+      terminalRendererPreference="auto"
+      onChangeTerminalRendererPreference={() => undefined}
+      confirmRiskyPaneClose
+      onChangeConfirmRiskyPaneClose={() => undefined}
+      bootIntro={boot}
+      onChangeBootIntro={setBoot}
+      allowOsc52Clipboard={false}
+      onChangeAllowOsc52Clipboard={() => undefined}
+      terminalPastePreferences={DEFAULT_TERMINAL_PASTE_PREFERENCES}
+      onChangeTerminalPastePreferences={() => undefined}
+      theme={theme}
+      onSelectTheme={(next) => setTheme(next as typeof theme)}
+      availableThemes={availableThemes}
+      onImportTheme={async () => ({ ok: true })}
+      fontId="share-tech-mono"
+      onSelectFont={() => undefined}
+      activeThemeEffects={activeThemeEffects}
+      effectToggles={toggles}
+      onToggleEffect={(id, on) => setToggles((current) => ({ ...current, [id]: on }))}
+      rollbar={DEFAULT_ROLLBAR_PARAMS}
+      onChangeRollbar={() => undefined}
+      interference={DEFAULT_INTERFERENCE_PARAMS}
+      onChangeEffectParams={() => undefined}
+      capabilities={resolvedCapabilities}
+    />
+  );
+}
+
+export function useDialogInvokerFocus(): RefObject<HTMLButtonElement> {
+  const invokerRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    invokerRef.current?.focus();
+  }, []);
+  return invokerRef;
+}
+
+export function PairingDialogFixture({ redeemed }: { readonly redeemed: boolean }): JSX.Element {
+  const [open, setOpen] = useState(true);
+  const invokerRef = useDialogInvokerFocus();
+  const { t } = useAppTranslation();
+  return (
+    <>
+      <button
+        ref={invokerRef}
+        className="desktop-handoff-dialog-invoker"
+        data-testid="desktop-handoff-dialog-invoker"
+        type="button"
+        onClick={() => setOpen(true)}
+      >
+        {t('pairing.title')}
+      </button>
+      <PairingQrDialog
+        open={open}
+        onOpenChange={setOpen}
+        endpoint="ws://100.86.12.4:8765"
+        code={{ code: '7C2F-91KD', expiresAt: NOW + PAIRING_CODE_TTL_MS }}
+        currentTime={NOW}
+        redeemed={redeemed}
+        issuing={false}
+        issueFailed={false}
+        onIssue={() => undefined}
+      />
+    </>
+  );
+}
+
+export function PasteWarningFixture(): JSX.Element {
+  const [open, setOpen] = useState(true);
+  const invokerRef = useDialogInvokerFocus();
+  const { t } = useAppTranslation();
+  return (
+    <>
+      <button
+        ref={invokerRef}
+        className="desktop-handoff-dialog-invoker"
+        data-testid="desktop-handoff-dialog-invoker"
+        type="button"
+        onClick={() => setOpen(true)}
+      >
+        {t('terminalPasteWarning.title')}
+      </button>
+      {open && (
+        <TerminalPasteWarningDialog
+          risk={{ multiline: true, large: true, lineCount: 18, byteLength: 8_420, shouldWarn: true }}
+          onCancel={() => setOpen(false)}
+          onConfirm={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+export function RiskyCloseFixture(): JSX.Element {
+  const [open, setOpen] = useState(true);
+  const invokerRef = useDialogInvokerFocus();
+  const { t } = useAppTranslation();
+  const runningCommand = t('safetyDialog.risks.runningCommand');
+  const activeAgent = t('safetyDialog.risks.activeAgent');
+  return (
+    <>
+      <button
+        ref={invokerRef}
+        className="desktop-handoff-dialog-invoker"
+        data-testid="desktop-handoff-dialog-invoker"
+        type="button"
+        onClick={() => setOpen(true)}
+      >
+        {t('safetyDialog.closeActiveTitle')}
+      </button>
+      {open && (
+        <RiskyCloseDialog
+          title={t('safetyDialog.closeActiveTitle')}
+          description={t('safetyDialog.closeActiveDescription', {
+            risk: `${runningCommand}, ${activeAgent}`,
+          })}
+          details={[
+            t('safetyDialog.riskCount', { count: 1, risk: runningCommand }),
+            t('safetyDialog.riskCount', { count: 1, risk: activeAgent }),
+          ]}
+          confirmLabel={t('safetyDialog.closeTerminal')}
+          alternateLabel={t('safetyDialog.keepInBackground')}
+          onAlternate={() => setOpen(false)}
+          onCancel={() => setOpen(false)}
+          onConfirm={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+export function ProductBootFixture(): JSX.Element {
+  useLayoutEffect(() => {
+    const previous = Object.getOwnPropertyDescriptor(window, 'ezterminalDesktop');
+    const current = window.ezterminalDesktop;
+    Object.defineProperty(window, 'ezterminalDesktop', {
+      configurable: true,
+      value: {
+        ...(current ?? {}),
+        getBootIntro: async () => true,
+      },
+    });
+    return () => {
+      if (previous) Object.defineProperty(window, 'ezterminalDesktop', previous);
+      else Reflect.deleteProperty(window, 'ezterminalDesktop');
+    };
+  }, []);
+  return <BootIntroOverlay />;
+}
+
+/** Command Center rows of every result kind, then the actions (the same list the app builds). */
+export function useCommandCenterStoryRows(): readonly QuickOpenRow[] {
+  const { t } = useAppTranslation();
+  return useMemo<readonly QuickOpenRow[]>(() => [
+    { id: 'handoff-pane', kind: 'pane', title: 'PowerShell', detail: 'C:\\Working\\EZTerminal' },
+    { id: 'handoff-background', kind: 'background-session', title: 'pnpm test:storybook', detail: t('commandCenter.kinds.background-session') },
+    { id: 'handoff-file', kind: 'file', title: 'src/renderer/App.tsx', detail: 'C:\\Working\\EZTerminal\\src\\renderer\\App.tsx' },
+    { id: 'handoff-history', kind: 'history', title: 'git status --short', detail: t('commandCenter.kinds.history') },
+    { id: 'handoff-quick-command', kind: 'quick-command', title: t('quickCommands.title'), detail: 'pnpm test:unit' },
+    { id: 'handoff-preset', kind: 'preset', title: t('workspace.layoutOnePlusTwo'), detail: t('workspace.layoutOnePlusTwoDescription') },
+    { id: 'handoff-agent', kind: 'agent', title: 'Claude Code', detail: t('commandCenter.kinds.agent'), sourceLabel: 'Claude' },
+    ...buildCommandCenterActionRows(t, true),
+  ], [t]);
+}

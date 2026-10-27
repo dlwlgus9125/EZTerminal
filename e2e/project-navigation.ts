@@ -32,6 +32,15 @@ export async function openProjectItems(page: Page, projectId: string): Promise<L
   return workspace;
 }
 
+/** A project's files (the project workspace panel), opened with the board's 파일. */
+export async function openProjectFiles(page: Page, projectId: string): Promise<Locator> {
+  await openProjectBoard(page, projectId);
+  await page.getByTestId('shell-board-files').click();
+  const panel = page.getByTestId('project-workspace-panel');
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
 /**
  * A new conversation draft tab from the work list's +, as the old sidebar's 새 대화 opened it.
  * On the board, Ctrl+` first goes to work mode (to the existing terminal, without a new tab).

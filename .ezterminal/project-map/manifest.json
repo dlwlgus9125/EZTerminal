@@ -585,7 +585,7 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:33e3d2cdedfa9c01965e2f3fbc2eaebb9edc50c208a49264b3ded85bb6807404",
+        "inputDigest": "sha256:b31fdcf4c19d4124da37b3d88f5094d14811a952fed1bde9f1bcddf332f2e61b",
         "decision": "no-semantic-impact",
         "reason": "Reviewed (I4-5 review fixes): TerminalPane lists the extracted AI input ref in its takeover effect; the phone terminal records block end times before it retains blocks. No anchored block changed meaning."
       }
@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:1ed5eb70c3a6fc43544b5093efdbf057efbb30b4d13dc3ae7a3cbfef540ca8fe",
+        "inputDigest": "sha256:1924574a2ecf836d2cb9e4771cc41e65a9e1b25a9b8e728fb61ae6a51d68e150",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4 device fix): on a phone the conversation composer wraps the model and effort pills in one span so the joined chip never splits across rows; desktop markup is unchanged. The anchored block only moved."
+        "reason": "Reviewed (I5-0 prep): the conversation row type the flow screen lists moved to workflow/workflow-conversations.ts and the old planning panel re-exports it; the daemon projection event filter moved to daemon-session-events.ts. Anchors only moved."
       }
     },
     {
@@ -749,9 +749,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:9c8ed15dfe64894be6c3bc97dbe0e247c811b72161f0124fb7d05842e511a5a8",
+        "inputDigest": "sha256:2e4d30603fc633a785e6a8a78dbcea58105b58b66ad7f14e041317c063f48ea0",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I4 review fixes 2): the phone project screen seeds a stage conversation draft through that conversation's shared draft controller (seedPhoneConversationDraft). Navigation projection and authority fingerprint unchanged."
+        "reason": "Reviewed (I5-0 prep): the flow screen and dock host import the listed-conversation type and the daemon projection event filter from their new modules; the board Files button gains a test id. No anchored behaviour changed."
       }
     }
   ]

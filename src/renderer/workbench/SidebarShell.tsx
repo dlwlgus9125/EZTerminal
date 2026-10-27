@@ -12,7 +12,7 @@ import { useAppTranslation } from '../i18n';
 import { PanelShell } from '../ui';
 import { isolateModalBackground } from '../ui/modal-isolation';
 import { getFocusableElements } from '../ui/utils';
-import { ACTIVITY_RAIL_ID } from './ActivityRail';
+import { ACTIVITY_RAIL_ID } from '../shell/shell-ids';
 
 /** The Board + Desk top bar's element id (src/renderer/shell/ShellTopBar.tsx). */
 export const SHELL_TOP_BAR_ID = 'workbench-shell-top';

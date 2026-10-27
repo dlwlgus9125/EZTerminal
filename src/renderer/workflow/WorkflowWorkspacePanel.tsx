@@ -11,7 +11,8 @@ import { WorkflowDraftResultSchema, type WorkflowDraftAccess, type WorkflowDraft
 import { blockingRunOf } from '../../shared/planning-execution';
 import { WorkflowRecovery } from './workflow-recovery';
 import { withHiddenFlowFields } from '../../shared/workflow-protocol-projection';
-import type { PlanningConversation, PlanningWorkspaceSection } from '../PlanningWorkspacePanel';
+import type { PlanningWorkspaceSection } from '../PlanningWorkspacePanel';
+import type { PlanningConversation } from './workflow-conversations';
 import { StructuredAgentDraftPanel, type StructuredAgentDraftFormState, type StructuredAgentDraftInput, type StructuredAgentUiResult } from '../StructuredAgentSession';
 import { createStructuredAgentSession, structuredAgentProviderOptions, structuredAgentWorkspaceOptions, type StructuredAgentCreateCommand } from '../structured-agent-create';
 import { Badge, Button, Dialog, Field, IconButton, Input, LoadingState, Menu, MenuItem, MenuSeparator, Select, Switch } from '../ui';

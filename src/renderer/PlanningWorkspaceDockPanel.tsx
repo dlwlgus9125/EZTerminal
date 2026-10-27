@@ -17,13 +17,13 @@ import { WorkflowWorkspacePanel, type WorkflowDaemonAccess } from "./workflow/Wo
 import type { WorkflowAccess } from "../shared/workflow";
 import type { WorkflowDraftAccess } from "../shared/workflow-draft";
 import type { AgentCapabilitiesClient } from "../shared/agent-capabilities";
-import { daemonEventAffectsAgentSessionProjection } from "./DaemonAgentSessions";
+import { daemonEventAffectsAgentSessionProjection } from "./daemon-session-events";
 import {
   PlanningWorkspacePanel,
-  type PlanningConversation,
   type PlanningWorkspaceAccess,
   type PlanningWorkspaceSection,
 } from "./PlanningWorkspacePanel";
+import type { PlanningConversation } from "./workflow/workflow-conversations";
 
 export interface PlanningNavigation {
   readonly openHistory?: (projectId?: string) => void;

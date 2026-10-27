@@ -46,11 +46,15 @@ for (const [name, expected] of Object.entries(manifest.extractedFiles ?? {})) {
   );
 }
 
+// 2.0 reference: approved surfaces plus the 1.0 surfaces still guarded as legacy.
+const { approved, legacy, retired, checker } = validateDesignReferenceManifest(reference, manifest);
+// The handoff story and Electron spec are only a reference while a 1.0 surface is still legacy.
+const legacySource = (path) => legacy.length > 0 ? readFile(resolve(root, path), 'utf8') : Promise.resolve('');
 const [designContract, referenceIndex, e2eSource, storySource, visualSource] = await Promise.all([
   readFile(resolve(root, 'docs/ux/frontend-design.md'), 'utf8'),
   readFile(resolve(root, 'docs/ux/reference/README.md'), 'utf8'),
-  readFile(resolve(root, 'e2e/workbench-shell.spec.ts'), 'utf8'),
-  readFile(resolve(root, 'src/renderer/workbench/DesktopHandoff.stories.tsx'), 'utf8'),
+  legacySource('e2e/workbench-shell.spec.ts'),
+  legacySource('src/renderer/workbench/DesktopHandoff.stories.tsx'),
   readFile(resolve(root, 'visual/storybook.visual.spec.ts'), 'utf8'),
 ]);
 const snapshotEntries = await readdir(snapshotRoot, { withFileTypes: true });
@@ -66,8 +70,6 @@ assert(
   'docs/ux/reference/README.md does not name the archived desktop handoff manifest.',
 );
 
-// 2.0 reference: approved surfaces plus the 1.0 surfaces still guarded as legacy.
-const { approved, legacy, retired, checker } = validateDesignReferenceManifest(reference, manifest);
 // The one helper every approved visual test runs, pinned so weakening it is a visible manifest change.
 const checkerPath = checker ? resolve(root, checker.file) : null;
 const checkerSource = checkerPath ? await readFile(checkerPath, 'utf8') : '';

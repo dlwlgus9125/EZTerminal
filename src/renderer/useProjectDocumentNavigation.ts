@@ -46,6 +46,12 @@ interface UseProjectDocumentNavigationOptions {
   readonly dockWindowCoordinatorRef: MutableRefObject<DockWindowCoordinator | null>;
   readonly setSidebarDestination: Dispatch<SetStateAction<SidebarDestination | null>>;
   readonly t: TFunction<"translation", undefined>;
+  /**
+   * Brings work mode forward for the panel a document or map opened in. Reusing the panel that is
+   * already active fires no activation change, so without this a file opened from the board stays
+   * hidden behind it.
+   */
+  readonly revealPanel?: (panel: IDockviewPanel) => void;
 }
 
 export function useProjectDocumentNavigation({
@@ -67,6 +73,8 @@ export function useProjectDocumentNavigation({
   setSidebarDestination,
 
   t,
+
+  revealPanel,
 
 }: UseProjectDocumentNavigationOptions) {
   const codePanelSequence = useRef(0);
@@ -138,6 +146,7 @@ export function useProjectDocumentNavigation({
       // API parameter store empty until the first explicit update.
       panel.api.updateParameters(document);
     }
+    revealPanel?.(panel);
     if (projectDrillActive) {
       projectReviewLayoutRef.current ??= captureProjectReviewLayout(api);
       applyProjectReviewLayout(api, panel, projectWide ? 'wide' : 'narrow');
@@ -159,7 +168,7 @@ export function useProjectDocumentNavigation({
         if (api.activePanel?.id === panel.id) flushProjectCodeFocus(document);
       });
     }
-  }, [apiRef, dockWindowCoordinatorRef, lastMainGridPanelRef, projectDrillActive, projectReviewLayoutRef, projectWide, sessionMirroringCoordinator, setSidebarDestination]);
+  }, [apiRef, dockWindowCoordinatorRef, lastMainGridPanelRef, projectDrillActive, projectReviewLayoutRef, projectWide, revealPanel, sessionMirroringCoordinator, setSidebarDestination]);
 
   const openProjectDocument = useCallback((
     requested: ProjectEditorDocument,
@@ -244,9 +253,10 @@ export function useProjectDocumentNavigation({
       }, { kind: 'main-tab' });
       panel?.api.updateParameters(params);
     }
+    if (panel) revealPanel?.(panel);
     panel?.api.setActive();
     if (panel) dockWindowCoordinatorRef.current?.focusPanelWindow(panel);
-  }, [apiRef, dockWindowCoordinatorRef, sessionMirroringCoordinator, t]);
+  }, [apiRef, dockWindowCoordinatorRef, revealPanel, sessionMirroringCoordinator, t]);
 
   return { openProjectDocument, openProjectFile, openProjectMap };
 }

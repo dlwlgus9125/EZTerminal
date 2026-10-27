@@ -13,6 +13,7 @@ import { useRef } from 'react';
 
 import { useAppTranslation } from '../i18n';
 import { Badge, IconButton, Menu, MenuItem, Tooltip, VisuallyHidden } from '../ui';
+import { ACTIVITY_RAIL_ID } from '../shell/shell-ids';
 import type { SidebarDestination } from './types';
 
 interface RailItem {
@@ -37,7 +38,7 @@ const RAIL_ITEMS: readonly RailItem[] = [
  * itself remains active even while OpenClaw is hidden. */
 export const ACTIVITY_RAIL_DESTINATIONS: readonly SidebarDestination[] = RAIL_ITEMS.map((item) => item.id);
 
-export const ACTIVITY_RAIL_ID = 'workbench-activity-rail';
+export { ACTIVITY_RAIL_ID };
 
 export function ActivityRail({
   active,

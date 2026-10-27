@@ -2067,6 +2067,7 @@ export function App(): JSX.Element {
     dockWindowCoordinatorRef,
     setSidebarDestination,
     t,
+    revealPanel: revealOpenedSession,
   });
 
   const showProjectWorkspace = useCallback((projectId: string): void => {
