@@ -1908,6 +1908,13 @@ export interface StructuredAgentSessionPanelProps {
    * conversation from elsewhere (a terminal's AI input). The conversation tab stays `full`.
    */
   readonly presentation?: 'full' | 'composer';
+  /**
+   * Android chat (I4): one header row — leading control · title · state · results · extensions · ⋯ —
+   * like the desktop row, instead of the inline control block. Ignored on desktop.
+   */
+  readonly compactHeader?: boolean;
+  /** Leading header control, e.g. the Android page's back button in the compact row. */
+  readonly headerLeading?: ReactNode;
 }
 
 const BUSY_AGENT_STATES = new Set<ManagedAgentState>(['starting', 'queued', 'working']);
@@ -2016,9 +2023,12 @@ export function StructuredAgentSessionPanel({
   onDetach,
   variant = 'desktop',
   presentation = 'full',
+  compactHeader = false,
+  headerLeading,
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const full = presentation === 'full';
+  const compactRow = variant === 'mobile' && compactHeader;
   const paneActions = usePaneActions();
   // This header carries the tab's actions, so a group of one may hide its tab strip while it is shown.
   // A message box shown elsewhere (in a terminal tab) has no header and never hides that tab's strip.
@@ -2459,7 +2469,7 @@ export function StructuredAgentSessionPanel({
           </div>
   );
 
-  const capabilitiesPanel = !historyOnly && !providerOwned && capabilityClient && (providerId === 'codex' || providerId === 'claude') ? <AgentCapabilitiesPanel compact={variant !== 'mobile'}
+  const capabilitiesPanel = !historyOnly && !providerOwned && capabilityClient && (providerId === 'codex' || providerId === 'claude') ? <AgentCapabilitiesPanel compact={variant !== 'mobile' || compactRow}
         client={capabilityClient} providerId={providerId} workspaceId={workspace.id} sessionId={capabilitySessionId === null ? undefined : capabilitySessionId ?? sessionId} remote={variant === 'mobile'}
         onCatalog={setCapabilityCatalog} onDiscoveryState={setCapabilityDiscovery} disabled={composerDisabled}
         onInsert={(item) => { setSelectedCapabilities((current) => [...current.filter((entry) => entry.id !== item.id), item]); setDraftAction({ id: ++actionSequence.current, sessionId, insert: item.invocation, ...(item.kind === 'skill' && item.invocation ? { skill: { providerId, id: item.id, name: item.name, invocation: item.invocation } } : {}) }); }}
@@ -2478,10 +2488,12 @@ export function StructuredAgentSessionPanel({
       data-review-aside={reviewAside || undefined}
       data-history-only={historyOnly || undefined}
       data-presentation={full ? undefined : presentation}
+      data-header-layout={compactRow ? 'row' : undefined}
       data-testid="structured-agent-session"
       {...(full ? { 'aria-labelledby': titleId } : { 'aria-label': `${title} · ${providerLabel}` })}
     >
       {full && <header className="structured-agent-session-header">
+        {headerLeading}
         <div className="structured-agent-session-header__identity">
           {parent && onOpenRelatedSession ? (
             <button type="button" className="structured-agent-session-header__parent" onClick={() => onOpenRelatedSession(parent.sessionId)}
@@ -2506,8 +2518,8 @@ export function StructuredAgentSessionPanel({
             </span>
           )}
         </div>
-        {/* Desktop: one-row header with an overflow menu. Android keeps its inline controls. */}
-        {variant === 'mobile' ? (
+        {/* Desktop and the compact Android row: one row with an overflow menu. Otherwise Android keeps its inline controls. */}
+        {variant === 'mobile' && !compactRow ? (
           <div className="structured-agent-session-controls">
             {headerActions}
             {onOpenHistory && <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>{i18n.language.startsWith('ko') ? '이전 대화' : 'Previous conversations'}</Button>}
@@ -2575,7 +2587,8 @@ export function StructuredAgentSessionPanel({
         ) : (
           <div className="structured-agent-session-controls">
             {headerActions}
-            {heartbeatActive && (
+            {/* Android keeps the heartbeat control inline below the header, so the chip and menu entry are desktop only. */}
+            {heartbeatActive && variant !== 'mobile' && (
               <button type="button" className="chat-header-chip" onClick={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-chip">
                 <Activity aria-hidden="true" />{copy.heartbeatOn}
               </button>
@@ -2626,8 +2639,8 @@ export function StructuredAgentSessionPanel({
               {onDelegate && !providerOwned && !historyOnly && (
                 <MenuItem icon={ScanSearch} onSelect={() => onDelegate('review')} data-testid="structured-agent-delegate-review">{copy.delegateReview}</MenuItem>
               )}
-              {heartbeatControl !== undefined && <MenuSeparator />}
-              {heartbeatControl !== undefined && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
+              {heartbeatControl !== undefined && variant !== 'mobile' && <MenuSeparator />}
+              {heartbeatControl !== undefined && variant !== 'mobile' && <MenuItem icon={Activity} onSelect={() => setHeartbeatOpen(true)} data-testid="structured-agent-heartbeat-open">{copy.heartbeatMenu}</MenuItem>}
               {paneActions && <MenuSeparator />}
               {paneActions && <MenuLabel>{copy.tabSection}</MenuLabel>}
               {paneActions?.preview && <MenuItem onSelect={paneActions.keep} data-testid="structured-agent-tab-keep">{copy.keepTab}</MenuItem>}
@@ -2669,11 +2682,11 @@ export function StructuredAgentSessionPanel({
         </div>
       )}
 
-      {full && variant === 'mobile' && capabilitiesPanel}
+      {full && variant === 'mobile' && !compactRow && capabilitiesPanel}
       {full && !results && <ConversationChangeReview key={`review:${sessionId}`} sessionId={sessionId} items={items} wide={wideReview && variant !== 'mobile'} mobile={variant === 'mobile'} ownerDocument={panelRef.current?.ownerDocument}
         onAsideChange={setReviewAside}
         openRequest={reviewRequest}
-        hideTrigger={variant !== 'mobile'}
+        hideTrigger={variant !== 'mobile' || compactRow}
         onOpenProjectFiles={onOpenProjectFiles}
         onQuote={!historyOnly && !composerDisabled ? text => setDraftAction({ id: ++actionSequence.current, sessionId, insert: text }) : undefined} />}
       {full && workflowContext}

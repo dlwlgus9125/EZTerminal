@@ -665,9 +665,9 @@
         }
       ],
       "review": {
-        "inputDigest": "sha256:c6faec43e58cf17bed96565b169da5e5133e0eaa19c73d0162d619d534e4b0d0",
+        "inputDigest": "sha256:b01c72abb92c755903731f663f220f6ee8a4872496951c6c32a7550a6816b885",
         "decision": "no-semantic-impact",
-        "reason": "Reviewed (I3 terminal): instrument blocks and prompt dock, Ctrl+. AI input sharing the conversation draft, Tab completion answered by the interpreter. Moved blocks reanchored; changed blocks keep their claims. Existing claims hold."
+        "reason": "Reviewed (I4-2 Android chat): optional compactHeader/headerLeading give the phone one header row with the desktop overflow menu; desktop markup unchanged. Moved block reanchored; claim unchanged and still holds."
       }
     },
     {

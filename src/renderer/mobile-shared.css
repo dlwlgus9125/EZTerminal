@@ -4,6 +4,9 @@
 /* The shared status (ui/primitives.css): its icon and words (B list ⑤). */
 [data-ui-flex-gap='unsupported'] .ez-ui-status { gap: 0; }
 [data-ui-flex-gap='unsupported'] .ez-ui-status > .ez-ui-status__icon + * { margin-left: var(--ui-space-1); }
+/* The conversation state: its lamp and word (structured-agent.css). */
+[data-ui-flex-gap='unsupported'] .structured-agent-state { gap: 0; }
+[data-ui-flex-gap='unsupported'] .structured-agent-state > span:first-child { margin-right: var(--ui-space-2); }
 [data-ui-flex-gap='unsupported'] .workflow-header,
 [data-ui-flex-gap='unsupported'] .workflow-header__actions,
 [data-ui-flex-gap='unsupported'] .workflow-toolbar,

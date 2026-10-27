@@ -26,7 +26,6 @@ const LUCIDE_ALLOWED = new Set([
   'MobileSessionSheet.tsx',
   'MobileSessionView.tsx',
   'MobileSettingsView.tsx',
-  'MobileStructuredAgentSession.tsx',
   'MobileTabBar.tsx',
   'MobileWorkspace.tsx',
   'TerminalAccessorySettings.tsx',

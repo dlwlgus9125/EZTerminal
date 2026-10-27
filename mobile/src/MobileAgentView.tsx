@@ -13,6 +13,9 @@ import type {
   AgentStatus,
 } from '../../src/shared/agent';
 import { conversationQueue } from '../../src/renderer/conversation-queue';
+import { createCapabilityAccess } from '../../src/renderer/capability-access';
+import { structuredAgentModelOptions } from '../../src/renderer/structured-agent-create';
+import { useProviderModelCatalogs } from '../../src/renderer/use-provider-models';
 import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
   type AgentCoordinationSnapshot,
@@ -129,6 +132,8 @@ const INITIAL_DAEMON_RUNTIME_STATE: DaemonRuntimeViewState = {
   snapshot: null,
 };
 
+/** Without a transport there is nothing to ask; the catalog hook needs a stable access anyway. */
+const NO_MODEL_ACCESS = createCapabilityAccess({ readCore: () => undefined, readDesktop: () => undefined });
 const EMPTY_STRUCTURED_TRANSCRIPTS: Readonly<Record<string, readonly DaemonTranscriptItem[]>> = {};
 const EMPTY_TRANSCRIPT: readonly DaemonTranscriptItem[] = [];
 const TRANSCRIPT_PAGE_SIZE = 500;
@@ -400,6 +405,15 @@ export function MobileAgentView({
     list: transport.agentCapabilitiesList.bind(transport),
     manage: transport.agentCapabilitiesManage.bind(transport),
   } : undefined, [transport]);
+  // The PC's model lists (I2-9 provider-models-read); an older PC answers nothing and the
+  // capability-advertised models stay the list.
+  const modelAccess = useMemo(() => transport
+    ? createCapabilityAccess({ readCore: () => transport, readDesktop: () => undefined })
+    : NO_MODEL_ACCESS, [transport]);
+  const providerModelCatalogs = useProviderModelCatalogs(
+    transport && !disconnected ? daemonRuntimeState.snapshot ?? null : null,
+    modelAccess,
+  );
   // /btw over the bridge; offered only while connected to a PC that advertises side-questions-v1.
   const sideQuestionClient = useMemo(() => createSideQuestionClient(transport), [transport]);
   const historyClient = useMemo<ConversationHistoryClient | undefined>(() => transport
@@ -1418,13 +1432,12 @@ export function MobileAgentView({
         principal: { kind: 'android' as const, id: 'mobile-agent-ui' },
       };
     };
-    const availableModels = selectedDaemonProvider?.capabilities.flatMap((capability) => {
-      const match = /^(?:model:|model=)(.+)$/u.exec(capability);
-      return match?.[1] ? [{ id: match[1], label: match[1] }] : [];
-    }) ?? [];
-    if (selectedDaemonAgent.model && !availableModels.some((model) => model.id === selectedDaemonAgent.model)) {
-      availableModels.unshift({ id: selectedDaemonAgent.model, label: selectedDaemonAgent.model });
-    }
+    const availableModels = structuredAgentModelOptions(
+      selectedDaemonProvider?.capabilities ?? [],
+      selectedDaemonAgent.model,
+      providerModelCatalogs[selectedDaemonAgent.providerId],
+    );
+    const effortSupported = daemonRuntimeState.snapshot?.capabilities?.includes('agent-effort-v1') === true;
     const providerOwned = selectedDaemonRelation?.owner === 'provider-native';
     const archivedHistory = isDaemonSessionArchived(selectedDaemonSession, selectedDaemonAgent) || workflowContext.scope?.readOnly === true;
     const canCancel = !providerOwned
@@ -1456,6 +1469,8 @@ export function MobileAgentView({
         }}
         model={selectedDaemonAgent.model}
         modelOptions={availableModels}
+        effortSupported={effortSupported}
+        {...(selectedDaemonAgent.reasoningEffort ? { reasoningEffort: selectedDaemonAgent.reasoningEffort } : {})}
         permissionPreset={selectedDaemonAgent.permissionPreset}
         awaitingFirstMessage={selectedDaemonAgent.state === 'idle' && !selectedDaemonAgent.providerSessionId && !daemonRuntimeState.snapshot?.turns.some((turn) => turn.sessionId === selectedDaemonSessionId)}
         state={selectedDaemonAgent.state}
@@ -1535,6 +1550,7 @@ export function MobileAgentView({
         onChangeSettings={(settings: {
           readonly model?: string;
           readonly permissionPreset?: PermissionPreset;
+          readonly reasoningEffort?: string;
         }) => dispatchDaemonCommand(createDaemonCommand({
           ...buildCommandBase(),
           type: 'agent.set-settings',
@@ -1542,6 +1558,8 @@ export function MobileAgentView({
             sessionId: selectedDaemonSession.id,
             ...(settings.model ? { model: settings.model } : {}),
             ...(settings.permissionPreset ? { permissionPreset: settings.permissionPreset } : {}),
+            // Only a PC that takes effort gets it; an older one would refuse the whole change.
+            ...(settings.reasoningEffort && effortSupported ? { reasoningEffort: settings.reasoningEffort } : {}),
           },
         }))}
         {...(!providerOwned && !archivedHistory ? {
@@ -1582,7 +1600,7 @@ export function MobileAgentView({
   return (
     <main className="mob-page" data-testid="mobile-agent-view" aria-label={t('agentHub.activity')}>
       <MobilePageHeader
-        title={t('mobile.agents')}
+        title={language === 'ko' ? '대화' : 'Chat'}
         backLabel={t('common.back')}
         backTestId="mobile-agent-close"
         onBack={onBack}

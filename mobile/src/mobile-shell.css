@@ -52,6 +52,24 @@
   flex: 1 1 auto;
 }
 
+/* The back control leads the conversation's one header row (I4). */
+.mob-structured-agent__back {
+  color: var(--ui-text-secondary);
+}
+
+/* Draft and offline notes sit just above the message box, as a quiet line. */
+.mob-structured-agent .mobile-v2-draft-status {
+  padding: var(--ui-space-1) var(--ui-space-3);
+  background: var(--ui-surface);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.mob-structured-agent .mobile-v2-draft-status[data-state='unavailable'],
+.mob-structured-agent .mobile-v2-draft-status[data-kind='offline'] {
+  color: var(--ui-warning);
+}
+
 .mob-new-session__scroll {
   min-height: 0;
   flex: 1 1 auto;

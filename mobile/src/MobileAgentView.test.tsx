@@ -154,6 +154,18 @@ function testIds(id: string): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`));
 }
 
+/** The phone chat's one header row keeps history, skin and lifecycle in its ⋯ menu (I4). */
+async function menuIds(id: string): Promise<HTMLElement[]> {
+  if (!document.querySelector('[role="menu"]')) {
+    await act(async () => testIds('structured-agent-menu')[0]!.click());
+  }
+  return Array.from(document.querySelectorAll<HTMLElement>(`[role="menu"] [data-testid="${id}"]`));
+}
+
+async function closeMenu(): Promise<void> {
+  if (document.querySelector('[role="menu"]')) await act(async () => testIds('structured-agent-menu')[0]!.click());
+}
+
 async function changeSelect(testId: string, value: string): Promise<void> {
   const select = testIds(testId)[0] as HTMLSelectElement;
   const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
@@ -208,6 +220,37 @@ describe('MobileAgentView', () => {
     agentCreateRecovery: readyRecoveryController(),
   };
 
+  it('offers the effort switch and the PC model list only to a PC that takes them (I4)', async () => {
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: true as const, status: 'queued' as const, commandId: command.commandId, revision: 9, eventSequence: 13,
+    }));
+    const listDaemonProviderModels = vi.fn(async () => ({ ok: true as const, value: [
+      { id: 'gpt-5', displayName: 'GPT-5' }, { id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
+    ] }));
+    const transport = { sendDaemonCommand, listDaemonProviderModels } as unknown as WsEzTerminalTransport;
+    const older = daemonSnapshotOf();
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: older }} transport={transport} initialSessionId="structured-session-1" {...noop} />);
+    await flush();
+    expect(testIds('structured-agent-live-effort')).toHaveLength(0);
+    const newer = daemonSnapshotOf({ revision: 9, capabilities: ['agent-effort-v1'],
+      agents: older.agents.map((agent) => ({ ...agent, reasoningEffort: 'medium' })) });
+    await render(<MobileAgentView snapshot={snapshotOf()} daemonRuntimeState={{ status: 'ready', snapshot: newer }} transport={transport} initialSessionId="structured-session-1" {...noop} />);
+    await flush();
+    expect(listDaemonProviderModels).toHaveBeenCalledWith('codex');
+    await act(async () => testIds('structured-agent-live-model')[0]!.click());
+    expect(Array.from(document.querySelectorAll('[role="menuitemradio"]')).map((item) => item.textContent)).toEqual(expect.arrayContaining(['GPT-6 Astra']));
+    await act(async () => testIds('structured-agent-live-model')[0]!.click());
+    await act(async () => testIds('structured-agent-live-effort')[0]!.click());
+    const high = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((item) => item.textContent === 'High')!;
+    await act(async () => { high.click(); await Promise.resolve(); });
+    await flush();
+    expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'agent.set-settings',
+      payload: { sessionId: 'structured-session-1', reasoningEffort: 'high' },
+      principal: { kind: 'android', id: 'mobile-agent-ui' },
+    }));
+  });
+
   it('opens unified history above the current chat and preserves its unsent draft when closed', async () => {
     const authority = daemonSnapshotOf();
     const listConversations = vi.fn(async () => ({ ok: true as const, items: [], nextCursor: null }));
@@ -219,7 +262,8 @@ describe('MobileAgentView', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Keep my unsent draft');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await clickButtonText(container, 'Previous conversations'); await flush();
+    await menuIds('structured-agent-menu');
+    await clickButtonText(document, 'Previous conversations'); await flush();
     expect(testIds('mobile-conversation-history')).toHaveLength(1);
     expect(testIds('structured-agent-composer-input')[0]).toBe(input);
     expect(input.value).toBe('Keep my unsent draft');
@@ -1318,12 +1362,14 @@ describe('MobileAgentView', () => {
     await act(async () => childButtons[0]!.click());
     expect(onFocusSession).toHaveBeenLastCalledWith('managed-child');
     expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(false);
-    expect(testIds('structured-agent-cancel')).toHaveLength(1);
-    expect(testIds('structured-agent-archive')).toHaveLength(0);
-    expect(testIds('structured-agent-detach')).toHaveLength(1);
+    // Stopping is the message box's stop button; detach and archive are in the ⋯ menu.
+    expect(testIds('structured-agent-stop')).toHaveLength(1);
+    expect(await menuIds('structured-agent-archive')).toHaveLength(0);
+    expect(await menuIds('structured-agent-detach')).toHaveLength(1);
+    await closeMenu();
 
     await act(async () => {
-      testIds('structured-agent-cancel')[0]!.click();
+      testIds('structured-agent-stop')[0]!.click();
       await Promise.resolve();
     });
     expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -1343,13 +1389,13 @@ describe('MobileAgentView', () => {
       agents: stoppedAgents,
       agentRelations: relations,
     })));
-    expect(testIds('structured-agent-cancel')).toHaveLength(0);
-    expect(testIds('structured-agent-archive')).toHaveLength(1);
-    expect(testIds('structured-agent-detach')).toHaveLength(1);
+    expect(testIds('structured-agent-stop')).toHaveLength(0);
+    expect(await menuIds('structured-agent-archive')).toHaveLength(1);
+    expect(await menuIds('structured-agent-detach')).toHaveLength(1);
     expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(true);
 
     await act(async () => {
-      testIds('structured-agent-detach')[0]!.click();
+      (await menuIds('structured-agent-detach'))[0]!.click();
       await Promise.resolve();
     });
     expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -1366,11 +1412,11 @@ describe('MobileAgentView', () => {
       agents: stoppedAgents,
       agentRelations: detachedRelations,
     })));
-    expect(testIds('structured-agent-detach')).toHaveLength(0);
-    expect(testIds('structured-agent-archive')).toHaveLength(1);
+    expect(await menuIds('structured-agent-detach')).toHaveLength(0);
+    expect(await menuIds('structured-agent-archive')).toHaveLength(1);
 
     await act(async () => {
-      testIds('structured-agent-archive')[0]!.click();
+      (await menuIds('structured-agent-archive'))[0]!.click();
       await Promise.resolve();
     });
     expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({

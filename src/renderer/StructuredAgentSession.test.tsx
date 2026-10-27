@@ -838,4 +838,32 @@ describe('message-based chat skins', () => {
     expect(onReconcileDelivery).toHaveBeenCalledOnce();
     expect(input().value).toBe('');
   });
+
+  it('gives Android one header row when compact and leaves the default markup alone', () => {
+    const onDetach = vi.fn(async () => ({ ok: true as const }));
+    const onOpenHistory = vi.fn();
+    const back = <button type="button" data-testid="phone-back">Back</button>;
+    // Default Android: inline control block, no row layout, no leading control.
+    render(panel({ variant: 'mobile', onDetach, onOpenHistory, headerLeading: back }));
+    const section = container.querySelector<HTMLElement>('[data-testid="structured-agent-session"]')!;
+    expect(section.dataset.headerLayout).toBeUndefined();
+    expect(container.querySelector('[data-testid="structured-agent-menu"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-skin"]')).not.toBeNull();
+    // Desktop ignores compactHeader entirely.
+    render(panel({ compactHeader: true, onDetach }));
+    expect(container.querySelector<HTMLElement>('[data-testid="structured-agent-session"]')!.dataset.headerLayout).toBeUndefined();
+    // Compact Android: the leading control first, then the desktop row with its ⋯ menu.
+    render(panel({ variant: 'mobile', compactHeader: true, onDetach, onOpenHistory, headerLeading: back }));
+    const compact = container.querySelector<HTMLElement>('[data-testid="structured-agent-session"]')!;
+    expect(compact.dataset.headerLayout).toBe('row');
+    const header = compact.querySelector('.structured-agent-session-header')!;
+    expect(header.firstElementChild?.getAttribute('data-testid')).toBe('phone-back');
+    expect(container.querySelector('[data-testid="structured-agent-skin"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-menu"]')!.click());
+    expect(document.querySelector('[role="menu"] [data-testid="structured-agent-detach"]')).not.toBeNull();
+    expect(document.querySelector('[role="menu"] [data-testid="structured-agent-skin-cli"]')).not.toBeNull();
+    // No dock pane on a phone: no tab section in the menu.
+    expect(document.querySelector('[role="menu"] [data-testid="structured-agent-tab-close"]')).toBeNull();
+  });
 });

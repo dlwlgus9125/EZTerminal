@@ -1525,3 +1525,108 @@
 .structured-agent-children[data-expanded] .structured-agent-children__heading {
   line-height: 1.75rem;
 }
+
+/* I4 Android chat: the compact header is the page's only header row
+   (back · title · state · results · extensions · ⋯), the desktop row's anatomy.
+   Margins instead of flex gap: Android WebView 74 ignores flex gap. */
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header {
+  flex-wrap: nowrap;
+  gap: 0;
+  align-items: center;
+  min-height: 3.25rem;
+  padding: 0 var(--ui-space-2) 0 var(--ui-space-1);
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  margin-left: var(--ui-space-1);
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity .structured-agent__eyebrow,
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity p {
+  display: none;
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__identity h1 {
+  flex: 0 1 auto;
+  min-width: 4rem;
+  overflow: hidden;
+  font-family: var(--ui-font-label);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__status {
+  /* The state is a short word; the title gives way instead. */
+  flex: none;
+  margin-left: var(--ui-space-2);
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__status .structured-agent-state {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--ui-font-size-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A block keeps the ellipsis; the lamp stays a lamp beside the word. */
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-header__status .structured-agent-state > span:first-child {
+  display: inline-block;
+  margin-right: var(--ui-space-1);
+  vertical-align: 0.0625rem;
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-controls {
+  flex: none;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 0;
+  width: auto;
+  margin-left: var(--ui-space-1);
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-controls > * + * {
+  margin-left: var(--ui-space-1);
+}
+/* Header buttons keep their names for screen readers; on the phone the glyph and count show. */
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-controls > .ez-ui-button > .ez-ui-button__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .agent-capabilities > summary {
+  font-size: 0;
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .agent-capabilities > summary > span {
+  font-size: var(--ui-font-size-12);
+}
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-controls .ez-ui-button,
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .structured-agent-session-controls .chat-icon-action,
+.structured-agent--live[data-variant='mobile'][data-header-layout='row'] .agent-capabilities > summary {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+/* A decision on a phone is a thumb target. */
+.structured-agent[data-variant='mobile'] .chat-dock .ez-ui-button {
+  min-width: 5.5rem;
+  min-height: 2.75rem;
+  font-size: 0.90625rem;
+}
+
+/* The phone composer's switches flow in rows of chips (not two grid columns). */
+.structured-agent[data-variant='mobile'] .chat-composer__settings .structured-agent-session-settings {
+  display: flex;
+  flex-wrap: wrap;
+}
+.structured-agent[data-variant='mobile'] .chat-composer__settings .structured-agent-session-settings > * {
+  margin: 0 0.3125rem 0.3125rem 0;
+}
+.structured-agent[data-variant='mobile'] .chat-pill {
+  height: 2.125rem;
+  padding: 0 0.625rem;
+  font-size: var(--ui-font-size-13);
+}
