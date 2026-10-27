@@ -300,4 +300,52 @@ describe('MobileNavigationHistory native Android Back', () => {
     await pop({});
     expect(pushed).toEqual(['tab', 'files']);
   });
+  it('rewinds its entries once a close in flight lands, when the shell unmounts first (I5)', async () => {
+    function Layer({ id, onBack = () => undefined }: { readonly id: string; readonly onBack?: () => void }): null {
+      const navigation = useMobileNavigationHistory();
+      useEffect(() => navigation.pushLayer({ id, kind: 'page', onBack }), [id, navigation, onBack]);
+      return null;
+    }
+    function Close(): JSX.Element {
+      const navigation = useMobileNavigationHistory();
+      return <button type="button" data-testid="close" onClick={() => navigation.closeLayer('sheet', 'ui')}>close</button>;
+    }
+    // Real jsdom history: a traversal lands two timer tasks later, as a real popstate.
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        for (let index = 0; index < 10; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    };
+    await settle();
+    const base = { base: 'i5' };
+    window.history.pushState(base, '');
+    await act(async () => {
+      root.render(<MobileNavigationHistoryProvider><Layer id="page" /><Layer id="sheet" /><Close /></MobileNavigationHistoryProvider>);
+      await Promise.resolve();
+    });
+    expect(window.history.state.ezterminalNavigation.layerId).toBe('sheet');
+    // Closing the sheet sends the browser back; before it lands, the session drops and the shell unmounts.
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="close"]')!.click());
+    act(() => root.render(<div>disconnected</div>));
+    await settle();
+    expect(window.history.state).toEqual(base);
+    // The next shell's first Back closes its own page and lands on the base, not on a leftover stop.
+    const onBack = vi.fn();
+    await act(async () => {
+      root.render(<MobileNavigationHistoryProvider><Layer id="next" onBack={onBack} /></MobileNavigationHistoryProvider>);
+      await Promise.resolve();
+    });
+    expect(nativeApp.listeners.size).toBe(1);
+    act(() => [...nativeApp.listeners][0]({ canGoBack: true }));
+    await settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(window.history.state).toEqual(base);
+  });
+  it('ignores Back on an unmounted shell while its listener is still being removed (I5)', async () => {
+    await renderCoordinator();
+    const stale = [...nativeApp.listeners][0];
+    act(() => root.render(<div>disconnected</div>));
+    act(() => stale({ canGoBack: false }));
+    expect(nativeApp.exitApp).not.toHaveBeenCalled();
+  });
 });

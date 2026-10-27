@@ -64,6 +64,31 @@ function markerFromState(state: unknown): NavigationMarker | null {
 }
 
 /**
+ * A shell that unmounts while one of its traversals is still on the way cannot rewind yet. Once the browser
+ * lands, keep stepping back past every entry it marked, or the next shell finds them as dead Back stops.
+ * Their number is not known up front: while a traversal is pending the entries and the layers can differ.
+ */
+function rewindOwnerEntriesAfterTraversal(owner: string): void {
+  const onPopState = (event: PopStateEvent): void => {
+    const state = event.state ?? window.history.state;
+    if (markerFromState(state)?.owner === owner) {
+      try {
+        window.history.back();
+        return;
+      } catch {
+        try {
+          window.history.replaceState(withoutNavigationMarkers(state), '');
+        } catch {
+          // Ignore an unavailable History implementation.
+        }
+      }
+    }
+    window.removeEventListener('popstate', onPopState);
+  };
+  window.addEventListener('popstate', onPopState);
+}
+
+/**
  * The authenticated mobile shell's single browser-history owner. React layer
  * lifetimes update one logical stack, while browser traversals are serialized
  * so a programmatic close can never consume a layer opened in the same turn.
@@ -270,6 +295,8 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
     window.addEventListener('popstate', onPopState);
     const nativeBackHandle = Capacitor.getPlatform() === 'android'
       ? CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+          // Removal is asynchronous: an unmounted shell must not answer Back alongside the next one.
+          if (!mountedRef.current) return;
           // A programmatic history traversal is already reconciling a UI
           // close. Consuming another Back here could skip the terminal page.
           if (pendingTraversalRef.current || replacementRef.current) return;
@@ -330,12 +357,15 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
             // Explicit navigation remains usable when History is unavailable.
           }
         }
+      } else if (pendingTraversalRef.current) {
+        rewindOwnerEntriesAfterTraversal(owner);
       }
       if (replacementRef.current) clearTimeout(replacementRef.current.timer);
       replacementRef.current = null;
       layersRef.current = [];
       registrations.clear();
       pendingTraversalRef.current = false;
+      resyncRef.current = false;
     };
   }, [owner, rebuildDeferredEntries]);
 
