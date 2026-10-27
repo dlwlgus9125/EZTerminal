@@ -100,6 +100,9 @@ describe('PairingScanner camera lifecycle', () => {
         resolvePlayback = resolve;
       }),
     );
+    // The Back history asks for a frame when the scanner opens; jsdom serves frames from its own
+    // setInterval, which is not the decoder this test is about.
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0);
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
 
     container = document.createElement('div');
